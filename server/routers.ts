@@ -26,6 +26,8 @@ import type { NoteAppliedItem, NoteParseResult, NoteParsedItem } from "@shared/n
 import { employeePortalRouter } from "./routers/employeePortal";
 import { parseCopackerInventoryEmail, applyCopackerInventoryUpdate } from "./copackerEmailExtractor";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
+import { parseInvoiceText } from "./_core/invoiceTextParser";
+import { parseEntityText } from "./_core/universalTextParser";
 import { detectFinancialAnomalies, forecastRevenue, predictCashFlow, classifyTransactions } from "./financeAiService";
 import { predictAttrition, benchmarkCompensation, analyzePerformance, planWorkforce } from "./hrAiService";
 import { predictYield, forecastQuality, optimizeProduction, predictMaintenance } from "./manufacturingAiService";
@@ -1114,11 +1116,84 @@ ONLY return the JSON array, no other text.`;
         };
       }),
     createFromText: financeProcedure
-      .input(z.object({ text: z.string() }))
-      .mutation(async () => ({ id: 0, invoiceNumber: 'INV-STUB', parsed: null as any, invoiceId: 0 })),
+      .input(z.object({ text: z.string().min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        const parsed = await parseInvoiceText(input.text);
+
+        let customer = await db.getCustomerByName(parsed.customerName);
+        if (!customer) {
+          const created = await db.createCustomer({
+            name: parsed.customerName,
+            type: "business",
+            status: "active",
+          });
+          customer = await db.getCustomerById(created.id);
+        }
+        if (!customer) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Failed to resolve customer" });
+        }
+
+        const invoiceNumber = `INV-${Date.now().toString(36).toUpperCase()}`;
+        const issueDate = new Date();
+        const dueDate = parsed.dueInDays
+          ? new Date(issueDate.getTime() + parsed.dueInDays * 24 * 60 * 60 * 1000)
+          : null;
+
+        const total = parsed.amount.toFixed(2);
+        const created = await db.createInvoice({
+          invoiceNumber,
+          customerId: customer.id,
+          type: "invoice",
+          status: "draft",
+          issueDate,
+          dueDate: dueDate ?? undefined,
+          subtotal: total,
+          totalAmount: total,
+          terms: parsed.paymentTerms,
+          createdBy: ctx.user.id,
+        });
+
+        await db.createInvoiceItem({
+          invoiceId: created.id,
+          description: parsed.quantity && parsed.unit
+            ? `${parsed.description} (${parsed.quantity} ${parsed.unit})`
+            : parsed.description,
+          quantity: (parsed.quantity ?? 1).toString(),
+          unitPrice: (parsed.amount / (parsed.quantity ?? 1)).toFixed(2),
+          totalAmount: total,
+        });
+
+        await createAuditLog(ctx.user.id, 'create', 'invoice', created.id, invoiceNumber);
+
+        return { id: created.id, invoiceNumber, parsed, invoiceId: created.id };
+      }),
     approveAndEmail: financeProcedure
       .input(z.object({ invoiceId: z.number() }))
-      .mutation(async () => ({ success: true, invoiceNumber: 'INV-STUB' })),
+      .mutation(async ({ input, ctx }) => {
+        const invoice = await db.getInvoiceById(input.invoiceId);
+        if (!invoice) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Invoice not found" });
+        }
+
+        await db.updateInvoice(input.invoiceId, {
+          status: "sent",
+          approvedBy: ctx.user.id,
+          approvedAt: new Date(),
+        });
+
+        const emailResult = await emailService.sendInvoiceEmail(input.invoiceId, {
+          triggeredBy: ctx.user.id,
+        });
+
+        await createAuditLog(ctx.user.id, 'approve', 'invoice', input.invoiceId, invoice.invoiceNumber);
+
+        return {
+          success: true,
+          invoiceNumber: invoice.invoiceNumber,
+          emailQueued: emailResult.success,
+          emailError: emailResult.success ? undefined : emailResult.error,
+        };
+      }),
     delete: financeProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input, ctx }) => {
@@ -1135,7 +1210,12 @@ ONLY return the JSON array, no other text.`;
     list: protectedProcedure.query(() => [] as any[]),
     createFromText: opsProcedure
       .input(z.object({ text: z.string() }))
-      .mutation(async () => ({ id: 0, billNumber: 'BILL-STUB' })),
+      .mutation(async () => {
+        throw new TRPCError({
+          code: "NOT_IMPLEMENTED",
+          message: "Vendor bill ingestion is not yet supported. Use Purchase Orders for vendor liabilities, or import bills via QuickBooks sync.",
+        });
+      }),
   }),
 
   // ============================================
@@ -2078,9 +2158,6 @@ ONLY return the JSON array, no other text.`;
         sendEmail: z.boolean().default(false),
       }))
       .mutation(async ({ input, ctx }) => {
-        if (!input.preview) {
-          return { success: true, po: { id: 0, poNumber: 'PO-STUB', status: 'draft' as const }, emailSent: false, emailError: undefined as string | undefined };
-        }
         // Create the PO from preview
         const po = await createPOFromPreview(input.preview as any, ctx.user.id);
         
@@ -4695,14 +4772,22 @@ ONLY return the JSON array, no other text.`;
                       }
                     } catch {}
 
-                    // Create a placeholder contact for the deal (name-only; no unique identifier to match on)
-                    const dealName = record.name || record.deal || record.opportunity || `Deal ${imported + 1}`;
+                    // Resolve company name — that's the deal title.
+                    const company = (record.company || record.organization || record.account || record.client || record.name || record.deal || record.opportunity || '').toString().trim();
+                    if (!company) { imported++; break; }
+
+                    // Skip duplicates — by existing deal or already-pending approval task.
+                    if (await db.findCrmDealByCompany(company)) { imported++; break; }
+                    if (await db.hasPendingDealApprovalForCompany(company)) { imported++; break; }
+
+                    // Create a placeholder contact tied to that company.
                     let contactId: number;
                     try {
                       const { id } = await db.findOrCreateCrmContact({
-                        firstName: dealName,
+                        firstName: company,
                         lastName: '',
-                        fullName: dealName,
+                        fullName: company,
+                        organization: company,
                         source: 'import',
                         contactType: 'lead',
                       });
@@ -4711,14 +4796,22 @@ ONLY return the JSON array, no other text.`;
                       contactId = 1;
                     }
 
-                    await db.createCrmDeal({
+                    const taskData = {
                       pipelineId,
                       contactId,
-                      name: dealName,
+                      company,
                       stage: record.stage || record.status || 'discovery',
                       amount: record.amount || record.value || record['deal size'] || undefined,
                       source: 'google_sheets',
                       notes: record.notes || undefined,
+                    };
+                    await db.createAiAgentTask({
+                      taskType: 'create_crm_deal',
+                      priority: 'medium',
+                      status: 'pending_approval',
+                      taskData: JSON.stringify(taskData),
+                      aiReasoning: `Imported CRM deal for "${company}" from Google Sheets — pending approval.`,
+                      aiConfidence: '90.00',
                     });
                     imported++;
                     break;
@@ -4785,6 +4878,149 @@ ONLY return the JSON array, no other text.`;
         });
 
         return { results, totalSheets: files.length };
+      }),
+
+    // List files from Google Drive (all types, not just spreadsheets)
+    listDriveFiles: protectedProcedure
+      .input(z.object({
+        mimeType: z.enum([
+          'application/vnd.google-apps.document',
+          'application/vnd.google-apps.spreadsheet',
+          'application/vnd.google-apps.presentation',
+          'application/pdf',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        ]).optional(),
+        pageToken: z.string().optional(),
+      }).optional())
+      .query(async ({ ctx, input }) => {
+        const { accessToken, error: tokenError } = await getValidGoogleToken(ctx.user.id);
+        if (tokenError || !accessToken) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: tokenError || 'Google not connected' });
+        }
+
+        let query = 'trashed=false';
+        if (input?.mimeType) {
+          // mimeType is validated against an enum above — safe to interpolate
+          query += ` and mimeType='${input.mimeType}'`;
+        }
+
+        const params = new URLSearchParams({
+          q: query,
+          fields: 'files(id,name,mimeType,modifiedTime,size),nextPageToken',
+          orderBy: 'modifiedTime desc',
+          pageSize: '30',
+        });
+        if (input?.pageToken) {
+          params.set('pageToken', input.pageToken);
+        }
+
+        const response = await fetch(
+          `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+
+        if (!response.ok) {
+          if (response.status === 401) {
+            throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google token expired. Please reconnect.' });
+          }
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list Drive files' });
+        }
+
+        const data = await response.json();
+        return {
+          files: data.files || [],
+          nextPageToken: data.nextPageToken || null,
+        };
+      }),
+
+    // Export / download a file from Google Drive
+    exportFile: protectedProcedure
+      .input(z.object({
+        fileId: z.string().min(1),
+        exportFormat: z.enum(['pdf', 'xlsx', 'docx', 'csv']),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { accessToken, error: tokenError } = await getValidGoogleToken(ctx.user.id);
+        if (tokenError || !accessToken) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: tokenError || 'Google not connected' });
+        }
+
+        const { fileId, exportFormat } = input;
+
+        // Fetch file metadata from Drive — never trust client-supplied mimeType/name
+        const metaResp = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id%2Cname%2CmimeType`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+        if (!metaResp.ok) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'File not found or access denied' });
+        }
+        const meta = await metaResp.json() as { id: string; name: string; mimeType: string };
+        const fileMimeType = meta.mimeType;
+        // Sanitize filename: strip path separators and control characters, ensure non-empty
+        const rawName = meta.name ?? 'download';
+        const safeName = rawName.replace(/[/\\?%*:|"<>\x00-\x1f]/g, '_').trim() || 'download';
+
+        // Determine the download URL based on file type
+        let url: string;
+        let outputMimeType: string;
+        let extension: string;
+
+        const isGoogleDoc = fileMimeType === 'application/vnd.google-apps.document';
+        const isGoogleSheet = fileMimeType === 'application/vnd.google-apps.spreadsheet';
+        const isGoogleSlides = fileMimeType === 'application/vnd.google-apps.presentation';
+
+        const exportMimeTypes: Record<string, string> = {
+          pdf: 'application/pdf',
+          xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          csv: 'text/csv',
+        };
+
+        if (isGoogleDoc || isGoogleSheet || isGoogleSlides) {
+          // Google Workspace files need export
+          outputMimeType = exportMimeTypes[exportFormat];
+          url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(outputMimeType)}`;
+          extension = exportFormat;
+        } else {
+          // Native files (PDF, XLSX, etc.) — direct download
+          url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`;
+          outputMimeType = fileMimeType;
+          const extMap: Record<string, string> = {
+            'application/pdf': 'pdf',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+            'text/csv': 'csv',
+          };
+          extension = extMap[fileMimeType] || exportFormat;
+        }
+
+        const response = await fetch(url, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+
+        if (!response.ok) {
+          const errText = await response.text().catch(() => 'Unknown error');
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: `Failed to export file: ${response.status} ${errText.slice(0, 200)}`,
+          });
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        const base64 = Buffer.from(arrayBuffer).toString('base64');
+
+        // Build filename with correct extension (strip any existing extension from safe name)
+        const baseName = safeName.replace(/\.[^/.]+$/, '');
+        const outputFilename = `${baseName}.${extension}`;
+
+        return {
+          filename: outputFilename,
+          base64,
+          mimeType: outputMimeType,
+          size: arrayBuffer.byteLength,
+        };
       }),
 
     // Get past Google Drive sync history so results persist across page reloads
@@ -5786,7 +6022,7 @@ Be concise and helpful. Always give actionable guidance.`;
       
       create: protectedProcedure
         .input(z.object({
-          taskType: z.enum(['generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory', 'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials', 'vendor_followup', 'create_work_order', 'query', 'reply_email', 'approve_po', 'approve_invoice', 'create_vendor', 'create_material', 'create_product', 'create_bom', 'create_customer']),
+          taskType: z.enum(['generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory', 'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials', 'vendor_followup', 'create_work_order', 'query', 'reply_email', 'approve_po', 'approve_invoice', 'create_vendor', 'create_material', 'create_product', 'create_bom', 'create_customer', 'create_crm_deal']),
           priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium'),
           taskData: z.string(), // JSON string with task-specific data
           aiReasoning: z.string().optional(),
@@ -5841,6 +6077,60 @@ Be concise and helpful. Always give actionable guidance.`;
             status: 'success',
             message: `Task approved by ${ctx.user.name}`,
           });
+
+          // CRM deal approvals create the deal immediately on approval —
+          // no separate execute step required.
+          const task = await db.getAiAgentTaskById(input.id);
+          if (task?.taskType === 'create_crm_deal') {
+            try {
+              const taskData = JSON.parse(task.taskData || '{}');
+              const contact = taskData.contactId ? await db.getCrmContactById(taskData.contactId) : null;
+              if (!contact) throw new Error('Contact not found for CRM deal');
+              const company = (contact.organization || '').trim();
+              if (!company) throw new Error(`Contact "${contact.fullName}" has no company set`);
+              const existing = await db.findCrmDealByCompany(company);
+              if (existing) throw new Error(`A deal already exists for "${company}" (deal #${existing.id})`);
+              if (!taskData.pipelineId) throw new Error('Pipeline required to create CRM deal');
+
+              const dealId = await db.createCrmDeal({
+                pipelineId: taskData.pipelineId,
+                contactId: taskData.contactId,
+                name: company,
+                stage: taskData.stage || 'discovery',
+                amount: taskData.amount || undefined,
+                source: taskData.source || undefined,
+                notes: taskData.notes || undefined,
+                assignedTo: taskData.assignedTo || undefined,
+              });
+              const result = { created: true, dealId, dealName: company };
+              await db.updateAiAgentTask(input.id, {
+                status: 'completed',
+                executedAt: new Date(),
+                executionResult: JSON.stringify(result),
+              });
+              await db.createAiAgentLog({
+                taskId: input.id,
+                action: 'task_executed',
+                status: 'success',
+                message: `CRM deal created for ${company}`,
+                details: JSON.stringify(result),
+              });
+              return { success: true, autoExecuted: true, dealId, company };
+            } catch (error: any) {
+              await db.updateAiAgentTask(input.id, {
+                status: 'failed',
+                errorMessage: error.message,
+              });
+              await db.createAiAgentLog({
+                taskId: input.id,
+                action: 'task_execution_failed',
+                status: 'error',
+                message: `CRM deal creation failed: ${error.message}`,
+              });
+              throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
+            }
+          }
+
           return { success: true };
         }),
       
@@ -6247,7 +6537,39 @@ Be concise and helpful. Always give actionable guidance.`;
                 result = { created: true, customerId: customer.id, customerName: taskData.name };
                 break;
               }
-              
+
+              case 'create_crm_deal': {
+                // Resolve company name from contact's organization (the deal's title).
+                const contact = taskData.contactId ? await db.getCrmContactById(taskData.contactId) : null;
+                if (!contact) throw new Error('Contact not found for CRM deal');
+                const company = (contact.organization || '').trim();
+                if (!company) {
+                  throw new Error(`Cannot create deal: contact "${contact.fullName}" has no company set`);
+                }
+
+                // Re-check duplicates at execution time in case another deal was approved
+                // for the same company while this one was waiting.
+                const existing = await db.findCrmDealByCompany(company);
+                if (existing) {
+                  throw new Error(`A deal already exists for company "${company}" (deal #${existing.id})`);
+                }
+
+                if (!taskData.pipelineId) throw new Error('Pipeline required to create CRM deal');
+
+                const dealId = await db.createCrmDeal({
+                  pipelineId: taskData.pipelineId,
+                  contactId: taskData.contactId,
+                  name: company,
+                  stage: taskData.stage || 'discovery',
+                  amount: taskData.amount || undefined,
+                  source: taskData.source || undefined,
+                  notes: taskData.notes || undefined,
+                  assignedTo: taskData.assignedTo || undefined,
+                });
+                result = { created: true, dealId, dealName: company };
+                break;
+              }
+
               case 'create_work_order': {
                 // Create work order from BOM
                 const bom = taskData.bomId ? await db.getBomById(taskData.bomId) : null;
@@ -9479,8 +9801,65 @@ Provide a brief status summary, any missing documents, and next steps.`;
         return { success: true };
       }),
     createFromText: opsProcedure
-      .input(z.object({ text: z.string() }))
-      .mutation(async () => ({ id: 0, workOrderNumber: 'WO-STUB' })),
+      .input(z.object({ text: z.string().min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        const parsed = await parseEntityText(input.text, "work_order");
+        const productName = (parsed.productName as string | undefined)?.trim();
+        const quantity = Number(parsed.quantity);
+        if (!productName || !Number.isFinite(quantity) || quantity <= 0) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Could not extract a product and quantity from the text.",
+          });
+        }
+
+        const allProducts = await db.getProducts();
+        const product = allProducts.find(
+          (p) => p.name?.toLowerCase() === productName.toLowerCase()
+            || p.sku?.toLowerCase() === productName.toLowerCase(),
+        )
+          ?? allProducts.find((p) => p.name?.toLowerCase().includes(productName.toLowerCase()));
+        if (!product) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: `No product matched "${productName}". Create the product first or use an existing SKU.`,
+          });
+        }
+
+        const boms = await db.getBillOfMaterials({ productId: product.id, status: "active" });
+        const bom = boms[0];
+        if (!bom) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: `No active BOM exists for product "${product.name}". Create a BOM before scheduling production.`,
+          });
+        }
+
+        const priorityMap: Record<string, "low" | "normal" | "high" | "urgent"> = {
+          low: "low",
+          medium: "normal",
+          normal: "normal",
+          high: "high",
+          urgent: "urgent",
+        };
+        const rawPriority = (parsed.priority as string | undefined)?.toLowerCase() ?? "normal";
+        const priority = priorityMap[rawPriority] ?? "normal";
+
+        const created = await manufacturingDb.createWorkOrder({
+          productId: product.id,
+          bomId: bom.id,
+          quantity: quantity.toString(),
+          unit: (parsed.unit as string | undefined) ?? "EA",
+          status: "draft",
+          priority,
+          scheduledEndDate: parsed.dueDate ? new Date(parsed.dueDate as string) : undefined,
+          notes: (parsed.notes as string | undefined) ?? `Created from text: "${input.text}"`,
+          createdBy: ctx.user.id,
+        });
+
+        await createAuditLog(ctx.user.id, 'create', 'work_order', created.id, created.workOrderNumber);
+        return { id: created.id, workOrderNumber: created.workOrderNumber };
+      }),
     delete: opsProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input, ctx }) => {
@@ -9495,7 +9874,12 @@ Provide a brief status summary, any missing documents, and next steps.`;
     list: protectedProcedure.query(() => [] as any[]),
     createFromText: opsProcedure
       .input(z.object({ text: z.string() }))
-      .mutation(async () => ({ id: 0, orderNumber: 'PROD-STUB' })),
+      .mutation(async () => {
+        throw new TRPCError({
+          code: "NOT_IMPLEMENTED",
+          message: "Production Orders are not a separate entity in this system. Use Work Orders (workOrders.createFromText) for production scheduling.",
+        });
+      }),
   }),
 
   // Raw Material Inventory
@@ -11405,6 +11789,7 @@ Ask if they received the original request and if they can provide a quote.`;
             for (const { email } of parsedResults) {
               try {
                 await db.createInboundEmail?.({
+                  messageId: email.messageId,
                   fromEmail: email.from.address,
                   fromName: email.from.name || "",
                   toEmail: email.to.join(", ") || "inbox",
@@ -13243,18 +13628,14 @@ Ask if they received the original request and if they can provide a quote.`;
             .map(d => d.googleDriveFileId!)
         );
 
-        // Create folder hierarchy in data room
+        // Create folder hierarchy in data room.
+        // syncDriveFolder pushes folders in DFS pre-order, so parents
+        // already precede their children — no sort needed.
         const folderMap = new Map<string, number>();
-        const sortedFolders = [...syncResult.folders].sort((a, b) => {
-          const aDepth = a.parents?.length || 0;
-          const bDepth = b.parents?.length || 0;
-          return aDepth - bDepth;
-        });
-
         const results: { name: string; type: string; status: string }[] = [];
 
         // Process folders
-        for (const driveFolder of sortedFolders) {
+        for (const driveFolder of syncResult.folders) {
           if (existingFoldersByDriveId.has(driveFolder.id)) {
             folderMap.set(driveFolder.id, existingFoldersByDriveId.get(driveFolder.id)!);
             results.push({ name: driveFolder.name, type: 'folder', status: 'exists' });
@@ -13337,176 +13718,6 @@ Ask if they received the original request and if they can provide a quote.`;
 
     // Google Drive sync
     googleDrive: router({
-      // List available Google Drive folders
-      listFolders: protectedProcedure
-        .input(z.object({ 
-          parentFolderId: z.string().optional() 
-        }))
-        .query(async ({ ctx, input }) => {
-          const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
-          if (error) {
-            throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
-          }
-
-          const result = await listDriveFolders(accessToken, input.parentFolderId);
-          if (result.error) {
-            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
-          }
-
-          return { folders: result.folders };
-        }),
-
-      // Sync a Google Drive folder to a data room
-      syncFolder: protectedProcedure
-        .input(z.object({
-          dataRoomId: z.number(),
-          googleDriveFolderId: z.string(),
-        }))
-        .mutation(async ({ ctx, input }) => {
-          // Verify data room ownership
-          const room = await db.getDataRoomById(input.dataRoomId);
-          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
-          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
-            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-          }
-
-          // Get valid Google OAuth token
-          const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
-          if (error) {
-            throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
-          }
-
-          // Verify folder exists and get info
-          const folderInfo = await getFolderInfo(accessToken, input.googleDriveFolderId);
-          if (folderInfo.error || !folderInfo.folder) {
-            throw new TRPCError({ code: 'BAD_REQUEST', message: folderInfo.error || 'Folder not found' });
-          }
-
-          // Sync folder structure and files
-          const syncResult = await syncDriveFolder(accessToken, input.googleDriveFolderId);
-          if (!syncResult.success) {
-            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: syncResult.error || 'Sync failed' });
-          }
-
-          // Get existing folders and documents to avoid duplicates
-          const existingFolders = await db.getDataRoomFolders(input.dataRoomId);
-          const existingDocs = await db.getDataRoomDocuments(input.dataRoomId);
-          const existingFoldersByDriveId = new Map(
-            existingFolders
-              .filter(f => f.googleDriveFolderId)
-              .map(f => [f.googleDriveFolderId!, f.id])
-          );
-          const existingDocsByDriveId = new Map(
-            existingDocs
-              .filter(d => d.googleDriveFileId)
-              .map(d => [d.googleDriveFileId!, d.id])
-          );
-
-          // Create folder hierarchy in data room
-          const folderMap = new Map<string, number>(); // Google Drive folder ID -> data room folder ID
-          
-          // Sort folders by depth to ensure parents are created before children
-          const sortedFolders = [...syncResult.folders].sort((a, b) => {
-            const aDepth = a.parents?.length || 0;
-            const bDepth = b.parents?.length || 0;
-            return aDepth - bDepth;
-          });
-          
-          // Process folders
-          let foldersCreated = 0;
-          for (const driveFolder of sortedFolders) {
-            // Check if folder already exists
-            if (existingFoldersByDriveId.has(driveFolder.id)) {
-              folderMap.set(driveFolder.id, existingFoldersByDriveId.get(driveFolder.id)!);
-              continue;
-            }
-
-            const parentDriveId = driveFolder.parents?.[0];
-            const parentDataRoomId = parentDriveId && parentDriveId !== input.googleDriveFolderId 
-              ? folderMap.get(parentDriveId) 
-              : null;
-
-            // Log warning if parent folder is missing
-            if (parentDriveId && parentDriveId !== input.googleDriveFolderId && !parentDataRoomId) {
-              console.warn(`[GoogleDrive Sync] Parent folder ${parentDriveId} not found for folder ${driveFolder.name}`);
-            }
-
-            const { id } = await db.createDataRoomFolder({
-              dataRoomId: input.dataRoomId,
-              parentId: parentDataRoomId,
-              name: driveFolder.name,
-              googleDriveFolderId: driveFolder.id,
-            });
-
-            folderMap.set(driveFolder.id, id);
-            foldersCreated++;
-          }
-
-          // Process files — download actual content instead of just linking
-          let filesCreated = 0;
-          for (const driveFile of syncResult.files) {
-            // Check if file already exists
-            if (existingDocsByDriveId.has(driveFile.id)) {
-              continue;
-            }
-
-            const parentDriveId = driveFile.parents?.[0];
-            let folderId: number | null = null;
-
-            // Determine which folder this file belongs to
-            if (parentDriveId === input.googleDriveFolderId) {
-              // Root level file
-              folderId = null;
-            } else if (parentDriveId) {
-              folderId = folderMap.get(parentDriveId) || existingFoldersByDriveId.get(parentDriveId) || null;
-
-              // Log warning if parent folder is missing
-              if (!folderId) {
-                console.warn(`[GoogleDrive Sync] Parent folder ${parentDriveId} not found for file ${driveFile.name}`);
-              }
-            }
-
-            // Store by reference in Google Drive (no download)
-            const displayName = driveFile.name;
-            const fileType = getSimpleFileType(driveFile.mimeType);
-            const fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
-              ? parseInt(driveFile.size)
-              : undefined;
-
-            await db.createDataRoomDocument({
-              dataRoomId: input.dataRoomId,
-              folderId,
-              name: displayName,
-              fileType,
-              mimeType: driveFile.mimeType,
-              fileSize,
-              storageType: 'google_drive',
-              storageUrl: driveFile.webViewLink || undefined,
-              storageKey: undefined,
-              googleDriveFileId: driveFile.id,
-              googleDriveWebViewLink: driveFile.webViewLink,
-              thumbnailUrl: driveFile.thumbnailLink,
-              uploadedBy: ctx.user.id,
-            });
-
-            filesCreated++;
-          }
-
-          // Update data room with Google Drive folder ID and last sync time
-          await db.updateDataRoom(input.dataRoomId, {
-            googleDriveFolderId: input.googleDriveFolderId,
-            lastSyncedAt: new Date(),
-          });
-
-          return {
-            success: true,
-            foldersCreated,
-            filesCreated,
-            totalFolders: syncResult.folders.length,
-            totalFiles: syncResult.files.length,
-          };
-        }),
-
       // List files (non-folders) inside a Google Drive folder
       listFiles: protectedProcedure
         .input(z.object({
@@ -14109,6 +14320,7 @@ Ask if they received the original request and if they can provide a quote.`;
               includeFileTypes: config.includeFileTypes ? JSON.parse(config.includeFileTypes) : undefined,
               excludeFileTypes: config.excludeFileTypes ? JSON.parse(config.excludeFileTypes) : undefined,
               maxFileSizeMb: config.maxFileSizeMb || 100,
+              uploadedBy: ctx.user.id,
             });
 
             // Update sync log with results
@@ -15426,809 +15638,6 @@ Ask if they received the original request and if they can provide a quote.`;
           return db.getNdaAuditLogs(input.signatureId);
         }),
     }),
-
-    // ============================================
-    // GOOGLE DRIVE SYNC
-    // ============================================
-    driveSync: router({
-      // Get sync configuration for a data room
-      getConfig: protectedProcedure
-        .input(z.object({ dataRoomId: z.number() }))
-        .query(async ({ input, ctx }) => {
-          // Check authorization
-          const room = await db.getDataRoomById(input.dataRoomId);
-          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
-          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
-            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-          }
-          return db.getDriveSyncConfig(input.dataRoomId);
-        }),
-
-      // Create or update sync configuration
-      saveConfig: protectedProcedure
-        .input(z.object({
-          dataRoomId: z.number(),
-          googleDriveFolderId: z.string(),
-          googleDriveFolderName: z.string().optional(),
-          googleDriveFolderUrl: z.string().optional(),
-          syncEnabled: z.boolean().default(true),
-          syncFrequencyMinutes: z.number().default(60),
-          syncMode: z.enum(['one_way_import', 'one_way_export', 'bidirectional']).default('one_way_import'),
-          syncSubfolders: z.boolean().default(true),
-          includeFileTypes: z.array(z.string()).optional(),
-          excludeFileTypes: z.array(z.string()).optional(),
-          maxFileSizeMb: z.number().default(100),
-        }))
-        .mutation(async ({ input, ctx }) => {
-          // Check authorization
-          const room = await db.getDataRoomById(input.dataRoomId);
-          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
-          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
-            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-          }
-
-          const existingConfig = await db.getDriveSyncConfig(input.dataRoomId);
-
-          const configData: Omit<InsertDataRoomDriveSyncConfig, 'id'> = {
-            dataRoomId: input.dataRoomId,
-            googleDriveFolderId: input.googleDriveFolderId,
-            googleDriveFolderName: input.googleDriveFolderName,
-            googleDriveFolderUrl: input.googleDriveFolderUrl,
-            syncEnabled: input.syncEnabled,
-            syncFrequencyMinutes: input.syncFrequencyMinutes,
-            syncMode: input.syncMode,
-            syncSubfolders: input.syncSubfolders,
-            includeFileTypes: input.includeFileTypes ? JSON.stringify(input.includeFileTypes) : null,
-            excludeFileTypes: input.excludeFileTypes ? JSON.stringify(input.excludeFileTypes) : null,
-            maxFileSizeMb: input.maxFileSizeMb,
-            syncUserId: ctx.user.id,
-          };
-
-          if (existingConfig) {
-            await db.updateDriveSyncConfig(existingConfig.id, configData);
-            return { id: existingConfig.id, updated: true };
-          } else {
-            const id = await db.createDriveSyncConfig(configData);
-            return { id, updated: false };
-          }
-        }),
-
-      // Delete sync configuration
-      deleteConfig: protectedProcedure
-        .input(z.object({ dataRoomId: z.number() }))
-        .mutation(async ({ input, ctx }) => {
-          // Check authorization
-          const room = await db.getDataRoomById(input.dataRoomId);
-          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
-          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
-            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-          }
-          await db.deleteDriveSyncConfig(input.dataRoomId);
-          return { success: true };
-        }),
-
-      // Get sync logs
-      getLogs: protectedProcedure
-        .input(z.object({ dataRoomId: z.number(), limit: z.number().default(50) }))
-        .query(async ({ input, ctx }) => {
-          // Check authorization
-          const room = await db.getDataRoomById(input.dataRoomId);
-          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
-          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
-            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-          }
-          return db.getDriveSyncLogs(input.dataRoomId, input.limit);
-        }),
-
-      // Trigger manual sync
-      syncNow: protectedProcedure
-        .input(z.object({ dataRoomId: z.number() }))
-        .mutation(async ({ input, ctx }) => {
-          // Check authorization
-          const room = await db.getDataRoomById(input.dataRoomId);
-          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
-          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
-            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-          }
-
-          const config = await db.getDriveSyncConfig(input.dataRoomId);
-          if (!config) {
-            throw new TRPCError({ code: 'NOT_FOUND', message: 'No sync configuration found for this data room' });
-          }
-
-          // Create sync log entry
-          const logId = await db.createDriveSyncLog({
-            dataRoomId: input.dataRoomId,
-            syncConfigId: config.id,
-            syncType: 'manual',
-            status: 'started',
-            triggeredBy: ctx.user.id,
-          });
-
-          try {
-            // Get Google OAuth token for the user configured for sync (or current user as fallback)
-            const syncUserId = config.syncUserId || ctx.user.id;
-            const { accessToken: syncAccessToken, error: syncTokenErr } = await getValidGoogleToken(syncUserId);
-            if (syncTokenErr || !syncAccessToken) {
-              throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected. Please connect your Google account first.' });
-            }
-
-            // Import Google Drive sync service
-            const { syncGoogleDriveFolder } = await import('./googleDriveSyncService');
-
-            const result = await syncGoogleDriveFolder({
-              dataRoomId: input.dataRoomId,
-              folderId: config.googleDriveFolderId,
-              accessToken: syncAccessToken,
-              syncSubfolders: config.syncSubfolders,
-              includeFileTypes: config.includeFileTypes ? JSON.parse(config.includeFileTypes) : undefined,
-              excludeFileTypes: config.excludeFileTypes ? JSON.parse(config.excludeFileTypes) : undefined,
-              maxFileSizeMb: config.maxFileSizeMb || 100,
-            });
-
-            // Update sync log with results
-            await db.updateDriveSyncLog(logId, {
-              status: 'completed',
-              completedAt: new Date(),
-              filesScanned: result.filesScanned,
-              filesAdded: result.filesAdded,
-              filesUpdated: result.filesUpdated,
-              filesSkipped: result.filesSkipped,
-              foldersCreated: result.foldersCreated,
-              durationMs: result.durationMs,
-              warnings: result.warnings?.length ? JSON.stringify(result.warnings) : null,
-            });
-
-            // Update config last sync status
-            await db.updateDriveSyncConfig(config.id, {
-              lastSyncAt: new Date(),
-              lastSyncStatus: 'success',
-              lastSyncFilesAdded: result.filesAdded,
-              lastSyncFilesUpdated: result.filesUpdated,
-            });
-
-            return { success: true, ...result };
-          } catch (error: any) {
-            await db.updateDriveSyncLog(logId, {
-              status: 'failed',
-              completedAt: new Date(),
-              errors: JSON.stringify([error.message]),
-            });
-
-            await db.updateDriveSyncConfig(config.id, {
-              lastSyncStatus: 'failed',
-              lastSyncError: error.message,
-            });
-
-            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
-          }
-        }),
-
-      // List folders in Google Drive for selection
-      listDriveFolders: protectedProcedure
-        .input(z.object({ parentId: z.string().optional() }))
-        .query(async ({ input, ctx }) => {
-          const { accessToken: listAccessToken, error: listTokenErr } = await getValidGoogleToken(ctx.user.id);
-          if (listTokenErr || !listAccessToken) {
-            throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected' });
-          }
-
-          const { listGoogleDriveFolders } = await import('./googleDriveSyncService');
-          return listGoogleDriveFolders(listAccessToken, input.parentId);
-        }),
-    }),
-
-    // ============================================
-    // PAGE-LEVEL TRACKING
-    // ============================================
-    pageTracking: router({
-      // Record page view (public - for visitors)
-      recordPageView: publicProcedure
-        .input(z.object({
-          documentId: z.number(),
-          visitorId: z.number(),
-          sessionId: z.number().optional(),
-          linkId: z.number().optional(),
-          pageNumber: z.number(),
-          pageLabel: z.string().optional(),
-          durationMs: z.number().optional(),
-          scrollDepth: z.number().optional(),
-          mouseMovements: z.number().optional(),
-          clicks: z.number().optional(),
-          zoomLevel: z.number().optional(),
-          deviceType: z.string().optional(),
-          screenWidth: z.number().optional(),
-          screenHeight: z.number().optional(),
-          viewportWidth: z.number().optional(),
-          viewportHeight: z.number().optional(),
-        }))
-        .mutation(async ({ input }) => {
-          const id = await db.createDocumentPageView({
-            documentId: input.documentId,
-            visitorId: input.visitorId,
-            viewSessionId: input.sessionId,
-            linkId: input.linkId,
-            pageNumber: input.pageNumber,
-            pageLabel: input.pageLabel,
-            durationMs: input.durationMs || 0,
-            scrollDepth: input.scrollDepth,
-            mouseMovements: input.mouseMovements,
-            clicks: input.clicks,
-            zoomLevel: input.zoomLevel,
-            deviceType: input.deviceType,
-            screenWidth: input.screenWidth,
-            screenHeight: input.screenHeight,
-            viewportWidth: input.viewportWidth,
-            viewportHeight: input.viewportHeight,
-          });
-          return { id };
-        }),
-
-      // Update page view (when visitor leaves page)
-      updatePageView: publicProcedure
-        .input(z.object({
-          id: z.number(),
-          sessionToken: z.string(), // Session token to verify the page view belongs to the current visitor session
-          durationMs: z.number(),
-          scrollDepth: z.number().optional(),
-          mouseMovements: z.number().optional(),
-          clicks: z.number().optional(),
-        }))
-        .mutation(async ({ input }) => {
-          // Verify the page view belongs to this session
-          const pageView = await db.getDocumentPageViewById(input.id);
-          
-          if (!pageView) {
-            throw new TRPCError({ code: 'NOT_FOUND', message: 'Page view not found' });
-          }
-
-          // Verify session token matches (get session for this page view's visitor)
-          const sessions = await db.getVisitorSessions(pageView.visitorId);
-          const validSession = sessions.find(s => s.sessionToken === input.sessionToken);
-          
-          if (!validSession) {
-            throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid session token' });
-          }
-
-          await db.updateDocumentPageView(input.id, {
-            exitTime: new Date(),
-            durationMs: input.durationMs,
-            scrollDepth: input.scrollDepth,
-            mouseMovements: input.mouseMovements,
-            clicks: input.clicks,
-          });
-          return { success: true };
-        }),
-
-      // Get page views for a document (admin)
-      getForDocument: protectedProcedure
-        .input(z.object({ documentId: z.number(), visitorId: z.number().optional() }))
-        .query(async ({ input }) => {
-          return db.getDocumentPageViews(input.documentId, input.visitorId);
-        }),
-
-      // Get page views by visitor (admin)
-      getByVisitor: protectedProcedure
-        .input(z.object({ visitorId: z.number() }))
-        .query(async ({ input }) => {
-          return db.getPageViewsByVisitor(input.visitorId);
-        }),
-    }),
-
-    // ============================================
-    // VISITOR SESSIONS
-    // ============================================
-    sessions: router({
-      // Start a new session (public)
-      start: publicProcedure
-        .input(z.object({
-          dataRoomId: z.number(),
-          visitorId: z.number(),
-          linkId: z.number().optional(),
-          deviceType: z.string().optional(),
-          browser: z.string().optional(),
-          browserVersion: z.string().optional(),
-          os: z.string().optional(),
-          osVersion: z.string().optional(),
-          screenResolution: z.string().optional(),
-          referrer: z.string().optional(),
-          utmSource: z.string().optional(),
-          utmMedium: z.string().optional(),
-          utmCampaign: z.string().optional(),
-        }))
-        .mutation(async ({ input, ctx }) => {
-          const sessionToken = `sess_${nanoid()}`;
-          const ipAddress = (ctx.req.headers['x-forwarded-for'] as string)?.split(',')[0] || ctx.req.socket.remoteAddress || '';
-
-          const id = await db.createVisitorSession({
-            dataRoomId: input.dataRoomId,
-            visitorId: input.visitorId,
-            linkId: input.linkId,
-            sessionToken,
-            deviceType: input.deviceType,
-            browser: input.browser,
-            browserVersion: input.browserVersion,
-            os: input.os,
-            osVersion: input.osVersion,
-            screenResolution: input.screenResolution,
-            ipAddress,
-            referrer: input.referrer,
-            utmSource: input.utmSource,
-            utmMedium: input.utmMedium,
-            utmCampaign: input.utmCampaign,
-          });
-
-          return { id, sessionToken };
-        }),
-
-      // Update session activity (public)
-      updateActivity: publicProcedure
-        .input(z.object({
-          sessionToken: z.string(),
-          documentsViewed: z.number().optional(),
-          pagesViewed: z.number().optional(),
-          totalScrollDistance: z.number().optional(),
-          totalClicks: z.number().optional(),
-          downloadsCount: z.number().optional(),
-          printsCount: z.number().optional(),
-          activeDurationMs: z.number().optional(),
-          idleDurationMs: z.number().optional(),
-        }))
-        .mutation(async ({ input }) => {
-          const session = await db.getSessionByToken(input.sessionToken);
-          if (!session) {
-            throw new TRPCError({ code: 'NOT_FOUND', message: 'Session not found' });
-          }
-
-          const { sessionToken, ...updateData } = input;
-          await db.updateVisitorSession(session.id, {
-            ...updateData,
-            totalDurationMs: (updateData.activeDurationMs || 0) + (updateData.idleDurationMs || 0),
-          });
-
-          return { success: true };
-        }),
-
-      // End session (public)
-      end: publicProcedure
-        .input(z.object({
-          sessionToken: z.string(),
-          totalDurationMs: z.number(),
-          activeDurationMs: z.number().optional(),
-        }))
-        .mutation(async ({ input }) => {
-          const session = await db.getSessionByToken(input.sessionToken);
-          if (!session) {
-            throw new TRPCError({ code: 'NOT_FOUND', message: 'Session not found' });
-          }
-
-          await db.updateVisitorSession(session.id, {
-            sessionEndAt: new Date(),
-            totalDurationMs: input.totalDurationMs,
-            activeDurationMs: input.activeDurationMs,
-            isActive: false,
-          });
-
-          return { success: true };
-        }),
-
-      // Get sessions for a data room (admin)
-      list: protectedProcedure
-        .input(z.object({ dataRoomId: z.number(), limit: z.number().default(100) }))
-        .query(async ({ input }) => {
-          return db.getDataRoomSessions(input.dataRoomId, input.limit);
-        }),
-
-      // Get sessions for a visitor (admin)
-      getByVisitor: protectedProcedure
-        .input(z.object({ visitorId: z.number() }))
-        .query(async ({ input }) => {
-          return db.getVisitorSessions(input.visitorId);
-        }),
-    }),
-
-    // ============================================
-    // EMAIL ACCESS RULES
-    // ============================================
-    emailRules: router({
-      // List rules for a data room
-      list: protectedProcedure
-        .input(z.object({ dataRoomId: z.number() }))
-        .query(async ({ input }) => {
-          return db.getEmailAccessRules(input.dataRoomId);
-        }),
-
-      // Create a new rule
-      create: protectedProcedure
-        .input(z.object({
-          dataRoomId: z.number(),
-          ruleType: z.enum(['allow_email', 'allow_domain', 'block_email', 'block_domain']),
-          emailPattern: z.string(),
-          allowDownload: z.boolean().default(true),
-          allowPrint: z.boolean().default(true),
-          maxViews: z.number().optional(),
-          expiresAt: z.date().optional(),
-          requireNdaSignature: z.boolean().default(true),
-          autoApprove: z.boolean().default(false),
-          notifyOnAccess: z.boolean().default(true),
-          notifyEmail: z.string().optional(),
-          priority: z.number().default(0),
-        }))
-        .mutation(async ({ input, ctx }) => {
-          const id = await db.createEmailAccessRule({
-            ...input,
-            createdBy: ctx.user.id,
-          });
-          return { id };
-        }),
-
-      // Update a rule
-      update: protectedProcedure
-        .input(z.object({
-          id: z.number(),
-          ruleType: z.enum(['allow_email', 'allow_domain', 'block_email', 'block_domain']).optional(),
-          emailPattern: z.string().optional(),
-          allowDownload: z.boolean().optional(),
-          allowPrint: z.boolean().optional(),
-          maxViews: z.number().optional(),
-          expiresAt: z.date().optional(),
-          requireNdaSignature: z.boolean().optional(),
-          autoApprove: z.boolean().optional(),
-          notifyOnAccess: z.boolean().optional(),
-          notifyEmail: z.string().optional(),
-          priority: z.number().optional(),
-          isActive: z.boolean().optional(),
-        }))
-        .mutation(async ({ input, ctx }) => {
-          await assertEmailAccessRuleOwnership(input.id, ctx.user.id, ctx.user.role);
-          const { id, ...data } = input;
-          await db.updateEmailAccessRule(id, data);
-          return { success: true };
-        }),
-
-      // Delete a rule
-      delete: protectedProcedure
-        .input(z.object({ id: z.number() }))
-        .mutation(async ({ input, ctx }) => {
-          await assertEmailAccessRuleOwnership(input.id, ctx.user.id, ctx.user.role);
-          await db.deleteEmailAccessRule(input.id);
-          return { success: true };
-        }),
-
-      // Check if an email has access (for public access flow)
-      checkAccess: publicProcedure
-        .input(z.object({ dataRoomId: z.number(), email: z.string().email() }))
-        .query(async ({ input }) => {
-          const result = await db.checkEmailAccess(input.dataRoomId, input.email);
-          if (!result) {
-            return { allowed: false, permissions: undefined };
-          }
-          const { allowed, permissions } = result as { allowed: boolean; permissions?: unknown };
-          return { allowed, permissions };
-        }),
-    }),
-
-    // ============================================
-    // DETAILED ANALYTICS
-    // ============================================
-    detailedAnalytics: router({
-      // Get page-level analytics for a data room
-      getPageAnalytics: protectedProcedure
-        .input(z.object({ dataRoomId: z.number() }))
-        .query(async ({ input }) => {
-          return db.getPageViewAnalytics(input.dataRoomId);
-        }),
-
-      // Get detailed analytics for a specific visitor
-      getVisitorDetails: protectedProcedure
-        .input(z.object({ dataRoomId: z.number(), visitorId: z.number() }))
-        .query(async ({ input }) => {
-          return db.getDetailedVisitorAnalytics(input.dataRoomId, input.visitorId);
-        }),
-
-      // Get engagement report for a data room
-      getEngagementReport: protectedProcedure
-        .input(z.object({
-          dataRoomId: z.number(),
-          startDate: z.date().optional(),
-          endDate: z.date().optional(),
-        }))
-        .query(async ({ input }) => {
-          return db.getDataRoomEngagementReport(input.dataRoomId, input.startDate, input.endDate);
-        }),
-
-      // Get document-level heatmap data (which pages are most viewed)
-      getDocumentHeatmap: protectedProcedure
-        .input(z.object({ documentId: z.number() }))
-        .query(async ({ input }) => {
-          const pageViews = await db.getDocumentPageViews(input.documentId);
-
-          // Aggregate by page number
-          const pageStats: Record<number, { views: number; totalDuration: number; uniqueVisitors: Set<number> }> = {};
-
-          pageViews.forEach(pv => {
-            if (!pageStats[pv.pageNumber]) {
-              pageStats[pv.pageNumber] = { views: 0, totalDuration: 0, uniqueVisitors: new Set() };
-            }
-            pageStats[pv.pageNumber].views++;
-            pageStats[pv.pageNumber].totalDuration += pv.durationMs || 0;
-            pageStats[pv.pageNumber].uniqueVisitors.add(pv.visitorId);
-          });
-
-          return Object.entries(pageStats).map(([page, stats]) => ({
-            pageNumber: parseInt(page),
-            views: stats.views,
-            totalDurationMs: stats.totalDuration,
-            avgDurationMs: stats.views > 0 ? stats.totalDuration / stats.views : 0,
-            uniqueVisitors: stats.uniqueVisitors.size,
-          })).sort((a, b) => a.pageNumber - b.pageNumber);
-        }),
-
-      // Export analytics as CSV
-      exportCsv: protectedProcedure
-        .input(z.object({
-          dataRoomId: z.number(),
-          type: z.enum(['visitors', 'documents']), // Only supported types
-        }))
-        .mutation(async ({ input }) => {
-          const report = await db.getDataRoomEngagementReport(input.dataRoomId);
-          if (!report) {
-            throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
-          }
-
-          let csv = '';
-          let filename = '';
-
-          if (input.type === 'visitors') {
-            filename = `visitors_${input.dataRoomId}_${Date.now()}.csv`;
-            csv = 'Email,Name,Company,Status,Sessions,Total Time (min),Documents Viewed,Pages Viewed,NDA Signed,Last Activity\n';
-            report.visitorEngagement.forEach(v => {
-              csv += `"${v.email || ''}","${v.name || ''}","${v.company || ''}","${v.accessStatus}",${v.sessionsCount},${Math.round(v.totalTimeMs / 60000)},${v.documentsViewed},${v.pagesViewed},"${v.ndaAcceptedAt ? 'Yes' : 'No'}","${v.lastActivity || ''}"\n`;
-            });
-          } else if (input.type === 'documents') {
-            filename = `documents_${input.dataRoomId}_${Date.now()}.csv`;
-            csv = 'Document,Pages,Views,Unique Visitors,Total Time (min),Avg Time per Page (sec)\n';
-            report.documentEngagement.forEach(d => {
-              csv += `"${d.documentName}",${d.pageCount},${d.views},${d.uniqueVisitors},${Math.round(d.totalTimeMs / 60000)},${Math.round(d.avgTimePerPageMs / 1000)}\n`;
-            });
-          }
-
-          return { csv, filename };
-        }),
-    }),
-
-    // ============================================
-    // DUE DILIGENCE CHECKLISTS
-    // ============================================
-    dueDiligence: router({
-      // Get checklist summary for a data room
-      getSummary: protectedProcedure
-        .input(z.object({ dataRoomId: z.number() }))
-        .query(async ({ input }) => {
-          return db.getChecklistSummary(input.dataRoomId);
-        }),
-
-      // List all checklists for a data room
-      list: protectedProcedure
-        .input(z.object({ dataRoomId: z.number() }))
-        .query(async ({ input }) => {
-          return db.getDataRoomChecklists(input.dataRoomId);
-        }),
-
-      // Get a checklist with all its items
-      getById: protectedProcedure
-        .input(z.object({ id: z.number() }))
-        .query(async ({ input }) => {
-          return db.getChecklistWithItems(input.id);
-        }),
-
-      // Create a standard due diligence checklist
-      createStandard: protectedProcedure
-        .input(z.object({
-          dataRoomId: z.number(),
-          checklistType: z.enum(['fundraising', 'ma', 'full', 'series_b']).default('full'),
-          customName: z.string().optional(),
-        }))
-        .mutation(async ({ input, ctx }) => {
-          const checklist = await db.createStandardChecklist(
-            input.dataRoomId,
-            ctx.user.id,
-            input.checklistType,
-            input.customName
-          );
-          return checklist;
-        }),
-
-      // Create from a template
-      createFromTemplate: protectedProcedure
-        .input(z.object({
-          dataRoomId: z.number(),
-          templateId: z.number(),
-          customName: z.string().optional(),
-        }))
-        .mutation(async ({ input, ctx }) => {
-          return db.createChecklistFromTemplate(
-            input.dataRoomId,
-            input.templateId,
-            ctx.user.id,
-            input.customName
-          );
-        }),
-
-      // Auto-match documents against checklist items
-      autoMatch: protectedProcedure
-        .input(z.object({ checklistId: z.number() }))
-        .mutation(async ({ input }) => {
-          return db.autoMatchChecklistDocuments(input.checklistId);
-        }),
-
-      // Update checklist item status
-      updateItem: protectedProcedure
-        .input(z.object({
-          id: z.number(),
-          status: z.enum(['missing', 'partial', 'complete', 'not_applicable', 'waived']).optional(),
-          notes: z.string().optional(),
-          internalNotes: z.string().optional(),
-          waiverReason: z.string().optional(),
-        }))
-        .mutation(async ({ input, ctx }) => {
-          const { id, waiverReason, ...data } = input;
-
-          const updateData: any = { ...data };
-
-          // If waiving the item, set the waiver info
-          if (input.status === 'waived' && waiverReason) {
-            updateData.waivedBy = ctx.user.id;
-            updateData.waivedAt = new Date();
-            updateData.waiverReason = waiverReason;
-          }
-
-          await db.updateChecklistItem(id, updateData);
-
-          // Get the item to recalculate parent checklist
-          const item = await db.getChecklistItemById(id);
-          if (item) {
-            await db.recalculateChecklistProgress(item.checklistId);
-          }
-
-          return { success: true };
-        }),
-
-      // Link a document to a checklist item
-      linkDocument: protectedProcedure
-        .input(z.object({
-          itemId: z.number(),
-          documentId: z.number(),
-        }))
-        .mutation(async ({ input }) => {
-          const item = await db.getChecklistItemById(input.itemId);
-          if (!item) {
-            throw new TRPCError({ code: 'NOT_FOUND', message: 'Checklist item not found' });
-          }
-
-          let linkedIds: number[] = [];
-          try {
-            linkedIds = (item as any).linkedDocumentIds ? JSON.parse((item as any).linkedDocumentIds) : [];
-          } catch (e) {
-            linkedIds = [];
-          }
-
-          if (!linkedIds.includes(input.documentId)) {
-            linkedIds.push(input.documentId);
-          }
-
-          await db.updateChecklistItem(input.itemId, {
-            linkedDocumentIds: JSON.stringify(linkedIds),
-            linkedDocumentCount: linkedIds.length,
-            status: linkedIds.length > 0 ? 'complete' : 'missing',
-          } as any);
-
-          await db.recalculateChecklistProgress(item.checklistId);
-
-          return { success: true };
-        }),
-
-      // Unlink a document from a checklist item
-      unlinkDocument: protectedProcedure
-        .input(z.object({
-          itemId: z.number(),
-          documentId: z.number(),
-        }))
-        .mutation(async ({ input }) => {
-          const item = await db.getChecklistItemById(input.itemId);
-          if (!item) {
-            throw new TRPCError({ code: 'NOT_FOUND', message: 'Checklist item not found' });
-          }
-
-          let linkedIds: number[] = [];
-          try {
-            linkedIds = (item as any).linkedDocumentIds ? JSON.parse((item as any).linkedDocumentIds) : [];
-          } catch (e) {
-            linkedIds = [];
-          }
-
-          linkedIds = linkedIds.filter(id => id !== input.documentId);
-
-          await db.updateChecklistItem(input.itemId, {
-            linkedDocumentIds: JSON.stringify(linkedIds),
-            linkedDocumentCount: linkedIds.length,
-            status: linkedIds.length > 0 ? 'complete' : 'missing',
-          } as any);
-
-          await db.recalculateChecklistProgress(item.checklistId);
-
-          return { success: true };
-        }),
-
-      // Add a custom item to a checklist
-      addItem: protectedProcedure
-        .input(z.object({
-          checklistId: z.number(),
-          categoryName: z.string(),
-          itemName: z.string(),
-          itemDescription: z.string().optional(),
-          requirement: z.enum(['required', 'recommended', 'optional']).default('required'),
-          matchKeywords: z.array(z.string()).optional(),
-        }))
-        .mutation(async ({ input }) => {
-          const checklist = await db.getDataRoomChecklistById(input.checklistId);
-          if (!checklist) {
-            throw new TRPCError({ code: 'NOT_FOUND', message: 'Checklist not found' });
-          }
-
-          const result = await db.createDataRoomChecklistItem({
-            checklistId: input.checklistId,
-            dataRoomId: (checklist as any).dataRoomId,
-            categoryName: input.categoryName,
-            itemName: input.itemName,
-            itemDescription: input.itemDescription,
-            requirement: input.requirement,
-            matchKeywords: input.matchKeywords ? JSON.stringify(input.matchKeywords) : undefined,
-            status: 'missing',
-          } as any);
-
-          await db.recalculateChecklistProgress(input.checklistId);
-
-          return result;
-        }),
-
-      // Delete a checklist item
-      deleteItem: protectedProcedure
-        .input(z.object({ id: z.number() }))
-        .mutation(async ({ input }) => {
-          const item = await db.getChecklistItemById(input.id);
-          if (item) {
-            await db.deleteChecklistItem(input.id);
-            await db.recalculateChecklistProgress(item.checklistId);
-          }
-          return { success: true };
-        }),
-
-      // Delete entire checklist
-      delete: protectedProcedure
-        .input(z.object({ id: z.number() }))
-        .mutation(async ({ input }) => {
-          await db.deleteDataRoomChecklist(input.id);
-          return { success: true };
-        }),
-
-      // Review an item
-      reviewItem: protectedProcedure
-        .input(z.object({
-          id: z.number(),
-          reviewStatus: z.enum(['pending', 'approved', 'needs_attention', 'rejected']),
-          reviewNotes: z.string().optional(),
-        }))
-        .mutation(async ({ input, ctx }) => {
-          await db.updateChecklistItem(input.id, {
-            reviewStatus: input.reviewStatus,
-            reviewNotes: input.reviewNotes,
-            reviewedBy: ctx.user.id,
-            reviewedAt: new Date(),
-          } as any);
-          return { success: true };
-        }),
-    }),
   }),
 
   // ============================================
@@ -17530,7 +16939,7 @@ Ask if they received the original request and if they can provide a quote.`;
         .input(z.object({
           pipelineId: z.number(),
           contactId: z.number(),
-          name: z.string().min(1),
+          name: z.string().min(1).optional(), // Ignored — deal title is always the contact's company.
           description: z.string().optional(),
           stage: z.string(),
           amount: z.string().optional(),
@@ -17543,12 +16952,63 @@ Ask if they received the original request and if they can provide a quote.`;
           assignedTo: z.number().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const id = await db.createCrmDeal({
-            ...input,
+          // Deal title must be the contact's client company name.
+          const contact = await db.getCrmContactById(input.contactId);
+          if (!contact) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Contact not found' });
+          }
+          const company = (contact.organization || '').trim();
+          if (!company) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: `Cannot create deal: contact "${contact.fullName}" has no company. Add a company to the contact first.`,
+            });
+          }
+
+          // Reject duplicates up front — same company can't have two deals.
+          const existing = await db.findCrmDealByCompany(company);
+          if (existing) {
+            throw new TRPCError({
+              code: 'CONFLICT',
+              message: `A deal already exists for "${company}" (deal #${existing.id}).`,
+            });
+          }
+
+          // Block if another approval task is already queued for this company.
+          if (await db.hasPendingDealApprovalForCompany(company)) {
+            throw new TRPCError({
+              code: 'CONFLICT',
+              message: `An approval is already pending for "${company}".`,
+            });
+          }
+
+          const taskData = {
+            pipelineId: input.pipelineId,
+            contactId: input.contactId,
+            company,
+            stage: input.stage,
+            amount: input.amount,
+            source: input.source,
+            notes: input.notes,
             assignedTo: input.assignedTo || ctx.user.id,
+          };
+          const task = await db.createAiAgentTask({
+            taskType: 'create_crm_deal',
+            priority: 'medium',
+            status: 'pending_approval',
+            taskData: JSON.stringify(taskData),
+            aiReasoning: `New CRM deal for "${company}" submitted by ${ctx.user.name} for approval.`,
+            aiConfidence: '100.00',
           });
-          await createAuditLog(ctx.user.id, 'create', 'crm_deal', id, input.name);
-          return { id };
+          await db.createAiAgentLog({
+            taskId: task.id,
+            action: 'task_created',
+            status: 'info',
+            message: `CRM deal approval requested by ${ctx.user.name}`,
+            details: JSON.stringify(taskData),
+          });
+          await createAuditLog(ctx.user.id, 'create', 'crm_deal_request', task.id, company);
+          return { taskId: task.id, pendingApproval: true, company };
         }),
 
       update: protectedProcedure
@@ -17981,6 +17441,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           roundType: input.roundType,
           status: input.status,
           createdBy: ctx.user.id,
+          companyId: (ctx.user as any).companyId ?? null,
         };
         if (input.description) cleaned.description = input.description;
         if (input.targetAmount) cleaned.targetAmount = input.targetAmount;
@@ -18809,11 +18270,39 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'Fireflies not configured. Go to Settings → Fireflies to enter your API key.' });
       }
       console.log(`[Fireflies Sync] Fetching transcripts for user ${ctx.user.id} with key ${config.apiKey.substring(0, 8)}...`);
-      const transcripts = await listAllTranscripts(config.apiKey, input?.limit ?? 100);
-      console.log(`[Fireflies Sync] Got ${transcripts.length} transcripts from API`);
+
+      // Two-pass sync to work around Fireflies' broken `skip` pagination:
+      //   1. Catch up on anything new since our newest stored meeting.
+      //   2. Walk backwards from our oldest stored meeting to pull more history.
+      // Each pass is bounded so a single click stays responsive — repeat
+      // clicks keep extending coverage until exhausted.
+      const existing = await db.getFirefliesMeetings();
+      const dates = existing
+        .map((m: any) => (m?.date ? new Date(m.date).getTime() : 0))
+        .filter((n: number) => n > 0);
+      const newestStoredMs = dates.length ? Math.max(...dates) : undefined;
+      const oldestStoredMs = dates.length ? Math.min(...dates) : undefined;
+      const perClickCap = input?.limit ?? 100;
+
+      const fresh = await listAllTranscripts(config.apiKey, {
+        maxItems: perClickCap,
+        untilDateMs: newestStoredMs,
+      });
+      const backfill = oldestStoredMs
+        ? await listAllTranscripts(config.apiKey, {
+            maxItems: perClickCap,
+            startToDateMs: oldestStoredMs - 1,
+          })
+        : [];
+
+      // Dedup by id in case the two passes overlap.
+      const byId = new Map<string, typeof fresh[number]>();
+      for (const t of [...fresh, ...backfill]) if (t?.id) byId.set(t.id, t);
+      const transcripts = Array.from(byId.values());
+      console.log(`[Fireflies Sync] Got ${fresh.length} new + ${backfill.length} backfill = ${transcripts.length} unique transcripts`);
       let synced = 0;
       let skipped = 0;
-      let dealsCreated = 0;
+      let dealApprovalsQueued = 0;
       let contactsCreated = 0;
       let tasksSuggested = 0;
 
@@ -18828,6 +18317,11 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         }
         const fullTranscript = await getTranscript(config.apiKey, t.id);
         const participants = fullTranscript ? extractParticipants(fullTranscript) : [];
+        const sentences = Array.isArray(fullTranscript?.sentences)
+          ? fullTranscript!.sentences!
+              .map((s) => ({ speaker: s.speaker_name || "Unknown", text: (s.text || "").trim() }))
+              .filter((s) => s.text)
+          : [];
         const createdMeeting = await db.createFirefliesMeeting({
           firefliesId: t.id,
           title: t.title || 'Untitled Meeting',
@@ -18836,6 +18330,8 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           organizerEmail: fullTranscript?.organizer_email || t.organizer_email || null,
           participants: JSON.stringify(participants),
           transcriptUrl: fullTranscript?.transcript_url || null,
+          recordingUrl: fullTranscript?.audio_url || null,
+          transcriptText: sentences.length > 0 ? JSON.stringify(sentences) : null,
           summary: fullTranscript?.summary ? JSON.stringify(fullTranscript.summary) : null,
           actionItems: fullTranscript ? JSON.stringify(parseActionItems(fullTranscript?.summary?.action_items || [])) : null,
           processingStatus: 'pending',
@@ -18880,17 +18376,31 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
 
                   if (contact) {
                     if (created) {
-                      // Only create a deal the first time we see this contact —
-                      // subsequent meetings with the same person just add interactions.
-                      await db.createCrmDeal({
-                        pipelineId,
-                        contactId: contact.id,
-                        name: `Deal from: ${fullTranscript?.title || t.title || "Meeting"}`,
-                        stage: "discovery",
-                        source: "meeting",
-                        notes: `Auto-created from Fireflies meeting. Key topics: ${overview.substring(0, 200)}`,
-                      });
-                      dealsCreated++;
+                      // Auto-deals from meetings also flow through the approval queue.
+                      // Deal title must be the contact's company; skip if missing or duplicate.
+                      const company = (contact.organization || "").trim();
+                      const dupe = company
+                        ? (await db.findCrmDealByCompany(company)) || (await db.hasPendingDealApprovalForCompany(company))
+                        : true;
+                      if (company && !dupe) {
+                        const taskData = {
+                          pipelineId,
+                          contactId: contact.id,
+                          company,
+                          stage: "discovery",
+                          source: "meeting",
+                          notes: `Auto-created from Fireflies meeting. Key topics: ${overview.substring(0, 200)}`,
+                        };
+                        await db.createAiAgentTask({
+                          taskType: 'create_crm_deal',
+                          priority: 'medium',
+                          status: 'pending_approval',
+                          taskData: JSON.stringify(taskData),
+                          aiReasoning: `Deal signals detected in Fireflies meeting "${fullTranscript?.title || t.title || 'Meeting'}" with ${contact.fullName} at ${company}.`,
+                          aiConfidence: '80.00',
+                        });
+                        dealApprovalsQueued++;
+                      }
                     }
 
                     // Always log meeting as CRM interaction regardless of whether
@@ -18928,7 +18438,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           console.warn("[CRM Auto-Deal] Failed to create deal from meeting:", e);
         }
       }
-      return { synced, skipped, dealsCreated, contactsCreated, tasksSuggested };
+      return { synced, skipped, dealApprovalsQueued, contactsCreated, tasksSuggested };
     }),
     processMeeting: protectedProcedure
       .input(z.object({
@@ -18939,6 +18449,8 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         projectName: z.string().optional(),
         projectId: z.number().optional(),
         assigneeId: z.number().optional(),
+        existingContactIds: z.array(z.number()).optional(),
+        selectedActionItemIndices: z.array(z.number()).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const meeting = await db.getFirefliesMeetingById(input.meetingId);
@@ -18970,6 +18482,29 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           }
         }
 
+        // Log this meeting as a CRM interaction for any explicitly chosen
+        // existing contacts (separate from the auto-create-from-participants
+        // path above so users can link meetings to contacts who weren't on
+        // the call).
+        let linkedContactCount = 0;
+        if (input.existingContactIds?.length) {
+          const overview = (() => {
+            try { return JSON.parse(meeting.summary || "")?.overview || ""; } catch { return ""; }
+          })();
+          for (const contactId of input.existingContactIds) {
+            try {
+              await db.createCrmInteraction({
+                contactId,
+                channel: "meeting",
+                interactionType: "meeting_completed",
+                subject: meeting.title || "Meeting",
+                content: overview.substring(0, 500) || undefined,
+              });
+              linkedContactCount++;
+            } catch { /* skip duplicates / failures */ }
+          }
+        }
+
         // Create project if requested
         if (input.createProject) {
           const project = await db.createProject({
@@ -18984,25 +18519,66 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           projectId = input.projectId;
         }
 
-        // Queue tasks from action items for approval
-        if (input.createTasks && meeting.actionItems) {
-          const parsedParticipants: Array<{ name: string; email: string }> =
-            typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
-            Array.isArray(meeting.participants) ? meeting.participants : [];
-          tasksCreated += await queueFirefliesActionItemsForApproval({
-            userId: ctx.user.id,
-            meetingId: meeting.id,
-            meetingTitle: meeting.title || 'Untitled meeting',
-            actionItems: (meeting.actionItems ? JSON.parse(meeting.actionItems) : []) as Array<{ text: string; assignee?: string; dueDate?: string }>,
-            participants: parsedParticipants,
-            preferredProjectId: projectId,
-            preferredAssigneeId: input.assigneeId,
-          });
+        // Queue tasks from action items for approval. Older meetings may have
+        // an empty `actionItems` column (the previous parser didn't handle
+        // Fireflies' markdown string format) — fall back to re-parsing from
+        // the stored `summary` JSON so the Process button still works.
+        let actionItemsAvailable = 0;
+        if (input.createTasks) {
+          let storedItems: Array<{ text: string; assignee?: string; dueDate?: string }> = [];
+          try {
+            storedItems = meeting.actionItems ? JSON.parse(meeting.actionItems) : [];
+          } catch { storedItems = []; }
+          if (storedItems.length === 0 && meeting.summary) {
+            try {
+              const summaryObj = JSON.parse(meeting.summary);
+              storedItems = parseActionItems(summaryObj?.action_items);
+            } catch { /* leave empty */ }
+          }
+          actionItemsAvailable = storedItems.length;
+          // Honor the user's explicit selection from the preview UI. If
+          // selectedActionItemIndices is omitted, default to all items so
+          // existing callers stay backwards-compatible. If it's an empty
+          // array, the user unchecked everything — process zero.
+          let selectedItems: typeof storedItems;
+          let stableIndices: number[];
+          if (input.selectedActionItemIndices === undefined) {
+            selectedItems = storedItems;
+            stableIndices = storedItems.map((_, i) => i);
+          } else {
+            const set = new Set(input.selectedActionItemIndices);
+            selectedItems = storedItems.filter((_, i) => set.has(i));
+            stableIndices = storedItems
+              .map((_, i) => i)
+              .filter((i) => set.has(i));
+          }
+          if (selectedItems.length > 0) {
+            const parsedParticipants: Array<{ name: string; email: string }> =
+              typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
+              Array.isArray(meeting.participants) ? meeting.participants : [];
+            // forceCreate: user is explicitly invoking Process, so bypass the
+            // importance/confidence gates that exist to keep auto-sync quiet.
+            tasksCreated += await queueFirefliesActionItemsForApproval({
+              userId: ctx.user.id,
+              meetingId: meeting.id,
+              meetingTitle: meeting.title || 'Untitled meeting',
+              actionItems: selectedItems,
+              participants: parsedParticipants,
+              preferredProjectId: projectId,
+              preferredAssigneeId: input.assigneeId,
+              forceCreate: true,
+              stableIndices,
+            });
+            await db.updateFirefliesMeeting(input.meetingId, {
+              actionItems: JSON.stringify(storedItems),
+            });
+          }
         }
 
+        const totalContactWork = contactsCreated + linkedContactCount;
         const status: 'fully_processed' | 'contacts_created' | 'tasks_created' | 'pending' =
-          contactsCreated > 0 && tasksCreated > 0 ? 'fully_processed'
-          : contactsCreated > 0 ? 'contacts_created'
+          totalContactWork > 0 && tasksCreated > 0 ? 'fully_processed'
+          : totalContactWork > 0 ? 'contacts_created'
           : tasksCreated > 0 ? 'tasks_created'
           : 'pending';
 
@@ -19010,13 +18586,13 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           processingStatus: status,
           processedAt: new Date(),
           processedBy: ctx.user.id,
-          processingNotes: JSON.stringify({ contactsCreated, tasksCreated, projectId }),
-          autoCreatedContactCount: contactsCreated,
+          processingNotes: JSON.stringify({ contactsCreated, linkedContactCount, tasksCreated, projectId }),
+          autoCreatedContactCount: contactsCreated + linkedContactCount,
           autoCreatedTaskCount: tasksCreated,
           autoCreatedProjectId: projectId,
         });
 
-        return { contactsCreated, tasksCreated, projectId };
+        return { contactsCreated, linkedContactCount, tasksCreated, projectId, actionItemsAvailable };
       }),
     taskRoutingOptions: protectedProcedure.query(async () => {
       const projects = await db.getProjects();
@@ -19120,8 +18696,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           return null;
         }),
       getStats: protectedProcedure.query(async () => {
-        const stats = await db.getFirefliesMeetingStats();
-        return { ...stats, contactsCreated: 0, tasksCreated: 0 };
+        return db.getFirefliesMeetingStats();
       }),
     }),
   }),
@@ -21392,13 +20967,22 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
   banking: router({
     // Get all Mercury accounts with balances
     accounts: protectedProcedure.query(async () => {
-      const { getMercuryAccounts } = await import("./mercuryService");
+      const { getMercuryAccounts, isMercuryConfigured } = await import("./mercuryService");
+      if (!isMercuryConfigured()) {
+        return { accounts: [], configured: false };
+      }
       return getMercuryAccounts();
     }),
 
     // Sync transactions from Mercury
     syncTransactions: protectedProcedure.mutation(async () => {
-      const { getMercuryAccounts, getMercuryTransactions } = await import("./mercuryService");
+      const { getMercuryAccounts, getMercuryTransactions, isMercuryConfigured } = await import("./mercuryService");
+      if (!isMercuryConfigured()) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "Mercury banking is not configured. Set MERCURY_API_TOKEN to enable transaction sync.",
+        });
+      }
       const accounts = await getMercuryAccounts();
       let totalImported = 0;
       let totalSkipped = 0;
@@ -23116,6 +22700,230 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
         const note = await db.getNoteById(input.id, ctx.user.id);
         if (!note) throw new TRPCError({ code: "NOT_FOUND", message: "Note not found" });
         await db.deleteNote(input.id, ctx.user.id);
+        return { ok: true };
+      }),
+  }),
+
+  // ============================================
+  // EMAIL SEQUENCES
+  // ============================================
+  emailSequences: router({
+    list: protectedProcedure.query(async ({ ctx }) => {
+      const database = await db.getDb();
+      if (!database) return [];
+      const { emailSequences, emailSequenceSteps } = await import("../drizzle/schema");
+      const rows = await database.select().from(emailSequences).where(eq(emailSequences.userId, ctx.user.id));
+      // Attach step count
+      const withSteps = await Promise.all(rows.map(async (seq: any) => {
+        const steps = await database.select().from(emailSequenceSteps).where(eq(emailSequenceSteps.sequenceId, seq.id));
+        return { ...seq, stepCount: steps.length, steps };
+      }));
+      return withSteps;
+    }),
+
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailSequences, emailSequenceSteps } = await import("../drizzle/schema");
+        const [seq] = await database.select().from(emailSequences).where(and(eq(emailSequences.id, input.id), eq(emailSequences.userId, ctx.user.id)));
+        if (!seq) throw new TRPCError({ code: "NOT_FOUND", message: "Sequence not found" });
+        const steps = await database.select().from(emailSequenceSteps).where(eq(emailSequenceSteps.sequenceId, input.id));
+        return { ...seq, steps: steps.sort((a: any, b: any) => a.stepOrder - b.stepOrder) };
+      }),
+
+    create: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        description: z.string().optional(),
+        status: z.enum(["draft", "active", "paused", "archived"]).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailSequences } = await import("../drizzle/schema");
+        const result = await database.insert(emailSequences).values({
+          userId: ctx.user.id,
+          name: input.name,
+          description: input.description ?? null,
+          status: input.status ?? "draft",
+        });
+        return { id: (result as any)[0].insertId };
+      }),
+
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().min(1).optional(),
+        description: z.string().optional(),
+        status: z.enum(["draft", "active", "paused", "archived"]).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailSequences } = await import("../drizzle/schema");
+        const patch: Record<string, unknown> = {};
+        if (input.name !== undefined) patch.name = input.name;
+        if (input.description !== undefined) patch.description = input.description;
+        if (input.status !== undefined) patch.status = input.status;
+        await database.update(emailSequences).set(patch).where(and(eq(emailSequences.id, input.id), eq(emailSequences.userId, ctx.user.id)));
+        return { ok: true };
+      }),
+
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailSequences, emailSequenceSteps } = await import("../drizzle/schema");
+        // Verify ownership before deleting steps
+        const [seq] = await database.select().from(emailSequences).where(and(eq(emailSequences.id, input.id), eq(emailSequences.userId, ctx.user.id)));
+        if (!seq) throw new TRPCError({ code: "NOT_FOUND", message: "Sequence not found" });
+        await database.delete(emailSequenceSteps).where(eq(emailSequenceSteps.sequenceId, input.id));
+        await database.delete(emailSequences).where(eq(emailSequences.id, input.id));
+        return { ok: true };
+      }),
+
+    addStep: protectedProcedure
+      .input(z.object({
+        sequenceId: z.number(),
+        subject: z.string().min(1),
+        body: z.string().min(1),
+        delayDays: z.number().min(0).default(1),
+        stepOrder: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailSequences, emailSequenceSteps } = await import("../drizzle/schema");
+        const [seq] = await database.select().from(emailSequences).where(and(eq(emailSequences.id, input.sequenceId), eq(emailSequences.userId, ctx.user.id)));
+        if (!seq) throw new TRPCError({ code: "NOT_FOUND", message: "Sequence not found" });
+        const existing = await database.select().from(emailSequenceSteps).where(eq(emailSequenceSteps.sequenceId, input.sequenceId));
+        const order = input.stepOrder ?? existing.length + 1;
+        const result = await database.insert(emailSequenceSteps).values({
+          sequenceId: input.sequenceId,
+          stepOrder: order,
+          subject: input.subject,
+          body: input.body,
+          delayDays: input.delayDays,
+        });
+        return { id: (result as any)[0].insertId };
+      }),
+
+    updateStep: protectedProcedure
+      .input(z.object({
+        stepId: z.number(),
+        subject: z.string().min(1).optional(),
+        body: z.string().min(1).optional(),
+        delayDays: z.number().min(0).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailSequences, emailSequenceSteps } = await import("../drizzle/schema");
+        // Verify the step's parent sequence belongs to the user
+        const [step] = await database.select().from(emailSequenceSteps).where(eq(emailSequenceSteps.id, input.stepId));
+        if (!step) throw new TRPCError({ code: "NOT_FOUND", message: "Step not found" });
+        const [seq] = await database.select().from(emailSequences).where(and(eq(emailSequences.id, step.sequenceId), eq(emailSequences.userId, ctx.user.id)));
+        if (!seq) throw new TRPCError({ code: "FORBIDDEN", message: "Not authorized" });
+        const patch: Record<string, unknown> = {};
+        if (input.subject !== undefined) patch.subject = input.subject;
+        if (input.body !== undefined) patch.body = input.body;
+        if (input.delayDays !== undefined) patch.delayDays = input.delayDays;
+        await database.update(emailSequenceSteps).set(patch).where(eq(emailSequenceSteps.id, input.stepId));
+        return { ok: true };
+      }),
+
+    deleteStep: protectedProcedure
+      .input(z.object({ stepId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailSequences, emailSequenceSteps } = await import("../drizzle/schema");
+        // Verify the step's parent sequence belongs to the user
+        const [step] = await database.select().from(emailSequenceSteps).where(eq(emailSequenceSteps.id, input.stepId));
+        if (!step) throw new TRPCError({ code: "NOT_FOUND", message: "Step not found" });
+        const [seq] = await database.select().from(emailSequences).where(and(eq(emailSequences.id, step.sequenceId), eq(emailSequences.userId, ctx.user.id)));
+        if (!seq) throw new TRPCError({ code: "FORBIDDEN", message: "Not authorized" });
+        await database.delete(emailSequenceSteps).where(eq(emailSequenceSteps.id, input.stepId));
+        return { ok: true };
+      }),
+  }),
+
+  // ============================================
+  // EMAIL CANNED RESPONSES
+  // ============================================
+  emailCannedResponses: router({
+    list: protectedProcedure.query(async ({ ctx }) => {
+      const database = await db.getDb();
+      if (!database) return [];
+      const { emailCannedResponses } = await import("../drizzle/schema");
+      return database.select().from(emailCannedResponses).where(eq(emailCannedResponses.userId, ctx.user.id));
+    }),
+
+    create: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        content: z.string().min(1),
+        shortcut: z.string().optional(),
+        category: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailCannedResponses } = await import("../drizzle/schema");
+        const result = await database.insert(emailCannedResponses).values({
+          userId: ctx.user.id,
+          name: input.name,
+          content: input.content,
+          shortcut: input.shortcut ?? null,
+          category: input.category ?? null,
+        });
+        return { id: (result as any)[0].insertId };
+      }),
+
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().min(1).optional(),
+        content: z.string().min(1).optional(),
+        shortcut: z.string().optional(),
+        category: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailCannedResponses } = await import("../drizzle/schema");
+        const patch: Record<string, unknown> = {};
+        if (input.name !== undefined) patch.name = input.name;
+        if (input.content !== undefined) patch.content = input.content;
+        if (input.shortcut !== undefined) patch.shortcut = input.shortcut;
+        if (input.category !== undefined) patch.category = input.category;
+        await database.update(emailCannedResponses).set(patch).where(and(eq(emailCannedResponses.id, input.id), eq(emailCannedResponses.userId, ctx.user.id)));
+        return { ok: true };
+      }),
+
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailCannedResponses } = await import("../drizzle/schema");
+        await database.delete(emailCannedResponses).where(and(eq(emailCannedResponses.id, input.id), eq(emailCannedResponses.userId, ctx.user.id)));
+        return { ok: true };
+      }),
+
+    incrementUsage: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) return { ok: true };
+        const { emailCannedResponses } = await import("../drizzle/schema");
+        const [row] = await database.select().from(emailCannedResponses).where(and(eq(emailCannedResponses.id, input.id), eq(emailCannedResponses.userId, ctx.user.id)));
+        if (row) {
+          await database.update(emailCannedResponses).set({ usageCount: (row.usageCount ?? 0) + 1 }).where(and(eq(emailCannedResponses.id, input.id), eq(emailCannedResponses.userId, ctx.user.id)));
+        }
         return { ok: true };
       }),
   }),

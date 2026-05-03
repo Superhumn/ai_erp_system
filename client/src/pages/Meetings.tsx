@@ -20,11 +20,12 @@ import {
   FileText,
   Zap,
   FolderPlus,
-  Video,
   Tag,
   CheckCircle2,
   Filter,
   X,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 
 export default function Meetings() {
@@ -33,6 +34,7 @@ export default function Meetings() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [panelMeeting, setPanelMeeting] = useState<any | null>(null);
+  const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [showProcessDialog, setShowProcessDialog] = useState(false);
   const [selectedMeetingId, setSelectedMeetingId] = useState<number | null>(null);
@@ -42,15 +44,26 @@ export default function Meetings() {
   const [processProjectName, setProcessProjectName] = useState("");
   const [processExistingProjectId, setProcessExistingProjectId] = useState<number | undefined>(undefined);
   const [predictedProjectId, setPredictedProjectId] = useState<number | undefined>(undefined);
+  const [processAssigneeId, setProcessAssigneeId] = useState<number | undefined>(undefined);
+  const [existingContactIds, setExistingContactIds] = useState<number[]>([]);
+  const [contactSearch, setContactSearch] = useState("");
+  const [selectedTaskIndices, setSelectedTaskIndices] = useState<Set<number>>(new Set());
 
   const { data: projectsRaw } = trpc.projects.list.useQuery();
   const availableProjects = (projectsRaw as Array<{ id: number; name: string }> | undefined) || [];
+
+  const { data: routingOptions } = trpc.fireflies.taskRoutingOptions.useQuery();
+  const availableAssignees = (routingOptions?.assignees as Array<{ id: number; name: string; email: string }> | undefined) || [];
+
+  const { data: contactsRaw } = trpc.crm.contacts.list.useQuery({ limit: 500 });
+  const availableContacts = (contactsRaw as Array<{ id: number; fullName?: string; firstName?: string; lastName?: string; email?: string }> | undefined) || [];
 
   const { data: meetingsRaw, isLoading, refetch, error: meetingsError } = trpc.fireflies.meetings.list.useQuery({});
   const meetings = (meetingsRaw as any[] | undefined) || [];
 
   const openPanel = (meeting: any) => {
     setPanelMeeting(meeting);
+    setTranscriptOpen(false);
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
     if (meeting != null) {
@@ -86,8 +99,18 @@ export default function Meetings() {
 
   const processMeetingMutation = trpc.fireflies.processMeeting.useMutation({
     onSuccess: (data) => {
+      const d = data as any;
+      const linked = d.linkedContactCount ?? 0;
+      const linkedSuffix = linked > 0 ? `, ${linked} linked` : "";
+      const tasks = d.tasksCreated ?? 0;
+      const available = d.actionItemsAvailable ?? 0;
+      const taskNote = tasks === 0 && available === 0
+        ? " (no action items found in transcript)"
+        : tasks === 0 && available > 0
+          ? ` (${available} action items, none could be routed to a project)`
+          : "";
       toast.success(
-        `Processed: ${(data as any).contactsCreated ?? 0} contacts, ${(data as any).tasksCreated ?? 0} tasks created`
+        `Processed: ${d.contactsCreated ?? 0} contacts${linkedSuffix}, ${tasks} tasks created${taskNote}`
       );
       setShowProcessDialog(false);
       setSelectedMeetingId(null);
@@ -106,22 +129,75 @@ export default function Meetings() {
     }
   };
 
+  // Remove Fireflies transcript timestamps in any of these shapes:
+  //   (00:30) | (1:23:45) | (00:00 - 10:46) | * (00:00 - 10:46) ... | - 08:40)
+  const stripTimestamps = (s: string) => {
+    const TS = String.raw`\d{1,2}:\d{2}(?::\d{2})?`;
+    return s
+      .replace(new RegExp(String.raw`\(\s*${TS}(?:\s*[-–]\s*${TS})?\s*\)`, "g"), " ")
+      .replace(new RegExp(String.raw`(?:^|\s)[-–]\s*${TS}\s*\)`, "g"), " ")
+      .replace(new RegExp(String.raw`(?:^|\s)\(\s*${TS}\s*[-–]\s*${TS}\s*(?=\s|$)`, "g"), " ")
+      .replace(/^\s*[*•]\s+/, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  };
+
+  // Strip timestamps + markdown bullet/header artifacts from a single
+  // action-item string.
+  const cleanActionText = (s: string) =>
+    stripTimestamps(s.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, ""));
+
+  // Fireflies returns `summary.action_items` as a markdown string with
+  // "**Speaker**" headers. Parse it client-side as a fallback for meetings
+  // synced before the backend parser was fixed.
+  const parseActionItemsFromSummary = (raw: unknown): Array<{ text: string; assignee?: string }> => {
+    if (!raw) return [];
+    if (Array.isArray(raw)) {
+      return raw
+        .map((it) => (typeof it === "string" ? { text: cleanActionText(it) } : { text: cleanActionText(it?.text || it?.action_item || it?.description || ""), assignee: it?.assignee }))
+        .filter((it) => it.text);
+    }
+    if (typeof raw !== "string") return [];
+    const out: Array<{ text: string; assignee?: string }> = [];
+    let assignee: string | undefined;
+    for (const line of raw.split(/\r?\n/)) {
+      const t = line.trim();
+      if (!t) continue;
+      const header = t.match(/^\*\*(.+?)\*\*:?\s*$/);
+      if (header) { assignee = header[1].trim(); continue; }
+      const text = cleanActionText(t);
+      if (text) out.push({ text, ...(assignee ? { assignee } : {}) });
+    }
+    return out;
+  };
+
   const meetingsWithParsed = useMemo(
     () =>
-      meetings.map((meeting: any) => ({
-        ...meeting,
-        parsedParticipants: parseSafe(meeting.participants) || [],
-        parsedSummary: parseSafe(meeting.summary),
-        parsedActionItems: parseSafe(meeting.actionItems) || [],
-      })),
+      meetings.map((meeting: any) => {
+        const parsedSummary = parseSafe(meeting.summary);
+        const stored = parseSafe(meeting.actionItems);
+        const storedArr = Array.isArray(stored) ? stored : [];
+        const parsedActionItems = storedArr.length > 0
+          ? storedArr.map((it: any) => ({ ...it, text: cleanActionText(typeof it === "string" ? it : it?.text || "") }))
+          : parseActionItemsFromSummary(parsedSummary?.action_items);
+        const parsedTranscript: Array<{ speaker: string; text: string }> = (() => {
+          const raw = parseSafe(meeting.transcriptText);
+          return Array.isArray(raw) ? raw.filter((s: any) => s?.text) : [];
+        })();
+        return {
+          ...meeting,
+          parsedParticipants: parseSafe(meeting.participants) || [],
+          parsedSummary,
+          parsedActionItems,
+          parsedTranscript,
+        };
+      }),
     [meetings]
   );
 
   const filtered = meetingsWithParsed
     .filter((m: any) => {
-      if (statusFilter === "pending" && m.processingStatus !== "pending") return false;
-      if (statusFilter === "processed" && m.processingStatus !== "fully_processed") return false;
-      if (statusFilter !== "all" && statusFilter !== "pending" && statusFilter !== "processed" && m.processingStatus !== statusFilter) return false;
+      if (statusFilter !== "all" && m.processingStatus !== statusFilter) return false;
       if (!search) return true;
       const q = search.toLowerCase();
       const title = (m.title || "").toLowerCase();
@@ -177,11 +253,6 @@ export default function Meetings() {
     return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   };
 
-  const fmtTime = (date?: string | Date | null) => {
-    if (!date) return "";
-    return new Date(date).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-  };
-
   const statusBadge = (status: string) => {
     const base = "text-[10px] px-1.5 py-0";
     switch (status) {
@@ -223,6 +294,26 @@ export default function Meetings() {
     return bestId;
   };
 
+  const openProcessDialog = (meeting: any) => {
+    setSelectedMeetingId(meeting.id);
+    setProcessProjectName("");
+    setProcessAssigneeId(undefined);
+    setExistingContactIds([]);
+    setContactSearch("");
+    const itemCount = (meeting.parsedActionItems || []).length;
+    setSelectedTaskIndices(new Set(Array.from({ length: itemCount }, (_, i) => i)));
+    const predicted = predictProject(meeting.title || "");
+    setPredictedProjectId(predicted);
+    if (predicted !== undefined) {
+      setProjectMode("existing");
+      setProcessExistingProjectId(predicted);
+    } else {
+      setProjectMode("none");
+      setProcessExistingProjectId(undefined);
+    }
+    setShowProcessDialog(true);
+  };
+
   const handleProcessMeeting = () => {
     if (!selectedMeetingId) return;
     processMeetingMutation.mutate({
@@ -232,6 +323,9 @@ export default function Meetings() {
       createProject: projectMode === "new",
       projectName: projectMode === "new" ? (processProjectName || undefined) : undefined,
       projectId: projectMode === "existing" ? processExistingProjectId : undefined,
+      assigneeId: processAssigneeId,
+      existingContactIds: existingContactIds.length ? existingContactIds : undefined,
+      selectedActionItemIndices: processCreateTasks ? Array.from(selectedTaskIndices) : [],
     } as any);
   };
 
@@ -267,12 +361,12 @@ export default function Meetings() {
     const raw = summary.shorthand_bullet;
     if (!raw) return [];
     const arr = Array.isArray(raw) ? raw : [raw];
-    return arr.slice(0, 4);
+    return arr.slice(0, 4).map((b: string) => stripTimestamps(b));
   };
 
-  /** Render inline markdown bold (**text**) as <strong> elements. */
+  /** Render inline markdown bold (**text**) as <strong>, stripping timestamps. */
   const renderInlineMd = (text: string): React.ReactNode => {
-    const parts = text.split(/\*\*(.+?)\*\*/g);
+    const parts = stripTimestamps(text).split(/\*\*(.+?)\*\*/g);
     return parts.map((part, i) =>
       i % 2 === 1 ? <strong key={i} className="font-semibold text-foreground">{part}</strong> : part
     );
@@ -340,7 +434,11 @@ export default function Meetings() {
               <SelectItem value="all">All</SelectItem>
               <SelectItem value="pending">Pending</SelectItem>
               <SelectItem value="contacts_created">Contacts</SelectItem>
+              <SelectItem value="tasks_created">Tasks</SelectItem>
+              <SelectItem value="project_created">Project</SelectItem>
               <SelectItem value="fully_processed">Processed</SelectItem>
+              <SelectItem value="skipped">Skipped</SelectItem>
+              <SelectItem value="error">Error</SelectItem>
             </SelectContent>
           </Select>
           <Button
@@ -404,6 +502,8 @@ export default function Meetings() {
           {filtered.map((meeting: any) => {
             const summary = meeting.parsedSummary;
             const bullets = getBullets(meeting);
+            const tasks = (meeting.parsedActionItems || []) as Array<{ text: string; assignee?: string }>;
+            const previewTasks = tasks.slice(0, 3);
 
             return (
               <div
@@ -422,7 +522,7 @@ export default function Meetings() {
                         {meeting.title || "Untitled"}
                       </span>
                       <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
-                        {fmtDate(meeting.date)} {fmtTime(meeting.date)}
+                        {fmtDate(meeting.date)}
                       </span>
                       <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
                         {fmtDur(meeting.duration)}
@@ -434,10 +534,7 @@ export default function Meetings() {
                           className="h-5 px-2 text-[10px] shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setSelectedMeetingId(meeting.id);
-                            setProcessProjectName("");
-                            setProjectMode("none");
-                            setShowProcessDialog(true);
+                            openProcessDialog(meeting);
                           }}
                         >
                           <Zap className="h-2.5 w-2.5 mr-0.5" />
@@ -469,7 +566,29 @@ export default function Meetings() {
                       </ul>
                     )}
                     {!bullets.length && summary?.overview && (
-                      <p className="mt-0.5 text-[12px] text-muted-foreground line-clamp-1 leading-[1.4]">{summary.overview}</p>
+                      <p className="mt-0.5 text-[12px] text-muted-foreground line-clamp-1 leading-[1.4]">{stripTimestamps(summary.overview)}</p>
+                    )}
+
+                    {/* Inline task preview */}
+                    {previewTasks.length > 0 && (
+                      <ul className="mt-1 space-y-0">
+                        {previewTasks.map((task, i) => (
+                          <li key={i} className="flex items-start gap-1.5 text-[12px] leading-[1.4]">
+                            <CheckCircle2 className="mt-[2px] h-3 w-3 shrink-0 text-emerald-500" />
+                            <span className="line-clamp-1">
+                              {task.assignee && (
+                                <span className="font-medium text-blue-600 dark:text-blue-400 mr-1">@{task.assignee}</span>
+                              )}
+                              <span className="text-foreground/80">{task.text}</span>
+                            </span>
+                          </li>
+                        ))}
+                        {tasks.length > previewTasks.length && (
+                          <li className="text-[11px] text-muted-foreground pl-[18px]">
+                            +{tasks.length - previewTasks.length} more
+                          </li>
+                        )}
+                      </ul>
                     )}
                   </div>
                 </div>
@@ -493,7 +612,7 @@ export default function Meetings() {
                 <SheetHeader className="border-b px-5 py-4 gap-1">
                   <SheetTitle className="text-base leading-snug pr-6">{m.title || "Untitled"}</SheetTitle>
                   <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
-                    <span>{fmtDate(m.date)} {fmtTime(m.date)}</span>
+                    <span>{fmtDate(m.date)}</span>
                     <span>·</span>
                     <span>{fmtDur(m.duration)}</span>
                     <span>·</span>
@@ -514,6 +633,18 @@ export default function Meetings() {
 
                 {/* Scrollable content */}
                 <div className="flex-1 overflow-y-auto px-5 py-5 space-y-6">
+                  {/* Inline recording player */}
+                  {m.recordingUrl && (
+                    <section>
+                      <video
+                        src={m.recordingUrl}
+                        controls
+                        preload="metadata"
+                        className="w-full rounded-lg bg-black"
+                      />
+                    </section>
+                  )}
+
                   {/* Tasks */}
                   {actionItems.length > 0 && (
                     <section>
@@ -522,17 +653,19 @@ export default function Meetings() {
                         Tasks ({actionItems.length})
                       </h3>
                       <ul className="space-y-2">
-                        {actionItems.map((item: any, i: number) => (
-                          <li key={i} className="flex items-start gap-2.5 text-[13px] leading-relaxed">
-                            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
-                            <span>
-                              {renderInlineMd(typeof item === "string" ? item : item.text || item.description || JSON.stringify(item))}
-                            </span>
-                            {item.assignee && (
-                              <span className="shrink-0 text-[11px] font-medium text-blue-600 dark:text-blue-400">@{item.assignee}</span>
-                            )}
-                          </li>
-                        ))}
+                        {actionItems.map((item: any, i: number) => {
+                          const rawText = typeof item === "string" ? item : item.text || item.description || "";
+                          const text = cleanActionText(rawText);
+                          return (
+                            <li key={i} className="flex items-start gap-2.5 text-[13px] leading-relaxed">
+                              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                              <span>{renderInlineMd(text)}</span>
+                              {item.assignee && (
+                                <span className="shrink-0 text-[11px] font-medium text-blue-600 dark:text-blue-400">@{item.assignee}</span>
+                              )}
+                            </li>
+                          );
+                        })}
                       </ul>
                     </section>
                   )}
@@ -586,17 +719,43 @@ export default function Meetings() {
                       </div>
                     </section>
                   )}
+
+                  {/* Full transcript (collapsed by default) */}
+                  {(m.parsedTranscript?.length ?? 0) > 0 && (() => {
+                    // Group consecutive sentences from the same speaker.
+                    const blocks: Array<{ speaker: string; text: string }> = [];
+                    for (const s of m.parsedTranscript as Array<{ speaker: string; text: string }>) {
+                      const last = blocks[blocks.length - 1];
+                      if (last && last.speaker === s.speaker) last.text += " " + s.text;
+                      else blocks.push({ speaker: s.speaker, text: s.text });
+                    }
+                    return (
+                      <section>
+                        <button
+                          type="button"
+                          onClick={() => setTranscriptOpen((v) => !v)}
+                          className="flex w-full items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground"
+                        >
+                          {transcriptOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                          Transcript ({m.parsedTranscript.length} lines)
+                        </button>
+                        {transcriptOpen && (
+                          <div className="mt-3 space-y-3">
+                            {blocks.map((b, i) => (
+                              <div key={i}>
+                                <div className="text-[11px] font-medium text-blue-600 dark:text-blue-400">{b.speaker}</div>
+                                <p className="text-[13px] leading-relaxed whitespace-pre-wrap">{b.text}</p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </section>
+                    );
+                  })()}
                 </div>
 
                 {/* Footer actions */}
                 <div className="border-t px-5 py-3 flex items-center gap-2">
-                  {m.recordingUrl && (
-                    <Button variant="outline" size="sm" className="text-xs" asChild>
-                      <a href={m.recordingUrl} target="_blank" rel="noopener noreferrer">
-                        <Video className="mr-1.5 h-3.5 w-3.5" /> Recording <ExternalLink className="ml-1 h-3 w-3" />
-                      </a>
-                    </Button>
-                  )}
                   {m.transcriptUrl && (
                     <Button variant="outline" size="sm" className="text-xs" asChild>
                       <a href={m.transcriptUrl} target="_blank" rel="noopener noreferrer">
@@ -608,12 +767,7 @@ export default function Meetings() {
                     <Button
                       size="sm"
                       className="ml-auto text-xs"
-                      onClick={() => {
-                        setSelectedMeetingId(m.id);
-                        setProcessProjectName("");
-                        setProjectMode("none");
-                        setShowProcessDialog(true);
-                      }}
+                      onClick={() => openProcessDialog(m)}
                     >
                       <Zap className="mr-1.5 h-3.5 w-3.5" />
                       Process Meeting
@@ -636,22 +790,166 @@ export default function Meetings() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="flex items-center gap-3 rounded-lg border p-3">
-              <Users className="h-5 w-5 text-blue-600 shrink-0" />
-              <div className="flex-1">
-                <div className="text-sm font-medium">Create CRM Contacts</div>
-                <div className="text-xs text-muted-foreground">From meeting participants</div>
+            <div className="space-y-3 rounded-lg border p-3">
+              <div className="flex items-center gap-3">
+                <Users className="h-5 w-5 text-blue-600 shrink-0" />
+                <div className="flex-1">
+                  <div className="text-sm font-medium">Create CRM Contacts</div>
+                  <div className="text-xs text-muted-foreground">From meeting participants</div>
+                </div>
+                <Switch checked={processCreateContacts} onCheckedChange={setProcessCreateContacts} />
               </div>
-              <Switch checked={processCreateContacts} onCheckedChange={setProcessCreateContacts} />
-            </div>
-            <div className="flex items-center gap-3 rounded-lg border p-3">
-              <ListTodo className="h-5 w-5 text-purple-600 shrink-0" />
-              <div className="flex-1">
-                <div className="text-sm font-medium">Create Tasks</div>
-                <div className="text-xs text-muted-foreground">From meeting action items</div>
+              <div className="pl-7 space-y-1">
+                <Label className="text-xs">Link to existing contacts (optional)</Label>
+                {existingContactIds.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {existingContactIds.map((id) => {
+                      const c = availableContacts.find((x) => x.id === id);
+                      const label = c?.fullName || [c?.firstName, c?.lastName].filter(Boolean).join(" ") || c?.email || `#${id}`;
+                      return (
+                        <Badge key={id} variant="secondary" className="gap-1 pr-1">
+                          {label}
+                          <button
+                            type="button"
+                            className="ml-1 rounded-sm hover:bg-muted-foreground/20"
+                            onClick={() => setExistingContactIds((ids) => ids.filter((x) => x !== id))}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </Badge>
+                      );
+                    })}
+                  </div>
+                )}
+                <Input
+                  placeholder="Search contacts to link…"
+                  value={contactSearch}
+                  onChange={(e) => setContactSearch(e.target.value)}
+                  className="mt-1 text-xs h-8"
+                />
+                {contactSearch.trim() && (
+                  <div className="max-h-40 overflow-y-auto rounded-md border bg-popover">
+                    {availableContacts
+                      .filter((c) => {
+                        if (existingContactIds.includes(c.id)) return false;
+                        const q = contactSearch.toLowerCase();
+                        const hay = [c.fullName, c.firstName, c.lastName, c.email].filter(Boolean).join(" ").toLowerCase();
+                        return hay.includes(q);
+                      })
+                      .slice(0, 8)
+                      .map((c) => {
+                        const label = c.fullName || [c.firstName, c.lastName].filter(Boolean).join(" ") || c.email || `#${c.id}`;
+                        return (
+                          <button
+                            key={c.id}
+                            type="button"
+                            className="w-full px-2 py-1.5 text-left text-xs hover:bg-accent"
+                            onClick={() => {
+                              setExistingContactIds((ids) => [...ids, c.id]);
+                              setContactSearch("");
+                            }}
+                          >
+                            <div className="font-medium">{label}</div>
+                            {c.email && <div className="text-[10px] text-muted-foreground">{c.email}</div>}
+                          </button>
+                        );
+                      })}
+                  </div>
+                )}
               </div>
-              <Switch checked={processCreateTasks} onCheckedChange={setProcessCreateTasks} />
             </div>
+            {(() => {
+              const selectedMeeting = meetingsWithParsed.find((m: any) => m.id === selectedMeetingId);
+              const dialogTasks: Array<{ text: string; assignee?: string }> = selectedMeeting?.parsedActionItems || [];
+              return (
+                <div className="space-y-3 rounded-lg border p-3">
+                  <div className="flex items-center gap-3">
+                    <ListTodo className="h-5 w-5 text-purple-600 shrink-0" />
+                    <div className="flex-1">
+                      <div className="text-sm font-medium">Create Tasks</div>
+                      <div className="text-xs text-muted-foreground">
+                        {dialogTasks.length === 0
+                          ? "No action items detected in this meeting"
+                          : `${selectedTaskIndices.size} of ${dialogTasks.length} selected`}
+                      </div>
+                    </div>
+                    <Switch checked={processCreateTasks} onCheckedChange={setProcessCreateTasks} />
+                  </div>
+                  {processCreateTasks && dialogTasks.length > 0 && (
+                    <div className="pl-7 space-y-2">
+                      <div className="flex items-center gap-2 text-[11px]">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedTaskIndices(new Set(dialogTasks.map((_, i) => i)))}
+                          className="text-purple-600 hover:underline"
+                        >
+                          Select all
+                        </button>
+                        <span className="text-muted-foreground">·</span>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedTaskIndices(new Set())}
+                          className="text-muted-foreground hover:underline"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                      <ul className="max-h-56 overflow-y-auto space-y-1.5 rounded-md border p-2">
+                        {dialogTasks.map((task, i) => {
+                          const checked = selectedTaskIndices.has(i);
+                          return (
+                            <li key={i}>
+                              <label className="flex items-start gap-2 cursor-pointer text-[13px] leading-snug">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(e) => {
+                                    setSelectedTaskIndices((prev) => {
+                                      const next = new Set(prev);
+                                      if (e.target.checked) next.add(i);
+                                      else next.delete(i);
+                                      return next;
+                                    });
+                                  }}
+                                  className="mt-0.5 shrink-0"
+                                />
+                                <span className="flex-1">
+                                  {task.assignee && (
+                                    <span className="font-medium text-blue-600 dark:text-blue-400 mr-1">@{task.assignee}</span>
+                                  )}
+                                  <span className={checked ? "" : "text-muted-foreground line-through"}>{task.text}</span>
+                                </span>
+                              </label>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  )}
+                  {processCreateTasks && dialogTasks.length > 0 && availableAssignees.length > 0 && (
+                    <div className="pl-7 space-y-1">
+                      <Label className="text-xs">Default Assignee (optional)</Label>
+                      <Select
+                        value={processAssigneeId !== undefined ? String(processAssigneeId) : "auto"}
+                        onValueChange={(v) => setProcessAssigneeId(v === "auto" ? undefined : Number(v))}
+                      >
+                        <SelectTrigger className="mt-1">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="auto">Auto-detect from action items</SelectItem>
+                          {availableAssignees.map((a) => (
+                            <SelectItem key={a.id} value={String(a.id)}>
+                              {a.name || a.email}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             <div className="space-y-3 rounded-lg border p-3">
               <div className="flex items-center gap-2">
                 <FolderPlus className="h-5 w-5 text-indigo-600 shrink-0" />

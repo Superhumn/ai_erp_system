@@ -1,7 +1,7 @@
 import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray, ne, sum, max, min } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
-  InsertUser, users, localAuthCredentials, InsertLocalAuthCredential, companies, customers, vendors, products,
+  InsertUser, users, authTokens, InsertAuthToken, localAuthCredentials, InsertLocalAuthCredential, companies, customers, vendors, products,
   accounts, invoices, invoiceItems, payments, transactions, transactionLines,
   orders, orderItems, inventory, warehouses, productionBatches,
   purchaseOrders, purchaseOrderItems, shipments,
@@ -382,6 +382,62 @@ export async function updateLocalAuthCredential(openId: string, updates: Partial
     await db.update(localAuthCredentials).set(updates).where(eq(localAuthCredentials.openId, openId));
 }
 
+// ============================================
+// AUTH TOKENS (email verification, password reset)
+// ============================================
+
+export async function createAuthToken(data: InsertAuthToken) {
+  const db = await getDb();
+  if (!db) throw new Error("[Database] Cannot create auth token: database not available");
+  await db.insert(authTokens).values(data);
+}
+
+export async function getAuthToken(token: string, type: "email_verification" | "password_reset") {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db
+    .select()
+    .from(authTokens)
+    .where(and(eq(authTokens.token, token), eq(authTokens.type, type)))
+    .limit(1);
+  return result[0];
+}
+
+export async function deleteAuthToken(token: string) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(authTokens).where(eq(authTokens.token, token));
+}
+
+export async function deleteAuthTokensByEmail(email: string, type: "email_verification" | "password_reset") {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(authTokens).where(and(eq(authTokens.email, email), eq(authTokens.type, type)));
+}
+
+export async function deleteExpiredAuthTokens() {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(authTokens).where(lt(authTokens.expiresAt, new Date()));
+}
+
+export async function setUserEmailVerified(email: string, verified: boolean = true) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(users).set({ emailVerified: verified }).where(eq(users.email, email));
+}
+
+export async function isUserEmailVerified(email: string): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  const result = await db
+    .select({ emailVerified: users.emailVerified })
+    .from(users)
+    .where(eq(users.email, email))
+    .limit(1);
+  return result[0]?.emailVerified ?? false;
+}
+
 export async function getCompanies() {
   const db = await getDb();
   if (!db) return [];
@@ -446,6 +502,13 @@ export async function getCustomerByEmail(email: string) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(customers).where(eq(customers.email, email)).limit(1);
+  return result[0];
+}
+
+export async function getCustomerByName(name: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(customers).where(eq(customers.name, name)).limit(1);
   return result[0];
 }
 
@@ -5771,8 +5834,14 @@ export async function createInboundEmail(input: InsertInboundEmail) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  // Deduplicate: skip if same subject + sender + date already exists
-  if (input.subject && input.fromEmail) {
+  // Deduplicate: prefer messageId match (globally unique per RFC 2822),
+  // fall back to subject + sender check when messageId is absent
+  if (input.messageId) {
+    const existing = await db.select({ id: inboundEmails.id }).from(inboundEmails)
+      .where(eq(inboundEmails.messageId, input.messageId))
+      .limit(1);
+    if (existing.length > 0) return { id: existing[0].id };
+  } else if (input.subject && input.fromEmail) {
     const existing = await db.select({ id: inboundEmails.id }).from(inboundEmails)
       .where(and(
         eq(inboundEmails.subject, input.subject),
@@ -9177,6 +9246,40 @@ export async function deleteCrmDeal(id: number) {
   const db = await getDb();
   if (!db) return;
   await db.delete(crmDeals).where(eq(crmDeals.id, id));
+}
+
+// Looks up an existing deal that represents the same client company.
+// Match is case-insensitive and considers either deal.name == company
+// or the linked contact's organization == company.
+export async function findCrmDealByCompany(company: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const normalized = company.trim().toLowerCase();
+  if (!normalized) return undefined;
+  const result = await db
+    .select({ deal: crmDeals })
+    .from(crmDeals)
+    .leftJoin(crmContacts, eq(crmDeals.contactId, crmContacts.id))
+    .where(
+      or(
+        sql`LOWER(${crmDeals.name}) = ${normalized}`,
+        sql`LOWER(${crmContacts.organization}) = ${normalized}`,
+      ),
+    )
+    .limit(1);
+  return result[0]?.deal;
+}
+
+// True iff a `create_crm_deal` approval task is already queued for this company.
+export async function hasPendingDealApprovalForCompany(company: string): Promise<boolean> {
+  const lc = company.trim().toLowerCase();
+  if (!lc) return false;
+  const tasks = await getAiAgentTasks({ taskType: 'create_crm_deal', status: 'pending_approval' });
+  return (tasks as any[]).some(t => {
+    try {
+      return ((JSON.parse(t.taskData || '{}').company) || '').toString().trim().toLowerCase() === lc;
+    } catch { return false; }
+  });
 }
 
 export async function getCrmDealStats(pipelineId?: number) {

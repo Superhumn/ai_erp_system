@@ -81,10 +81,10 @@ export default function IntegrationsPage() {
     },
   });
 
-  const shopifyInitiateOAuthMutation = (trpc.integrations as any).shopify.initiateOAuth.useMutation({
+  const shopifyInitiateOAuthMutation = trpc.integrations.shopify.initiateOAuth.useMutation({
     onSuccess: (data) => {
       // Redirect to Shopify OAuth page
-      window.location.href = data.authUrl || data.url;
+      window.location.href = data.authUrl;
     },
     onError: (error) => {
       toast.error(error.message);
@@ -92,7 +92,7 @@ export default function IntegrationsPage() {
     },
   });
 
-  const shopifyDisconnectMutation = (trpc.integrations as any).shopify.disconnect.useMutation({
+  const shopifyDisconnectMutation = trpc.integrations.shopify.disconnect.useMutation({
     onSuccess: () => {
       toast.success("Store disconnected successfully");
       refetch();
@@ -102,7 +102,7 @@ export default function IntegrationsPage() {
     },
   });
 
-  const shopifyTestConnectionMutation = (trpc.integrations as any).shopify.testConnection.useMutation({
+  const shopifyTestConnectionMutation = trpc.integrations.shopify.testConnection.useMutation({
     onSuccess: (data) => {
       toast.success((data as any).message ?? "Connection successful");
     },
@@ -927,7 +927,7 @@ export default function IntegrationsPage() {
                         <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_CLIENT_ID</code> - Your QuickBooks app client ID</li>
                         <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_CLIENT_SECRET</code> - Your QuickBooks app client secret</li>
                         <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_REDIRECT_URI</code> - OAuth callback URL (optional)</li>
-                        <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_ENVIRONMENT</code> - sandbox or production (optional, defaults to sandbox)</li>
+                        <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_ENVIRONMENT</code> - sandbox or production (optional, defaults to production)</li>
                       </ul>
                       {quickbooksAuthUrl?.redirectUri && (
                         <div className="mb-4 p-3 bg-amber-500/5 border border-amber-500/20 rounded-md">

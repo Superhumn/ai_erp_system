@@ -270,20 +270,6 @@ export default function DataRoomDetail() {
     },
   });
 
-  const syncGoogleDriveMutation = trpc.dataRoom.googleDrive.syncFolder.useMutation({
-    onSuccess: (data) => {
-      toast.success(`Synced ${data.foldersCreated} new folders and ${data.filesCreated} new files from Google Drive`);
-      setGoogleDriveSyncOpen(false);
-      setSelectedDriveFolderId("");
-      refetchFolders();
-      refetchDocuments();
-      refetchRoom();
-    },
-    onError: (error) => {
-      toast.error(error.message);
-    },
-  });
-
   const { data: driveFilesData, isLoading: driveFilesLoading } = trpc.dataRoom.googleDrive.listFiles.useQuery(
     { folderId: driveFileBrowseFolderId },
     { enabled: !!driveFileBrowseFolderId }
@@ -306,6 +292,8 @@ export default function DataRoomDetail() {
   const syncFromDriveMutation = trpc.dataRoom.syncFromDrive.useMutation({
     onSuccess: (data) => {
       toast.success(`Synced ${data.filesCreated} files and ${data.foldersCreated} folders from Google Drive${data.folderName ? ` (${data.folderName})` : ''}`);
+      setGoogleDriveSyncOpen(false);
+      setSelectedDriveFolderId("");
       refetchFolders();
       refetchDocuments();
       refetchRoom();
@@ -1797,11 +1785,11 @@ export default function DataRoomDetail() {
                         toast.error("Please enter a Google Drive folder ID");
                         return;
                       }
-                      syncGoogleDriveMutation.mutate({ dataRoomId: roomId, googleDriveFolderId: selectedDriveFolderId });
+                      syncFromDriveMutation.mutate({ dataRoomId: roomId, driveFolderId: selectedDriveFolderId });
                     }}
-                    disabled={syncGoogleDriveMutation.isPending}
+                    disabled={syncFromDriveMutation.isPending}
                   >
-                    {syncGoogleDriveMutation.isPending ? "Syncing..." : "Sync Folder"}
+                    {syncFromDriveMutation.isPending ? "Syncing..." : "Sync Folder"}
                   </Button>
                 </DialogFooter>
               </TabsContent>
@@ -2207,13 +2195,13 @@ function NdaManagement({ dataRoomId, requiresNda }: { dataRoomId: number; requir
 function DetailedAnalytics({ dataRoomId }: { dataRoomId: number }) {
   const [selectedVisitor, setSelectedVisitor] = useState<number | null>(null);
 
-  const { data: report, isLoading } = (trpc.dataRoom as any).detailedAnalytics.getEngagementReport.useQuery({ dataRoomId });
-  const { data: visitorDetails } = (trpc.dataRoom as any).detailedAnalytics.getVisitorDetails.useQuery(
+  const { data: report, isLoading } = trpc.dataRoom.detailedAnalytics.getEngagementReport.useQuery({ dataRoomId });
+  const { data: visitorDetails } = trpc.dataRoom.detailedAnalytics.getVisitorDetails.useQuery(
     { dataRoomId, visitorId: selectedVisitor! },
     { enabled: !!selectedVisitor }
   );
 
-  const exportCsvMutation = (trpc.dataRoom as any).detailedAnalytics.exportCsv.useMutation({
+  const exportCsvMutation = trpc.dataRoom.detailedAnalytics.exportCsv.useMutation({
     onSuccess: (data) => {
       const blob = new Blob([data.csv], { type: 'text/csv' });
       const url = window.URL.createObjectURL(blob);
@@ -2444,14 +2432,14 @@ function GoogleDriveSyncSettings({ dataRoomId }: { dataRoomId: number }) {
   const [currentParentId, setCurrentParentId] = useState<string | undefined>(undefined);
   const [folderPath, setFolderPath] = useState<{ id: string; name: string }[]>([]);
 
-  const { data: syncConfig, refetch: refetchConfig } = (trpc.dataRoom as any).driveSync.getConfig.useQuery({ dataRoomId });
-  const { data: syncLogs, refetch: refetchLogs } = (trpc.dataRoom as any).driveSync.getLogs.useQuery({ dataRoomId, limit: 10 });
-  const { data: driveFolders, isLoading: foldersLoading } = (trpc.dataRoom as any).driveSync.listDriveFolders.useQuery(
+  const { data: syncConfig, refetch: refetchConfig } = trpc.dataRoom.driveSync.getConfig.useQuery({ dataRoomId });
+  const { data: syncLogs, refetch: refetchLogs } = trpc.dataRoom.driveSync.getLogs.useQuery({ dataRoomId, limit: 10 });
+  const { data: driveFolders, isLoading: foldersLoading } = trpc.dataRoom.driveSync.listDriveFolders.useQuery(
     { parentId: currentParentId },
     { enabled: folderPickerOpen }
   );
 
-  const saveConfigMutation = (trpc.dataRoom as any).driveSync.saveConfig.useMutation({
+  const saveConfigMutation = trpc.dataRoom.driveSync.saveConfig.useMutation({
     onSuccess: () => {
       toast.success("Sync configuration saved");
       refetchConfig();
@@ -2462,7 +2450,7 @@ function GoogleDriveSyncSettings({ dataRoomId }: { dataRoomId: number }) {
     },
   });
 
-  const syncNowMutation = (trpc.dataRoom as any).driveSync.syncNow.useMutation({
+  const syncNowMutation = trpc.dataRoom.driveSync.syncNow.useMutation({
     onSuccess: (result) => {
       toast.success(`Sync completed: ${result.filesAdded} added, ${result.filesUpdated} updated`);
       refetchConfig();
@@ -2473,7 +2461,7 @@ function GoogleDriveSyncSettings({ dataRoomId }: { dataRoomId: number }) {
     },
   });
 
-  const deleteConfigMutation = (trpc.dataRoom as any).driveSync.deleteConfig.useMutation({
+  const deleteConfigMutation = trpc.dataRoom.driveSync.deleteConfig.useMutation({
     onSuccess: () => {
       toast.success("Sync configuration removed");
       refetchConfig();
@@ -2728,9 +2716,9 @@ function EmailAccessRulesManager({ dataRoomId }: { dataRoomId: number }) {
     notifyOnAccess: true,
   });
 
-  const { data: rules, refetch } = (trpc.dataRoom as any).emailRules.list.useQuery({ dataRoomId });
+  const { data: rules, refetch } = trpc.dataRoom.emailRules.list.useQuery({ dataRoomId });
 
-  const createMutation = (trpc.dataRoom as any).emailRules.create.useMutation({
+  const createMutation = trpc.dataRoom.emailRules.create.useMutation({
     onSuccess: () => {
       toast.success("Rule created");
       setCreateOpen(false);
@@ -2749,14 +2737,14 @@ function EmailAccessRulesManager({ dataRoomId }: { dataRoomId: number }) {
     },
   });
 
-  const deleteMutation = (trpc.dataRoom as any).emailRules.delete.useMutation({
+  const deleteMutation = trpc.dataRoom.emailRules.delete.useMutation({
     onSuccess: () => {
       toast.success("Rule deleted");
       refetch();
     },
   });
 
-  const toggleMutation = (trpc.dataRoom as any).emailRules.update.useMutation({
+  const toggleMutation = trpc.dataRoom.emailRules.update.useMutation({
     onSuccess: () => {
       refetch();
     },
@@ -2957,14 +2945,14 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
   const [showMissingOnly, setShowMissingOnly] = useState(false);
   const [hasAutoMatched, setHasAutoMatched] = useState(false);
 
-  const { data: summary, refetch: refetchSummary } = (trpc.dataRoom as any).dueDiligence.getSummary.useQuery({ dataRoomId });
-  const { data: checklistData, refetch: refetchChecklist } = (trpc.dataRoom as any).dueDiligence.getById.useQuery(
+  const { data: summary, refetch: refetchSummary } = trpc.dataRoom.dueDiligence.getSummary.useQuery({ dataRoomId });
+  const { data: checklistData, refetch: refetchChecklist } = trpc.dataRoom.dueDiligence.getById.useQuery(
     { id: summary?.checklist?.id || 0 },
     { enabled: !!summary?.checklist?.id }
   );
   const { data: documents } = trpc.dataRoom.documents.list.useQuery({ dataRoomId });
 
-  const createStandardMutation = (trpc.dataRoom as any).dueDiligence.createStandard.useMutation({
+  const createStandardMutation = trpc.dataRoom.dueDiligence.createStandard.useMutation({
     onSuccess: () => {
       toast.success("Checklist created - scanning documents...");
       setCreateOpen(false);
@@ -2975,7 +2963,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
     },
   });
 
-  const autoMatchMutation = (trpc.dataRoom as any).dueDiligence.autoMatch.useMutation({
+  const autoMatchMutation = trpc.dataRoom.dueDiligence.autoMatch.useMutation({
     onSuccess: (result) => {
       if (result.matched > 0) {
         toast.success(`Matched ${result.matched} documents to checklist items`);
@@ -2990,14 +2978,14 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
     },
   });
 
-  const updateItemMutation = (trpc.dataRoom as any).dueDiligence.updateItem.useMutation({
+  const updateItemMutation = trpc.dataRoom.dueDiligence.updateItem.useMutation({
     onSuccess: () => {
       refetchSummary();
       refetchChecklist();
     },
   });
 
-  const linkDocumentMutation = (trpc.dataRoom as any).dueDiligence.linkDocument.useMutation({
+  const linkDocumentMutation = trpc.dataRoom.dueDiligence.linkDocument.useMutation({
     onSuccess: () => {
       toast.success("Document linked");
       refetchChecklist();

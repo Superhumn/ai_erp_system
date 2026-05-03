@@ -20,6 +20,7 @@ interface SyncOptions {
   excludeFileTypes?: string[];
   maxFileSizeMb: number;
   parentFolderId?: number | null;
+  uploadedBy?: number;
 }
 
 interface SyncResult {
@@ -208,6 +209,7 @@ export async function syncGoogleDriveFolder(options: SyncOptions): Promise<SyncR
             googleDriveFileId: file.id,
             googleDriveWebViewLink: file.webViewLink,
             thumbnailUrl: file.thumbnailLink,
+            uploadedBy: options.uploadedBy,
           });
           filesAdded++;
         }

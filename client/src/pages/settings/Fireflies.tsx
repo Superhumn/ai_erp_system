@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,7 +8,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
@@ -19,25 +19,18 @@ import {
   Loader2,
   Users,
   ListTodo,
-  FolderPlus,
   Play,
   Clock,
   Zap,
   Settings,
-  ArrowRight,
 } from "lucide-react";
 
 export default function FirefliesPage() {
+  const [, setLocation] = useLocation();
   const [apiKey, setApiKey] = useState("");
   const [autoCreateContacts, setAutoCreateContacts] = useState(true);
   const [autoCreateTasks, setAutoCreateTasks] = useState(true);
   const [autoCreateProjects, setAutoCreateProjects] = useState(false);
-  const [showProcessDialog, setShowProcessDialog] = useState(false);
-  const [selectedMeetingId, setSelectedMeetingId] = useState<number | null>(null);
-  const [processProjectName, setProcessProjectName] = useState("");
-  const [processCreateProject, setProcessCreateProject] = useState(false);
-  const [selectedProjectId, setSelectedProjectId] = useState<string>("auto");
-  const [selectedAssigneeId, setSelectedAssigneeId] = useState<string>("auto");
 
   const { data: configRaw, isLoading: configLoading, refetch: refetchConfig } = trpc.fireflies.getConfig.useQuery();
   const config = configRaw as any;
@@ -55,13 +48,6 @@ export default function FirefliesPage() {
   const meetings = meetingsRaw as any[] | undefined;
   const { data: statsRaw, refetch: refetchStats } = trpc.fireflies.meetings.getStats.useQuery();
   const stats = statsRaw as any;
-  const { data: taskRoutingOptionsRaw } = trpc.fireflies.taskRoutingOptions.useQuery(undefined, {
-    enabled: !!config?.configured,
-  });
-  const taskRoutingOptions = taskRoutingOptionsRaw as
-    | { projects: Array<{ id: number; name: string }>; assignees: Array<{ id: number; name?: string; email?: string }> }
-    | undefined;
-
   const configureMutation = trpc.fireflies.configure.useMutation({
     onSuccess: (data) => {
       toast.success((data as any).updated ? "Fireflies configuration updated" : "Fireflies connected successfully");
@@ -82,18 +68,6 @@ export default function FirefliesPage() {
   const syncMutation = trpc.fireflies.syncMeetings.useMutation({
     onSuccess: (data) => {
       toast.success(`Synced ${data.synced} new meetings (${(data as any).skipped ?? 0} already synced)`);
-      refetchMeetings();
-    },
-    onError: (error) => toast.error(error.message),
-  });
-
-  const processMeetingMutation = trpc.fireflies.processMeeting.useMutation({
-    onSuccess: (data) => {
-      toast.success(
-        `Processed: ${(data as any).contactsCreated ?? 0} contacts, ${(data as any).tasksCreated ?? 0} tasks${(data as any).projectId ? ", 1 project" : ""} created`
-      );
-      setShowProcessDialog(false);
-      setSelectedMeetingId(null);
       refetchMeetings();
     },
     onError: (error) => toast.error(error.message),
@@ -120,23 +94,6 @@ export default function FirefliesPage() {
       autoCreateTasks,
       autoCreateProjects,
     });
-  };
-
-  const handleProcessMeeting = () => {
-    if (!selectedMeetingId) return;
-    if (!processCreateProject && selectedProjectId === "auto" && selectedAssigneeId !== "auto") {
-      toast.error("Select a project when assigning tasks to a team member");
-      return;
-    }
-    processMeetingMutation.mutate({
-      meetingId: selectedMeetingId,
-      createContacts: true,
-      createTasks: true,
-      createProject: processCreateProject,
-      projectName: processProjectName || undefined,
-      projectId: !processCreateProject && selectedProjectId !== "auto" ? Number(selectedProjectId) : undefined,
-      assigneeId: selectedAssigneeId !== "auto" ? Number(selectedAssigneeId) : undefined,
-    } as any);
   };
 
   const statusBadge = (status: string) => {
@@ -447,14 +404,7 @@ export default function FirefliesPage() {
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  onClick={() => {
-                                    setSelectedMeetingId(meeting.id);
-                                    setProcessProjectName("");
-                                    setProcessCreateProject(false);
-                                    setSelectedProjectId("auto");
-                                    setSelectedAssigneeId("auto");
-                                    setShowProcessDialog(true);
-                                  }}
+                                  onClick={() => setLocation(`/meetings?meetingId=${meeting.id}`)}
                                 >
                                   <Play className="h-3 w-3 mr-1" />
                                   Process
@@ -472,120 +422,6 @@ export default function FirefliesPage() {
           </TabsContent>
         )}
       </Tabs>
-
-      {/* Process Meeting Dialog */}
-      <Dialog open={showProcessDialog} onOpenChange={setShowProcessDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Process Meeting</DialogTitle>
-            <DialogDescription>
-              Choose what to auto-generate from this meeting's data.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-lg">
-              <Users className="h-5 w-5 text-blue-600" />
-              <div>
-                <div className="font-medium text-sm">Create CRM Contacts</div>
-                <div className="text-xs text-muted-foreground">New contacts from meeting participants</div>
-              </div>
-              <ArrowRight className="h-4 w-4 text-blue-400 ml-auto" />
-              <CheckCircle2 className="h-4 w-4 text-green-500" />
-            </div>
-            <div className="flex items-center gap-3 p-3 bg-purple-50 rounded-lg">
-              <ListTodo className="h-5 w-5 text-purple-600" />
-              <div>
-                <div className="font-medium text-sm">Create Tasks</div>
-                <div className="text-xs text-muted-foreground">From meeting action items</div>
-              </div>
-              <ArrowRight className="h-4 w-4 text-purple-400 ml-auto" />
-              <CheckCircle2 className="h-4 w-4 text-green-500" />
-            </div>
-            <div className="border rounded-lg p-3 space-y-3">
-              <div className="font-medium text-sm">Task Routing (optional)</div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <div>
-                  <Label className="text-xs">Project</Label>
-                  <Select
-                    value={processCreateProject ? "auto" : selectedProjectId}
-                    onValueChange={setSelectedProjectId}
-                    disabled={processCreateProject}
-                  >
-                    <SelectTrigger className="mt-1">
-                      <SelectValue placeholder="Auto route project" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="auto">Auto route project</SelectItem>
-                      {(taskRoutingOptions?.projects || []).map((project) => (
-                        <SelectItem key={project.id} value={String(project.id)}>
-                          {project.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label className="text-xs">Assignee</Label>
-                  <Select value={selectedAssigneeId} onValueChange={setSelectedAssigneeId}>
-                    <SelectTrigger className="mt-1">
-                      <SelectValue placeholder="Auto assign" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="auto">Auto assign</SelectItem>
-                      {(taskRoutingOptions?.assignees || []).map((assignee) => (
-                        <SelectItem key={assignee.id} value={String(assignee.id)}>
-                          {assignee.name || assignee.email || `User ${assignee.id}`}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              {processCreateProject && (
-                <p className="text-xs text-muted-foreground">
-                  Project selection is disabled because a new project will be created for this meeting.
-                </p>
-              )}
-            </div>
-            <div className="border rounded-lg p-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <FolderPlus className="h-5 w-5 text-indigo-600" />
-                  <div>
-                    <div className="font-medium text-sm">Create Project</div>
-                    <div className="text-xs text-muted-foreground">Group tasks under a project</div>
-                  </div>
-                </div>
-                <Switch checked={processCreateProject} onCheckedChange={setProcessCreateProject} />
-              </div>
-              {processCreateProject && (
-                <div className="pl-7">
-                  <Label className="text-xs">Project Name (optional)</Label>
-                  <Input
-                    placeholder="Auto-generated from meeting title"
-                    value={processProjectName}
-                    onChange={(e) => setProcessProjectName(e.target.value)}
-                    className="mt-1"
-                  />
-                </div>
-              )}
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowProcessDialog(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleProcessMeeting} disabled={processMeetingMutation.isPending}>
-              {processMeetingMutation.isPending ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Zap className="h-4 w-4 mr-2" />
-              )}
-              Process Meeting
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

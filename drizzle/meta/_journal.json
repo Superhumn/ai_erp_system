@@ -1,293 +1,300 @@
 {
-    "version": "7",
-    "dialect": "mysql",
-    "entries": [
-          {
-                  "idx": 0,
-                  "version": "5",
-                  "when": 1767752107846,
-                  "tag": "0000_chubby_stardust",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 1,
-                  "version": "5",
-                  "when": 1767848260684,
-                  "tag": "0001_nebulous_richard_fisk",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 2,
-                  "version": "5",
-                  "when": 1767850796950,
-                  "tag": "0002_yellow_goliath",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 3,
-                  "version": "5",
-                  "when": 1767854487775,
-                  "tag": "0003_worried_talon",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 4,
-                  "version": "5",
-                  "when": 1767864170270,
-                  "tag": "0004_hesitant_sleepwalker",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 5,
-                  "version": "5",
-                  "when": 1767866371177,
-                  "tag": "0005_puzzling_silverclaw",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 6,
-                  "version": "5",
-                  "when": 1767912433773,
-                  "tag": "0006_wealthy_infant_terrible",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 7,
-                  "version": "5",
-                  "when": 1767921650285,
-                  "tag": "0007_loud_onslaught",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 8,
-                  "version": "5",
-                  "when": 1767923219377,
-                  "tag": "0008_lush_iron_lad",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 9,
-                  "version": "5",
-                  "when": 1767924105146,
-                  "tag": "0009_volatile_outlaw_kid",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 10,
-                  "version": "5",
-                  "when": 1767941745294,
-                  "tag": "0010_ordinary_doctor_doom",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 11,
-                  "version": "5",
-                  "when": 1768011414136,
-                  "tag": "0011_loving_franklin_richards",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 12,
-                  "version": "5",
-                  "when": 1768109573677,
-                  "tag": "0012_jazzy_tombstone",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 13,
-                  "version": "5",
-                  "when": 1768110823841,
-                  "tag": "0013_crazy_molecule_man",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 14,
-                  "version": "5",
-                  "when": 1768167866084,
-                  "tag": "0014_cool_dragon_man",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 15,
-                  "version": "5",
-                  "when": 1768203273774,
-                  "tag": "0015_happy_meltdown",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 16,
-                  "version": "5",
-                  "when": 1768208108707,
-                  "tag": "0016_clumsy_bromley",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 17,
-                  "version": "5",
-                  "when": 1768208788575,
-                  "tag": "0017_wonderful_maddog",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 18,
-                  "version": "5",
-                  "when": 1768212665878,
-                  "tag": "0018_flashy_the_leader",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 19,
-                  "version": "5",
-                  "when": 1768214589826,
-                  "tag": "0019_certain_black_tom",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 20,
-                  "version": "5",
-                  "when": 1768260193124,
-                  "tag": "0020_cuddly_talisman",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 21,
-                  "version": "5",
-                  "when": 1768267195402,
-                  "tag": "0021_premium_tinkerer",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 22,
-                  "version": "5",
-                  "when": 1768268016939,
-                  "tag": "0022_tired_cyclops",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 23,
-                  "version": "5",
-                  "when": 1769437677326,
-                  "tag": "0023_wise_marvel_apes",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 24,
-                  "version": "5",
-                  "when": 1770000000000,
-                  "tag": "0024_autonomous_supply_chain_workflows",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 25,
-                  "version": "5",
-                  "when": 1771251256000,
-                  "tag": "0025_investment_grant_checklists",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 26,
-                  "version": "5",
-                  "when": 1772376928000,
-                  "tag": "0026_board_approvals_investor_updates",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 27,
-                  "version": "5",
-                  "when": 1773502601634,
-                  "tag": "0027_fireflies_configs",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 28,
-                  "version": "5",
-                  "when": 1773590400000,
-                  "tag": "0028_fireflies_meeting_tables",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 29,
-                  "version": "5",
-                  "when": 1773676800000,
-                  "tag": "0029_fix_fireflies_meetings_schema",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 30,
-                  "version": "5",
-                  "when": 1776110400000,
-                  "tag": "0030_recipe_costing_module",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 31,
-                  "version": "5",
-                  "when": 1776200000000,
-                  "tag": "0031_recipe_bom_link",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 32,
-                  "version": "5",
-                  "when": 1776300000000,
-                  "tag": "0032_employee_portal",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 33,
-                  "version": "5",
-                  "when": 1776400000000,
-                  "tag": "0033_recipe_copacker_shares",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 34,
-                  "version": "5",
-                  "when": 1776500000000,
-                  "tag": "0034_task_source_external_id",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 35,
-                  "version": "5",
-                  "when": 1777651200000,
-                  "tag": "0035_drive_docs_metadata_only",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 36,
-                  "version": "5",
-                  "when": 1777039200000,
-                  "tag": "0036_crm_contact_dedup_indexes",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 37,
-                  "version": "5",
-                  "when": 1777651300000,
-                  "tag": "0037_data_room_live_financials",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 38,
-                  "version": "5",
-                  "when": 1777651400000,
-                  "tag": "0038_investor_portal",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 39,
-                  "version": "5",
-                  "when": 1777651500000,
-                  "tag": "0039_investor_portal_phase2",
-                  "breakpoints": true
-          },
-          {
-                  "idx": 40,
-                  "version": "5",
-                  "when": 1777651600000,
-                  "tag": "0040_pro_rata_indications",
-                  "breakpoints": true
-          }
-    ]
+        "version": "7",
+        "dialect": "mysql",
+        "entries": [
+                {
+                        "idx": 0,
+                        "version": "5",
+                        "when": 1767752107846,
+                        "tag": "0000_chubby_stardust",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 1,
+                        "version": "5",
+                        "when": 1767848260684,
+                        "tag": "0001_nebulous_richard_fisk",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 2,
+                        "version": "5",
+                        "when": 1767850796950,
+                        "tag": "0002_yellow_goliath",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 3,
+                        "version": "5",
+                        "when": 1767854487775,
+                        "tag": "0003_worried_talon",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 4,
+                        "version": "5",
+                        "when": 1767864170270,
+                        "tag": "0004_hesitant_sleepwalker",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 5,
+                        "version": "5",
+                        "when": 1767866371177,
+                        "tag": "0005_puzzling_silverclaw",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 6,
+                        "version": "5",
+                        "when": 1767912433773,
+                        "tag": "0006_wealthy_infant_terrible",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 7,
+                        "version": "5",
+                        "when": 1767921650285,
+                        "tag": "0007_loud_onslaught",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 8,
+                        "version": "5",
+                        "when": 1767923219377,
+                        "tag": "0008_lush_iron_lad",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 9,
+                        "version": "5",
+                        "when": 1767924105146,
+                        "tag": "0009_volatile_outlaw_kid",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 10,
+                        "version": "5",
+                        "when": 1767941745294,
+                        "tag": "0010_ordinary_doctor_doom",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 11,
+                        "version": "5",
+                        "when": 1768011414136,
+                        "tag": "0011_loving_franklin_richards",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 12,
+                        "version": "5",
+                        "when": 1768109573677,
+                        "tag": "0012_jazzy_tombstone",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 13,
+                        "version": "5",
+                        "when": 1768110823841,
+                        "tag": "0013_crazy_molecule_man",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 14,
+                        "version": "5",
+                        "when": 1768167866084,
+                        "tag": "0014_cool_dragon_man",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 15,
+                        "version": "5",
+                        "when": 1768203273774,
+                        "tag": "0015_happy_meltdown",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 16,
+                        "version": "5",
+                        "when": 1768208108707,
+                        "tag": "0016_clumsy_bromley",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 17,
+                        "version": "5",
+                        "when": 1768208788575,
+                        "tag": "0017_wonderful_maddog",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 18,
+                        "version": "5",
+                        "when": 1768212665878,
+                        "tag": "0018_flashy_the_leader",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 19,
+                        "version": "5",
+                        "when": 1768214589826,
+                        "tag": "0019_certain_black_tom",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 20,
+                        "version": "5",
+                        "when": 1768260193124,
+                        "tag": "0020_cuddly_talisman",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 21,
+                        "version": "5",
+                        "when": 1768267195402,
+                        "tag": "0021_premium_tinkerer",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 22,
+                        "version": "5",
+                        "when": 1768268016939,
+                        "tag": "0022_tired_cyclops",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 23,
+                        "version": "5",
+                        "when": 1769437677326,
+                        "tag": "0023_wise_marvel_apes",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 24,
+                        "version": "5",
+                        "when": 1770000000000,
+                        "tag": "0024_autonomous_supply_chain_workflows",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 25,
+                        "version": "5",
+                        "when": 1771251256000,
+                        "tag": "0025_investment_grant_checklists",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 26,
+                        "version": "5",
+                        "when": 1772376928000,
+                        "tag": "0026_board_approvals_investor_updates",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 27,
+                        "version": "5",
+                        "when": 1773502601634,
+                        "tag": "0027_fireflies_configs",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 28,
+                        "version": "5",
+                        "when": 1773590400000,
+                        "tag": "0028_fireflies_meeting_tables",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 29,
+                        "version": "5",
+                        "when": 1773676800000,
+                        "tag": "0029_fix_fireflies_meetings_schema",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 30,
+                        "version": "5",
+                        "when": 1776110400000,
+                        "tag": "0030_recipe_costing_module",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 31,
+                        "version": "5",
+                        "when": 1776200000000,
+                        "tag": "0031_recipe_bom_link",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 32,
+                        "version": "5",
+                        "when": 1776300000000,
+                        "tag": "0032_employee_portal",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 33,
+                        "version": "5",
+                        "when": 1776400000000,
+                        "tag": "0033_recipe_copacker_shares",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 34,
+                        "version": "5",
+                        "when": 1776500000000,
+                        "tag": "0034_task_source_external_id",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 35,
+                        "version": "5",
+                        "when": 1777651200000,
+                        "tag": "0035_drive_docs_metadata_only",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 36,
+                        "version": "5",
+                        "when": 1777039200000,
+                        "tag": "0036_crm_contact_dedup_indexes",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 37,
+                        "version": "5",
+                        "when": 1777651300000,
+                        "tag": "0036_data_room_live_financials",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 38,
+                        "version": "5",
+                        "when": 1777651400000,
+                        "tag": "0037_investor_portal",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 39,
+                        "version": "5",
+                        "when": 1777651500000,
+                        "tag": "0038_investor_portal_phase2",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 40,
+                        "version": "5",
+                        "when": 1777651600000,
+                        "tag": "0039_pro_rata_indications",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 41,
+                        "version": "5",
+                        "when": 1777651700000,
+                        "tag": "0041_fix_fundraising_campaigns_schema",
+                        "breakpoints": true
+                }
+        ]
 }
