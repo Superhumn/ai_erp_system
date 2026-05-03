@@ -349,8 +349,8 @@ function DashboardLayoutContent({
           disableTransition={isResizing}
         >
           {/* Header: logo + wordmark */}
-          <SidebarHeader className="h-10 justify-center border-b border-sidebar-border">
-            <div className="flex items-center gap-2.5 px-3 transition-all w-full">
+          <SidebarHeader className="h-9 justify-center border-b border-sidebar-border p-0 gap-0">
+            <div className="flex items-center gap-1.5 px-1.5 transition-all w-full">
               <button
                 onClick={toggleSidebar}
                 className="h-7 w-7 flex items-center justify-center hover:bg-sidebar-accent rounded-md transition-colors duration-100 focus:outline-none shrink-0"
@@ -367,13 +367,13 @@ function DashboardLayoutContent({
           </SidebarHeader>
 
           {/* Flat navigation - all items visible, no dropdowns */}
-          <SidebarContent className="overflow-y-auto px-2 py-2">
-            <nav className="flex flex-col gap-px">
+          <SidebarContent className="overflow-y-auto p-0 gap-0">
+            <nav className="flex flex-col">
               {getMenuGroups(user?.role).map((group, gi) => (
                 <div key={group.label}>
-                  {gi > 0 && !isCollapsed && <div className="border-t border-border/30 my-1" />}
+                  {gi > 0 && !isCollapsed && <div className="border-t border-border/30" />}
                   {!isCollapsed && (
-                    <p className="px-2 mb-0.5 text-[10px] font-semibold tracking-wider uppercase text-muted-foreground/60">
+                    <p className="px-1.5 text-[10px] font-semibold tracking-wider uppercase text-muted-foreground/60 leading-tight">
                       {group.label}
                     </p>
                   )}
@@ -383,7 +383,7 @@ function DashboardLayoutContent({
                       <button
                         key={item.path}
                         onClick={() => setLocation(item.path)}
-                        className={`flex items-center gap-2 px-2 py-1 rounded-md text-[13px] transition-colors duration-100 w-full ${
+                        className={`flex items-center gap-1.5 px-1.5 py-0.5 text-[13px] transition-colors duration-100 w-full leading-tight ${
                           isActive
                             ? "bg-primary/10 text-primary font-medium"
                             : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-foreground"
@@ -406,12 +406,12 @@ function DashboardLayoutContent({
           </SidebarContent>
 
           {/* Lightfield-style footer: clean user section */}
-          <SidebarFooter className="p-2 border-t border-sidebar-border">
-            <div className="flex items-center gap-1 px-1 mb-1">
+          <SidebarFooter className="p-0 gap-0 border-t border-sidebar-border">
+            <div className="flex items-center px-1">
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-8 w-8 p-0"
+                className="h-7 w-7 p-0"
                 onClick={() => toggleTheme?.()}
               >
                 {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
@@ -419,7 +419,7 @@ function DashboardLayoutContent({
             </div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button className="flex items-center gap-2.5 rounded-lg px-2 py-2 hover:bg-accent transition-colors duration-100 w-full text-left group-data-[collapsible=icon]:justify-center focus:outline-none">
+                <button className="flex items-center gap-1.5 px-1.5 py-1 hover:bg-accent transition-colors duration-100 w-full text-left group-data-[collapsible=icon]:justify-center focus:outline-none">
                   <Avatar className="h-7 w-7 shrink-0">
                     <AvatarFallback className="text-[11px] font-medium bg-primary/10 text-primary">
                       {user?.name?.charAt(0).toUpperCase() || "U"}

@@ -4801,6 +4801,149 @@ ONLY return the JSON array, no other text.`;
         return { results, totalSheets: files.length };
       }),
 
+    // List files from Google Drive (all types, not just spreadsheets)
+    listDriveFiles: protectedProcedure
+      .input(z.object({
+        mimeType: z.enum([
+          'application/vnd.google-apps.document',
+          'application/vnd.google-apps.spreadsheet',
+          'application/vnd.google-apps.presentation',
+          'application/pdf',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        ]).optional(),
+        pageToken: z.string().optional(),
+      }).optional())
+      .query(async ({ ctx, input }) => {
+        const { accessToken, error: tokenError } = await getValidGoogleToken(ctx.user.id);
+        if (tokenError || !accessToken) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: tokenError || 'Google not connected' });
+        }
+
+        let query = 'trashed=false';
+        if (input?.mimeType) {
+          // mimeType is validated against an enum above — safe to interpolate
+          query += ` and mimeType='${input.mimeType}'`;
+        }
+
+        const params = new URLSearchParams({
+          q: query,
+          fields: 'files(id,name,mimeType,modifiedTime,size),nextPageToken',
+          orderBy: 'modifiedTime desc',
+          pageSize: '30',
+        });
+        if (input?.pageToken) {
+          params.set('pageToken', input.pageToken);
+        }
+
+        const response = await fetch(
+          `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+
+        if (!response.ok) {
+          if (response.status === 401) {
+            throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google token expired. Please reconnect.' });
+          }
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list Drive files' });
+        }
+
+        const data = await response.json();
+        return {
+          files: data.files || [],
+          nextPageToken: data.nextPageToken || null,
+        };
+      }),
+
+    // Export / download a file from Google Drive
+    exportFile: protectedProcedure
+      .input(z.object({
+        fileId: z.string().min(1),
+        exportFormat: z.enum(['pdf', 'xlsx', 'docx', 'csv']),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { accessToken, error: tokenError } = await getValidGoogleToken(ctx.user.id);
+        if (tokenError || !accessToken) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: tokenError || 'Google not connected' });
+        }
+
+        const { fileId, exportFormat } = input;
+
+        // Fetch file metadata from Drive — never trust client-supplied mimeType/name
+        const metaResp = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id%2Cname%2CmimeType`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+        if (!metaResp.ok) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'File not found or access denied' });
+        }
+        const meta = await metaResp.json() as { id: string; name: string; mimeType: string };
+        const fileMimeType = meta.mimeType;
+        // Sanitize filename: strip path separators and control characters, ensure non-empty
+        const rawName = meta.name ?? 'download';
+        const safeName = rawName.replace(/[/\\?%*:|"<>\x00-\x1f]/g, '_').trim() || 'download';
+
+        // Determine the download URL based on file type
+        let url: string;
+        let outputMimeType: string;
+        let extension: string;
+
+        const isGoogleDoc = fileMimeType === 'application/vnd.google-apps.document';
+        const isGoogleSheet = fileMimeType === 'application/vnd.google-apps.spreadsheet';
+        const isGoogleSlides = fileMimeType === 'application/vnd.google-apps.presentation';
+
+        const exportMimeTypes: Record<string, string> = {
+          pdf: 'application/pdf',
+          xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          csv: 'text/csv',
+        };
+
+        if (isGoogleDoc || isGoogleSheet || isGoogleSlides) {
+          // Google Workspace files need export
+          outputMimeType = exportMimeTypes[exportFormat];
+          url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(outputMimeType)}`;
+          extension = exportFormat;
+        } else {
+          // Native files (PDF, XLSX, etc.) — direct download
+          url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`;
+          outputMimeType = fileMimeType;
+          const extMap: Record<string, string> = {
+            'application/pdf': 'pdf',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+            'text/csv': 'csv',
+          };
+          extension = extMap[fileMimeType] || exportFormat;
+        }
+
+        const response = await fetch(url, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+
+        if (!response.ok) {
+          const errText = await response.text().catch(() => 'Unknown error');
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: `Failed to export file: ${response.status} ${errText.slice(0, 200)}`,
+          });
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        const base64 = Buffer.from(arrayBuffer).toString('base64');
+
+        // Build filename with correct extension (strip any existing extension from safe name)
+        const baseName = safeName.replace(/\.[^/.]+$/, '');
+        const outputFilename = `${baseName}.${extension}`;
+
+        return {
+          filename: outputFilename,
+          base64,
+          mimeType: outputMimeType,
+          size: arrayBuffer.byteLength,
+        };
+      }),
+
     // Get past Google Drive sync history so results persist across page reloads
     getSyncHistory: protectedProcedure.query(async ({ ctx }) => {
       const history = await db.getSyncHistory(20);
@@ -22061,6 +22204,230 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
         const note = await db.getNoteById(input.id, ctx.user.id);
         if (!note) throw new TRPCError({ code: "NOT_FOUND", message: "Note not found" });
         await db.deleteNote(input.id, ctx.user.id);
+        return { ok: true };
+      }),
+  }),
+
+  // ============================================
+  // EMAIL SEQUENCES
+  // ============================================
+  emailSequences: router({
+    list: protectedProcedure.query(async ({ ctx }) => {
+      const database = await db.getDb();
+      if (!database) return [];
+      const { emailSequences, emailSequenceSteps } = await import("../drizzle/schema");
+      const rows = await database.select().from(emailSequences).where(eq(emailSequences.userId, ctx.user.id));
+      // Attach step count
+      const withSteps = await Promise.all(rows.map(async (seq: any) => {
+        const steps = await database.select().from(emailSequenceSteps).where(eq(emailSequenceSteps.sequenceId, seq.id));
+        return { ...seq, stepCount: steps.length, steps };
+      }));
+      return withSteps;
+    }),
+
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailSequences, emailSequenceSteps } = await import("../drizzle/schema");
+        const [seq] = await database.select().from(emailSequences).where(and(eq(emailSequences.id, input.id), eq(emailSequences.userId, ctx.user.id)));
+        if (!seq) throw new TRPCError({ code: "NOT_FOUND", message: "Sequence not found" });
+        const steps = await database.select().from(emailSequenceSteps).where(eq(emailSequenceSteps.sequenceId, input.id));
+        return { ...seq, steps: steps.sort((a: any, b: any) => a.stepOrder - b.stepOrder) };
+      }),
+
+    create: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        description: z.string().optional(),
+        status: z.enum(["draft", "active", "paused", "archived"]).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailSequences } = await import("../drizzle/schema");
+        const result = await database.insert(emailSequences).values({
+          userId: ctx.user.id,
+          name: input.name,
+          description: input.description ?? null,
+          status: input.status ?? "draft",
+        });
+        return { id: (result as any)[0].insertId };
+      }),
+
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().min(1).optional(),
+        description: z.string().optional(),
+        status: z.enum(["draft", "active", "paused", "archived"]).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailSequences } = await import("../drizzle/schema");
+        const patch: Record<string, unknown> = {};
+        if (input.name !== undefined) patch.name = input.name;
+        if (input.description !== undefined) patch.description = input.description;
+        if (input.status !== undefined) patch.status = input.status;
+        await database.update(emailSequences).set(patch).where(and(eq(emailSequences.id, input.id), eq(emailSequences.userId, ctx.user.id)));
+        return { ok: true };
+      }),
+
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailSequences, emailSequenceSteps } = await import("../drizzle/schema");
+        // Verify ownership before deleting steps
+        const [seq] = await database.select().from(emailSequences).where(and(eq(emailSequences.id, input.id), eq(emailSequences.userId, ctx.user.id)));
+        if (!seq) throw new TRPCError({ code: "NOT_FOUND", message: "Sequence not found" });
+        await database.delete(emailSequenceSteps).where(eq(emailSequenceSteps.sequenceId, input.id));
+        await database.delete(emailSequences).where(eq(emailSequences.id, input.id));
+        return { ok: true };
+      }),
+
+    addStep: protectedProcedure
+      .input(z.object({
+        sequenceId: z.number(),
+        subject: z.string().min(1),
+        body: z.string().min(1),
+        delayDays: z.number().min(0).default(1),
+        stepOrder: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailSequences, emailSequenceSteps } = await import("../drizzle/schema");
+        const [seq] = await database.select().from(emailSequences).where(and(eq(emailSequences.id, input.sequenceId), eq(emailSequences.userId, ctx.user.id)));
+        if (!seq) throw new TRPCError({ code: "NOT_FOUND", message: "Sequence not found" });
+        const existing = await database.select().from(emailSequenceSteps).where(eq(emailSequenceSteps.sequenceId, input.sequenceId));
+        const order = input.stepOrder ?? existing.length + 1;
+        const result = await database.insert(emailSequenceSteps).values({
+          sequenceId: input.sequenceId,
+          stepOrder: order,
+          subject: input.subject,
+          body: input.body,
+          delayDays: input.delayDays,
+        });
+        return { id: (result as any)[0].insertId };
+      }),
+
+    updateStep: protectedProcedure
+      .input(z.object({
+        stepId: z.number(),
+        subject: z.string().min(1).optional(),
+        body: z.string().min(1).optional(),
+        delayDays: z.number().min(0).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailSequences, emailSequenceSteps } = await import("../drizzle/schema");
+        // Verify the step's parent sequence belongs to the user
+        const [step] = await database.select().from(emailSequenceSteps).where(eq(emailSequenceSteps.id, input.stepId));
+        if (!step) throw new TRPCError({ code: "NOT_FOUND", message: "Step not found" });
+        const [seq] = await database.select().from(emailSequences).where(and(eq(emailSequences.id, step.sequenceId), eq(emailSequences.userId, ctx.user.id)));
+        if (!seq) throw new TRPCError({ code: "FORBIDDEN", message: "Not authorized" });
+        const patch: Record<string, unknown> = {};
+        if (input.subject !== undefined) patch.subject = input.subject;
+        if (input.body !== undefined) patch.body = input.body;
+        if (input.delayDays !== undefined) patch.delayDays = input.delayDays;
+        await database.update(emailSequenceSteps).set(patch).where(eq(emailSequenceSteps.id, input.stepId));
+        return { ok: true };
+      }),
+
+    deleteStep: protectedProcedure
+      .input(z.object({ stepId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailSequences, emailSequenceSteps } = await import("../drizzle/schema");
+        // Verify the step's parent sequence belongs to the user
+        const [step] = await database.select().from(emailSequenceSteps).where(eq(emailSequenceSteps.id, input.stepId));
+        if (!step) throw new TRPCError({ code: "NOT_FOUND", message: "Step not found" });
+        const [seq] = await database.select().from(emailSequences).where(and(eq(emailSequences.id, step.sequenceId), eq(emailSequences.userId, ctx.user.id)));
+        if (!seq) throw new TRPCError({ code: "FORBIDDEN", message: "Not authorized" });
+        await database.delete(emailSequenceSteps).where(eq(emailSequenceSteps.id, input.stepId));
+        return { ok: true };
+      }),
+  }),
+
+  // ============================================
+  // EMAIL CANNED RESPONSES
+  // ============================================
+  emailCannedResponses: router({
+    list: protectedProcedure.query(async ({ ctx }) => {
+      const database = await db.getDb();
+      if (!database) return [];
+      const { emailCannedResponses } = await import("../drizzle/schema");
+      return database.select().from(emailCannedResponses).where(eq(emailCannedResponses.userId, ctx.user.id));
+    }),
+
+    create: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        content: z.string().min(1),
+        shortcut: z.string().optional(),
+        category: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailCannedResponses } = await import("../drizzle/schema");
+        const result = await database.insert(emailCannedResponses).values({
+          userId: ctx.user.id,
+          name: input.name,
+          content: input.content,
+          shortcut: input.shortcut ?? null,
+          category: input.category ?? null,
+        });
+        return { id: (result as any)[0].insertId };
+      }),
+
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().min(1).optional(),
+        content: z.string().min(1).optional(),
+        shortcut: z.string().optional(),
+        category: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailCannedResponses } = await import("../drizzle/schema");
+        const patch: Record<string, unknown> = {};
+        if (input.name !== undefined) patch.name = input.name;
+        if (input.content !== undefined) patch.content = input.content;
+        if (input.shortcut !== undefined) patch.shortcut = input.shortcut;
+        if (input.category !== undefined) patch.category = input.category;
+        await database.update(emailCannedResponses).set(patch).where(and(eq(emailCannedResponses.id, input.id), eq(emailCannedResponses.userId, ctx.user.id)));
+        return { ok: true };
+      }),
+
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailCannedResponses } = await import("../drizzle/schema");
+        await database.delete(emailCannedResponses).where(and(eq(emailCannedResponses.id, input.id), eq(emailCannedResponses.userId, ctx.user.id)));
+        return { ok: true };
+      }),
+
+    incrementUsage: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) return { ok: true };
+        const { emailCannedResponses } = await import("../drizzle/schema");
+        const [row] = await database.select().from(emailCannedResponses).where(and(eq(emailCannedResponses.id, input.id), eq(emailCannedResponses.userId, ctx.user.id)));
+        if (row) {
+          await database.update(emailCannedResponses).set({ usageCount: (row.usageCount ?? 0) + 1 }).where(and(eq(emailCannedResponses.id, input.id), eq(emailCannedResponses.userId, ctx.user.id)));
+        }
         return { ok: true };
       }),
   }),

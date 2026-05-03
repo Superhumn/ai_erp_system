@@ -7,6 +7,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import { AIAgentProvider } from "./contexts/AIAgentContext";
 import DashboardLayout from "./components/DashboardLayout";
 import { ModuleErrorBoundary } from "./components/ModuleErrorBoundary";
+import OfflineIndicator from "@/components/OfflineIndicator";
 
 // Eagerly loaded pages (high-traffic, first paint)
 import Home from "./pages/Home";
@@ -109,6 +110,7 @@ const TimeTracking = lazy(() => import("./pages/hr/TimeTracking"));
 
 // Marketing
 const ContentHub = lazy(() => import("./pages/marketing/ContentHub"));
+const MarketingHub = lazy(() => import("./pages/marketing/MarketingHub"));
 
 // Recruiting
 const Recruiting = lazy(() => import("./pages/hr/Recruiting"));
@@ -299,7 +301,8 @@ function Router() {
           <Route path="/freight/customs/:id" component={CustomsDetail} />
 
           {/* Marketing */}
-          <Route path="/marketing" component={ContentHub} />
+          <Route path="/marketing" component={MarketingHub} />
+          <Route path="/marketing/content" component={ContentHub} />
 
           {/* Recruiting */}
           <Route path="/hr/recruiting" component={Recruiting} />
@@ -384,6 +387,7 @@ function App() {
         <AIAgentProvider>
           <TooltipProvider>
             <Toaster />
+            <OfflineIndicator />
             <Suspense fallback={<PageLoader />}>
               <Switch>
                 {/* Public routes (outside dashboard) */}
