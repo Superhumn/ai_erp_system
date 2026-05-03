@@ -4804,7 +4804,14 @@ ONLY return the JSON array, no other text.`;
     // List files from Google Drive (all types, not just spreadsheets)
     listDriveFiles: protectedProcedure
       .input(z.object({
-        mimeType: z.string().optional(),
+        mimeType: z.enum([
+          'application/vnd.google-apps.document',
+          'application/vnd.google-apps.spreadsheet',
+          'application/vnd.google-apps.presentation',
+          'application/pdf',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        ]).optional(),
         pageToken: z.string().optional(),
       }).optional())
       .query(async ({ ctx, input }) => {
@@ -4815,6 +4822,7 @@ ONLY return the JSON array, no other text.`;
 
         let query = 'trashed=false';
         if (input?.mimeType) {
+          // mimeType is validated against an enum above — safe to interpolate
           query += ` and mimeType='${input.mimeType}'`;
         }
 
@@ -4851,8 +4859,6 @@ ONLY return the JSON array, no other text.`;
     exportFile: protectedProcedure
       .input(z.object({
         fileId: z.string().min(1),
-        fileName: z.string(),
-        fileMimeType: z.string(),
         exportFormat: z.enum(['pdf', 'xlsx', 'docx', 'csv']),
       }))
       .mutation(async ({ ctx, input }) => {
@@ -4861,7 +4867,21 @@ ONLY return the JSON array, no other text.`;
           throw new TRPCError({ code: 'PRECONDITION_FAILED', message: tokenError || 'Google not connected' });
         }
 
-        const { fileId, fileName, fileMimeType, exportFormat } = input;
+        const { fileId, exportFormat } = input;
+
+        // Fetch file metadata from Drive — never trust client-supplied mimeType/name
+        const metaResp = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id%2Cname%2CmimeType`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+        if (!metaResp.ok) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'File not found or access denied' });
+        }
+        const meta = await metaResp.json() as { id: string; name: string; mimeType: string };
+        const fileMimeType = meta.mimeType;
+        // Sanitize filename: strip path separators and control characters, ensure non-empty
+        const rawName = meta.name ?? 'download';
+        const safeName = rawName.replace(/[/\\?%*:|"<>\x00-\x1f]/g, '_').trim() || 'download';
 
         // Determine the download URL based on file type
         let url: string;
@@ -4872,20 +4892,21 @@ ONLY return the JSON array, no other text.`;
         const isGoogleSheet = fileMimeType === 'application/vnd.google-apps.spreadsheet';
         const isGoogleSlides = fileMimeType === 'application/vnd.google-apps.presentation';
 
+        const exportMimeTypes: Record<string, string> = {
+          pdf: 'application/pdf',
+          xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          csv: 'text/csv',
+        };
+
         if (isGoogleDoc || isGoogleSheet || isGoogleSlides) {
           // Google Workspace files need export
-          const exportMimeTypes: Record<string, string> = {
-            pdf: 'application/pdf',
-            xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            csv: 'text/csv',
-          };
           outputMimeType = exportMimeTypes[exportFormat];
-          url = `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=${encodeURIComponent(outputMimeType)}`;
+          url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(outputMimeType)}`;
           extension = exportFormat;
         } else {
           // Native files (PDF, XLSX, etc.) — direct download
-          url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+          url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`;
           outputMimeType = fileMimeType;
           const extMap: Record<string, string> = {
             'application/pdf': 'pdf',
@@ -4911,8 +4932,8 @@ ONLY return the JSON array, no other text.`;
         const arrayBuffer = await response.arrayBuffer();
         const base64 = Buffer.from(arrayBuffer).toString('base64');
 
-        // Build filename with correct extension
-        const baseName = fileName.replace(/\.[^/.]+$/, '');
+        // Build filename with correct extension (strip any existing extension from safe name)
+        const baseName = safeName.replace(/\.[^/.]+$/, '');
         const outputFilename = `${baseName}.${extension}`;
 
         return {

@@ -202,10 +202,13 @@ function GoogleDriveFiles() {
       for (let i = 0; i < byteChars.length; i++) byteArray[i] = byteChars.charCodeAt(i);
       const blob = new Blob([byteArray], { type: result.mimeType });
       const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
+      const url = URL.createObjectURL(blob);
+      a.href = url;
       a.download = result.filename;
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(a.href);
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
       setDownloadingId(null);
       toast.success(`Downloaded ${result.filename}`);
     },
@@ -224,8 +227,6 @@ function GoogleDriveFiles() {
     setDownloadingId(file.id);
     exportMutation.mutate({
       fileId: file.id,
-      fileName: file.name,
-      fileMimeType: file.mimeType,
       exportFormat: exp.format,
     });
   };
