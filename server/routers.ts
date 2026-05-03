@@ -26,6 +26,8 @@ import type { NoteAppliedItem, NoteParseResult, NoteParsedItem } from "@shared/n
 import { employeePortalRouter } from "./routers/employeePortal";
 import { parseCopackerInventoryEmail, applyCopackerInventoryUpdate } from "./copackerEmailExtractor";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
+import { parseInvoiceText } from "./_core/invoiceTextParser";
+import { parseEntityText } from "./_core/universalTextParser";
 import { detectFinancialAnomalies, forecastRevenue, predictCashFlow, classifyTransactions } from "./financeAiService";
 import { predictAttrition, benchmarkCompensation, analyzePerformance, planWorkforce } from "./hrAiService";
 import { predictYield, forecastQuality, optimizeProduction, predictMaintenance } from "./manufacturingAiService";
@@ -1112,11 +1114,84 @@ ONLY return the JSON array, no other text.`;
         };
       }),
     createFromText: financeProcedure
-      .input(z.object({ text: z.string() }))
-      .mutation(async () => ({ id: 0, invoiceNumber: 'INV-STUB', parsed: null as any, invoiceId: 0 })),
+      .input(z.object({ text: z.string().min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        const parsed = await parseInvoiceText(input.text);
+
+        let customer = await db.getCustomerByName(parsed.customerName);
+        if (!customer) {
+          const created = await db.createCustomer({
+            name: parsed.customerName,
+            type: "business",
+            status: "active",
+          });
+          customer = await db.getCustomerById(created.id);
+        }
+        if (!customer) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Failed to resolve customer" });
+        }
+
+        const invoiceNumber = `INV-${Date.now().toString(36).toUpperCase()}`;
+        const issueDate = new Date();
+        const dueDate = parsed.dueInDays
+          ? new Date(issueDate.getTime() + parsed.dueInDays * 24 * 60 * 60 * 1000)
+          : null;
+
+        const total = parsed.amount.toFixed(2);
+        const created = await db.createInvoice({
+          invoiceNumber,
+          customerId: customer.id,
+          type: "invoice",
+          status: "draft",
+          issueDate,
+          dueDate: dueDate ?? undefined,
+          subtotal: total,
+          totalAmount: total,
+          terms: parsed.paymentTerms,
+          createdBy: ctx.user.id,
+        });
+
+        await db.createInvoiceItem({
+          invoiceId: created.id,
+          description: parsed.quantity && parsed.unit
+            ? `${parsed.description} (${parsed.quantity} ${parsed.unit})`
+            : parsed.description,
+          quantity: (parsed.quantity ?? 1).toString(),
+          unitPrice: (parsed.amount / (parsed.quantity ?? 1)).toFixed(2),
+          totalAmount: total,
+        });
+
+        await createAuditLog(ctx.user.id, 'create', 'invoice', created.id, invoiceNumber);
+
+        return { id: created.id, invoiceNumber, parsed, invoiceId: created.id };
+      }),
     approveAndEmail: financeProcedure
       .input(z.object({ invoiceId: z.number() }))
-      .mutation(async () => ({ success: true, invoiceNumber: 'INV-STUB' })),
+      .mutation(async ({ input, ctx }) => {
+        const invoice = await db.getInvoiceById(input.invoiceId);
+        if (!invoice) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Invoice not found" });
+        }
+
+        await db.updateInvoice(input.invoiceId, {
+          status: "sent",
+          approvedBy: ctx.user.id,
+          approvedAt: new Date(),
+        });
+
+        const emailResult = await emailService.sendInvoiceEmail(input.invoiceId, {
+          triggeredBy: ctx.user.id,
+        });
+
+        await createAuditLog(ctx.user.id, 'approve', 'invoice', input.invoiceId, invoice.invoiceNumber);
+
+        return {
+          success: true,
+          invoiceNumber: invoice.invoiceNumber,
+          emailQueued: emailResult.success,
+          emailError: emailResult.success ? undefined : emailResult.error,
+        };
+      }),
     delete: financeProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input, ctx }) => {
@@ -1133,7 +1208,12 @@ ONLY return the JSON array, no other text.`;
     list: protectedProcedure.query(() => [] as any[]),
     createFromText: opsProcedure
       .input(z.object({ text: z.string() }))
-      .mutation(async () => ({ id: 0, billNumber: 'BILL-STUB' })),
+      .mutation(async () => {
+        throw new TRPCError({
+          code: "NOT_IMPLEMENTED",
+          message: "Vendor bill ingestion is not yet supported. Use Purchase Orders for vendor liabilities, or import bills via QuickBooks sync.",
+        });
+      }),
   }),
 
   // ============================================
@@ -2076,9 +2156,6 @@ ONLY return the JSON array, no other text.`;
         sendEmail: z.boolean().default(false),
       }))
       .mutation(async ({ input, ctx }) => {
-        if (!input.preview) {
-          return { success: true, po: { id: 0, poNumber: 'PO-STUB', status: 'draft' as const }, emailSent: false, emailError: undefined as string | undefined };
-        }
         // Create the PO from preview
         const po = await createPOFromPreview(input.preview as any, ctx.user.id);
         
@@ -4799,6 +4876,149 @@ ONLY return the JSON array, no other text.`;
         });
 
         return { results, totalSheets: files.length };
+      }),
+
+    // List files from Google Drive (all types, not just spreadsheets)
+    listDriveFiles: protectedProcedure
+      .input(z.object({
+        mimeType: z.enum([
+          'application/vnd.google-apps.document',
+          'application/vnd.google-apps.spreadsheet',
+          'application/vnd.google-apps.presentation',
+          'application/pdf',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        ]).optional(),
+        pageToken: z.string().optional(),
+      }).optional())
+      .query(async ({ ctx, input }) => {
+        const { accessToken, error: tokenError } = await getValidGoogleToken(ctx.user.id);
+        if (tokenError || !accessToken) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: tokenError || 'Google not connected' });
+        }
+
+        let query = 'trashed=false';
+        if (input?.mimeType) {
+          // mimeType is validated against an enum above — safe to interpolate
+          query += ` and mimeType='${input.mimeType}'`;
+        }
+
+        const params = new URLSearchParams({
+          q: query,
+          fields: 'files(id,name,mimeType,modifiedTime,size),nextPageToken',
+          orderBy: 'modifiedTime desc',
+          pageSize: '30',
+        });
+        if (input?.pageToken) {
+          params.set('pageToken', input.pageToken);
+        }
+
+        const response = await fetch(
+          `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+
+        if (!response.ok) {
+          if (response.status === 401) {
+            throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google token expired. Please reconnect.' });
+          }
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list Drive files' });
+        }
+
+        const data = await response.json();
+        return {
+          files: data.files || [],
+          nextPageToken: data.nextPageToken || null,
+        };
+      }),
+
+    // Export / download a file from Google Drive
+    exportFile: protectedProcedure
+      .input(z.object({
+        fileId: z.string().min(1),
+        exportFormat: z.enum(['pdf', 'xlsx', 'docx', 'csv']),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { accessToken, error: tokenError } = await getValidGoogleToken(ctx.user.id);
+        if (tokenError || !accessToken) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: tokenError || 'Google not connected' });
+        }
+
+        const { fileId, exportFormat } = input;
+
+        // Fetch file metadata from Drive — never trust client-supplied mimeType/name
+        const metaResp = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id%2Cname%2CmimeType`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+        if (!metaResp.ok) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'File not found or access denied' });
+        }
+        const meta = await metaResp.json() as { id: string; name: string; mimeType: string };
+        const fileMimeType = meta.mimeType;
+        // Sanitize filename: strip path separators and control characters, ensure non-empty
+        const rawName = meta.name ?? 'download';
+        const safeName = rawName.replace(/[/\\?%*:|"<>\x00-\x1f]/g, '_').trim() || 'download';
+
+        // Determine the download URL based on file type
+        let url: string;
+        let outputMimeType: string;
+        let extension: string;
+
+        const isGoogleDoc = fileMimeType === 'application/vnd.google-apps.document';
+        const isGoogleSheet = fileMimeType === 'application/vnd.google-apps.spreadsheet';
+        const isGoogleSlides = fileMimeType === 'application/vnd.google-apps.presentation';
+
+        const exportMimeTypes: Record<string, string> = {
+          pdf: 'application/pdf',
+          xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          csv: 'text/csv',
+        };
+
+        if (isGoogleDoc || isGoogleSheet || isGoogleSlides) {
+          // Google Workspace files need export
+          outputMimeType = exportMimeTypes[exportFormat];
+          url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(outputMimeType)}`;
+          extension = exportFormat;
+        } else {
+          // Native files (PDF, XLSX, etc.) — direct download
+          url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`;
+          outputMimeType = fileMimeType;
+          const extMap: Record<string, string> = {
+            'application/pdf': 'pdf',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+            'text/csv': 'csv',
+          };
+          extension = extMap[fileMimeType] || exportFormat;
+        }
+
+        const response = await fetch(url, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+
+        if (!response.ok) {
+          const errText = await response.text().catch(() => 'Unknown error');
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: `Failed to export file: ${response.status} ${errText.slice(0, 200)}`,
+          });
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        const base64 = Buffer.from(arrayBuffer).toString('base64');
+
+        // Build filename with correct extension (strip any existing extension from safe name)
+        const baseName = safeName.replace(/\.[^/.]+$/, '');
+        const outputFilename = `${baseName}.${extension}`;
+
+        return {
+          filename: outputFilename,
+          base64,
+          mimeType: outputMimeType,
+          size: arrayBuffer.byteLength,
+        };
       }),
 
     // Get past Google Drive sync history so results persist across page reloads
@@ -9579,8 +9799,65 @@ Provide a brief status summary, any missing documents, and next steps.`;
         return { success: true };
       }),
     createFromText: opsProcedure
-      .input(z.object({ text: z.string() }))
-      .mutation(async () => ({ id: 0, workOrderNumber: 'WO-STUB' })),
+      .input(z.object({ text: z.string().min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        const parsed = await parseEntityText(input.text, "work_order");
+        const productName = (parsed.productName as string | undefined)?.trim();
+        const quantity = Number(parsed.quantity);
+        if (!productName || !Number.isFinite(quantity) || quantity <= 0) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Could not extract a product and quantity from the text.",
+          });
+        }
+
+        const allProducts = await db.getProducts();
+        const product = allProducts.find(
+          (p) => p.name?.toLowerCase() === productName.toLowerCase()
+            || p.sku?.toLowerCase() === productName.toLowerCase(),
+        )
+          ?? allProducts.find((p) => p.name?.toLowerCase().includes(productName.toLowerCase()));
+        if (!product) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: `No product matched "${productName}". Create the product first or use an existing SKU.`,
+          });
+        }
+
+        const boms = await db.getBillOfMaterials({ productId: product.id, status: "active" });
+        const bom = boms[0];
+        if (!bom) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: `No active BOM exists for product "${product.name}". Create a BOM before scheduling production.`,
+          });
+        }
+
+        const priorityMap: Record<string, "low" | "normal" | "high" | "urgent"> = {
+          low: "low",
+          medium: "normal",
+          normal: "normal",
+          high: "high",
+          urgent: "urgent",
+        };
+        const rawPriority = (parsed.priority as string | undefined)?.toLowerCase() ?? "normal";
+        const priority = priorityMap[rawPriority] ?? "normal";
+
+        const created = await manufacturingDb.createWorkOrder({
+          productId: product.id,
+          bomId: bom.id,
+          quantity: quantity.toString(),
+          unit: (parsed.unit as string | undefined) ?? "EA",
+          status: "draft",
+          priority,
+          scheduledEndDate: parsed.dueDate ? new Date(parsed.dueDate as string) : undefined,
+          notes: (parsed.notes as string | undefined) ?? `Created from text: "${input.text}"`,
+          createdBy: ctx.user.id,
+        });
+
+        await createAuditLog(ctx.user.id, 'create', 'work_order', created.id, created.workOrderNumber);
+        return { id: created.id, workOrderNumber: created.workOrderNumber };
+      }),
     delete: opsProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input, ctx }) => {
@@ -9595,7 +9872,12 @@ Provide a brief status summary, any missing documents, and next steps.`;
     list: protectedProcedure.query(() => [] as any[]),
     createFromText: opsProcedure
       .input(z.object({ text: z.string() }))
-      .mutation(async () => ({ id: 0, orderNumber: 'PROD-STUB' })),
+      .mutation(async () => {
+        throw new TRPCError({
+          code: "NOT_IMPLEMENTED",
+          message: "Production Orders are not a separate entity in this system. Use Work Orders (workOrders.createFromText) for production scheduling.",
+        });
+      }),
   }),
 
   // Raw Material Inventory
@@ -16730,7 +17012,7 @@ Ask if they received the original request and if they can provide a quote.`;
       update: protectedProcedure
         .input(z.object({
           id: z.number(),
-          // Deal title is locked to the contact's company — not editable.
+          name: z.string().optional(),
           description: z.string().optional(),
           stage: z.string().optional(),
           amount: z.string().optional(),
@@ -20683,13 +20965,22 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
   banking: router({
     // Get all Mercury accounts with balances
     accounts: protectedProcedure.query(async () => {
-      const { getMercuryAccounts } = await import("./mercuryService");
+      const { getMercuryAccounts, isMercuryConfigured } = await import("./mercuryService");
+      if (!isMercuryConfigured()) {
+        return { accounts: [], configured: false };
+      }
       return getMercuryAccounts();
     }),
 
     // Sync transactions from Mercury
     syncTransactions: protectedProcedure.mutation(async () => {
-      const { getMercuryAccounts, getMercuryTransactions } = await import("./mercuryService");
+      const { getMercuryAccounts, getMercuryTransactions, isMercuryConfigured } = await import("./mercuryService");
+      if (!isMercuryConfigured()) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "Mercury banking is not configured. Set MERCURY_API_TOKEN to enable transaction sync.",
+        });
+      }
       const accounts = await getMercuryAccounts();
       let totalImported = 0;
       let totalSkipped = 0;

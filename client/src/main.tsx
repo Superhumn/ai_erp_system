@@ -16,7 +16,20 @@ import "./index.css";
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: 1,
+      retry: (failureCount, error) => {
+        // Don't retry if offline — serve from cache instead
+        if (!navigator.onLine) return false;
+        // Skip retry for ignorable errors
+        if (error instanceof TRPCClientError) {
+          const msg = error.message || "";
+          if (msg.includes("not configured") || msg.includes("not available") ||
+              msg.includes("PRECONDITION_FAILED") || msg.includes("Database not available") ||
+              (msg.includes("table") && msg.includes("doesn't exist"))) {
+            return false;
+          }
+        }
+        return failureCount < 1;
+      },
       staleTime: 30_000, // 30s — prevents constant refetching
       refetchOnWindowFocus: false,
       // Show cached data while offline; refetch transparently when online.

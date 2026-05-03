@@ -167,6 +167,35 @@ export function getTools(): Anthropic.Tool[] {
       },
     },
     {
+      name: "send_sms",
+      description:
+        "Send an SMS text message to a vendor, customer, or CRM contact via Twilio. Can also log a manually-sent text or look up delivery status. All messages are recorded in the CRM interaction history. Respects opted-out contacts.",
+      input_schema: {
+        type: "object" as const,
+        properties: {
+          action: {
+            type: "string",
+            enum: ["send_sms", "log_sms", "get_sms_status"],
+            description: "send_sms to send via Twilio, log_sms to record a manually-sent text, get_sms_status to fetch delivery status by message SID.",
+          },
+          payload: {
+            type: "object",
+            description:
+              "For send_sms: { contactType, contactId, body, purpose? } or { phoneNumber, body, purpose? }. For log_sms: { contactType, contactId, body, purpose? }. For get_sms_status: { messageSid }.",
+            properties: {
+              contactType: { type: "string", enum: ["vendor", "customer", "crm_contact"] },
+              contactId: { type: "number" },
+              phoneNumber: { type: "string", description: "Direct E.164 phone number (optional if contactType+contactId provided)" },
+              body: { type: "string", description: "Message text. Max 1600 characters." },
+              purpose: { type: "string", description: "Brief reason for the text, used as the CRM interaction subject." },
+              messageSid: { type: "string", description: "Twilio message SID for status checks" },
+            },
+          },
+        },
+        required: ["action"],
+      },
+    },
+    {
       name: "manage_contacts",
       description:
         "Search, look up, and manage contacts across vendors, customers, and CRM. View unified interaction history (emails, calls, notes) for any contact. All communication channels in one place.",
