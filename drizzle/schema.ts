@@ -5430,6 +5430,29 @@ export const agentCallLogs = mysqlTable("agent_call_logs", {
 export type AgentCallLog = typeof agentCallLogs.$inferSelect;
 export type InsertAgentCallLog = typeof agentCallLogs.$inferInsert;
 
+export const agentSmsLogs = mysqlTable("agent_sms_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  contactType: varchar("contactType", { length: 32 }).notNull(),
+  contactId: int("contactId").notNull(),
+  contactName: varchar("contactName", { length: 255 }).notNull(),
+  phoneNumber: varchar("phoneNumber", { length: 32 }).notNull(),
+  direction: mysqlEnum("direction", ["inbound", "outbound"]).default("outbound").notNull(),
+  status: mysqlEnum("status", ["queued", "sending", "sent", "delivered", "undelivered", "failed", "received"]).default("queued").notNull(),
+  body: text("body").notNull(),
+  purpose: text("purpose"),
+  twilioMessageSid: varchar("twilioMessageSid", { length: 64 }),
+  errorCode: varchar("errorCode", { length: 32 }),
+  errorMessage: text("errorMessage"),
+  numSegments: int("numSegments"),
+  crmInteractionId: int("crmInteractionId"),
+  sentBy: int("sentBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type AgentSmsLog = typeof agentSmsLogs.$inferSelect;
+export type InsertAgentSmsLog = typeof agentSmsLogs.$inferInsert;
+
 // ============================================
 // CRM INVESTORS & FUNDRAISING
 // ============================================

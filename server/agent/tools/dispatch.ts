@@ -4,6 +4,7 @@ import { queryDatabase } from "./adapters/db";
 import { runSupplyChainWorkflow } from "./adapters/supplyChain";
 import { runEmailCommunication } from "./adapters/email";
 import { runPhoneCall } from "./adapters/call";
+import { runSmsCommunication } from "./adapters/sms";
 import { runContactLookup } from "./adapters/contacts";
 import type { ToolAdapterInput } from "../types";
 
@@ -27,6 +28,8 @@ export async function dispatchTool(name: string, input: unknown): Promise<string
       return JSON.stringify(await runEmailCommunication(i as any));
     case "make_phone_call":
       return JSON.stringify(await runPhoneCall(i as any));
+    case "send_sms":
+      return JSON.stringify(await runSmsCommunication(i as any));
     case "manage_contacts":
       return JSON.stringify(await runContactLookup(i as any));
     default:

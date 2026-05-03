@@ -16873,7 +16873,7 @@ Ask if they received the original request and if they can provide a quote.`;
       update: protectedProcedure
         .input(z.object({
           id: z.number(),
-          // Deal title is locked to the contact's company — not editable.
+          name: z.string().optional(),
           description: z.string().optional(),
           stage: z.string().optional(),
           amount: z.string().optional(),

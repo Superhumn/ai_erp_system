@@ -993,7 +993,7 @@ Source: `server/db.ts` (13076 lines, 938 top-level exports, 109 comment-banner s
 - `updateCrmDeal` — L9163 — ✓ `db/crm`
 - `deleteCrmDeal` — L9178 — ✓ `db/crm`
 - `findCrmDealByCompany` — L9187 — ✗ legacy-only
-- `hasPendingDealApprovalForCompany` — L9206 — ✗ legacy-only
+- `hasPendingDealApprovalForCompany` — L9207 — ✗ legacy-only
 - `getCrmDealStats` — L9218 — ✓ `db/crm`
 - `getContactCaptures` — L9247 — ✓ `db/crm`
 - `getContactCaptureById` — L9279 — ✓ `db/crm`
