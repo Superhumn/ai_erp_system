@@ -20,6 +20,7 @@ export const users = mysqlTable("users", {
   linkedVendorId: int("linkedVendorId"),
   linkedWarehouseId: int("linkedWarehouseId"),
   isActive: boolean("isActive").default(true).notNull(),
+  emailVerified: boolean("emailVerified").default(false).notNull(),
   invitedBy: int("invitedBy"),
   invitedAt: timestamp("invitedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -29,6 +30,20 @@ export const users = mysqlTable("users", {
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
+
+// Single-use auth tokens (email verification, password reset).
+// Backed by the database so verification/reset flows work across multiple
+// app instances.
+export const authTokens = mysqlTable("authTokens", {
+  token: varchar("token", { length: 128 }).primaryKey(),
+  type: mysqlEnum("type", ["email_verification", "password_reset"]).notNull(),
+  email: varchar("email", { length: 320 }).notNull(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type AuthToken = typeof authTokens.$inferSelect;
+export type InsertAuthToken = typeof authTokens.$inferInsert;
 
 // Local authentication credentials for email/password auth
 export const localAuthCredentials = mysqlTable("localAuthCredentials", {
@@ -5429,6 +5444,29 @@ export const agentCallLogs = mysqlTable("agent_call_logs", {
 });
 export type AgentCallLog = typeof agentCallLogs.$inferSelect;
 export type InsertAgentCallLog = typeof agentCallLogs.$inferInsert;
+
+export const agentSmsLogs = mysqlTable("agent_sms_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  contactType: varchar("contactType", { length: 32 }).notNull(),
+  contactId: int("contactId").notNull(),
+  contactName: varchar("contactName", { length: 255 }).notNull(),
+  phoneNumber: varchar("phoneNumber", { length: 32 }).notNull(),
+  direction: mysqlEnum("direction", ["inbound", "outbound"]).default("outbound").notNull(),
+  status: mysqlEnum("status", ["queued", "sending", "sent", "delivered", "undelivered", "failed", "received"]).default("queued").notNull(),
+  body: text("body").notNull(),
+  purpose: text("purpose"),
+  twilioMessageSid: varchar("twilioMessageSid", { length: 64 }),
+  errorCode: varchar("errorCode", { length: 32 }),
+  errorMessage: text("errorMessage"),
+  numSegments: int("numSegments"),
+  crmInteractionId: int("crmInteractionId"),
+  sentBy: int("sentBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type AgentSmsLog = typeof agentSmsLogs.$inferSelect;
+export type InsertAgentSmsLog = typeof agentSmsLogs.$inferInsert;
 
 // ============================================
 // CRM INVESTORS & FUNDRAISING
