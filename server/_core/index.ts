@@ -1110,6 +1110,54 @@ async function startServer() {
   });
 
   // QuickBooks OAuth callback
+  // YouTube (Google) OAuth callback for marketing connections.
+  // On success, stores the access + refresh tokens + expiry under the
+  // social_platform_credentials table so the publisher can use them.
+  app.get('/api/oauth/youtube/callback', oauthCallbackLimiter, async (req, res) => {
+    const { code, state, error } = req.query;
+    if (error) return res.redirect(`/marketing?yt_error=${encodeURIComponent(String(error))}`);
+    if (!code || !state) return res.redirect('/marketing?yt_error=missing_params');
+    try {
+      // Match the Shopify callback pattern: re-authenticate the request and
+      // verify the logged-in user matches the signed state. Mitigates risk if
+      // a state token is exfiltrated.
+      const { sdk } = await import('./sdk');
+      let user: any;
+      try { user = await sdk.authenticateRequest(req); }
+      catch { return res.redirect('/marketing?yt_error=not_authenticated'); }
+      if (!user) return res.redirect('/marketing?yt_error=not_authenticated');
+
+      const { verifySignedOAuthState, encrypt } = await import('./crypto');
+      const statePayload = verifySignedOAuthState(state as string);
+      if (!statePayload || statePayload.provider !== 'youtube' || typeof statePayload.userId !== 'number') {
+        return res.redirect('/marketing?yt_error=invalid_state');
+      }
+      if (statePayload.userId !== user.id) {
+        return res.redirect('/marketing?yt_error=user_mismatch');
+      }
+      const userId = user.id;
+      const { exchangeYouTubeCode, fetchYouTubeChannel } = await import('./youtube');
+      const tokens = await exchangeYouTubeCode(code as string);
+      const channel = await fetchYouTubeChannel(tokens.accessToken);
+      const dbMod = await import('../db');
+      // Encrypt tokens at rest. Decrypted via safeDecryptToken at use-time.
+      await dbMod.upsertSocialPlatformCredential({
+        platform: 'youtube',
+        accountHandle: channel?.handle ?? null,
+        externalAccountId: channel?.id ?? null,
+        accessToken: encrypt(tokens.accessToken),
+        refreshToken: encrypt(tokens.refreshToken),
+        tokenExpiresAt: tokens.expiresAt,
+        isActive: true,
+        createdBy: userId,
+      });
+      res.redirect('/marketing?yt_success=connected');
+    } catch (err: any) {
+      logger.error("YouTube OAuth error", { error: err?.message ?? String(err) });
+      res.redirect(`/marketing?yt_error=${encodeURIComponent(err?.message ?? 'oauth_failed')}`);
+    }
+  });
+
   app.get('/api/oauth/quickbooks/callback', oauthCallbackLimiter, async (req, res) => {
     const { code, state, realmId } = req.query;
     if (!code || !state || !realmId) return res.redirect('/settings/integrations?quickbooks_error=missing_params');

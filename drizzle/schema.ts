@@ -6800,6 +6800,99 @@ export type CodeAiSession = typeof codeAiSessions.$inferSelect;
 export type InsertCodeAiSession = typeof codeAiSessions.$inferInsert;
 
 // ============================================
+// MARKETING — VIDEO ASSETS & SOCIAL POSTING
+// ============================================
+
+// One uploaded video, optionally with multiple orientation-specific cuts.
+// Availability is determined by which of `horizontalUrl`, `verticalUrl`,
+// and `squareUrl` are populated so the publisher can match each platform
+// to its preferred orientation.
+export const marketingVideos = mysqlTable("marketing_videos", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  title: varchar("title", { length: 256 }).notNull(),
+  description: text("description"),
+  // Storage URLs for each available cut. Null = that aspect ratio is not provided.
+  horizontalUrl: text("horizontalUrl"),
+  verticalUrl: text("verticalUrl"),
+  squareUrl: text("squareUrl"),
+  thumbnailUrl: text("thumbnailUrl"),
+  durationSec: int("durationSec"),
+  // Comma-separated tags / hashtags reused across platforms.
+  tags: text("tags"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type MarketingVideo = typeof marketingVideos.$inferSelect;
+export type InsertMarketingVideo = typeof marketingVideos.$inferInsert;
+
+// One row per (video, platform) attempt. The publisher writes one of these
+// for each platform fan-out and updates `status`/`externalId` as the upload
+// progresses.
+export const socialPosts = mysqlTable("social_posts", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  videoId: int("videoId").notNull(),
+  platform: mysqlEnum("platform", [
+    "tiktok",
+    "youtube",
+    "youtube_shorts",
+    "instagram_reels",
+    "instagram_feed",
+  ]).notNull(),
+  // Which cut was actually published — picked by the platform-fit selector.
+  aspectRatio: mysqlEnum("aspectRatio", ["horizontal", "vertical", "square"]).notNull(),
+  caption: text("caption"),
+  hashtags: text("hashtags"),
+  status: mysqlEnum("status", [
+    "pending",
+    "scheduled",
+    "uploading",
+    "published",
+    "failed",
+    "skipped",
+  ]).default("pending").notNull(),
+  // Skipped means the user requested this platform but no compatible cut was
+  // available (e.g. TikTok with horizontal-only video). Stored so the UI can
+  // explain the gap.
+  skipReason: varchar("skipReason", { length: 256 }),
+  scheduledAt: timestamp("scheduledAt"),
+  publishedAt: timestamp("publishedAt"),
+  externalId: varchar("externalId", { length: 256 }),
+  externalUrl: text("externalUrl"),
+  errorMessage: text("errorMessage"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SocialPost = typeof socialPosts.$inferSelect;
+export type InsertSocialPost = typeof socialPosts.$inferInsert;
+
+// Per-company OAuth credentials for each social platform. Tokens are stored
+// encrypted-at-rest at the DB level (existing infra); rotation handled by the
+// platform-specific refresh helpers.
+export const socialPlatformCredentials = mysqlTable("social_platform_credentials", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  platform: mysqlEnum("platform", ["tiktok", "youtube", "instagram"]).notNull(),
+  accountHandle: varchar("accountHandle", { length: 256 }),
+  accessToken: text("accessToken"),
+  refreshToken: text("refreshToken"),
+  tokenExpiresAt: timestamp("tokenExpiresAt"),
+  externalAccountId: varchar("externalAccountId", { length: 256 }),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SocialPlatformCredential = typeof socialPlatformCredentials.$inferSelect;
+export type InsertSocialPlatformCredential = typeof socialPlatformCredentials.$inferInsert;
+
+// ============================================
 // QUICK NOTES — Apple-Notes-style capture that an LLM parses
 // into actionable items routed elsewhere (tasks, CRM, etc.)
 // ============================================
