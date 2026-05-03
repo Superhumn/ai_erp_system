@@ -1,0 +1,27 @@
+client/src/pages/cx/CustomerSupport.tsx
+  a4537c253fc65a92 91-96,104-112,134-139,143-162
+client/src/App.tsx
+  a4537c253fc65a92 10
+client/src/pages/sales/OrderDetail.tsx
+  a4537c253fc65a92 41,125-129
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "bca897a9aeaa453e0f95c2eeae389b42c282adf9",
+  "prompts": {
+    "a4537c253fc65a92": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "24d42b8f-d7fb-43ad-afe5-e3bce469a227",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Jade Cheng",
+      "messages": [],
+      "total_additions": 9954,
+      "total_deletions": 8,
+      "accepted_lines": 9950,
+      "overriden_lines": 0
+    }
+  }
+}
