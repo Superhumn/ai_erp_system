@@ -1,4 +1,5 @@
 # AI ERP System
+<!-- test: claude-agent-required -->
 
 A modern, AI-powered Enterprise Resource Planning system built for CPG (Consumer Packaged Goods) companies, manufacturers, and brands managing complex supply chains with copackers, vendors, and multi-warehouse operations. Built with React, Express, tRPC, and MySQL.
 

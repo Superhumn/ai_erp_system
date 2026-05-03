@@ -4465,6 +4465,263 @@ export const crmCampaignRecipients = mysqlTable("crm_campaign_recipients", {
 export type CrmCampaignRecipient = typeof crmCampaignRecipients.$inferSelect;
 export type InsertCrmCampaignRecipient = typeof crmCampaignRecipients.$inferInsert;
 
+// ============================================
+// MARKETING — Social media management, scheduling, engagement, campaign ROI
+// ============================================
+
+// Connected social accounts (handle per platform). Credentials are held by the
+// provider aggregator (Ayrshare profile) — we only store a reference.
+export const socialAccounts = mysqlTable("social_accounts", {
+  id: int("id").autoincrement().primaryKey(),
+  platform: mysqlEnum("platform", ["linkedin", "twitter", "facebook", "instagram", "tiktok", "youtube", "threads"]).notNull(),
+  handle: varchar("handle", { length: 255 }).notNull(),
+  displayName: varchar("displayName", { length: 255 }),
+  avatarUrl: text("avatarUrl"),
+  provider: mysqlEnum("provider", ["ayrshare", "direct", "manual"]).default("ayrshare").notNull(),
+  providerProfileKey: varchar("providerProfileKey", { length: 255 }),
+  status: mysqlEnum("status", ["active", "disconnected", "error"]).default("active").notNull(),
+  lastSyncedAt: timestamp("lastSyncedAt"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SocialAccount = typeof socialAccounts.$inferSelect;
+export type InsertSocialAccount = typeof socialAccounts.$inferInsert;
+
+// A marketing campaign groups posts and (optionally) paid spend for ROI.
+export const marketingCampaigns = mysqlTable("marketing_campaigns", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  goal: mysqlEnum("goal", ["awareness", "engagement", "leads", "conversions", "retention"]).default("engagement").notNull(),
+  status: mysqlEnum("status", ["draft", "active", "paused", "completed", "archived"]).default("draft").notNull(),
+  startDate: timestamp("startDate"),
+  endDate: timestamp("endDate"),
+  budgetAmount: decimal("budgetAmount", { precision: 15, scale: 2 }),
+  spendAmount: decimal("spendAmount", { precision: 15, scale: 2 }).default("0"),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  targetTags: text("targetTags"), // JSON array of CRM tag IDs
+  utmSource: varchar("utmSource", { length: 128 }),
+  utmMedium: varchar("utmMedium", { length: 128 }),
+  utmCampaign: varchar("utmCampaign", { length: 128 }),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type MarketingCampaign = typeof marketingCampaigns.$inferSelect;
+export type InsertMarketingCampaign = typeof marketingCampaigns.$inferInsert;
+
+// Scheduled or published social posts (one logical post may fan out to many
+// platforms; we record one row per logical post and track per-platform external
+// IDs on the post so engagement/metrics can be keyed back correctly).
+export const marketingPosts = mysqlTable("marketing_posts", {
+  id: int("id").autoincrement().primaryKey(),
+  campaignId: int("campaignId").references(() => marketingCampaigns.id),
+  title: varchar("title", { length: 255 }),
+  body: text("body").notNull(),
+  mediaUrls: text("mediaUrls"), // JSON array of URLs
+  platforms: text("platforms").notNull(), // JSON array of platform enum values
+  accountIds: text("accountIds"), // JSON array of social_accounts.id
+  status: mysqlEnum("status", ["draft", "scheduled", "queued", "posted", "failed", "cancelled"]).default("draft").notNull(),
+  scheduledAt: timestamp("scheduledAt"),
+  postedAt: timestamp("postedAt"),
+  externalIds: text("externalIds"), // JSON object: { [platform]: { id, permalink } }
+  failureReason: text("failureReason"),
+  aiGenerated: boolean("aiGenerated").default(false),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type MarketingPost = typeof marketingPosts.$inferSelect;
+export type InsertMarketingPost = typeof marketingPosts.$inferInsert;
+
+// Inbound engagement — comments, likes, shares, mentions, DMs pulled from each
+// platform. Sentiment scored async. Optional link to a CRM contact when the
+// author handle can be matched.
+export const marketingEngagements = mysqlTable("marketing_engagements", {
+  id: int("id").autoincrement().primaryKey(),
+  postId: int("postId").references(() => marketingPosts.id),
+  platform: mysqlEnum("platform", ["linkedin", "twitter", "facebook", "instagram", "tiktok", "youtube", "threads"]).notNull(),
+  externalId: varchar("externalId", { length: 255 }).notNull(),
+  type: mysqlEnum("type", ["like", "comment", "share", "mention", "dm", "reaction"]).notNull(),
+  authorHandle: varchar("authorHandle", { length: 255 }),
+  authorName: varchar("authorName", { length: 255 }),
+  authorAvatarUrl: text("authorAvatarUrl"),
+  body: text("body"),
+  permalink: text("permalink"),
+  sentiment: mysqlEnum("sentiment", ["positive", "neutral", "negative", "unknown"]).default("unknown"),
+  contactId: int("contactId").references(() => crmContacts.id),
+  repliedAt: timestamp("repliedAt"),
+  fetchedAt: timestamp("fetchedAt").defaultNow().notNull(),
+  occurredAt: timestamp("occurredAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type MarketingEngagement = typeof marketingEngagements.$inferSelect;
+export type InsertMarketingEngagement = typeof marketingEngagements.$inferInsert;
+
+// Time-series metrics per post per platform (impressions, reach, clicks, etc.)
+export const marketingMetrics = mysqlTable("marketing_metrics", {
+  id: int("id").autoincrement().primaryKey(),
+  postId: int("postId").notNull().references(() => marketingPosts.id),
+  platform: mysqlEnum("platform", ["linkedin", "twitter", "facebook", "instagram", "tiktok", "youtube", "threads"]).notNull(),
+  impressions: int("impressions").default(0),
+  reach: int("reach").default(0),
+  clicks: int("clicks").default(0),
+  likes: int("likes").default(0),
+  comments: int("comments").default(0),
+  shares: int("shares").default(0),
+  saves: int("saves").default(0),
+  videoViews: int("videoViews").default(0),
+  recordedAt: timestamp("recordedAt").defaultNow().notNull(),
+});
+
+export type MarketingMetric = typeof marketingMetrics.$inferSelect;
+export type InsertMarketingMetric = typeof marketingMetrics.$inferInsert;
+
+// ============================================
+// MARKETING — Influencer CRM (creator relationships, outreach, deliverables)
+// ============================================
+
+// Influencer / creator profile. May optionally be linked to a CRM contact when
+// the same person already exists in the contact graph.
+export const influencers = mysqlTable("influencers", {
+  id: int("id").autoincrement().primaryKey(),
+  fullName: varchar("fullName", { length: 255 }).notNull(),
+  primaryHandle: varchar("primaryHandle", { length: 255 }),
+  primaryPlatform: mysqlEnum("primaryPlatform", ["linkedin", "twitter", "facebook", "instagram", "tiktok", "youtube", "threads"]),
+  // JSON map of { platform: { handle, url, followers } }
+  handles: text("handles"),
+  email: varchar("email", { length: 320 }),
+  phone: varchar("phone", { length: 32 }),
+  agentName: varchar("agentName", { length: 255 }),
+  agentEmail: varchar("agentEmail", { length: 320 }),
+  websiteUrl: text("websiteUrl"),
+  avatarUrl: text("avatarUrl"),
+  // Reach & quality
+  followerCount: int("followerCount").default(0),
+  engagementRatePct: decimal("engagementRatePct", { precision: 6, scale: 3 }), // e.g. 3.475 for 3.475%
+  avgViews: int("avgViews"),
+  // Categorization
+  tier: mysqlEnum("tier", ["nano", "micro", "mid", "macro", "mega"]),
+  niche: varchar("niche", { length: 128 }),
+  tags: text("tags"), // JSON array
+  language: varchar("language", { length: 16 }),
+  country: varchar("country", { length: 64 }),
+  city: varchar("city", { length: 128 }),
+  // Commercials
+  rateCard: text("rateCard"), // JSON: { post: 500, story: 200, reel: 1500, ... }
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  preferredPaymentMethod: varchar("preferredPaymentMethod", { length: 64 }),
+  // Pipeline
+  status: mysqlEnum("status", [
+    "prospect",
+    "contacted",
+    "negotiating",
+    "agreed",
+    "active",
+    "completed",
+    "paused",
+    "blacklisted",
+  ]).default("prospect").notNull(),
+  leadSource: mysqlEnum("leadSource", ["search", "inbound", "referral", "agency", "engagement_funnel", "import", "manual"]).default("manual"),
+  lastOutreachAt: timestamp("lastOutreachAt"),
+  notes: text("notes"),
+  // Cross-links
+  crmContactId: int("crmContactId").references(() => crmContacts.id),
+  assignedTo: int("assignedTo"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Influencer = typeof influencers.$inferSelect;
+export type InsertInfluencer = typeof influencers.$inferInsert;
+
+// Many-to-many between influencers and marketing campaigns. One row per
+// influencer's involvement in a single campaign, with the commercial terms
+// captured at the participation level (not the influencer level) so the same
+// creator can have different deals across campaigns.
+export const influencerCampaignParticipations = mysqlTable("influencer_campaign_participations", {
+  id: int("id").autoincrement().primaryKey(),
+  influencerId: int("influencerId").notNull().references(() => influencers.id),
+  campaignId: int("campaignId").notNull().references(() => marketingCampaigns.id),
+  status: mysqlEnum("status", [
+    "invited",
+    "negotiating",
+    "agreed",
+    "in_progress",
+    "completed",
+    "cancelled",
+  ]).default("invited").notNull(),
+  agreedFee: decimal("agreedFee", { precision: 15, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  paymentStatus: mysqlEnum("paymentStatus", ["pending", "invoiced", "paid", "refunded"]).default("pending"),
+  productGifted: boolean("productGifted").default(false),
+  briefUrl: text("briefUrl"),
+  contractUrl: text("contractUrl"),
+  trackingCode: varchar("trackingCode", { length: 64 }), // discount/UTM tag
+  notes: text("notes"),
+  startDate: timestamp("startDate"),
+  endDate: timestamp("endDate"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type InfluencerCampaignParticipation = typeof influencerCampaignParticipations.$inferSelect;
+export type InsertInfluencerCampaignParticipation = typeof influencerCampaignParticipations.$inferInsert;
+
+// Deliverables produced by an influencer for a campaign. May reference an
+// existing marketing_post when the deliverable was scheduled through the hub,
+// or stand alone (creator-published content we just track externally).
+export const influencerDeliverables = mysqlTable("influencer_deliverables", {
+  id: int("id").autoincrement().primaryKey(),
+  participationId: int("participationId").notNull().references(() => influencerCampaignParticipations.id),
+  type: mysqlEnum("type", ["post", "story", "reel", "video", "live", "blog", "podcast"]).notNull(),
+  platform: mysqlEnum("platform", ["linkedin", "twitter", "facebook", "instagram", "tiktok", "youtube", "threads"]).notNull(),
+  status: mysqlEnum("status", ["planned", "submitted", "approved", "revision_requested", "published", "rejected"]).default("planned").notNull(),
+  scheduledAt: timestamp("scheduledAt"),
+  publishedAt: timestamp("publishedAt"),
+  postUrl: text("postUrl"),
+  marketingPostId: int("marketingPostId").references(() => marketingPosts.id),
+  // Self-reported / scraped metrics
+  impressions: int("impressions").default(0),
+  views: int("views").default(0),
+  likes: int("likes").default(0),
+  comments: int("comments").default(0),
+  shares: int("shares").default(0),
+  saves: int("saves").default(0),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type InfluencerDeliverable = typeof influencerDeliverables.$inferSelect;
+export type InsertInfluencerDeliverable = typeof influencerDeliverables.$inferInsert;
+
+// Outreach activity log — separate from generic CRM interactions because the
+// fields are different (touchpoint, channel, response sentiment).
+export const influencerOutreach = mysqlTable("influencer_outreach", {
+  id: int("id").autoincrement().primaryKey(),
+  influencerId: int("influencerId").notNull().references(() => influencers.id),
+  campaignId: int("campaignId").references(() => marketingCampaigns.id),
+  channel: mysqlEnum("channel", ["email", "dm", "phone", "in_person", "agent", "platform_message"]).notNull(),
+  direction: mysqlEnum("direction", ["outbound", "inbound"]).default("outbound").notNull(),
+  subject: varchar("subject", { length: 255 }),
+  body: text("body"),
+  response: mysqlEnum("response", ["pending", "interested", "not_interested", "no_response", "negotiating"]).default("pending"),
+  sentAt: timestamp("sentAt").defaultNow().notNull(),
+  respondedAt: timestamp("respondedAt"),
+  createdBy: int("createdBy"),
+});
+
+export type InfluencerOutreach = typeof influencerOutreach.$inferSelect;
+export type InsertInfluencerOutreach = typeof influencerOutreach.$inferInsert;
+
 
 
 
@@ -6528,3 +6785,52 @@ export const notes = mysqlTable("notes", {
 
 export type Note = typeof notes.$inferSelect;
 export type InsertNote = typeof notes.$inferInsert;
+
+// ─── EMAIL SEQUENCES ──────────────────────────────────────────────────────────
+
+export const emailSequences = mysqlTable("email_sequences", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().references(() => users.id),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  status: mysqlEnum("status", ["draft", "active", "paused", "archived"]).default("draft").notNull(),
+  totalContacts: int("totalContacts").default(0).notNull(),
+  openRate: decimal("openRate", { precision: 5, scale: 2 }),
+  replyRate: decimal("replyRate", { precision: 5, scale: 2 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailSequence = typeof emailSequences.$inferSelect;
+export type InsertEmailSequence = typeof emailSequences.$inferInsert;
+
+export const emailSequenceSteps = mysqlTable("email_sequence_steps", {
+  id: int("id").autoincrement().primaryKey(),
+  sequenceId: int("sequenceId").notNull().references(() => emailSequences.id),
+  stepOrder: int("stepOrder").notNull(),
+  subject: varchar("subject", { length: 500 }).notNull(),
+  body: text("body").notNull(),
+  delayDays: int("delayDays").default(1).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailSequenceStep = typeof emailSequenceSteps.$inferSelect;
+export type InsertEmailSequenceStep = typeof emailSequenceSteps.$inferInsert;
+
+// ─── EMAIL CANNED RESPONSES ───────────────────────────────────────────────────
+
+export const emailCannedResponses = mysqlTable("email_canned_responses", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().references(() => users.id),
+  name: varchar("name", { length: 255 }).notNull(),
+  content: text("content").notNull(),
+  shortcut: varchar("shortcut", { length: 50 }),
+  category: varchar("category", { length: 100 }),
+  usageCount: int("usageCount").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailCannedResponse = typeof emailCannedResponses.$inferSelect;
+export type InsertEmailCannedResponse = typeof emailCannedResponses.$inferInsert;

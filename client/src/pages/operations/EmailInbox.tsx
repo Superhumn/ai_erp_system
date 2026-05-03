@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -27,15 +27,26 @@ import {
   Reply,
   ClipboardList,
   Search,
-  Users,
-  Package,
-  Factory,
-  Truck,
-  ArrowLeft,
   PenSquare,
+  ListOrdered,
+  MessageSquare,
+  Rss,
+  FolderOpen,
+  Plus,
+  ChevronRight,
+  ChevronDown,
+  Play,
+  Pause,
+  Edit2,
+  X,
+  Check,
+  BookOpen,
+  MailOpen,
+  AlertCircle,
 } from "lucide-react";
 
-// Category display configuration
+// ─── helpers ─────────────────────────────────────────────────────────────────
+
 const categoryConfig: Record<string, { label: string; dot: string }> = {
   receipt: { label: "Receipt", dot: "bg-emerald-500" },
   purchase_order: { label: "PO", dot: "bg-blue-500" },
@@ -48,1132 +59,558 @@ const categoryConfig: Record<string, { label: string; dot: string }> = {
   general: { label: "General", dot: "bg-gray-400" },
 };
 
-function cleanEmailBody(raw: string): string {
-  let text = raw;
-  // Strip HTML tags
-  if (text.includes("<") && text.includes(">")) {
-    text = text
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-      .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/<\/p>/gi, "\n\n")
-      .replace(/<\/div>/gi, "\n")
-      .replace(/<\/tr>/gi, "\n")
-      .replace(/<\/li>/gi, "\n")
-      .replace(/<[^>]+>/g, "")
-      .replace(/&nbsp;/g, " ")
-      .replace(/&amp;/g, "&")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&quot;/g, '"');
-  }
-  // Strip image/icon alt-text placeholders
-  text = text
-    .replace(/\[(?:icon|image|logo|img|button|banner|photo|avatar|badge)\]/gi, "")
-    .replace(/\[(?:GreenBridge|Trustpilot|BBB|Custom)[^\]]*\]/gi, "")
-    .replace(/\[(?:instagram|linkedin|twitter|facebook|youtube|tiktok)\]/gi, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-  return text;
-}
-
 function formatEmailDate(date: string | Date): string {
   const d = new Date(date);
   const now = new Date();
   const isToday = d.toDateString() === now.toDateString();
-  if (isToday) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (isToday) return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   const isThisYear = d.getFullYear() === now.getFullYear();
-  if (isThisYear) return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
-  return d.toLocaleDateString([], { month: 'numeric', day: 'numeric', year: '2-digit' });
+  if (isThisYear) return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  return d.toLocaleDateString([], { month: "numeric", day: "numeric", year: "2-digit" });
 }
 
-export default function EmailInbox() {
-  const [selectedEmailId, setSelectedEmailId] = useState<number | null>(null);
-  const [expandedEmailId, setExpandedEmailId] = useState<number | null>(null);
-  const [replyText, setReplyText] = useState("");
-  const [showSnippetMenu, setShowSnippetMenu] = useState(false);
-  const [snippets, setSnippets] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem("email_snippets") || "[]"); } catch { return []; }
-  });
-  const [newSnippetText, setNewSnippetText] = useState("");
+function isReplyToday(email: any): boolean {
+  return email.priority === "high" || email.parsingStatus === "pending";
+}
 
-  const saveSnippets = (updated: string[]) => {
-    setSnippets(updated);
-    localStorage.setItem("email_snippets", JSON.stringify(updated));
-  };
+function groupEmailsByDate(emails: any[]) {
+  const pinned: any[] = [];
+  const today: any[] = [];
+  const yesterday: any[] = [];
+  const thisWeek: any[] = [];
+  const older: any[] = [];
+  const now = new Date();
+  const todayStr = now.toDateString();
+  const yest = new Date(now);
+  yest.setDate(yest.getDate() - 1);
+  const yesterdayStr = yest.toDateString();
+  const weekAgo = new Date(now);
+  weekAgo.setDate(weekAgo.getDate() - 7);
+  for (const e of emails) {
+    if (e._pinned) { pinned.push(e); continue; }
+    const d = new Date(e.receivedAt);
+    if (d.toDateString() === todayStr) { today.push(e); continue; }
+    if (d.toDateString() === yesterdayStr) { yesterday.push(e); continue; }
+    if (d >= weekAgo) { thisWeek.push(e); continue; }
+    older.push(e);
+  }
+  return { pinned, today, yesterday, thisWeek, older };
+}
+
+function renderSanitizedBody(raw: string): string {
+  if (!raw) return "(No content)";
+  if (raw.includes("<") && raw.includes(">")) {
+    return sanitizeHtml(raw, { allowedTags: [], allowedAttributes: {} })
+      .replace(/&nbsp;/g, " ")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
+  return raw;
+}
+
+type Tab = "important" | "sales" | "hiring" | "raise" | "other";
+
+function tabFilter(emails: any[], tab: Tab): any[] {
+  if (tab === "important") return emails.filter((e: any) => e.priority === "high" || e.parsingStatus === "pending");
+  if (tab === "sales") return emails.filter((e: any) => ["purchase_order", "order_confirmation"].includes(e.category));
+  if (tab === "hiring") return emails.filter((e: any) => {
+    const text = ((e.subject || "") + " " + (e.bodyText || "")).toLowerCase();
+    return text.includes("hire") || text.includes("hiring") || text.includes("recruit") || text.includes("candidate") || text.includes("interview");
+  });
+  if (tab === "raise") return emails.filter((e: any) => {
+    const text = ((e.subject || "") + " " + (e.bodyText || "")).toLowerCase();
+    return text.includes("fundrais") || text.includes("investor") || text.includes("raise") || text.includes("series") || e.category === "invoice";
+  });
+  return emails;
+}
+
+type Folder = "inbox" | "sequences" | "sent" | "drafts" | "scheduled" | "archive" | "spam" | "trash" | "messages" | "feeds";
+
+export default function EmailInbox() {
+  const [activeFolder, setActiveFolder] = useState<Folder>("inbox");
+  const [activeTab, setActiveTab] = useState<Tab>("important");
+  const [selectedEmailId, setSelectedEmailId] = useState<number | null>(null);
+  const [replyText, setReplyText] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [labelFilter, setLabelFilter] = useState<string | null>(null);
   const [starredEmails, setStarredEmails] = useState<Set<number>>(new Set());
-  const [selectedEmails, setSelectedEmails] = useState<Set<number>>(new Set());
+  const [pinnedEmails, setPinnedEmails] = useState<Set<number>>(new Set());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteTargetId, setDeleteTargetId] = useState<number | null>(null);
-
-  // Scan dialog state
   const [showScanDialog, setShowScanDialog] = useState(false);
-  const [scanConfig, setScanConfig] = useState({
-    host: "",
-    port: 993,
-    user: "",
-    password: "",
-    folder: "INBOX",
-    limit: 50,
-    unseenOnly: true,
-    markAsSeen: false,
-    fullAiParsing: false,
-  });
-  const [selectedPreset, setSelectedPreset] = useState<string>("");
-
-  // AI Reply state
+  const [foldersExpanded, setFoldersExpanded] = useState(true);
+  const [labelsExpanded, setLabelsExpanded] = useState(true);
+  const [scanConfig, setScanConfig] = useState({ host: "", port: 993, user: "", password: "", folder: "INBOX", limit: 50, unseenOnly: true, markAsSeen: false, fullAiParsing: false });
+  const [selectedPreset, setSelectedPreset] = useState("");
   const [showAiReplyDialog, setShowAiReplyDialog] = useState(false);
   const [aiReplyEmailId, setAiReplyEmailId] = useState<number | null>(null);
-  const [generatedReply, setGeneratedReply] = useState<{
-    subject: string;
-    body: string;
-    tone: string;
-    confidence: number;
-    suggestedActions?: string[];
-  } | null>(null);
+  const [generatedReply, setGeneratedReply] = useState<{ subject: string; body: string; tone: string; confidence: number; suggestedActions?: string[] } | null>(null);
   const [isGeneratingReply, setIsGeneratingReply] = useState(false);
+  const [selectedSequenceId, setSelectedSequenceId] = useState<number | null>(null);
+  const [showNewSequenceDialog, setShowNewSequenceDialog] = useState(false);
+  const [newSeqForm, setNewSeqForm] = useState({ name: "", description: "" });
+  const [showStepDialog, setShowStepDialog] = useState(false);
+  const [stepForm, setStepForm] = useState({ subject: "", body: "", delayDays: 1 });
+  const [editingStepId, setEditingStepId] = useState<number | null>(null);
+  const [showCannedManager, setShowCannedManager] = useState(false);
+  const [showCannedPicker, setShowCannedPicker] = useState(false);
+  const [cannedSearch, setCannedSearch] = useState("");
+  const [cannedForm, setCannedForm] = useState<{ open: boolean; id: number | null; name: string; content: string; shortcut: string; category: string }>({ open: false, id: null, name: "", content: "", shortcut: "", category: "" });
+  const cannedPickerRef = useRef<HTMLDivElement>(null);
 
   const utils = trpc.useUtils();
 
-  const setSelectedEmailWithUrl = (emailId: number | null) => {
-    setSelectedEmailId(emailId);
-    if (typeof window === "undefined") return;
-    const url = new URL(window.location.href);
-    if (emailId != null) {
-      url.searchParams.set("emailId", String(emailId));
-    } else {
-      url.searchParams.delete("emailId");
-    }
-    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
-  };
-
-  // Build query params for email list
-  const emailQueryParams = {
-    ...(categoryFilter !== "all" && { category: categoryFilter }),
-  };
-
-  // Queries
   const { data: emails, isLoading: emailsLoading } = trpc.emailScanning.list.useQuery(
-    Object.keys(emailQueryParams).length > 0 ? emailQueryParams : undefined
+    categoryFilter !== "all" ? { category: categoryFilter } : undefined
   );
+  const { data: emailDetail } = trpc.emailScanning.getById.useQuery({ id: selectedEmailId! }, { enabled: !!selectedEmailId });
+  const { data: sequences, isLoading: seqLoading } = trpc.emailSequences.list.useQuery(undefined, { enabled: activeFolder === "sequences" });
+  const { data: selectedSeq } = trpc.emailSequences.get.useQuery({ id: selectedSequenceId! }, { enabled: !!selectedSequenceId && activeFolder === "sequences" });
+  const { data: cannedResponses } = trpc.emailCannedResponses.list.useQuery();
 
-  const { data: emailDetail } = trpc.emailScanning.getById.useQuery(
-    { id: selectedEmailId! },
-    { enabled: !!selectedEmailId }
-  );
+  const archiveEmailMutation = trpc.emailScanning.archiveEmail.useMutation({ onSuccess: () => { toast.success("Email archived"); setSelectedEmailId(null); utils.emailScanning.list.invalidate(); } });
+  const deleteEmailMutation = trpc.emailScanning.deleteEmail.useMutation({ onSuccess: () => { toast.success("Email deleted"); setSelectedEmailId(null); setShowDeleteConfirm(false); setDeleteTargetId(null); utils.emailScanning.list.invalidate(); }, onError: (e) => toast.error(`Failed: ${e.message}`) });
+  const reparseEmailMutation = trpc.emailScanning.reparseEmail.useMutation({ onSuccess: (r) => { if (r.success) { toast.success(`Reparsed! ${r.documentsFound} docs`); utils.emailScanning.list.invalidate(); } else toast.error(`Reparse failed: ${r.error}`); } });
+  const scanInboxMutation = trpc.emailScanning.scanInbox.useMutation({ onSuccess: (r) => { if (r.success) { toast.success(`Scanned! Imported ${r.imported}`); setShowScanDialog(false); utils.emailScanning.list.invalidate(); } else toast.error(`Failed: ${r.error}`); }, onError: (e) => toast.error(e.message) });
+  const testConnectionMutation = trpc.emailScanning.testInboxConnection.useMutation({ onSuccess: (r) => { if (r.success) toast.success(`Connected! ${r.mailboxes?.length || 0} mailboxes`); else toast.error(`Failed: ${r.error}`); }, onError: (e) => toast.error(e.message) });
+  const scanNowMutation = (trpc.emailScanning as any).scanNow.useMutation({ onSuccess: (r: any) => { toast.success(`Scanned: ${r.emailsProcessed} emails`); utils.emailScanning.list.invalidate(); }, onError: (e: any) => toast.error("Scan failed: " + e.message) });
+  const bulkCategorizeMutation = trpc.emailScanning.bulkCategorize.useMutation({ onSuccess: (r) => { if (r.success) { toast.success(`Categorized ${r.categorized}`); utils.emailScanning.list.invalidate(); } }, onError: (e) => toast.error(e.message) });
+  const generateReplyMutation = trpc.aiAgent.generateEmailReply.useMutation({ onSuccess: (r) => { setGeneratedReply(r as any); setShowAiReplyDialog(true); setIsGeneratingReply(false); }, onError: (e) => { toast.error(`Failed: ${e.message}`); setIsGeneratingReply(false); } });
+  const sendReplyMutation = trpc.aiAgent.sendEmailReply.useMutation({ onSuccess: (r) => { if (r.emailSent) { toast.success("Reply sent!"); setShowAiReplyDialog(false); setGeneratedReply(null); } else toast.error("Failed to send"); }, onError: (e) => toast.error(e.message) });
+  const createReplyTaskMutation = trpc.aiAgent.createEmailReplyTask.useMutation({ onSuccess: () => { toast.success("Reply queued"); setShowAiReplyDialog(false); setGeneratedReply(null); }, onError: (e) => toast.error(e.message) });
 
-  // Mutations
-  const archiveEmailMutation = trpc.emailScanning.archiveEmail.useMutation({
-    onSuccess: () => {
-      toast.success("Email archived");
-      setSelectedEmailWithUrl(null);
-      utils.emailScanning.list.invalidate();
-    },
-  });
+  const createSeqMutation = trpc.emailSequences.create.useMutation({ onSuccess: (r) => { toast.success("Sequence created"); setShowNewSequenceDialog(false); setNewSeqForm({ name: "", description: "" }); utils.emailSequences.list.invalidate(); setSelectedSequenceId(r.id); }, onError: (e) => toast.error(e.message) });
+  const updateSeqMutation = trpc.emailSequences.update.useMutation({ onSuccess: () => { utils.emailSequences.list.invalidate(); if (selectedSequenceId) utils.emailSequences.get.invalidate({ id: selectedSequenceId }); } });
+  const deleteSeqMutation = trpc.emailSequences.delete.useMutation({ onSuccess: () => { toast.success("Deleted"); setSelectedSequenceId(null); utils.emailSequences.list.invalidate(); } });
+  const addStepMutation = trpc.emailSequences.addStep.useMutation({ onSuccess: () => { toast.success("Step added"); setShowStepDialog(false); setStepForm({ subject: "", body: "", delayDays: 1 }); setEditingStepId(null); if (selectedSequenceId) utils.emailSequences.get.invalidate({ id: selectedSequenceId }); }, onError: (e) => toast.error(e.message) });
+  const updateStepMutation = trpc.emailSequences.updateStep.useMutation({ onSuccess: () => { toast.success("Step updated"); setShowStepDialog(false); setStepForm({ subject: "", body: "", delayDays: 1 }); setEditingStepId(null); if (selectedSequenceId) utils.emailSequences.get.invalidate({ id: selectedSequenceId }); }, onError: (e) => toast.error(e.message) });
+  const deleteStepMutation = trpc.emailSequences.deleteStep.useMutation({ onSuccess: () => { toast.success("Step deleted"); if (selectedSequenceId) utils.emailSequences.get.invalidate({ id: selectedSequenceId }); } });
 
-  const deleteEmailMutation = trpc.emailScanning.deleteEmail.useMutation({
-    onSuccess: () => {
-      toast.success("Email deleted");
-      setSelectedEmailWithUrl(null);
-      setShowDeleteConfirm(false);
-      setDeleteTargetId(null);
-      utils.emailScanning.list.invalidate();
-    },
-    onError: (error) => {
-      toast.error(`Failed to delete: ${error.message}`);
-    },
-  });
+  const createCannedMutation = trpc.emailCannedResponses.create.useMutation({ onSuccess: () => { toast.success("Canned response saved"); setCannedForm({ open: false, id: null, name: "", content: "", shortcut: "", category: "" }); utils.emailCannedResponses.list.invalidate(); }, onError: (e) => toast.error(e.message) });
+  const updateCannedMutation = trpc.emailCannedResponses.update.useMutation({ onSuccess: () => { toast.success("Updated"); setCannedForm({ open: false, id: null, name: "", content: "", shortcut: "", category: "" }); utils.emailCannedResponses.list.invalidate(); }, onError: (e) => toast.error(e.message) });
+  const deleteCannedMutation = trpc.emailCannedResponses.delete.useMutation({ onSuccess: () => { toast.success("Deleted"); utils.emailCannedResponses.list.invalidate(); } });
+  const incrementCannedMutation = trpc.emailCannedResponses.incrementUsage.useMutation();
 
-  const reparseEmailMutation = trpc.emailScanning.reparseEmail.useMutation({
-    onSuccess: (result) => {
-      if (result.success) {
-        toast.success(`Reparsed successfully! Found ${result.documentsFound} document(s)`);
-        utils.emailScanning.list.invalidate();
-      } else {
-        toast.error(`Reparse failed: ${result.error}`);
-      }
-    },
-  });
-
-  // Inbox scanning mutations
-  const scanInboxMutation = trpc.emailScanning.scanInbox.useMutation({
-    onSuccess: (result) => {
-      if (result.success) {
-        toast.success(
-          `Inbox scanned! Imported ${result.imported} emails, skipped ${result.skipped} duplicates.`
-        );
-        setShowScanDialog(false);
-        utils.emailScanning.list.invalidate();
-      } else {
-        toast.error(`Scan failed: ${result.error}`);
-      }
-    },
-    onError: (error) => {
-      toast.error(`Error: ${error.message}`);
-    },
-  });
-
-  const testConnectionMutation = trpc.emailScanning.testInboxConnection.useMutation({
-    onSuccess: (result) => {
-      if (result.success) {
-        toast.success(`Connected! Found ${result.mailboxes?.length || 0} mailboxes.`);
-      } else {
-        toast.error(`Connection failed: ${result.error}`);
-      }
-    },
-    onError: (error) => {
-      toast.error(`Error: ${error.message}`);
-    },
-  });
-
-  const scanNowMutation = trpc.emailScanning.scanNow.useMutation({
-    onSuccess: (result: any) => {
-      toast.success(`Scanned inbox: ${result.emailsProcessed} emails, ${result.attachmentsParsed} attachments parsed`);
-      utils.emailScanning.list.invalidate();
-    },
-    onError: (error: any) => toast.error("Scan failed: " + error.message),
-  });
-
-  const bulkCategorizeMutation = trpc.emailScanning.bulkCategorize.useMutation({
-    onSuccess: (result) => {
-      if (result.success) {
-        toast.success(`Categorized ${result.categorized} of ${result.total} emails.`);
-        utils.emailScanning.list.invalidate();
-      }
-    },
-    onError: (error) => {
-      toast.error(`Error: ${error.message}`);
-    },
-  });
-
-  // AI Email Reply mutations
-  const generateReplyMutation = trpc.aiAgent.generateEmailReply.useMutation({
-    onSuccess: (result) => {
-      setGeneratedReply(result as any);
-      setShowAiReplyDialog(true);
-      setIsGeneratingReply(false);
-    },
-    onError: (error) => {
-      toast.error(`Failed to generate reply: ${error.message}`);
-      setIsGeneratingReply(false);
-    },
-  });
-
-  const sendReplyMutation = trpc.aiAgent.sendEmailReply.useMutation({
-    onSuccess: (result) => {
-      if (result.emailSent) {
-        toast.success("Email reply sent successfully!");
-        setShowAiReplyDialog(false);
-        setGeneratedReply(null);
-      } else {
-        toast.error("Failed to send email reply");
-      }
-    },
-    onError: (error) => {
-      toast.error(`Error sending reply: ${error.message}`);
-    },
-  });
-
-  const createReplyTaskMutation = trpc.aiAgent.createEmailReplyTask.useMutation({
-    onSuccess: () => {
-      toast.success("Email reply task created for approval");
-      setShowAiReplyDialog(false);
-      setGeneratedReply(null);
-    },
-    onError: (error) => {
-      toast.error(`Error creating task: ${error.message}`);
-    },
-  });
-
-  // IMAP presets
-  const imapPresets: Record<string, { host: string; port: number }> = {
-    gmail: { host: "imap.gmail.com", port: 993 },
-    outlook: { host: "outlook.office365.com", port: 993 },
-    yahoo: { host: "imap.mail.yahoo.com", port: 993 },
-    icloud: { host: "imap.mail.me.com", port: 993 },
-  };
-
-  const handlePresetChange = (preset: string) => {
-    setSelectedPreset(preset);
-    if (preset && imapPresets[preset]) {
-      setScanConfig(prev => ({
-        ...prev,
-        host: imapPresets[preset].host,
-        port: imapPresets[preset].port,
-      }));
-    }
-  };
-
-  const handleScanInbox = () => {
-    if (!scanConfig.host || !scanConfig.user || !scanConfig.password) {
-      toast.error("Please fill in all connection details");
-      return;
-    }
-    scanInboxMutation.mutate(scanConfig);
-  };
-
-  const handleTestConnection = () => {
-    if (!scanConfig.host || !scanConfig.user || !scanConfig.password) {
-      toast.error("Please fill in all connection details");
-      return;
-    }
-    testConnectionMutation.mutate({
-      host: scanConfig.host,
-      port: scanConfig.port,
-      secure: true,
-      user: scanConfig.user,
-      password: scanConfig.password,
-    });
-  };
-
-  const handleGenerateAiReply = (email: any) => {
-    setAiReplyEmailId(email.id);
-    setIsGeneratingReply(true);
-    generateReplyMutation.mutate({
-      originalEmail: {
-        from: email.fromEmail,
-        subject: email.subject || '',
-        body: email.bodyText || '',
-        emailId: email.id,
-      },
-    });
-  };
-
+  const imapPresets: Record<string, { host: string; port: number }> = { gmail: { host: "imap.gmail.com", port: 993 }, outlook: { host: "outlook.office365.com", port: 993 }, yahoo: { host: "imap.mail.yahoo.com", port: 993 }, icloud: { host: "imap.mail.me.com", port: 993 } };
+  const handlePresetChange = (preset: string) => { setSelectedPreset(preset); if (preset && imapPresets[preset]) setScanConfig(prev => ({ ...prev, ...imapPresets[preset] })); };
+  const handleGenerateAiReply = (email: any) => { setAiReplyEmailId(email.id); setIsGeneratingReply(true); generateReplyMutation.mutate({ originalEmail: { from: email.fromEmail, subject: email.subject || "", body: email.bodyText || "", emailId: email.id } }); };
   const handleSendReply = (autoSend: boolean) => {
     if (!aiReplyEmailId || !generatedReply) return;
     const email = emails?.find((e: any) => e.id === aiReplyEmailId);
     if (!email) return;
-
-    if (autoSend) {
-      sendReplyMutation.mutate({
-        originalEmail: {
-          from: email.fromEmail,
-          subject: email.subject || '',
-          body: email.bodyText || '',
-          emailId: email.id,
-        },
-        autoSend: true,
-      });
-    } else {
-      createReplyTaskMutation.mutate({
-        to: email.fromEmail,
-        originalSubject: email.subject || '',
-        originalBody: email.bodyText || '',
-        emailId: email.id,
-        priority: email.priority === 'high' ? 'high' : 'medium',
-      });
-    }
+    if (autoSend) sendReplyMutation.mutate({ originalEmail: { from: email.fromEmail, subject: email.subject || "", body: email.bodyText || "", emailId: email.id }, autoSend: true });
+    else createReplyTaskMutation.mutate({ to: email.fromEmail, originalSubject: email.subject || "", originalBody: email.bodyText || "", emailId: email.id, priority: email.priority === "high" ? "high" : "medium" });
   };
+  const toggleStar = (e: React.MouseEvent, id: number) => { e.stopPropagation(); setStarredEmails(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; }); };
+  const togglePin = (e: React.MouseEvent, id: number) => { e.stopPropagation(); setPinnedEmails(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; }); };
+  const insertCannedResponse = (content: string, id: number) => { setReplyText(content); setShowCannedPicker(false); incrementCannedMutation.mutate({ id }); };
 
-  const toggleStar = (e: React.MouseEvent, emailId: number) => {
-    e.stopPropagation();
-    setStarredEmails(prev => {
-      const next = new Set(prev);
-      if (next.has(emailId)) next.delete(emailId);
-      else next.add(emailId);
-      return next;
-    });
-  };
-
-  const toggleCheckbox = (e: React.MouseEvent, emailId: number) => {
-    e.stopPropagation();
-    setSelectedEmails(prev => {
-      const next = new Set(prev);
-      if (next.has(emailId)) next.delete(emailId);
-      else next.add(emailId);
-      return next;
-    });
-  };
-
-  // Filter emails by search query and category
-  const filteredEmails = emails?.filter((email: any) => {
-    if (categoryFilter === "starred") return starredEmails.has(email.id);
-    if (categoryFilter !== "all") {
-      if (email.category !== categoryFilter) return false;
-    }
-    if (!searchQuery) return true;
-    const q = searchQuery.toLowerCase();
-    return (
-      (email.subject || "").toLowerCase().includes(q) ||
-      (email.fromName || "").toLowerCase().includes(q) ||
-      (email.fromEmail || "").toLowerCase().includes(q) ||
-      (email.bodyText || "").toLowerCase().includes(q)
-    );
-  });
-
+  const baseEmails = emails?.filter((e: any) => {
+    if (activeFolder === "archive") return e.parsingStatus === "archived";
+    if (activeFolder === "trash") return false;
+    if (activeFolder !== "inbox") return false;
+    if (e.parsingStatus === "archived") return false;
+    if (categoryFilter !== "all" && e.category !== categoryFilter) return false;
+    if (labelFilter) { const q = labelFilter.toLowerCase(); if (!((e.subject || "").toLowerCase().includes(q) || (e.fromName || "").toLowerCase().includes(q) || (e.fromEmail || "").toLowerCase().includes(q) || (e.bodyText || "").toLowerCase().includes(q))) return false; }
+    if (searchQuery) { const q = searchQuery.toLowerCase(); return (e.subject || "").toLowerCase().includes(q) || (e.fromName || "").toLowerCase().includes(q) || (e.fromEmail || "").toLowerCase().includes(q); }
+    return true;
+  }) ?? [];
+  const tabEmails = activeFolder === "inbox" ? tabFilter(baseEmails, activeTab) : baseEmails;
+  const emailsWithPin = tabEmails.map((e: any) => ({ ...e, _pinned: pinnedEmails.has(e.id) }));
+  const grouped = groupEmailsByDate(emailsWithPin);
   const selectedEmail = emails?.find((e: any) => e.id === selectedEmailId);
 
   useEffect(() => {
-    if (typeof window === "undefined" || !emails?.length) return;
-    const rawEmailId = new URLSearchParams(window.location.search).get("emailId");
-    if (!rawEmailId) return;
-    const emailId = Number(rawEmailId);
-    if (!Number.isFinite(emailId) || emailId <= 0) return;
-    if (!emails.some((email: any) => email.id === emailId)) return;
-    if (selectedEmailId !== emailId) {
-      setSelectedEmailId(emailId);
-    }
-  }, [emails, selectedEmailId]);
+    if (!emails?.length) return;
+    const id = Number(new URLSearchParams(window.location.search).get("emailId"));
+    if (id && Number.isFinite(id) && id > 0 && emails.some((e: any) => e.id === id) && selectedEmailId !== id) setSelectedEmailId(id);
+  }, [emails]);
 
-  // Sidebar folder config
-  const sidebarFolders = [
-    { key: "all", label: "Inbox", icon: Inbox, count: emails?.filter((e: any) => e.parsingStatus !== "archived").length ?? 0 },
-    { key: "starred", label: "Starred", icon: Star, count: starredEmails.size },
-    { key: "archived", label: "Archive", icon: Archive, count: 0 },
-    { key: "trash", label: "Trash", icon: Trash2, count: 0 },
+  useEffect(() => {
+    const handler = (e: MouseEvent) => { if (cannedPickerRef.current && !cannedPickerRef.current.contains(e.target as Node)) setShowCannedPicker(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const inboxCount = emails?.filter((e: any) => e.parsingStatus !== "archived").length ?? 0;
+  const seqCount = sequences?.length ?? 0;
+  const sidebarFolders: { key: Folder; label: string; icon: any; count?: number }[] = [
+    { key: "inbox", label: "Inbox", icon: Inbox, count: inboxCount },
+    { key: "sequences", label: "Sequences", icon: ListOrdered, count: seqCount },
+    { key: "sent", label: "Sent", icon: Send },
+    { key: "drafts", label: "Drafts", icon: PenSquare },
+    { key: "scheduled", label: "Scheduled", icon: Clock },
+    { key: "archive", label: "Archive", icon: Archive },
+    { key: "spam", label: "Spam", icon: AlertCircle },
+    { key: "trash", label: "Trash", icon: Trash2 },
+    { key: "messages", label: "Messages", icon: MessageSquare },
+    { key: "feeds", label: "Feeds", icon: Rss },
+  ];
+  const userFolders = ["2026 Q2 GTM", "Series B Raise", "Hiring"];
+  const userLabels = [
+    { label: "Investors", color: "bg-violet-500" }, { label: "LinkedIn", color: "bg-blue-600" },
+    { label: "Product", color: "bg-emerald-500" }, { label: "Engineering", color: "bg-orange-500" },
+    { label: "Legal", color: "bg-red-500" }, { label: "Partnerships", color: "bg-amber-500" },
+    { label: "Board", color: "bg-gray-500" }, { label: "Recruiting", color: "bg-pink-500" },
   ];
 
-  // Category label config for sidebar
-  const sidebarLabels = [
-    { key: "purchase_order", label: "Sales", icon: Users, dot: "bg-blue-500" },
-    { key: "invoice", label: "Invoices", icon: Package, dot: "bg-orange-500" },
-    { key: "receipt", label: "Receipts", icon: Factory, dot: "bg-emerald-500" },
-    { key: "shipping_confirmation", label: "Freight", icon: Truck, dot: "bg-violet-500" },
-  ];
+  const EmailRow = ({ email }: { email: any }) => {
+    const isUnread = email.parsingStatus === "pending";
+    const isStarred = starredEmails.has(email.id);
+    const isPinned = pinnedEmails.has(email.id);
+    const isSelected = selectedEmailId === email.id;
+    const replyToday = isReplyToday(email);
+    const catConfig = categoryConfig[email.category || "general"] || categoryConfig.general;
+    return (
+      <div
+        className={`group relative flex items-start gap-2 px-3 py-2.5 cursor-pointer select-none border-b border-border/20 transition-colors hover:bg-accent/40 ${isSelected ? "bg-accent/60 border-l-2 border-l-primary" : ""} ${isUnread ? "font-medium" : ""}`}
+        onClick={() => setSelectedEmailId(isSelected ? null : email.id)}
+      >
+        <div className="h-8 w-8 rounded-full bg-gradient-to-br from-primary/70 to-primary shrink-0 flex items-center justify-center text-primary-foreground font-semibold text-xs select-none mt-0.5">
+          {(email.fromName || email.fromEmail || "?")[0].toUpperCase()}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5">
+            <span className={`text-sm truncate flex-1 ${isUnread ? "font-semibold" : "text-muted-foreground"}`}>{email.fromName || email.fromEmail}</span>
+            <span className="text-xs text-muted-foreground shrink-0">{formatEmailDate(email.receivedAt)}</span>
+            {isPinned && <span className="text-xs shrink-0">📌</span>}
+          </div>
+          <p className={`text-sm truncate ${isUnread ? "text-foreground" : "text-muted-foreground"}`}>{email.subject || "(No subject)"}</p>
+          <p className="text-xs text-muted-foreground truncate mt-0.5">{(email.bodyText || "").substring(0, 80)}</p>
+          <div className="flex items-center gap-2 mt-1">
+            {replyToday && <span className="inline-flex items-center gap-1 text-xs text-orange-500 font-medium"><span className="h-1.5 w-1.5 rounded-full bg-orange-500 animate-pulse" />Reply Today</span>}
+            {email.suggestedAction && <span className="text-xs text-primary/70 truncate flex items-center gap-1"><Sparkles className="h-2.5 w-2.5 shrink-0" />{email.suggestedAction}</span>}
+          </div>
+        </div>
+        <div className="hidden group-hover:flex flex-col gap-0.5 shrink-0" onClick={e => e.stopPropagation()}>
+          <button className="h-5 w-5 flex items-center justify-center rounded hover:bg-accent" title="Star" onClick={e => toggleStar(e, email.id)}><Star className={`h-3 w-3 ${isStarred ? "text-yellow-400 fill-yellow-400" : "text-muted-foreground"}`} /></button>
+          <button className="h-5 w-5 flex items-center justify-center rounded hover:bg-accent" title="Pin" onClick={e => togglePin(e, email.id)}><span className="text-xs">📌</span></button>
+          <button className="h-5 w-5 flex items-center justify-center rounded hover:bg-accent" title="Archive" onClick={e => { e.stopPropagation(); archiveEmailMutation.mutate({ id: email.id }); }}><Archive className="h-3 w-3 text-muted-foreground" /></button>
+        </div>
+        <div className="absolute right-2 top-2.5 group-hover:hidden"><span className={`h-2 w-2 rounded-full ${catConfig.dot}`} /></div>
+      </div>
+    );
+  };
 
-  // Render stripped body text
-  const renderBody = (raw: string) => {
-    if (!raw) return "(No content)";
-    if (raw.includes("<") && raw.includes(">")) {
-      let sanitized = raw;
-      let previous: string;
-      do {
-        previous = sanitized;
-        sanitized = sanitized
-          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "");
-      } while (sanitized !== previous);
+  const EmailGroup = ({ label, emails: groupEmails }: { label: string; emails: any[] }) => {
+    if (!groupEmails.length) return null;
+    return (
+      <div>
+        <div className="px-3 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wide bg-muted/30 sticky top-0 z-10">{label}</div>
+        {groupEmails.map((e: any) => <EmailRow key={e.id} email={e} />)}
+      </div>
+    );
+  };
 
-      return sanitized
-        .replace(/<br\s*\/?>/gi, "\n")
-        .replace(/<\/p>/gi, "\n\n")
-        .replace(/<\/div>/gi, "\n")
-        .replace(/<\/tr>/gi, "\n")
-        .replace(/<\/li>/gi, "\n")
-        .replace(/<[^>]+>/g, "")
-        .replace(/&nbsp;/g, " ")
-        .replace(/&amp;/g, "&")
-        .replace(/&quot;/g, '"')
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
+  const SequencesPanel = () => (
+    <div className="flex flex-1 overflow-hidden">
+      <div className="w-80 shrink-0 border-r flex flex-col overflow-hidden">
+        <div className="px-3 py-2 border-b flex items-center justify-between bg-background">
+          <span className="text-sm font-semibold">Sequences</span>
+          <Button size="sm" className="h-7 text-xs gap-1" onClick={() => setShowNewSequenceDialog(true)}><Plus className="h-3.5 w-3.5" /> New</Button>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {seqLoading ? (
+            <div className="flex items-center justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+          ) : !sequences?.length ? (
+            <div className="text-center py-16 text-muted-foreground">
+              <ListOrdered className="h-10 w-10 mx-auto mb-3 opacity-30" />
+              <p className="text-sm">No sequences yet</p>
+              <p className="text-xs mt-1">Create your first automated outreach sequence</p>
+              <Button size="sm" className="mt-4 gap-1" onClick={() => setShowNewSequenceDialog(true)}><Plus className="h-3.5 w-3.5" /> Create Sequence</Button>
+            </div>
+          ) : sequences.map((seq: any) => (
+            <div key={seq.id} className={`px-3 py-3 border-b border-border/20 cursor-pointer hover:bg-accent/40 transition-colors ${selectedSequenceId === seq.id ? "bg-accent/60" : ""}`} onClick={() => setSelectedSequenceId(seq.id)}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{seq.name}</p>
+                  {seq.description && <p className="text-xs text-muted-foreground truncate mt-0.5">{seq.description}</p>}
+                </div>
+                <Badge variant="outline" className={`text-xs shrink-0 ${seq.status === "active" ? "border-emerald-500 text-emerald-600" : seq.status === "paused" ? "border-orange-500 text-orange-600" : "text-muted-foreground"}`}>{seq.status}</Badge>
+              </div>
+              <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
+                <span>{seq.stepCount ?? 0} step{(seq.stepCount ?? 0) !== 1 ? "s" : ""}</span>
+                {seq.totalContacts > 0 && <span>{seq.totalContacts} contacts</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto bg-muted/10">
+        {!selectedSeq ? (
+          <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+            <ListOrdered className="h-12 w-12 opacity-20 mb-4" />
+            <p className="text-sm">Select a sequence to view or edit it</p>
+          </div>
+        ) : (
+          <div className="max-w-2xl mx-auto p-6 space-y-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-semibold">{selectedSeq.name}</h2>
+                {selectedSeq.description && <p className="text-sm text-muted-foreground mt-1">{selectedSeq.description}</p>}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {selectedSeq.status !== "active" ? (
+                  <Button size="sm" variant="outline" className="h-8 gap-1.5 text-emerald-600 border-emerald-500 hover:bg-emerald-50" onClick={() => updateSeqMutation.mutate({ id: selectedSeq.id, status: "active" })}><Play className="h-3.5 w-3.5" /> Activate</Button>
+                ) : (
+                  <Button size="sm" variant="outline" className="h-8 gap-1.5 text-orange-600 border-orange-400" onClick={() => updateSeqMutation.mutate({ id: selectedSeq.id, status: "paused" })}><Pause className="h-3.5 w-3.5" /> Pause</Button>
+                )}
+                <Button size="sm" variant="ghost" className="h-8 text-destructive hover:text-destructive" onClick={() => { if (confirm("Delete this sequence?")) deleteSeqMutation.mutate({ id: selectedSeq.id }); }}><Trash2 className="h-4 w-4" /></Button>
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold">Email Steps</h3>
+                <Button size="sm" className="h-7 text-xs gap-1" onClick={() => { setEditingStepId(null); setStepForm({ subject: "", body: "", delayDays: 1 }); setShowStepDialog(true); }}><Plus className="h-3.5 w-3.5" /> Add Step</Button>
+              </div>
+              {!selectedSeq.steps?.length ? (
+                <div className="border-2 border-dashed rounded-lg p-8 text-center text-muted-foreground">
+                  <Mail className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                  <p className="text-sm">No steps yet. Add the first email in your sequence.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {selectedSeq.steps.map((step: any, idx: number) => (
+                    <div key={step.id} className="flex gap-3">
+                      <div className="flex flex-col items-center">
+                        <div className="h-8 w-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-bold shrink-0">{idx + 1}</div>
+                        {idx < selectedSeq.steps.length - 1 && <div className="w-0.5 flex-1 bg-border mt-1" />}
+                      </div>
+                      <div className="flex-1 border rounded-lg p-3 bg-background mb-1 group">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate">{step.subject}</p>
+                            <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{step.body}</p>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button className="h-6 w-6 rounded flex items-center justify-center hover:bg-accent" onClick={() => { setEditingStepId(step.id); setStepForm({ subject: step.subject, body: step.body, delayDays: step.delayDays }); setShowStepDialog(true); }}><Edit2 className="h-3.5 w-3.5 text-muted-foreground" /></button>
+                            <button className="h-6 w-6 rounded flex items-center justify-center hover:bg-accent" onClick={() => { if (confirm("Delete step?")) deleteStepMutation.mutate({ stepId: step.id }); }}><X className="h-3.5 w-3.5 text-destructive" /></button>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground"><Clock className="h-3 w-3" />{idx === 0 ? "Send immediately" : `Wait ${step.delayDays} day${step.delayDays !== 1 ? "s" : ""} after previous`}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const ReadingPane = () => {
+    if (!selectedEmail) {
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground bg-muted/10">
+          <MailOpen className="h-14 w-14 opacity-15 mb-4" />
+          <p className="text-sm font-medium">Select an email to read</p>
+          <p className="text-xs mt-1 opacity-70">Your messages will appear here</p>
+        </div>
+      );
     }
-    return raw;
+    const detail = emailDetail?.id === selectedEmail.id ? emailDetail : null;
+    const bodyRaw = (detail as any)?.bodyHtml || (detail as any)?.bodyText || selectedEmail.bodyText || selectedEmail.bodyHtml || "";
+    const bodyClean = renderSanitizedBody(bodyRaw);
+    return (
+      <div className="flex-1 flex flex-col overflow-hidden bg-background">
+        <div className="border-b px-4 py-2.5 flex items-center gap-2 bg-background shrink-0">
+          <h2 className="font-semibold flex-1 truncate text-sm">{selectedEmail.subject || "(No subject)"}</h2>
+          <button className="h-7 w-7 flex items-center justify-center rounded hover:bg-accent" onClick={e => toggleStar(e, selectedEmail.id)}><Star className={`h-4 w-4 ${starredEmails.has(selectedEmail.id) ? "text-yellow-400 fill-yellow-400" : "text-muted-foreground"}`} /></button>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => archiveEmailMutation.mutate({ id: selectedEmail.id })} disabled={archiveEmailMutation.isPending}><Archive className="h-4 w-4" /></Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => { setDeleteTargetId(selectedEmail.id); setShowDeleteConfirm(true); }}><Trash2 className="h-4 w-4" /></Button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+          <div className="flex items-start gap-3">
+            <div className="h-9 w-9 rounded-full bg-gradient-to-br from-primary/70 to-primary shrink-0 flex items-center justify-center text-primary-foreground font-semibold text-sm select-none">{(selectedEmail.fromName || selectedEmail.fromEmail || "?")[0].toUpperCase()}</div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-medium text-sm">{selectedEmail.fromName ? `${selectedEmail.fromName} <${selectedEmail.fromEmail}>` : selectedEmail.fromEmail}</span>
+                <Badge variant="secondary" className="text-xs gap-1"><span className={`h-1.5 w-1.5 rounded-full ${(categoryConfig[selectedEmail.category || "general"] || categoryConfig.general).dot}`} />{(categoryConfig[selectedEmail.category || "general"] || categoryConfig.general).label}</Badge>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">{new Date(selectedEmail.receivedAt).toLocaleString()}</p>
+            </div>
+            <Button variant="ghost" size="sm" className="h-7 text-xs shrink-0 gap-1" onClick={() => reparseEmailMutation.mutate({ id: selectedEmail.id })} disabled={reparseEmailMutation.isPending}>
+              {reparseEmailMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ClipboardList className="h-3.5 w-3.5" />}Reparse
+            </Button>
+          </div>
+          {(detail as any)?.documents?.length > 0 && (
+            <div className="flex flex-wrap gap-2 py-2 border-y">
+              <span className="text-xs text-muted-foreground font-medium w-full">Parsed Documents ({(detail as any).documents.length})</span>
+              {(detail as any).documents.map((doc: any) => <Badge key={doc.id} variant="secondary" className="text-xs gap-1"><FileText className="h-3 w-3" />{doc.documentType?.replace(/_/g, " ")}{doc.totalAmount && ` — $${Number(doc.totalAmount).toFixed(2)}`}</Badge>)}
+            </div>
+          )}
+          <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground/90">{bodyClean}</div>
+          <div className="border rounded-xl p-3 space-y-2 bg-background">
+            <div className="flex items-center gap-2 text-sm">
+              <Reply className="h-4 w-4 text-muted-foreground shrink-0" />
+              <span className="text-muted-foreground text-xs">Reply to <span className="font-medium text-foreground">{selectedEmail.fromName || selectedEmail.fromEmail}</span></span>
+              <Button variant="ghost" size="sm" className="ml-auto h-7 gap-1.5 text-xs bg-gradient-to-r from-violet-600 to-indigo-600 text-white hover:from-violet-700 hover:to-indigo-700" onClick={() => handleGenerateAiReply(selectedEmail)} disabled={isGeneratingReply && aiReplyEmailId === selectedEmail.id}>
+                {isGeneratingReply && aiReplyEmailId === selectedEmail.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}AI Reply
+              </Button>
+            </div>
+            <Textarea placeholder="Write a reply..." rows={3} className="text-sm resize-none border bg-accent/20" value={replyText} onChange={e => setReplyText(e.target.value)} />
+            <div className="flex items-center gap-2">
+              <Button size="sm" className="gap-1.5 h-7 text-xs" onClick={() => { if (replyText.trim()) { navigator.clipboard.writeText(replyText.trim()); toast.success("Reply copied — paste in Gmail to send"); setReplyText(""); } }}><Send className="h-3.5 w-3.5" /> Send</Button>
+              <div className="relative" ref={cannedPickerRef}>
+                <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={() => { setShowCannedPicker(p => !p); setCannedSearch(""); }}><BookOpen className="h-3.5 w-3.5" /> Canned</Button>
+                {showCannedPicker && (
+                  <div className="absolute bottom-full left-0 mb-2 w-72 bg-popover border rounded-xl shadow-xl z-50 overflow-hidden">
+                    <div className="p-2 border-b"><Input placeholder="Search canned responses..." className="h-7 text-xs" value={cannedSearch} onChange={e => setCannedSearch(e.target.value)} autoFocus /></div>
+                    <div className="max-h-48 overflow-y-auto py-1">
+                      {(cannedResponses ?? []).filter((r: any) => !cannedSearch || r.name.toLowerCase().includes(cannedSearch.toLowerCase()) || r.content.toLowerCase().includes(cannedSearch.toLowerCase())).map((r: any) => (
+                        <div key={r.id} className="px-3 py-2 hover:bg-accent cursor-pointer" onClick={() => insertCannedResponse(r.content, r.id)}>
+                          <p className="text-xs font-medium truncate">{r.name}</p>
+                          <p className="text-xs text-muted-foreground truncate mt-0.5">{r.content.substring(0, 60)}</p>
+                        </div>
+                      ))}
+                      {!(cannedResponses ?? []).length && <div className="px-3 py-4 text-xs text-muted-foreground text-center">No canned responses. <button className="text-primary underline" onClick={() => { setShowCannedPicker(false); setShowCannedManager(true); }}>Create one</button></div>}
+                    </div>
+                    <div className="border-t px-3 py-1.5"><button className="text-xs text-primary hover:underline" onClick={() => { setShowCannedPicker(false); setShowCannedManager(true); }}>Manage canned responses →</button></div>
+                  </div>
+                )}
+              </div>
+              <Button variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground" onClick={() => setReplyText("")}>Discard</Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   return (
     <>
-      {/* Gmail-style two-panel layout */}
-      <div
-        className="-m-3 -mb-4 md:-m-6 lg:-m-8 flex overflow-hidden bg-background"
-        style={{ height: "calc(100vh - 5.25rem)" }}
-      >
-        {/* ── LEFT SIDEBAR ── */}
-        <div className="w-56 shrink-0 flex flex-col border-r bg-background">
-          {/* Compose / Connect button */}
-          <div className="p-3 pb-2">
-            <Button
-              variant="outline"
-              className="rounded-2xl shadow h-12 w-full gap-2 justify-start pl-5 text-sm font-medium"
-              onClick={() => setShowScanDialog(true)}
-            >
-              <PenSquare className="h-4 w-4" />
-              Connect Inbox
+      <div className="-m-3 -mb-4 md:-m-6 lg:-m-8 flex overflow-hidden bg-background" style={{ height: "calc(100vh - 5.25rem)" }}>
+
+        {/* LEFT SIDEBAR */}
+        <div className="w-52 shrink-0 flex flex-col border-r bg-background overflow-hidden">
+          <div className="p-2 pb-1">
+            <Button className="rounded-2xl shadow h-10 w-full gap-2 justify-start pl-4 text-sm font-medium" onClick={() => setShowScanDialog(true)}>
+              <PenSquare className="h-4 w-4" />New Email
             </Button>
           </div>
-
-          {/* Folder nav */}
-          <nav className="flex-1 overflow-y-auto py-1 space-y-0.5">
+          <nav className="flex-1 overflow-y-auto py-1 space-y-0">
             {sidebarFolders.map(({ key, label, icon: Icon, count }) => (
-              <button
-                key={key}
-                className={`flex items-center gap-3 pl-4 pr-3 py-1.5 text-sm w-[calc(100%-8px)] rounded-r-full transition-colors hover:bg-accent/60 ${
-                  categoryFilter === key ? "bg-accent font-semibold" : "font-normal"
-                }`}
-                onClick={() => { setCategoryFilter(key); setSelectedEmailWithUrl(null); }}
-              >
+              <button key={key} className={`flex items-center gap-2.5 pl-3 pr-2 py-1.5 text-sm w-full rounded-r-full transition-colors hover:bg-accent/60 ${activeFolder === key ? "bg-accent font-semibold" : "font-normal"}`} onClick={() => { setActiveFolder(key); setSelectedEmailId(null); setSelectedSequenceId(null); setLabelFilter(null); }}>
                 <Icon className="h-4 w-4 shrink-0" />
                 <span className="flex-1 text-left">{label}</span>
-                {count > 0 && (
-                  <span className="text-xs font-semibold">{count}</span>
-                )}
+                {count !== undefined && count > 0 && <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${activeFolder === key ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>{count}</span>}
               </button>
             ))}
-
-            {/* Labels section */}
-            <div className="pt-3 px-4 pb-1">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Labels</p>
-            </div>
-            {sidebarLabels.map(({ key, label, dot }) => (
-              <button
-                key={key}
-                className={`flex items-center gap-3 pl-4 pr-3 py-1.5 text-sm w-[calc(100%-8px)] rounded-r-full transition-colors hover:bg-accent/60 ${
-                  categoryFilter === key ? "bg-accent font-semibold" : "font-normal"
-                }`}
-                onClick={() => { setCategoryFilter(key); setSelectedEmailWithUrl(null); }}
-              >
-                <span className={`h-3 w-3 rounded-full shrink-0 ${dot}`} />
-                <span className="flex-1 text-left">{label}</span>
+            <div className="pt-2">
+              <button className="flex items-center gap-2 px-3 py-1 text-xs font-medium text-muted-foreground uppercase tracking-wide w-full hover:text-foreground" onClick={() => setFoldersExpanded(p => !p)}>
+                {foldersExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}Folders<Plus className="h-3 w-3 ml-auto" />
               </button>
-            ))}
-          </nav>
-
-          {/* Bottom toolbar */}
-          <div className="px-2 py-2 border-t flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              title="Refresh"
-              onClick={() => utils.emailScanning.list.invalidate()}
-            >
-              <RefreshCw className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              title="Categorize"
-              onClick={() => bulkCategorizeMutation.mutate({ useAi: false, limit: 100 })}
-              disabled={bulkCategorizeMutation.isPending}
-            >
-              {bulkCategorizeMutation.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Zap className="h-4 w-4" />
-              )}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              title="Scan Now"
-              onClick={() => scanNowMutation.mutate({ folders: ["INBOX"], unseenOnly: false, limit: 200 })}
-              disabled={scanNowMutation.isPending}
-            >
-              {scanNowMutation.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Inbox className="h-4 w-4" />
-              )}
-            </Button>
-            <div className="ml-auto flex items-center gap-1 text-xs text-green-500 pr-1" title="Auto-syncing">
-              <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
-              <span className="hidden sm:inline">Live</span>
-            </div>
-          </div>
-        </div>
-
-        {/* ── MAIN CONTENT ── */}
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Search bar + bulk actions */}
-          <div className="border-b px-4 py-2 flex items-center gap-2 bg-background">
-            <div className="flex-1 relative max-w-2xl">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-              <Input
-                placeholder="Search mail"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 h-9 rounded-full bg-accent/40 border-0 focus-visible:ring-1 text-sm"
-              />
-            </div>
-            {selectedEmails.size > 0 && (
-              <div className="flex items-center gap-1 ml-2">
-                <span className="text-xs text-muted-foreground mr-1">{selectedEmails.size} selected</span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs gap-1"
-                  onClick={() => {
-                    selectedEmails.forEach((id) => archiveEmailMutation.mutate({ id }));
-                    setSelectedEmails(new Set());
-                  }}
-                >
-                  <Archive className="h-3.5 w-3.5" /> Archive
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs gap-1 text-destructive hover:text-destructive"
-                  onClick={() => {
-                    selectedEmails.forEach((id) => deleteEmailMutation.mutate({ id }));
-                    setSelectedEmails(new Set());
-                  }}
-                >
-                  <Trash2 className="h-3.5 w-3.5" /> Delete
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={() => setSelectedEmails(new Set())}
-                >
-                  Clear
-                </Button>
-              </div>
-            )}
-          </div>
-
-          {/* ── EMAIL LIST ── */}
-          {!selectedEmailId || !selectedEmail ? (
-            <div className="flex-1 overflow-y-auto">
-              {emailsLoading ? (
-                <div className="flex items-center justify-center py-16">
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                </div>
-              ) : !filteredEmails || filteredEmails.length === 0 ? (
-                <div className="text-center py-16 text-muted-foreground">
-                  <Mail className="h-10 w-10 mx-auto mb-3 opacity-30" />
-                  <p className="text-sm">No emails found</p>
-                  {searchQuery && (
-                    <p className="text-xs mt-1">No results for "{searchQuery}"</p>
-                  )}
-                </div>
-              ) : (
-                <div className="divide-y divide-border/30">
-                  {filteredEmails.map((email: any) => {
-                    const isUnread = email.parsingStatus === "pending";
-                    const isStarred = starredEmails.has(email.id);
-                    const isChecked = selectedEmails.has(email.id);
-                    const catConfig = categoryConfig[email.category || "general"] || categoryConfig.general;
-
-                    const isExpanded = expandedEmailId === email.id;
-
-                    return (
-                      <div key={email.id}>
-                      <div
-                        className={`group flex items-center gap-2 px-4 h-11 cursor-pointer select-none transition-colors hover:bg-accent/50 hover:shadow-[inset_3px_0_0] hover:shadow-primary/50 ${
-                          isUnread ? "font-semibold bg-accent/10" : ""
-                        } ${isChecked ? "bg-primary/5" : ""} ${isExpanded ? "bg-accent/30" : ""}`}
-                        onClick={() => setExpandedEmailId(isExpanded ? null : email.id)}
-                      >
-                        {/* Checkbox */}
-                        <div className={`h-4 w-4 shrink-0 transition-opacity ${!isChecked ? "opacity-0 group-hover:opacity-100" : "opacity-100"}`}>
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4 cursor-pointer accent-primary rounded"
-                            checked={isChecked}
-                            onChange={() => {}}
-                            onClick={(e) => toggleCheckbox(e, email.id)}
-                          />
-                        </div>
-
-                        {/* Star */}
-                        <Star
-                          className={`h-4 w-4 shrink-0 cursor-pointer transition-all ${
-                            isStarred
-                              ? "text-yellow-400 fill-yellow-400"
-                              : "text-muted-foreground/30 hover:text-yellow-400 opacity-0 group-hover:opacity-100"
-                          }`}
-                          onClick={(e) => toggleStar(e, email.id)}
-                        />
-
-                        {/* Sender */}
-                        <span className={`w-36 shrink-0 truncate text-sm ${isUnread ? "font-semibold" : "text-muted-foreground"}`}>
-                          {email.fromName || email.fromEmail}
-                        </span>
-
-                        {/* Subject + snippet */}
-                        <span className="flex-1 min-w-0 truncate text-sm">
-                          <span className={isUnread ? "font-semibold" : ""}>{email.subject || "(No subject)"}</span>
-                          {email.bodyText && (
-                            <span className="text-muted-foreground font-normal">
-                              {" — "}{email.bodyText.substring(0, 80)}
-                            </span>
-                          )}
-                        </span>
-
-                        {/* Category dot (hidden on hover) */}
-                        <div className="flex items-center gap-1 shrink-0 group-hover:invisible">
-                          <span className={`h-2 w-2 rounded-full ${catConfig.dot}`} title={catConfig.label} />
-                        </div>
-
-                        {/* Hover action icons */}
-                        <div
-                          className="hidden group-hover:flex items-center gap-0.5 shrink-0"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <button
-                            className="h-7 w-7 flex items-center justify-center rounded hover:bg-accent transition-colors"
-                            title="Archive"
-                            onClick={(e) => { e.stopPropagation(); archiveEmailMutation.mutate({ id: email.id }); }}
-                          >
-                            <Archive className="h-3.5 w-3.5 text-muted-foreground" />
-                          </button>
-                          <button
-                            className="h-7 w-7 flex items-center justify-center rounded hover:bg-accent transition-colors"
-                            title="Delete"
-                            onClick={(e) => { e.stopPropagation(); setDeleteTargetId(email.id); setShowDeleteConfirm(true); }}
-                          >
-                            <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
-                          </button>
-                        </div>
-
-                        {/* Date */}
-                        <span className="text-xs text-muted-foreground shrink-0 w-16 text-right">
-                          {formatEmailDate(email.receivedAt)}
-                        </span>
-                      </div>
-                      {/* Inline expanded body */}
-                      {isExpanded && (
-                        <div className="px-6 py-3 bg-muted/20 border-t border-b border-border/30">
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="text-xs text-muted-foreground">
-                              <span className="font-medium text-foreground">{email.fromName || email.fromEmail}</span>
-                              {email.fromName && <span className="ml-1">&lt;{email.fromEmail}&gt;</span>}
-                              <span className="mx-2">·</span>
-                              {new Date(email.receivedAt).toLocaleString()}
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => reparseEmailMutation.mutate({ id: email.id })}>
-                                Reparse
-                              </Button>
-                              <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => archiveEmailMutation.mutate({ id: email.id })}>
-                                Archive
-                              </Button>
-                              <Button size="sm" variant="outline" className="h-6 text-xs text-destructive" onClick={() => { setDeleteTargetId(email.id); setShowDeleteConfirm(true); }}>
-                                Delete
-                              </Button>
-                            </div>
-                          </div>
-
-                          {/* Body — prefer HTML content (strip tags), fall back to plain text */}
-                          <div className="p-3 bg-background rounded-md border text-sm whitespace-pre-wrap max-h-[70vh] overflow-y-auto leading-relaxed">
-                            {emailsLoading && expandedEmailId === email.id ? (
-                              <span className="flex items-center gap-2 text-muted-foreground">
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                Loading…
-                              </span>
-                            ) : (
-                              (() => {
-                                const detail = emailDetail && emailDetail.id === email.id ? emailDetail : null;
-                                // Prefer the richer HTML body from the detail query; fall back to
-                                // the list-level bodyHtml, then bodyText from either source.
-                                const raw =
-                                  detail?.bodyHtml ||
-                                  email.bodyHtml ||
-                                  detail?.bodyText ||
-                                  email.bodyText ||
-                                  "(No content)";
-                                // Strip HTML if it contains tags
-                                if (raw.includes("<") && raw.includes(">")) {
-                                  const sanitized = sanitizeHtml(raw, {
-                                    allowedTags: [],
-                                    allowedAttributes: {},
-                                  })
-                                    .replace(/&nbsp;/g, " ")
-                                    .replace(/\n{3,}/g, "\n\n")
-                                    .trim();
-                                  return sanitized;
-                                }
-                                return raw;
-                              })()
-                            )}
-                          </div>
-                          {/* Reply box with snippet support */}
-                          <div className="mt-3 pt-3 border-t border-border/30 relative">
-                            <div className="flex gap-2">
-                              <div className="flex-1 relative">
-                                <Input
-                                  placeholder="Write a reply... (type / for snippets)"
-                                  className="h-8 text-sm pr-8"
-                                  value={replyText}
-                                  onChange={(e) => {
-                                    setReplyText(e.target.value);
-                                    setShowSnippetMenu(e.target.value === "/");
-                                  }}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter" && replyText.trim() && !showSnippetMenu) {
-                                      navigator.clipboard.writeText(replyText.trim());
-                                      toast.success("Reply copied — paste in Gmail to send");
-                                      setReplyText("");
-                                    }
-                                    if (e.key === "Escape") setShowSnippetMenu(false);
-                                  }}
-                                />
-                                {/* Save as snippet button */}
-                                {replyText.trim() && !showSnippetMenu && (
-                                  <button
-                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-primary text-xs"
-                                    title="Save as snippet"
-                                    onClick={() => {
-                                      if (replyText.trim() && !snippets.includes(replyText.trim())) {
-                                        saveSnippets([...snippets, replyText.trim()]);
-                                        toast.success("Snippet saved — type / to use it");
-                                      }
-                                    }}
-                                  >
-                                    💾
-                                  </button>
-                                )}
-                                {/* Snippet dropdown */}
-                                {showSnippetMenu && (
-                                  <div className="absolute bottom-full left-0 mb-1 w-full bg-popover border rounded-xl shadow-lg z-50 max-h-48 overflow-y-auto">
-                                    {snippets.length > 0 ? (
-                                      <div className="py-1">
-                                        {snippets.map((s, i) => (
-                                          <div key={i} className="flex items-center justify-between px-3 py-1.5 hover:bg-accent cursor-pointer group">
-                                            <button
-                                              className="flex-1 text-left text-sm truncate"
-                                              onClick={() => { setReplyText(s); setShowSnippetMenu(false); }}
-                                            >
-                                              {s}
-                                            </button>
-                                            <button
-                                              className="text-xs text-destructive opacity-0 group-hover:opacity-100 ml-2 shrink-0"
-                                              onClick={(e) => { e.stopPropagation(); saveSnippets(snippets.filter((_, j) => j !== i)); }}
-                                            >
-                                              ✕
-                                            </button>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    ) : (
-                                      <div className="px-3 py-3 text-xs text-muted-foreground text-center">
-                                        No snippets yet. Write a reply and click 💾 to save it.
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                              <Button size="sm" className="h-8 text-xs" onClick={() => {
-                                if (replyText.trim()) {
-                                  navigator.clipboard.writeText(replyText.trim());
-                                  toast.success("Reply copied — paste in Gmail to send");
-                                  setReplyText("");
-                                }
-                              }}>
-                                Send
-                              </Button>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-              {filteredEmails && filteredEmails.length > 0 && (
-                <p className="text-xs text-muted-foreground px-4 py-2 border-t">
-                  {filteredEmails.length} email{filteredEmails.length !== 1 ? "s" : ""}
-                  {searchQuery && ` matching "${searchQuery}"`}
-                </p>
-              )}
-            </div>
-          ) : (
-            /* ── READING PANE ── */
-            <div className="flex-1 overflow-y-auto">
-              {/* Sticky header */}
-              <div className="sticky top-0 bg-background border-b px-4 py-2.5 flex items-center gap-2 z-10">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 -ml-1 shrink-0"
-                  title="Back to inbox"
-                  onClick={() => setSelectedEmailWithUrl(null)}
-                >
-                  <ArrowLeft className="h-4 w-4" />
-                </Button>
-                <h2 className="font-semibold flex-1 truncate text-base">
-                  {selectedEmail.subject || "(No subject)"}
-                </h2>
-                <button
-                  className="h-8 w-8 flex items-center justify-center rounded hover:bg-accent transition-colors shrink-0"
-                  title={starredEmails.has(selectedEmail.id) ? "Unstar" : "Star"}
-                  onClick={(e) => toggleStar(e, selectedEmail.id)}
-                >
-                  <Star
-                    className={`h-4 w-4 ${
-                      starredEmails.has(selectedEmail.id)
-                        ? "text-yellow-400 fill-yellow-400"
-                        : "text-muted-foreground"
-                    }`}
-                  />
+              {foldersExpanded && userFolders.map(f => (
+                <button key={f} className="flex items-center gap-2 pl-6 pr-3 py-1 text-sm w-full rounded-r-full hover:bg-accent/60 text-muted-foreground hover:text-foreground transition-colors">
+                  <FolderOpen className="h-3.5 w-3.5 shrink-0" /><span className="flex-1 text-left truncate">{f}</span>
                 </button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 shrink-0"
-                  title="Archive"
-                  onClick={() => archiveEmailMutation.mutate({ id: selectedEmail.id })}
-                  disabled={archiveEmailMutation.isPending}
-                >
-                  <Archive className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 shrink-0 text-destructive hover:text-destructive"
-                  title="Delete"
-                  onClick={() => { setDeleteTargetId(selectedEmail.id); setShowDeleteConfirm(true); }}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+              ))}
+            </div>
+            <div className="pt-1">
+              <button className="flex items-center gap-2 px-3 py-1 text-xs font-medium text-muted-foreground uppercase tracking-wide w-full hover:text-foreground" onClick={() => setLabelsExpanded(p => !p)}>
+                {labelsExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}Labels<Plus className="h-3 w-3 ml-auto" />
+              </button>
+              {labelsExpanded && userLabels.map(({ label, color }) => (
+                <button key={label} className={`flex items-center gap-2 pl-6 pr-3 py-1 text-sm w-full rounded-r-full hover:bg-accent/60 transition-colors ${labelFilter === label ? "bg-accent font-medium" : "text-muted-foreground hover:text-foreground"}`} onClick={() => setLabelFilter(labelFilter === label ? null : label)}>
+                  <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${color}`} /><span className="flex-1 text-left truncate">{label}</span>
+                </button>
+              ))}
+            </div>
+          </nav>
+          <div className="px-2 py-1.5 border-t flex items-center gap-0.5">
+            <Button variant="ghost" size="icon" className="h-7 w-7" title="Refresh" onClick={() => utils.emailScanning.list.invalidate()}><RefreshCw className="h-3.5 w-3.5" /></Button>
+            <Button variant="ghost" size="icon" className="h-7 w-7" title="Auto-categorize" onClick={() => bulkCategorizeMutation.mutate({ useAi: false, limit: 100 })} disabled={bulkCategorizeMutation.isPending}>{bulkCategorizeMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}</Button>
+            <Button variant="ghost" size="icon" className="h-7 w-7" title="Scan inbox" onClick={() => scanNowMutation.mutate({ folders: ["INBOX"], unseenOnly: false, limit: 200 })} disabled={scanNowMutation.isPending}>{scanNowMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Inbox className="h-3.5 w-3.5" />}</Button>
+            <Button variant="ghost" size="icon" className="h-7 w-7" title="Canned responses" onClick={() => setShowCannedManager(true)}><BookOpen className="h-3.5 w-3.5" /></Button>
+            <div className="ml-auto flex items-center pr-1"><div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" /></div>
+          </div>
+        </div>
+
+        {/* MIDDLE + RIGHT */}
+        {activeFolder === "sequences" ? <SequencesPanel /> : (
+          <>
+            {/* Email list */}
+            <div className="w-80 shrink-0 border-r flex flex-col overflow-hidden">
+              <div className="border-b px-2 py-1.5 flex items-center gap-0.5 bg-background shrink-0">
+                {(["important", "sales", "hiring", "raise", "other"] as Tab[]).map(t => (
+                  <button key={t} className={`px-2.5 py-1 rounded-md text-xs font-medium capitalize transition-colors ${activeTab === t ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground"}`} onClick={() => setActiveTab(t)}>{t}</button>
+                ))}
               </div>
-
-              {/* Email content */}
-              <div className="max-w-3xl mx-auto px-6 py-6 space-y-6">
-                {/* Sender info row */}
-                <div className="flex items-start gap-4">
-                  {/* Avatar */}
-                  <div className="h-10 w-10 rounded-full bg-primary flex items-center justify-center text-primary-foreground font-semibold text-sm shrink-0 select-none">
-                    {(selectedEmail.fromName || selectedEmail.fromEmail || "?")[0].toUpperCase()}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-medium text-sm">
-                        {selectedEmail.fromName
-                          ? `${selectedEmail.fromName} <${selectedEmail.fromEmail}>`
-                          : selectedEmail.fromEmail}
-                      </span>
-                      <Badge variant="outline" className="text-xs">
-                        {selectedEmail.parsingStatus}
-                      </Badge>
-                      {(categoryConfig[selectedEmail.category || "general"] || categoryConfig.general) && (
-                        <Badge variant="secondary" className="text-xs gap-1">
-                          <span className={`h-1.5 w-1.5 rounded-full ${(categoryConfig[selectedEmail.category || "general"] || categoryConfig.general).dot}`} />
-                          {(categoryConfig[selectedEmail.category || "general"] || categoryConfig.general).label}
-                        </Badge>
-                      )}
-                    </div>
-                    <div className="text-xs text-muted-foreground mt-0.5">
-                      {new Date(selectedEmail.receivedAt).toLocaleString()}
-                    </div>
-                  </div>
-                  {/* Quick actions */}
-                  <div className="flex items-center gap-1 shrink-0">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 text-xs gap-1.5"
-                      onClick={() => reparseEmailMutation.mutate({ id: selectedEmail.id })}
-                      disabled={reparseEmailMutation.isPending}
-                    >
-                      {reparseEmailMutation.isPending ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <ClipboardList className="h-3.5 w-3.5" />
-                      )}
-                      Reparse
-                    </Button>
-                  </div>
+              <div className="px-2 py-1.5 border-b shrink-0">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+                  <Input placeholder="Search emails..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="pl-8 h-7 rounded-full bg-accent/40 border-0 focus-visible:ring-1 text-xs" />
                 </div>
-
-                {/* Parsed documents */}
-                {emailDetail && emailDetail.id === selectedEmail.id && emailDetail.documents && emailDetail.documents.length > 0 && (
-                  <div className="flex flex-wrap gap-2 py-3 border-y">
-                    <span className="text-xs text-muted-foreground font-medium w-full">
-                      Parsed Documents ({emailDetail.documents.length})
-                    </span>
-                    {emailDetail.documents.map((doc: any) => (
-                      <Badge key={doc.id} variant="secondary" className="text-xs gap-1">
-                        <FileText className="h-3 w-3" />
-                        {doc.documentType?.replace(/_/g, " ")}
-                        {doc.totalAmount && ` — $${Number(doc.totalAmount).toFixed(2)}`}
-                      </Badge>
-                    ))}
-                  </div>
+              </div>
+              {activeFolder === "inbox" && (
+                <div className="px-3 py-1.5 border-b flex items-center gap-3 text-xs text-muted-foreground shrink-0">
+                  <span className="font-medium text-foreground">All {tabEmails.length}</span>
+                  <span>• <span className="text-orange-500 font-medium">Reply Today {tabEmails.filter((e: any) => isReplyToday(e)).length}</span></span>
+                </div>
+              )}
+              <div className="flex-1 overflow-y-auto">
+                {emailsLoading ? (
+                  <div className="flex items-center justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+                ) : !tabEmails.length ? (
+                  <div className="text-center py-16 text-muted-foreground"><Mail className="h-10 w-10 mx-auto mb-3 opacity-30" /><p className="text-sm">No emails found</p>{searchQuery && <p className="text-xs mt-1">No results for "{searchQuery}"</p>}</div>
+                ) : (
+                  <>
+                    <EmailGroup label="Pinned" emails={grouped.pinned} />
+                    <EmailGroup label="Today" emails={grouped.today} />
+                    <EmailGroup label="Yesterday" emails={grouped.yesterday} />
+                    <EmailGroup label="This Week" emails={grouped.thisWeek} />
+                    <EmailGroup label="Older" emails={grouped.older} />
+                  </>
                 )}
-
-                {/* Email body */}
-                <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground/90">
-                  {renderBody(
-                    (emailDetail && emailDetail.id === selectedEmail.id)
-                      ? (emailDetail.bodyText || emailDetail.bodyHtml || "")
-                      : (selectedEmail.bodyText || selectedEmail.bodyHtml || "")
-                  )}
-                </div>
-
-                {/* Inline reply box */}
-                <div className="border rounded-xl p-4 space-y-3 bg-background">
-                  <div className="flex items-center gap-2 text-sm">
-                    <Reply className="h-4 w-4 text-muted-foreground shrink-0" />
-                    <span className="text-muted-foreground">
-                      Reply to{" "}
-                      <span className="font-medium text-foreground">
-                        {selectedEmail.fromName || selectedEmail.fromEmail}
-                      </span>
-                    </span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="ml-auto h-7 gap-1.5 text-xs bg-gradient-to-r from-violet-600 to-indigo-600 text-white hover:from-violet-700 hover:to-indigo-700"
-                      onClick={() => handleGenerateAiReply(selectedEmail)}
-                      disabled={isGeneratingReply && aiReplyEmailId === selectedEmail.id}
-                    >
-                      {isGeneratingReply && aiReplyEmailId === selectedEmail.id ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Sparkles className="h-3.5 w-3.5" />
-                      )}
-                      AI Reply
-                    </Button>
-                  </div>
-                  <Textarea
-                    placeholder="Write a reply..."
-                    rows={4}
-                    className="text-sm resize-none border bg-accent/20"
-                  />
-                  <div className="flex items-center gap-2">
-                    <Button size="sm" className="gap-1.5 h-8">
-                      <Send className="h-3.5 w-3.5" />
-                      Send
-                    </Button>
-                    <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground">
-                      Discard
-                    </Button>
-                  </div>
-                </div>
               </div>
             </div>
-          )}
-        </div>
+            <ReadingPane />
+          </>
+        )}
       </div>
 
-      {/* IMAP Scan / Connect Inbox Dialog */}
+      {/* IMAP Dialog */}
       <Dialog open={showScanDialog} onOpenChange={setShowScanDialog}>
         <DialogContent className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle>Connect Email Inbox</DialogTitle>
-            <DialogDescription>
-              Connect to your email inbox via IMAP to automatically import and categorize emails.
-            </DialogDescription>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Connect Email Inbox</DialogTitle><DialogDescription>Connect via IMAP to import and categorize emails.</DialogDescription></DialogHeader>
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Email Provider</Label>
-              <Select value={selectedPreset} onValueChange={handlePresetChange}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select provider or enter custom" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="gmail">Gmail</SelectItem>
-                  <SelectItem value="outlook">Outlook / Office 365</SelectItem>
-                  <SelectItem value="yahoo">Yahoo Mail</SelectItem>
-                  <SelectItem value="icloud">iCloud Mail</SelectItem>
-                  <SelectItem value="custom">Custom IMAP Server</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="space-y-2"><Label>Email Provider</Label>
+              <Select value={selectedPreset} onValueChange={handlePresetChange}><SelectTrigger><SelectValue placeholder="Select provider or enter custom" /></SelectTrigger><SelectContent><SelectItem value="gmail">Gmail</SelectItem><SelectItem value="outlook">Outlook / Office 365</SelectItem><SelectItem value="yahoo">Yahoo Mail</SelectItem><SelectItem value="icloud">iCloud Mail</SelectItem><SelectItem value="custom">Custom IMAP Server</SelectItem></SelectContent></Select>
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="imapHost">IMAP Host</Label>
-                <Input
-                  id="imapHost"
-                  placeholder="imap.gmail.com"
-                  value={scanConfig.host}
-                  onChange={(e) => setScanConfig({ ...scanConfig, host: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="imapPort">Port</Label>
-                <Input
-                  id="imapPort"
-                  type="number"
-                  value={scanConfig.port}
-                  onChange={(e) => setScanConfig({ ...scanConfig, port: parseInt(e.target.value) || 993 })}
-                />
-              </div>
+              <div className="space-y-2"><Label>IMAP Host</Label><Input placeholder="imap.gmail.com" value={scanConfig.host} onChange={e => setScanConfig({ ...scanConfig, host: e.target.value })} /></div>
+              <div className="space-y-2"><Label>Port</Label><Input type="number" value={scanConfig.port} onChange={e => setScanConfig({ ...scanConfig, port: parseInt(e.target.value) || 993 })} /></div>
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="imapUser">Email / Username</Label>
-                <Input
-                  id="imapUser"
-                  placeholder="you@gmail.com"
-                  value={scanConfig.user}
-                  onChange={(e) => setScanConfig({ ...scanConfig, user: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="imapPassword">Password / App Password</Label>
-                <Input
-                  id="imapPassword"
-                  type="password"
-                  placeholder="••••••••"
-                  value={scanConfig.password}
-                  onChange={(e) => setScanConfig({ ...scanConfig, password: e.target.value })}
-                />
-              </div>
+              <div className="space-y-2"><Label>Email / Username</Label><Input placeholder="you@gmail.com" value={scanConfig.user} onChange={e => setScanConfig({ ...scanConfig, user: e.target.value })} /></div>
+              <div className="space-y-2"><Label>Password / App Password</Label><Input type="password" placeholder="••••••••" value={scanConfig.password} onChange={e => setScanConfig({ ...scanConfig, password: e.target.value })} /></div>
             </div>
-            <div className="space-y-3 border-t pt-4">
-              <Label className="text-sm font-medium">Scan Options</Label>
+            <div className="border-t pt-3 space-y-3"><Label className="text-sm font-medium">Scan Options</Label>
               <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="folder">Folder</Label>
-                  <Input
-                    id="folder"
-                    value={scanConfig.folder}
-                    onChange={(e) => setScanConfig({ ...scanConfig, folder: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="limit">Max Emails</Label>
-                  <Input
-                    id="limit"
-                    type="number"
-                    value={scanConfig.limit}
-                    onChange={(e) => setScanConfig({ ...scanConfig, limit: parseInt(e.target.value) || 50 })}
-                  />
-                </div>
+                <div className="space-y-2"><Label>Folder</Label><Input value={scanConfig.folder} onChange={e => setScanConfig({ ...scanConfig, folder: e.target.value })} /></div>
+                <div className="space-y-2"><Label>Max Emails</Label><Input type="number" value={scanConfig.limit} onChange={e => setScanConfig({ ...scanConfig, limit: parseInt(e.target.value) || 50 })} /></div>
               </div>
               <div className="flex flex-col gap-2">
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="unseenOnly"
-                    checked={scanConfig.unseenOnly}
-                    onCheckedChange={(checked) => setScanConfig({ ...scanConfig, unseenOnly: !!checked })}
-                  />
-                  <Label htmlFor="unseenOnly" className="text-sm">Only unread emails</Label>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="markAsSeen"
-                    checked={scanConfig.markAsSeen}
-                    onCheckedChange={(checked) => setScanConfig({ ...scanConfig, markAsSeen: !!checked })}
-                  />
-                  <Label htmlFor="markAsSeen" className="text-sm">Mark as read after scanning</Label>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="fullAiParsing"
-                    checked={scanConfig.fullAiParsing}
-                    onCheckedChange={(checked) => setScanConfig({ ...scanConfig, fullAiParsing: !!checked })}
-                  />
-                  <Label htmlFor="fullAiParsing" className="text-sm">Full AI parsing (slower, more accurate)</Label>
-                </div>
+                {([["unseenOnly", "Only unread emails"], ["markAsSeen", "Mark as read after scanning"], ["fullAiParsing", "Full AI parsing (slower, more accurate)"]] as const).map(([field, label]) => (
+                  <div key={field} className="flex items-center space-x-2"><Checkbox id={field} checked={scanConfig[field]} onCheckedChange={v => setScanConfig({ ...scanConfig, [field]: !!v })} /><Label htmlFor={field} className="text-sm">{label}</Label></div>
+                ))}
               </div>
             </div>
             {(selectedPreset === "gmail" || selectedPreset === "outlook") && (
               <div className="rounded-md bg-amber-50 dark:bg-amber-950 p-3 text-sm">
-                <p className="font-medium text-amber-800 dark:text-amber-200">
-                  Note for {selectedPreset === "gmail" ? "Gmail" : "Outlook"}:
-                </p>
-                <p className="text-amber-700 dark:text-amber-300 mt-1">
-                  {selectedPreset === "gmail"
-                    ? "Use an App Password instead of your regular password. Go to Google Account > Security > 2-Step Verification > App passwords."
-                    : "You may need to enable IMAP access in Outlook settings and use an App Password if 2FA is enabled."}
-                </p>
+                <p className="font-medium text-amber-800 dark:text-amber-200">Note for {selectedPreset === "gmail" ? "Gmail" : "Outlook"}:</p>
+                <p className="text-amber-700 dark:text-amber-300 mt-1">{selectedPreset === "gmail" ? "Use an App Password. Go to Google Account › Security › 2-Step Verification › App passwords." : "Enable IMAP in Outlook and use an App Password if 2FA is enabled."}</p>
               </div>
             )}
           </div>
           <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={handleTestConnection} disabled={testConnectionMutation.isPending}>
-              {testConnectionMutation.isPending ? (
-                <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Testing...</>
-              ) : (
-                <><Settings className="h-4 w-4 mr-2" /> Test Connection</>
-              )}
-            </Button>
-            <Button onClick={handleScanInbox} disabled={scanInboxMutation.isPending}>
-              {scanInboxMutation.isPending ? (
-                <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Scanning...</>
-              ) : (
-                <><Inbox className="h-4 w-4 mr-2" /> Scan Inbox</>
-              )}
-            </Button>
+            <Button variant="outline" onClick={() => { if (!scanConfig.host || !scanConfig.user || !scanConfig.password) { toast.error("Fill in connection details"); return; } testConnectionMutation.mutate({ host: scanConfig.host, port: scanConfig.port, secure: true, user: scanConfig.user, password: scanConfig.password }); }} disabled={testConnectionMutation.isPending}>{testConnectionMutation.isPending ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Testing...</> : <><Settings className="h-4 w-4 mr-2" />Test Connection</>}</Button>
+            <Button onClick={() => { if (!scanConfig.host || !scanConfig.user || !scanConfig.password) { toast.error("Fill in connection details"); return; } scanInboxMutation.mutate(scanConfig); }} disabled={scanInboxMutation.isPending}>{scanInboxMutation.isPending ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Scanning...</> : <><Inbox className="h-4 w-4 mr-2" />Scan Inbox</>}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1181,108 +618,124 @@ export default function EmailInbox() {
       {/* AI Reply Dialog */}
       <Dialog open={showAiReplyDialog} onOpenChange={setShowAiReplyDialog}>
         <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-violet-500" />
-              AI-Generated Reply
-            </DialogTitle>
-            <DialogDescription>
-              Review and send the AI-generated email reply
-            </DialogDescription>
-          </DialogHeader>
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><Sparkles className="h-5 w-5 text-violet-500" />AI-Generated Reply</DialogTitle><DialogDescription>Review and send the AI-generated reply</DialogDescription></DialogHeader>
           {generatedReply && (
             <div className="space-y-4">
-              <div className="flex items-center gap-4 text-sm">
-                <Badge variant="outline" className="capitalize">
-                  {generatedReply.tone} tone
-                </Badge>
-                <span className="text-muted-foreground">
-                  Confidence: {generatedReply.confidence}%
-                </span>
-              </div>
-              <div className="space-y-2">
-                <Label>Subject</Label>
-                <Input
-                  value={generatedReply.subject}
-                  onChange={(e) => setGeneratedReply({ ...generatedReply, subject: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Message</Label>
-                <Textarea
-                  value={generatedReply.body}
-                  onChange={(e) => setGeneratedReply({ ...generatedReply, body: e.target.value })}
-                  rows={10}
-                  className="font-mono text-sm"
-                />
-              </div>
-              {generatedReply.suggestedActions && generatedReply.suggestedActions.length > 0 && (
-                <div className="space-y-2">
-                  <Label className="text-muted-foreground">Suggested Follow-up Actions</Label>
-                  <div className="flex flex-wrap gap-2">
-                    {generatedReply.suggestedActions.map((action, i) => (
-                      <Badge key={i} variant="secondary">{action}</Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
+              <div className="flex items-center gap-4 text-sm"><Badge variant="outline" className="capitalize">{generatedReply.tone} tone</Badge><span className="text-muted-foreground">Confidence: {generatedReply.confidence}%</span></div>
+              <div className="space-y-2"><Label>Subject</Label><Input value={generatedReply.subject} onChange={e => setGeneratedReply({ ...generatedReply, subject: e.target.value })} /></div>
+              <div className="space-y-2"><Label>Message</Label><Textarea value={generatedReply.body} onChange={e => setGeneratedReply({ ...generatedReply, body: e.target.value })} rows={10} className="font-mono text-sm" /></div>
+              {generatedReply.suggestedActions && generatedReply.suggestedActions.length > 0 && <div className="space-y-2"><Label className="text-muted-foreground">Suggested Actions</Label><div className="flex flex-wrap gap-2">{generatedReply.suggestedActions.map((a, i) => <Badge key={i} variant="secondary">{a}</Badge>)}</div></div>}
             </div>
           )}
           <DialogFooter className="gap-2 sm:gap-0">
-            <Button
-              variant="outline"
-              onClick={() => handleSendReply(false)}
-              disabled={createReplyTaskMutation.isPending}
-            >
-              {createReplyTaskMutation.isPending ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Clock className="h-4 w-4 mr-2" />
-              )}
-              Queue for Approval
-            </Button>
-            <Button
-              onClick={() => handleSendReply(true)}
-              disabled={sendReplyMutation.isPending}
-              className="bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700"
-            >
-              {sendReplyMutation.isPending ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Send className="h-4 w-4 mr-2" />
-              )}
-              Send Now
+            <Button variant="outline" onClick={() => handleSendReply(false)} disabled={createReplyTaskMutation.isPending}>{createReplyTaskMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Clock className="h-4 w-4 mr-2" />}Queue for Approval</Button>
+            <Button onClick={() => handleSendReply(true)} disabled={sendReplyMutation.isPending} className="bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700">{sendReplyMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}Send Now</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Dialog */}
+      <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Delete Email</DialogTitle><DialogDescription>Are you sure? This cannot be undone.</DialogDescription></DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDeleteConfirm(false)}>Cancel</Button>
+            <Button variant="destructive" onClick={() => deleteTargetId && deleteEmailMutation.mutate({ id: deleteTargetId })} disabled={deleteEmailMutation.isPending}>{deleteEmailMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Trash2 className="h-4 w-4 mr-2" />}Delete</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* New Sequence Dialog */}
+      <Dialog open={showNewSequenceDialog} onOpenChange={setShowNewSequenceDialog}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Create Sequence</DialogTitle><DialogDescription>Build a multi-step automated email sequence</DialogDescription></DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2"><Label>Name</Label><Input placeholder="e.g. Sales Outreach Q2" value={newSeqForm.name} onChange={e => setNewSeqForm({ ...newSeqForm, name: e.target.value })} /></div>
+            <div className="space-y-2"><Label>Description <span className="text-muted-foreground text-xs">(optional)</span></Label><Textarea placeholder="What is this sequence for?" rows={2} value={newSeqForm.description} onChange={e => setNewSeqForm({ ...newSeqForm, description: e.target.value })} /></div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowNewSequenceDialog(false)}>Cancel</Button>
+            <Button onClick={() => createSeqMutation.mutate({ name: newSeqForm.name, description: newSeqForm.description || undefined })} disabled={!newSeqForm.name.trim() || createSeqMutation.isPending}>{createSeqMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Plus className="h-4 w-4 mr-2" />}Create</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Step Dialog */}
+      <Dialog open={showStepDialog} onOpenChange={setShowStepDialog}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader><DialogTitle>{editingStepId ? "Edit Step" : "Add Step"}</DialogTitle><DialogDescription>Configure this email step in the sequence</DialogDescription></DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2"><Label>Subject</Label><Input placeholder="Email subject line" value={stepForm.subject} onChange={e => setStepForm({ ...stepForm, subject: e.target.value })} /></div>
+            <div className="space-y-2"><Label>Body</Label><Textarea placeholder="Email body..." rows={6} value={stepForm.body} onChange={e => setStepForm({ ...stepForm, body: e.target.value })} /></div>
+            <div className="space-y-2"><Label>Delay (days after previous step)</Label><Input type="number" min={0} value={stepForm.delayDays} onChange={e => setStepForm({ ...stepForm, delayDays: parseInt(e.target.value) || 0 })} /><p className="text-xs text-muted-foreground">Set to 0 to send immediately (first step only)</p></div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowStepDialog(false)}>Cancel</Button>
+            <Button onClick={() => {
+              if (!stepForm.subject.trim() || !stepForm.body.trim()) { toast.error("Subject and body required"); return; }
+              if (editingStepId) updateStepMutation.mutate({ stepId: editingStepId, subject: stepForm.subject, body: stepForm.body, delayDays: stepForm.delayDays });
+              else addStepMutation.mutate({ sequenceId: selectedSequenceId!, subject: stepForm.subject, body: stepForm.body, delayDays: stepForm.delayDays });
+            }} disabled={addStepMutation.isPending || updateStepMutation.isPending}>
+              {(addStepMutation.isPending || updateStepMutation.isPending) ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Check className="h-4 w-4 mr-2" />}{editingStepId ? "Update" : "Add"} Step
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete Email</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete this email? This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowDeleteConfirm(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => deleteTargetId && deleteEmailMutation.mutate({ id: deleteTargetId })}
-              disabled={deleteEmailMutation.isPending}
-            >
-              {deleteEmailMutation.isPending ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Trash2 className="h-4 w-4 mr-2" />
-              )}
-              Delete
-            </Button>
-          </DialogFooter>
+      {/* Canned Responses Manager */}
+      <Dialog open={showCannedManager} onOpenChange={v => { setShowCannedManager(v); if (!v) setCannedForm({ open: false, id: null, name: "", content: "", shortcut: "", category: "" }); }}>
+        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><BookOpen className="h-5 w-5" /> Canned Responses</DialogTitle><DialogDescription>Pre-written replies you can insert while composing</DialogDescription></DialogHeader>
+          <div className="flex-1 overflow-y-auto space-y-4 min-h-0">
+            {!cannedForm.open ? (
+              <>
+                <div className="flex justify-end">
+                  <Button size="sm" className="gap-1.5" onClick={() => setCannedForm({ open: true, id: null, name: "", content: "", shortcut: "", category: "" })}><Plus className="h-4 w-4" /> New Canned Response</Button>
+                </div>
+                {!(cannedResponses ?? []).length ? (
+                  <div className="text-center py-12 text-muted-foreground"><BookOpen className="h-10 w-10 mx-auto mb-3 opacity-30" /><p className="text-sm">No canned responses yet</p><p className="text-xs mt-1">Create your first template to speed up email replies</p></div>
+                ) : (
+                  <div className="space-y-2">
+                    {(cannedResponses ?? []).map((r: any) => (
+                      <div key={r.id} className="border rounded-lg p-3 group hover:border-primary/50 transition-colors">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2"><p className="text-sm font-medium">{r.name}</p>{r.shortcut && <Badge variant="outline" className="text-xs">{r.shortcut}</Badge>}{r.category && <Badge variant="secondary" className="text-xs">{r.category}</Badge>}</div>
+                            <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{r.content}</p>
+                            {r.usageCount > 0 && <p className="text-xs text-muted-foreground mt-1">Used {r.usageCount} time{r.usageCount !== 1 ? "s" : ""}</p>}
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setCannedForm({ open: true, id: r.id, name: r.name, content: r.content, shortcut: r.shortcut || "", category: r.category || "" })}><Edit2 className="h-3.5 w-3.5" /></Button>
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => { if (confirm("Delete?")) deleteCannedMutation.mutate({ id: r.id }); }}><Trash2 className="h-3.5 w-3.5" /></Button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2"><Button variant="ghost" size="sm" className="gap-1" onClick={() => setCannedForm({ open: false, id: null, name: "", content: "", shortcut: "", category: "" })}>← Back</Button><h3 className="text-sm font-semibold">{cannedForm.id ? "Edit" : "New"} Canned Response</h3></div>
+                <div className="space-y-2"><Label>Name</Label><Input placeholder="e.g. Meeting follow-up" value={cannedForm.name} onChange={e => setCannedForm({ ...cannedForm, name: e.target.value })} /></div>
+                <div className="space-y-2"><Label>Content</Label><Textarea placeholder="Pre-written reply content..." rows={6} value={cannedForm.content} onChange={e => setCannedForm({ ...cannedForm, content: e.target.value })} /></div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2"><Label>Shortcut <span className="text-muted-foreground text-xs">(optional)</span></Label><Input placeholder="e.g. /followup" value={cannedForm.shortcut} onChange={e => setCannedForm({ ...cannedForm, shortcut: e.target.value })} /></div>
+                  <div className="space-y-2"><Label>Category <span className="text-muted-foreground text-xs">(optional)</span></Label><Input placeholder="e.g. Sales, Support" value={cannedForm.category} onChange={e => setCannedForm({ ...cannedForm, category: e.target.value })} /></div>
+                </div>
+                <div className="flex gap-2 justify-end pt-2">
+                  <Button variant="outline" onClick={() => setCannedForm({ open: false, id: null, name: "", content: "", shortcut: "", category: "" })}>Cancel</Button>
+                  <Button onClick={() => {
+                    if (!cannedForm.name.trim() || !cannedForm.content.trim()) { toast.error("Name and content required"); return; }
+                    if (cannedForm.id) updateCannedMutation.mutate({ id: cannedForm.id, name: cannedForm.name, content: cannedForm.content, shortcut: cannedForm.shortcut || undefined, category: cannedForm.category || undefined });
+                    else createCannedMutation.mutate({ name: cannedForm.name, content: cannedForm.content, shortcut: cannedForm.shortcut || undefined, category: cannedForm.category || undefined });
+                  }} disabled={createCannedMutation.isPending || updateCannedMutation.isPending}>
+                    {(createCannedMutation.isPending || updateCannedMutation.isPending) ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Check className="h-4 w-4 mr-2" />}{cannedForm.id ? "Update" : "Save"}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </>
