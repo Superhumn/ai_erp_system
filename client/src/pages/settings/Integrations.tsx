@@ -81,10 +81,10 @@ export default function IntegrationsPage() {
     },
   });
 
-  const shopifyInitiateOAuthMutation = (trpc.integrations as any).shopify.initiateOAuth.useMutation({
+  const shopifyInitiateOAuthMutation = trpc.integrations.shopify.initiateOAuth.useMutation({
     onSuccess: (data) => {
       // Redirect to Shopify OAuth page
-      window.location.href = data.authUrl || data.url;
+      window.location.href = data.authUrl;
     },
     onError: (error) => {
       toast.error(error.message);
@@ -92,7 +92,7 @@ export default function IntegrationsPage() {
     },
   });
 
-  const shopifyDisconnectMutation = (trpc.integrations as any).shopify.disconnect.useMutation({
+  const shopifyDisconnectMutation = trpc.integrations.shopify.disconnect.useMutation({
     onSuccess: () => {
       toast.success("Store disconnected successfully");
       refetch();
@@ -102,7 +102,7 @@ export default function IntegrationsPage() {
     },
   });
 
-  const shopifyTestConnectionMutation = (trpc.integrations as any).shopify.testConnection.useMutation({
+  const shopifyTestConnectionMutation = trpc.integrations.shopify.testConnection.useMutation({
     onSuccess: (data) => {
       toast.success((data as any).message ?? "Connection successful");
     },
@@ -177,11 +177,13 @@ export default function IntegrationsPage() {
         'missing_params': 'Missing required parameters from QuickBooks',
         'not_configured': 'QuickBooks integration is not configured. Please contact your administrator.',
         'not_authenticated': 'You must be logged in to connect QuickBooks',
-        'invalid_state': 'Invalid OAuth state parameter',
+        'invalid_state': 'Invalid OAuth state — please try connecting again',
         'token_exchange_failed': 'Failed to exchange authorization code for access token',
         'oauth_failed': 'OAuth authentication failed',
       };
-      toast.error(errorMessages[quickbooksError] || 'Failed to connect QuickBooks');
+      const detail = params.get('detail');
+      const base = errorMessages[quickbooksError] || 'Failed to connect QuickBooks';
+      toast.error(detail ? `${base}: ${detail}` : base);
       // Clean up URL
       window.history.replaceState({}, '', '/settings/integrations');
     }

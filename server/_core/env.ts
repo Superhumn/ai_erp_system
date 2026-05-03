@@ -60,7 +60,7 @@ export const ENV = {
     quickbooksClientId: process.env.QUICKBOOKS_CLIENT_ID ?? "",
     quickbooksClientSecret: process.env.QUICKBOOKS_CLIENT_SECRET ?? "",
     quickbooksRedirectUri: process.env.QUICKBOOKS_REDIRECT_URI ?? "",
-    quickbooksEnvironment: process.env.QUICKBOOKS_ENVIRONMENT ?? "sandbox", // sandbox or production
+    quickbooksEnvironment: process.env.QUICKBOOKS_ENVIRONMENT ?? "production", // sandbox or production
 
     // Shopify OAuth configuration
     shopifyClientId: process.env.SHOPIFY_CLIENT_ID ?? "",
@@ -81,6 +81,15 @@ export const ENV = {
     awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? "",
     awsRegion: process.env.AWS_REGION ?? "us-east-1",
     awsS3Bucket: process.env.AWS_S3_BUCKET ?? "",
+
+    // Cloudflare R2 (S3-compatible storage; takes priority over S3 and Forge when configured)
+    r2AccountId: process.env.R2_ACCOUNT_ID ?? "",
+    r2AccessKeyId: process.env.R2_ACCESS_KEY_ID ?? "",
+    r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY ?? "",
+    r2Bucket: process.env.R2_BUCKET ?? "",
+    // Optional: set to your bucket's public URL or custom domain (e.g. https://assets.example.com).
+    // When set, returned URLs point directly to R2 instead of using presigned GET URLs.
+    r2PublicUrl: process.env.R2_PUBLIC_URL ?? "",
 
     // Airtable integration
     airtablePersonalAccessToken: process.env.AIRTABLE_PERSONAL_ACCESS_TOKEN ?? "",

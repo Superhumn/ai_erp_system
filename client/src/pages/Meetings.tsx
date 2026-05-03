@@ -43,6 +43,9 @@ export default function Meetings() {
   const [processExistingProjectId, setProcessExistingProjectId] = useState<number | undefined>(undefined);
   const [predictedProjectId, setPredictedProjectId] = useState<number | undefined>(undefined);
 
+  const { data: projectsRaw } = trpc.projects.list.useQuery();
+  const availableProjects = (projectsRaw as Array<{ id: number; name: string }> | undefined) || [];
+
   const { data: meetingsRaw, isLoading, refetch, error: meetingsError } = trpc.fireflies.meetings.list.useQuery({});
   const meetings = (meetingsRaw as any[] | undefined) || [];
 
@@ -433,7 +436,7 @@ export default function Meetings() {
                             e.stopPropagation();
                             setSelectedMeetingId(meeting.id);
                             setProcessProjectName("");
-                            setProcessCreateProject(false);
+                            setProjectMode("none");
                             setShowProcessDialog(true);
                           }}
                         >
@@ -608,7 +611,7 @@ export default function Meetings() {
                       onClick={() => {
                         setSelectedMeetingId(m.id);
                         setProcessProjectName("");
-                        setProcessCreateProject(false);
+                        setProjectMode("none");
                         setShowProcessDialog(true);
                       }}
                     >

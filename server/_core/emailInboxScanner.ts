@@ -177,7 +177,7 @@ export async function scanInbox(
           envelope: true,
           bodyStructure: true,
           source: true,
-        }, { uid: true });
+        }, { uid: true, markSeen: false });
 
         if (!message) continue;
 
@@ -196,24 +196,9 @@ export async function scanInbox(
           const skipPatterns = /unsubscribe|newsletter|promo(tion)?|marketing|no-?reply@|noreply@|mailchimp|sendgrid\.net|constantcontact|hubspot|campaigns?@|updates?@|news@|digest@|weekly.*summary|daily.*digest/i;
           const isPromotional = skipPatterns.test(scannedEmail.subject) ||
                                 skipPatterns.test(scannedEmail.from.address) ||
-                                skipPatterns.test(scannedEmail.body || '');
+                                skipPatterns.test(scannedEmail.bodyText || '');
           if (isPromotional) {
             continue; // Skip this email
-          }
-
-          // Strip HTML from body to get plain text
-          if (scannedEmail.body) {
-            scannedEmail.body = scannedEmail.body
-              .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-              .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-              .replace(/<[^>]+>/g, ' ')
-              .replace(/&nbsp;/g, ' ')
-              .replace(/&amp;/g, '&')
-              .replace(/&lt;/g, '<')
-              .replace(/&gt;/g, '>')
-              .replace(/&quot;/g, '"')
-              .replace(/\s+/g, ' ')
-              .trim();
           }
 
           result.processedEmails.push(scannedEmail);
@@ -306,7 +291,7 @@ async function parseImapMessage(
     let bodyHtml = "";
 
     // Fetch the body parts
-    const bodyPart = await client.download(uid.toString(), undefined, { uid: true });
+    const bodyPart = await client.download(uid.toString(), undefined, { uid: true, markSeen: false });
     if (bodyPart && bodyPart.content) {
       const chunks: Buffer[] = [];
       for await (const chunk of bodyPart.content) {
@@ -338,7 +323,7 @@ async function parseImapMessage(
           const isParseable = /pdf|image|msword|spreadsheet|csv|excel|png|jpg|jpeg/i.test(contentType) || /\.pdf$|\.png$|\.jpg$|\.jpeg$|\.xlsx?$|\.csv$|\.doc/i.test(filename);
           if (isParseable && (child.size || 0) < 5 * 1024 * 1024) {
             try {
-              const part = await client.download(uid.toString(), String(partIndex), { uid: true });
+              const part = await client.download(uid.toString(), String(partIndex), { uid: true, markSeen: false });
               if (part?.content) {
                 const chunks: Buffer[] = [];
                 for await (const chunk of part.content) chunks.push(chunk);

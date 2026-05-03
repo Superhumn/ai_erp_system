@@ -28,9 +28,17 @@ setInterval(() => {
  * Resolve the redirect URI the server will send to Intuit.
  * The exact same string must be registered in the Intuit app's
  * "Keys & OAuth → Redirect URIs" list or Intuit rejects the request.
+ *
+ * We normalise both sources to prevent common mismatches:
+ *   - trimmed whitespace (accidental copy-paste spaces)
+ *   - trailing slash on the base URL (e.g. PUBLIC_APP_URL="https://app.com/")
+ *     which would produce a double-slash like "https://app.com//api/…"
  */
 export function getQuickBooksRedirectUri(): string {
-  return ENV.quickbooksRedirectUri || `${ENV.publicAppUrl}/api/oauth/quickbooks/callback`;
+  const explicit = ENV.quickbooksRedirectUri.trim();
+  if (explicit) return explicit;
+  const base = ENV.publicAppUrl.replace(/\/+$/, "");
+  return `${base}/api/oauth/quickbooks/callback`;
 }
 
 /**
@@ -93,6 +101,8 @@ export async function exchangeCodeForToken(code: string): Promise<{
   token_type?: string;
   realmId?: string;
   error?: string;
+  /** Raw error code returned by Intuit (e.g. "invalid_grant") */
+  intuitError?: string;
 }> {
   const clientId = ENV.quickbooksClientId;
   const clientSecret = ENV.quickbooksClientSecret;
@@ -125,9 +135,16 @@ export async function exchangeCodeForToken(code: string): Promise<{
     });
     
     if (!response.ok) {
-      const error = await response.text();
-      console.error("QuickBooks token exchange failed:", error);
-      return { error: "Failed to exchange authorization code for token" };
+      const errorBody = await response.text();
+      console.error("QuickBooks token exchange failed:", errorBody);
+      let intuitError: string | undefined;
+      try {
+        const parsed = JSON.parse(errorBody);
+        intuitError = parsed.error || parsed.error_description || undefined;
+      } catch {
+        // response body is not JSON; leave intuitError undefined
+      }
+      return { error: "Failed to exchange authorization code for token", intuitError };
     }
     
     const data = await response.json();

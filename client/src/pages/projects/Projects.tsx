@@ -237,7 +237,7 @@ export default function Projects() {
 
   const utils = trpc.useUtils();
   const { data: projects, isLoading: projectsLoading } = trpc.projects.list.useQuery();
-  const { data: allTasks, isLoading: tasksLoading } = (trpc.projects as any).listAllTasks.useQuery();
+  const { data: allTasks, isLoading: tasksLoading } = trpc.projects.listAllTasks.useQuery();
   const { data: users } = trpc.users.list.useQuery();
 
   const createProject = trpc.projects.create.useMutation({
@@ -267,7 +267,7 @@ export default function Projects() {
     onError: (e) => toast.error(e.message),
   });
 
-  const deleteProject = (trpc.projects as any).delete.useMutation({
+  const deleteProject = trpc.projects.delete.useMutation({
     onSuccess: () => {
       toast.success("Project deleted");
       setDeleteProjectId(null);

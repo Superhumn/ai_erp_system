@@ -145,20 +145,35 @@ export async function listDriveFolders(
     if (parentFolderId) {
       query += ` and '${parentFolderId}' in parents`;
     }
-    
-    const url = `${GOOGLE_DRIVE_API}/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,webViewLink,parents)&orderBy=name&supportsAllDrives=true&includeItemsFromAllDrives=true`;
 
-    const response = await driveFetch(url, accessToken);
+    const folders: DriveFolder[] = [];
+    let pageToken: string | undefined;
+    do {
+      const params = new URLSearchParams({
+        q: query,
+        fields: "nextPageToken,files(id,name,mimeType,webViewLink,parents)",
+        orderBy: "name",
+        pageSize: "1000",
+        supportsAllDrives: "true",
+        includeItemsFromAllDrives: "true",
+      });
+      if (pageToken) params.set("pageToken", pageToken);
 
-    if (!response.ok) {
-      const error = await response.text();
-      console.error("[GoogleDrive] Failed to list folders:", error);
-      const hint = response.status === 403 || response.status === 404 ? permissionHint() : "";
-      return { folders: [], error: `Failed to list folders: ${response.status}.${hint}` };
-    }
-    
-    const data = await response.json();
-    return { folders: data.files || [] };
+      const response = await driveFetch(`${GOOGLE_DRIVE_API}/files?${params.toString()}`, accessToken);
+
+      if (!response.ok) {
+        const error = await response.text();
+        console.error("[GoogleDrive] Failed to list folders:", error);
+        const hint = response.status === 403 || response.status === 404 ? permissionHint() : "";
+        return { folders: [], error: `Failed to list folders: ${response.status}.${hint}` };
+      }
+
+      const data = await response.json();
+      if (Array.isArray(data.files)) folders.push(...data.files);
+      pageToken = data.nextPageToken;
+    } while (pageToken);
+
+    return { folders };
   } catch (error: any) {
     console.error("[GoogleDrive] Error listing folders:", error);
     return { folders: [], error: error.message };
@@ -174,20 +189,35 @@ export async function listDriveFiles(
 ): Promise<{ files: DriveFile[]; error?: string }> {
   try {
     const query = `'${folderId}' in parents and trashed=false and mimeType!='${FOLDER_MIME_TYPE}'`;
-    
-    const url = `${GOOGLE_DRIVE_API}/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,size,webViewLink,thumbnailLink,iconLink,createdTime,modifiedTime,parents)&orderBy=name&supportsAllDrives=true&includeItemsFromAllDrives=true`;
 
-    const response = await driveFetch(url, accessToken);
+    const files: DriveFile[] = [];
+    let pageToken: string | undefined;
+    do {
+      const params = new URLSearchParams({
+        q: query,
+        fields: "nextPageToken,files(id,name,mimeType,size,webViewLink,thumbnailLink,iconLink,createdTime,modifiedTime,parents)",
+        orderBy: "name",
+        pageSize: "1000",
+        supportsAllDrives: "true",
+        includeItemsFromAllDrives: "true",
+      });
+      if (pageToken) params.set("pageToken", pageToken);
 
-    if (!response.ok) {
-      const error = await response.text();
-      console.error("[GoogleDrive] Failed to list files:", error);
-      const hint = response.status === 403 || response.status === 404 ? permissionHint() : "";
-      return { files: [], error: `Failed to list files: ${response.status}.${hint}` };
-    }
-    
-    const data = await response.json();
-    return { files: data.files || [] };
+      const response = await driveFetch(`${GOOGLE_DRIVE_API}/files?${params.toString()}`, accessToken);
+
+      if (!response.ok) {
+        const error = await response.text();
+        console.error("[GoogleDrive] Failed to list files:", error);
+        const hint = response.status === 403 || response.status === 404 ? permissionHint() : "";
+        return { files: [], error: `Failed to list files: ${response.status}.${hint}` };
+      }
+
+      const data = await response.json();
+      if (Array.isArray(data.files)) files.push(...data.files);
+      pageToken = data.nextPageToken;
+    } while (pageToken);
+
+    return { files };
   } catch (error: any) {
     console.error("[GoogleDrive] Error listing files:", error);
     return { files: [], error: error.message };
@@ -208,14 +238,17 @@ export async function syncDriveFolder(
   async function syncRecursive(currentFolderId: string, depth: number) {
     if (depth > maxDepth) return;
 
+    // List subfolders — a failure here must not prevent listing files in the
+    // current folder, because the folder itself was already recorded by the
+    // parent call and its files should still be imported.
     const { folders, error: folderError } = await listDriveFolders(accessToken, currentFolderId);
     if (folderError) {
-      console.error(`[GoogleDrive] Error syncing folder ${currentFolderId}:`, folderError);
-      return;
+      console.error(`[GoogleDrive] Error listing subfolders in ${currentFolderId}:`, folderError);
+    } else {
+      allFolders.push(...folders);
     }
 
-    allFolders.push(...folders);
-
+    // Always fetch files regardless of whether subfolder listing succeeded.
     const { files, error: fileError } = await listDriveFiles(accessToken, currentFolderId);
     if (fileError) {
       console.error(`[GoogleDrive] Error getting files in ${currentFolderId}:`, fileError);
@@ -223,8 +256,11 @@ export async function syncDriveFolder(
       allFiles.push(...files);
     }
 
-    for (const folder of folders) {
-      await syncRecursive(folder.id, depth + 1);
+    // Only recurse into subfolders when we actually know what they are.
+    if (!folderError) {
+      for (const folder of folders) {
+        await syncRecursive(folder.id, depth + 1);
+      }
     }
   }
   
