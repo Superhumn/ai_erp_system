@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,13 +21,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
 import { SpreadsheetTable, Column } from "@/components/SpreadsheetTable";
+import { DetailSheet } from "@/components/DetailSheet";
 import { QuickCreateButton } from "@/components/QuickCreateDialog";
 import {
   ShoppingCart,
@@ -410,31 +405,31 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                         <table className="w-full text-sm">
                           <thead className="bg-muted">
                             <tr>
-                              <th className="text-left p-2">Rank</th>
-                              <th className="text-left p-2">Vendor</th>
-                              <th className="text-right p-2">Unit Price</th>
-                              <th className="text-right p-2">Total</th>
-                              <th className="text-center p-2">Lead Time</th>
-                              <th className="text-center p-2">Valid Until</th>
-                              <th className="text-center p-2">Actions</th>
+                              <th className="text-left px-1.5 py-1">Rank</th>
+                              <th className="text-left px-1.5 py-1">Vendor</th>
+                              <th className="text-right px-1.5 py-1">Unit Price</th>
+                              <th className="text-right px-1.5 py-1">Total</th>
+                              <th className="text-center px-1.5 py-1">Lead Time</th>
+                              <th className="text-center px-1.5 py-1">Valid Until</th>
+                              <th className="text-center px-1.5 py-1">Actions</th>
                             </tr>
                           </thead>
                           <tbody>
                             {selectedRfqQuotes.map((quote: any, idx: number) => (
                               <tr key={quote.id} className={`border-t ${idx === 0 ? 'bg-green-50' : ''}`}>
-                                <td className="p-2">
+                                <td className="px-1.5 py-0.5">
                                   {idx === 0 ? (
                                     <Badge className="bg-green-500">Best</Badge>
                                   ) : (
                                     <span className="text-muted-foreground">#{quote.overallRank || idx + 1}</span>
                                   )}
                                 </td>
-                                <td className="p-2 font-medium">{quote.vendor?.name}</td>
-                                <td className="p-2 text-right font-mono">{formatCurrency(quote.unitPrice)}</td>
-                                <td className="p-2 text-right font-mono font-semibold">{formatCurrency(quote.totalPrice)}</td>
-                                <td className="p-2 text-center">{quote.leadTimeDays ? `${quote.leadTimeDays} days` : '-'}</td>
-                                <td className="p-2 text-center">{formatDate(quote.validUntil)}</td>
-                                <td className="p-2 text-center">
+                                <td className="px-1.5 py-0.5 font-medium">{quote.vendor?.name}</td>
+                                <td className="px-1.5 py-0.5 text-right font-mono">{formatCurrency(quote.unitPrice)}</td>
+                                <td className="px-1.5 py-0.5 text-right font-mono font-semibold">{formatCurrency(quote.totalPrice)}</td>
+                                <td className="px-1.5 py-0.5 text-center">{quote.leadTimeDays ? `${quote.leadTimeDays} days` : '-'}</td>
+                                <td className="px-1.5 py-0.5 text-center">{formatDate(quote.validUntil)}</td>
+                                <td className="px-1.5 py-0.5 text-center">
                                   {quote.status === 'received' && (
                                     <div className="flex items-center justify-center gap-1">
                                       <Button
@@ -495,13 +490,13 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                 <table className="w-full text-sm">
                   <thead className="bg-muted">
                     <tr>
-                      <th className="text-left p-2">Quote #</th>
-                      <th className="text-left p-2">RFQ</th>
-                      <th className="text-left p-2">Vendor</th>
-                      <th className="text-right p-2">Unit Price</th>
-                      <th className="text-right p-2">Total</th>
-                      <th className="text-center p-2">Status</th>
-                      <th className="text-center p-2">Received</th>
+                      <th className="text-left px-1.5 py-1">Quote #</th>
+                      <th className="text-left px-1.5 py-1">RFQ</th>
+                      <th className="text-left px-1.5 py-1">Vendor</th>
+                      <th className="text-right px-1.5 py-1">Unit Price</th>
+                      <th className="text-right px-1.5 py-1">Total</th>
+                      <th className="text-center px-1.5 py-1">Status</th>
+                      <th className="text-center px-1.5 py-1">Received</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -510,15 +505,15 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                       const vendor = vendors.find((v: any) => v.id === quote.vendorId);
                       return (
                         <tr key={quote.id} className="border-t hover:bg-muted/50">
-                          <td className="p-2 font-mono">{quote.quoteNumber || `Q-${quote.id}`}</td>
-                          <td className="p-2">{rfq?.rfqNumber || '-'}</td>
-                          <td className="p-2 font-medium">{vendor?.name || '-'}</td>
-                          <td className="p-2 text-right font-mono">{formatCurrency(quote.unitPrice)}</td>
-                          <td className="p-2 text-right font-mono font-semibold">{formatCurrency(quote.totalPrice)}</td>
-                          <td className="p-2 text-center">
+                          <td className="px-1.5 py-0.5 font-mono">{quote.quoteNumber || `Q-${quote.id}`}</td>
+                          <td className="px-1.5 py-0.5">{rfq?.rfqNumber || '-'}</td>
+                          <td className="px-1.5 py-0.5 font-medium">{vendor?.name || '-'}</td>
+                          <td className="px-1.5 py-0.5 text-right font-mono">{formatCurrency(quote.unitPrice)}</td>
+                          <td className="px-1.5 py-0.5 text-right font-mono font-semibold">{formatCurrency(quote.totalPrice)}</td>
+                          <td className="px-1.5 py-0.5 text-center">
                             <Badge variant="outline">{quote.status}</Badge>
                           </td>
-                          <td className="p-2 text-center text-muted-foreground">{formatDate(quote.createdAt)}</td>
+                          <td className="px-1.5 py-0.5 text-center text-muted-foreground">{formatDate(quote.createdAt)}</td>
                         </tr>
                       );
                     })}
@@ -875,21 +870,21 @@ function PoDetailPanel({ po, onClose, onSendToSupplier, onStatusChange }: {
             <table className="w-full text-sm">
               <thead className="bg-muted/50">
                 <tr>
-                  <th className="text-left p-2 font-medium">Material</th>
-                  <th className="text-right p-2 font-medium">Qty</th>
-                  <th className="text-right p-2 font-medium">Unit Price</th>
-                  <th className="text-right p-2 font-medium">Total</th>
-                  <th className="text-right p-2 font-medium">Received</th>
+                  <th className="text-left px-1.5 py-1 font-medium">Material</th>
+                  <th className="text-right px-1.5 py-1 font-medium">Qty</th>
+                  <th className="text-right px-1.5 py-1 font-medium">Unit Price</th>
+                  <th className="text-right px-1.5 py-1 font-medium">Total</th>
+                  <th className="text-right px-1.5 py-1 font-medium">Received</th>
                 </tr>
               </thead>
               <tbody>
                 {poItems.map((item: any) => (
                   <tr key={item.id} className="border-t">
-                    <td className="p-2">{item.rawMaterial?.name || item.description || "-"}</td>
-                    <td className="p-2 text-right">{item.quantity} {item.rawMaterial?.unitOfMeasure || ""}</td>
-                    <td className="p-2 text-right font-mono">{formatCurrency(item.unitPrice)}</td>
-                    <td className="p-2 text-right font-mono">{formatCurrency(item.totalPrice)}</td>
-                    <td className="p-2 text-right">
+                    <td className="px-1.5 py-0.5">{item.rawMaterial?.name || item.description || "-"}</td>
+                    <td className="px-1.5 py-0.5 text-right">{item.quantity} {item.rawMaterial?.unitOfMeasure || ""}</td>
+                    <td className="px-1.5 py-0.5 text-right font-mono">{formatCurrency(item.unitPrice)}</td>
+                    <td className="px-1.5 py-0.5 text-right font-mono">{formatCurrency(item.totalPrice)}</td>
+                    <td className="px-1.5 py-0.5 text-right">
                       {item.receivedQuantity || 0} / {item.quantity}
                     </td>
                   </tr>
@@ -1024,16 +1019,42 @@ function MaterialDetailPanel({ material, onClose }: { material: any; onClose: ()
 }
 
 export default function ProcurementHub() {
-  const [activeTab, setActiveTab] = useState("purchase-orders");
   const [isPoDialogOpen, setIsPoDialogOpen] = useState(false);
   const [isVendorDialogOpen, setIsVendorDialogOpen] = useState(false);
   const [isMaterialDialogOpen, setIsMaterialDialogOpen] = useState(false);
   const [isSendPoDialogOpen, setIsSendPoDialogOpen] = useState(false);
-  const [selectedPo, setSelectedPo] = useState<any>(null);
+  const [poToSend, setPoToSend] = useState<any>(null);
   const [emailMessage, setEmailMessage] = useState("");
-  const [expandedPoId, setExpandedPoId] = useState<number | string | null>(null);
-  const [expandedVendorId, setExpandedVendorId] = useState<number | string | null>(null);
-  const [expandedMaterialId, setExpandedMaterialId] = useState<number | string | null>(null);
+  const [selectedPo, setSelectedPo] = useState<any | null>(null);
+  const [selectedVendor, setSelectedVendor] = useState<any | null>(null);
+  const [selectedMaterial, setSelectedMaterial] = useState<any | null>(null);
+
+  // Queries
+  const { data: purchaseOrders, isLoading: posLoading, refetch: refetchPos } = trpc.purchaseOrders.list.useQuery();
+  const { data: vendors, isLoading: vendorsLoading, refetch: refetchVendors } = trpc.vendors.list.useQuery();
+  const { data: rawMaterials, isLoading: materialsLoading, refetch: refetchMaterials } = trpc.rawMaterials.list.useQuery();
+
+  // Keep selected detail objects in sync when lists refetch.
+  useEffect(() => {
+    if (!selectedPo) return;
+    const fresh = (purchaseOrders || []).find((p: any) => p.id === selectedPo.id);
+    if (fresh) setSelectedPo(fresh);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [purchaseOrders]);
+
+  useEffect(() => {
+    if (!selectedVendor) return;
+    const fresh = (vendors || []).find((v: any) => v.id === selectedVendor.id);
+    if (fresh) setSelectedVendor(fresh);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vendors]);
+
+  useEffect(() => {
+    if (!selectedMaterial) return;
+    const fresh = (rawMaterials || []).find((m: any) => m.id === selectedMaterial.id);
+    if (fresh) setSelectedMaterial(fresh);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawMaterials]);
   
   // Bulk selection state
   const [selectedPos, setSelectedPos] = useState<Set<number | string>>(new Set());
@@ -1063,11 +1084,6 @@ export default function ProcurementHub() {
     leadTimeDays: "14",
   });
 
-  // Queries
-  const { data: purchaseOrders, isLoading: posLoading, refetch: refetchPos } = trpc.purchaseOrders.list.useQuery();
-  const { data: vendors, isLoading: vendorsLoading, refetch: refetchVendors } = trpc.vendors.list.useQuery();
-  const { data: rawMaterials, isLoading: materialsLoading, refetch: refetchMaterials } = trpc.rawMaterials.list.useQuery();
-
   // Integration status
   const { data: integrationStatus } = trpc.integrations.getStatus.useQuery();
 
@@ -1094,7 +1110,7 @@ export default function ProcurementHub() {
     onSuccess: () => {
       toast.success("PO sent to supplier");
       setIsSendPoDialogOpen(false);
-      setSelectedPo(null);
+      setPoToSend(null);
       refetchPos();
     },
     onError: (err: any) => toast.error(err.message),
@@ -1346,15 +1362,15 @@ export default function ProcurementHub() {
   };
 
   const handleSendPoToSupplier = () => {
-    if (!selectedPo) return;
+    if (!poToSend) return;
     sendPoToSupplier.mutate({
-      poId: selectedPo.id,
+      poId: poToSend.id,
       message: emailMessage || undefined,
     });
   };
 
   const openSendDialog = (po: any) => {
-    setSelectedPo(po);
+    setPoToSend(po);
     setEmailMessage("");
     setIsSendPoDialogOpen(true);
   };
@@ -1375,7 +1391,7 @@ export default function ProcurementHub() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+            <h1 className="text-lg font-semibold flex items-center gap-2">
               <ShoppingCart className="h-8 w-8" />
               Procurement Hub
             </h1>
@@ -1451,171 +1467,163 @@ export default function ProcurementHub() {
 
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
-          <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("purchase-orders")}>
+          <Card className="p-4">
             <div className="text-xl font-semibold tracking-[-0.02em]">{stats.totalPos}</div>
             <div className="text-xs text-muted-foreground">Total POs</div>
           </Card>
-          <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("purchase-orders")}>
+          <Card className="p-4">
             <div className="text-xl font-semibold tracking-[-0.02em] text-blue-600">{stats.pendingPos}</div>
             <div className="text-xs text-muted-foreground">Pending POs</div>
           </Card>
-          <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("vendors")}>
+          <Card className="p-4">
             <div className="text-xl font-semibold tracking-[-0.02em]">{stats.totalVendors}</div>
             <div className="text-xs text-muted-foreground">Vendors</div>
           </Card>
-          <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("vendors")}>
+          <Card className="p-4">
             <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{stats.activeVendors}</div>
             <div className="text-xs text-muted-foreground">Active</div>
           </Card>
-          <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("materials")}>
+          <Card className="p-4">
             <div className="text-xl font-semibold tracking-[-0.02em]">{stats.totalMaterials}</div>
             <div className="text-xs text-muted-foreground">Materials</div>
           </Card>
-          <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("materials")}>
+          <Card className="p-4">
             <div className="text-xl font-semibold tracking-[-0.02em] text-orange-600">{stats.lowStock}</div>
             <div className="text-xs text-muted-foreground">Low Stock</div>
           </Card>
-          <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("materials")}>
+          <Card className="p-4">
             <div className="text-xl font-semibold tracking-[-0.02em] text-purple-600">{stats.inTransit}</div>
             <div className="text-xs text-muted-foreground">In Transit</div>
           </Card>
         </div>
 
-        {/* Tabs with Expandable Spreadsheet Views */}
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList>
-            <TabsTrigger value="purchase-orders" className="gap-2">
-              <FileText className="h-4 w-4" />
-              Purchase Orders
-            </TabsTrigger>
-            <TabsTrigger value="vendors" className="gap-2">
-              <Users className="h-4 w-4" />
-              Vendors
-            </TabsTrigger>
-            <TabsTrigger value="materials" className="gap-2">
-              <Package className="h-4 w-4" />
-              Raw Materials
-            </TabsTrigger>
-            <TabsTrigger value="quotes" className="gap-2">
-              <Mail className="h-4 w-4" />
-              Vendor Quotes
-            </TabsTrigger>
-          </TabsList>
+        {/* Purchase Orders */}
+        <Card>
+          <CardContent className="pt-6">
+            <SpreadsheetTable
+              data={purchaseOrders || []}
+              columns={poColumns}
+              isLoading={posLoading}
+              emptyMessage="No purchase orders found"
+              showSearch
+              showFilters
+              showExport
+              onAdd={() => setIsPoDialogOpen(true)}
+              addLabel="New PO"
+              onRowClick={(po) => setSelectedPo(po)}
+              expandedRowId={selectedPo?.id ?? null}
+              onCellEdit={handlePoCellEdit}
+              selectedRows={selectedPos}
+              onSelectionChange={setSelectedPos}
+              bulkActions={poBulkActions}
+              onBulkAction={handlePoBulkAction}
+              compact
+            />
+          </CardContent>
+        </Card>
 
-          <TabsContent value="purchase-orders" className="mt-4">
-            <Card>
-              <CardContent className="pt-6">
-                <SpreadsheetTable
-                  data={purchaseOrders || []}
-                  columns={poColumns}
-                  isLoading={posLoading}
-                  emptyMessage="No purchase orders found"
-                  showSearch
-                  showFilters
-                  showExport
-                  onAdd={() => setIsPoDialogOpen(true)}
-                  addLabel="New PO"
-                  expandable
-                  expandedRowId={expandedPoId}
-                  onExpandChange={setExpandedPoId}
-                  renderExpanded={(po, onClose) => (
-                    <PoDetailPanel 
-                      po={po} 
-                      onClose={onClose}
-                      onSendToSupplier={openSendDialog}
-                      onStatusChange={handleUpdatePoStatus}
-                    />
-                  )}
-                  onCellEdit={handlePoCellEdit}
-                  selectedRows={selectedPos}
-                  onSelectionChange={setSelectedPos}
-                  bulkActions={poBulkActions}
-                  onBulkAction={handlePoBulkAction}
-                  compact
+        {/* Vendors */}
+        <Card>
+          <CardContent className="pt-6">
+            <SpreadsheetTable
+              data={vendors || []}
+              columns={vendorColumns}
+              isLoading={vendorsLoading}
+              emptyMessage="No vendors found. Add your first vendor to start managing suppliers."
+              emptyAction={
+                <QuickCreateButton
+                  entityType="vendor"
+                  label="Create First Vendor"
+                  variant="default"
+                  onCreated={() => refetchVendors()}
                 />
-              </CardContent>
-            </Card>
-          </TabsContent>
+              }
+              showSearch
+              showExport
+              onAdd={() => setIsVendorDialogOpen(true)}
+              addLabel="New Vendor"
+              onRowClick={(vendor) => setSelectedVendor(vendor)}
+              expandedRowId={selectedVendor?.id ?? null}
+              onCellEdit={handleVendorCellEdit}
+              selectedRows={selectedVendors}
+              onSelectionChange={setSelectedVendors}
+              bulkActions={vendorBulkActions}
+              onBulkAction={handleVendorBulkAction}
+              compact
+            />
+          </CardContent>
+        </Card>
 
-          <TabsContent value="vendors" className="mt-4">
-            <Card>
-              <CardContent className="pt-6">
-                <SpreadsheetTable
-                  data={vendors || []}
-                  columns={vendorColumns}
-                  isLoading={vendorsLoading}
-                  emptyMessage="No vendors found. Add your first vendor to start managing suppliers."
-                  emptyAction={
-                    <QuickCreateButton
-                      entityType="vendor"
-                      label="Create First Vendor"
-                      variant="default"
-                      onCreated={() => refetchVendors()}
-                    />
-                  }
-                  showSearch
-                  showExport
-                  onAdd={() => setIsVendorDialogOpen(true)}
-                  addLabel="New Vendor"
-                  expandable
-                  expandedRowId={expandedVendorId}
-                  onExpandChange={setExpandedVendorId}
-                  renderExpanded={(vendor, onClose) => (
-                    <VendorDetailPanel vendor={vendor} onClose={onClose} />
-                  )}
-                  onCellEdit={handleVendorCellEdit}
-                  selectedRows={selectedVendors}
-                  onSelectionChange={setSelectedVendors}
-                  bulkActions={vendorBulkActions}
-                  onBulkAction={handleVendorBulkAction}
-                  compact
+        {/* Raw Materials */}
+        <Card>
+          <CardContent className="pt-6">
+            <SpreadsheetTable
+              data={rawMaterials || []}
+              columns={materialColumns}
+              isLoading={materialsLoading}
+              emptyMessage="No raw materials found. Add materials to track inventory and create purchase orders."
+              emptyAction={
+                <QuickCreateButton
+                  entityType="material"
+                  label="Create First Material"
+                  variant="default"
+                  onCreated={() => refetchMaterials()}
                 />
-              </CardContent>
-            </Card>
-          </TabsContent>
+              }
+              showSearch
+              showExport
+              onAdd={() => setIsMaterialDialogOpen(true)}
+              addLabel="New Material"
+              onRowClick={(material) => setSelectedMaterial(material)}
+              expandedRowId={selectedMaterial?.id ?? null}
+              onCellEdit={handleMaterialCellEdit}
+              selectedRows={selectedMaterials}
+              onSelectionChange={setSelectedMaterials}
+              bulkActions={materialBulkActions}
+              onBulkAction={handleMaterialBulkAction}
+              compact
+            />
+          </CardContent>
+        </Card>
 
-          <TabsContent value="materials" className="mt-4">
-            <Card>
-              <CardContent className="pt-6">
-                <SpreadsheetTable
-                  data={rawMaterials || []}
-                  columns={materialColumns}
-                  isLoading={materialsLoading}
-                  emptyMessage="No raw materials found. Add materials to track inventory and create purchase orders."
-                  emptyAction={
-                    <QuickCreateButton
-                      entityType="material"
-                      label="Create First Material"
-                      variant="default"
-                      onCreated={() => refetchMaterials()}
-                    />
-                  }
-                  showSearch
-                  showExport
-                  onAdd={() => setIsMaterialDialogOpen(true)}
-                  addLabel="New Material"
-                  expandable
-                  expandedRowId={expandedMaterialId}
-                  onExpandChange={setExpandedMaterialId}
-                  renderExpanded={(material, onClose) => (
-                    <MaterialDetailPanel material={material} onClose={onClose} />
-                  )}
-                  onCellEdit={handleMaterialCellEdit}
-                  selectedRows={selectedMaterials}
-                  onSelectionChange={setSelectedMaterials}
-                  bulkActions={materialBulkActions}
-                  onBulkAction={handleMaterialBulkAction}
-                  compact
-                />
-              </CardContent>
-            </Card>
-          </TabsContent>
+        {/* Vendor Quotes */}
+        <VendorQuotesTab vendors={vendors || []} rawMaterials={rawMaterials || []} />
 
-          <TabsContent value="quotes" className="mt-4">
-            <VendorQuotesTab vendors={vendors || []} rawMaterials={rawMaterials || []} />
-          </TabsContent>
+        {/* Side panels for PO / Vendor / Material */}
+        <DetailSheet
+          open={!!selectedPo}
+          onOpenChange={(o) => !o && setSelectedPo(null)}
+          width="lg"
+        >
+          {selectedPo && (
+            <PoDetailPanel
+              po={selectedPo}
+              onClose={() => setSelectedPo(null)}
+              onSendToSupplier={openSendDialog}
+              onStatusChange={handleUpdatePoStatus}
+            />
+          )}
+        </DetailSheet>
 
-        </Tabs>
+        <DetailSheet
+          open={!!selectedVendor}
+          onOpenChange={(o) => !o && setSelectedVendor(null)}
+          width="md"
+        >
+          {selectedVendor && (
+            <VendorDetailPanel vendor={selectedVendor} onClose={() => setSelectedVendor(null)} />
+          )}
+        </DetailSheet>
+
+        <DetailSheet
+          open={!!selectedMaterial}
+          onOpenChange={(o) => !o && setSelectedMaterial(null)}
+          width="md"
+        >
+          {selectedMaterial && (
+            <MaterialDetailPanel material={selectedMaterial} onClose={() => setSelectedMaterial(null)} />
+          )}
+        </DetailSheet>
 
         {/* Create PO Dialog */}
         <Dialog open={isPoDialogOpen} onOpenChange={setIsPoDialogOpen}>
@@ -1791,7 +1799,7 @@ export default function ProcurementHub() {
             <DialogHeader>
               <DialogTitle>Send PO to Supplier</DialogTitle>
               <DialogDescription>
-                Send PO #{selectedPo?.poNumber} to {selectedPo?.vendor?.name}
+                Send PO #{poToSend?.poNumber} to {poToSend?.vendor?.name}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">

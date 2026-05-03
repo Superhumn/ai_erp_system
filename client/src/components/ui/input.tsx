@@ -54,7 +54,7 @@ function Input({
       type={type}
       data-slot="input"
       className={cn(
-        "file:text-foreground placeholder:text-muted-foreground/50 selection:bg-primary/20 selection:text-foreground border-border h-8 w-full min-w-0 rounded-lg border bg-transparent px-3 py-1 text-[13px] transition-colors duration-100 outline-none file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50",
+        "file:text-foreground placeholder:text-muted-foreground/50 selection:bg-primary/20 selection:text-foreground border-border h-9 w-full min-w-0 rounded-lg border bg-background px-3.5 py-2 text-sm transition-colors duration-100 outline-none file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50",
         "focus-visible:border-ring focus-visible:ring-ring/15 focus-visible:ring-[3px]",
         "aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive",
         className

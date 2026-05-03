@@ -1,4 +1,5 @@
 # AI ERP System
+<!-- test: claude-agent-required -->
 
 A modern, AI-powered Enterprise Resource Planning system built for CPG (Consumer Packaged Goods) companies, manufacturers, and brands managing complex supply chains with copackers, vendors, and multi-warehouse operations. Built with React, Express, tRPC, and MySQL.
 
@@ -864,9 +865,9 @@ While the system works completely standalone with email/password authentication,
 
 ## Post-Deployment: How to Access Your App
 
-See **[DEPLOYMENT.md](./DEPLOYMENT.md)** for the comprehensive deployment guide covering Docker, Railway, Vercel, and manual hosting.
+See **[DEPLOYMENT.md](./DEPLOYMENT.md)** for the comprehensive deployment guide covering Docker, Railway, and manual hosting.
 
-**TL;DR:** Visit `https://[your-project].vercel.app` → Click "Sign up" → First user = Admin
+**TL;DR:** Visit `https://[your-app].railway.app` → Click "Sign up" → First user = Admin
 
 ---
 
@@ -883,16 +884,11 @@ Detailed setup documentation for each integration:
 
 ## Deployment
 
-### 🚨 Common Issue: Seeing Code Instead of App?
-If your Vercel deployment shows raw code or source files instead of the application:
-- **Quick Fix:** A `vercel.json` file has been added. Just run `vercel --prod` to redeploy.
-- **Details:** See [DEPLOYMENT.md → Troubleshooting](./DEPLOYMENT.md#troubleshooting)
-
 ### Quick Start Options
 
-See **[DEPLOYMENT.md](./DEPLOYMENT.md)** for full platform-specific instructions (Docker, Railway, Vercel, manual hosting).
+See **[DEPLOYMENT.md](./DEPLOYMENT.md)** for full platform-specific instructions (Docker, Railway, and manual hosting).
 
-- Your app will be at `https://[your-project].vercel.app` or `https://[your-app].railway.app`
+- Your app will be at `https://[your-app].railway.app`
 - First visit redirects to `/login` - click "Sign up" to create admin account
 
 ### Railway (Recommended)
@@ -903,14 +899,6 @@ See **[DEPLOYMENT.md](./DEPLOYMENT.md)** for full platform-specific instructions
 4. Railway auto-detects configuration from `package.json`.
 5. **Access:** Visit `https://[your-app].railway.app`, click "Sign up", create first user (auto-admin)
 
-### Vercel (Popular Alternative)
-
-1. **Deploy:** Run `vercel` or connect GitHub repo
-2. **Environment Variables:** Set `DATABASE_URL` and `JWT_SECRET` in Vercel dashboard
-3. **Database Migrations:** Run `npm run db:push` locally after setting DATABASE_URL
-4. **Access:** Visit `https://[your-project].vercel.app`, sign up as first user (auto-admin)
-
-**Detailed instructions:** [DEPLOYMENT.md](./DEPLOYMENT.md#vercel--planetscale)
 
 ### Production Build (Manual)
 

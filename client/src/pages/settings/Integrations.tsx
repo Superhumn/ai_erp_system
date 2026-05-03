@@ -38,7 +38,7 @@ export default function IntegrationsPage() {
   const [shopifyConnecting, setShopifyConnecting] = useState(false);
   const [activeTab, setActiveTab] = useState("connections");
 
-  const { data: status, isLoading, refetch } = trpc.integrations.getStatus.useQuery();
+  const { data: status, isLoading, refetch } = trpc.integrations.getStatus.useQuery(undefined, { refetchOnWindowFocus: true, refetchOnMount: "always", staleTime: 0 });
   const { data: syncHistory } = trpc.integrations.getSyncHistory.useQuery({ limit: 20 });
 
   // Get OAuth URLs for Gmail and Google Workspace
@@ -46,8 +46,12 @@ export default function IntegrationsPage() {
   const { data: workspaceAuthUrl } = trpc.googleWorkspace.getAuthUrl.useQuery();
   const { data: sheetsAuthUrl } = trpc.sheetsImport.getAuthUrl.useQuery();
   
-  // Get QuickBooks OAuth URL
-  const { data: quickbooksAuthUrl } = trpc.quickbooks.getAuthUrl.useQuery();
+  // Get QuickBooks OAuth URL. The tRPC inferred type lands as `unknown` for
+  // this procedure, so narrow it here to keep call sites type-checked.
+  const { data: quickbooksAuthUrlData } = trpc.quickbooks.getAuthUrl.useQuery();
+  const quickbooksAuthUrl = quickbooksAuthUrlData as
+    | { url?: string; redirectUri?: string; error?: string }
+    | undefined;
 
   // Handle OAuth callback
   useEffect(() => {
@@ -77,10 +81,10 @@ export default function IntegrationsPage() {
     },
   });
 
-  const shopifyInitiateOAuthMutation = (trpc.integrations as any).shopify.initiateOAuth.useMutation({
+  const shopifyInitiateOAuthMutation = trpc.integrations.shopify.initiateOAuth.useMutation({
     onSuccess: (data) => {
       // Redirect to Shopify OAuth page
-      window.location.href = data.authUrl || data.url;
+      window.location.href = data.authUrl;
     },
     onError: (error) => {
       toast.error(error.message);
@@ -88,7 +92,7 @@ export default function IntegrationsPage() {
     },
   });
 
-  const shopifyDisconnectMutation = (trpc.integrations as any).shopify.disconnect.useMutation({
+  const shopifyDisconnectMutation = trpc.integrations.shopify.disconnect.useMutation({
     onSuccess: () => {
       toast.success("Store disconnected successfully");
       refetch();
@@ -98,7 +102,7 @@ export default function IntegrationsPage() {
     },
   });
 
-  const shopifyTestConnectionMutation = (trpc.integrations as any).shopify.testConnection.useMutation({
+  const shopifyTestConnectionMutation = trpc.integrations.shopify.testConnection.useMutation({
     onSuccess: (data) => {
       toast.success((data as any).message ?? "Connection successful");
     },
@@ -173,11 +177,13 @@ export default function IntegrationsPage() {
         'missing_params': 'Missing required parameters from QuickBooks',
         'not_configured': 'QuickBooks integration is not configured. Please contact your administrator.',
         'not_authenticated': 'You must be logged in to connect QuickBooks',
-        'invalid_state': 'Invalid OAuth state parameter',
+        'invalid_state': 'Invalid OAuth state — please try connecting again',
         'token_exchange_failed': 'Failed to exchange authorization code for access token',
         'oauth_failed': 'OAuth authentication failed',
       };
-      toast.error(errorMessages[quickbooksError] || 'Failed to connect QuickBooks');
+      const detail = params.get('detail');
+      const base = errorMessages[quickbooksError] || 'Failed to connect QuickBooks';
+      toast.error(detail ? `${base}: ${detail}` : base);
       // Clean up URL
       window.history.replaceState({}, '', '/settings/integrations');
     }
@@ -232,7 +238,7 @@ export default function IntegrationsPage() {
     <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Integration Settings</h1>
+            <h1 className="text-lg font-semibold">Integration Settings</h1>
             <p className="text-muted-foreground mt-1">
               Manage API connections, sync configurations, and external services
             </p>
@@ -330,7 +336,7 @@ export default function IntegrationsPage() {
                     bg: "bg-orange-500/10",
                     name: "Fireflies.ai",
                     desc: "Meeting transcription & actions",
-                    status: "not_configured" as string,
+                    status: (status as any)?.fireflies?.status || "not_configured" as string,
                     action: () => { window.location.href = '/settings/fireflies'; },
                     actionLabel: "Configure",
                   },
@@ -756,10 +762,43 @@ export default function IntegrationsPage() {
                       {status?.googleWorkspace?.configured ? 'Google Workspace Connected' : 'Google Workspace Not Connected'}
                     </h4>
                     <p className="text-sm text-muted-foreground">
-                      {status?.googleWorkspace?.configured 
+                      {status?.googleWorkspace?.configured
                         ? `Connected as ${status.googleWorkspace.email}`
                         : 'Connect your Google account to create and manage Workspace files'}
                     </p>
+                  </div>
+                </div>
+
+                <div className="p-4 border rounded-lg">
+                  <div className="flex items-start gap-3">
+                    <div className={`mt-0.5 p-2 rounded-full ${status?.googleDriveServiceAccount?.configured ? 'bg-green-500/10' : 'bg-muted'}`}>
+                      {status?.googleDriveServiceAccount?.configured ? (
+                        <CheckCircle2 className="w-4 h-4 text-green-500" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 text-muted-foreground" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-medium text-sm">Drive Service Account (optional fallback)</h4>
+                      {status?.googleDriveServiceAccount?.configured ? (
+                        <>
+                          <p className="text-sm text-muted-foreground mt-1">
+                            Configured. Share private folders with the address below so the server can read them
+                            without making the folder public, even if the connected Google account above loses access.
+                          </p>
+                          <code className="mt-2 inline-block text-xs px-2 py-1 rounded bg-muted break-all">
+                            {status.googleDriveServiceAccount.email}
+                          </code>
+                        </>
+                      ) : (
+                        <p className="text-sm text-muted-foreground mt-1">
+                          Not configured. Set either <code className="text-xs">GOOGLE_SERVICE_ACCOUNT_JSON</code> or both{" "}
+                          <code className="text-xs">GOOGLE_SERVICE_ACCOUNT_EMAIL</code> and{" "}
+                          <code className="text-xs">GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY</code> in the server environment
+                          to let the app read private Drive folders without relying on a user OAuth grant.
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -890,12 +929,44 @@ export default function IntegrationsPage() {
                         <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_REDIRECT_URI</code> - OAuth callback URL (optional)</li>
                         <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_ENVIRONMENT</code> - sandbox or production (optional, defaults to sandbox)</li>
                       </ul>
+                      {quickbooksAuthUrl?.redirectUri && (
+                        <div className="mb-4 p-3 bg-amber-500/5 border border-amber-500/20 rounded-md">
+                          <p className="text-sm font-medium mb-1">Register this Redirect URI in Intuit</p>
+                          <p className="text-xs text-muted-foreground mb-2">
+                            In the Intuit Developer portal, open your app → <strong>Keys &amp; OAuth</strong> → <strong>Redirect URIs</strong>, and add this exact string. Intuit rejects the connection if it doesn't match character-for-character.
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <code className="flex-1 text-xs bg-muted px-2 py-1.5 rounded break-all">
+                              {quickbooksAuthUrl.redirectUri}
+                            </code>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={async () => {
+                                const uri = quickbooksAuthUrl.redirectUri;
+                                if (!uri || !navigator.clipboard?.writeText) {
+                                  toast.error("Clipboard copy is not supported in this browser");
+                                  return;
+                                }
+                                try {
+                                  await navigator.clipboard.writeText(uri);
+                                  toast.success("Redirect URI copied");
+                                } catch {
+                                  toast.error("Failed to copy Redirect URI");
+                                }
+                              }}
+                            >
+                              Copy
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                       <Button
                         onClick={() => {
-                          if ((quickbooksAuthUrl as any)?.url) {
-                            window.location.href = (quickbooksAuthUrl as any).url;
+                          if (quickbooksAuthUrl?.url) {
+                            window.location.href = quickbooksAuthUrl.url;
                           } else {
-                            toast.error((quickbooksAuthUrl as any)?.error || "QuickBooks OAuth not configured");
+                            toast.error(quickbooksAuthUrl?.error || "QuickBooks OAuth not configured");
                           }
                         }}
                       >

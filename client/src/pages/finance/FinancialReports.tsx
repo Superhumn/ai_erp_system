@@ -1,5 +1,10 @@
 import { useState, useMemo } from "react";
 import { trpc } from "../../lib/trpc";
+import {
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  BarChart, Bar, Legend, LineChart, Line, ComposedChart, Cell,
+  TooltipProps,
+} from "recharts";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
@@ -19,8 +24,6 @@ import {
   FileText,
   Sparkles,
   Loader2,
-  ChevronDown,
-  ChevronUp,
   BarChart3,
   TrendingUp,
   TrendingDown,
@@ -31,12 +34,6 @@ import {
   Upload,
   Plus,
   DollarSign,
-  Flame,
-  Clock,
-  Shield,
-  Presentation,
-  Calculator,
-  Activity,
 } from "lucide-react";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
@@ -145,6 +142,51 @@ function fmtCompact(value: string | number | null | undefined): string {
   if (Math.abs(num) >= 1_000_000) return `$${(num / 1_000_000).toFixed(1)}M`;
   if (Math.abs(num) >= 1_000) return `$${(num / 1_000).toFixed(0)}K`;
   return `$${num.toFixed(0)}`;
+}
+
+// ── Chart helpers ────────────────────────────────────────────
+const CHART_COLORS = {
+  revenue: "#3b82f6",    // blue-500
+  cogs: "#f97316",       // orange-500
+  grossProfit: "#22c55e",// green-500
+  ebitda: "#8b5cf6",     // violet-500
+  cash: "#06b6d4",       // cyan-500
+  negative: "#ef4444",   // red-500
+  muted: "#94a3b8",      // slate-400
+};
+
+function fmtChartAxis(value: number): string {
+  if (Math.abs(value) >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(value) >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
+  return `$${value.toFixed(0)}`;
+}
+
+function fmtChartTooltip(value: number): string {
+  if (Math.abs(value) >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
+  if (Math.abs(value) >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
+  return `$${value.toFixed(0)}`;
+}
+
+function ChartTooltipContent({ active, payload, label }: TooltipProps<number, string>) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="rounded-lg border bg-background p-2 shadow-sm text-xs">
+      <p className="font-medium mb-1">{label}</p>
+      {payload.map((entry, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: entry.color }} />
+          <span className="text-muted-foreground">{entry.name}:</span>
+          <span className="font-medium">
+            {typeof entry.value === "number"
+              ? entry.name?.includes("%") || entry.name?.includes("Margin")
+                ? `${entry.value.toFixed(1)}%`
+                : fmtChartTooltip(entry.value)
+              : entry.value}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function varianceColor(variancePct: number | null): string {
@@ -286,84 +328,23 @@ export default function FinancialReports() {
   const [modelCategory, setModelCategory] = useState<string>("all");
   const [kpiYear, setKpiYear] = useState(new Date().getFullYear());
 
-  // CFO Strategy state
-  const [expandedStrategy, setExpandedStrategy] = useState<string | null>(null);
-  const [strategyResults, setStrategyResults] = useState<Record<string, string>>({});
-
-  // CFO Strategy data sources
+  // Banking data (shown in the Banking card at the bottom)
   const { data: bankBalances } = trpc.banking.balances.useQuery();
-  const { data: invoicesList } = trpc.invoices.list.useQuery();
 
-  const cashPosition = useMemo(() =>
-    bankBalances?.accounts?.reduce(
-      (sum: number, a: any) => sum + (a.currentBalance ?? a.availableBalance ?? 0), 0
-    ) ?? 0, [bankBalances]);
-
-  const monthlyRevenue = useMemo(() => {
-    if (!invoicesList) return 0;
-    const now = new Date();
-    const thisMonth = invoicesList.filter((i: any) => {
-      const d = new Date(i.issueDate || i.createdAt);
-      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-    });
-    return thisMonth.reduce((s: number, i: any) => s + parseFloat(i.totalAmount || "0"), 0);
-  }, [invoicesList]);
-
-  const lastMonthRevenue = useMemo(() => {
-    if (!invoicesList) return 0;
-    const now = new Date();
-    const lm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const prev = invoicesList.filter((i: any) => {
-      const d = new Date(i.issueDate || i.createdAt);
-      return d.getMonth() === lm.getMonth() && d.getFullYear() === lm.getFullYear();
-    });
-    return prev.reduce((s: number, i: any) => s + parseFloat(i.totalAmount || "0"), 0);
-  }, [invoicesList]);
-
-  const revenueGrowth = lastMonthRevenue > 0
-    ? Math.round(((monthlyRevenue - lastMonthRevenue) / lastMonthRevenue) * 100)
-    : 0;
-
-  const estimatedBurn = useMemo(() => {
-    // rough: cash change over last month as burn proxy
-    return Math.max(monthlyRevenue * 0.7, 10000); // fallback estimate
-  }, [monthlyRevenue]);
-
-  const runwayMonths = estimatedBurn > 0 ? Math.round((cashPosition / estimatedBurn) * 10) / 10 : 0;
-
-  const strategyMutation = (trpc as any).financialReports.aiAnalysis.useMutation({
-    onSuccess: (data: any) => {
-      if (expandedStrategy) {
-        setStrategyResults((prev) => ({ ...prev, [expandedStrategy]: data.analysis }));
-      }
-    },
-  });
-
-  const handleStrategyClick = (id: string, prompt: string) => {
-    if (expandedStrategy === id) {
-      setExpandedStrategy(null);
-      return;
-    }
-    setExpandedStrategy(id);
-    if (!strategyResults[id]) {
-      strategyMutation.mutate({ reportType: "cfo_strategy", reportData: prompt });
-    }
-  };
-
-  const generateMutation = (trpc as any).financialReports.generate.useMutation({
-    onSuccess: (data: any) => {
+  const generateMutation = trpc.financialReports.generate.useMutation({
+    onSuccess: (data) => {
       setReportData(data as ReportData);
       setAiAnalysis(null);
     },
   });
 
-  const aiMutation = (trpc as any).financialReports.aiAnalysis.useMutation({
-    onSuccess: (data: any) => {
+  const aiMutation = trpc.financialReports.aiAnalysis.useMutation({
+    onSuccess: (data) => {
       setAiAnalysis(data.analysis);
     },
   });
 
-  const autoCategorize = (trpc as any).financialReports.autoCategorize.useMutation();
+  const autoCategorize = trpc.banking.autoCategorize.useMutation();
 
   // Financial Model vs Actual queries
   const financialModelQuery = trpc.financialModel.list.useQuery({
@@ -372,6 +353,53 @@ export default function FinancialReports() {
   });
   const modelCategories = trpc.financialModel.categories.useQuery();
   const modelData = financialModelQuery.data ?? [];
+
+  // All-years query for charts (unfiltered by year)
+  const allModelQuery = trpc.financialModel.list.useQuery({});
+  const allModelData = allModelQuery.data ?? [];
+
+  // ── Prepare chart data from financial model ──────────────────
+  const revenueCogsChartData = useMemo(() => {
+    const byYear: Record<number, { revenue: number; cogs: number; grossProfit: number; ebitda: number; cash: number }> = {};
+    for (const row of allModelData) {
+      const y = row.year;
+      if (!y) continue;
+      if (!byYear[y]) byYear[y] = { revenue: 0, cogs: 0, grossProfit: 0, ebitda: 0, cash: 0 };
+      const val = parseFloat(row.projectedValue ?? "0");
+      const name = (row.metricName || "").toLowerCase();
+      if (name === "revenue") byYear[y].revenue += val;
+      else if (name === "cogs") byYear[y].cogs += val;
+      else if (name === "gross profit") byYear[y].grossProfit += val;
+      else if (name === "ebitda") byYear[y].ebitda += val;
+      else if (name === "ending cash" || name === "cash") byYear[y].cash += val;
+    }
+    return Object.entries(byYear)
+      .sort(([a], [b]) => Number(a) - Number(b))
+      .map(([yr, d]) => ({
+        year: `Year ${yr}`,
+        Revenue: d.revenue,
+        COGS: d.cogs,
+        "Gross Profit": d.grossProfit,
+        EBITDA: d.ebitda,
+        "Ending Cash": d.cash,
+        "Gross Margin %": d.revenue > 0 ? ((d.grossProfit / d.revenue) * 100) : 0,
+        "EBITDA Margin %": d.revenue > 0 ? ((d.ebitda / d.revenue) * 100) : 0,
+      }));
+  }, [allModelData]);
+
+  // ── Waterfall chart data (Year 1 breakdown) ──────────────────
+  const waterfallData = useMemo(() => {
+    const y1 = revenueCogsChartData.find((d) => d.year === "Year 1");
+    if (!y1) return [];
+    const opex = y1.Revenue - y1.COGS - y1.EBITDA;
+    return [
+      { name: "Revenue", value: y1.Revenue, fill: CHART_COLORS.revenue, isPositive: true },
+      { name: "COGS", value: -y1.COGS, fill: CHART_COLORS.negative, isPositive: false },
+      { name: "Gross Profit", value: y1["Gross Profit"], fill: CHART_COLORS.grossProfit, isPositive: true },
+      { name: "OpEx", value: -opex, fill: CHART_COLORS.negative, isPositive: false },
+      { name: "EBITDA", value: y1.EBITDA, fill: y1.EBITDA >= 0 ? CHART_COLORS.ebitda : CHART_COLORS.negative, isPositive: y1.EBITDA >= 0 },
+    ];
+  }, [revenueCogsChartData]);
 
   // Group model data by category
   const groupedModelData = useMemo(() => {
@@ -581,57 +609,22 @@ export default function FinancialReports() {
   };
 
   return (
-    <div className="p-4 space-y-3">
+    <div className="space-y-3">
       {/* Header */}
       <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-lg font-semibold">Financials</h1>
-          <p className="text-muted-foreground text-sm">
-            CFO dashboard, reports, and financial strategy
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="outline" size="sm">
-                <FileText className="h-4 w-4 mr-2" />
-                Reports
-                <ChevronDown className="h-3 w-3 ml-1" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-72 p-1" align="end">
-              <div className="space-y-0.5 max-h-80 overflow-y-auto">
-                {reportTypes.map((report) => (
-                  <button
-                    key={report.id}
-                    className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors"
-                    onClick={() => {
-                      handleGenerate(report.id);
-                      setExpandedReport(report.id);
-                    }}
-                  >
-                    <div className="font-medium">{report.name}</div>
-                    <div className="text-xs text-muted-foreground">{report.description}</div>
-                  </button>
-                ))}
-              </div>
-            </PopoverContent>
-          </Popover>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => autoCategorize.mutate()}
-            disabled={autoCategorize.isPending}
-          >
-            {autoCategorize.isPending ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Sparkles className="mr-2 h-4 w-4" />
-            )}
-            Auto-Categorize
-          </Button>
-        </div>
+        <h1 className="text-lg font-semibold">Financials</h1>
+        <Button variant="outline" size="sm" onClick={() => autoCategorize.mutate()} disabled={autoCategorize.isPending}>
+          {autoCategorize.isPending ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Sparkles className="mr-1 h-3 w-3" />}
+          Auto-Categorize
+        </Button>
       </div>
+
+      {/* 2-column layout: dashboard left, reports menu right */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px] gap-3">
+        {/* Left: Dashboard content (rendered below) */}
+        <div className="space-y-3">
+
+      {/* Reports side menu - rendered in right column via CSS order */}
 
       {/* Auto-Categorize result */}
       {autoCategorize.data && (
@@ -687,63 +680,96 @@ export default function FinancialReports() {
         </div>
       )}
 
-      {/* ── CFO Strategy (top of page) ────────────────────────── */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2">
-            <Activity className="h-5 w-5" />
-            CFO Strategy
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <div className="border rounded-lg p-3">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1"><DollarSign className="h-3 w-3" /> Cash Position</div>
-              <p className="text-lg font-bold">{fmtCompact(cashPosition)}</p>
-            </div>
-            <div className="border rounded-lg p-3">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1"><Flame className="h-3 w-3" /> Monthly Burn</div>
-              <p className="text-lg font-bold">{fmtCompact(estimatedBurn)}</p>
-            </div>
-            <div className="border rounded-lg p-3">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1"><Clock className="h-3 w-3" /> Runway</div>
-              <p className={`text-lg font-bold ${runwayMonths > 12 ? "text-green-600" : runwayMonths > 6 ? "text-yellow-600" : "text-red-600"}`}>{runwayMonths} mo</p>
-            </div>
-            <div className="border rounded-lg p-3">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1"><TrendingUp className="h-3 w-3" /> Revenue Growth</div>
-              <p className={`text-lg font-bold ${revenueGrowth >= 0 ? "text-green-600" : "text-red-600"}`}>{revenueGrowth >= 0 ? "+" : ""}{revenueGrowth}%</p>
-            </div>
-          </div>
-          <div className="border rounded-lg divide-y">
-            {[
-              { id: "fundraising", icon: Target, label: "Fundraising Readiness Check", prompt: `Analyze fundraising readiness: cash=${cashPosition}, burn=${estimatedBurn}, runway=${runwayMonths}mo, MoM growth=${revenueGrowth}%. Assess investor-readiness metrics, data room checklist, and recommended fundraising timeline.` },
-              { id: "board_report", icon: Presentation, label: "Board Report Generator", prompt: `Generate board report data: revenue=${monthlyRevenue}, cash=${cashPosition}, burn=${estimatedBurn}, runway=${runwayMonths}mo, growth=${revenueGrowth}%. Include KPI summary, financial highlights, risks, and asks.` },
-              { id: "scenario", icon: BarChart3, label: "Scenario Planning", prompt: `Run scenario analysis with current metrics: cash=${cashPosition}, burn=${estimatedBurn}, revenue=${monthlyRevenue}. Model 3 scenarios: conservative (flat growth), base (${revenueGrowth}% MoM), aggressive (2x growth). Show runway and hiring capacity for each.` },
-              { id: "tax", icon: Calculator, label: "Tax Planning", prompt: `Analyze tax planning: revenue=${monthlyRevenue * 12}/yr estimated. Identify estimated quarterly tax liability, R&D tax credit eligibility, deduction opportunities, and entity structure considerations for a startup.` },
-              { id: "compliance", icon: Shield, label: "Compliance Checklist", prompt: `Generate SOX/audit readiness checklist for a startup: assess internal controls, financial reporting procedures, revenue recognition compliance, data security, and audit preparation status. Include priority ratings.` },
-              { id: "working_capital", icon: Activity, label: "Working Capital Analysis", prompt: `Analyze working capital: cash=${cashPosition}, monthly revenue=${monthlyRevenue}. Assess accounts receivable health, payable optimization, inventory efficiency, and cash conversion cycle. Recommend improvements.` },
-            ].map(({ id, icon: Icon, label, prompt }) => (
-              <div key={id}>
-                <button className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/50 transition-colors" onClick={() => handleStrategyClick(id, prompt)}>
-                  <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
-                  <span className="text-sm font-medium flex-1">{label}</span>
-                  {strategyMutation.isPending && expandedStrategy === id ? (
-                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                  ) : expandedStrategy === id ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
-                </button>
-                {expandedStrategy === id && strategyResults[id] && (
-                  <div className="px-4 pb-4">
-                    <div className="bg-muted/30 rounded-lg p-4 text-sm whitespace-pre-wrap leading-relaxed">
-                      <div className="flex items-center gap-2 mb-2 text-xs text-muted-foreground"><Sparkles className="h-3 w-3" /> AI Analysis</div>
-                      {strategyResults[id]}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+      {/* ── Financial Charts ─────────────────────────────────── */}
+      {revenueCogsChartData.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {/* Revenue vs COGS Area Chart */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">Revenue vs COGS</CardTitle>
+              <CardDescription className="text-xs">5-year projected trajectory</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={240}>
+                <AreaChart data={revenueCogsChartData}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <XAxis dataKey="year" tick={{ fontSize: 11 }} />
+                  <YAxis tickFormatter={fmtChartAxis} tick={{ fontSize: 11 }} width={60} />
+                  <Tooltip content={<ChartTooltipContent />} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Area type="monotone" dataKey="Revenue" stackId="1" stroke={CHART_COLORS.revenue} fill={CHART_COLORS.revenue} fillOpacity={0.3} />
+                  <Area type="monotone" dataKey="COGS" stackId="2" stroke={CHART_COLORS.cogs} fill={CHART_COLORS.cogs} fillOpacity={0.3} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          {/* Gross Margin & EBITDA Margin Line Chart */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">Margin Trends</CardTitle>
+              <CardDescription className="text-xs">Gross margin and EBITDA margin %</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={240}>
+                <LineChart data={revenueCogsChartData}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <XAxis dataKey="year" tick={{ fontSize: 11 }} />
+                  <YAxis tickFormatter={(v: number) => `${v.toFixed(0)}%`} tick={{ fontSize: 11 }} width={45} />
+                  <Tooltip content={<ChartTooltipContent />} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Line type="monotone" dataKey="Gross Margin %" stroke={CHART_COLORS.grossProfit} strokeWidth={2} dot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="EBITDA Margin %" stroke={CHART_COLORS.ebitda} strokeWidth={2} dot={{ r: 3 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          {/* Cash Position Bar Chart */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">Cash Position</CardTitle>
+              <CardDescription className="text-xs">Ending cash balance by year</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart data={revenueCogsChartData}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <XAxis dataKey="year" tick={{ fontSize: 11 }} />
+                  <YAxis tickFormatter={fmtChartAxis} tick={{ fontSize: 11 }} width={60} />
+                  <Tooltip content={<ChartTooltipContent />} />
+                  <Bar dataKey="Ending Cash" fill={CHART_COLORS.cash} radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          {/* Waterfall Chart — Year 1 */}
+          {waterfallData.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Year 1 Waterfall</CardTitle>
+                <CardDescription className="text-xs">Revenue to EBITDA breakdown</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={240}>
+                  <BarChart data={waterfallData}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                    <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                    <YAxis tickFormatter={fmtChartAxis} tick={{ fontSize: 11 }} width={60} />
+                    <Tooltip content={<ChartTooltipContent />} />
+                    <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                      {waterfallData.map((entry, idx) => (
+                        <Cell key={idx} fill={entry.fill} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
 
       {/* ── Model vs Actual Comparison ────────────────────────── */}
       <Card>
@@ -962,11 +988,26 @@ export default function FinancialReports() {
                               style={{ width: `${Math.min(pct, 100)}%` }}
                             />
                           </div>
-                          {kpi.month && (
-                            <p className="text-xs text-muted-foreground">
-                              Month {kpi.month}
-                            </p>
-                          )}
+                          {/* Sparkline — 12-month target trajectory */}
+                          <div className="flex items-center justify-between">
+                            <div style={{ width: 80, height: 30 }}>
+                              <ResponsiveContainer width="100%" height="100%">
+                                <LineChart data={Array.from({ length: 12 }, (_, i) => ({
+                                  m: i + 1,
+                                  v: target > 0 ? (target / 12) * (i + 1) : 0,
+                                  a: i < (kpi.month || 1) ? (actual / (kpi.month || 1)) * (i + 1) : undefined,
+                                }))}>
+                                  <Line type="monotone" dataKey="v" stroke={CHART_COLORS.muted} strokeWidth={1} dot={false} strokeDasharray="2 2" />
+                                  <Line type="monotone" dataKey="a" stroke={isOverTarget ? CHART_COLORS.grossProfit : CHART_COLORS.revenue} strokeWidth={1.5} dot={false} connectNulls />
+                                </LineChart>
+                              </ResponsiveContainer>
+                            </div>
+                            {kpi.month && (
+                              <span className="text-[10px] text-muted-foreground">
+                                Mo {kpi.month}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       );
                     })}
@@ -978,7 +1019,113 @@ export default function FinancialReports() {
         </CardContent>
       </Card>
 
-      {/* (CFO Strategy moved to top of page) */}
+      {/* ── Banking ─────────────────────────────── */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <DollarSign className="h-4 w-4 text-blue-600" /> Banking
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {bankBalances?.accounts && bankBalances.accounts.length > 0 ? (
+              bankBalances.accounts.map((acct: any) => (
+                <div key={acct.id} className="border rounded-lg p-4">
+                  <div className="text-sm text-muted-foreground font-medium">
+                    {acct.name || acct.nickname || "Account"}
+                  </div>
+                  <div className="text-2xl font-bold mt-1">
+                    {fmtCompact(acct.currentBalance ?? acct.availableBalance ?? 0)}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {acct.kind || acct.type || "Checking"} &middot; ****{acct.accountNumber?.slice(-4) || acct.id?.slice(-4)}
+                  </p>
+                </div>
+              ))
+            ) : (
+              <div className="col-span-full text-sm text-muted-foreground py-4 text-center">
+                No bank accounts connected. Connect Mercury or Amex below.
+              </div>
+            )}
+          </div>
+
+          {/* Connect accounts section */}
+          <div className="mt-4 border-t pt-4">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">Connect Accounts</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <a
+                href="/settings"
+                className="flex items-center gap-3 p-3 border rounded-lg hover:bg-muted/50 transition-colors"
+              >
+                <div className="h-8 w-8 rounded-full bg-gradient-to-r from-gray-800 to-gray-600 flex items-center justify-center text-white text-xs font-bold">M</div>
+                <div>
+                  <div className="text-sm font-medium">Mercury</div>
+                  <div className="text-xs text-muted-foreground">Business checking &middot; API key in Settings</div>
+                </div>
+              </a>
+              <a
+                href="https://www.americanexpress.com/en-us/business/trends-and-insights/articles/how-to-connect-your-amex-account-to-accounting-software/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-3 p-3 border rounded-lg hover:bg-muted/50 transition-colors"
+              >
+                <div className="h-8 w-8 rounded-full bg-gradient-to-r from-blue-700 to-blue-500 flex items-center justify-center text-white text-xs font-bold">AX</div>
+                <div>
+                  <div className="text-sm font-medium">American Express</div>
+                  <div className="text-xs text-muted-foreground">Connect via Plaid or CSV import &middot; Use QuickBooks sync</div>
+                </div>
+              </a>
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-2">
+              To connect Amex: Go to Settings &gt; QuickBooks and sync your accounts. Amex integrates via QuickBooks Online or you can export transactions as CSV from americanexpress.com and import via the Import Data page.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+        </div>{/* end left column */}
+
+        {/* Right sidebar: reports menu */}
+        <div className="space-y-2 hidden lg:block">
+          <Card className="py-2">
+            <CardHeader className="pb-1 px-3">
+              <CardTitle className="text-xs text-muted-foreground uppercase tracking-wider">Reports</CardTitle>
+            </CardHeader>
+            <CardContent className="px-2 py-0">
+              <div className="space-y-0.5">
+                {reportTypes.map((report) => (
+                  <button
+                    key={report.id}
+                    className={`w-full text-left px-2 py-1.5 text-xs rounded-lg hover:bg-muted transition-colors ${expandedReport === report.id ? "bg-primary/10 text-primary font-medium" : ""}`}
+                    onClick={() => {
+                      handleGenerate(report.id);
+                      setExpandedReport(report.id);
+                    }}
+                  >
+                    {report.name}
+                  </button>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="py-2">
+            <CardHeader className="pb-1 px-3">
+              <CardTitle className="text-xs text-muted-foreground uppercase tracking-wider">Actions</CardTitle>
+            </CardHeader>
+            <CardContent className="px-2 py-0 space-y-0.5">
+              <button className="w-full text-left px-2 py-1.5 text-xs rounded-lg hover:bg-muted transition-colors" onClick={() => autoCategorize.mutate()}>
+                Auto-Categorize
+              </button>
+              <button className="w-full text-left px-2 py-1.5 text-xs rounded-lg hover:bg-muted transition-colors" onClick={() => window.location.href = "/import"}>
+                Import Data
+              </button>
+              <button className="w-full text-left px-2 py-1.5 text-xs rounded-lg hover:bg-muted transition-colors" onClick={() => window.location.href = "/settings/integrations"}>
+                QuickBooks
+              </button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>{/* end grid */}
     </div>
   );
 }

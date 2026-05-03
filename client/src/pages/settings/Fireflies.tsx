@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -35,13 +36,31 @@ export default function FirefliesPage() {
   const [selectedMeetingId, setSelectedMeetingId] = useState<number | null>(null);
   const [processProjectName, setProcessProjectName] = useState("");
   const [processCreateProject, setProcessCreateProject] = useState(false);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>("auto");
+  const [selectedAssigneeId, setSelectedAssigneeId] = useState<string>("auto");
 
   const { data: configRaw, isLoading: configLoading, refetch: refetchConfig } = trpc.fireflies.getConfig.useQuery();
   const config = configRaw as any;
+
+  // Sync toggle state from the server config whenever it loads
+  useEffect(() => {
+    if (config) {
+      if (config.autoCreateContacts != null) setAutoCreateContacts(config.autoCreateContacts);
+      if (config.autoCreateTasks != null) setAutoCreateTasks(config.autoCreateTasks);
+      if (config.autoCreateProjects != null) setAutoCreateProjects(config.autoCreateProjects);
+    }
+  }, [configRaw]);
+
   const { data: meetingsRaw, isLoading: meetingsLoading, refetch: refetchMeetings } = trpc.fireflies.meetings.list.useQuery({});
   const meetings = meetingsRaw as any[] | undefined;
   const { data: statsRaw, refetch: refetchStats } = trpc.fireflies.meetings.getStats.useQuery();
   const stats = statsRaw as any;
+  const { data: taskRoutingOptionsRaw } = trpc.fireflies.taskRoutingOptions.useQuery(undefined, {
+    enabled: !!config?.configured,
+  });
+  const taskRoutingOptions = taskRoutingOptionsRaw as
+    | { projects: Array<{ id: number; name: string }>; assignees: Array<{ id: number; name?: string; email?: string }> }
+    | undefined;
 
   const configureMutation = trpc.fireflies.configure.useMutation({
     onSuccess: (data) => {
@@ -91,23 +110,32 @@ export default function FirefliesPage() {
   });
 
   const handleConfigure = () => {
-    if (!apiKey.trim()) {
+    if (!config?.configured && !apiKey.trim()) {
       toast.error("Please enter your Fireflies API key");
       return;
     }
     configureMutation.mutate({
-      apiKey: apiKey.trim(),
+      apiKey: apiKey.trim() || undefined,
+      autoCreateContacts,
+      autoCreateTasks,
+      autoCreateProjects,
     });
   };
 
   const handleProcessMeeting = () => {
     if (!selectedMeetingId) return;
+    if (!processCreateProject && selectedProjectId === "auto" && selectedAssigneeId !== "auto") {
+      toast.error("Select a project when assigning tasks to a team member");
+      return;
+    }
     processMeetingMutation.mutate({
-      meetingId: selectedMeetingId.toString(),
+      meetingId: selectedMeetingId,
       createContacts: true,
       createTasks: true,
       createProject: processCreateProject,
       projectName: processProjectName || undefined,
+      projectId: !processCreateProject && selectedProjectId !== "auto" ? Number(selectedProjectId) : undefined,
+      assigneeId: selectedAssigneeId !== "auto" ? Number(selectedAssigneeId) : undefined,
     } as any);
   };
 
@@ -130,11 +158,28 @@ export default function FirefliesPage() {
     }
   };
 
-  const formatDuration = (seconds?: number | null) => {
+  const normalizeDurationSeconds = (raw?: number | string | null) => {
+    if (raw == null) return null;
+    const value = typeof raw === "string" ? Number(raw) : raw;
+    if (!Number.isFinite(value) || value <= 0) return null;
+
+    // Fireflies payloads may arrive in minutes for some accounts.
+    if (value <= 120 && Number.isInteger(value)) return value * 60;
+    // Also support decimal-minute values (e.g., 42.5).
+    if (value < 10 && !Number.isInteger(value)) return Math.round(value * 60);
+
+    return Math.round(value);
+  };
+
+  const formatDuration = (raw?: number | string | null) => {
+    const seconds = normalizeDurationSeconds(raw);
     if (!seconds) return "—";
-    const mins = Math.floor(seconds / 60);
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
-    return `${mins}m ${secs}s`;
+    if (hours > 0) return `${hours}h ${mins}m`;
+    if (mins > 0) return `${mins}m ${secs}s`;
+    return `${secs}s`;
   };
 
   const formatDate = (date?: string | Date | null) => {
@@ -160,11 +205,11 @@ export default function FirefliesPage() {
             Sync meeting transcripts and auto-generate tasks, projects, and CRM contacts
           </p>
         </div>
-        {config?.enabled && (
+        {config?.configured && (
           <div className="flex gap-2">
             <Button
               variant="outline"
-              onClick={() => (syncMutation.mutate as any)({})}
+              onClick={() => (syncMutation.mutate as any)({ limit: 500 })}
               disabled={syncMutation.isPending}
             >
               {syncMutation.isPending ? (
@@ -195,46 +240,10 @@ export default function FirefliesPage() {
         )}
       </div>
 
-      {/* Stats Cards */}
-      {config?.enabled && stats && (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="text-sm text-muted-foreground">Total Meetings</div>
-              <div className="text-xl font-semibold tracking-[-0.02em]">{stats.total}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="text-sm text-muted-foreground">Pending</div>
-              <div className="text-xl font-semibold tracking-[-0.02em] text-yellow-600">{stats.pending}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="text-sm text-muted-foreground">Processed</div>
-              <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{stats.processed}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="text-sm text-muted-foreground flex items-center gap-1"><Users className="h-3 w-3" /> Contacts Created</div>
-              <div className="text-xl font-semibold tracking-[-0.02em] text-blue-600">{stats.contactsCreated}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="text-sm text-muted-foreground flex items-center gap-1"><ListTodo className="h-3 w-3" /> Tasks Created</div>
-              <div className="text-xl font-semibold tracking-[-0.02em] text-purple-600">{stats.tasksCreated}</div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      <Tabs defaultValue={config?.enabled ? "meetings" : "setup"}>
+      <Tabs defaultValue={config?.configured ? "meetings" : "setup"}>
         <TabsList>
           <TabsTrigger value="setup"><Settings className="h-4 w-4 mr-1" /> Setup</TabsTrigger>
-          {config?.enabled && (
+          {config?.configured && (
             <TabsTrigger value="meetings"><Mic className="h-4 w-4 mr-1" /> Meetings</TabsTrigger>
           )}
         </TabsList>
@@ -244,7 +253,7 @@ export default function FirefliesPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                {config?.enabled ? (
+                {config?.configured ? (
                   <CheckCircle2 className="h-5 w-5 text-green-500" />
                 ) : (
                   <XCircle className="h-5 w-5 text-gray-400" />
@@ -260,7 +269,7 @@ export default function FirefliesPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              {config?.enabled && (
+              {config?.configured && (
                 <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
                   <div className="flex items-center gap-2 text-green-700 font-medium">
                     <CheckCircle2 className="h-4 w-4" />
@@ -283,7 +292,7 @@ export default function FirefliesPage() {
 
               <div className="space-y-4">
                 <div>
-                  <Label htmlFor="apiKey">{config?.enabled ? "Update" : ""} Fireflies API Key</Label>
+                  <Label htmlFor="apiKey">{config?.configured ? "Update" : ""} Fireflies API Key</Label>
                   <div className="flex gap-2 mt-1">
                     <Input
                       id="apiKey"
@@ -292,13 +301,18 @@ export default function FirefliesPage() {
                       value={apiKey}
                       onChange={(e) => setApiKey(e.target.value)}
                     />
-                    <Button onClick={handleConfigure} disabled={configureMutation.isPending || !apiKey.trim()}>
+                    <Button onClick={handleConfigure} disabled={configureMutation.isPending || (!config?.configured && !apiKey.trim())}>
                       {configureMutation.isPending ? (
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                       ) : null}
-                      {config?.enabled ? "Update" : "Connect"}
+                      {config?.configured ? "Update" : "Connect"}
                     </Button>
                   </div>
+                  {config?.configured && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Leave blank to keep your existing API key and save only settings changes.
+                    </p>
+                  )}
                 </div>
 
                 <div className="border rounded-lg p-4 space-y-4">
@@ -325,8 +339,16 @@ export default function FirefliesPage() {
                     <Switch checked={autoCreateProjects} onCheckedChange={setAutoCreateProjects} />
                   </div>
                 </div>
+                {config?.configured && (
+                  <Button onClick={handleConfigure} disabled={configureMutation.isPending}>
+                    {configureMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : null}
+                    Save Settings
+                  </Button>
+                )}
 
-                {config?.enabled && (
+                {config?.configured && (
                   <div className="pt-4 border-t">
                     <Button variant="destructive" size="sm" onClick={() => disconnectMutation.mutate()} disabled={disconnectMutation.isPending}>
                       Disconnect Fireflies
@@ -339,13 +361,13 @@ export default function FirefliesPage() {
         </TabsContent>
 
         {/* Meetings Tab */}
-        {config?.enabled && (
+        {config?.configured && (
           <TabsContent value="meetings">
             <Card>
               <CardHeader>
                 <CardTitle>Synced Meetings</CardTitle>
                 <CardDescription>
-                  Meetings synced from Fireflies. Process them to create CRM contacts, tasks, and projects.
+                  New meetings sync automatically about every 30 minutes (and when you use Sync). Action items are queued as task suggestions when they can be matched to a project. Use Process for extra CRM contacts or a meeting project if needed.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -357,7 +379,7 @@ export default function FirefliesPage() {
                   <div className="text-center py-12 text-muted-foreground">
                     <Mic className="h-12 w-12 mx-auto mb-3 opacity-30" />
                     <p>No meetings synced yet.</p>
-                    <p className="text-sm mt-1">Click "Sync Meetings" to fetch your recent meetings from Fireflies.</p>
+                    <p className="text-sm mt-1">Wait for the next automatic sync or click Sync Meetings to fetch now.</p>
                   </div>
                 ) : (
                   <Table>
@@ -429,6 +451,8 @@ export default function FirefliesPage() {
                                     setSelectedMeetingId(meeting.id);
                                     setProcessProjectName("");
                                     setProcessCreateProject(false);
+                                    setSelectedProjectId("auto");
+                                    setSelectedAssigneeId("auto");
                                     setShowProcessDialog(true);
                                   }}
                                 >
@@ -476,6 +500,52 @@ export default function FirefliesPage() {
               </div>
               <ArrowRight className="h-4 w-4 text-purple-400 ml-auto" />
               <CheckCircle2 className="h-4 w-4 text-green-500" />
+            </div>
+            <div className="border rounded-lg p-3 space-y-3">
+              <div className="font-medium text-sm">Task Routing (optional)</div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div>
+                  <Label className="text-xs">Project</Label>
+                  <Select
+                    value={processCreateProject ? "auto" : selectedProjectId}
+                    onValueChange={setSelectedProjectId}
+                    disabled={processCreateProject}
+                  >
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="Auto route project" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">Auto route project</SelectItem>
+                      {(taskRoutingOptions?.projects || []).map((project) => (
+                        <SelectItem key={project.id} value={String(project.id)}>
+                          {project.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-xs">Assignee</Label>
+                  <Select value={selectedAssigneeId} onValueChange={setSelectedAssigneeId}>
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="Auto assign" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">Auto assign</SelectItem>
+                      {(taskRoutingOptions?.assignees || []).map((assignee) => (
+                        <SelectItem key={assignee.id} value={String(assignee.id)}>
+                          {assignee.name || assignee.email || `User ${assignee.id}`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              {processCreateProject && (
+                <p className="text-xs text-muted-foreground">
+                  Project selection is disabled because a new project will be created for this meeting.
+                </p>
+              )}
             </div>
             <div className="border rounded-lg p-3 space-y-2">
               <div className="flex items-center justify-between">

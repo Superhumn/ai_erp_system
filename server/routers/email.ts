@@ -1,5 +1,8 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+import { createHash, createDecipheriv } from "crypto";
+import { encrypt, decrypt } from "../_core/crypto";
+import { ENV } from "../_core/env";
 import { sendEmail } from "../_core/email";
 import * as emailService from "../_core/emailService";
 import * as db from "../db";
@@ -7,6 +10,25 @@ import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage,
 import { getGoogleFullAccessAuthUrl } from "../_core/googleDrive";
 import { testConnection } from "../ediTransportService";
 import { router, protectedProcedure, adminProcedure, createAuditLog, getValidGoogleToken } from "./middleware";
+
+// Decrypts a stored password supporting both the current AES-256-GCM format
+// (iv:authTag:ciphertext) and the legacy AES-256-CBC format (plain hex ciphertext).
+function decryptPassword(encryptedText: string): string {
+  if (encryptedText.split(":").length === 3) {
+    return decrypt(encryptedText);
+  }
+  // Legacy CBC fallback for passwords stored before the GCM migration.
+  // Uses ENV.cookieSecret which is validated at startup (no insecure fallback).
+  const key = ENV.cookieSecret;
+  const decipher = createDecipheriv(
+    "aes-256-cbc",
+    createHash("sha256").update(key).digest().slice(0, 32),
+    Buffer.alloc(16, 0),
+  );
+  let decrypted = decipher.update(encryptedText, "hex", "utf8");
+  decrypted += decipher.final("utf8");
+  return decrypted;
+}
 
 export const emailRouter = router({
   // ============================================
@@ -537,6 +559,18 @@ export const emailRouter = router({
         const attachments = await db.getEmailAttachments(input.id);
         const documents = await db.getParsedDocuments({ emailId: input.id });
         
+        return { ...email, attachments, documents };
+      }),
+
+    /** Resolve stored inbound email by RFC Message-ID (for approval-queue source links). */
+    getByMessageId: protectedProcedure
+      .input(z.object({ messageId: z.string().min(1) }))
+      .query(async ({ input }) => {
+        const email = await db.findInboundEmailByMessageId(input.messageId);
+        if (!email) return null;
+        const id = (email as { id: number }).id;
+        const attachments = await db.getEmailAttachments(id);
+        const documents = await db.getParsedDocuments({ emailId: id });
         return { ...email, attachments, documents };
       }),
 
@@ -1548,14 +1582,7 @@ export const emailRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         // Encrypt password
-        const crypto = await import('crypto');
-        const key = process.env.JWT_SECRET || 'default-key';
-        const cipher = crypto.createCipheriv('aes-256-cbc', 
-          crypto.createHash('sha256').update(key).digest().slice(0, 32),
-          Buffer.alloc(16, 0)
-        );
-        let encrypted = cipher.update(input.password, 'utf8', 'hex');
-        encrypted += cipher.final('hex');
+        const encrypted = encrypt(input.password);
 
         const { id } = await db.createImapCredential({
           ...input,
@@ -1608,14 +1635,7 @@ export const emailRouter = router({
         }
 
         // Decrypt password
-        const crypto = await import('crypto');
-        const key = process.env.JWT_SECRET || 'default-key';
-        const decipher = crypto.createDecipheriv('aes-256-cbc',
-          crypto.createHash('sha256').update(key).digest().slice(0, 32),
-          Buffer.alloc(16, 0)
-        );
-        let decrypted = decipher.update(credential.encryptedPassword, 'hex', 'utf8');
-        decrypted += decipher.final('utf8');
+        const decrypted = decryptPassword(credential.encryptedPassword);
 
         return {
           ...credential,
@@ -1662,14 +1682,7 @@ export const emailRouter = router({
         // Encrypt password if provided
         let encryptedPassword = input.imapPassword;
         if (input.imapPassword) {
-          const crypto = await import('crypto');
-          const key = process.env.JWT_SECRET || 'default-key';
-          const cipher = crypto.createCipheriv('aes-256-cbc',
-            crypto.createHash('sha256').update(key).digest().slice(0, 32),
-            Buffer.alloc(16, 0)
-          );
-          encryptedPassword = cipher.update(input.imapPassword, 'utf8', 'hex');
-          encryptedPassword += cipher.final('hex');
+          encryptedPassword = encrypt(input.imapPassword);
         }
 
         const { id } = await db.createEmailCredential({
@@ -1707,15 +1720,7 @@ export const emailRouter = router({
 
         // Encrypt new password if provided
         if (imapPassword) {
-          const crypto = await import('crypto');
-          const key = process.env.JWT_SECRET || 'default-key';
-          const cipher = crypto.createCipheriv('aes-256-cbc',
-            crypto.createHash('sha256').update(key).digest().slice(0, 32),
-            Buffer.alloc(16, 0)
-          );
-          let encrypted = cipher.update(imapPassword, 'utf8', 'hex');
-          encrypted += cipher.final('hex');
-          updateData.imapPassword = encrypted;
+          updateData.imapPassword = encrypt(imapPassword);
         }
 
         await db.updateEmailCredential(id, updateData);
@@ -1755,15 +1760,7 @@ export const emailRouter = router({
 
           // Decrypt password
           if (credential.imapPassword) {
-            const crypto = await import('crypto');
-            const key = process.env.JWT_SECRET || 'default-key';
-            const decipher = crypto.createDecipheriv('aes-256-cbc',
-              crypto.createHash('sha256').update(key).digest().slice(0, 32),
-              Buffer.alloc(16, 0)
-            );
-            let decrypted = decipher.update(credential.imapPassword, 'hex', 'utf8');
-            decrypted += decipher.final('utf8');
-            config = { ...credential, imapPassword: decrypted };
+            config = { ...credential, imapPassword: decryptPassword(credential.imapPassword) };
           }
         }
 

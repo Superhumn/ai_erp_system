@@ -258,8 +258,17 @@ export async function checkAndSendPoFollowups(triggeredBy?: number): Promise<{
     const expected = new Date(po.expectedDate);
     const daysOverdue = Math.floor((now.getTime() - expected.getTime()) / (1000 * 60 * 60 * 24));
 
-    // Send follow-up if 3+ days overdue
+    // Send follow-up if 3+ days overdue and no follow-up was sent in the last 6 days
     if (daysOverdue >= 3 && po.vendorId) {
+      // Guard: skip if a follow-up email was already queued/sent for this PO recently
+      const recentEmails = await db.getEmailMessages({ relatedEntityType: "purchase_order", relatedEntityId: po.id });
+      const SIX_DAYS_MS = 6 * 24 * 60 * 60 * 1000;
+      const cutoff = Date.now() - SIX_DAYS_MS;
+      const alreadySent = recentEmails.some((e: any) => {
+        const ts = e.sentAt ? new Date(e.sentAt).getTime() : new Date(e.createdAt).getTime();
+        return ts > cutoff;
+      });
+      if (alreadySent) continue;
       try {
         await sendVendorEmail({
           vendorId: po.vendorId,

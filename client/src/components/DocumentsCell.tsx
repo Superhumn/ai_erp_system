@@ -30,6 +30,16 @@ const DOC_TYPES = [
   "other",
 ] as const;
 
+const HR_DOC_TYPES = [
+  "employment_agreement",
+  "option_grant",
+  "offer_letter",
+  "nda",
+  "ip_assignment",
+  "termination",
+  "other",
+] as const;
+
 type DocType = typeof DOC_TYPES[number];
 
 function getFileIcon(mimeType?: string | null) {
@@ -50,10 +60,12 @@ function formatDate(date: Date | string | null | undefined): string {
 interface DocumentsCellProps {
   referenceType: string;
   referenceId: number;
+  docTypeSet?: "default" | "hr";
 }
 
-export default function DocumentsCell({ referenceType, referenceId }: DocumentsCellProps) {
-  const [docType, setDocType] = useState<DocType>("other");
+export default function DocumentsCell({ referenceType, referenceId, docTypeSet = "default" }: DocumentsCellProps) {
+  const typeOptions = docTypeSet === "hr" ? HR_DOC_TYPES : DOC_TYPES;
+  const [docType, setDocType] = useState<string>(typeOptions[0]);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const utils = trpc.useUtils();
@@ -85,7 +97,7 @@ export default function DocumentsCell({ referenceType, referenceId }: DocumentsC
       const base64 = (reader.result as string).split(",")[1];
       uploadMutation.mutate({
         name: file.name,
-        type: docType,
+        type: docType as any,
         referenceType,
         referenceId,
         fileData: base64,
@@ -165,12 +177,12 @@ export default function DocumentsCell({ referenceType, referenceId }: DocumentsC
           {/* Upload section */}
           <div className="border-t pt-2 space-y-2">
             <div className="flex items-center gap-2">
-              <Select value={docType} onValueChange={(v) => setDocType(v as DocType)}>
+              <Select value={docType} onValueChange={(v) => setDocType(v)}>
                 <SelectTrigger className="h-7 text-xs flex-1">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {DOC_TYPES.map((t) => (
+                  {typeOptions.map((t) => (
                     <SelectItem key={t} value={t} className="text-xs">
                       {t.replace(/_/g, " ")}
                     </SelectItem>

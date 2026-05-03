@@ -1,5 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { NotificationCenter } from "@/components/NotificationCenter";
+import { OfflineIndicator } from "@/components/OfflineIndicator";
 import { AutonomousAgentBar } from "@/components/AutonomousAgentBar";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -15,14 +16,8 @@ import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarInset,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
   SidebarProvider,
   SidebarTrigger,
   useSidebar,
@@ -34,120 +29,140 @@ import {
   LogOut,
   PanelLeft,
   ShoppingCart,
-  Package,
   Users,
   Scale,
   Settings,
-  FileText,
-  Warehouse,
   Truck,
   Mail,
-  ChevronDown,
-  Bell,
-  MapPin,
-  ArrowLeftRight,
-  ArrowRightLeft,
-  ClipboardCheck,
-  ClipboardList,
   FolderLock,
   Target,
   BarChart3,
-  CircleDollarSign,
-  Wrench,
   Factory,
   UserCircle,
-  Receipt,
-  Landmark,
   Network,
   Upload,
-  LineChart,
-  Megaphone,
-  FileBarChart,
-  Clock,
   Sun,
   Moon,
   Mic,
   MessageSquare,
+  BookOpen,
+  Award,
+  TrendingUp,
+  Code2,
+  PenTool,
+  UserPlus,
+  Package,
+  StickyNote,
 } from "lucide-react";
-import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { AICommandBar } from './AICommandBar';
+import { QuickNoteDialog } from './QuickNoteDialog';
 import { useTheme } from "@/contexts/ThemeContext";
-// FloatingAIAssistant removed — toolbar only
+// FloatingAIAssistant removed - toolbar only
 import { toast } from "sonner";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import { Input } from "./ui/input";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "./ui/tooltip";
 
-function getMenuGroups(role: string = "user") {
+export function getMenuGroups(role: string = "user") {
   const isAdmin = ["admin", "exec"].includes(role);
-  return [
-  {
-    label: "_main",
+  const hasFinance = ["admin", "exec", "finance"].includes(role);
+  const hasOps = ["admin", "exec", "ops"].includes(role);
+  const hasLegal = ["admin", "exec", "legal"].includes(role);
+  const hasSales = ["admin", "exec", "sales"].includes(role);
+  const inSalesSection = hasSales || role === "ops";
+  const groups: Array<{ label: string; items: Array<{ icon: typeof LayoutDashboard; label: string; path: string }> }> = [];
+
+  groups.push({
+    label: "Command Center",
     items: [
       { icon: LayoutDashboard, label: "Dashboard", path: "/" },
-      { icon: Target, label: "Projects & Tasks", path: "/projects" },
+      { icon: Target, label: "Projects", path: "/projects" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
       { icon: Mic, label: "Meetings", path: "/meetings" },
       { icon: MessageSquare, label: "Messaging", path: "/messaging" },
     ],
-  },
-  {
-    label: "_ops",
-    items: [
-      { icon: Warehouse, label: "Inventory", path: "/operations/inventory-hub" },
-      { icon: Users, label: "Vendors & Locations", path: "/operations/vendors" },
-    ],
-  },
-  {
-    label: "_sell",
-    items: [
-      { icon: ShoppingCart, label: "Orders", path: "/sales/orders" },
-      { icon: UserCircle, label: "Customers & CRM", path: "/crm/hub" },
-      { icon: CircleDollarSign, label: "Banking", path: "/finance/banking" },
-      { icon: BarChart3, label: "Financials", path: "/finance/reports" },
-    ],
-  },
-  {
-    label: "_people",
-    items: [
-      ...(isAdmin ? [
-        { icon: Users, label: "People & Equity", path: "/hr/employees" },
-        { icon: FileBarChart, label: "Equity Reports", path: "/hr/equity-reports" },
-        { icon: Scale, label: "Contracts", path: "/legal/contracts" },
-      ] : [
-        { icon: Clock, label: "Time Tracking", path: "/hr/time-tracking" },
-        { icon: LineChart, label: "Equity Portal", path: "/hr/equity-portal" },
-      ]),
-    ],
-  },
-  {
-    label: "_tools",
-    items: [
-      ...(isAdmin ? [
-        { icon: Upload, label: "Import Data", path: "/import" },
+  });
+
+  if (inSalesSection) {
+    groups.push({
+      label: "Sales",
+      items: [
+        { icon: ShoppingCart, label: "Orders", path: "/sales/orders" },
+        ...(hasSales ? [
+          { icon: UserCircle, label: "CRM", path: "/crm/hub" },
+          { icon: PenTool, label: "Marketing", path: "/marketing" },
+        ] : []),
+      ],
+    });
+  }
+
+  if (hasFinance) {
+    groups.push({
+      label: "Finance",
+      items: [
+        { icon: BarChart3, label: "Finance", path: "/finance" },
+        { icon: Award, label: "Grants", path: "/grants/submitter" },
+        { icon: TrendingUp, label: "Fundraising", path: "/crm/campaigns" },
+        { icon: Users, label: "Investors", path: "/hr/investors" },
         { icon: FolderLock, label: "Data Room", path: "/dataroom/1" },
-        { icon: Megaphone, label: "Investor Updates", path: "/investor-updates" },
+      ],
+    });
+  }
+
+  if (hasOps) {
+    groups.push({
+      label: "Operations",
+      items: [
+        { icon: Package, label: "Operations", path: "/operations" },
+        { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
+        // Recipes restricted to admin + ops only (trade secrets) — exec excluded
+        ...(role === "admin" || role === "ops" ? [
+          { icon: Factory, label: "Recipes", path: "/operations/recipes" },
+        ] : []),
+        { icon: Users, label: "Vendors", path: "/operations/vendors" },
+      ],
+    });
+  }
+
+  groups.push({
+    label: "People",
+    items: [
+      { icon: Users, label: "HR", path: "/hr" },
+      { icon: UserPlus, label: "Recruiting", path: "/hr/recruiting" },
+      ...(hasLegal ? [
+        { icon: Scale, label: "Legal", path: "/legal" },
+      ] : []),
+    ],
+  });
+
+  groups.push({
+    label: "Tools",
+    items: [
+      { icon: BookOpen, label: "SOPs", path: "/sops" },
+      ...(isAdmin ? [
+        { icon: Code2, label: "Code", path: "/code" },
+        { icon: Settings, label: "Settings", path: "/settings" },
+      ] : []),
+      ...(hasOps ? [
+        { icon: Upload, label: "Import", path: "/import" },
+      ] : []),
+      ...(role === "ops" || isAdmin ? [
         { icon: Network, label: "EDI", path: "/edi" },
       ] : []),
-      { icon: Settings, label: "Settings", path: "/settings" },
     ],
-  },
-];
+  });
+
+  return groups;
 }
 
-const SIDEBAR_WIDTH_KEY = "sidebar-width";
-const DEFAULT_WIDTH = 260;
-const MIN_WIDTH = 200;
+const SIDEBAR_WIDTH_KEY = "sidebar-width-v2";
+const DEFAULT_WIDTH = 180;
+const MIN_WIDTH = 160;
 const MAX_WIDTH = 400;
 
 const roleColors: Record<string, string> = {
@@ -185,7 +200,7 @@ export default function DashboardLayout({
 
   return (
     <SidebarProvider
-      defaultOpen={false}
+      defaultOpen={true}
       style={
         {
           "--sidebar-width": `${sidebarWidth}px`,
@@ -216,7 +231,8 @@ function DashboardLayoutContent({
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
-  const [openGroups, setOpenGroups] = useState<string[]>(["Command Center", "Buy", "Sell"]);
+  const [quickNoteOpen, setQuickNoteOpen] = useState(false);
+
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -243,6 +259,7 @@ function DashboardLayoutContent({
             case 't': setLocation('/finance/transactions'); break; // Transactions
             case 's': setLocation('/settings'); break; // Settings
           case 'm': setLocation('/meetings'); break; // Meetings
+          case 'n': setQuickNoteOpen(true); break; // New quick note
           }
         };
         document.addEventListener('keydown', handleNextKey, { once: true });
@@ -254,7 +271,7 @@ function DashboardLayoutContent({
       if (e.key === '?') {
         toast.info(
           'Keyboard Shortcuts:\n' +
-          '⌘K - AI Command Bar\n' +
+          'âK - AI Command Bar\n' +
           'g d - Dashboard\n' +
           'g e - Email Inbox\n' +
           'g v - Vendors\n' +
@@ -265,7 +282,8 @@ function DashboardLayoutContent({
           'g a - Accounts\n' +
           'g t - Transactions\n' +
           'g s - Settings\n' +
-        'g m - Meetings',
+          'g m - Meetings\n' +
+          'g n - New Quick Note',
           { duration: 5000 }
         );
         return;
@@ -274,14 +292,6 @@ function DashboardLayoutContent({
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [setLocation]);
-
-  const toggleGroup = useCallback((label: string) => {
-    setOpenGroups(prev =>
-      prev.includes(label)
-        ? prev.filter(g => g !== label)
-        : [...prev, label]
-    );
-  }, []);
 
   // Find active menu item for mobile header (memoized to avoid recalculation)
   const activeMenuItem = useMemo(() => getMenuGroups(user?.role)
@@ -332,40 +342,45 @@ function DashboardLayoutContent({
           className="border-r border-sidebar-border bg-sidebar"
           disableTransition={isResizing}
         >
-          {/* Lightfield-style header: logo + wordmark */}
-          <SidebarHeader className="h-14 justify-center border-b border-sidebar-border">
+          {/* Header: logo + wordmark */}
+          <SidebarHeader className="h-10 justify-center border-b border-sidebar-border">
             <div className="flex items-center gap-2.5 px-3 transition-all w-full">
               <button
                 onClick={toggleSidebar}
-                className="h-7 w-7 flex items-center justify-center hover:bg-accent rounded-md transition-colors duration-100 focus:outline-none shrink-0"
+                className="h-7 w-7 flex items-center justify-center hover:bg-sidebar-accent rounded-md transition-colors duration-100 focus:outline-none shrink-0"
                 aria-label="Toggle navigation"
               >
                 <PanelLeft className="h-3.5 w-3.5 text-muted-foreground" />
               </button>
               {!isCollapsed && (
-                <span className="font-semibold tracking-[-0.02em] truncate text-[13px] text-foreground">
+                <span className="font-semibold tracking-tight truncate text-sm text-foreground">
                   ERP System
                 </span>
               )}
             </div>
           </SidebarHeader>
 
-          {/* Flat navigation — all items visible, no dropdowns */}
+          {/* Flat navigation - all items visible, no dropdowns */}
           <SidebarContent className="overflow-y-auto px-2 py-2">
             <nav className="flex flex-col gap-px">
               {getMenuGroups(user?.role).map((group, gi) => (
                 <div key={group.label}>
-                  {gi > 0 && !isCollapsed && <div className="border-t border-border/30 my-1.5" />}
+                  {gi > 0 && !isCollapsed && <div className="border-t border-border/30 my-1" />}
+                  {!isCollapsed && (
+                    <p className="px-2 mb-0.5 text-[10px] font-semibold tracking-wider uppercase text-muted-foreground/60">
+                      {group.label}
+                    </p>
+                  )}
                   {group.items.map(item => {
                     const isActive = location === item.path;
                     const btn = (
                       <button
                         key={item.path}
                         onClick={() => setLocation(item.path)}
-                        className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] transition-colors duration-100 w-full ${
+                        className={`flex items-center gap-2 px-2 py-1 rounded-md text-[13px] transition-colors duration-100 w-full ${
                           isActive
-                            ? "bg-accent text-foreground font-medium"
-                            : "text-sidebar-foreground hover:bg-accent/60 hover:text-foreground"
+                            ? "bg-primary/10 text-primary font-medium"
+                            : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-foreground"
                         } ${isCollapsed ? "justify-center" : ""}`}
                       >
                         <item.icon className={`h-[14px] w-[14px] shrink-0 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
@@ -452,23 +467,37 @@ function DashboardLayoutContent({
       </div>
 
       <SidebarInset className="flex flex-col bg-background">
-        {/* Autonomous Agent Status Bar */}
-        <AutonomousAgentBar />
-
-        {/* Lightfield-style top bar: clean, minimal, functional */}
-        <header className="flex h-12 items-center justify-between gap-4 border-b border-border bg-background px-4 sticky top-0 z-40">
+        {/* Top bar: AI search + agent status + notifications */}
+        <header className="flex h-10 items-center justify-between gap-3 border-b border-border bg-card/80 backdrop-blur-sm px-4 sticky top-0 z-40">
           <div className="flex items-center gap-2 shrink-0">
             {isMobile && <SidebarTrigger className="h-8 w-8 rounded-md" />}
           </div>
           <AICommandBar />
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  aria-label="Quick note"
+                  onClick={() => setQuickNoteOpen(true)}
+                >
+                  <StickyNote className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Quick note (g then n)</TooltipContent>
+            </Tooltip>
+            <AutonomousAgentBar />
             <NotificationCenter />
           </div>
         </header>
-        <main className="flex-1 overflow-auto p-3 pb-4 md:p-6 md:pb-6 lg:p-8 lg:pb-8">{children}</main>
+        <main className="density-compact flex-1 overflow-auto p-3 pb-3 md:p-4 md:pb-4 lg:p-5 lg:pb-5">{children}</main>
       </SidebarInset>
 
-      {/* Floating AI removed — using toolbar only */}
+      {/* Floating AI removed - using toolbar only */}
+
+      <QuickNoteDialog open={quickNoteOpen} onOpenChange={setQuickNoteOpen} />
     </>
   );
 }

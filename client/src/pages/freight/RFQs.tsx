@@ -56,6 +56,7 @@ const statusColors: Record<string, string> = {
 
 export default function RFQs() {
   const [isOpen, setIsOpen] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<{ invoice: File | null; packing: File | null }>({ invoice: null, packing: null });
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [formData, setFormData] = useState({
@@ -78,6 +79,14 @@ export default function RFQs() {
     incoterms: "FOB",
     insuranceRequired: false,
     customsClearanceRequired: true,
+    containerSize: "" as string,
+    readyDate: "",
+    targetDeliveryDate: "",
+    dimensions: "",
+    stackable: true,
+    temperatureRange: "",
+    pickupRequired: false,
+    deliveryRequired: false,
     notes: "",
   });
 
@@ -86,11 +95,40 @@ export default function RFQs() {
     statusFilter !== "all" ? { status: statusFilter } : undefined
   );
 
+  const uploadDoc = trpc.documents.upload.useMutation();
+
   const createMutation = trpc.freight.rfqs.create.useMutation({
-    onSuccess: (result) => {
-      toast.success(`RFQ ${result.rfqNumber} created successfully`);
+    onSuccess: async (result) => {
+      // Upload attached documents
+      const filesToUpload = [
+        { file: pendingFiles.invoice, type: "invoice" as const, label: "Commercial Invoice" },
+        { file: pendingFiles.packing, type: "packing_list" as const, label: "Packing List" },
+      ];
+      for (const { file, type, label } of filesToUpload) {
+        if (!file) continue;
+        try {
+          const reader = new FileReader();
+          const base64 = await new Promise<string>((resolve, reject) => {
+            reader.onload = () => resolve((reader.result as string).split(",")[1]);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+          await uploadDoc.mutateAsync({
+            name: file.name,
+            type,
+            referenceType: "rfq",
+            referenceId: result.id,
+            fileData: base64,
+            mimeType: file.type || "application/pdf",
+            description: `${label} for ${result.rfqNumber}`,
+          });
+        } catch { /* skip failed upload */ }
+      }
+      const docCount = filesToUpload.filter(f => f.file).length;
+      toast.success(`RFQ ${result.rfqNumber} created${docCount > 0 ? ` with ${docCount} document(s)` : ""}`);
       utils.freight.rfqs.list.invalidate();
       setIsOpen(false);
+      setPendingFiles({ invoice: null, packing: null });
       resetForm();
     },
     onError: (error) => {
@@ -119,6 +157,14 @@ export default function RFQs() {
       incoterms: "FOB",
       insuranceRequired: false,
       customsClearanceRequired: true,
+      containerSize: "",
+      readyDate: "",
+      targetDeliveryDate: "",
+      dimensions: "",
+      stackable: true,
+      temperatureRange: "",
+      pickupRequired: false,
+      deliveryRequired: false,
       notes: "",
     });
   };
@@ -407,6 +453,77 @@ export default function RFQs() {
                       <Label htmlFor="customsClearanceRequired">Customs Clearance Required</Label>
                     </div>
                   </div>
+                </div>
+
+                {/* Dates & Logistics */}
+                <div className="space-y-4">
+                  <h3 className="font-semibold">Schedule & Logistics</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Cargo Ready Date *</Label>
+                      <Input type="date" value={formData.readyDate} onChange={(e) => setFormData({ ...formData, readyDate: e.target.value })} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Target Delivery Date</Label>
+                      <Input type="date" value={formData.targetDeliveryDate} onChange={(e) => setFormData({ ...formData, targetDeliveryDate: e.target.value })} />
+                    </div>
+                    {(formData.preferredMode === "ocean_fcl" || formData.preferredMode === "any") && (
+                      <div className="space-y-2">
+                        <Label>Container Size</Label>
+                        <Select value={formData.containerSize} onValueChange={(v) => setFormData({ ...formData, containerSize: v })}>
+                          <SelectTrigger><SelectValue placeholder="Select size" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="20GP">20' Standard</SelectItem>
+                            <SelectItem value="40GP">40' Standard</SelectItem>
+                            <SelectItem value="40HC">40' High Cube</SelectItem>
+                            <SelectItem value="20RF">20' Reefer</SelectItem>
+                            <SelectItem value="40RF">40' Reefer</SelectItem>
+                            <SelectItem value="45HC">45' High Cube</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                    <div className="space-y-2">
+                      <Label>Package Dimensions (L×W×H cm)</Label>
+                      <Input placeholder="e.g., 120×100×150" value={formData.dimensions} onChange={(e) => setFormData({ ...formData, dimensions: e.target.value })} />
+                    </div>
+                    {formData.cargoType === "refrigerated" && (
+                      <div className="space-y-2">
+                        <Label>Temperature Range (°C)</Label>
+                        <Input placeholder="e.g., -18 to -22" value={formData.temperatureRange} onChange={(e) => setFormData({ ...formData, temperatureRange: e.target.value })} />
+                      </div>
+                    )}
+                    <div className="flex items-center space-x-2">
+                      <Switch id="stackable" checked={formData.stackable} onCheckedChange={(c) => setFormData({ ...formData, stackable: c })} />
+                      <Label htmlFor="stackable">Stackable</Label>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Switch id="pickupRequired" checked={formData.pickupRequired} onCheckedChange={(c) => setFormData({ ...formData, pickupRequired: c })} />
+                      <Label htmlFor="pickupRequired">Pickup from Origin</Label>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Switch id="deliveryRequired" checked={formData.deliveryRequired} onCheckedChange={(c) => setFormData({ ...formData, deliveryRequired: c })} />
+                      <Label htmlFor="deliveryRequired">Delivery to Door</Label>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Documents */}
+                <div className="space-y-4">
+                  <h3 className="font-semibold">Documents</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Commercial Invoice</Label>
+                      <Input type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xlsx" onChange={(e) => setPendingFiles({ ...pendingFiles, invoice: e.target.files?.[0] || null })} />
+                      {pendingFiles.invoice && <p className="text-xs text-green-600">✓ {pendingFiles.invoice.name}</p>}
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Packing List</Label>
+                      <Input type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xlsx" onChange={(e) => setPendingFiles({ ...pendingFiles, packing: e.target.files?.[0] || null })} />
+                      {pendingFiles.packing && <p className="text-xs text-green-600">✓ {pendingFiles.packing.name}</p>}
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Carriers require a commercial invoice and packing list with every quote request</p>
                 </div>
 
                 {/* Notes */}

@@ -50,7 +50,9 @@ describe("ErrorBoundary", () => {
       </ErrorBoundary>
     );
 
-    expect(screen.getByText(/Test error/)).toBeInTheDocument();
+    // Error message now appears in both the summary paragraph and the dev
+    // stack trace, so we expect at least one match.
+    expect(screen.getAllByText(/Test error/).length).toBeGreaterThan(0);
   });
 
   it("renders a Reload Page button in fallback UI", () => {

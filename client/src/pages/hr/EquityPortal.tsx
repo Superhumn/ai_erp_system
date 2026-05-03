@@ -96,11 +96,31 @@ export default function EquityPortal() {
   const [exerciseNotes, setExerciseNotes] = useState("");
   const [exitValuation, setExitValuation] = useState(50_000_000);
 
+  // Get current user to filter to their own equity
+  const meQuery = trpc.auth.me.useQuery();
+  const currentUser = meQuery.data;
+  const isAdmin = currentUser && ["admin", "exec"].includes(currentUser.role);
+
   // Fetch data
   const { data: capTable, isLoading: capTableLoading } = trpc.capTable.summary.useQuery({});
   const { data: valuations } = trpc.capTable.valuations.list.useQuery({});
-  const { data: grants, isLoading: grantsLoading } = trpc.capTable.grants.list.useQuery({});
+  const { data: allGrants, isLoading: grantsLoading } = trpc.capTable.grants.list.useQuery({});
+  const { data: stakeholders } = trpc.capTable.stakeholders.list.useQuery();
   const { data: exerciseRequests } = trpc.exerciseRequests.list.useQuery({});
+
+  // Find the stakeholder matching the current user's email
+  const myStakeholder = useMemo(() => {
+    if (!currentUser?.email || !stakeholders) return null;
+    return stakeholders.find((s: any) => s.email?.toLowerCase() === currentUser.email?.toLowerCase()) || null;
+  }, [currentUser, stakeholders]);
+
+  // Non-admins only see their own grants; admins see all
+  const grants = useMemo(() => {
+    if (!allGrants) return [];
+    if (isAdmin) return allGrants;
+    if (!myStakeholder) return [];
+    return allGrants.filter((g: any) => g.stakeholderId === myStakeholder.id);
+  }, [allGrants, isAdmin, myStakeholder]);
 
   const utils = trpc.useUtils();
 
@@ -483,15 +503,22 @@ export default function EquityPortal() {
         </Card>
       )}
 
-      {/* Section 4: My Grants Table */}
+      {/* Section 4: Grants Table */}
       <Card>
         <CardHeader>
-          <div className="font-semibold text-lg">My Grants</div>
+          <div className="font-semibold text-lg">{isAdmin ? "All Equity Grants" : "My Grants"}</div>
+          {!isAdmin && myStakeholder && (
+            <p className="text-sm text-muted-foreground">Showing grants for {myStakeholder.name}</p>
+          )}
+          {!isAdmin && !myStakeholder && currentUser && (
+            <p className="text-sm text-yellow-600">No stakeholder record found matching your email ({currentUser.email}). Contact your admin.</p>
+          )}
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
               <TableRow>
+                {isAdmin && <TableHead>Stakeholder</TableHead>}
                 <TableHead>Grant Date</TableHead>
                 <TableHead>Type</TableHead>
                 <TableHead className="text-right">Shares</TableHead>
@@ -507,8 +534,10 @@ export default function EquityPortal() {
                   const shares = parseFloat(grant.shares || "0");
                   const vested = parseFloat(grant.sharesVested || "0");
                   const unvested = shares - vested;
+                  const stakeholder = stakeholders?.find((s: any) => s.id === grant.stakeholderId);
                   return (
                     <TableRow key={grant.id}>
+                      {isAdmin && <TableCell className="font-medium">{stakeholder?.name || `#${grant.stakeholderId}`}</TableCell>}
                       <TableCell>{fmtDate(grant.grantDate)}</TableCell>
                       <TableCell>
                         <Badge variant="outline">{grant.grantType?.replace(/_/g, " ").toUpperCase()}</Badge>
@@ -527,7 +556,7 @@ export default function EquityPortal() {
                 })
               ) : (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={isAdmin ? 8 : 7} className="text-center text-muted-foreground py-8">
                     No equity grants found
                   </TableCell>
                 </TableRow>

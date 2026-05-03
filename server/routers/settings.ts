@@ -4,7 +4,7 @@ import { sendEmail, isEmailConfigured, formatEmailHtml } from "../_core/email";
 import * as db from "../db";
 import { createGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "../_core/googleWorkspace";
 import { getGoogleFullAccessAuthUrl } from "../_core/googleDrive";
-import { getQuickBooksAuthUrl, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems } from "../_core/quickbooks";
+import { getQuickBooksAuthUrl, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems, getProfitAndLoss, parseProfitAndLossReport } from "../_core/quickbooks";
 import { testConnection } from "../ediTransportService";
 import { router, publicProcedure, protectedProcedure, adminProcedure, createAuditLog, generateNumber, getValidGoogleToken } from "./middleware";
 
@@ -917,6 +917,47 @@ export const settingsRouter = router({
           synced: synced.synced,
           message: `Successfully synced ${synced.synced} items from QuickBooks`
         };
+      }),
+
+    // Fetch Profit & Loss from QuickBooks and return parsed monthly totals.
+    // Drives actual burn / gross margin / EBITDA on the CFO dashboard.
+    getProfitAndLoss: protectedProcedure
+      .input(z.object({
+        startDate: z.string().optional(),
+        endDate: z.string().optional(),
+        summarizeBy: z.enum(["Month", "Quarter", "Year"]).optional(),
+      }).optional())
+      .query(async ({ input, ctx }) => {
+        const token = await db.getQuickBooksOAuthToken(ctx.user.id);
+        if (!token || !token.realmId) return { connected: false, months: [] };
+
+        // Refresh the access token if it has expired.
+        let accessToken = token.accessToken;
+        const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
+        if (isExpired && token.refreshToken) {
+          const refreshResult = await refreshQuickBooksToken(token.refreshToken);
+          if (!refreshResult.error) {
+            await db.upsertQuickBooksOAuthToken({
+              userId: ctx.user.id,
+              accessToken: refreshResult.access_token!,
+              refreshToken: refreshResult.refresh_token!,
+              expiresAt: new Date(Date.now() + refreshResult.expires_in! * 1000),
+              realmId: token.realmId,
+            });
+            accessToken = refreshResult.access_token!;
+          }
+        }
+
+        const result = await getProfitAndLoss(accessToken, token.realmId, {
+          startDate: input?.startDate,
+          endDate: input?.endDate,
+          summarizeBy: input?.summarizeBy ?? "Month",
+        });
+        if (result.error) return { connected: true, error: result.error, months: [] };
+
+        const { months, expenseAccounts } = parseProfitAndLossReport(result.data);
+
+        return { connected: true, months, expenseAccounts };
       }),
 
     // Get QuickBooks accounts for mapping

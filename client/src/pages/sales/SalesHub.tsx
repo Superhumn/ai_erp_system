@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import {
-  ShoppingCart, FileText, Users, CreditCard, Package, Search,
+  ShoppingCart, Users, Package, Search,
   ShoppingBag, Plug, Loader2, Mail, CloudUpload, RefreshCw,
   ArrowUpDown, ChevronUp, ChevronDown,
 } from "lucide-react";
@@ -385,12 +385,21 @@ export default function SalesHub() {
   }
 
   return (
-    <div className="p-6 space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Orders &amp; Sales</h1>
-          <p className="text-muted-foreground">Unified view of orders, invoices, payments, and shipments</p>
+    <div className="p-6 space-y-2">
+      {/* Header — single consolidated row */}
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-4 text-xs flex-wrap">
+          <h1 className="text-sm font-bold tracking-[-0.02em]">Orders &amp; Sales</h1>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Revenue</span> <span className="font-bold text-green-600">${stats.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Orders</span> <span className="font-bold">{stats.totalOrders}</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Pending</span> <span className="font-bold text-amber-600">{stats.pendingOrders}</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Unpaid</span> <span className="font-bold text-red-600">{stats.unpaidInvoices}</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Customers</span> <span className="font-bold">{stats.totalCustomers}</span></div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -482,50 +491,6 @@ export default function SalesHub() {
         </div>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-5 gap-4">
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center justify-between">
-              <div><p className="text-sm text-muted-foreground">Revenue</p><p className="text-xl font-semibold tracking-[-0.02em] text-green-600">${stats.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div>
-              <CreditCard className="h-8 w-8 text-green-500" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center justify-between">
-              <div><p className="text-sm text-muted-foreground">Total Orders</p><p className="text-xl font-semibold tracking-[-0.02em]">{stats.totalOrders}</p></div>
-              <ShoppingCart className="h-8 w-8 text-muted-foreground" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center justify-between">
-              <div><p className="text-sm text-muted-foreground">Pending Orders</p><p className="text-xl font-semibold tracking-[-0.02em] text-amber-600">{stats.pendingOrders}</p></div>
-              <ShoppingCart className="h-8 w-8 text-amber-500" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center justify-between">
-              <div><p className="text-sm text-muted-foreground">Unpaid Invoices</p><p className="text-xl font-semibold tracking-[-0.02em] text-red-600">{stats.unpaidInvoices}</p></div>
-              <FileText className="h-8 w-8 text-red-500" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center justify-between">
-              <div><p className="text-sm text-muted-foreground">Customers</p><p className="text-xl font-semibold tracking-[-0.02em]">{stats.totalCustomers}</p></div>
-              <Users className="h-8 w-8 text-muted-foreground" />
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
       {/* Unified Orders & Sales Table */}
       <Card>
         <CardContent className="pt-4">
@@ -551,7 +516,7 @@ export default function SalesHub() {
                   {columns.map((col) => (
                     <th
                       key={col.key}
-                      className={`px-2 py-2 font-medium text-xs whitespace-nowrap select-none ${
+                      className={`px-1.5 py-1 font-medium text-xs whitespace-nowrap select-none ${
                         col.align === "right" ? "text-right" : "text-left"
                       } ${col.sortable ? "cursor-pointer hover:bg-muted/80" : ""}`}
                       onClick={() => col.sortable && toggleSort(col.key)}
@@ -585,7 +550,7 @@ export default function SalesHub() {
                       {columns.map((col) => (
                         <td
                           key={col.key}
-                          className={`px-2 py-1.5 whitespace-nowrap ${
+                          className={`px-1.5 py-0.5 whitespace-nowrap ${
                             col.align === "right" ? "text-right tabular-nums" : "text-left"
                           }`}
                         >

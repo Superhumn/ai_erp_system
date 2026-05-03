@@ -2,6 +2,10 @@ import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
 import net from "net";
+import { sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/mysql2";
+import { migrate } from "drizzle-orm/mysql2/migrator";
+import mysql from "mysql2/promise";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import rateLimit from "express-rate-limit";
 import { registerOAuthRoutes } from "./oauth";
@@ -17,17 +21,99 @@ function serveStatic(app: import("express").Express) {
       ? path.resolve(import.meta.dirname, "../..", "dist", "public")
       : path.resolve(import.meta.dirname, "..", "public");
   if (!fs.existsSync(distPath)) {
-    console.error(`Could not find the build directory: ${distPath}, make sure to build the client first`);
+    const message = `Could not find the build directory: ${distPath}, make sure to build the client first`;
+    if (ENV.isProduction) {
+      throw new Error(message);
+    }
+    console.error(message);
   }
-  app.use(express.static(distPath));
+  // Hashed assets (JS/CSS) — cache forever (filename changes on rebuild)
+  app.use("/assets", express.static(path.join(distPath, "assets"), {
+    maxAge: "1y",
+    immutable: true,
+  }));
+  // Everything else — no cache (index.html must always be fresh)
+  app.use(express.static(distPath, {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith(".html")) {
+        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      }
+    },
+  }));
   app.use("*", (_req: any, res: any) => {
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.sendFile(path.resolve(distPath, "index.html"));
   });
 }
-import { ENV, validateEmailConfig, validateCriticalConfig } from "./env";
+
+async function runMigrationsAtStartup() {
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    // In production validateRequiredSecrets() already throws; this guard only
+    // applies to local dev where DATABASE_URL may legitimately be absent.
+    console.warn("[migrate] DATABASE_URL is not set, skipping auto-migration");
+    return;
+  }
+  // Resolve the migrations folder relative to this file so it works both in
+  // development (server/_core/index.ts → ../../drizzle) and in production
+  // (dist/_core/index.js → ../../drizzle, since the Dockerfile copies drizzle/).
+  const migrationsFolder = path.resolve(import.meta.dirname, "../../drizzle");
+  if (!fs.existsSync(migrationsFolder)) {
+    console.warn(`[migrate] Migrations folder not found at ${migrationsFolder}, skipping auto-migration`);
+    return;
+  }
+  try {
+    console.log("[migrate] Running pending database migrations...");
+    const pool = mysql.createPool(url);
+    const migrationDb = drizzle(pool);
+    try {
+      await migrate(migrationDb, { migrationsFolder });
+      console.log("[migrate] Migrations completed successfully");
+    } finally {
+      await pool.end();
+    }
+  } catch (error) {
+    console.error(
+      `[migrate] Migration failed at ${migrationsFolder}. ` +
+      "Verify that the migration files exist and DATABASE_URL is correct.",
+      error
+    );
+    throw error;
+  }
+}
+
+async function verifyDatabaseReadiness() {
+  const database = await db.getDb();
+  if (!database) {
+    throw new Error("Database is not available. Check DATABASE_URL and database connectivity.");
+  }
+
+  await database.execute(sql`SELECT 1`);
+
+  const productStageColumnResult = await database.execute(sql`
+    SELECT COLUMN_NAME
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'products'
+      AND COLUMN_NAME = 'manufacturingStage'
+    LIMIT 1
+  `);
+
+  const rows = Array.isArray((productStageColumnResult as any)?.rows)
+    ? (productStageColumnResult as any).rows
+    : (productStageColumnResult as any);
+
+  if (!Array.isArray(rows) || rows.length === 0) {
+    throw new Error(
+      "Database schema is missing `products.manufacturingStage`. Run migrations before starting the server."
+    );
+  }
+}
+import { ENV, validateEmailConfig, validateCriticalConfig, validateRequiredSecrets } from "./env";
 import * as sendgridProvider from "./sendgridProvider";
 import * as emailService from "./emailService";
 import * as db from "../db";
+import { getValidGoogleToken } from "../routers/middleware";
 import { startEmailQueueWorker } from "../emailQueueWorker";
 import { startOrchestrator } from "../supplyChainOrchestrator";
 import { startScheduler } from "../aiAgentScheduler";
@@ -80,38 +166,191 @@ async function ensureTables() {
       )`,
       `CREATE TABLE IF NOT EXISTS fireflies_meetings (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        companyId INT,
-        firefliesId VARCHAR(128) NOT NULL,
-        title VARCHAR(500),
+        firefliesId VARCHAR(128) NOT NULL UNIQUE,
+        title VARCHAR(500) NOT NULL,
         date TIMESTAMP NULL,
         duration INT,
+        organizerEmail VARCHAR(320),
+        organizerName VARCHAR(255),
         participants TEXT,
-        transcript TEXT,
         summary TEXT,
-        aiSummary TEXT,
-        actionItemsRaw TEXT,
-        videoUrl TEXT,
-        audioUrl TEXT,
-        status ENUM('pending','contacts_created','tasks_created','fully_processed') DEFAULT 'pending',
-        crmContactId INT,
-        linkedEntityType VARCHAR(64),
-        linkedEntityId INT,
-        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
+        shortSummary TEXT,
+        keywords TEXT,
+        topics TEXT,
+        sentimentAnalysis TEXT,
+        transcriptUrl TEXT,
+        transcriptText TEXT,
+        actionItems TEXT,
+        processingStatus ENUM('pending','contacts_created','tasks_created','project_created','fully_processed','skipped','error') NOT NULL DEFAULT 'pending',
+        processedAt TIMESTAMP NULL,
+        processedBy INT,
+        processingNotes TEXT,
+        autoCreatedProjectId INT,
+        autoCreatedTaskCount INT DEFAULT 0,
+        autoCreatedContactCount INT DEFAULT 0,
+        meetingSource VARCHAR(64),
+        calendarEventId VARCHAR(255),
+        recordingUrl TEXT,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )`,
       `CREATE TABLE IF NOT EXISTS fireflies_action_items (
         id INT AUTO_INCREMENT PRIMARY KEY,
         meetingId INT NOT NULL,
-        text TEXT,
+        firefliesMeetingId VARCHAR(128) NOT NULL,
+        text TEXT NOT NULL,
         assignee VARCHAR(255),
+        assigneeEmail VARCHAR(320),
         dueDate TIMESTAMP NULL,
-        status ENUM('pending','completed','cancelled') DEFAULT 'pending',
-        linkedTaskId INT,
-        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+        projectTaskId INT,
+        crmContactId INT,
+        status ENUM('pending','converted_to_task','skipped','completed') NOT NULL DEFAULT 'pending',
+        convertedAt TIMESTAMP NULL,
+        convertedBy INT,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )`,
+      // Orchestrator tables
+      `CREATE TABLE IF NOT EXISTS supplyChainWorkflows (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        companyId INT,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        workflowType ENUM('demand_forecasting','production_planning','material_requirements','procurement','inventory_reorder','inventory_transfer','inventory_optimization','work_order_generation','production_scheduling','freight_procurement','shipment_tracking','order_fulfillment','supplier_management','quality_inspection','invoice_matching','payment_processing','exception_handling','vendor_quote_procurement','vendor_quote_analysis','custom') NOT NULL,
+        triggerType ENUM('scheduled','event','threshold','manual','continuous') DEFAULT 'scheduled' NOT NULL,
+        cronSchedule VARCHAR(64),
+        triggerEvents TEXT,
+        thresholdConfig TEXT,
+        executionConfig TEXT,
+        maxConcurrentRuns INT DEFAULT 1,
+        timeoutMinutes INT DEFAULT 60,
+        retryAttempts INT DEFAULT 3,
+        retryDelayMinutes INT DEFAULT 5,
+        requiresApproval BOOLEAN DEFAULT FALSE,
+        autoApproveThreshold DECIMAL(14,2),
+        approvalRoles TEXT,
+        escalationMinutes INT DEFAULT 60,
+        escalationRoles TEXT,
+        dependsOnWorkflows TEXT,
+        isActive BOOLEAN DEFAULT TRUE NOT NULL,
+        lastRunAt TIMESTAMP NULL,
+        nextScheduledRun TIMESTAMP NULL,
+        successCount INT DEFAULT 0,
+        failureCount INT DEFAULT 0,
+        createdBy INT,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS workflowRuns (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        workflowId INT NOT NULL,
+        runNumber VARCHAR(64) NOT NULL,
+        status ENUM('queued','running','awaiting_approval','approved','rejected','completed','failed','cancelled','timed_out') DEFAULT 'queued' NOT NULL,
+        triggeredBy ENUM('schedule','event','threshold','manual','dependency') NOT NULL,
+        triggerData TEXT,
+        triggeredByUserId INT,
+        startedAt TIMESTAMP NULL,
+        completedAt TIMESTAMP NULL,
+        durationMs INT,
+        totalSteps INT DEFAULT 0,
+        completedSteps INT DEFAULT 0,
+        currentStepName VARCHAR(255),
+        progressPercent INT DEFAULT 0,
+        inputData TEXT,
+        outputData TEXT,
+        errorMessage TEXT,
+        errorDetails TEXT,
+        itemsProcessed INT DEFAULT 0,
+        itemsSucceeded INT DEFAULT 0,
+        itemsFailed INT DEFAULT 0,
+        totalValue DECIMAL(14,2),
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS approvalThresholds (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        companyId INT,
+        name VARCHAR(255) NOT NULL,
+        entityType ENUM('purchase_order','work_order','inventory_transfer','freight_booking','payment','vendor_rfq','price_override','exception') NOT NULL,
+        autoApproveMaxAmount DECIMAL(14,2),
+        level1MaxAmount DECIMAL(14,2),
+        level2MaxAmount DECIMAL(14,2),
+        level3MaxAmount DECIMAL(14,2),
+        level1Roles TEXT,
+        level2Roles TEXT,
+        level3Roles TEXT,
+        execRoles TEXT,
+        level1EscalationMinutes INT DEFAULT 60,
+        level2EscalationMinutes INT DEFAULT 120,
+        level3EscalationMinutes INT DEFAULT 240,
+        conditions TEXT,
+        isActive BOOLEAN DEFAULT TRUE NOT NULL,
+        createdBy INT,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS exceptionRules (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        companyId INT,
+        name VARCHAR(255) NOT NULL,
+        ruleType ENUM('price_variance','quantity_variance','delivery_delay','quality_issue','budget_exceeded','inventory_discrepancy','custom') NOT NULL,
+        conditions TEXT,
+        severity ENUM('low','medium','high','critical') DEFAULT 'medium' NOT NULL,
+        autoResolveAction TEXT,
+        notifyRoles TEXT,
+        isActive BOOLEAN DEFAULT TRUE NOT NULL,
+        createdBy INT,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS fundraising_campaigns (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        companyId INT,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        targetAmount DECIMAL(15,2),
+        raisedAmount DECIMAL(15,2) DEFAULT 0,
+        minimumInvestment DECIMAL(15,2),
+        valuation DECIMAL(15,2),
+        roundType ENUM('pre_seed','seed','series_a','series_b','series_c','bridge','other') DEFAULT 'seed' NOT NULL,
+        equityOffered DECIMAL(5,2),
+        startDate TIMESTAMP NULL,
+        targetCloseDate TIMESTAMP NULL,
+        actualCloseDate TIMESTAMP NULL,
+        status ENUM('planning','active','paused','closed','cancelled') DEFAULT 'planning' NOT NULL,
+        dataRoomId INT,
+        notes TEXT,
+        createdBy INT,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
       )`,
     ];
-    for (const sql of tables) {
-      try { await database.execute(require('drizzle-orm/sql').sql.raw(sql)); } catch { /* already exists */ }
+    // Add missing columns to existing tables
+    const alterColumns = [
+      "ALTER TABLE kpi_goals ADD COLUMN status ENUM('not_started','on_track','at_risk','behind','exceeded') DEFAULT 'not_started'",
+      "ALTER TABLE kpi_goals ADD COLUMN notes TEXT",
+      "ALTER TABLE kpi_goals ADD COLUMN companyId INT",
+      "ALTER TABLE fundraising_campaigns ADD COLUMN actualCloseDate TIMESTAMP NULL",
+      "ALTER TABLE fundraising_campaigns ADD COLUMN dataRoomId INT",
+      "ALTER TABLE fundraising_campaigns ADD COLUMN createdBy INT",
+      "ALTER TABLE fundraising_campaigns ADD COLUMN companyId INT",
+    ];
+    for (const alt of alterColumns) {
+      try { await database.execute(require('drizzle-orm/sql').sql.raw(alt)); } catch { /* already exists */ }
+    }
+    for (const tableSQL of tables) {
+      try { await database.execute(sql.raw(tableSQL)); } catch { /* already exists */ }
+    }
+    // Add missing columns to existing tables
+    const alterStatements = [
+      "ALTER TABLE fireflies_meetings ADD COLUMN videoUrl TEXT",
+      "ALTER TABLE fireflies_meetings ADD COLUMN audioUrl TEXT",
+      "ALTER TABLE fireflies_meetings ADD COLUMN crmContactId INT",
+      "ALTER TABLE fireflies_meetings ADD COLUMN linkedEntityType VARCHAR(64)",
+      "ALTER TABLE fireflies_meetings ADD COLUMN linkedEntityId INT",
+    ];
+    for (const sql of alterStatements) {
+      try { await database.execute(require('drizzle-orm/sql').sql.raw(sql)); } catch { /* column already exists */ }
     }
     console.log("[Startup] Ensured critical tables exist");
   } catch (e) {
@@ -172,13 +411,49 @@ async function cleanupPlaceholders() {
   }
 }
 
+// Run CRM duplicate merges only when CRM_DEDUP_ON_STARTUP=true.
+// Set that env var on the first deploy that includes migration 0035 so
+// duplicates are eliminated *before* the UNIQUE indexes are created.
+// Unset it after migration 0035 is applied to skip the full table scan
+// on subsequent boots.
+async function autoMergeCrmContacts() {
+  if (!ENV.crmDedupOnStartup) return;
+  try {
+    const db = await import("../db");
+    const groups = await db.findDuplicateCrmContactGroups();
+    if (groups.length === 0) return;
+    let merged = 0;
+    for (const g of groups) {
+      const sorted = [...g.contacts].sort((a: any, b: any) => a.id - b.id);
+      const primary = sorted[0];
+      const dupeIds = sorted.slice(1).map((c: any) => c.id);
+      if (dupeIds.length === 0) continue;
+      const result = await db.mergeCrmContacts(primary.id, dupeIds);
+      merged += result.merged;
+    }
+    if (merged > 0) console.log(`[Cleanup] Auto-merged ${merged} duplicate CRM contacts across ${groups.length} groups`);
+  } catch (e) {
+    console.warn("[Cleanup] CRM auto-merge skipped:", e instanceof Error ? e.message : e);
+  }
+}
+
 async function startServer() {
   await initErrorTracking();
 
+  validateRequiredSecrets();
   validateCriticalConfig();
 
+  // Merge CRM duplicates BEFORE migrations so migration 0035's UNIQUE
+  // index creation doesn't fail with ER_DUP_ENTRY on existing rows.
+  await autoMergeCrmContacts();
+
+  await runMigrationsAtStartup();
+  await verifyDatabaseReadiness();
+
   // Ensure critical tables exist + cleanup placeholders
-  ensureTables().then(() => cleanupPlaceholders()).catch(console.warn);
+  ensureTables()
+    .then(() => cleanupPlaceholders())
+    .catch(console.warn);
 
   const emailConfigValidation = validateEmailConfig();
   if (!emailConfigValidation.valid) {
@@ -186,6 +461,9 @@ async function startServer() {
       errors: emailConfigValidation.errors,
     });
   }
+
+  if (!ENV.cookieSecret) {
+    console.error("[Security] CRITICAL: JWT_SECRET is not set. All session tokens are trivially forgeable. Set JWT_SECRET before deploying.");  }
 
   const app = express();
 
@@ -424,10 +702,19 @@ async function startServer() {
     }
   });
 
-  // Google OAuth callback
-  app.get('/api/google/callback', oauthCallbackLimiter, async (req, res) => {
+  // Shared handler for Google OAuth callbacks.
+  // `selfRedirectUri` must exactly match the redirect_uri used when the auth URL was generated.
+  async function handleGoogleOAuthCallback(req: any, res: any, selfRedirectUri: string) {
+    const sanitizeReturnTo = (value: unknown): string => {
+      if (typeof value !== 'string') return '/import';
+      if (!value.startsWith('/')) return '/import';
+      if (value.startsWith('//')) return '/import';
+      if (value.includes('\\')) return '/import';
+      if (/[\r\n\t]/.test(value)) return '/import';
+      return value;
+    };
+
     const { code, state } = req.query;
-    // Determine the redirect page from the state (defaults to /import)
     let returnTo = '/import';
     if (!code || !state) return res.redirect(`${returnTo}?error=missing_params`);
     const clientId = process.env.GOOGLE_CLIENT_ID;
@@ -438,10 +725,8 @@ async function startServer() {
       const { verifySignedOAuthState } = await import('./crypto');
       const stateData = verifySignedOAuthState(state as string);
       if (!stateData) return res.redirect(`${returnTo}?error=invalid_state`);
-      // Use returnTo from state if the caller encoded one (e.g. Gmail pages)
-      if (typeof stateData.returnTo === 'string' && stateData.returnTo.startsWith('/')) {
-        returnTo = stateData.returnTo;
-      }
+      // Use returnTo from state if the caller encoded one (e.g. Gmail/Workspace pages)
+      returnTo = sanitizeReturnTo(stateData.returnTo);
       const { sdk: authSdk } = await import('./sdk');
       let user: any;
       try { user = await authSdk.authenticateRequest(req); } catch { return res.redirect(`${returnTo}?error=not_authenticated`); }
@@ -451,7 +736,7 @@ async function startServer() {
       const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, code: code as string, grant_type: 'authorization_code', redirect_uri: `${process.env.VITE_APP_URL || 'http://localhost:3000'}/api/google/callback` }),
+        body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, code: code as string, grant_type: 'authorization_code', redirect_uri: selfRedirectUri }),
       });
       if (!tokenResponse.ok) return res.redirect(`${returnTo}?error=token_exchange_failed`);
       const tokens = await tokenResponse.json();
@@ -464,6 +749,134 @@ async function startServer() {
     } catch (error) {
       logger.error("Google OAuth error", { error: error instanceof Error ? error.message : String(error) });
       res.redirect(`${returnTo}?error=oauth_failed`);
+    }
+  }
+
+  // Google OAuth callback — legacy path used by sheetsImport.getAuthUrl
+  app.get('/api/google/callback', oauthCallbackLimiter, (req, res) => {
+    const redirectUri = `${process.env.VITE_APP_URL || 'http://localhost:3000'}/api/google/callback`;
+    return handleGoogleOAuthCallback(req, res, redirectUri);
+  });
+
+  // Google OAuth callback — path used by gmail.getAuthUrl and googleWorkspace.getAuthUrl
+  // (generated by getGoogleFullAccessAuthUrl in server/_core/googleDrive.ts)
+  app.get('/api/oauth/google/callback', oauthCallbackLimiter, (req, res) => {
+    const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${process.env.VITE_APP_URL || process.env.APP_URL || 'http://localhost:3000'}/api/oauth/google/callback`;
+    console.log(`[Google OAuth] Token exchange with redirect_uri: ${redirectUri}`);
+    return handleGoogleOAuthCallback(req, res, redirectUri);
+  });
+
+  // Google Chat OAuth initiation — redirects the authenticated user to
+  // Google's consent screen requesting the chat.messages scope. The flow
+  // completes via /api/oauth/google/callback (handleGoogleOAuthCallback),
+  // which persists the tokens with upsertGoogleOAuthToken.
+  app.get('/api/google/chat/auth', oauthCallbackLimiter, async (req, res) => {
+    const sanitizeReturnTo = (value: unknown): string => {
+      if (typeof value !== 'string') return '/messaging';
+      if (!value.startsWith('/') || value.startsWith('//') || value.includes('\\') || /[\r\n\t]/.test(value)) {
+        return '/messaging';
+      }
+      return value;
+    };
+    const returnTo = sanitizeReturnTo(req.query.returnTo);
+    try {
+      if (!process.env.GOOGLE_CLIENT_ID) {
+        return res.redirect('/messaging?error=google_oauth_not_configured');
+      }
+      const { sdk: authSdk } = await import('./sdk');
+      let user: Awaited<ReturnType<typeof authSdk.authenticateRequest>> | null = null;
+      try { user = await authSdk.authenticateRequest(req); } catch { user = null; }
+      if (!user) return res.redirect(`/login?returnTo=${encodeURIComponent(`/api/google/chat/auth?returnTo=${encodeURIComponent(returnTo)}`)}`);
+
+      const { getGoogleChatAuthUrl } = await import('./googleChat');
+      return res.redirect(getGoogleChatAuthUrl(user.id, returnTo));
+    } catch (error) {
+      logger.error('Google Chat OAuth initiation error', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return res.redirect('/messaging?error=google_chat_oauth_failed');
+    }
+  });
+
+  // Google Drive streaming proxy — fetches a Drive file's bytes using the
+  // connected account's OAuth token (with service-account fallback) and pipes
+  // them straight to the browser. This lets the data room viewer iframe load
+  // private Drive files from our own origin, bypassing Google's third-party
+  // iframe block, without ever persisting the file to our storage.
+  //
+  // Access control:
+  //   - authenticated user must own the data room, OR
+  //   - linkCode query param must resolve to an active share link for the
+  //     data room that contains this document.
+  app.get('/api/drive/proxy/:documentId', async (req, res) => {
+    try {
+      const documentId = parseInt(req.params.documentId, 10);
+      if (!Number.isFinite(documentId)) return res.status(400).send('Invalid document id');
+
+      const doc = await db.getDataRoomDocumentById(documentId);
+      if (!doc) return res.status(404).send('Document not found');
+      if (!doc.googleDriveFileId) return res.status(400).send('Not a Google Drive document');
+
+      const dataRoom = await db.getDataRoomById(doc.dataRoomId);
+      if (!dataRoom) return res.status(404).send('Data room not found');
+
+      // Resolve who the Drive OAuth token should come from and authorize the
+      // request. The data room owner's token is always the one used to fetch
+      // the file — viewers never need their own Google connection.
+      let ownerUserId: number | null = null;
+      const linkCode = typeof req.query.linkCode === 'string' ? req.query.linkCode : null;
+
+      if (linkCode) {
+        const link = await db.getDataRoomLinkByCode(linkCode);
+        if (!link || !link.isActive) return res.status(403).send('Share link is not active');
+        if (link.expiresAt && new Date(link.expiresAt) < new Date()) return res.status(403).send('Share link has expired');
+        if (link.dataRoomId !== doc.dataRoomId) return res.status(403).send('Document not in this data room');
+        ownerUserId = dataRoom.ownerId;
+      } else {
+        const { sdk } = await import('./sdk');
+        let user: any = null;
+        try { user = await sdk.authenticateRequest(req); } catch { /* unauthenticated */ }
+        if (!user) return res.status(401).send('Not authenticated');
+        if (user.id !== dataRoom.ownerId) return res.status(403).send('Forbidden');
+        ownerUserId = user.id;
+      }
+
+      if (!ownerUserId) return res.status(500).send('Unable to resolve Drive owner');
+
+      const { accessToken, error: tokenError } = await getValidGoogleToken(ownerUserId);
+      if (tokenError || !accessToken) {
+        return res.status(502).send(`Google Drive not connected: ${tokenError || 'no token'}`);
+      }
+
+      const { resolveDriveStreamUrl, driveFetch } = await import('./googleDrive');
+      const { url, outMime } = resolveDriveStreamUrl(doc.googleDriveFileId, doc.mimeType || '');
+
+      const driveResponse = await driveFetch(url, accessToken);
+      if (!driveResponse.ok || !driveResponse.body) {
+        const body = await driveResponse.text().catch(() => '');
+        return res.status(driveResponse.status || 502).send(`Drive fetch failed: ${driveResponse.status}. ${body}`);
+      }
+
+      res.setHeader('Content-Type', driveResponse.headers.get('content-type') || outMime || 'application/octet-stream');
+      const len = driveResponse.headers.get('content-length');
+      if (len) res.setHeader('Content-Length', len);
+      res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(doc.name || 'file')}"`);
+      res.setHeader('Cache-Control', 'private, max-age=60');
+
+      // Pipe Drive's response body to the client. Node's fetch returns a web
+      // ReadableStream; convert it to a Node stream for res.pipe semantics.
+      const { Readable } = await import('node:stream');
+      const nodeStream = Readable.fromWeb(driveResponse.body as any);
+      nodeStream.pipe(res);
+      nodeStream.on('error', (err) => {
+        console.error('[DriveProxy] Stream error:', err);
+        if (!res.headersSent) res.status(502);
+        res.end();
+      });
+    } catch (err: any) {
+      console.error('[DriveProxy] Handler error:', err);
+      if (!res.headersSent) res.status(500).send(`Proxy error: ${err.message}`);
+      else res.end();
     }
   });
 
@@ -522,7 +935,10 @@ async function startServer() {
       const stateValidation = validateOAuthState(state as string);
       if (stateValidation.error || stateValidation.userId !== user.id) return res.redirect('/settings/integrations?quickbooks_error=invalid_state');
       const tokenResult = await exchangeCodeForToken(code as string);
-      if (tokenResult.error) return res.redirect('/settings/integrations?quickbooks_error=token_exchange_failed');
+      if (tokenResult.error) {
+        const detail = tokenResult.intuitError ? `&detail=${encodeURIComponent(tokenResult.intuitError)}` : "";
+        return res.redirect(`/settings/integrations?quickbooks_error=token_exchange_failed${detail}`);
+      }
       const { upsertQuickBooksOAuthToken, createSyncLog } = await import('../db');
       await upsertQuickBooksOAuthToken({ userId: user.id, accessToken: tokenResult.access_token!, refreshToken: tokenResult.refresh_token!, expiresAt: new Date(Date.now() + (tokenResult.expires_in! * 1000)), realmId: realmId as string, scope: 'com.intuit.quickbooks.accounting' });
       await createSyncLog({ integration: 'quickbooks', action: 'connected', status: 'success', details: `QuickBooks connected - Realm ID: ${realmId}` });
@@ -556,6 +972,30 @@ async function startServer() {
     // Start the email queue worker
     startEmailQueueWorker();
 
+    // One-time cleanup: remove non-food products (equipment, machinery, etc.)
+    (async () => {
+      try {
+        const db = await import("../db");
+        const allProducts = await db.getDb().then(async (d) => {
+          if (!d) return [];
+          const { products } = await import("../../drizzle/schema");
+          return d.select().from(products);
+        });
+        const equipmentKeywords = ["equipment", "machinery", "machine", "tools", "supplies", "office", "furniture", "hardware", "electronics", "forklift", "conveyor", "mixer", "oven", "printer", "computer", "laptop", "monitor", "desk"];
+        const toDelete = allProducts.filter((p: any) => {
+          const cat = (p.category || "").toLowerCase();
+          const name = (p.name || "").toLowerCase();
+          return equipmentKeywords.some(kw => cat.includes(kw) || name.includes(kw));
+        });
+        if (toDelete.length > 0) {
+          for (const p of toDelete) {
+            try { await db.deleteProduct(p.id); } catch { /* FK constraint, skip */ }
+          }
+          console.log(`[Startup] Cleaned up ${toDelete.length} non-food products (equipment/machinery)`);
+        }
+      } catch { /* skip */ }
+    })();
+
     // Start EDI polling scheduler (check every 5 minutes)
     import('../ediTransportService').then(({ startEdiPolling }) => {
       startEdiPolling(5 * 60 * 1000);
@@ -580,39 +1020,109 @@ async function startServer() {
     // Start email inbox polling (IMAP) — supports multiple inboxes
     (async () => {
       try {
-        const { scanInbox } = await import("./emailInboxScanner");
+        const { scanAndCategorizeInbox } = await import("./emailInboxScanner");
+        const db = await import("../db");
+        const { parseUploadedDocument } = await import("../documentImportService");
+
         const inboxes = [
           { host: process.env.IMAP_HOST, user: process.env.IMAP_USER, password: process.env.IMAP_PASSWORD, port: parseInt(process.env.IMAP_PORT || "993") },
           { host: process.env.IMAP_HOST_2, user: process.env.IMAP_USER_2, password: process.env.IMAP_PASSWORD_2, port: parseInt(process.env.IMAP_PORT_2 || "993") },
         ].filter(i => i.host && i.user && i.password);
 
         if (inboxes.length > 0) {
-          const POLL_INTERVAL = 30 * 60 * 1000; // 30 minutes
-          console.log(`[Email Polling] Starting inbox scanner for ${inboxes.length} inbox(es) with 30m interval`);
+          const POLL_INTERVAL = 5 * 60 * 1000; // 5 minutes
+          console.log(`[Email Polling] Starting inbox scanner for ${inboxes.length} inbox(es) with 5m interval`);
           for (const inbox of inboxes) {
             console.log(`[Email Polling] Monitoring: ${inbox.user}`);
           }
-          // Ongoing polling — only new/unseen emails
+
+          const processInbox = async (inbox: any) => {
+            try {
+              const { scanResult, parsedResults } = await scanAndCategorizeInbox(
+                { host: inbox.host!, port: inbox.port, secure: true, auth: { user: inbox.user!, pass: inbox.password! } },
+                { unseenOnly: true, limit: 50, fullAiParsing: true, markAsSeen: false }
+              );
+
+              // Save each email to DB and parse attachments
+              for (const { email, parseResult } of parsedResults) {
+                try {
+                  // Save inbound email record
+                  const savedEmail = await db.createInboundEmail?.({
+                    messageId: email.messageId,
+                    fromEmail: email.from.address,
+                    fromName: email.from.name || "",
+                    toEmail: email.to.join(", ") || "inbox",
+                    subject: email.subject,
+                    bodyText: email.bodyText?.substring(0, 10000) || "",
+                    receivedAt: email.date,
+                    status: "parsed",
+                    category: email.categorization?.category || "other",
+                  } as any);
+
+                  // Parse attachments and AUTO-IMPORT into correct database tables
+                  if ((email as any).attachmentContents?.length > 0) {
+                    const { bulkImportDocuments } = await import("../documentImportService");
+                    const docs = (email as any).attachmentContents.map((att: any) => ({
+                      content: `data:${att.contentType};base64,${att.data.toString("base64")}`,
+                      filename: att.filename,
+                    }));
+                    try {
+                      const importResult = await bulkImportDocuments(docs, 1, true);
+                      for (const r of importResult.results) {
+                        if (r.success) {
+                          console.log(`[Email Import] ✓ ${r.documentType}: created ${r.createdRecords.length} records, updated ${r.updatedRecords.length}`);
+                          // Also save the raw file as a document for reference
+                          const att = (email as any).attachmentContents[importResult.results.indexOf(r)];
+                          if (att) {
+                            await db.createDocument?.({
+                              name: att.filename,
+                              type: r.documentType === "customs_document" ? "customs" : r.documentType === "vendor_invoice" ? "invoice" : r.documentType === "purchase_order" ? "po" : "other",
+                              referenceType: "email",
+                              referenceId: savedEmail?.id,
+                              fileData: att.data.toString("base64"),
+                              mimeType: att.contentType,
+                              description: `Auto-imported ${r.documentType}: ${r.createdRecords.map((cr: any) => cr.id || cr.number || "").join(", ")}`,
+                            } as any);
+                          }
+                        } else {
+                          console.warn(`[Email Import] ✗ ${r.documentType}: ${r.error}`);
+                        }
+                      }
+                      if (importResult.successful > 0) {
+                        // Create notification for imported documents
+                        await db.createNotification({
+                          userId: 1,
+                          type: "reminder" as const,
+                          title: `📧 Auto-imported ${importResult.successful} document(s)`,
+                          message: `From: ${email.from.name || email.from.address} — ${importResult.results.filter((r: any) => r.success).map((r: any) => r.documentType.replace(/_/g, " ")).join(", ")}`,
+                        });
+                      }
+                    } catch (e) {
+                      console.warn(`[Email Import] Bulk import failed:`, e);
+                    }
+                  }
+                } catch (e) {
+                  console.warn(`[Email Polling] Failed to save email:`, e);
+                }
+              }
+
+              if (scanResult.newEmails > 0) {
+                console.log(`[Email Polling] Processed ${scanResult.newEmails} new emails from ${inbox.user}`);
+              }
+            } catch (e) {
+              console.warn(`[Email Polling] Scan failed for ${inbox.user}:`, e);
+            }
+          };
+
+          // Ongoing polling
           setInterval(async () => {
-            for (const inbox of inboxes) {
-              try {
-                await scanInbox({ host: inbox.host!, port: inbox.port, secure: true, auth: { user: inbox.user!, pass: inbox.password! } }, { unseenOnly: true, limit: 100 });
-              } catch (e) {
-                console.warn(`[Email Polling] Scan failed for ${inbox.user}:`, e);
-              }
-            }
+            for (const inbox of inboxes) await processInbox(inbox);
           }, POLL_INTERVAL);
-          // Initial sync after 2 minutes — only unseen, small batch (no AI flood)
+
+          // Initial sync after 1 minute
           setTimeout(async () => {
-            for (const inbox of inboxes) {
-              try {
-                await scanInbox({ host: inbox.host!, port: inbox.port, secure: true, auth: { user: inbox.user!, pass: inbox.password! } }, { unseenOnly: true, limit: 20 });
-                console.log(`[Email Polling] Initial sync complete for ${inbox.user}`);
-              } catch (e) {
-                console.warn(`[Email Polling] Initial sync failed for ${inbox.user}:`, e);
-              }
-            }
-          }, 2 * 60 * 1000);
+            for (const inbox of inboxes) await processInbox(inbox);
+          }, 60 * 1000);
         }
       } catch (e) {
         console.warn("[Email Polling] Could not initialize:", e);
@@ -883,16 +1393,15 @@ async function startServer() {
         console.log("[Data Room Sync] Starting daily auto-sync");
         setInterval(async () => {
           try {
-            const { syncDriveFolder, downloadDriveFile, getSimpleFileType } = await import("../routers").then(() => import("./googleDrive"));
+            const { syncDriveFolder, getSimpleFileType } = await import("../routers").then(() => import("./googleDrive"));
             const rooms = await db.getDataRooms();
             for (const room of rooms) {
               if (room.googleDriveFolderId) {
-                const token = await db.getGoogleOAuthTokenByUserId(room.ownerId);
-                if (token?.accessToken) {
+                const { accessToken: roomAccessToken, error: tokenErr } = await getValidGoogleToken(room.ownerId);
+                if (roomAccessToken && !tokenErr) {
                   try {
-                    const syncResult = await syncDriveFolder(token.accessToken, room.googleDriveFolderId);
+                    const syncResult = await syncDriveFolder(roomAccessToken, room.googleDriveFolderId);
                     if (syncResult.success && syncResult.files.length > 0) {
-                      // Check for new files not yet in the data room
                       const existingDocs = await db.getDataRoomDocuments(room.id);
                       const existingDriveIds = new Set(
                         existingDocs.filter(d => d.googleDriveFileId).map(d => d.googleDriveFileId!)
@@ -902,30 +1411,16 @@ async function startServer() {
                       for (const driveFile of syncResult.files) {
                         if (existingDriveIds.has(driveFile.id)) continue;
 
-                        // Download actual file content
-                        const downloaded = await downloadDriveFile(token.accessToken, driveFile.id, driveFile.mimeType);
-                        const isGoogleWorkspaceFile = driveFile.mimeType.startsWith('application/vnd.google-apps.');
-                        const displayName = isGoogleWorkspaceFile ? `${driveFile.name}.pdf` : driveFile.name;
-                        const effectiveMimeType = ('exportedMimeType' in downloaded) ? downloaded.exportedMimeType : driveFile.mimeType;
-                        const fileType = getSimpleFileType(effectiveMimeType);
-
-                        let storageUrl: string | undefined;
-                        let storageType: string = 'google_drive';
-
-                        if ('buffer' in downloaded && downloaded.buffer.length < 5 * 1024 * 1024) {
-                          storageUrl = `data:${downloaded.exportedMimeType};base64,${downloaded.buffer.toString('base64')}`;
-                          storageType = 's3';
-                        }
-
+                        // Metadata-only record. Content stays in Drive and is
+                        // streamed on demand via /api/drive/proxy/:documentId.
                         await db.createDataRoomDocument({
                           dataRoomId: room.id,
                           folderId: null,
-                          name: displayName,
-                          fileType,
-                          mimeType: effectiveMimeType,
-                          fileSize: ('buffer' in downloaded) ? downloaded.buffer.length : (driveFile.size ? parseInt(driveFile.size) : undefined),
-                          storageType: storageType as any,
-                          storageUrl,
+                          name: driveFile.name,
+                          fileType: getSimpleFileType(driveFile.mimeType),
+                          mimeType: driveFile.mimeType,
+                          fileSize: driveFile.size ? parseInt(driveFile.size) : undefined,
+                          storageType: 'google_drive',
                           googleDriveFileId: driveFile.id,
                           googleDriveWebViewLink: driveFile.webViewLink,
                           thumbnailUrl: driveFile.thumbnailLink,
@@ -954,36 +1449,70 @@ async function startServer() {
       }
     })();
 
-    // ── Fireflies meeting auto-sync (every 30 minutes) ──
+    // ── Fireflies meeting auto-sync (uses per-user API keys from Settings; no env var required) ──
     (async () => {
       try {
-        if (process.env.FIREFLIES_API_KEY) {
-          const FIREFLIES_INTERVAL = 24 * 60 * 60 * 1000; // Daily
-          console.log("[Fireflies Sync] Starting auto-sync with 30m interval");
-          setInterval(async () => {
-            try {
-              const { syncAllFirefliesMeetings } = await import("../firefliesSyncService");
-              const result = await syncAllFirefliesMeetings();
-              if (result.totalSynced > 0) {
-                console.log(`[Fireflies Sync] Synced ${result.totalSynced} meetings, created ${result.contactsCreated} contacts, ${result.dealsCreated} deals, ${result.notificationsCreated} notifications`);
-              }
-            } catch (e) {
-              console.warn("[Fireflies Sync] Failed:", e);
+        const FIREFLIES_INTERVAL = 30 * 60 * 1000; // 30 minutes
+        console.log("[Fireflies Sync] Starting auto-sync (30m interval) for users with Fireflies connected");
+        const runFirefliesSync = async () => {
+          try {
+            const { syncAllFirefliesMeetings } = await import("../firefliesSyncService");
+            const result = await syncAllFirefliesMeetings();
+            if (
+              result.totalSynced > 0 ||
+              result.tasksSuggested > 0 ||
+              result.contactsCreated > 0 ||
+              result.dealApprovalsQueued > 0
+            ) {
+              console.log(
+                `[Fireflies Sync] Synced ${result.totalSynced} new meetings (${result.totalSkipped} already had), ` +
+                  `task suggestions ${result.tasksSuggested}, contacts ${result.contactsCreated}, deal approvals queued ${result.dealApprovalsQueued}`
+              );
             }
-          }, FIREFLIES_INTERVAL);
-          // Initial sync after 3 minutes
-          setTimeout(async () => {
-            try {
-              const { syncAllFirefliesMeetings } = await import("../firefliesSyncService");
-              await syncAllFirefliesMeetings();
-              console.log("[Fireflies Sync] Initial sync complete");
-            } catch (e) {
-              console.warn("[Fireflies Sync] Initial sync failed:", e);
-            }
-          }, 3 * 60 * 1000);
-        }
+          } catch (e) {
+            console.warn("[Fireflies Sync] Failed:", e);
+          }
+        };
+        setInterval(runFirefliesSync, FIREFLIES_INTERVAL);
+        setTimeout(runFirefliesSync, 3 * 60 * 1000);
       } catch (e) {
         console.warn("[Fireflies Sync] Could not initialize:", e);
+      }
+    })();
+
+    // ── Shopify auto-sync (every 12 hours) ──
+    (async () => {
+      try {
+        const SHOPIFY_SYNC_INTERVAL = 12 * 60 * 60 * 1000; // 12 hours
+        console.log("[Shopify Sync] Starting auto-sync with 12h interval");
+        setInterval(async () => {
+          try {
+            const { runAllShopifySyncs } = await import("./shopify");
+            const result = await runAllShopifySyncs();
+            for (const r of result.results) {
+              if (r.result) {
+                console.log(`[Shopify Sync] ${r.domain}: products=${r.result.products.created}+${r.result.products.updated}, orders=${r.result.orders.created}+${r.result.orders.updated}, customers=${r.result.customers.created}+${r.result.customers.updated} (${(r.result.duration / 1000).toFixed(1)}s)`);
+              } else if (r.error) {
+                console.warn(`[Shopify Sync] ${r.domain} failed: ${r.error}`);
+              }
+            }
+          } catch (e) {
+            console.warn("[Shopify Sync] Auto-sync error:", e);
+          }
+        }, SHOPIFY_SYNC_INTERVAL);
+
+        // Run initial sync after 2 minutes to let the server warm up
+        setTimeout(async () => {
+          try {
+            const { runAllShopifySyncs } = await import("./shopify");
+            const result = await runAllShopifySyncs();
+            console.log(`[Shopify Sync] Initial sync complete for ${result.stores} store(s)`);
+          } catch (e) {
+            console.warn("[Shopify Sync] Initial sync failed:", e);
+          }
+        }, 2 * 60 * 1000);
+      } catch (e) {
+        console.warn("[Shopify Sync] Could not initialize:", e);
       }
     })();
   });

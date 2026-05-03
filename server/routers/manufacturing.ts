@@ -1,5 +1,8 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import * as db from "../db";
+import * as manufacturingDb from "../db/manufacturing";
+import * as ingredientQuoteService from "../ingredientQuoteService";
 import { router, protectedProcedure, createAuditLog } from "./middleware";
 
 export const manufacturingRouter = router({
@@ -371,6 +374,494 @@ export const manufacturingRouter = router({
         };
       }),
   }),
+  ingredients: router({
+    list: protectedProcedure
+      .input(z.object({
+        category: z.string().optional(),
+        active: z.boolean().optional(),
+      }).optional())
+      .query(async ({ input }) => manufacturingDb.getIngredients(input)),
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const ingredient = await manufacturingDb.getIngredientById(input.id);
+        const costHistory = await manufacturingDb.getIngredientCostHistory(input.id);
+        return { ingredient, costHistory };
+      }),
+    create: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        sku: z.string().min(1),
+        category: z.enum(["protein", "spice", "liquid", "produce", "packaging", "other"]).default("other"),
+        unitOfMeasure: z.enum(["g", "kg", "lb", "oz", "ml", "l", "each"]).default("g"),
+        costPerUnit: z.string().default("0"),
+        costUnit: z.enum(["per_lb", "per_kg", "per_oz", "per_each"]).default("per_kg"),
+        supplierId: z.number().optional(),
+        leadTimeDays: z.number().optional(),
+        moistureContent: z.string().optional(),
+        shelfLifeDays: z.number().optional(),
+        isAllergen: z.boolean().optional(),
+        allergenType: z.string().optional(),
+        notes: z.string().optional(),
+        isActive: z.boolean().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return manufacturingDb.createIngredient({
+          ...input,
+          costPerUnit: input.costPerUnit,
+          moistureContent: input.moistureContent,
+        });
+      }),
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        category: z.enum(["protein", "spice", "liquid", "produce", "packaging", "other"]).optional(),
+        unitOfMeasure: z.enum(["g", "kg", "lb", "oz", "ml", "l", "each"]).optional(),
+        costPerUnit: z.string().optional(),
+        costUnit: z.enum(["per_lb", "per_kg", "per_oz", "per_each"]).optional(),
+        supplierId: z.number().optional(),
+        leadTimeDays: z.number().optional(),
+        moistureContent: z.string().optional(),
+        shelfLifeDays: z.number().optional(),
+        isAllergen: z.boolean().optional(),
+        allergenType: z.string().optional(),
+        notes: z.string().optional(),
+        isActive: z.boolean().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...payload } = input;
+        await manufacturingDb.updateIngredient(id, payload);
+        return { success: true };
+      }),
+    addCost: protectedProcedure
+      .input(z.object({
+        ingredientId: z.number(),
+        costPerUnit: z.string(),
+        costUnit: z.enum(["per_lb", "per_kg", "per_oz", "per_each"]),
+        effectiveDate: z.date().optional(),
+        supplierId: z.number().optional(),
+        source: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return manufacturingDb.addIngredientCostEntry({
+          ...input,
+          effectiveDate: input.effectiveDate || new Date(),
+        });
+      }),
+    costHistory: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => manufacturingDb.getIngredientCostHistory(input.id)),
+
+    // ── Ingredient Quoting ──────────────────────────────────────────
+    quoting: router({
+      // Ingredient vendor management
+      vendors: router({
+        list: protectedProcedure
+          .input(z.object({ ingredientId: z.number() }))
+          .query(async ({ input }) => manufacturingDb.getIngredientVendors(input.ingredientId)),
+        add: protectedProcedure
+          .input(z.object({
+            ingredientId: z.number(),
+            vendorId: z.number(),
+            isPrimary: z.boolean().optional(),
+            unitPrice: z.string().optional(),
+            costUnit: z.enum(["per_lb", "per_kg", "per_oz", "per_each"]).optional(),
+            contractStartDate: z.date().optional(),
+            contractEndDate: z.date().optional(),
+            minimumOrderQty: z.string().optional(),
+            leadTimeDays: z.number().optional(),
+            paymentTerms: z.string().optional(),
+            notes: z.string().optional(),
+          }))
+          .mutation(async ({ input }) => manufacturingDb.createIngredientVendor(input)),
+        update: protectedProcedure
+          .input(z.object({
+            id: z.number(),
+            unitPrice: z.string().optional(),
+            costUnit: z.enum(["per_lb", "per_kg", "per_oz", "per_each"]).optional(),
+            contractStartDate: z.date().optional(),
+            contractEndDate: z.date().optional(),
+            minimumOrderQty: z.string().optional(),
+            leadTimeDays: z.number().optional(),
+            paymentTerms: z.string().optional(),
+            status: z.enum(["active", "inactive", "pending_quote"]).optional(),
+            notes: z.string().optional(),
+          }))
+          .mutation(async ({ input }) => {
+            const { id, ...data } = input;
+            await manufacturingDb.updateIngredientVendor(id, data);
+            return { success: true };
+          }),
+        remove: protectedProcedure
+          .input(z.object({ id: z.number() }))
+          .mutation(async ({ input }) => {
+            await manufacturingDb.deleteIngredientVendor(input.id);
+            return { success: true };
+          }),
+        setPrimary: protectedProcedure
+          .input(z.object({ ingredientId: z.number(), vendorId: z.number() }))
+          .mutation(async ({ input }) => {
+            await manufacturingDb.setPrimaryVendor(input.ingredientId, input.vendorId);
+            return { success: true };
+          }),
+      }),
+
+      // Quote request lifecycle
+      requests: router({
+        list: protectedProcedure
+          .input(z.object({
+            ingredientId: z.number().optional(),
+            status: z.string().optional(),
+            triggerType: z.string().optional(),
+          }).optional())
+          .query(async ({ input }) => manufacturingDb.getIngredientQuoteRequests(input)),
+        get: protectedProcedure
+          .input(z.object({ id: z.number() }))
+          .query(async ({ input }) => manufacturingDb.getIngredientQuoteRequestById(input.id)),
+        create: protectedProcedure
+          .input(z.object({
+            ingredientId: z.number(),
+            targetVendorIds: z.array(z.number()).optional(),
+          }))
+          .mutation(async ({ input }) => {
+            const stats = await manufacturingDb.getIngredientCostStats(input.ingredientId);
+            const vendorIds = input.targetVendorIds || (await manufacturingDb.getIngredientVendors(input.ingredientId)).map(v => v.vendorId);
+            const qr = await manufacturingDb.createIngredientQuoteRequest({
+              ingredientId: input.ingredientId,
+              triggerType: "manual",
+              currentCostPerUnit: stats?.currentCost.toFixed(4),
+              historicalAvgCost: stats?.historicalAvg.toFixed(4),
+              targetVendorIds: JSON.stringify(vendorIds),
+              status: "pending",
+              costUpdated: false,
+            });
+            const result = await ingredientQuoteService.sendIngredientRfqToVendors(qr.id);
+            return { quoteRequestId: qr.id, ...result };
+          }),
+        analyze: protectedProcedure
+          .input(z.object({ id: z.number() }))
+          .mutation(async ({ input }) => ingredientQuoteService.analyzeIngredientQuotes(input.id)),
+        accept: protectedProcedure
+          .input(z.object({
+            quoteRequestId: z.number(),
+            quoteId: z.number(),
+            autoUpdateCost: z.boolean().default(false),
+          }))
+          .mutation(async ({ input }) => ingredientQuoteService.acceptIngredientQuote(
+            input.quoteRequestId, input.quoteId, input.autoUpdateCost,
+          )),
+      }),
+
+      // Cost alerts
+      alerts: router({
+        list: protectedProcedure
+          .input(z.object({
+            ingredientId: z.number().optional(),
+            alertType: z.string().optional(),
+            isRead: z.boolean().optional(),
+            severity: z.string().optional(),
+          }).optional())
+          .query(async ({ input }) => manufacturingDb.getIngredientCostAlerts(input)),
+        markRead: protectedProcedure
+          .input(z.object({ id: z.number() }))
+          .mutation(async ({ input }) => { await manufacturingDb.markAlertRead(input.id); return { success: true }; }),
+        dismiss: protectedProcedure
+          .input(z.object({ id: z.number() }))
+          .mutation(async ({ input }) => { await manufacturingDb.dismissAlert(input.id); return { success: true }; }),
+      }),
+
+      // Cost analysis
+      costAnalysis: protectedProcedure
+        .input(z.object({ ingredientId: z.number() }))
+        .query(async ({ input }) => manufacturingDb.getIngredientCostStats(input.ingredientId)),
+
+      // Invoice price variance check
+      checkInvoiceVariance: protectedProcedure
+        .input(z.object({
+          vendorId: z.number(),
+          ingredientId: z.number(),
+          invoiceUnitPrice: z.number(),
+          invoiceQuantity: z.number(),
+          purchaseOrderId: z.number().optional(),
+          invoiceNumber: z.string().optional(),
+        }))
+        .mutation(async ({ input }) => ingredientQuoteService.checkInvoicePriceVariance(input)),
+
+      // Manual trigger for cost monitoring
+      runCostMonitor: protectedProcedure
+        .input(z.object({
+          priceSpikePct: z.number().optional(),
+          contractExpiryDays: z.number().optional(),
+        }).optional())
+        .mutation(async ({ input }) => ingredientQuoteService.monitorIngredientCosts(input)),
+    }),
+  }),
+  recipes: router({
+    list: protectedProcedure
+      .input(z.object({
+        category: z.string().optional(),
+        status: z.string().optional(),
+        isSubRecipe: z.boolean().optional(),
+      }).optional())
+      .query(async ({ input }) => manufacturingDb.getRecipes(input)),
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const recipe = await manufacturingDb.getRecipeById(input.id);
+        if (!recipe) return null;
+        const lines = await manufacturingDb.getRecipeLines(input.id);
+        const procedures = await manufacturingDb.getRecipeProcedures(input.id);
+        const cost = await manufacturingDb.calculateRecipeBatchCost({ recipeId: input.id, formulation: "wet" });
+        return { ...recipe, lines, procedures, cost };
+      }),
+    create: protectedProcedure
+      .input(z.object({
+        recipeId: z.string().min(1),
+        name: z.string().min(1),
+        category: z.enum(["beef", "pork", "chicken", "seafood", "dairy", "blend", "other"]).default("other"),
+        status: z.enum(["development", "production", "discontinued"]).default("development"),
+        version: z.number().default(1),
+        isSubRecipe: z.boolean().optional(),
+        baseBatchGrams: z.string().default("0"),
+        expectedYieldPct: z.string().default("1.0000"),
+        hasMoistureVariants: z.boolean().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return manufacturingDb.createRecipe({
+          ...input,
+          createdBy: ctx.user?.id,
+        });
+      }),
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        category: z.enum(["beef", "pork", "chicken", "seafood", "dairy", "blend", "other"]).optional(),
+        status: z.enum(["development", "production", "discontinued"]).optional(),
+        baseBatchGrams: z.string().optional(),
+        expectedYieldPct: z.string().optional(),
+        hasMoistureVariants: z.boolean().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...payload } = input;
+        await manufacturingDb.updateRecipe(id, payload);
+        return { success: true };
+      }),
+    createVersion: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const current = await manufacturingDb.getRecipeById(input.id);
+        if (!current) throw new Error("Recipe not found");
+        const nextVersion = (current.version || 1) + 1;
+        const created = await manufacturingDb.createRecipe({
+          recipeId: current.recipeId,
+          name: current.name,
+          category: current.category,
+          status: "development",
+          version: nextVersion,
+          isSubRecipe: current.isSubRecipe,
+          baseBatchGrams: current.baseBatchGrams,
+          expectedYieldPct: current.expectedYieldPct,
+          hasMoistureVariants: current.hasMoistureVariants,
+          notes: current.notes || undefined,
+          createdBy: ctx.user?.id,
+          approvedAt: null,
+          approvedBy: null,
+        });
+        const oldLines = await manufacturingDb.getRecipeLines(input.id);
+        const oldProcedures = await manufacturingDb.getRecipeProcedures(input.id);
+        for (const line of oldLines) {
+          await manufacturingDb.createRecipeLine({
+            recipeRowId: created.id,
+            lineNumber: line.lineNumber,
+            ingredientId: line.ingredientId,
+            subRecipeId: line.subRecipeId,
+            quantityGrams: line.quantityGrams,
+            quantityGramsDry: line.quantityGramsDry,
+            isProteinLine: line.isProteinLine,
+            isWaterLine: line.isWaterLine,
+          }, { skipCycleCheck: true });
+        }
+        for (const step of oldProcedures) {
+          await manufacturingDb.createRecipeProcedure({
+            recipeRowId: created.id,
+            stepNumber: step.stepNumber,
+            instruction: step.instruction,
+            durationMinutes: step.durationMinutes,
+            temperatureF: step.temperatureF,
+            appliesTo: step.appliesTo,
+          });
+        }
+        return created;
+      }),
+    approve: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await manufacturingDb.updateRecipe(input.id, {
+          approvedBy: ctx.user?.id,
+          approvedAt: new Date(),
+          status: "production",
+        });
+        return { success: true };
+      }),
+    cost: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        formulation: z.enum(["wet", "dry"]).default("wet"),
+        batchSize: z.number().optional(),
+      }))
+      .query(async ({ input }) => {
+        return manufacturingDb.calculateRecipeBatchCost({
+          recipeId: input.id,
+          formulation: input.formulation,
+          batchGrams: input.batchSize,
+        });
+      }),
+    costHistory: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => manufacturingDb.getRecipeCostHistory(input.id)),
+    lines: router({
+      list: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input }) => manufacturingDb.getRecipeLines(input.id)),
+      add: protectedProcedure
+        .input(z.object({
+          recipeId: z.number(),
+          lineNumber: z.number().default(1),
+          ingredientId: z.number().optional(),
+          subRecipeId: z.number().optional(),
+          quantityGrams: z.string().default("0"),
+          quantityGramsDry: z.string().optional(),
+          isProteinLine: z.boolean().optional(),
+          isWaterLine: z.boolean().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          if ((input.ingredientId ? 1 : 0) + (input.subRecipeId ? 1 : 0) !== 1) {
+            throw new Error("Exactly one of ingredientId or subRecipeId is required");
+          }
+          return manufacturingDb.createRecipeLine({
+            recipeRowId: input.recipeId,
+            lineNumber: input.lineNumber,
+            ingredientId: input.ingredientId,
+            subRecipeId: input.subRecipeId,
+            quantityGrams: input.quantityGrams,
+            quantityGramsDry: input.quantityGramsDry,
+            isProteinLine: input.isProteinLine || false,
+            isWaterLine: input.isWaterLine || false,
+          });
+        }),
+      update: protectedProcedure
+        .input(z.object({
+          lineId: z.number(),
+          quantityGrams: z.string().optional(),
+          quantityGramsDry: z.string().optional(),
+          ingredientId: z.number().optional(),
+          subRecipeId: z.number().optional(),
+          isProteinLine: z.boolean().optional(),
+          isWaterLine: z.boolean().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { lineId, ...payload } = input;
+          await manufacturingDb.updateRecipeLine(lineId, payload);
+          return { success: true };
+        }),
+      delete: protectedProcedure
+        .input(z.object({ lineId: z.number() }))
+        .mutation(async ({ input }) => {
+          await manufacturingDb.deleteRecipeLine(input.lineId);
+          return { success: true };
+        }),
+      reorder: protectedProcedure
+        .input(z.object({ recipeId: z.number(), lineIds: z.array(z.number()) }))
+        .mutation(async ({ input }) => {
+          await manufacturingDb.reorderRecipeLines(input.recipeId, input.lineIds);
+          return { success: true };
+        }),
+    }),
+    batchCost: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        formulation: z.enum(["wet", "dry"]).default("wet"),
+        batchGrams: z.number().optional(),
+        scaleFactor: z.number().optional(),
+        targetLbs: z.number().optional(),
+      }))
+      .query(async ({ input }) => manufacturingDb.calculateRecipeBatchCost({
+        recipeId: input.id,
+        formulation: input.formulation,
+        batchGrams: input.batchGrams,
+        scaleFactor: input.scaleFactor,
+        targetLbs: input.targetLbs,
+      })),
+    saveBatchSnapshot: protectedProcedure
+      .input(z.object({
+        recipeId: z.number(),
+        formulationType: z.enum(["wet", "dry"]),
+      }))
+      .mutation(async ({ input }) => {
+        const cost = await manufacturingDb.calculateRecipeBatchCost({
+          recipeId: input.recipeId,
+          formulation: input.formulationType,
+        });
+        if (!cost) throw new Error("Unable to calculate recipe cost");
+        return manufacturingDb.saveBatchCostSnapshot({
+          recipeId: input.recipeId,
+          formulationType: input.formulationType,
+          totalBatchGrams: String(cost.totalBatchGrams),
+          totalBatchCost: String(cost.totalCost),
+          costPerGram: String(cost.costPerGram),
+          costPerLb: String(cost.costPerLb),
+          costPerKg: String(cost.costPerKg),
+          yieldAdjustedCostPerLb: String(cost.yieldAdjustedCostPerLb),
+          ingredientCosts: cost.lines,
+          snapshotDate: new Date(),
+        });
+      }),
+    /** Build or refresh a BOM from recipe lines so work orders consume raw material inventory. */
+    syncToBom: protectedProcedure
+      .input(z.object({
+        recipeId: z.number(),
+        productId: z.number(),
+        formulation: z.enum(["wet", "dry"]).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return db.syncRecipeToBom(input.recipeId, input.productId, {
+          userId: ctx.user?.id,
+          formulation: input.formulation,
+        });
+      }),
+  }),
+  moisture: router({
+    calculate: protectedProcedure
+      .input(z.object({
+        wetWeight: z.number(),
+        dryWeight: z.number(),
+      }))
+      .mutation(async ({ input }) => {
+        const moisturePct = input.wetWeight > 0
+          ? (input.wetWeight - input.dryWeight) / input.wetWeight
+          : 0;
+        return {
+          moisturePct,
+          solidsPct: 1 - moisturePct,
+        };
+      }),
+    convert: protectedProcedure
+      .input(z.object({
+        sourceWeight: z.number(),
+        sourceMoisture: z.number(),
+        targetMoisture: z.number(),
+      }))
+      .mutation(async ({ input }) => {
+        const solids = input.sourceWeight * (1 - input.sourceMoisture);
+        const targetWeight = solids / (1 - input.targetMoisture);
+        const waterDelta = (targetWeight * input.targetMoisture) - (input.sourceWeight * input.sourceMoisture);
+        return { targetWeight, solids, waterDelta };
+      }),
+  }),
   // Work Orders
   workOrders: router({
     list: protectedProcedure.query(async () => {
@@ -383,7 +874,8 @@ export const manufacturingRouter = router({
       }),
     create: protectedProcedure
       .input(z.object({
-        bomId: z.number(),
+        bomId: z.number().optional(),
+        recipeId: z.number().optional(),
         productId: z.number(),
         warehouseId: z.number().optional(),
         quantity: z.string(),
@@ -393,11 +885,43 @@ export const manufacturingRouter = router({
         scheduledEndDate: z.date().optional(),
         notes: z.string().optional(),
         assignedTo: z.number().optional(),
+      }).refine((d) => d.bomId != null || d.recipeId != null, {
+        message: "Provide bomId or recipeId (recipe must be synced to a BOM first).",
       }))
       .mutation(async ({ input, ctx }) => {
-        const result = await db.createWorkOrder({ ...input, createdBy: ctx.user?.id });
-        // Auto-generate material requirements from BOM
-        await db.generateWorkOrderMaterialsFromBom(result.id, input.bomId, parseFloat(input.quantity));
+        let bomId = input.bomId;
+        let productId = input.productId;
+        if (input.recipeId != null) {
+          const recipe = await manufacturingDb.getRecipeById(input.recipeId);
+          if (!recipe) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "Recipe not found" });
+          }
+          if (!recipe.bomId) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "Recipe has no BOM. Run recipes.syncToBom with a finished product first.",
+            });
+          }
+          bomId = recipe.bomId;
+          if (recipe.outputProductId) productId = recipe.outputProductId;
+        }
+        if (bomId == null) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "bomId is required" });
+        }
+        const result = await db.createWorkOrder({
+          bomId,
+          productId,
+          warehouseId: input.warehouseId,
+          quantity: input.quantity,
+          unit: input.unit,
+          priority: input.priority,
+          scheduledStartDate: input.scheduledStartDate,
+          scheduledEndDate: input.scheduledEndDate,
+          notes: input.notes,
+          assignedTo: input.assignedTo,
+          createdBy: ctx.user?.id,
+        });
+        await db.generateWorkOrderMaterialsFromBom(result.id, bomId, parseFloat(input.quantity));
         return result;
       }),
     update: protectedProcedure

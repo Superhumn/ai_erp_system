@@ -24,14 +24,48 @@ import {
 import { useLocation, useParams } from "wouter";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
+// Helper: return the Google Drive embedded preview URL for a file
+function getGooglePreviewUrl(fileId: string) {
+  return `https://drive.google.com/file/d/${fileId}/preview`;
+}
+
+// Helper: open or download a file URL, handling data: URLs properly
+function openFileUrl(url: string, filename?: string) {
+  if (url.startsWith('data:')) {
+    // Convert data URL to blob for proper download/viewing
+    const [header, base64] = url.split(',');
+    const mime = header.match(/data:(.*?);/)?.[1] || 'application/octet-stream';
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const blob = new Blob([bytes], { type: mime });
+    const blobUrl = URL.createObjectURL(blob);
+    if (filename) {
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    } else {
+      window.open(blobUrl, '_blank');
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+    }
+  } else {
+    window.open(url, '_blank');
+  }
+}
+
 export default function DataRoomDetail() {
   const params = useParams<{ id: string }>();
   const roomId = parseInt(params.id || "0");
   const [, setLocation] = useLocation();
   const [currentFolderId, setCurrentFolderId] = useState<number | null>(null);
+  const [folderStack, setFolderStack] = useState<Array<{ id: number; name: string }>>([]);
   const [createFolderOpen, setCreateFolderOpen] = useState(false);
   const [createLinkOpen, setCreateLinkOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [deleteAllOpen, setDeleteAllOpen] = useState(false);
+  const [isDeletingAll, setIsDeletingAll] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [newLink, setNewLink] = useState({
     name: "",
@@ -49,7 +83,25 @@ export default function DataRoomDetail() {
   });
   const [googleDriveSyncOpen, setGoogleDriveSyncOpen] = useState(false);
   const [selectedDriveFolderId, setSelectedDriveFolderId] = useState("");
+  const [driveSyncTab, setDriveSyncTab] = useState<"folder" | "file">("folder");
+  const [driveFileBrowseFolderId, setDriveFileBrowseFolderId] = useState("");
+  const [driveFileBrowseInput, setDriveFileBrowseInput] = useState("");
+  const [selectedDriveFileId, setSelectedDriveFileId] = useState("");
+  const [selectedDoc, setSelectedDoc] = useState<{
+    id?: number;
+    name?: string;
+    fileType?: string;
+    fileSize?: number | null;
+    mimeType?: string | null;
+    storageUrl?: string | null;
+    storageType?: string | null;
+    googleDriveFileId?: string | null;
+    googleDriveWebViewLink?: string | null;
+    [key: string]: unknown;
+  } | null>(null);
+  const [docVisible, setDocVisible] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const versionInputRef = useRef<HTMLInputElement>(null);
 
   const { data: room, isLoading: roomLoading, refetch: refetchRoom } = trpc.dataRoom.getById.useQuery({ id: roomId });
   const { data: folders, refetch: refetchFolders } = trpc.dataRoom.folders.list.useQuery({ dataRoomId: roomId, parentId: currentFolderId });
@@ -74,6 +126,10 @@ export default function DataRoomDetail() {
     },
     onError: (error) => {
       toast.error(error.message);
+    },
+    onSettled: () => {
+      // Reset the file input so the same file can be selected again
+      if (fileInputRef.current) fileInputRef.current.value = "";
     },
   });
 
@@ -102,10 +158,47 @@ export default function DataRoomDetail() {
     },
   });
 
+  const refreshDocMutation = trpc.dataRoom.documents.refreshFromDrive.useMutation({
+    onSuccess: async (data) => {
+      toast.success(`Refreshed from Drive (v${data.version})`);
+      const selectedId = selectedDoc?.id;
+      const refetched = await refetchDocuments();
+      if (selectedId) {
+        const fresh = refetched.data?.find((d) => d.id === selectedId);
+        if (fresh) setSelectedDoc(fresh);
+      }
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const uploadNewVersionMutation = trpc.dataRoom.documents.uploadNewVersion.useMutation({
+    onSuccess: async (data) => {
+      toast.success(`New version uploaded (v${data.version})`);
+      const selectedId = selectedDoc?.id;
+      const refetched = await refetchDocuments();
+      if (selectedId) {
+        const fresh = refetched.data?.find((d) => d.id === selectedId);
+        if (fresh) setSelectedDoc(fresh);
+      }
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+    onSettled: () => {
+      if (versionInputRef.current) versionInputRef.current.value = "";
+    },
+  });
+
   const deleteDocMutation = trpc.dataRoom.documents.delete.useMutation({
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       toast.success("Document deleted");
+      if (variables && selectedDoc?.id === variables.id) setSelectedDoc(null);
       refetchDocuments();
+    },
+    onError: (error) => {
+      toast.error(error.message);
     },
   });
 
@@ -114,9 +207,40 @@ export default function DataRoomDetail() {
       toast.success("Folder deleted");
       refetchFolders();
     },
+    onError: (error) => {
+      toast.error(error.message);
+    },
   });
 
+  const handleDeleteAll = async () => {
+    setIsDeletingAll(true);
+    try {
+      await Promise.all([
+        ...(documents || []).map((doc) => deleteDocMutation.mutateAsync({ id: doc.id })),
+        ...(folders || []).map((folder) => deleteFolderMutation.mutateAsync({ id: folder.id })),
+      ]);
+      setSelectedDoc(null);
+      toast.success("All files and folders deleted");
+      setDeleteAllOpen(false);
+      refetchDocuments();
+      refetchFolders();
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to delete some files");
+    } finally {
+      setIsDeletingAll(false);
+    }
+  };
+
   const utils = trpc.useUtils();
+
+  const ownerPreviewMutation = trpc.dataRoom.links.getOrCreateOwnerPreviewLink.useMutation({
+    onSuccess: (data) => {
+      window.open(`/share/${data.linkCode}`, '_blank');
+    },
+    onError: (error) => {
+      toast.error(error.message || 'Failed to open preview');
+    },
+  });
 
   const blockVisitorMutation = trpc.dataRoom.visitors.block.useMutation({
     onSuccess: () => {
@@ -146,14 +270,19 @@ export default function DataRoomDetail() {
     },
   });
 
-  const syncGoogleDriveMutation = trpc.dataRoom.googleDrive.syncFolder.useMutation({
+  const { data: driveFilesData, isLoading: driveFilesLoading } = trpc.dataRoom.googleDrive.listFiles.useQuery(
+    { folderId: driveFileBrowseFolderId },
+    { enabled: !!driveFileBrowseFolderId }
+  );
+
+  const syncDriveFileMutation = trpc.dataRoom.googleDrive.syncFile.useMutation({
     onSuccess: (data) => {
-      toast.success(`Synced ${data.foldersCreated} new folders and ${data.filesCreated} new files from Google Drive`);
+      toast.success(`Imported "${data.fileName}" from Google Drive`);
       setGoogleDriveSyncOpen(false);
-      setSelectedDriveFolderId(""); // Clear the input
-      refetchFolders();
+      setSelectedDriveFileId("");
+      setDriveFileBrowseFolderId("");
+      setDriveFileBrowseInput("");
       refetchDocuments();
-      refetchRoom();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -163,6 +292,8 @@ export default function DataRoomDetail() {
   const syncFromDriveMutation = trpc.dataRoom.syncFromDrive.useMutation({
     onSuccess: (data) => {
       toast.success(`Synced ${data.filesCreated} files and ${data.foldersCreated} folders from Google Drive${data.folderName ? ` (${data.folderName})` : ''}`);
+      setGoogleDriveSyncOpen(false);
+      setSelectedDriveFolderId("");
       refetchFolders();
       refetchDocuments();
       refetchRoom();
@@ -185,6 +316,13 @@ export default function DataRoomDetail() {
     },
   });
 
+  const updateRoomMutation = trpc.dataRoom.update.useMutation({
+    onSuccess: () => {
+      refetchRoom();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   const finalizeMutation = trpc.dataRoom.finalizeInvestment.useMutation({
     onSuccess: () => {
       toast.success("Investment finalized and added to cap table!");
@@ -198,6 +336,14 @@ export default function DataRoomDetail() {
     },
   });
 
+  // Animate the viewer panel each time a new document is selected
+  useEffect(() => {
+    if (!selectedDoc) { setDocVisible(false); return; }
+    setDocVisible(false);
+    const t = setTimeout(() => setDocVisible(true), 40);
+    return () => clearTimeout(t);
+  }, [selectedDoc?.id]);
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -206,10 +352,31 @@ export default function DataRoomDetail() {
     reader.onload = async () => {
       const base64 = (reader.result as string).split(",")[1];
       const fileType = file.name.split(".").pop()?.toLowerCase() || "unknown";
-      
+
       uploadMutation.mutate({
         dataRoomId: roomId,
         folderId: currentFolderId,
+        name: file.name,
+        fileType,
+        mimeType: file.type,
+        fileSize: file.size,
+        base64Content: base64,
+      });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleVersionUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedDoc?.id) return;
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const base64 = (reader.result as string).split(",")[1];
+      const fileType = file.name.split(".").pop()?.toLowerCase() || "unknown";
+
+      uploadNewVersionMutation.mutate({
+        id: selectedDoc.id!,
         name: file.name,
         fileType,
         mimeType: file.type,
@@ -289,17 +456,11 @@ export default function DataRoomDetail() {
           </Button>
           <Button
             variant="outline"
-            onClick={() => {
-              const firstLink = links?.[0];
-              if (firstLink) {
-                window.open(`/share/${firstLink.linkCode}`, '_blank');
-              } else {
-                toast.error("No share link exists yet. Create one first.");
-              }
-            }}
+            onClick={() => ownerPreviewMutation.mutate({ dataRoomId: roomId })}
+            disabled={ownerPreviewMutation.isPending}
           >
             <ExternalLink className="h-4 w-4 mr-2" />
-            Preview
+            {ownerPreviewMutation.isPending ? 'Opening...' : 'Preview as Investor'}
           </Button>
           <Button
             variant="outline"
@@ -418,34 +579,45 @@ export default function DataRoomDetail() {
             </TabsTrigger>
           </TabsList>
 
-          {/* Documents Tab */}
+          {/* Documents Tab — Split-panel Investor Viewer */}
           <TabsContent value="documents" className="mt-4">
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle>Files & Folders</CardTitle>
-                    <CardDescription>
-                      {currentFolderId ? (
-                        <Button 
-                          variant="link" 
-                          className="p-0 h-auto" 
-                          onClick={() => setCurrentFolderId(null)}
-                        >
-                          ← Back to root
-                        </Button>
-                      ) : (
-                        "Organize your documents into folders"
-                      )}
-                    </CardDescription>
-                  </div>
-                  <div className="flex gap-2">
+            <div
+              className="flex rounded-xl border overflow-hidden bg-card shadow-sm"
+              style={{ height: "calc(100vh - 330px)", minHeight: "540px" }}
+            >
+              {/* ── LEFT PANEL: Folder + file tree ── */}
+              <div className="w-72 shrink-0 border-r flex flex-col bg-muted/20">
+                {/* Panel header */}
+                <div className="px-4 py-3 border-b flex items-center gap-2 shrink-0 bg-muted/30">
+                  {currentFolderId ? (
+                    <button
+                      className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                      onClick={() => {
+                        const prev = folderStack[folderStack.length - 2];
+                        setFolderStack(folderStack.slice(0, -1));
+                        setCurrentFolderId(prev ? prev.id : null);
+                        setSelectedDoc(null);
+                      }}
+                    >
+                      <ArrowLeft className="h-3.5 w-3.5" />
+                      <span>Back</span>
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <FolderOpen className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm font-medium">Documents</span>
+                    </div>
+                  )}
+                  <div className="ml-auto flex items-center gap-0.5">
+                    {/* New Folder */}
                     <Dialog open={createFolderOpen} onOpenChange={setCreateFolderOpen}>
                       <DialogTrigger asChild>
-                        <Button variant="outline">
-                          <Folder className="h-4 w-4 mr-2" />
-                          New Folder
-                        </Button>
+                        <button
+                          className="p-1.5 rounded-md hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+                          title="New folder"
+                        >
+                          <Folder className="h-3.5 w-3.5" />
+                        </button>
                       </DialogTrigger>
                       <DialogContent>
                         <DialogHeader>
@@ -475,134 +647,321 @@ export default function DataRoomDetail() {
                         </DialogFooter>
                       </DialogContent>
                     </Dialog>
-                    <Button onClick={() => fileInputRef.current?.click()}>
-                      <Upload className="h-4 w-4 mr-2" />
-                      Upload File
-                    </Button>
+                    {/* Upload */}
+                    <button
+                      className="p-1.5 rounded-md hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+                      title="Upload file"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      <Upload className="h-3.5 w-3.5" />
+                    </button>
                     <input
                       ref={fileInputRef}
                       type="file"
                       className="hidden"
                       onChange={handleFileUpload}
                     />
+                    {/* Delete All */}
+                    {(!!folders?.length || !!documents?.length) && (
+                      <button
+                        className="p-1.5 rounded-md hover:bg-accent transition-colors text-muted-foreground hover:text-destructive"
+                        title="Delete all files"
+                        onClick={() => setDeleteAllOpen(true)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  {/* Folders */}
-                  {folders?.map((folder) => (
-                    <div
-                      key={`folder-${folder.id}`}
-                      className="flex items-center justify-between p-3 rounded-lg border hover:bg-accent cursor-pointer"
-                      onClick={() => setCurrentFolderId(folder.id)}
-                    >
-                      <div className="flex items-center gap-3">
-                        <Folder className="h-5 w-5 text-blue-500" />
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{folder.name}</span>
+
+                {/* File / folder list */}
+                <ScrollArea className="flex-1">
+                  <div className="p-2 space-y-0.5">
+                    {/* Folders */}
+                    {folders?.map((folder) => (
+                      <div
+                        key={`folder-${folder.id}`}
+                        className="w-full flex items-center rounded-lg text-sm hover:bg-accent transition-colors group"
+                      >
+                        <button
+                          className="flex items-center gap-2.5 flex-1 min-w-0 text-left px-3 py-2"
+                          onClick={() => {
+                            setFolderStack([...folderStack, { id: folder.id, name: folder.name }]);
+                            setCurrentFolderId(folder.id);
+                            setSelectedDoc(null);
+                          }}
+                        >
+                          <Folder className="h-4 w-4 text-blue-500 shrink-0" />
+                          <span className="flex-1 truncate">{folder.name}</span>
                           {folder.googleDriveFolderId && (
-                            <Badge variant="outline" className="text-xs">
-                              <Cloud className="h-3 w-3 mr-1" />
-                              Google Drive
-                            </Badge>
+                            <Cloud className="h-3 w-3 text-muted-foreground/50 shrink-0" />
                           )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                        </button>
                         <DropdownMenu>
-                          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                            <Button variant="ghost" size="icon">
-                              <MoreVertical className="h-4 w-4" />
-                            </Button>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              className="p-1.5 mr-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-muted-foreground/10 shrink-0"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <MoreVertical className="h-3.5 w-3.5 text-muted-foreground" />
+                            </button>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent>
+                          <DropdownMenuContent align="end">
                             <DropdownMenuItem
-                              className="text-destructive"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                deleteFolderMutation.mutate({ id: folder.id });
+                              className="text-destructive focus:text-destructive"
+                              onClick={() => {
+                                if (confirm(`Delete folder "${folder.name}" and all its contents?`)) {
+                                  deleteFolderMutation.mutate({ id: folder.id });
+                                }
                               }}
                             >
                               <Trash2 className="h-4 w-4 mr-2" />
-                              Delete
+                              Delete Folder
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
-                    </div>
-                  ))}
+                    ))}
 
-                  {/* Documents */}
-                  {documents?.map((doc) => (
-                    <div
-                      key={`doc-${doc.id}`}
-                      className="flex items-center justify-between p-3 rounded-lg border hover:bg-accent"
-                    >
-                      <div className="flex items-center gap-3">
-                        {getFileIcon(doc.fileType)}
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium">{doc.name}</span>
-                            {doc.storageType === 'google_drive' && (
-                              <Badge variant="outline" className="text-xs">
-                                <Cloud className="h-3 w-3 mr-1" />
-                                Google Drive
-                              </Badge>
-                            )}
-                          </div>
-                          <div className="text-sm text-muted-foreground">
-                            {doc.fileSize ? `${(doc.fileSize / 1024).toFixed(1)} KB` : "Unknown size"}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {(doc.storageUrl || doc.googleDriveWebViewLink) && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => window.open(doc.googleDriveWebViewLink || doc.storageUrl!, '_blank')}
+                    {/* Documents */}
+                    {documents?.map((doc) => {
+                      const isSelected = selectedDoc?.id === doc.id;
+                      return (
+                        <div
+                          key={`doc-${doc.id}`}
+                          className={`w-full flex items-center rounded-lg text-sm transition-all duration-150 border-l-2 group ${
+                            isSelected
+                              ? "bg-primary/10 border-primary"
+                              : "border-transparent hover:bg-accent"
+                          }`}
+                        >
+                          <button
+                            className="flex items-center gap-2.5 flex-1 min-w-0 text-left px-3 py-2"
+                            onClick={() => setSelectedDoc(doc)}
                           >
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                        )}
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon">
-                              <MoreVertical className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent>
-                            {doc.storageUrl && (
-                              <DropdownMenuItem onClick={() => window.open(doc.storageUrl!, '_blank')}>
-                                <Download className="h-4 w-4 mr-2" />
-                                Download
-                              </DropdownMenuItem>
+                            <span className="shrink-0">{getFileIcon(doc.fileType)}</span>
+                            <span className="flex-1 truncate">{doc.name}</span>
+                            {doc.storageType === "google_drive" && (
+                              <Cloud className="h-3 w-3 text-muted-foreground/50 shrink-0" />
                             )}
-                            <DropdownMenuItem
-                              className="text-destructive"
-                              onClick={() => deleteDocMutation.mutate({ id: doc.id })}
-                            >
-                              <Trash2 className="h-4 w-4 mr-2" />
-                              Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
-                    </div>
-                  ))}
+                          </button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button
+                                className="p-1.5 mr-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-muted-foreground/10 shrink-0"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <MoreVertical className="h-3.5 w-3.5 text-muted-foreground" />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              {doc.storageUrl && (
+                                <DropdownMenuItem
+                                  onClick={() => openFileUrl(doc.storageUrl as string, doc.name)}
+                                >
+                                  <Download className="h-4 w-4 mr-2" />
+                                  Download
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuItem
+                                className="text-destructive focus:text-destructive"
+                                onClick={() => {
+                                  if (confirm(`Delete "${doc.name}"?`)) {
+                                    deleteDocMutation.mutate({ id: doc.id });
+                                  }
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      );
+                    })}
 
-                  {!folders?.length && !documents?.length && (
-                    <div className="text-center py-12 text-muted-foreground">
-                      <FolderOpen className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                      <p>No files or folders yet</p>
-                      <p className="text-sm">Upload files or create folders to get started</p>
+                    {!folders?.length && !documents?.length && (
+                      <div className="text-center py-10 text-muted-foreground">
+                        <FolderOpen className="h-8 w-8 mx-auto mb-2 opacity-40" />
+                        <p className="text-xs">No files yet</p>
+                      </div>
+                    )}
+                  </div>
+                </ScrollArea>
+              </div>
+
+              {/* ── RIGHT PANEL: Document viewer ── */}
+              <div className="flex-1 flex flex-col overflow-hidden">
+                {selectedDoc ? (
+                  <>
+                    {/* Viewer toolbar */}
+                    <div className="px-5 py-3 border-b flex items-center gap-3 shrink-0 bg-muted/10">
+                      <span className="shrink-0">{getFileIcon(selectedDoc.fileType)}</span>
+                      <span className="text-sm font-medium truncate flex-1">{selectedDoc.name}</span>
+                      {selectedDoc.fileSize && (
+                        <span className="text-xs text-muted-foreground shrink-0">
+                          {(selectedDoc.fileSize / 1024).toFixed(1)} KB
+                        </span>
+                      )}
+                      {selectedDoc.storageType === "google_drive" && (
+                        <Badge variant="outline" className="text-xs shrink-0">
+                          <Cloud className="h-3 w-3 mr-1" />
+                          Drive
+                        </Badge>
+                      )}
+                      {selectedDoc.storageUrl && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 shrink-0"
+                          title="Download"
+                          onClick={() => openFileUrl(selectedDoc.storageUrl as string, selectedDoc.name)}
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                      {selectedDoc.storageType === "google_drive" && selectedDoc.id != null && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 shrink-0"
+                          title="Refresh from Google Drive"
+                          disabled={refreshDocMutation.isPending}
+                          onClick={() => refreshDocMutation.mutate({ id: selectedDoc.id! })}
+                        >
+                          <RefreshCw className={`h-3.5 w-3.5 ${refreshDocMutation.isPending ? "animate-spin" : ""}`} />
+                        </Button>
+                      )}
+                      {selectedDoc.id != null && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 shrink-0"
+                          title="Upload new version"
+                          disabled={uploadNewVersionMutation.isPending}
+                          onClick={() => versionInputRef.current?.click()}
+                        >
+                          <Upload className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                      <input
+                        ref={versionInputRef}
+                        type="file"
+                        className="hidden"
+                        onChange={handleVersionUpload}
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0 text-destructive hover:text-destructive"
+                        title="Delete file"
+                        onClick={() => {
+                          if (selectedDoc.id != null && confirm(`Delete "${selectedDoc.name}"?`)) {
+                            deleteDocMutation.mutate({ id: selectedDoc.id });
+                          }
+                        }}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
                     </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
+
+                    {/* Viewer body — animated on selection */}
+                    <div
+                      className="flex-1 overflow-hidden"
+                      style={{
+                        opacity: docVisible ? 1 : 0,
+                        transform: docVisible ? "translateX(0)" : "translateX(14px)",
+                        transition: "opacity 0.35s ease, transform 0.35s ease",
+                      }}
+                    >
+                      {(() => {
+                        const ft = (selectedDoc.fileType || "").toLowerCase();
+                        const isImg = ["png","jpg","jpeg","gif","webp","svg"].includes(ft);
+                        const isOffice = ["doc","docx","xls","xlsx","ppt","pptx"].includes(ft);
+
+                        // Google Drive files: stream through our own proxy
+                        // endpoint. The server uses the connected Google
+                        // account's OAuth token to fetch the bytes on demand,
+                        // so the folder can stay private and the browser
+                        // never sees Google's third-party iframe block.
+                        if (selectedDoc.storageType === "google_drive" && selectedDoc.id != null) {
+                          return (
+                            <iframe
+                              key={selectedDoc.id}
+                              src={`/api/drive/proxy/${selectedDoc.id}`}
+                              className="w-full h-full border-0"
+                              referrerPolicy="no-referrer"
+                              allow="autoplay"
+                              title={selectedDoc.name}
+                            />
+                          );
+                        }
+
+                        if (!selectedDoc.storageUrl) {
+                          return (
+                            <div className="flex-1 flex flex-col items-center justify-center gap-3 h-full text-muted-foreground">
+                              <FileText className="h-14 w-14 opacity-20" />
+                              <p className="text-sm font-medium">Preview not available</p>
+                              <p className="text-xs opacity-70">No file URL found.</p>
+                            </div>
+                          );
+                        }
+
+                        // Images
+                        if (isImg) {
+                          return (
+                            <div className="flex items-center justify-center h-full p-6">
+                              <img
+                                key={selectedDoc.id}
+                                src={selectedDoc.storageUrl}
+                                alt={selectedDoc.name}
+                                className="max-w-full max-h-full object-contain rounded-lg"
+                              />
+                            </div>
+                          );
+                        }
+
+                        // Office files: MS Office Online viewer
+                        if (isOffice) {
+                          return (
+                            <iframe
+                              key={selectedDoc.id}
+                              src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(selectedDoc.storageUrl)}`}
+                              className="w-full h-full border-0"
+                              allow="autoplay"
+                              title={selectedDoc.name}
+                            />
+                          );
+                        }
+
+                        // PDF, txt, html, csv — direct URL
+                        return (
+                          <iframe
+                            key={selectedDoc.id}
+                            src={selectedDoc.storageUrl}
+                            className="w-full h-full border-0"
+                            sandbox="allow-same-origin"
+                            referrerPolicy="no-referrer"
+                            title={selectedDoc.name}
+                          />
+                        );
+                      })()}
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center gap-4 text-muted-foreground">
+                    <div className="w-16 h-16 rounded-2xl bg-muted/40 flex items-center justify-center">
+                      <FileText className="h-8 w-8 opacity-25" />
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm font-medium">No document selected</p>
+                      <p className="text-xs mt-1 opacity-70">Choose a file from the panel on the left to preview it here</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </TabsContent>
 
           {/* Share Links Tab */}
@@ -725,7 +1084,7 @@ export default function DataRoomDetail() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {links.map((link) => (
+                      {links.filter((link) => link.name !== '__owner_preview__').map((link) => (
                         <TableRow key={link.id}>
                           <TableCell>
                             <div className="font-medium">{link.name || "Unnamed Link"}</div>
@@ -1297,70 +1656,226 @@ export default function DataRoomDetail() {
                     )}
                   </div>
                 </div>
+
+                <div className="border-t pt-6 mt-6">
+                  <h3 className="font-medium mb-4">Live Financials Page</h3>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Expose a JSON-driven, always-current financials page at
+                    <code className="mx-1 px-1 py-0.5 rounded bg-muted text-xs">/dr/:code/financials</code>
+                    inside this data room. Respects the same password, email, and NDA gates as
+                    the document viewer. Intentionally narrow: cash, last-3-month revenue and burn,
+                    runway, and (optionally) outstanding AR.
+                  </p>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="min-w-0 pr-4">
+                        <Label>Include Live Financials page</Label>
+                        <p className="text-sm text-muted-foreground">
+                          Visitors with a valid link can view current cash, revenue, burn, and runway.
+                        </p>
+                      </div>
+                      <Switch
+                        checked={!!room.showLiveFinancials}
+                        disabled={updateRoomMutation.isPending}
+                        onCheckedChange={(checked) =>
+                          updateRoomMutation.mutate({ id: roomId, showLiveFinancials: checked })
+                        }
+                      />
+                    </div>
+                    <div className="flex items-center justify-between pl-4 border-l-2 border-muted">
+                      <div className="min-w-0 pr-4">
+                        <Label className={room.showLiveFinancials ? undefined : "text-muted-foreground"}>
+                          Also show outstanding AR total
+                        </Label>
+                        <p className="text-sm text-muted-foreground">
+                          Adds a single AR total figure. No per-customer or aging detail.
+                        </p>
+                      </div>
+                      <Switch
+                        checked={!!room.liveFinancialsIncludeAr}
+                        disabled={!room.showLiveFinancials || updateRoomMutation.isPending}
+                        onCheckedChange={(checked) =>
+                          updateRoomMutation.mutate({ id: roomId, liveFinancialsIncludeAr: checked })
+                        }
+                      />
+                    </div>
+                  </div>
+                </div>
                 {/* Google Drive sync — use header button only */}
               </CardContent>
             </Card>
           </TabsContent>
         </Tabs>
 
-        {/* Google Drive Sync Dialog */}
-        <Dialog open={googleDriveSyncOpen} onOpenChange={setGoogleDriveSyncOpen}>
+        {/* Delete All Confirmation Dialog */}
+        <Dialog open={deleteAllOpen} onOpenChange={setDeleteAllOpen}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Sync Google Drive Folder</DialogTitle>
+              <DialogTitle>Delete All Files</DialogTitle>
               <DialogDescription>
-                Connect this data room to an existing Google Drive folder. All files and folders will be imported with the security and access controls configured for this data room.
+                This will permanently delete all {(documents?.length || 0) + (folders?.length || 0)} items
+                ({documents?.length || 0} file{(documents?.length || 0) !== 1 ? "s" : ""} and{" "}
+                {folders?.length || 0} folder{(folders?.length || 0) !== 1 ? "s" : ""}) in the current view.
+                This action cannot be undone.
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label htmlFor="driveFolderId">Google Drive Folder ID</Label>
-                <Input
-                  id="driveFolderId"
-                  placeholder="Paste Google Drive folder ID here"
-                  value={selectedDriveFolderId}
-                  onChange={(e) => setSelectedDriveFolderId(e.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  To get the folder ID, open the folder in Google Drive and copy the ID from the URL (the part after /folders/)
-                </p>
-              </div>
-              <div className="bg-muted p-4 rounded-lg space-y-2">
-                <p className="text-sm font-medium">Security & Access Controls</p>
-                <p className="text-xs text-muted-foreground">
-                  All synced files will have:
-                </p>
-                <ul className="text-xs text-muted-foreground list-disc list-inside space-y-1">
-                  {room.requiresNda && <li>NDA requirement before access</li>}
-                  {room.password && <li>Password protection</li>}
-                  {!room.allowDownload && <li>Download disabled</li>}
-                  {!room.allowPrint && <li>Print disabled</li>}
-                  {room.watermarkEnabled && <li>Watermarked with visitor email</li>}
-                </ul>
-              </div>
-            </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setGoogleDriveSyncOpen(false)}>
+              <Button variant="outline" onClick={() => setDeleteAllOpen(false)} disabled={isDeletingAll}>
                 Cancel
               </Button>
               <Button
-                onClick={() => {
-                  if (!selectedDriveFolderId) {
-                    toast.error("Please enter a Google Drive folder ID");
-                    return;
-                  }
-                  syncGoogleDriveMutation.mutate({
-                    dataRoomId: roomId,
-                    googleDriveFolderId: selectedDriveFolderId,
-                  });
-                }}
-                disabled={syncGoogleDriveMutation.isPending}
+                variant="destructive"
+                onClick={handleDeleteAll}
+                disabled={isDeletingAll}
               >
-                {syncGoogleDriveMutation.isPending ? "Syncing..." : "Sync Folder"}
+                {isDeletingAll ? "Deleting..." : "Delete All"}
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Google Drive Sync Dialog */}
+        <Dialog open={googleDriveSyncOpen} onOpenChange={(open) => {
+          setGoogleDriveSyncOpen(open);
+          if (!open) {
+            setSelectedDriveFolderId("");
+            setDriveFileBrowseFolderId("");
+            setDriveFileBrowseInput("");
+            setSelectedDriveFileId("");
+            setDriveSyncTab("folder");
+          }
+        }}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Import from Google Drive</DialogTitle>
+              <DialogDescription>
+                Import a full folder or a single file from Google Drive into this data room.
+              </DialogDescription>
+            </DialogHeader>
+
+            <Tabs value={driveSyncTab} onValueChange={(v) => setDriveSyncTab(v as "folder" | "file")}>
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="folder">Sync Folder</TabsTrigger>
+                <TabsTrigger value="file">Import Single File</TabsTrigger>
+              </TabsList>
+
+              {/* ── Sync Folder tab ── */}
+              <TabsContent value="folder" className="space-y-4 pt-2">
+                <div className="space-y-2">
+                  <Label htmlFor="driveFolderId">Google Drive Folder ID</Label>
+                  <Input
+                    id="driveFolderId"
+                    placeholder="Paste folder ID here"
+                    value={selectedDriveFolderId}
+                    onChange={(e) => setSelectedDriveFolderId(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Open the folder in Google Drive and copy the ID from the URL (the part after /folders/)
+                  </p>
+                </div>
+                <div className="bg-muted p-3 rounded-lg space-y-1 text-xs text-muted-foreground">
+                  <p className="font-medium text-foreground">What gets synced:</p>
+                  <p>All files and subfolders are imported recursively (up to 5 levels deep). Folders named "private", "confidential", or starting with "_" are skipped. Google Docs/Sheets/Slides are exported as PDF.</p>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setGoogleDriveSyncOpen(false)}>Cancel</Button>
+                  <Button
+                    onClick={() => {
+                      if (!selectedDriveFolderId) {
+                        toast.error("Please enter a Google Drive folder ID");
+                        return;
+                      }
+                      syncFromDriveMutation.mutate({ dataRoomId: roomId, driveFolderId: selectedDriveFolderId });
+                    }}
+                    disabled={syncFromDriveMutation.isPending}
+                  >
+                    {syncFromDriveMutation.isPending ? "Syncing..." : "Sync Folder"}
+                  </Button>
+                </DialogFooter>
+              </TabsContent>
+
+              {/* ── Import Single File tab ── */}
+              <TabsContent value="file" className="space-y-4 pt-2">
+                <div className="space-y-2">
+                  <Label htmlFor="driveFileBrowse">Google Drive Folder ID to browse</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="driveFileBrowse"
+                      placeholder="Paste folder ID to list its files"
+                      value={driveFileBrowseInput}
+                      onChange={(e) => setDriveFileBrowseInput(e.target.value)}
+                    />
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        if (!driveFileBrowseInput.trim()) {
+                          toast.error("Enter a folder ID first");
+                          return;
+                        }
+                        setSelectedDriveFileId("");
+                        setDriveFileBrowseFolderId(driveFileBrowseInput.trim());
+                      }}
+                    >
+                      Browse
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Open the parent folder in Google Drive and copy the ID from the URL.
+                  </p>
+                </div>
+
+                {driveFileBrowseFolderId && (
+                  <div className="space-y-2">
+                    <Label>Select a file</Label>
+                    {driveFilesLoading ? (
+                      <p className="text-sm text-muted-foreground">Loading files…</p>
+                    ) : !driveFilesData?.files?.length ? (
+                      <p className="text-sm text-muted-foreground">No files found in this folder.</p>
+                    ) : (
+                      <ScrollArea className="h-48 rounded-md border p-2">
+                        <div className="space-y-1">
+                          {driveFilesData.files.map((f) => (
+                            <div
+                              key={f.id}
+                              className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-sm hover:bg-muted transition-colors ${selectedDriveFileId === f.id ? "bg-muted font-medium" : ""}`}
+                              onClick={() => setSelectedDriveFileId(f.id)}
+                            >
+                              <File className="h-4 w-4 shrink-0 text-muted-foreground" />
+                              <span className="truncate flex-1">{f.name}</span>
+                              {selectedDriveFileId === f.id && <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" />}
+                            </div>
+                          ))}
+                        </div>
+                      </ScrollArea>
+                    )}
+                  </div>
+                )}
+
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setGoogleDriveSyncOpen(false)}>Cancel</Button>
+                  <Button
+                    onClick={() => {
+                      if (!selectedDriveFileId) {
+                        toast.error("Please select a file");
+                        return;
+                      }
+                      syncDriveFileMutation.mutate({
+                        dataRoomId: roomId,
+                        googleDriveFileId: selectedDriveFileId,
+                        folderId: currentFolderId,
+                      });
+                    }}
+                    disabled={syncDriveFileMutation.isPending || !selectedDriveFileId}
+                  >
+                    {syncDriveFileMutation.isPending ? "Importing…" : "Import File"}
+                  </Button>
+                </DialogFooter>
+              </TabsContent>
+            </Tabs>
+          </DialogContent>
+        </Dialog>
+
+
       </div>
   );
 }
@@ -1425,39 +1940,17 @@ function NdaManagement({ dataRoomId, requiresNda }: { dataRoomId: number; requir
   const handleUpload = async () => {
     if (!selectedFile) return;
 
-    // Convert file to base64 and upload to S3
     const reader = new FileReader();
-    reader.onload = async () => {
+    reader.onload = () => {
       const base64 = (reader.result as string).split(',')[1];
-      const key = `nda/${dataRoomId}/${Date.now()}-${selectedFile.name}`;
-      
-      // Upload to S3 via storage API
-      try {
-        const response = await fetch('/api/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            key,
-            data: base64,
-            contentType: 'application/pdf',
-          }),
-        });
-        
-        if (!response.ok) throw new Error('Upload failed');
-        const { url } = await response.json();
-
-        uploadNdaMutation.mutate({
-          dataRoomId,
-          name: ndaName || selectedFile.name,
-          version: ndaVersion,
-          storageKey: key,
-          storageUrl: url,
-          mimeType: 'application/pdf',
-          fileSize: selectedFile.size,
-        });
-      } catch (error) {
-        toast.error("Failed to upload file");
-      }
+      uploadNdaMutation.mutate({
+        dataRoomId,
+        name: ndaName || selectedFile.name,
+        version: ndaVersion,
+        fileContent: base64,
+        mimeType: 'application/pdf',
+        fileSize: selectedFile.size,
+      });
     };
     reader.readAsDataURL(selectedFile);
   };
@@ -1702,13 +2195,13 @@ function NdaManagement({ dataRoomId, requiresNda }: { dataRoomId: number; requir
 function DetailedAnalytics({ dataRoomId }: { dataRoomId: number }) {
   const [selectedVisitor, setSelectedVisitor] = useState<number | null>(null);
 
-  const { data: report, isLoading } = (trpc.dataRoom as any).detailedAnalytics.getEngagementReport.useQuery({ dataRoomId });
-  const { data: visitorDetails } = (trpc.dataRoom as any).detailedAnalytics.getVisitorDetails.useQuery(
+  const { data: report, isLoading } = trpc.dataRoom.detailedAnalytics.getEngagementReport.useQuery({ dataRoomId });
+  const { data: visitorDetails } = trpc.dataRoom.detailedAnalytics.getVisitorDetails.useQuery(
     { dataRoomId, visitorId: selectedVisitor! },
     { enabled: !!selectedVisitor }
   );
 
-  const exportCsvMutation = (trpc.dataRoom as any).detailedAnalytics.exportCsv.useMutation({
+  const exportCsvMutation = trpc.dataRoom.detailedAnalytics.exportCsv.useMutation({
     onSuccess: (data) => {
       const blob = new Blob([data.csv], { type: 'text/csv' });
       const url = window.URL.createObjectURL(blob);
@@ -1939,14 +2432,14 @@ function GoogleDriveSyncSettings({ dataRoomId }: { dataRoomId: number }) {
   const [currentParentId, setCurrentParentId] = useState<string | undefined>(undefined);
   const [folderPath, setFolderPath] = useState<{ id: string; name: string }[]>([]);
 
-  const { data: syncConfig, refetch: refetchConfig } = (trpc.dataRoom as any).driveSync.getConfig.useQuery({ dataRoomId });
-  const { data: syncLogs, refetch: refetchLogs } = (trpc.dataRoom as any).driveSync.getLogs.useQuery({ dataRoomId, limit: 10 });
-  const { data: driveFolders, isLoading: foldersLoading } = (trpc.dataRoom as any).driveSync.listDriveFolders.useQuery(
+  const { data: syncConfig, refetch: refetchConfig } = trpc.dataRoom.driveSync.getConfig.useQuery({ dataRoomId });
+  const { data: syncLogs, refetch: refetchLogs } = trpc.dataRoom.driveSync.getLogs.useQuery({ dataRoomId, limit: 10 });
+  const { data: driveFolders, isLoading: foldersLoading } = trpc.dataRoom.driveSync.listDriveFolders.useQuery(
     { parentId: currentParentId },
     { enabled: folderPickerOpen }
   );
 
-  const saveConfigMutation = (trpc.dataRoom as any).driveSync.saveConfig.useMutation({
+  const saveConfigMutation = trpc.dataRoom.driveSync.saveConfig.useMutation({
     onSuccess: () => {
       toast.success("Sync configuration saved");
       refetchConfig();
@@ -1957,7 +2450,7 @@ function GoogleDriveSyncSettings({ dataRoomId }: { dataRoomId: number }) {
     },
   });
 
-  const syncNowMutation = (trpc.dataRoom as any).driveSync.syncNow.useMutation({
+  const syncNowMutation = trpc.dataRoom.driveSync.syncNow.useMutation({
     onSuccess: (result) => {
       toast.success(`Sync completed: ${result.filesAdded} added, ${result.filesUpdated} updated`);
       refetchConfig();
@@ -1968,7 +2461,7 @@ function GoogleDriveSyncSettings({ dataRoomId }: { dataRoomId: number }) {
     },
   });
 
-  const deleteConfigMutation = (trpc.dataRoom as any).driveSync.deleteConfig.useMutation({
+  const deleteConfigMutation = trpc.dataRoom.driveSync.deleteConfig.useMutation({
     onSuccess: () => {
       toast.success("Sync configuration removed");
       refetchConfig();
@@ -2223,9 +2716,9 @@ function EmailAccessRulesManager({ dataRoomId }: { dataRoomId: number }) {
     notifyOnAccess: true,
   });
 
-  const { data: rules, refetch } = (trpc.dataRoom as any).emailRules.list.useQuery({ dataRoomId });
+  const { data: rules, refetch } = trpc.dataRoom.emailRules.list.useQuery({ dataRoomId });
 
-  const createMutation = (trpc.dataRoom as any).emailRules.create.useMutation({
+  const createMutation = trpc.dataRoom.emailRules.create.useMutation({
     onSuccess: () => {
       toast.success("Rule created");
       setCreateOpen(false);
@@ -2244,14 +2737,14 @@ function EmailAccessRulesManager({ dataRoomId }: { dataRoomId: number }) {
     },
   });
 
-  const deleteMutation = (trpc.dataRoom as any).emailRules.delete.useMutation({
+  const deleteMutation = trpc.dataRoom.emailRules.delete.useMutation({
     onSuccess: () => {
       toast.success("Rule deleted");
       refetch();
     },
   });
 
-  const toggleMutation = (trpc.dataRoom as any).emailRules.update.useMutation({
+  const toggleMutation = trpc.dataRoom.emailRules.update.useMutation({
     onSuccess: () => {
       refetch();
     },
@@ -2452,14 +2945,14 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
   const [showMissingOnly, setShowMissingOnly] = useState(false);
   const [hasAutoMatched, setHasAutoMatched] = useState(false);
 
-  const { data: summary, refetch: refetchSummary } = (trpc.dataRoom as any).dueDiligence.getSummary.useQuery({ dataRoomId });
-  const { data: checklistData, refetch: refetchChecklist } = (trpc.dataRoom as any).dueDiligence.getById.useQuery(
+  const { data: summary, refetch: refetchSummary } = trpc.dataRoom.dueDiligence.getSummary.useQuery({ dataRoomId });
+  const { data: checklistData, refetch: refetchChecklist } = trpc.dataRoom.dueDiligence.getById.useQuery(
     { id: summary?.checklist?.id || 0 },
     { enabled: !!summary?.checklist?.id }
   );
   const { data: documents } = trpc.dataRoom.documents.list.useQuery({ dataRoomId });
 
-  const createStandardMutation = (trpc.dataRoom as any).dueDiligence.createStandard.useMutation({
+  const createStandardMutation = trpc.dataRoom.dueDiligence.createStandard.useMutation({
     onSuccess: () => {
       toast.success("Checklist created - scanning documents...");
       setCreateOpen(false);
@@ -2470,7 +2963,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
     },
   });
 
-  const autoMatchMutation = (trpc.dataRoom as any).dueDiligence.autoMatch.useMutation({
+  const autoMatchMutation = trpc.dataRoom.dueDiligence.autoMatch.useMutation({
     onSuccess: (result) => {
       if (result.matched > 0) {
         toast.success(`Matched ${result.matched} documents to checklist items`);
@@ -2485,14 +2978,14 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
     },
   });
 
-  const updateItemMutation = (trpc.dataRoom as any).dueDiligence.updateItem.useMutation({
+  const updateItemMutation = trpc.dataRoom.dueDiligence.updateItem.useMutation({
     onSuccess: () => {
       refetchSummary();
       refetchChecklist();
     },
   });
 
-  const linkDocumentMutation = (trpc.dataRoom as any).dueDiligence.linkDocument.useMutation({
+  const linkDocumentMutation = trpc.dataRoom.dueDiligence.linkDocument.useMutation({
     onSuccess: () => {
       toast.success("Document linked");
       refetchChecklist();
@@ -2604,7 +3097,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
                 <div className="text-left">
                   <div className="font-medium">General Fundraising</div>
                   <div className="text-sm text-muted-foreground">
-                    Optimized for seed and Series A fundraising
+                    20 items covering pitch materials, financials, team, and legal — optimized for seed and Series A
                   </div>
                 </div>
               </Button>
@@ -2617,7 +3110,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
                 <div className="text-left">
                   <div className="font-medium">M&A Due Diligence</div>
                   <div className="text-sm text-muted-foreground">
-                    Comprehensive for acquisitions
+                    40+ items including standard DD plus HR, real estate, IT systems, and environmental compliance
                   </div>
                 </div>
               </Button>

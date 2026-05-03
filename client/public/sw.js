@@ -1,54 +1,87 @@
-const CACHE_NAME = 'superhumn-erp-v1';
-const STATIC_ASSETS = [
+/**
+ * Superhumn ERP — service worker.
+ *
+ * Strategy:
+ *   - App shell (HTML / JS / CSS / fonts / icons) → stale-while-revalidate.
+ *   - Navigation requests → network-first, fall back to cached "/" so the
+ *     SPA loads even when offline (it then hydrates from the IndexedDB-backed
+ *     React Query cache; see client/src/lib/offline/queryCache.ts).
+ *   - tRPC + /api/* → never handled here. The query/mutation layer owns
+ *     offline reads (cache restore) and offline writes (mutation queue).
+ *
+ * Bump CACHE_VERSION whenever the shell strategy changes so old caches
+ * are evicted on activate.
+ */
+const CACHE_VERSION = 'v3';
+const SHELL_CACHE = `superhumn-shell-${CACHE_VERSION}`;
+const RUNTIME_CACHE = `superhumn-runtime-${CACHE_VERSION}`;
+
+const SHELL_ASSETS = [
   '/',
   '/manifest.json',
+  '/icon-192.svg',
+  '/icon-512.svg',
+  '/apple-touch-icon.svg',
 ];
 
-// Install — cache shell
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
+    caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL_ASSETS))
   );
   self.skipWaiting();
 });
 
-// Activate — clean old caches
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+      Promise.all(
+        keys
+          .filter((k) => k !== SHELL_CACHE && k !== RUNTIME_CACHE)
+          .map((k) => caches.delete(k))
+      )
     )
   );
   self.clients.claim();
 });
 
-// Fetch — network-first for API, cache-first for static assets
+const isApiRequest = (url) =>
+  url.pathname.startsWith('/api/') || url.pathname.startsWith('/trpc');
+
+const isStaticAsset = (url) =>
+  /\.(?:js|mjs|css|woff2?|ttf|otf|svg|png|jpg|jpeg|gif|webp|ico)$/i.test(
+    url.pathname
+  );
+
 self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
+  const { request } = event;
+  if (request.method !== 'GET') return;
 
-  // Skip non-GET and API/trpc calls — always go to network
-  if (event.request.method !== 'GET' || url.pathname.startsWith('/api/')) {
-    return;
-  }
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return;
+  if (isApiRequest(url)) return;
 
-  // For navigation requests (HTML pages), network-first with offline fallback
-  if (event.request.mode === 'navigate') {
+  if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(event.request).catch(() => caches.match('/'))
+      fetch(request).catch(() =>
+        caches.match('/').then((cached) => cached || Response.error())
+      )
     );
     return;
   }
 
-  // For static assets — stale-while-revalidate
-  event.respondWith(
-    caches.open(CACHE_NAME).then((cache) =>
-      cache.match(event.request).then((cached) => {
-        const fetched = fetch(event.request).then((response) => {
-          if (response.ok) cache.put(event.request, response.clone());
-          return response;
-        });
-        return cached || fetched;
-      })
-    )
-  );
+  if (isStaticAsset(url)) {
+    event.respondWith(
+      caches.open(RUNTIME_CACHE).then((cache) =>
+        cache.match(request).then((cached) => {
+          const fetched = fetch(request)
+            .then((response) => {
+              if (response && response.ok) cache.put(request, response.clone());
+              return response;
+            })
+            .catch(() => cached);
+          return cached || fetched;
+        })
+      )
+    );
+  }
 });

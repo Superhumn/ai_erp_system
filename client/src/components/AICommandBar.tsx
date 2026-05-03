@@ -44,6 +44,11 @@ const UNIT_CONVERSIONS: Record<string, { factor: number; baseUnit: string }> = {
   'kgs': { factor: 1, baseUnit: 'kg' },
   'kilogram': { factor: 1, baseUnit: 'kg' },
   'kilograms': { factor: 1, baseUnit: 'kg' },
+  'ton': { factor: 1000, baseUnit: 'kg' },
+  'tons': { factor: 1000, baseUnit: 'kg' },
+  'tonne': { factor: 1000, baseUnit: 'kg' },
+  'tonnes': { factor: 1000, baseUnit: 'kg' },
+  'mt': { factor: 1000, baseUnit: 'kg' },
   'lb': { factor: 0.453592, baseUnit: 'kg' },
   'lbs': { factor: 0.453592, baseUnit: 'kg' },
   'pound': { factor: 0.453592, baseUnit: 'kg' },
@@ -92,9 +97,9 @@ function parseQuantity(text: string): ParsedQuantity | null {
   // Match patterns like "50kg", "100 lbs", "25 cases", "1,000 units"
   const patterns = [
     // Number with unit attached: "50kg", "100lbs"
-    /([\d,]+(?:\.\d+)?)\s*(kg|kgs|kilogram|kilograms|lb|lbs|pound|pounds|g|gram|grams|oz|ounce|ounces|l|liter|liters|litre|litres|ml|gal|gallon|gallons|unit|units|piece|pieces|pcs|ea|each|case|cases|box|boxes|pallet|pallets|carton|cartons|bag|bags|roll|rolls)\b/i,
+    /([\d,]+(?:\.\d+)?)\s*(kg|kgs|kilogram|kilograms|ton|tons|tonne|tonnes|mt|lb|lbs|pound|pounds|g|gram|grams|oz|ounce|ounces|l|liter|liters|litre|litres|ml|gal|gallon|gallons|unit|units|piece|pieces|pcs|ea|each|case|cases|box|boxes|pallet|pallets|carton|cartons|bag|bags|roll|rolls)\b/i,
     // Number with unit separated: "50 kg", "100 lbs"
-    /([\d,]+(?:\.\d+)?)\s+(kg|kgs|kilogram|kilograms|lb|lbs|pound|pounds|g|gram|grams|oz|ounce|ounces|l|liter|liters|litre|litres|ml|gal|gallon|gallons|unit|units|piece|pieces|pcs|ea|each|case|cases|box|boxes|pallet|pallets|carton|cartons|bag|bags|roll|rolls)\b/i,
+    /([\d,]+(?:\.\d+)?)\s+(kg|kgs|kilogram|kilograms|ton|tons|tonne|tonnes|mt|lb|lbs|pound|pounds|g|gram|grams|oz|ounce|ounces|l|liter|liters|litre|litres|ml|gal|gallon|gallons|unit|units|piece|pieces|pcs|ea|each|case|cases|box|boxes|pallet|pallets|carton|cartons|bag|bags|roll|rolls)\b/i,
   ];
   
   for (const pattern of patterns) {
@@ -291,17 +296,20 @@ function parseDate(text: string): ParsedDate | null {
 }
 
 // Extract material name from query
+// Shared unit pattern used across extractMaterialName regexes
+const WEIGHT_VOLUME_UNITS = "ton|tons|tonne|tonnes|mt|kg|kgs|lb|lbs|g|oz|units?|cases?|boxes?|pieces?|bags?|pallets?";
+
 function extractMaterialName(query: string): string | null {
-  const lowerQuery = query.toLowerCase();
-  
-  // Patterns to extract material name
+  // Patterns to extract material name (longer/more-specific alternatives listed first)
   const patterns = [
+    // "[quantity] [unit] of [material]" - e.g., "3 tons of hemp protein", "500kg of oats"
+    new RegExp(`(?:[\\d,]+\\s*(?:${WEIGHT_VOLUME_UNITS})\\s+of\\s+)([a-zA-Z][a-zA-Z\\s]+?)(?:\\s+(?:from|by|before|for|at)|$)`, "i"),
     // "order X of [material]" or "order [material]"
-    /(?:order|purchase|buy|get|need)\s+(?:[\d,]+\s*(?:kg|kgs|lb|lbs|units?|cases?|boxes?|pieces?)?\s+(?:of\s+)?)?([a-zA-Z][a-zA-Z\s]+?)(?:\s+(?:from|by|before|for|at|$))/i,
-    // "PO for [material]"
-    /(?:po|purchase\s+order)\s+(?:for\s+)?(?:[\d,]+\s*(?:kg|kgs|lb|lbs|units?|cases?|boxes?|pieces?)?\s+(?:of\s+)?)?([a-zA-Z][a-zA-Z\s]+?)(?:\s+(?:from|by|before|for|at|$))/i,
-    // "[quantity] [material]"
-    /(?:[\d,]+\s*(?:kg|kgs|lb|lbs|units?|cases?|boxes?|pieces?)\s+(?:of\s+)?)([a-zA-Z][a-zA-Z\s]+?)(?:\s+(?:from|by|before|for|at|$))/i,
+    /(?:order|purchase|buy|get|need)\s+(?:[\d,]+\s*(?:kg|kgs|lb|lbs|units?|cases?|boxes?|pieces?)?\s+(?:of\s+)?)?([a-zA-Z][a-zA-Z\s]+?)(?:\s+(?:from|by|before|for|at)|$)/i,
+    // "make po for [material]" or "purchase order for [material]" (longer form first, then "po")
+    new RegExp(`(?:make\\s+po|purchase\\s+order|po)\\s+(?:for\\s+)?(?:[\\d,]+\\s*(?:${WEIGHT_VOLUME_UNITS})?\\s+(?:of\\s+)?)?([a-zA-Z][a-zA-Z\\s]+?)(?:\\s+(?:from|by|before|for|at)|$)`, "i"),
+    // "[quantity] [unit] [material]" (no "of") - e.g., "500kg mushrooms"
+    new RegExp(`(?:[\\d,]+\\s*(?:${WEIGHT_VOLUME_UNITS})\\s+(?:of\\s+)?)([a-zA-Z][a-zA-Z\\s]+?)(?:\\s+(?:from|by|before|for|at)|$)`, "i"),
   ];
   
   for (const pattern of patterns) {
@@ -359,16 +367,28 @@ function parseIntent(query: string): ParsedIntent {
   const parsedQuantity = parseQuantity(query);
   const parsedDate = parseDate(query);
   const materialName = extractMaterialName(query);
+
+  // Navigation/lookup queries must never be treated as creation intents.
+  // Detect questions like "where are my purchase orders", "show me POs", "can you list vendors", etc.
+  const isNavigationOrLookupQuery =
+    /^(where|what|show|list|find|tell|how|which|when|who)\b/i.test(lowerQuery) ||
+    /^(can|could|would|should)\s+(you\s+)?(show|list|find|tell|display|get)\b/i.test(lowerQuery) ||
+    /\bwhere (are|is)\b/.test(lowerQuery) ||
+    query.trim().endsWith("?");
   
   // Check for PO generation intent
   const isPOIntent = 
-    lowerQuery.includes("generate po") || 
-    lowerQuery.includes("create po") || 
-    lowerQuery.includes("purchase order") ||
-    lowerQuery.includes("reorder") ||
-    (lowerQuery.includes("order") && 
-      (lowerQuery.includes("material") || lowerQuery.includes("stock") || 
-       lowerQuery.includes("inventory") || parsedQuantity !== null));
+    !isNavigationOrLookupQuery && (
+      lowerQuery.includes("generate po") || 
+      lowerQuery.includes("create po") ||
+      lowerQuery.includes("make po") ||
+      /\bpo for\b/.test(lowerQuery) ||
+      lowerQuery.includes("purchase order") ||
+      lowerQuery.includes("reorder") ||
+      (lowerQuery.includes("order") && 
+        (lowerQuery.includes("material") || lowerQuery.includes("stock") || 
+         lowerQuery.includes("inventory") || parsedQuantity !== null))
+    );
   
   if (isPOIntent) {
     // Build description with parsed values
@@ -786,7 +806,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
         description: `PO #${data.po?.poNumber} has been created`
       });
       utils.purchaseOrders.list.invalidate();
-      setLocation("/procurement");
+      setLocation("/operations/purchase-orders");
       setIsExpanded(false);
     },
     onError: (error) => {
@@ -1058,6 +1078,11 @@ export function AICommandBar({ context }: AICommandBarProps) {
     });
     setEditingQuantity(parsedQty?.toString() || "");
     setEditingDate(parsedDate ? parsedDate.toISOString().split('T')[0] : "");
+    // Pre-populate material search with extracted material name so user doesn't have to retype
+    if (!material && intent.taskData?.rawMaterialName) {
+      setMaterialSearch(intent.taskData.rawMaterialName);
+      setShowMaterialDropdown(true);
+    }
     setShowDraftPreview(true);
   }, [context, aiQuery, vendorSuggestion, selectedVendorId, vendorsQuery.data, selectedMaterial]);
 
@@ -1288,7 +1313,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
                     variant="default"
                     size="sm"
                     onClick={() => {
-                      setLocation("/procurement");
+                      setLocation("/operations/purchase-orders");
                       setIsExpanded(false);
                     }}
                   >
@@ -1385,9 +1410,14 @@ export function AICommandBar({ context }: AICommandBarProps) {
           {/* Draft Preview Panel */}
           {showDraftPreview && draftData && !isLoading && !taskCreated && (
             <div className="p-4 space-y-4">
-              <div className="flex items-center gap-2 mb-3">
-                <FileText className="h-5 w-5 text-blue-600" />
-                <h3 className="font-semibold text-lg">Review Draft {draftData.taskType === 'generate_po' ? 'Purchase Order' : draftData.taskType === 'send_rfq' ? 'RFQ' : 'Task'}</h3>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <FileText className="h-5 w-5 text-blue-600" />
+                  <h3 className="font-semibold text-lg">Review Draft {draftData.taskType === 'generate_po' ? 'Purchase Order' : draftData.taskType === 'send_rfq' ? 'RFQ' : 'Task'}</h3>
+                </div>
+                <button onClick={() => { setShowDraftPreview(false); setDraftData(null); setShowSuggestions(true); }} className="text-muted-foreground hover:text-foreground">
+                  <X className="h-5 w-5" />
+                </button>
               </div>
               
               <div className="bg-slate-50 rounded-lg p-4 space-y-4">

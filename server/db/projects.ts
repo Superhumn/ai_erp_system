@@ -1,4 +1,4 @@
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { projects, InsertProject, projectMilestones, projectTasks, investmentGrantChecklists, InsertInvestmentGrantChecklist, investmentGrantItems, InsertInvestmentGrantItem } from "../../drizzle/schema";
 import { getDb } from "./connection";
 
@@ -21,6 +21,11 @@ export async function createProjectTask(data: typeof projectTasks.$inferInsert) 
 export async function updateProjectTask(id: number, data: Partial<typeof projectTasks.$inferInsert>) { const db = await getDb(); if (!db) return; await db.update(projectTasks).set(data).where(eq(projectTasks.id, id)); }
 export async function getProjectTasks(projectId: number) { const db = await getDb(); if (!db) return []; return db.select().from(projectTasks).where(eq(projectTasks.projectId, projectId)).orderBy(desc(projectTasks.createdAt)); }
 export async function getAllProjectTasks() { const db = await getDb(); if (!db) return []; return db.select().from(projectTasks).orderBy(desc(projectTasks.createdAt)); }
+export async function getProjectTaskBySourceExternalId(sourceType: string, sourceExternalId: string) {
+  const db = await getDb(); if (!db) return undefined;
+  const rows = await db.select().from(projectTasks).where(and(eq(projectTasks.sourceType, sourceType as any), eq(projectTasks.sourceExternalId, sourceExternalId))).limit(1);
+  return rows[0];
+}
 
 // ============================================
 // INVESTMENT GRANT CHECKLISTS

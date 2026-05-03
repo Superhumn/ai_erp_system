@@ -67,6 +67,7 @@ export default function Invoices() {
   const [emailMessage, setEmailMessage] = useState("");
   const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false);
   const [isRecurringDialogOpen, setIsRecurringDialogOpen] = useState(false);
+  const [deleteInvoiceId, setDeleteInvoiceId] = useState<number | null>(null);
   const [paymentData, setPaymentData] = useState({
     amount: "",
     paymentMethod: "bank_transfer" as const,
@@ -112,6 +113,15 @@ export default function Invoices() {
     onError: (error) => {
       toast.error(error.message);
     },
+  });
+
+  const deleteInvoice = trpc.invoices.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Invoice deleted");
+      setDeleteInvoiceId(null);
+      utils.invoices.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
   });
 
   const { data: recurringInvoices } = trpc.recurringInvoices.list.useQuery();
@@ -210,7 +220,7 @@ export default function Invoices() {
     },
   });
 
-  const approveAndEmail = (trpc.invoices as any).approveAndEmail.useMutation({
+  const approveAndEmail = trpc.invoices.approveAndEmail.useMutation({
     onSuccess: (data) => {
       toast.success(`Invoice ${data.invoiceNumber} approved and emailed to customer`);
       setIsPreviewOpen(false);
@@ -410,7 +420,7 @@ export default function Invoices() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+          <h1 className="text-lg font-semibold flex items-center gap-2">
             <FileText className="h-8 w-8" />
             Invoices
           </h1>
@@ -977,6 +987,13 @@ export default function Invoices() {
                             <DollarSign className="h-4 w-4 mr-2" />
                             Record Payment
                           </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onClick={() => setDeleteInvoiceId(invoice.id)}
+                          >
+                            <Trash2 className="h-4 w-4 mr-2" />
+                            Delete Invoice
+                          </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>
@@ -1099,6 +1116,29 @@ export default function Invoices() {
             >
               {approveAndEmail.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Approve & Email
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete invoice confirmation */}
+      <Dialog open={deleteInvoiceId !== null} onOpenChange={(open) => { if (!open) setDeleteInvoiceId(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete invoice?</DialogTitle>
+            <DialogDescription>
+              This will permanently delete the invoice and all its line items. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setDeleteInvoiceId(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={deleteInvoice.isPending}
+              onClick={() => { if (deleteInvoiceId !== null) deleteInvoice.mutate({ id: deleteInvoiceId }); }}
+            >
+              {deleteInvoice.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Delete
             </Button>
           </DialogFooter>
         </DialogContent>

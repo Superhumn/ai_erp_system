@@ -1,6 +1,7 @@
 import { invokeLLM, Tool, Message } from "./_core/llm";
 import { getDb } from "./db";
 import { sendEmail, formatEmailHtml } from "./_core/email";
+import { getValidGoogleToken } from "./routers/middleware";
 import {
   vendors,
   customers,
@@ -511,9 +512,8 @@ const AI_TOOLS: Tool[] = [
 
 async function executeSearchGoogleDrive(params: any, ctx: AIAgentContext): Promise<any> {
   try {
-    const dbModule = await import("./db");
-    const token = await dbModule.getGoogleOAuthTokenByUserId(ctx.userId);
-    if (!token?.accessToken) {
+    const { accessToken, error: tokenErr } = await getValidGoogleToken(ctx.userId);
+    if (tokenErr || !accessToken) {
       return { error: "Google Drive not connected. Go to Settings → Integrations to connect." };
     }
 
@@ -534,7 +534,7 @@ async function executeSearchGoogleDrive(params: any, ctx: AIAgentContext): Promi
 
     const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,modifiedTime,webViewLink,size)&pageSize=20&supportsAllDrives=true&includeItemsFromAllDrives=true`;
     const response = await fetch(url, {
-      headers: { Authorization: `Bearer ${token.accessToken}` },
+      headers: { Authorization: `Bearer ${accessToken}` },
     });
 
     if (!response.ok) {
@@ -1374,14 +1374,13 @@ async function executeCreateTask(params: any, ctx: AIAgentContext): Promise<any>
 // ============================================
 
 async function executeManageCalendar(params: any, ctx: AIAgentContext): Promise<any> {
-  const dbModule = await import("./db");
-  const token = await dbModule.getGoogleOAuthTokenByUserId(ctx.userId);
-  if (!token?.accessToken) return { error: "Google Calendar not connected" };
+  const { accessToken, error: tokenErr } = await getValidGoogleToken(ctx.userId);
+  if (tokenErr || !accessToken) return { error: "Google Calendar not connected" };
 
   const { getCalendarEvents, createCalendarEvent } = await import("./calendarService");
 
   if (params.action === "list_events") {
-    const events = await getCalendarEvents(token.accessToken);
+    const events = await getCalendarEvents(accessToken);
     return {
       events: events.items
         ?.map((e: any) => ({
@@ -1396,7 +1395,7 @@ async function executeManageCalendar(params: any, ctx: AIAgentContext): Promise<
   }
 
   if (params.action === "create_event") {
-    const event = await createCalendarEvent(token.accessToken, {
+    const event = await createCalendarEvent(accessToken, {
       summary: params.summary,
       description: params.description,
       start: { dateTime: params.startDateTime },

@@ -142,6 +142,7 @@ export default function EquityReports() {
     onSuccess: () => {
       toast.success("Valuation report uploaded successfully");
       valuationDocsQuery.refetch();
+      valuationsQuery.refetch();
     },
     onError: (err: any) => {
       toast.error("Upload failed: " + err.message);
@@ -159,24 +160,33 @@ export default function EquityReports() {
       return;
     }
     setIsUploading(true);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64 = (reader.result as string).split(",")[1];
-      uploadDoc.mutate({
-        name: file.name,
-        type: "report",
-        referenceType: "valuation",
-        referenceId: currentValuation?.id,
-        fileData: base64,
-        mimeType: file.type || "application/pdf",
-        description: `409A Valuation Report - ${file.name}`,
-      });
-    };
-    reader.onerror = () => {
-      toast.error("Failed to read file");
+    try {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = (reader.result as string).split(",")[1];
+        if (!base64) {
+          toast.error("Failed to read file data");
+          setIsUploading(false);
+          return;
+        }
+        uploadDoc.mutate({
+          name: file.name,
+          type: "report" as const,
+          referenceType: "valuation",
+          fileData: base64,
+          mimeType: file.type || "application/pdf",
+          description: `409A Valuation Report - ${file.name}`,
+        });
+      };
+      reader.onerror = () => {
+        toast.error("Failed to read file");
+        setIsUploading(false);
+      };
+      reader.readAsDataURL(file);
+    } catch (err: any) {
+      toast.error("Upload error: " + (err.message || "Unknown error"));
       setIsUploading(false);
-    };
-    reader.readAsDataURL(file);
+    }
     // Reset input
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
@@ -431,8 +441,7 @@ export default function EquityReports() {
   }
 
   return (
-    <div className="p-4 space-y-4">
-      <h1 className="text-lg font-semibold">Equity Reports</h1>
+    <div className="space-y-3">
 
       {/* ── 409A Valuation Section ─────────────────────────────── */}
       <Card>
@@ -442,7 +451,7 @@ export default function EquityReports() {
             <CardTitle className="text-base">409A Valuation</CardTitle>
           </div>
           <CardDescription className="text-sm">
-            Current company valuation and FMV per share for equity pricing
+            409A FMV per share for equity pricing. The total valuation shown is the investor post-money valuation — not the 409A FMV.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -458,13 +467,14 @@ export default function EquityReports() {
                 <>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Total Valuation</p>
+                      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Investor Valuation</p>
                       <p className="text-2xl font-bold text-primary">
                         {formatValuationCurrency(currentValuation.totalValuation)}
                       </p>
+                      <p className="text-[10px] text-muted-foreground">Post-money (not 409A FMV)</p>
                     </div>
                     <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">FMV Per Share</p>
+                      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">409A FMV Per Share</p>
                       <p className="text-2xl font-bold">
                         {formatFMV(currentValuation.fairMarketValue)}
                       </p>
@@ -578,9 +588,27 @@ export default function EquityReports() {
                           {doc.createdAt ? new Date(doc.createdAt).toLocaleDateString() : ""}
                         </span>
                         {doc.fileUrl && (
-                          <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer">
+                          <button
+                            onClick={() => {
+                              const url = doc.fileUrl!;
+                              if (url.startsWith("data:")) {
+                                const [header, base64] = url.split(",");
+                                const mime = header.match(/data:(.*?);/)?.[1] || "application/octet-stream";
+                                const binary = atob(base64);
+                                const bytes = new Uint8Array(binary.length);
+                                for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                                const blob = new Blob([bytes], { type: mime });
+                                const blobUrl = URL.createObjectURL(blob);
+                                window.open(blobUrl, "_blank");
+                                setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+                              } else {
+                                window.open(url, "_blank");
+                              }
+                            }}
+                            className="hover:text-primary"
+                          >
                             <ExternalLink className="h-3 w-3 text-blue-600" />
-                          </a>
+                          </button>
                         )}
                       </div>
                     </div>

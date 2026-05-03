@@ -93,7 +93,7 @@ export default function ShopifySettings() {
           </Button>
         </Link>
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+          <h1 className="text-lg font-semibold flex items-center gap-2">
             <ShoppingBag className="h-8 w-8" />
             Shopify Settings
           </h1>
@@ -153,7 +153,7 @@ export default function ShopifySettings() {
                     <Switch
                       checked={store.syncOrders}
                       onCheckedChange={(checked) =>
-                        updateStore.mutate({ id: store.id, isActive: checked })
+                        updateStore.mutate({ id: store.id, syncOrders: checked } as any)
                       }
                     />
                   </div>
@@ -165,7 +165,7 @@ export default function ShopifySettings() {
                     <Switch
                       checked={store.syncInventory}
                       onCheckedChange={(checked) =>
-                        updateStore.mutate({ id: store.id, isActive: checked })
+                        updateStore.mutate({ id: store.id, syncInventory: checked } as any)
                       }
                     />
                   </div>

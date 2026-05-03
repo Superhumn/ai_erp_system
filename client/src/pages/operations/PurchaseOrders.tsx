@@ -52,6 +52,7 @@ export default function PurchaseOrders() {
   const [isTextPOOpen, setIsTextPOOpen] = useState(false);
   const [textInput, setTextInput] = useState("");
   const [activeAction, setActiveAction] = useState<'draft' | 'email' | null>(null);
+  const [deletePOId, setDeletePOId] = useState<number | null>(null);
   const [poPreview, setPoPreview] = useState<{
     vendorId: number;
     vendorName: string;
@@ -174,6 +175,15 @@ export default function PurchaseOrders() {
     },
   });
 
+  const deletePO = trpc.purchaseOrders.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Purchase order deleted");
+      setDeletePOId(null);
+      utils.purchaseOrders.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   const filteredPOs = purchaseOrders?.filter((po) => {
     const matchesSearch = po.poNumber.toLowerCase().includes(search.toLowerCase());
     const matchesStatus = statusFilter === "all" || po.status === statusFilter;
@@ -257,7 +267,7 @@ export default function PurchaseOrders() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+          <h1 className="text-lg font-semibold flex items-center gap-2">
             <ClipboardList className="h-8 w-8" />
             Purchase Orders
           </h1>
@@ -620,6 +630,7 @@ export default function PurchaseOrders() {
                   <TableHead>Expected Date</TableHead>
                   <TableHead className="text-right">Items Count</TableHead>
                   <TableHead>Notes</TableHead>
+                  <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -649,6 +660,16 @@ export default function PurchaseOrders() {
                       <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
                         {po.notes || "-"}
                       </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Delete purchase order"
+                          onClick={() => setDeletePOId(po.id)}
+                        >
+                          <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   );
                 })}
@@ -657,6 +678,29 @@ export default function PurchaseOrders() {
           )}
         </CardContent>
       </Card>
+
+      {/* Delete PO confirmation */}
+      <Dialog open={deletePOId !== null} onOpenChange={(open) => { if (!open) setDeletePOId(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete purchase order?</DialogTitle>
+            <DialogDescription>
+              This will permanently delete the purchase order and all its items. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setDeletePOId(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={deletePO.isPending}
+              onClick={() => { if (deletePOId !== null) deletePO.mutate({ id: deletePOId }); }}
+            >
+              {deletePO.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

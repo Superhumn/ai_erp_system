@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,7 +30,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Building2, Plus, Search, Loader2, Upload, ShoppingBag, Star, ExternalLink, CheckCircle2 } from "lucide-react";
+import { Building2, Plus, Search, Loader2, Upload, ShoppingBag, Star, ExternalLink, CheckCircle2, Trash2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { getStatusColor } from "@/lib/statusColors";
 import { useLocation } from "wouter";
@@ -64,6 +74,12 @@ export default function Vendors() {
   const [isAlibabaOpen, setIsAlibabaOpen] = useState(false);
   const [alibabaForm, setAlibabaForm] = useState({ query: "", category: "", country: "" });
   const [alibabaResults, setAlibabaResults] = useState<any[]>([]);
+  const [alibabaUsedFallback, setAlibabaUsedFallback] = useState(false);
+  const [expandedVendorId, setExpandedVendorId] = useState<number | null>(null);
+  const [vendorToDelete, setVendorToDelete] = useState<{ id: number; name: string } | null>(null);
+  const [newMaterialName, setNewMaterialName] = useState("");
+  const [newMaterialUnit, setNewMaterialUnit] = useState("kg");
+  const [newMaterialCost, setNewMaterialCost] = useState("");
 
   // Vendor form
   const [formData, setFormData] = useState({
@@ -89,6 +105,18 @@ export default function Vendors() {
   const { data: purchaseOrders } = trpc.purchaseOrders.list.useQuery();
   const { data: negotiations } = trpc.vendorNegotiations.list.useQuery({});
   const { data: locations } = trpc.warehouses.list.useQuery();
+  const { data: rawMaterials } = trpc.rawMaterials.list.useQuery();
+  const { data: products } = trpc.products.list.useQuery();
+
+  const createRawMaterial = trpc.rawMaterials.create.useMutation({
+    onSuccess: () => {
+      toast.success("Material added");
+      setNewMaterialName("");
+      setNewMaterialCost("");
+      utils.rawMaterials.list.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
 
   const createVendor = trpc.vendors.create.useMutation({
     onSuccess: () => {
@@ -102,17 +130,48 @@ export default function Vendors() {
     },
   });
 
+  const deleteVendor = trpc.vendors.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Vendor deleted");
+      setVendorToDelete(null);
+      utils.vendors.list.invalidate();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
   const alibabaSearch = trpc.vendors.searchAlibaba.useMutation({
     onSuccess: (data: any) => {
       setAlibabaResults(data.suppliers || []);
+      setAlibabaUsedFallback(Boolean(data.usedFallback));
       if (data.suppliers?.length > 0) {
-        toast.success(`Found ${data.suppliers.length} suppliers on Alibaba`);
+        if (data.usedFallback) {
+          toast.info(`Showing ${data.suppliers.length} backup results while Alibaba search is busy.`);
+        } else {
+          toast.success(`Found ${data.suppliers.length} suppliers on Alibaba`);
+        }
       } else {
+        setAlibabaUsedFallback(false);
         toast.info("No suppliers found. Try different search terms.");
       }
     },
     onError: (error: any) => toast.error(error.message),
   });
+
+  const openAlibabaLiveSearch = () => {
+    const query = alibabaForm.query.trim();
+    if (!query) {
+      toast.info("Enter a product search term first.");
+      return;
+    }
+
+    const terms = [query, alibabaForm.category?.trim(), alibabaForm.country?.trim()]
+      .filter(Boolean)
+      .join(" ");
+    const url = `https://www.alibaba.com/trade/search?SearchText=${encodeURIComponent(terms)}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
 
   const handleAddAlibabaSupplier = (supplier: any) => {
     createVendor.mutate({
@@ -255,17 +314,12 @@ export default function Vendors() {
   const isLoading = vendorsLoading;
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
-            <Building2 className="h-8 w-8" />
-            Vendors
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Manage suppliers and service providers.
-          </p>
-        </div>
+    <div className="space-y-2 animate-fade-in">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h1 className="text-sm font-bold tracking-[-0.02em] flex items-center gap-1.5">
+          <Building2 className="h-4 w-4" />
+          Vendors
+        </h1>
         <div className="flex gap-2">
         <Button variant="outline" onClick={() => window.location.href = "/import"}>
           <Upload className="h-4 w-4 mr-1" /> Import
@@ -426,7 +480,7 @@ export default function Vendors() {
         <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Search Alibaba Suppliers</DialogTitle>
-            <DialogDescription>AI-powered search for suppliers and manufacturers on Alibaba</DialogDescription>
+            <DialogDescription>Use live Alibaba search in a new tab, or use AI suggestions below.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-1.5">
@@ -455,22 +509,43 @@ export default function Vendors() {
                 />
               </div>
             </div>
-            <Button
-              onClick={() => alibabaSearch.mutate({
-                query: alibabaForm.query,
-                category: alibabaForm.category || undefined,
-                country: alibabaForm.country || undefined,
-              })}
-              disabled={alibabaSearch.isPending || !alibabaForm.query.trim()}
-              className="w-full"
-            >
-              {alibabaSearch.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Search className="h-4 w-4 mr-2" />}
-              {alibabaSearch.isPending ? "Searching Alibaba..." : "Search Suppliers"}
-            </Button>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <Button
+                type="button"
+                onClick={openAlibabaLiveSearch}
+                disabled={!alibabaForm.query.trim()}
+                className="w-full"
+              >
+                <ExternalLink className="h-4 w-4 mr-2" />
+                Search Live on Alibaba
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setAlibabaUsedFallback(false);
+                  alibabaSearch.mutate({
+                    query: alibabaForm.query,
+                    category: alibabaForm.category || undefined,
+                    country: alibabaForm.country || undefined,
+                  });
+                }}
+                disabled={alibabaSearch.isPending || !alibabaForm.query.trim()}
+                className="w-full"
+              >
+                {alibabaSearch.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Search className="h-4 w-4 mr-2" />}
+                {alibabaSearch.isPending ? "Generating..." : "Generate AI Suggestions"}
+              </Button>
+            </div>
 
             {/* Results */}
             {alibabaResults.length > 0 && (
               <div className="space-y-2">
+                {alibabaUsedFallback && (
+                  <div className="rounded-md border border-amber-300/50 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    Live Alibaba lookup is temporarily overloaded. Showing backup AI-generated supplier matches.
+                  </div>
+                )}
                 <div className="flex items-center justify-between">
                   <Label className="text-xs text-muted-foreground uppercase tracking-wider">Found {alibabaResults.length} Suppliers</Label>
                 </div>
@@ -592,15 +667,20 @@ export default function Vendors() {
                     <TableHead className="text-sm whitespace-nowrap">Notes</TableHead>
                     <TableHead className="text-sm whitespace-nowrap">Status</TableHead>
                     <TableHead className="text-sm whitespace-nowrap">Docs</TableHead>
+                    <TableHead className="text-sm whitespace-nowrap w-12"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredVendors.map((vendor) => {
                     const agg = poAggregates.get(vendor.id);
                     const negStatus = negotiationStatusByVendor.get(vendor.id) || "none";
+                    const isExpanded = expandedVendorId === vendor.id;
+                    const vendorMaterials = rawMaterials?.filter((m: any) => m.preferredVendorId === vendor.id) || [];
+                    const vendorProducts = products?.filter((p: any) => p.preferredVendorId === vendor.id) || [];
 
                     return (
-                      <TableRow key={vendor.id}>
+                      <React.Fragment key={vendor.id}>
+                      <TableRow className="cursor-pointer hover:bg-muted/50" onClick={() => setExpandedVendorId(isExpanded ? null : vendor.id)}>
                         <TableCell className="text-sm font-medium whitespace-nowrap">
                           <span className="text-primary font-semibold">{vendor.name}</span>
                         </TableCell>
@@ -653,7 +733,107 @@ export default function Vendors() {
                         <TableCell className="text-sm whitespace-nowrap">
                           <DocumentsCell referenceType="vendor" referenceId={vendor.id} />
                         </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setVendorToDelete({ id: vendor.id, name: vendor.name });
+                            }}
+                            aria-label={`Delete vendor ${vendor.name}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
                       </TableRow>
+                      {isExpanded && (
+                        <TableRow>
+                          <TableCell colSpan={17} className="bg-muted/20 p-4">
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mb-4">
+                              <div><span className="text-xs text-muted-foreground block">Address</span>{vendor.address || "-"}, {vendor.city || ""} {vendor.state || ""} {vendor.country || ""}</div>
+                              <div><span className="text-xs text-muted-foreground block">Lead Time</span>{vendor.defaultLeadTimeDays || 14} days</div>
+                              <div><span className="text-xs text-muted-foreground block">Payment Terms</span>Net {vendor.paymentTerms || 30}</div>
+                              <div><span className="text-xs text-muted-foreground block">Tax ID</span>{vendor.taxId || "-"}</div>
+                            </div>
+                            {vendor.notes && <p className="text-sm text-muted-foreground mb-4 whitespace-pre-wrap">{vendor.notes}</p>}
+
+                            {/* Materials supplied by this vendor */}
+                            <div className="mb-3">
+                              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Raw Materials Supplied</h4>
+                              {vendorMaterials.length > 0 ? (
+                                <div className="flex flex-wrap gap-2 mb-2">
+                                  {vendorMaterials.map((m: any) => (
+                                    <Badge key={m.id} variant="outline">{m.name} ({m.unit}) — ${parseFloat(m.unitCost || "0").toFixed(2)}</Badge>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-xs text-muted-foreground mb-2">No materials linked yet</p>
+                              )}
+                              {/* Add material form */}
+                              <div className="flex items-center gap-2">
+                                <Input
+                                  placeholder="Material name"
+                                  value={newMaterialName}
+                                  onChange={(e) => setNewMaterialName(e.target.value)}
+                                  className="h-7 text-xs w-40"
+                                />
+                                <Select value={newMaterialUnit} onValueChange={setNewMaterialUnit}>
+                                  <SelectTrigger className="h-7 text-xs w-20"><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="kg">kg</SelectItem>
+                                    <SelectItem value="lb">lb</SelectItem>
+                                    <SelectItem value="L">L</SelectItem>
+                                    <SelectItem value="gal">gal</SelectItem>
+                                    <SelectItem value="ea">ea</SelectItem>
+                                    <SelectItem value="cs">case</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                                <Input
+                                  placeholder="Cost"
+                                  type="number"
+                                  step="0.01"
+                                  value={newMaterialCost}
+                                  onChange={(e) => setNewMaterialCost(e.target.value)}
+                                  className="h-7 text-xs w-20"
+                                />
+                                <Button
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                  disabled={!newMaterialName || createRawMaterial.isPending}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    createRawMaterial.mutate({
+                                      name: newMaterialName,
+                                      sku: `RM-${Date.now().toString(36)}`,
+                                      unit: newMaterialUnit,
+                                      unitCost: newMaterialCost || "0",
+                                      preferredVendorId: vendor.id,
+                                    } as any);
+                                  }}
+                                >
+                                  {createRawMaterial.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+                                  Add
+                                </Button>
+                              </div>
+                            </div>
+
+                            {/* Products from this vendor */}
+                            {vendorProducts.length > 0 && (
+                              <div>
+                                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Products</h4>
+                                <div className="flex flex-wrap gap-2">
+                                  {vendorProducts.map((p: any) => (
+                                    <Badge key={p.id} variant="secondary">{p.name}</Badge>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      )}
+                      </React.Fragment>
                     );
                   })}
                 </TableBody>
@@ -670,6 +850,33 @@ export default function Vendors() {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog open={!!vendorToDelete} onOpenChange={(open) => !open && setVendorToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete vendor?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes <span className="font-medium">{vendorToDelete?.name}</span>.
+              Purchase orders and raw materials linked to this vendor will keep their historical
+              record, but the vendor will no longer appear in lists or be selectable.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteVendor.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteVendor.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (vendorToDelete) deleteVendor.mutate({ id: vendorToDelete.id });
+              }}
+            >
+              {deleteVendor.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Delete vendor
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

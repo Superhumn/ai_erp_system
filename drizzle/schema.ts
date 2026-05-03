@@ -1,5 +1,6 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean, json, bigint, uniqueIndex, serial } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean, json, bigint, uniqueIndex, serial, type AnyMySqlColumn } from "drizzle-orm/mysql-core";
 import { relations } from "drizzle-orm";
+import type { NoteParseResult, NoteAppliedItem } from "../shared/notes";
 
 // ============================================
 // USER & ACCESS CONTROL
@@ -10,9 +11,8 @@ export const users = mysqlTable("users", {
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
-  passwordHash: text("passwordHash"),
   loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "copacker", "vendor", "contractor"]).default("user").notNull(),
+  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "sales", "copacker", "vendor", "contractor", "investor"]).default("user").notNull(),
   departmentId: int("departmentId"),
   avatarUrl: text("avatarUrl"),
   phone: varchar("phone", { length: 32 }),
@@ -49,7 +49,7 @@ export type InsertLocalAuthCredential = typeof localAuthCredentials.$inferInsert
 export const teamInvitations = mysqlTable("teamInvitations", {
   id: int("id").autoincrement().primaryKey(),
   email: varchar("email", { length: 320 }).notNull(),
-  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "copacker", "vendor", "contractor"]).default("user").notNull(),
+  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "sales", "copacker", "vendor", "contractor", "investor"]).default("user").notNull(),
   inviteCode: varchar("inviteCode", { length: 64 }).notNull().unique(),
   invitedBy: int("invitedBy").notNull().references(() => users.id),
   linkedVendorId: int("linkedVendorId").references(() => vendors.id),
@@ -268,6 +268,7 @@ export const products = mysqlTable("products", {
   description: text("description"),
   category: varchar("category", { length: 128 }),
   type: mysqlEnum("type", ["physical", "digital", "service"]).default("physical").notNull(),
+  manufacturingStage: mysqlEnum("manufacturingStage", ["raw_material", "semi_finished_good", "finished_product"]).default("finished_product").notNull(),
   unitPrice: decimal("unitPrice", { precision: 15, scale: 2 }).notNull(),
   costPrice: decimal("costPrice", { precision: 15, scale: 2 }),
   currency: varchar("currency", { length: 3 }).default("USD"),
@@ -296,7 +297,7 @@ export const accounts = mysqlTable("accounts", {
   balance: decimal("balance", { precision: 15, scale: 2 }).default("0"),
   currency: varchar("currency", { length: 3 }).default("USD"),
   isActive: boolean("isActive").default(true),
-  parentAccountId: int("parentAccountId").references(() => accounts.id),
+  parentAccountId: int("parentAccountId").references((): AnyMySqlColumn => accounts.id),
   quickbooksAccountId: varchar("quickbooksAccountId", { length: 64 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -670,8 +671,90 @@ export const employeePayments = mysqlTable("employee_payments", {
   payPeriodEnd: timestamp("payPeriodEnd"),
   paymentMethod: mysqlEnum("paymentMethod", ["check", "direct_deposit", "wire", "other"]).default("direct_deposit"),
   status: mysqlEnum("status", ["pending", "processed", "cancelled"]).default("pending").notNull(),
+  grossAmount: decimal("grossAmount", { precision: 15, scale: 2 }),
+  taxWithheld: decimal("taxWithheld", { precision: 15, scale: 2 }),
+  otherDeductions: decimal("otherDeductions", { precision: 15, scale: 2 }),
+  payslipUrl: text("payslipUrl"),
   notes: text("notes"),
   createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+// PTO balance per employee per leave type per year
+export const ptoBalances = mysqlTable("pto_balances", {
+  id: int("id").autoincrement().primaryKey(),
+  employeeId: int("employeeId").notNull().references(() => employees.id),
+  leaveType: mysqlEnum("leaveType", ["vacation", "sick", "personal", "parental", "bereavement", "unpaid", "other"]).notNull(),
+  year: int("year").notNull(),
+  accruedHours: decimal("accruedHours", { precision: 8, scale: 2 }).default("0").notNull(),
+  usedHours: decimal("usedHours", { precision: 8, scale: 2 }).default("0").notNull(),
+  pendingHours: decimal("pendingHours", { precision: 8, scale: 2 }).default("0").notNull(),
+  carryOverHours: decimal("carryOverHours", { precision: 8, scale: 2 }).default("0").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  employeeLeaveYearIdx: uniqueIndex("pto_balances_employee_leave_year_idx").on(table.employeeId, table.leaveType, table.year),
+}));
+export const leaveRequests = mysqlTable("leave_requests", {
+  id: int("id").autoincrement().primaryKey(),
+  employeeId: int("employeeId").notNull().references(() => employees.id),
+  leaveType: mysqlEnum("leaveType", ["vacation", "sick", "personal", "parental", "bereavement", "unpaid", "other"]).notNull(),
+  startDate: timestamp("startDate").notNull(),
+  endDate: timestamp("endDate").notNull(),
+  hours: decimal("hours", { precision: 8, scale: 2 }).notNull(),
+  reason: text("reason"),
+  status: mysqlEnum("status", ["pending", "approved", "rejected", "cancelled"]).default("pending").notNull(),
+  approverId: int("approverId").references(() => users.id),
+  approvedAt: timestamp("approvedAt"),
+  rejectionReason: text("rejectionReason"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const onboardingTasks = mysqlTable("onboarding_tasks", {
+  id: int("id").autoincrement().primaryKey(),
+  employeeId: int("employeeId").notNull().references(() => employees.id),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  category: mysqlEnum("category", ["paperwork", "training", "equipment", "access", "introduction", "acknowledgment", "other"]).default("other").notNull(),
+  dueDate: timestamp("dueDate"),
+  status: mysqlEnum("status", ["pending", "in_progress", "completed", "skipped"]).default("pending").notNull(),
+  completedAt: timestamp("completedAt"),
+  sortOrder: int("sortOrder").default(0).notNull(),
+  createdBy: int("createdBy").references(() => users.id),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const employeeBenefits = mysqlTable("employee_benefits", {
+  id: int("id").autoincrement().primaryKey(),
+  employeeId: int("employeeId").notNull().references(() => employees.id),
+  benefitType: mysqlEnum("benefitType", ["health", "dental", "vision", "retirement_401k", "life_insurance", "disability", "hsa", "fsa", "commuter", "other"]).notNull(),
+  plan: varchar("plan", { length: 255 }),
+  carrier: varchar("carrier", { length: 255 }),
+  coverageLevel: mysqlEnum("coverageLevel", ["employee_only", "employee_spouse", "employee_children", "family", "waived"]),
+  employeeContribution: decimal("employeeContribution", { precision: 15, scale: 2 }),
+  employerContribution: decimal("employerContribution", { precision: 15, scale: 2 }),
+  contributionFrequency: mysqlEnum("contributionFrequency", ["per_paycheck", "monthly", "annual"]).default("per_paycheck"),
+  effectiveDate: timestamp("effectiveDate"),
+  endDate: timestamp("endDate"),
+  enrollmentStatus: mysqlEnum("enrollmentStatus", ["enrolled", "pending", "waived", "terminated"]).default("pending").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const employeeEmergencyContacts = mysqlTable("employee_emergency_contacts", {
+  id: int("id").autoincrement().primaryKey(),
+  employeeId: int("employeeId").notNull().references(() => employees.id),
+  name: varchar("name", { length: 255 }).notNull(),
+  relationship: varchar("relationship", { length: 64 }),
+  phone: varchar("phone", { length: 32 }),
+  email: varchar("email", { length: 320 }),
+  address: text("address"),
+  isPrimary: boolean("isPrimary").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -809,16 +892,33 @@ export const projectTasks = mysqlTable("project_tasks", {
   name: varchar("name", { length: 255 }).notNull(),
   description: text("description"),
   assigneeId: int("assigneeId"),
+  // Who owns execution: a human user or an AI agent. When "ai_agent", the
+  // linked aiAgentTasks row carries approval/execution state.
+  assigneeType: mysqlEnum("assigneeType", ["human", "ai_agent"]).default("human").notNull(),
+  assigneeAgentTaskId: int("assigneeAgentTaskId"),
   status: mysqlEnum("status", ["todo", "in_progress", "review", "completed", "cancelled"]).default("todo").notNull(),
   priority: mysqlEnum("priority", ["low", "medium", "high", "critical"]).default("medium").notNull(),
   dueDate: timestamp("dueDate"),
   completedDate: timestamp("completedDate"),
   estimatedHours: decimal("estimatedHours", { precision: 10, scale: 2 }),
   actualHours: decimal("actualHours", { precision: 10, scale: 2 }),
+  // Lightfield-style CRM linkage + provenance
+  accountId: int("accountId"),
+  opportunityId: int("opportunityId"),
+  sourceType: mysqlEnum("sourceType", ["manual", "email", "meeting", "ai_generated", "crm_deal"]).default("manual").notNull(),
+  sourceRefType: varchar("sourceRefType", { length: 64 }),
+  sourceRefId: int("sourceRefId"),
+  // External string ID for sources whose identifier isn't a DB int — e.g.
+  // RFC 822 Message-ID for emails, Fireflies recording URL for meetings.
+  sourceExternalId: varchar("sourceExternalId", { length: 255 }),
+  aiReasoning: text("aiReasoning"),
+  aiConfidence: decimal("aiConfidence", { precision: 5, scale: 2 }),
   createdBy: int("createdBy"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
+export type ProjectTask = typeof projectTasks.$inferSelect;
+export type InsertProjectTask = typeof projectTasks.$inferInsert;
 
 // ============================================
 // AUDIT & SYSTEM
@@ -1577,6 +1677,114 @@ export const rawMaterials = mysqlTable("rawMaterials", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+// Recipe costing ingredients
+export const recipeIngredients = mysqlTable("recipeIngredients", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  sku: varchar("sku", { length: 64 }).notNull().unique(),
+  category: mysqlEnum("category", ["protein", "spice", "liquid", "produce", "packaging", "other"]).default("other").notNull(),
+  unitOfMeasure: mysqlEnum("unitOfMeasure", ["g", "kg", "lb", "oz", "ml", "l", "each"]).default("g").notNull(),
+  costPerUnit: decimal("costPerUnit", { precision: 12, scale: 4 }).default("0").notNull(),
+  costUnit: mysqlEnum("costUnit", ["per_lb", "per_kg", "per_oz", "per_each"]).default("per_kg").notNull(),
+  supplierId: int("supplierId").references(() => vendors.id),
+  leadTimeDays: int("leadTimeDays"),
+  moistureContent: decimal("moistureContent", { precision: 5, scale: 4 }),
+  shelfLifeDays: int("shelfLifeDays"),
+  isAllergen: boolean("isAllergen").default(false).notNull(),
+  allergenType: varchar("allergenType", { length: 100 }),
+  notes: text("notes"),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const ingredientCostHistory = mysqlTable("ingredientCostHistory", {
+  id: int("id").autoincrement().primaryKey(),
+  ingredientId: int("ingredientId").notNull().references(() => recipeIngredients.id),
+  costPerUnit: decimal("costPerUnit", { precision: 12, scale: 4 }).notNull(),
+  costUnit: mysqlEnum("costUnit", ["per_lb", "per_kg", "per_oz", "per_each"]).default("per_kg").notNull(),
+  effectiveDate: timestamp("effectiveDate").defaultNow().notNull(),
+  supplierId: int("supplierId").references(() => vendors.id),
+  source: varchar("source", { length: 100 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export const recipes = mysqlTable("recipes", {
+  id: int("id").autoincrement().primaryKey(),
+  recipeId: varchar("recipeId", { length: 32 }).notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  category: mysqlEnum("category", ["beef", "pork", "chicken", "seafood", "dairy", "blend", "other"]).default("other").notNull(),
+  status: mysqlEnum("status", ["development", "production", "discontinued"]).default("development").notNull(),
+  version: int("version").default(1).notNull(),
+  isSubRecipe: boolean("isSubRecipe").default(false).notNull(),
+  baseBatchGrams: decimal("baseBatchGrams", { precision: 12, scale: 2 }).default("0").notNull(),
+  expectedYieldPct: decimal("expectedYieldPct", { precision: 5, scale: 4 }).default("1.0000").notNull(),
+  hasMoistureVariants: boolean("hasMoistureVariants").default(false).notNull(),
+  /** Linked BOM built from this recipe (sync via syncRecipeToBom). */
+  bomId: int("bomId").references(() => billOfMaterials.id),
+  /** Finished good this recipe produces when synced to a BOM. */
+  outputProductId: int("outputProductId").references(() => products.id),
+  notes: text("notes"),
+  createdBy: int("createdBy").references(() => users.id),
+  approvedBy: int("approvedBy").references(() => users.id),
+  approvedAt: timestamp("approvedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  recipeVersionIdx: uniqueIndex("recipes_recipe_version_idx").on(table.recipeId, table.version),
+}));
+
+export const recipeLines = mysqlTable("recipeLines", {
+  id: int("id").autoincrement().primaryKey(),
+  recipeRowId: int("recipeRowId").notNull().references(() => recipes.id),
+  lineNumber: int("lineNumber").default(1).notNull(),
+  ingredientId: int("ingredientId").references(() => recipeIngredients.id),
+  subRecipeId: int("subRecipeId").references(() => recipes.id),
+  quantityGrams: decimal("quantityGrams", { precision: 12, scale: 2 }).default("0").notNull(),
+  quantityGramsDry: decimal("quantityGramsDry", { precision: 12, scale: 2 }),
+  isProteinLine: boolean("isProteinLine").default(false).notNull(),
+  isWaterLine: boolean("isWaterLine").default(false).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const recipeProcedures = mysqlTable("recipeProcedures", {
+  id: int("id").autoincrement().primaryKey(),
+  recipeRowId: int("recipeRowId").notNull().references(() => recipes.id),
+  stepNumber: int("stepNumber").default(1).notNull(),
+  instruction: text("instruction").notNull(),
+  durationMinutes: int("durationMinutes"),
+  temperatureF: int("temperatureF"),
+  appliesTo: mysqlEnum("appliesTo", ["both", "dry_only", "wet_only"]).default("both").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export const moistureProfiles = mysqlTable("moistureProfiles", {
+  id: int("id").autoincrement().primaryKey(),
+  ingredientId: int("ingredientId").notNull().references(() => recipeIngredients.id),
+  profileName: varchar("profileName", { length: 50 }).notNull(),
+  moistureContent: decimal("moistureContent", { precision: 5, scale: 4 }).notNull(),
+  isDefault: boolean("isDefault").default(false).notNull(),
+  testedDate: timestamp("testedDate"),
+  coaReference: varchar("coaReference", { length: 100 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export const batchCostSnapshots = mysqlTable("batchCostSnapshots", {
+  id: int("id").autoincrement().primaryKey(),
+  recipeId: int("recipeId").notNull().references(() => recipes.id),
+  snapshotDate: timestamp("snapshotDate").defaultNow().notNull(),
+  formulationType: mysqlEnum("formulationType", ["wet", "dry"]).default("wet").notNull(),
+  totalBatchGrams: decimal("totalBatchGrams", { precision: 12, scale: 2 }).notNull(),
+  totalBatchCost: decimal("totalBatchCost", { precision: 12, scale: 4 }).notNull(),
+  costPerGram: decimal("costPerGram", { precision: 12, scale: 6 }).notNull(),
+  costPerLb: decimal("costPerLb", { precision: 12, scale: 4 }).notNull(),
+  costPerKg: decimal("costPerKg", { precision: 12, scale: 4 }).notNull(),
+  yieldAdjustedCostPerLb: decimal("yieldAdjustedCostPerLb", { precision: 12, scale: 4 }).notNull(),
+  ingredientCosts: json("ingredientCosts"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
 // BOM version history for tracking changes
 export const bomVersionHistory = mysqlTable("bomVersionHistory", {
   id: int("id").autoincrement().primaryKey(),
@@ -1596,8 +1804,109 @@ export type BomComponent = typeof bomComponents.$inferSelect;
 export type InsertBomComponent = typeof bomComponents.$inferInsert;
 export type RawMaterial = typeof rawMaterials.$inferSelect;
 export type InsertRawMaterial = typeof rawMaterials.$inferInsert;
+export type RecipeIngredient = typeof recipeIngredients.$inferSelect;
+export type InsertRecipeIngredient = typeof recipeIngredients.$inferInsert;
+export type IngredientCostHistory = typeof ingredientCostHistory.$inferSelect;
+export type InsertIngredientCostHistory = typeof ingredientCostHistory.$inferInsert;
+
+// Multi-vendor pricing for ingredients
+export const ingredientVendors = mysqlTable("ingredientVendors", {
+  id: int("id").autoincrement().primaryKey(),
+  ingredientId: int("ingredientId").notNull().references(() => recipeIngredients.id),
+  vendorId: int("vendorId").notNull().references(() => vendors.id),
+  isPrimary: boolean("isPrimary").default(false).notNull(),
+  unitPrice: decimal("unitPrice", { precision: 12, scale: 4 }),
+  costUnit: mysqlEnum("costUnit", ["per_lb", "per_kg", "per_oz", "per_each"]).default("per_kg").notNull(),
+  contractStartDate: timestamp("contractStartDate"),
+  contractEndDate: timestamp("contractEndDate"),
+  minimumOrderQty: decimal("minimumOrderQty", { precision: 15, scale: 4 }),
+  leadTimeDays: int("leadTimeDays"),
+  paymentTerms: varchar("paymentTerms", { length: 100 }),
+  lastQuotedAt: timestamp("lastQuotedAt"),
+  lastQuotedPrice: decimal("lastQuotedPrice", { precision: 12, scale: 4 }),
+  quoteValidUntil: timestamp("quoteValidUntil"),
+  status: mysqlEnum("status", ["active", "inactive", "pending_quote"]).default("active").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  ingredientVendorIdx: uniqueIndex("ingredientVendors_ingredient_vendor_idx").on(table.ingredientId, table.vendorId),
+}));
+
+export type IngredientVendor = typeof ingredientVendors.$inferSelect;
+export type InsertIngredientVendor = typeof ingredientVendors.$inferInsert;
+
+// Automated ingredient quote requests (bridges ingredients to vendorRfqs)
+export const ingredientQuoteRequests = mysqlTable("ingredientQuoteRequests", {
+  id: int("id").autoincrement().primaryKey(),
+  ingredientId: int("ingredientId").notNull().references(() => recipeIngredients.id),
+  vendorRfqId: int("vendorRfqId"),
+  triggerType: mysqlEnum("triggerType", ["manual", "price_spike", "contract_expiry", "scheduled", "cost_review", "invoice_variance"]).notNull(),
+  triggerDetails: text("triggerDetails"),
+  currentCostPerUnit: decimal("currentCostPerUnit", { precision: 12, scale: 4 }),
+  historicalAvgCost: decimal("historicalAvgCost", { precision: 12, scale: 4 }),
+  targetVendorIds: text("targetVendorIds"),
+  status: mysqlEnum("status", ["pending", "rfq_created", "quotes_received", "analyzed", "accepted", "cancelled"]).default("pending").notNull(),
+  analysisResult: text("analysisResult"),
+  acceptedQuoteId: int("acceptedQuoteId"),
+  costUpdated: boolean("costUpdated").default(false).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type IngredientQuoteRequest = typeof ingredientQuoteRequests.$inferSelect;
+export type InsertIngredientQuoteRequest = typeof ingredientQuoteRequests.$inferInsert;
+
+// Cost alerts for ingredients (price spikes, better prices, contract expiry, invoice variances)
+export const ingredientCostAlerts = mysqlTable("ingredientCostAlerts", {
+  id: int("id").autoincrement().primaryKey(),
+  ingredientId: int("ingredientId").notNull().references(() => recipeIngredients.id),
+  alertType: mysqlEnum("alertType", [
+    "price_spike", "better_price_found", "contract_expiring",
+    "quote_below_current", "periodic_review", "invoice_above_po",
+  ]).notNull(),
+  severity: mysqlEnum("severity", ["info", "warning", "critical"]).default("info").notNull(),
+  message: text("message").notNull(),
+  details: text("details"),
+  quoteRequestId: int("quoteRequestId"),
+  vendorQuoteId: int("vendorQuoteId"),
+  isRead: boolean("isRead").default(false).notNull(),
+  isDismissed: boolean("isDismissed").default(false).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type IngredientCostAlert = typeof ingredientCostAlerts.$inferSelect;
+export type InsertIngredientCostAlert = typeof ingredientCostAlerts.$inferInsert;
+export type Recipe = typeof recipes.$inferSelect;
+export type InsertRecipe = typeof recipes.$inferInsert;
+export type RecipeLine = typeof recipeLines.$inferSelect;
+export type InsertRecipeLine = typeof recipeLines.$inferInsert;
+export type RecipeProcedure = typeof recipeProcedures.$inferSelect;
+export type InsertRecipeProcedure = typeof recipeProcedures.$inferInsert;
+export type MoistureProfile = typeof moistureProfiles.$inferSelect;
+export type InsertMoistureProfile = typeof moistureProfiles.$inferInsert;
+export type BatchCostSnapshot = typeof batchCostSnapshots.$inferSelect;
+export type InsertBatchCostSnapshot = typeof batchCostSnapshots.$inferInsert;
 export type BomVersionHistory = typeof bomVersionHistory.$inferSelect;
 export type InsertBomVersionHistory = typeof bomVersionHistory.$inferInsert;
+
+// Per-copacker recipe sharing. A recipe is visible in a copacker's portal only
+// if a row exists here for their linked warehouse.
+export const recipeCopackerShares = mysqlTable("recipe_copacker_shares", {
+  id: int("id").autoincrement().primaryKey(),
+  recipeId: int("recipeId").notNull().references(() => recipes.id),
+  warehouseId: int("warehouseId").notNull().references(() => warehouses.id),
+  shareIngredients: boolean("shareIngredients").default(true).notNull(),
+  shareProcedures: boolean("shareProcedures").default(true).notNull(),
+  notes: text("notes"),
+  sharedBy: int("sharedBy").references(() => users.id),
+  sharedAt: timestamp("sharedAt").defaultNow().notNull(),
+}, (table) => ({
+  recipeWarehouseIdx: uniqueIndex("recipe_copacker_shares_recipe_warehouse_idx").on(table.recipeId, table.warehouseId),
+}));
+
+export type RecipeCopackerShare = typeof recipeCopackerShares.$inferSelect;
+export type InsertRecipeCopackerShare = typeof recipeCopackerShares.$inferInsert;
 
 // ============================================
 // COPACKER PORTAL
@@ -2236,7 +2545,10 @@ export const shopifyStores = mysqlTable("shopifyStores", {
   storeDomain: varchar("storeDomain", { length: 255 }).notNull().unique(), // mystore.myshopify.com
   storeName: varchar("storeName", { length: 255 }),
   accessToken: text("accessToken"), // Encrypted in production
-  apiVersion: varchar("apiVersion", { length: 16 }).default("2024-01"),
+  tokenExpiresAt: timestamp("tokenExpiresAt"), // When the access token expires
+  clientId: varchar("clientId", { length: 255 }), // OAuth client ID for token refresh
+  clientSecret: varchar("clientSecret", { length: 255 }), // OAuth client secret for token refresh
+  apiVersion: varchar("apiVersion", { length: 16 }).default("2025-01"),
   isEnabled: boolean("isEnabled").default(true),
   syncInventory: boolean("syncInventory").default(true),
   syncOrders: boolean("syncOrders").default(true),
@@ -2547,7 +2859,14 @@ export const dataRooms = mysqlTable("data_rooms", {
   // Google Drive sync
   googleDriveFolderId: varchar("googleDriveFolderId", { length: 255 }),
   lastSyncedAt: timestamp("lastSyncedAt"),
-  
+
+  // Live current-financials page (investor-facing, JSON-driven, distinct from
+  // the frozen projections snapshot). When enabled, the data room exposes
+  // `/dr/:code/financials` with a trimmed set of metrics (cash, last-3-mo
+  // revenue/burn, runway, AR total).
+  showLiveFinancials: boolean("showLiveFinancials").default(false).notNull(),
+  liveFinancialsIncludeAr: boolean("liveFinancialsIncludeAr").default(false).notNull(),
+
   status: mysqlEnum("status", ["active", "archived", "draft"]).default("active").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -3043,7 +3362,7 @@ export const dataRoomChecklistItems = mysqlTable("dataRoomChecklistItems", {
   checklistId: int("checklistId").notNull(),
   dataRoomId: int("dataRoomId").notNull(),
   categoryName: varchar("categoryName", { length: 255 }),
-  itemName: varchar("itemName", { length: 255 }).notNull(),
+  itemName: varchar("itemName", { length: 255 }).notNull().$default(() => ''),
   itemDescription: text("itemDescription"),
   requirement: mysqlEnum("requirement", ["required", "optional", "conditional"]).default("required").notNull(),
   status: mysqlEnum("status", ["missing", "pending", "uploaded", "approved", "rejected", "waived", "not_applicable", "complete", "partial"]).default("missing").notNull(),
@@ -3490,7 +3809,10 @@ export const aiAgentTasks = mysqlTable("aiAgentTasks", {
     "create_material",
     "create_product",
     "create_bom",
-    "create_customer"
+    "create_customer",
+    "create_crm_deal",
+    "ingredient_rfq",
+    "invoice_price_review"
   ]).notNull(),
   status: mysqlEnum("status", [
     "pending_approval",
@@ -3549,7 +3871,9 @@ export const aiAgentRules = mysqlTable("aiAgentRules", {
     "payment_reminder",
     "shipment_tracking",
     "price_alert",
-    "quality_check"
+    "quality_check",
+    "ingredient_requote",
+    "invoice_price_check"
   ]).notNull(),
   triggerCondition: text("triggerCondition").notNull(), // JSON condition definition
   // Action configuration
@@ -3629,6 +3953,7 @@ export const vendorRfqs = mysqlTable("vendorRfqs", {
   
   // Material details
   rawMaterialId: int("rawMaterialId"),
+  ingredientId: int("ingredientId").references(() => recipeIngredients.id),
   materialName: varchar("materialName", { length: 255 }).notNull(),
   materialDescription: text("materialDescription"),
   quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(),
@@ -3851,7 +4176,16 @@ export const crmContacts = mysqlTable("crm_contacts", {
   assignedTo: int("assignedTo"), // User responsible for this contact
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (table) => ({
+  // Schema-level uniqueness guarantees. Multiple NULLs are allowed under
+  // MySQL's UNIQUE semantics, so contacts without an identifier are fine.
+  // Run crm.contacts.autoMergeDuplicates before migration 0035 if the
+  // deployment has existing duplicates.
+  emailUniq: uniqueIndex("crm_contacts_email_uniq").on(table.email),
+  phoneUniq: uniqueIndex("crm_contacts_phone_uniq").on(table.phone),
+  whatsappUniq: uniqueIndex("crm_contacts_whatsapp_uniq").on(table.whatsappNumber),
+  linkedinUniq: uniqueIndex("crm_contacts_linkedin_uniq").on(table.linkedinUrl),
+}));
 
 export type CrmContact = typeof crmContacts.$inferSelect;
 export type InsertCrmContact = typeof crmContacts.$inferInsert;
@@ -4387,6 +4721,9 @@ export const investmentGrantItems = mysqlTable("investment_grant_items", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+export type InvestmentGrantItem = typeof investmentGrantItems.$inferSelect;
+export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert;
+
 // ============================================
 // EDI (ELECTRONIC DATA INTERCHANGE) MODULE
 // ============================================
@@ -4622,8 +4959,6 @@ export const ediSettings = mysqlTable("edi_settings", {
 
 export type EdiSettings = typeof ediSettings.$inferSelect;
 export type InsertEdiSettings = typeof ediSettings.$inferInsert;
-export type InvestmentGrantItem = typeof investmentGrantItems.$inferSelect;
-export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert;
 
 // ============================================
 // FIREFLIES INTEGRATION
@@ -4631,22 +4966,31 @@ export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert
 
 export const firefliesMeetings = mysqlTable("fireflies_meetings", {
   id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId"),
-  firefliesId: varchar("firefliesId", { length: 128 }).notNull(),
-  title: varchar("title", { length: 500 }),
+  firefliesId: varchar("firefliesId", { length: 128 }).notNull().unique(),
+  title: varchar("title", { length: 500 }).notNull(),
   date: timestamp("date"),
   duration: int("duration"),
+  organizerEmail: varchar("organizerEmail", { length: 320 }),
+  organizerName: varchar("organizerName", { length: 255 }),
   participants: text("participants"),
-  transcript: text("transcript"),
   summary: text("summary"),
-  aiSummary: text("aiSummary"),
-  actionItemsRaw: text("actionItemsRaw"),
-  videoUrl: text("videoUrl"),
-  audioUrl: text("audioUrl"),
-  status: mysqlEnum("status", ["pending", "contacts_created", "tasks_created", "fully_processed"]).default("pending"),
-  crmContactId: int("crmContactId"),
-  linkedEntityType: varchar("linkedEntityType", { length: 64 }),
-  linkedEntityId: int("linkedEntityId"),
+  shortSummary: text("shortSummary"),
+  keywords: text("keywords"),
+  topics: text("topics"),
+  sentimentAnalysis: text("sentimentAnalysis"),
+  transcriptUrl: text("transcriptUrl"),
+  transcriptText: text("transcriptText"),
+  actionItems: text("actionItems"),
+  processingStatus: mysqlEnum("processingStatus", ["pending", "contacts_created", "tasks_created", "project_created", "fully_processed", "skipped", "error"]).default("pending").notNull(),
+  processedAt: timestamp("processedAt"),
+  processedBy: int("processedBy"),
+  processingNotes: text("processingNotes"),
+  autoCreatedProjectId: int("autoCreatedProjectId"),
+  autoCreatedTaskCount: int("autoCreatedTaskCount").default(0),
+  autoCreatedContactCount: int("autoCreatedContactCount").default(0),
+  meetingSource: varchar("meetingSource", { length: 64 }),
+  calendarEventId: varchar("calendarEventId", { length: 255 }),
+  recordingUrl: text("recordingUrl"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -4656,11 +5000,16 @@ export type InsertFirefliesMeeting = typeof firefliesMeetings.$inferInsert;
 export const firefliesActionItems = mysqlTable("fireflies_action_items", {
   id: int("id").autoincrement().primaryKey(),
   meetingId: int("meetingId").notNull(),
+  firefliesMeetingId: varchar("firefliesMeetingId", { length: 128 }).notNull(),
   text: text("text").notNull(),
   assignee: varchar("assignee", { length: 255 }),
-  dueDate: varchar("dueDate", { length: 64 }),
-  status: mysqlEnum("status", ["pending", "completed", "cancelled"]).default("pending").notNull(),
-  linkedTaskId: int("linkedTaskId"),
+  assigneeEmail: varchar("assigneeEmail", { length: 320 }),
+  dueDate: timestamp("dueDate"),
+  projectTaskId: int("projectTaskId"),
+  crmContactId: int("crmContactId"),
+  status: mysqlEnum("status", ["pending", "converted_to_task", "skipped", "completed"]).default("pending").notNull(),
+  convertedAt: timestamp("convertedAt"),
+  convertedBy: int("convertedBy"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -4669,12 +5018,13 @@ export type InsertFirefliesActionItem = typeof firefliesActionItems.$inferInsert
 
 export const firefliesContactMappings = mysqlTable("fireflies_contact_mappings", {
   id: int("id").autoincrement().primaryKey(),
-  email: varchar("email", { length: 320 }).notNull(),
+  meetingId: int("meetingId").notNull(),
+  participantEmail: varchar("participantEmail", { length: 320 }).notNull(),
+  participantName: varchar("participantName", { length: 255 }),
   crmContactId: int("crmContactId"),
-  vendorId: int("vendorId"),
-  customerId: int("customerId"),
+  isNewContact: boolean("isNewContact").default(false),
+  wasAutoCreated: boolean("wasAutoCreated").default(false),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 export type FirefliesContactMapping = typeof firefliesContactMappings.$inferSelect;
 export type InsertFirefliesContactMapping = typeof firefliesContactMappings.$inferInsert;
@@ -4855,14 +5205,19 @@ export const fundraisingCampaigns = mysqlTable("fundraising_campaigns", {
   companyId: int("companyId"),
   name: varchar("name", { length: 255 }).notNull(),
   description: text("description"),
-  targetAmount: decimal("targetAmount", { precision: 18, scale: 2 }),
-  raisedAmount: decimal("raisedAmount", { precision: 18, scale: 2 }).default("0"),
-  minimumInvestment: decimal("minimumInvestment", { precision: 18, scale: 2 }),
-  valuation: decimal("valuation", { precision: 18, scale: 2 }),
+  targetAmount: decimal("targetAmount", { precision: 15, scale: 2 }),
+  raisedAmount: decimal("raisedAmount", { precision: 15, scale: 2 }).default("0"),
+  minimumInvestment: decimal("minimumInvestment", { precision: 15, scale: 2 }),
+  valuation: decimal("valuation", { precision: 15, scale: 2 }),
   roundType: mysqlEnum("roundType", ["pre_seed", "seed", "series_a", "series_b", "series_c", "bridge", "other"]).default("seed").notNull(),
   equityOffered: decimal("equityOffered", { precision: 5, scale: 2 }),
+  startDate: timestamp("startDate"),
+  targetCloseDate: timestamp("targetCloseDate"),
+  actualCloseDate: timestamp("actualCloseDate"),
   status: mysqlEnum("status", ["planning", "active", "paused", "closed", "cancelled"]).default("planning").notNull(),
+  dataRoomId: int("dataRoomId"),
   notes: text("notes"),
+  createdBy: int("createdBy"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -5143,9 +5498,27 @@ export const stakeholders = mysqlTable("stakeholders", {
   type: mysqlEnum("type", ["founder", "employee", "investor", "advisor", "board_member", "contractor"]).notNull(),
   title: varchar("title", { length: 128 }),
   relationship: varchar("relationship", { length: 128 }), // "Lead Investor", "Angel", etc.
+  // Investor-portal entitlement tier. Drives which gated sections (board
+  // materials, sensitive cap-table detail, etc.) are visible. Free tiers
+  // for now since most investors fit cleanly into ordinary / major / board.
+  tier: mysqlEnum("tier", ["ordinary", "major", "board"]).default("ordinary").notNull(),
   address: text("address"),
+  // Mailing address for K-1s / paper communications. Distinct from `address`
+  // (legal address) because some investors live at one place and want tax
+  // documents sent to a different one (CPA, family office, etc.).
+  mailingAddress: text("mailingAddress"),
+  // Free-text "how to pay me" — wire instructions, ACH preference, etc.
+  // Deliberately NOT a structured ACH field: storing actual routing /
+  // account numbers needs an encrypted vault we don't have yet, and the
+  // failure mode of leaking those is much worse than the inconvenience
+  // of a free-text note describing the preference.
+  paymentPreference: text("paymentPreference"),
   taxId: varchar("taxId", { length: 64 }),
   accreditedInvestor: boolean("accreditedInvestor").default(false),
+  // When the investor last re-attested they're accredited. Used so the
+  // portal can prompt for re-attestation after some interval (Reg D
+  // typically wants annual re-confirmation for ongoing offerings).
+  accreditedReAttestedAt: timestamp("accreditedReAttestedAt"),
   status: mysqlEnum("status", ["active", "inactive", "terminated", "departed"]).default("active"),
   terminationDate: timestamp("terminationDate"),
   notes: text("notes"),
@@ -5156,6 +5529,58 @@ export const stakeholders = mysqlTable("stakeholders", {
 
 export type Stakeholder = typeof stakeholders.$inferSelect;
 export type InsertStakeholder = typeof stakeholders.$inferInsert;
+
+// Pro-rata / participation interest signaled by an existing investor in
+// response to an open fundraising round. This is non-binding — it's a
+// "I'd like to participate, please reach out" notice the IR team can
+// follow up on, not a subscription document. Storing the indicated
+// amount is optional; some investors signal interest without a number.
+export const proRataIndications = mysqlTable("pro_rata_indications", {
+  id: int("id").autoincrement().primaryKey(),
+  campaignId: int("campaignId").notNull(),
+  stakeholderId: int("stakeholderId").notNull(),
+  indicatedAmount: decimal("indicatedAmount", { precision: 18, scale: 2 }),
+  notes: text("notes"),
+  status: mysqlEnum("status", ["interested", "withdrawn", "converted"]).default("interested").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ProRataIndication = typeof proRataIndications.$inferSelect;
+export type InsertProRataIndication = typeof proRataIndications.$inferInsert;
+
+// Per-stakeholder document locker. Used by the investor portal to surface
+// executed agreements, K-1s, capital-call notices, distribution notices
+// — anything tied to one investor rather than the company at large.
+//
+// Storage uses the project's `storagePut`/`storageGet` helpers (Forge
+// proxy or S3 depending on env), so we keep the key + the durable URL.
+export const stakeholderDocuments = mysqlTable("stakeholder_documents", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  stakeholderId: int("stakeholderId").notNull(),
+  title: varchar("title", { length: 256 }).notNull(),
+  description: text("description"),
+  category: mysqlEnum("category", [
+    "agreement",        // SAFE / note / SPA — what the investor signed
+    "side_letter",      // any individually-negotiated terms
+    "k1",               // tax forms
+    "capital_call",
+    "distribution",
+    "other",
+  ]).default("other").notNull(),
+  fileType: varchar("fileType", { length: 64 }),
+  mimeType: varchar("mimeType", { length: 128 }),
+  fileSize: bigint("fileSize", { mode: "number" }),
+  storageKey: varchar("storageKey", { length: 512 }).notNull(),
+  storageUrl: varchar("storageUrl", { length: 1024 }),
+  uploadedBy: int("uploadedBy"), // user id, nullable so backfills don't break
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type StakeholderDocument = typeof stakeholderDocuments.$inferSelect;
+export type InsertStakeholderDocument = typeof stakeholderDocuments.$inferInsert;
 
 export const equityGrants = mysqlTable("equity_grants", {
   id: int("id").autoincrement().primaryKey(),
@@ -5387,9 +5812,13 @@ export const teamInvites = mysqlTable("team_invites", {
   companyId: int("companyId"),
   email: varchar("email", { length: 320 }).notNull(),
   name: varchar("name", { length: 256 }),
-  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "copacker", "vendor", "contractor"]).default("user").notNull(),
+  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "sales", "copacker", "vendor", "contractor", "investor"]).default("user").notNull(),
   invitedBy: int("invitedBy").notNull(),
   token: varchar("token", { length: 128 }).notNull().unique(),
+  // When an admin invites an existing stakeholder (typically an investor)
+  // to the portal, we remember which cap-table row to attach the new user
+  // to once they accept. Nullable for ordinary team invites.
+  linkedStakeholderId: int("linkedStakeholderId"),
   status: mysqlEnum("status", ["pending", "accepted", "expired", "cancelled"]).default("pending"),
   expiresAt: timestamp("expiresAt").notNull(),
   acceptedAt: timestamp("acceptedAt"),
@@ -5564,3 +5993,587 @@ export const kpiGoals = mysqlTable("kpi_goals", {
 
 export type KpiGoal = typeof kpiGoals.$inferSelect;
 export type InsertKpiGoal = typeof kpiGoals.$inferInsert;
+
+// ============================================
+// SUPPLY CHAIN WORKFLOW ENGINE
+// ============================================
+
+export const supplyChainWorkflows = mysqlTable("supplyChainWorkflows", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  workflowType: mysqlEnum("workflowType", ["demand_forecasting", "production_planning", "material_requirements", "procurement", "inventory_reorder", "inventory_transfer", "inventory_optimization", "work_order_generation", "production_scheduling", "freight_procurement", "shipment_tracking", "order_fulfillment", "supplier_management", "quality_inspection", "invoice_matching", "payment_processing", "exception_handling", "vendor_quote_procurement", "vendor_quote_analysis", "custom"]).notNull(),
+  triggerType: mysqlEnum("triggerType", ["scheduled", "event", "threshold", "manual", "continuous"]).default("scheduled").notNull(),
+  cronSchedule: varchar("cronSchedule", { length: 64 }),
+  triggerEvents: text("triggerEvents"),
+  thresholdConfig: text("thresholdConfig"),
+  executionConfig: text("executionConfig"),
+  maxConcurrentRuns: int("maxConcurrentRuns").default(1),
+  timeoutMinutes: int("timeoutMinutes").default(60),
+  retryAttempts: int("retryAttempts").default(3),
+  retryDelayMinutes: int("retryDelayMinutes").default(5),
+  requiresApproval: boolean("requiresApproval").default(false),
+  autoApproveThreshold: decimal("autoApproveThreshold", { precision: 14, scale: 2 }),
+  approvalRoles: text("approvalRoles"),
+  escalationMinutes: int("escalationMinutes").default(60),
+  escalationRoles: text("escalationRoles"),
+  dependsOnWorkflows: text("dependsOnWorkflows"),
+  isActive: boolean("isActive").default(true).notNull(),
+  lastRunAt: timestamp("lastRunAt"),
+  nextScheduledRun: timestamp("nextScheduledRun"),
+  successCount: int("successCount").default(0),
+  failureCount: int("failureCount").default(0),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SupplyChainWorkflow = typeof supplyChainWorkflows.$inferSelect;
+export type InsertSupplyChainWorkflow = typeof supplyChainWorkflows.$inferInsert;
+
+export const workflowRuns = mysqlTable("workflowRuns", {
+  id: int("id").autoincrement().primaryKey(),
+  workflowId: int("workflowId").notNull(),
+  runNumber: varchar("runNumber", { length: 64 }).notNull(),
+  status: mysqlEnum("status", ["queued", "running", "awaiting_approval", "approved", "rejected", "completed", "failed", "cancelled", "timed_out"]).default("queued").notNull(),
+  triggeredBy: mysqlEnum("triggeredBy", ["schedule", "event", "threshold", "manual", "dependency"]).notNull(),
+  triggerData: text("triggerData"),
+  triggeredByUserId: int("triggeredByUserId"),
+  startedAt: timestamp("startedAt"),
+  completedAt: timestamp("completedAt"),
+  durationMs: int("durationMs"),
+  totalSteps: int("totalSteps").default(0),
+  completedSteps: int("completedSteps").default(0),
+  currentStepName: varchar("currentStepName", { length: 255 }),
+  progressPercent: int("progressPercent").default(0),
+  inputData: text("inputData"),
+  outputData: text("outputData"),
+  errorMessage: text("errorMessage"),
+  errorDetails: text("errorDetails"),
+  itemsProcessed: int("itemsProcessed").default(0),
+  itemsSucceeded: int("itemsSucceeded").default(0),
+  itemsFailed: int("itemsFailed").default(0),
+  totalValue: decimal("totalValue", { precision: 14, scale: 2 }),
+  attemptNumber: int("attemptNumber").default(1),
+  parentRunId: int("parentRunId"),
+  approvalRequestedAt: timestamp("approvalRequestedAt"),
+  approvedBy: int("approvedBy"),
+  approvedAt: timestamp("approvedAt"),
+  rejectedBy: int("rejectedBy"),
+  rejectedAt: timestamp("rejectedAt"),
+  rejectionReason: text("rejectionReason"),
+  escalatedAt: timestamp("escalatedAt"),
+  escalatedTo: text("escalatedTo"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type WorkflowRun = typeof workflowRuns.$inferSelect;
+export type InsertWorkflowRun = typeof workflowRuns.$inferInsert;
+
+export const workflowSteps = mysqlTable("workflowSteps", {
+  id: int("id").autoincrement().primaryKey(),
+  runId: int("runId").notNull(),
+  stepNumber: int("stepNumber").notNull(),
+  stepName: varchar("stepName", { length: 255 }).notNull(),
+  stepType: mysqlEnum("stepType", ["data_fetch", "ai_analysis", "ai_decision", "calculation", "validation", "create_record", "update_record", "send_email", "send_notification", "api_call", "wait_approval", "condition_check", "loop_start", "loop_end", "parallel_start", "parallel_end", "subprocess"]).notNull(),
+  status: mysqlEnum("status", ["pending", "running", "completed", "failed", "skipped", "awaiting_input"]).default("pending").notNull(),
+  startedAt: timestamp("startedAt"),
+  completedAt: timestamp("completedAt"),
+  durationMs: int("durationMs"),
+  inputData: text("inputData"),
+  outputData: text("outputData"),
+  errorMessage: text("errorMessage"),
+  aiPrompt: text("aiPrompt"),
+  aiResponse: text("aiResponse"),
+  aiConfidence: decimal("aiConfidence", { precision: 5, scale: 2 }),
+  aiTokensUsed: int("aiTokensUsed"),
+  createdEntityType: varchar("createdEntityType", { length: 64 }),
+  createdEntityId: int("createdEntityId"),
+  modifiedEntityType: varchar("modifiedEntityType", { length: 64 }),
+  modifiedEntityId: int("modifiedEntityId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type WorkflowStep = typeof workflowSteps.$inferSelect;
+export type InsertWorkflowStep = typeof workflowSteps.$inferInsert;
+
+export const workflowApprovalQueue = mysqlTable("workflowApprovalQueue", {
+  id: int("id").autoincrement().primaryKey(),
+  runId: int("runId").notNull(),
+  approvalType: mysqlEnum("approvalType", ["purchase_order", "work_order", "inventory_transfer", "freight_booking", "payment", "price_change", "vendor_selection", "exception_override", "forecast_adjustment", "workflow_result"]).notNull(),
+  title: varchar("title", { length: 500 }).notNull(),
+  description: text("description"),
+  monetaryValue: decimal("monetaryValue", { precision: 14, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  contextData: text("contextData"),
+  aiRecommendation: text("aiRecommendation"),
+  aiConfidence: decimal("aiConfidence", { precision: 5, scale: 2 }),
+  riskAssessment: mysqlEnum("riskAssessment", ["low", "medium", "high", "critical"]).default("low"),
+  relatedEntityType: varchar("relatedEntityType", { length: 64 }),
+  relatedEntityId: int("relatedEntityId"),
+  status: mysqlEnum("status", ["pending", "approved", "rejected", "auto_approved", "escalated", "expired"]).default("pending").notNull(),
+  assignedToRoles: text("assignedToRoles"),
+  assignedToUsers: text("assignedToUsers"),
+  currentAssignee: int("currentAssignee"),
+  requestedAt: timestamp("requestedAt").defaultNow().notNull(),
+  dueAt: timestamp("dueAt"),
+  escalateAt: timestamp("escalateAt"),
+  escalatedAt: timestamp("escalatedAt"),
+  escalationLevel: int("escalationLevel").default(0),
+  resolvedBy: int("resolvedBy"),
+  resolvedAt: timestamp("resolvedAt"),
+  resolutionNotes: text("resolutionNotes"),
+  wasAutoApproved: boolean("wasAutoApproved").default(false),
+  autoApprovalReason: varchar("autoApprovalReason", { length: 255 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type WorkflowApproval = typeof workflowApprovalQueue.$inferSelect;
+export type InsertWorkflowApproval = typeof workflowApprovalQueue.$inferInsert;
+
+export const autonomousDecisions = mysqlTable("autonomousDecisions", {
+  id: int("id").autoincrement().primaryKey(),
+  runId: int("runId"),
+  stepId: int("stepId"),
+  decisionType: mysqlEnum("decisionType", ["vendor_selection", "quantity_calculation", "timing_decision", "routing_decision", "pricing_acceptance", "exception_handling", "priority_assignment", "allocation_decision", "forecast_adjustment", "reorder_trigger", "approval_routing"]).notNull(),
+  decisionContext: text("decisionContext"),
+  optionsConsidered: text("optionsConsidered"),
+  chosenOption: text("chosenOption"),
+  aiReasoning: text("aiReasoning"),
+  confidence: decimal("confidence", { precision: 5, scale: 2 }),
+  entityType: varchar("entityType", { length: 64 }),
+  entityId: int("entityId"),
+  estimatedImpact: text("estimatedImpact"),
+  actualImpact: text("actualImpact"),
+  wasOverridden: boolean("wasOverridden").default(false),
+  overriddenBy: int("overriddenBy"),
+  overrideReason: text("overrideReason"),
+  feedbackScore: int("feedbackScore"),
+  feedbackNotes: text("feedbackNotes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type AutonomousDecision = typeof autonomousDecisions.$inferSelect;
+export type InsertAutonomousDecision = typeof autonomousDecisions.$inferInsert;
+
+export const supplyChainEvents = mysqlTable("supplyChainEvents", {
+  id: int("id").autoincrement().primaryKey(),
+  eventType: mysqlEnum("eventType", ["inventory_low", "inventory_critical", "inventory_excess", "inventory_expiring", "inventory_received", "inventory_adjustment", "order_created", "order_confirmed", "order_shipped", "order_delivered", "order_cancelled", "po_created", "po_sent", "po_confirmed", "po_shipped", "po_received", "po_discrepancy", "work_order_created", "production_started", "production_completed", "production_issue", "yield_variance", "quote_received", "price_change", "lead_time_change", "supplier_issue", "shipment_booked", "shipment_picked_up", "shipment_delayed", "shipment_delivered", "customs_hold", "quality_issue", "inspection_failed", "inspection_passed", "invoice_received", "payment_due", "payment_overdue", "forecast_generated", "demand_spike", "demand_drop", "workflow_completed", "workflow_failed", "approval_needed", "escalation_triggered"]).notNull(),
+  severity: mysqlEnum("severity", ["info", "warning", "error", "critical"]).default("info").notNull(),
+  sourceSystem: varchar("sourceSystem", { length: 64 }),
+  sourceEntityType: varchar("sourceEntityType", { length: 64 }),
+  sourceEntityId: int("sourceEntityId"),
+  eventData: text("eventData"),
+  summary: varchar("summary", { length: 500 }),
+  isProcessed: boolean("isProcessed").default(false),
+  processedAt: timestamp("processedAt"),
+  processedByWorkflowId: int("processedByWorkflowId"),
+  processedByRunId: int("processedByRunId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type SupplyChainEvent = typeof supplyChainEvents.$inferSelect;
+export type InsertSupplyChainEvent = typeof supplyChainEvents.$inferInsert;
+
+export const workflowMetrics = mysqlTable("workflowMetrics", {
+  id: int("id").autoincrement().primaryKey(),
+  workflowId: int("workflowId").notNull(),
+  metricDate: timestamp("metricDate").notNull(),
+  totalRuns: int("totalRuns").default(0),
+  successfulRuns: int("successfulRuns").default(0),
+  failedRuns: int("failedRuns").default(0),
+  averageDurationMs: int("averageDurationMs"),
+  maxDurationMs: int("maxDurationMs"),
+  autoApprovedCount: int("autoApprovedCount").default(0),
+  manualApprovedCount: int("manualApprovedCount").default(0),
+  rejectedCount: int("rejectedCount").default(0),
+  averageApprovalTimeMs: int("averageApprovalTimeMs"),
+  escalationCount: int("escalationCount").default(0),
+  itemsProcessed: int("itemsProcessed").default(0),
+  totalValueProcessed: decimal("totalValueProcessed", { precision: 18, scale: 2 }),
+  exceptionsHandled: int("exceptionsHandled").default(0),
+  aiDecisionCount: int("aiDecisionCount").default(0),
+  aiOverrideCount: int("aiOverrideCount").default(0),
+  averageAiConfidence: decimal("averageAiConfidence", { precision: 5, scale: 2 }),
+  totalTokensUsed: int("totalTokensUsed").default(0),
+  estimatedTimeSavedMinutes: int("estimatedTimeSavedMinutes"),
+  estimatedCostSavings: decimal("estimatedCostSavings", { precision: 14, scale: 2 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type WorkflowMetric = typeof workflowMetrics.$inferSelect;
+export type InsertWorkflowMetric = typeof workflowMetrics.$inferInsert;
+
+export const approvalThresholds = mysqlTable("approvalThresholds", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  entityType: mysqlEnum("entityType", ["purchase_order", "work_order", "inventory_transfer", "freight_booking", "payment", "vendor_rfq", "price_override", "exception"]).notNull(),
+  autoApproveMaxAmount: decimal("autoApproveMaxAmount", { precision: 14, scale: 2 }),
+  level1MaxAmount: decimal("level1MaxAmount", { precision: 14, scale: 2 }),
+  level2MaxAmount: decimal("level2MaxAmount", { precision: 14, scale: 2 }),
+  level3MaxAmount: decimal("level3MaxAmount", { precision: 14, scale: 2 }),
+  level1Roles: text("level1Roles"),
+  level2Roles: text("level2Roles"),
+  level3Roles: text("level3Roles"),
+  execRoles: text("execRoles"),
+  level1EscalationMinutes: int("level1EscalationMinutes").default(60),
+  level2EscalationMinutes: int("level2EscalationMinutes").default(120),
+  level3EscalationMinutes: int("level3EscalationMinutes").default(240),
+  conditions: text("conditions"),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ApprovalThreshold = typeof approvalThresholds.$inferSelect;
+export type InsertApprovalThreshold = typeof approvalThresholds.$inferInsert;
+
+export const exceptionRules = mysqlTable("exceptionRules", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  exceptionType: mysqlEnum("exceptionType", ["quantity_mismatch", "price_variance", "quality_issue", "delivery_delay", "stockout", "overstock", "supplier_unavailable", "capacity_constraint", "forecast_deviation", "payment_issue", "documentation_missing", "customs_issue", "other"]).notNull(),
+  matchConditions: text("matchConditions"),
+  varianceThresholdPercent: decimal("varianceThresholdPercent", { precision: 5, scale: 2 }),
+  resolutionStrategy: mysqlEnum("resolutionStrategy", ["auto_resolve", "ai_decide", "route_to_human", "escalate", "apply_default", "notify_and_continue", "halt_workflow"]).notNull(),
+  autoResolutionAction: text("autoResolutionAction"),
+  defaultAction: text("defaultAction"),
+  notifyRoles: text("notifyRoles"),
+  assignToRole: varchar("assignToRole", { length: 64 }),
+  resolveWithinMinutes: int("resolveWithinMinutes").default(60),
+  escalateAfterMinutes: int("escalateAfterMinutes").default(120),
+  priority: int("priority").default(100),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ExceptionRule = typeof exceptionRules.$inferSelect;
+export type InsertExceptionRule = typeof exceptionRules.$inferInsert;
+
+export const exceptionLog = mysqlTable("exceptionLog", {
+  id: int("id").autoincrement().primaryKey(),
+  runId: int("runId"),
+  stepId: int("stepId"),
+  ruleId: int("ruleId"),
+  exceptionType: varchar("exceptionType", { length: 64 }).notNull(),
+  severity: mysqlEnum("severity", ["low", "medium", "high", "critical"]).default("medium").notNull(),
+  title: varchar("title", { length: 500 }).notNull(),
+  description: text("description"),
+  exceptionData: text("exceptionData"),
+  entityType: varchar("entityType", { length: 64 }),
+  entityId: int("entityId"),
+  status: mysqlEnum("status", ["open", "in_progress", "resolved", "escalated", "ignored"]).default("open").notNull(),
+  resolutionType: mysqlEnum("resolutionType", ["auto_resolved", "ai_resolved", "human_resolved", "escalated_resolved", "ignored"]),
+  resolutionAction: text("resolutionAction"),
+  resolutionNotes: text("resolutionNotes"),
+  resolvedBy: int("resolvedBy"),
+  resolvedAt: timestamp("resolvedAt"),
+  financialImpact: decimal("financialImpact", { precision: 14, scale: 2 }),
+  operationalImpact: varchar("operationalImpact", { length: 255 }),
+  detectedAt: timestamp("detectedAt").defaultNow().notNull(),
+  dueAt: timestamp("dueAt"),
+  escalatedAt: timestamp("escalatedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ExceptionLogEntry = typeof exceptionLog.$inferSelect;
+export type InsertExceptionLogEntry = typeof exceptionLog.$inferInsert;
+
+export const workflowNotifications = mysqlTable("workflowNotifications", {
+  id: int("id").autoincrement().primaryKey(),
+  runId: int("runId"),
+  notificationType: mysqlEnum("notificationType", ["info", "warning", "error", "approval_needed", "approval_completed", "exception", "milestone", "completion"]).notNull(),
+  title: varchar("title", { length: 500 }).notNull(),
+  message: text("message"),
+  targetRoles: text("targetRoles"),
+  targetUserIds: text("targetUserIds"),
+  sendEmail: boolean("sendEmail").default(false),
+  sendInApp: boolean("sendInApp").default(true),
+  sendSlack: boolean("sendSlack").default(false),
+  isRead: boolean("isRead").default(false),
+  readBy: int("readBy"),
+  readAt: timestamp("readAt"),
+  actionUrl: varchar("actionUrl", { length: 500 }),
+  actionLabel: varchar("actionLabel", { length: 100 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type WorkflowNotification = typeof workflowNotifications.$inferSelect;
+export type InsertWorkflowNotification = typeof workflowNotifications.$inferInsert;
+
+// ============================================
+// SUPPLIER PERFORMANCE
+// ============================================
+
+export const supplierPerformance = mysqlTable("supplierPerformance", {
+  id: int("id").autoincrement().primaryKey(),
+  vendorId: int("vendorId").notNull(),
+  metricMonth: varchar("metricMonth", { length: 7 }).notNull(),
+  totalOrders: int("totalOrders").default(0),
+  onTimeDeliveries: int("onTimeDeliveries").default(0),
+  lateDeliveries: int("lateDeliveries").default(0),
+  averageLeadTimeDays: decimal("averageLeadTimeDays", { precision: 8, scale: 2 }),
+  leadTimeVarianceDays: decimal("leadTimeVarianceDays", { precision: 8, scale: 2 }),
+  totalItemsReceived: int("totalItemsReceived").default(0),
+  qualityPassCount: int("qualityPassCount").default(0),
+  qualityFailCount: int("qualityFailCount").default(0),
+  qualityPassRate: decimal("qualityPassRate", { precision: 5, scale: 2 }),
+  quantityMatchCount: int("quantityMatchCount").default(0),
+  quantityVarianceCount: int("quantityVarianceCount").default(0),
+  totalSpend: decimal("totalSpend", { precision: 18, scale: 2 }),
+  averagePriceVariancePercent: decimal("averagePriceVariancePercent", { precision: 6, scale: 2 }),
+  averageResponseTimeHours: decimal("averageResponseTimeHours", { precision: 8, scale: 2 }),
+  issuesReported: int("issuesReported").default(0),
+  issuesResolved: int("issuesResolved").default(0),
+  deliveryScore: decimal("deliveryScore", { precision: 5, scale: 2 }),
+  qualityScore: decimal("qualityScore", { precision: 5, scale: 2 }),
+  priceScore: decimal("priceScore", { precision: 5, scale: 2 }),
+  responsiveScore: decimal("responsiveScore", { precision: 5, scale: 2 }),
+  overallScore: decimal("overallScore", { precision: 5, scale: 2 }),
+  aiAssessment: text("aiAssessment"),
+  recommendedActions: text("recommendedActions"),
+  riskLevel: mysqlEnum("riskLevel", ["low", "medium", "high"]).default("low"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SupplierPerformanceRecord = typeof supplierPerformance.$inferSelect;
+export type InsertSupplierPerformanceRecord = typeof supplierPerformance.$inferInsert;
+
+// ============================================
+// CODE CAPABILITY (Claude Code Integration)
+// ============================================
+
+export const codeSnippets = mysqlTable("codeSnippets", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().references(() => users.id),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  language: varchar("language", { length: 64 }).notNull().default("typescript"),
+  code: text("code").notNull(),
+  tags: text("tags"), // JSON array of tag strings
+  isPublic: boolean("isPublic").default(false).notNull(),
+  folderId: int("folderId"),
+  version: int("version").default(1).notNull(),
+  parentSnippetId: int("parentSnippetId"), // for version history
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CodeSnippet = typeof codeSnippets.$inferSelect;
+export type InsertCodeSnippet = typeof codeSnippets.$inferInsert;
+
+export const codeExecutions = mysqlTable("codeExecutions", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().references(() => users.id),
+  snippetId: int("snippetId").references(() => codeSnippets.id),
+  language: varchar("language", { length: 64 }).notNull(),
+  code: text("code").notNull(),
+  output: text("output"),
+  errorOutput: text("errorOutput"),
+  exitCode: int("exitCode"),
+  executionTimeMs: int("executionTimeMs"),
+  status: mysqlEnum("status", ["pending", "running", "completed", "failed", "timeout"]).default("pending").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+// ============================================
+// R&D TAX CREDIT (IRC SECTION 41)
+// ============================================
+
+export const rdTaxCreditStudies = mysqlTable("rd_tax_credit_studies", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  taxYear: int("taxYear").notNull(),
+  studyName: varchar("studyName", { length: 255 }).notNull(),
+  status: mysqlEnum("status", ["draft", "in_progress", "under_review", "filed", "amended"]).default("draft").notNull(),
+  calculationMethod: mysqlEnum("calculationMethod", ["regular", "asc"]).default("asc").notNull(),
+  // Qualified Research Expenses (QREs)
+  totalWageQre: decimal("totalWageQre", { precision: 15, scale: 2 }).default("0"),
+  totalSupplyQre: decimal("totalSupplyQre", { precision: 15, scale: 2 }).default("0"),
+  totalContractQre: decimal("totalContractQre", { precision: 15, scale: 2 }).default("0"),
+  totalQre: decimal("totalQre", { precision: 15, scale: 2 }).default("0"),
+  // Base amount for Regular Credit method
+  baseAmount: decimal("baseAmount", { precision: 15, scale: 2 }).default("0"),
+  fixedBasePercentage: decimal("fixedBasePercentage", { precision: 10, scale: 6 }).default("0"),
+  // ASC method: average QREs for prior 3 years
+  priorYear1Qre: decimal("priorYear1Qre", { precision: 15, scale: 2 }).default("0"),
+  priorYear2Qre: decimal("priorYear2Qre", { precision: 15, scale: 2 }).default("0"),
+  priorYear3Qre: decimal("priorYear3Qre", { precision: 15, scale: 2 }).default("0"),
+  averagePriorQre: decimal("averagePriorQre", { precision: 15, scale: 2 }).default("0"),
+  // Calculated credit
+  grossCredit: decimal("grossCredit", { precision: 15, scale: 2 }).default("0"),
+  section280CReduction: decimal("section280CReduction", { precision: 15, scale: 2 }).default("0"),
+  netCredit: decimal("netCredit", { precision: 15, scale: 2 }).default("0"),
+  // Gross receipts for base period (Regular Credit)
+  currentYearGrossReceipts: decimal("currentYearGrossReceipts", { precision: 15, scale: 2 }).default("0"),
+  averageBasePeriodGrossReceipts: decimal("averageBasePeriodGrossReceipts", { precision: 15, scale: 2 }).default("0"),
+  // Filing info
+  filingDate: timestamp("filingDate"),
+  formNumber: varchar("formNumber", { length: 20 }).default("6765"),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type RdTaxCreditStudy = typeof rdTaxCreditStudies.$inferSelect;
+export type InsertRdTaxCreditStudy = typeof rdTaxCreditStudies.$inferInsert;
+
+export const rdProjects = mysqlTable("rd_projects", {
+  id: int("id").autoincrement().primaryKey(),
+  studyId: int("studyId").notNull(),
+  projectName: varchar("projectName", { length: 255 }).notNull(),
+  description: text("description"),
+  businessComponent: varchar("businessComponent", { length: 255 }),
+  // Four-Part Test documentation
+  technologicalInNature: boolean("technologicalInNature").default(false),
+  technologicalNatureNotes: text("technologicalNatureNotes"),
+  eliminationOfUncertainty: boolean("eliminationOfUncertainty").default(false),
+  eliminationOfUncertaintyNotes: text("eliminationOfUncertaintyNotes"),
+  processOfExperimentation: boolean("processOfExperimentation").default(false),
+  processOfExperimentationNotes: text("processOfExperimentationNotes"),
+  permittedPurpose: boolean("permittedPurpose").default(false),
+  permittedPurposeNotes: text("permittedPurposeNotes"),
+  qualifies: boolean("qualifies").default(false),
+  // Project financials
+  totalProjectQre: decimal("totalProjectQre", { precision: 15, scale: 2 }).default("0"),
+  startDate: timestamp("startDate"),
+  endDate: timestamp("endDate"),
+  status: mysqlEnum("status", ["active", "completed", "excluded"]).default("active").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type RdProject = typeof rdProjects.$inferSelect;
+export type InsertRdProject = typeof rdProjects.$inferInsert;
+
+export const rdExpenses = mysqlTable("rd_expenses", {
+  id: int("id").autoincrement().primaryKey(),
+  projectId: int("projectId").notNull(),
+  studyId: int("studyId").notNull(),
+  category: mysqlEnum("category", ["wages", "supplies", "contract_research", "cloud_computing"]).notNull(),
+  description: varchar("description", { length: 500 }),
+  // Employee info (for wage QREs)
+  employeeId: int("employeeId"),
+  employeeName: varchar("employeeName", { length: 255 }),
+  rdPercentage: decimal("rdPercentage", { precision: 5, scale: 2 }).default("100"),
+  // Amounts
+  grossAmount: decimal("grossAmount", { precision: 15, scale: 2 }).notNull(),
+  qualifiedAmount: decimal("qualifiedAmount", { precision: 15, scale: 2 }).notNull(),
+  // Contract research is 65% qualified
+  contractResearchRate: decimal("contractResearchRate", { precision: 5, scale: 2 }).default("65"),
+  vendorId: int("vendorId"),
+  vendorName: varchar("vendorName", { length: 255 }),
+  periodStart: timestamp("periodStart"),
+  periodEnd: timestamp("periodEnd"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type RdExpense = typeof rdExpenses.$inferSelect;
+export type InsertRdExpense = typeof rdExpenses.$inferInsert;
+export type CodeExecution = typeof codeExecutions.$inferSelect;
+export type InsertCodeExecution = typeof codeExecutions.$inferInsert;
+
+export const codeAiSessions = mysqlTable("codeAiSessions", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().references(() => users.id),
+  snippetId: int("snippetId").references(() => codeSnippets.id),
+  action: mysqlEnum("action", ["generate", "explain", "debug", "refactor", "review", "test", "document", "optimize"]).notNull(),
+  prompt: text("prompt").notNull(),
+  inputCode: text("inputCode"),
+  outputCode: text("outputCode"),
+  explanation: text("explanation"),
+  model: varchar("model", { length: 128 }),
+  tokensUsed: int("tokensUsed"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CodeAiSession = typeof codeAiSessions.$inferSelect;
+export type InsertCodeAiSession = typeof codeAiSessions.$inferInsert;
+
+// ============================================
+// QUICK NOTES — Apple-Notes-style capture that an LLM parses
+// into actionable items routed elsewhere (tasks, CRM, etc.)
+// ============================================
+
+export const notes = mysqlTable("notes", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().references(() => users.id),
+  title: varchar("title", { length: 255 }),
+  content: text("content").notNull(),
+  status: mysqlEnum("status", ["draft", "parsed", "applied", "discarded"]).default("draft").notNull(),
+  // LLM-detected items.
+  parsedItems: json("parsedItems").$type<NoteParseResult>(),
+  // What we actually inserted on apply.
+  appliedItems: json("appliedItems").$type<NoteAppliedItem[]>(),
+  parseError: text("parseError"),
+  parsedAt: timestamp("parsedAt"),
+  appliedAt: timestamp("appliedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Note = typeof notes.$inferSelect;
+export type InsertNote = typeof notes.$inferInsert;
+
+// ─── EMAIL SEQUENCES ──────────────────────────────────────────────────────────
+
+export const emailSequences = mysqlTable("email_sequences", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().references(() => users.id),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  status: mysqlEnum("status", ["draft", "active", "paused", "archived"]).default("draft").notNull(),
+  totalContacts: int("totalContacts").default(0).notNull(),
+  openRate: decimal("openRate", { precision: 5, scale: 2 }),
+  replyRate: decimal("replyRate", { precision: 5, scale: 2 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailSequence = typeof emailSequences.$inferSelect;
+export type InsertEmailSequence = typeof emailSequences.$inferInsert;
+
+export const emailSequenceSteps = mysqlTable("email_sequence_steps", {
+  id: int("id").autoincrement().primaryKey(),
+  sequenceId: int("sequenceId").notNull().references(() => emailSequences.id),
+  stepOrder: int("stepOrder").notNull(),
+  subject: varchar("subject", { length: 500 }).notNull(),
+  body: text("body").notNull(),
+  delayDays: int("delayDays").default(1).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailSequenceStep = typeof emailSequenceSteps.$inferSelect;
+export type InsertEmailSequenceStep = typeof emailSequenceSteps.$inferInsert;
+
+// ─── EMAIL CANNED RESPONSES ───────────────────────────────────────────────────
+
+export const emailCannedResponses = mysqlTable("email_canned_responses", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().references(() => users.id),
+  name: varchar("name", { length: 255 }).notNull(),
+  content: text("content").notNull(),
+  shortcut: varchar("shortcut", { length: 50 }),
+  category: varchar("category", { length: 100 }),
+  usageCount: int("usageCount").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailCannedResponse = typeof emailCannedResponses.$inferSelect;
+export type InsertEmailCannedResponse = typeof emailCannedResponses.$inferInsert;

@@ -1,58 +1,66 @@
-import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { WifiOff, RefreshCw, Wifi } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { useInstallPrompt } from "@/hooks/useInstallPrompt";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { usePendingOfflineCount } from "@/hooks/useOfflineMutation";
+import { CloudOff, Download, RefreshCcw } from "lucide-react";
 
-type Status = "online" | "offline" | "syncing" | "restored";
-
-export default function OfflineIndicator() {
-  const [status, setStatus] = useState<Status>(
-    navigator.onLine ? "online" : "offline"
-  );
-
-  useEffect(() => {
-    const goOffline = () => setStatus("offline");
-    const goOnline = () => {
-      setStatus("syncing");
-      // "Syncing..." shows while pending mutations replay (handled in main.tsx).
-      // After a brief period, show "Back online" then hide.
-      setTimeout(() => {
-        setStatus("restored");
-        setTimeout(() => setStatus("online"), 2000);
-      }, 1500);
-    };
-
-    window.addEventListener("offline", goOffline);
-    window.addEventListener("online", goOnline);
-    return () => {
-      window.removeEventListener("offline", goOffline);
-      window.removeEventListener("online", goOnline);
-    };
-  }, []);
-
-  if (status === "online") return null;
+export function OfflineIndicator() {
+  const online = useOnlineStatus();
+  const pending = usePendingOfflineCount();
+  const { canInstall, promptInstall } = useInstallPrompt();
 
   return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[9999] animate-in fade-in slide-in-from-bottom-2 duration-300">
-      {status === "offline" && (
-        <Badge
-          variant="destructive"
-          className="px-3 py-1.5 text-xs gap-1.5 shadow-lg"
+    <div className="flex items-center gap-1.5">
+      {!online && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Badge
+              variant="outline"
+              className="gap-1 border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+            >
+              <CloudOff className="h-3 w-3" />
+              <span className="hidden sm:inline">Offline</span>
+            </Badge>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-xs max-w-[220px]">
+            You're offline. You can keep viewing cached data and your changes
+            will sync when you're back online.
+          </TooltipContent>
+        </Tooltip>
+      )}
+      {pending > 0 && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Badge
+              variant="outline"
+              className="gap-1 border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300"
+            >
+              <RefreshCcw className={`h-3 w-3 ${online ? "animate-spin" : ""}`} />
+              <span>{pending}</span>
+            </Badge>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-xs">
+            {pending} change{pending === 1 ? "" : "s"}{" "}
+            {online ? "syncing…" : "queued — will sync when online"}
+          </TooltipContent>
+        </Tooltip>
+      )}
+      {canInstall && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 gap-1 px-2 text-xs"
+          onClick={promptInstall}
         >
-          <WifiOff className="h-3 w-3" />
-          Offline — changes will sync when reconnected
-        </Badge>
-      )}
-      {status === "syncing" && (
-        <Badge className="px-3 py-1.5 text-xs gap-1.5 shadow-lg bg-yellow-500/15 text-yellow-500 border-transparent">
-          <RefreshCw className="h-3 w-3 animate-spin" />
-          Syncing...
-        </Badge>
-      )}
-      {status === "restored" && (
-        <Badge className="px-3 py-1.5 text-xs gap-1.5 shadow-lg bg-emerald-500/15 text-emerald-500 border-transparent">
-          <Wifi className="h-3 w-3" />
-          Back online
-        </Badge>
+          <Download className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">Install</span>
+        </Button>
       )}
     </div>
   );

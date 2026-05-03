@@ -37,6 +37,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { QuickCreateDialog } from "@/components/QuickCreateDialog";
 import { Link, useLocation } from "wouter";
+import { DetailSheet } from "@/components/DetailSheet";
 
 export default function InventoryHub() {
   const [, navigate] = useLocation();
@@ -45,6 +46,7 @@ export default function InventoryHub() {
   const [showShipmentDialog, setShowShipmentDialog] = useState(false);
   const [showProductionDialog, setShowProductionDialog] = useState(false);
   const [selectedItem, setSelectedItem] = useState<any>(null);
+  const [detailItem, setDetailItem] = useState<any>(null);
   const [showNewInventoryDialog, setShowNewInventoryDialog] = useState(false);
   const [showQcHoldDialog, setShowQcHoldDialog] = useState(false);
   const [qcHoldReason, setQcHoldReason] = useState("");
@@ -70,6 +72,12 @@ export default function InventoryHub() {
   const { data: workOrders } = trpc.workOrders.list.useQuery(undefined, { ...deferredOpts, enabled: showProductionDialog });
 
   const utils = trpc.useUtils();
+
+  // Update product (for vendor linking)
+  const updateProductMutation = trpc.products.update.useMutation({
+    onSuccess: () => { toast.success("Vendor linked"); utils.products.list.invalidate(); },
+    onError: (err) => toast.error(err.message),
+  });
 
   // Integration status
   const { data: integrationStatus } = trpc.integrations.getStatus.useQuery(undefined, { staleTime: 120_000 });
@@ -280,12 +288,16 @@ export default function InventoryHub() {
 
   // Build flat inventory rows - unified view
   const inventoryRows = useMemo(() => {
-    if (!inventory && !rawMaterials) return [];
+    if (!inventory && !rawMaterials && !products) return [];
 
     const rows: any[] = [];
 
+    // Track which product IDs already have inventory_items rows
+    const productIdsWithInventory = new Set<number>();
+
     // Add finished goods inventory
     inventory?.forEach((inv: any) => {
+      productIdsWithInventory.add(inv.productId);
       const qty = parseFloat(inv.quantity) || 0;
       const reserved = parseFloat(inv.reservedQuantity) || 0;
       const reorderPoint = parseFloat(inv.reorderPoint) || parseFloat(inv.reorderLevel) || 0;
@@ -355,6 +367,53 @@ export default function InventoryHub() {
         lastUpdated: inv.updatedAt || inv.createdAt,
         status,
         productId: inv.productId,
+        productType: "finished",
+      });
+    });
+
+    // Add products that have no inventory_items rows (e.g. Shopify-synced products
+    // where the inventory_items table is empty). Shows them with 0 on-hand qty.
+    products?.forEach((prod: any) => {
+      if (productIdsWithInventory.has(prod.id)) return; // already shown from inventory
+
+      const poInfo = poByProduct.get(prod.id);
+      const shipInfo = shipmentByProduct.get(prod.id);
+      const vendorId = prod.preferredVendorId || poInfo?.vendorId;
+      const vendor = vendorId ? vendorMap.get(vendorId) : null;
+      const unitCost = parseFloat(prod.costPrice) || parseFloat(prod.price) || 0;
+
+      // On-order from POs
+      let onOrderQty = 0;
+      pendingFromPOs?.forEach((pending: any) => {
+        if (pending.productId === prod.id) {
+          onOrderQty += parseFloat(pending.pendingQuantity) || 0;
+        }
+      });
+
+      rows.push({
+        id: `prod-${prod.id}`,
+        sku: prod.sku || "",
+        productName: prod.name || prod.title || `Product #${prod.id}`,
+        category: prod.category || prod.productType || "",
+        location: "",
+        locationId: null,
+        qtyOnHand: 0,
+        reserved: 0,
+        available: 0,
+        reorderPoint: parseFloat(prod.reorderPoint) || 0,
+        inTransit: 0,
+        onOrderQty: onOrderQty || (poInfo?.openQty || 0),
+        openPONumbers: poInfo?.poNumbers?.join(", ") || "",
+        poStatus: poInfo?.latestStatus || "",
+        lastPODate: poInfo?.latestDate || null,
+        vendorName: vendor?.name || "",
+        lastShipment: shipInfo?.tracking || "",
+        shipStatus: shipInfo?.status || "",
+        unitCost,
+        totalValue: 0,
+        lastUpdated: prod.updatedAt || prod.createdAt,
+        status: "out_of_stock",
+        productId: prod.id,
         productType: "finished",
       });
     });
@@ -490,7 +549,7 @@ export default function InventoryHub() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Products & Inventory</h1>
+          <h1 className="text-lg font-semibold">Products & Inventory</h1>
           <div className="flex items-center gap-2 mt-1">
             <p className="text-muted-foreground">Unified view — inventory, POs, shipments, costing, vendors</p>
             <a href="/operations/work-orders" className="text-xs text-primary hover:underline font-medium">Work Orders →</a>
@@ -607,52 +666,27 @@ export default function InventoryHub() {
         </div>
       </div>
 
-      {/* Stats Row */}
-      <div className="grid grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Total Items</p>
-                <p className="text-xl font-semibold tracking-[-0.02em]">{stats.totalItems}</p>
-              </div>
-              <Package className="h-8 w-8 text-muted-foreground" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Low Stock</p>
-                <p className="text-xl font-semibold tracking-[-0.02em] text-amber-600">{stats.lowStock}</p>
-              </div>
-              <AlertTriangle className="h-8 w-8 text-amber-500" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Out of Stock</p>
-                <p className="text-xl font-semibold tracking-[-0.02em] text-red-600">{stats.outOfStock}</p>
-              </div>
-              <Package className="h-8 w-8 text-red-500" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">In Transit</p>
-                <p className="text-xl font-semibold tracking-[-0.02em] text-blue-600">{stats.inTransitCount}</p>
-              </div>
-              <Truck className="h-8 w-8 text-blue-500" />
-            </div>
-          </CardContent>
-        </Card>
+      {/* Compact KPI bar */}
+      <div className="flex items-center gap-5 flex-wrap text-sm border rounded-xl px-4 py-3 bg-card">
+        <div>
+          <span className="text-xs text-muted-foreground">Total Items</span>
+          <div className="font-bold text-base">{stats.totalItems}</div>
+        </div>
+        <div className="h-8 w-px bg-border" />
+        <div>
+          <span className="text-xs text-muted-foreground">Low Stock</span>
+          <div className="font-bold text-base text-amber-600">{stats.lowStock}</div>
+        </div>
+        <div className="h-8 w-px bg-border" />
+        <div>
+          <span className="text-xs text-muted-foreground">Out of Stock</span>
+          <div className="font-bold text-base text-red-600">{stats.outOfStock}</div>
+        </div>
+        <div className="h-8 w-px bg-border" />
+        <div>
+          <span className="text-xs text-muted-foreground">In Transit</span>
+          <div className="font-bold text-base text-blue-600">{stats.inTransitCount}</div>
+        </div>
       </div>
 
       {/* Unified Products & Inventory Table */}
@@ -700,7 +734,7 @@ export default function InventoryHub() {
                 </TableHeader>
                 <TableBody>
                   {inventoryRows.map((row) => (
-                    <TableRow key={row.id} className="hover:bg-muted/50 h-8">
+                    <TableRow key={row.id} className="hover:bg-muted/50 h-8 cursor-pointer" onClick={() => setDetailItem(row)}>
                       {/* Sticky left columns */}
                       <TableCell className="sticky left-0 z-10 bg-background px-2 py-1 font-mono text-xs">{row.sku || "—"}</TableCell>
                       <TableCell className="sticky left-[80px] z-10 bg-background px-2 py-1 border-r max-w-[160px]">
@@ -733,12 +767,22 @@ export default function InventoryHub() {
                       </TableCell>
                       <TableCell className="px-2 py-1">{getPOStatusBadge(row.poStatus)}</TableCell>
                       <TableCell className="px-2 py-1 text-xs text-muted-foreground">{fmtDate(row.lastPODate)}</TableCell>
-                      <TableCell className="px-2 py-1 text-xs truncate max-w-[110px]">
-                        {row.vendorName ? (
-                          <a href="/operations/vendors" onClick={(e) => { e.preventDefault(); navigate("/operations/vendors"); }} className="text-primary hover:underline cursor-pointer">
-                            {row.vendorName}
-                          </a>
-                        ) : "—"}
+                      <TableCell className="px-2 py-1 text-xs truncate max-w-[130px]" onClick={(e) => e.stopPropagation()}>
+                        <select
+                          value={row.productId ? (products?.find((p: any) => p.id === row.productId)?.preferredVendorId || "") : ""}
+                          onChange={(e) => {
+                            const vendorId = e.target.value ? parseInt(e.target.value) : null;
+                            if (row.productId) {
+                              updateProductMutation.mutate({ id: row.productId, preferredVendorId: vendorId });
+                            }
+                          }}
+                          className="bg-transparent border-none text-xs cursor-pointer focus:outline-none w-full"
+                        >
+                          <option value="">—</option>
+                          {vendors?.map((v: any) => (
+                            <option key={v.id} value={v.id}>{v.name}</option>
+                          ))}
+                        </select>
                       </TableCell>
                       <TableCell className="px-2 py-1 text-xs font-mono truncate max-w-[100px]">
                         {row.lastShipment ? (
@@ -752,7 +796,7 @@ export default function InventoryHub() {
                       <TableCell className="px-2 py-1 text-right font-mono text-xs font-medium">{fmtCurrency(row.totalValue)}</TableCell>
                       <TableCell className="px-2 py-1 text-xs text-muted-foreground">{fmtDate(row.lastUpdated)}</TableCell>
                       <TableCell className="px-2 py-1 text-center">{getStatusBadge(row.status)}</TableCell>
-                      <TableCell className="px-2 py-1 text-right">
+                      <TableCell className="px-2 py-1 text-right" onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end gap-0.5">
                           <Button
                             size="sm"
@@ -939,6 +983,86 @@ export default function InventoryHub() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Inventory Item Detail Side Panel */}
+      <DetailSheet
+        open={!!detailItem}
+        onOpenChange={(o) => !o && setDetailItem(null)}
+        title={detailItem?.productName}
+        subtitle={detailItem?.sku ? `SKU: ${detailItem.sku}` : undefined}
+        width="md"
+      >
+        {detailItem && (
+          <div className="space-y-4 text-sm">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Status</p>
+                {getStatusBadge(detailItem.status)}
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Category</p>
+                <p className="font-medium">{detailItem.category || "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Location</p>
+                <p className="font-medium">{detailItem.location || "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Unit Cost</p>
+                <p className="font-medium font-mono">{fmtCurrency(detailItem.unitCost)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">On Hand</p>
+                <p className="font-medium font-mono">{detailItem.qtyOnHand.toLocaleString()}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Available</p>
+                <p className="font-medium font-mono">{detailItem.available.toLocaleString()}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Reserved</p>
+                <p className="font-medium font-mono">{detailItem.reserved > 0 ? detailItem.reserved.toLocaleString() : "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Reorder Point</p>
+                <p className="font-medium font-mono">{detailItem.reorderPoint > 0 ? detailItem.reorderPoint.toLocaleString() : "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">In Transit</p>
+                <p className="font-medium font-mono text-blue-600">{detailItem.inTransit > 0 ? `+${detailItem.inTransit.toLocaleString()}` : "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Total Value</p>
+                <p className="font-medium font-mono">{fmtCurrency(detailItem.totalValue)}</p>
+              </div>
+              {detailItem.openPONumbers && (
+                <div>
+                  <p className="text-xs text-muted-foreground mb-0.5">Open PO#</p>
+                  <p className="font-medium font-mono">{detailItem.openPONumbers}</p>
+                </div>
+              )}
+              {detailItem.lastShipment && (
+                <div>
+                  <p className="text-xs text-muted-foreground mb-0.5">Last Shipment</p>
+                  <p className="font-medium font-mono">{detailItem.lastShipment}</p>
+                </div>
+              )}
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Last Updated</p>
+                <p className="font-medium">{fmtDate(detailItem.lastUpdated)}</p>
+              </div>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <Button size="sm" variant="outline" onClick={() => { setSelectedItem(detailItem); setShowShipmentDialog(true); setDetailItem(null); }}>
+                <Send className="h-3 w-3 mr-1" /> Create Shipment
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => { setSelectedItem(detailItem); setShowProductionDialog(true); setDetailItem(null); }}>
+                <Factory className="h-3 w-3 mr-1" /> Allocate to WO
+              </Button>
+            </div>
+          </div>
+        )}
+      </DetailSheet>
     </div>
   );
 }

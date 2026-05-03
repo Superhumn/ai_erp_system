@@ -4,6 +4,7 @@ import { invokeLLM } from "../_core/llm";
 import { sendEmail, formatEmailHtml } from "../_core/email";
 import { processEmailReply, analyzeEmail, generateEmailReply } from "../emailReplyService";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "../aiAgentService";
+import { syncAgentStatusToProjectTask } from "../taskAgentBridge";
 import * as db from "../db";
 import { router, protectedProcedure, adminProcedure, generateNumber } from "./middleware";
 
@@ -325,9 +326,10 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
             status: 'success',
             message: `Task approved by ${ctx.user.name}`,
           });
+          await syncAgentStatusToProjectTask(input.id);
           return { success: true };
         }),
-      
+
       reject: adminProcedure
         .input(z.object({ id: z.number(), reason: z.string().optional() }))
         .mutation(async ({ input, ctx }) => {
@@ -343,6 +345,7 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
             status: 'warning',
             message: `Task rejected by ${ctx.user.name}: ${input.reason || 'No reason provided'}`,
           });
+          await syncAgentStatusToProjectTask(input.id);
           return { success: true };
         }),
       
@@ -400,7 +403,8 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
           }
           
           await db.updateAiAgentTask(input.id, { status: 'in_progress' });
-          
+          await syncAgentStatusToProjectTask(input.id);
+
           try {
             // Execute based on task type
             const taskData = JSON.parse(task.taskData);
@@ -746,6 +750,34 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
                 result = { created: true, workOrderId: workOrder.id, workOrderNumber: workOrder.workOrderNumber };
                 break;
               }
+
+              case 'query': {
+                // Generic "query" tasks can carry structured actions from other automations.
+                if (taskData.action === 'create_project_task') {
+                  if (!taskData.projectId || !taskData.name) {
+                    throw new Error('Project task suggestion missing projectId or name');
+                  }
+                  const created = await db.createProjectTask({
+                    projectId: Number(taskData.projectId),
+                    name: String(taskData.name),
+                    description: taskData.description ? String(taskData.description) : undefined,
+                    priority: (taskData.priority || 'medium') as any,
+                    status: 'todo',
+                    assigneeId: taskData.assigneeId ? Number(taskData.assigneeId) : undefined,
+                    createdBy: ctx.user.id,
+                  } as any);
+                  result = {
+                    created: true,
+                    action: 'create_project_task',
+                    projectTaskId: created.id,
+                    projectId: Number(taskData.projectId),
+                    assigneeId: taskData.assigneeId ? Number(taskData.assigneeId) : null,
+                  };
+                  break;
+                }
+                result = { executed: true, taskType: task.taskType };
+                break;
+              }
               
               default:
                 result = { executed: true, taskType: task.taskType };
@@ -756,7 +788,7 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
               executedAt: new Date(),
               executionResult: JSON.stringify(result),
             });
-            
+
             await db.createAiAgentLog({
               taskId: input.id,
               action: 'task_executed',
@@ -764,7 +796,8 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
               message: `Task executed successfully`,
               details: JSON.stringify(result),
             });
-            
+
+            await syncAgentStatusToProjectTask(input.id);
             return { success: true, result };
           } catch (error: any) {
             await db.updateAiAgentTask(input.id, {
@@ -772,14 +805,15 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
               errorMessage: error.message,
               retryCount: (task.retryCount || 0) + 1,
             });
-            
+
             await db.createAiAgentLog({
               taskId: input.id,
               action: 'task_failed',
               status: 'error',
               message: `Task execution failed: ${error.message}`,
             });
-            
+
+            await syncAgentStatusToProjectTask(input.id);
             throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
           }
         }),

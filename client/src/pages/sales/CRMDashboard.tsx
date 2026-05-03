@@ -8,15 +8,15 @@ import { Link } from "wouter";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
 export default function CRMDashboard() {
-  const { data: investors, isLoading: investorsLoading } = (trpc.crm as any).listInvestors.useQuery();
-  const { data: campaigns, isLoading: campaignsLoading } = (trpc.crm as any).listCampaigns.useQuery();
-  const { data: investments, isLoading: investmentsLoading } = (trpc.crm as any).listInvestments.useQuery();
-  const { data: reminders, isLoading: remindersLoading } = (trpc.crm as any).listReminders.useQuery({
+  const { data: investors, isLoading: investorsLoading } = trpc.crm.listInvestors.useQuery();
+  const { data: campaigns, isLoading: campaignsLoading } = trpc.crm.listCampaigns.useQuery();
+  const { data: investments, isLoading: investmentsLoading } = trpc.crm.listInvestments.useQuery();
+  const { data: reminders, isLoading: remindersLoading } = trpc.crm.listReminders.useQuery({
     status: 'pending',
     dueBefore: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // Next 30 days
   });
 
-  const isLoading = investorsLoading || campaignsLoading || investmentsLoading;
+  const isLoading = investorsLoading || campaignsLoading || investmentsLoading || remindersLoading;
 
   // Calculate metrics
   const totalInvestors = investors?.length || 0;
@@ -70,7 +70,7 @@ export default function CRMDashboard() {
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Fundraising CRM Dashboard</h1>
+          <h1 className="text-lg font-semibold">Fundraising CRM Dashboard</h1>
           <p className="text-muted-foreground">Overview of your fundraising pipeline and investor relationships</p>
         </div>
         <div className="flex gap-2">

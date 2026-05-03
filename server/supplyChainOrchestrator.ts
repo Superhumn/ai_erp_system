@@ -2,15 +2,14 @@ import { getDb } from "./db";
 import { getWorkflowEngine } from "./autonomousWorkflowEngine";
 import {
   users,
+  supplyChainWorkflows,
+  workflowRuns,
+  workflowApprovalQueue,
+  supplyChainEvents,
+  approvalThresholds,
+  workflowNotifications,
+  exceptionLog,
 } from "../drizzle/schema";
-// [Workflow] Supply chain workflow tables were removed from drizzle/schema.
-// These stubs allow the orchestrator to compile; queries will return empty results at runtime.
-const supplyChainWorkflows: any = {} as any;
-const workflowRuns: any = {} as any;
-const workflowApprovalQueue: any = {} as any;
-const supplyChainEvents: any = {} as any;
-const approvalThresholds: any = {} as any;
-const workflowNotifications: any = {} as any;
 import { eq, and, lt, lte, gte, desc, asc, sql, isNull, or, inArray } from "drizzle-orm";
 import { sendEmail } from "./_core/email";
 
@@ -49,8 +48,10 @@ class SupplyChainOrchestrator {
     this.config = { ...defaultConfig, ...config };
   }
 
-  private parseJsonCached(raw: string | null | undefined): any {
+  private parseJsonCached(raw: unknown): any {
     if (!raw) return null;
+    // Drizzle JSON columns may return already-parsed objects
+    if (typeof raw !== "string") return raw;
     const cached = this.parsedConfigCache.get(raw);
     if (cached && cached.raw === raw) return cached.value;
     const parsed = JSON.parse(raw);
@@ -256,7 +257,7 @@ class SupplyChainOrchestrator {
 
         if (triggerEvents.includes(event.eventType)) {
           // Trigger the workflow
-          const eventData = event.eventData ? JSON.parse(event.eventData) : {};
+          const eventData = event.eventData ? (typeof event.eventData === "string" ? JSON.parse(event.eventData) : event.eventData) : {};
           this.executeWorkflowAsync(workflow, "event", {
             eventId: event.id,
             eventType: event.eventType,
@@ -329,8 +330,6 @@ class SupplyChainOrchestrator {
         return (pendingCount?.count || 0) >= (config.threshold || 10);
 
       case "exception_count":
-        // [Workflow] exceptionLog table removed - stub returns 0
-        const exceptionLog: any = {} as any;
         const [exceptionCount] = await db
           .select({ count: sql<number>`COUNT(*)` })
           .from(exceptionLog)
@@ -718,6 +717,100 @@ Please review and approve/reject at your earliest convenience.`,
         thresholdConfig: JSON.stringify({ type: "exception_count", threshold: 3 }),
         requiresApproval: false,
       },
+      // Finance, Sales, HR, Legal, Communication workflows use "custom" type
+      // with specific behavior defined in executionConfig
+      {
+        name: "Expense Categorization",
+        workflowType: "custom" as const,
+        description: "Auto-categorize uncategorized transactions using AI",
+        triggerType: "scheduled" as const,
+        cronSchedule: "0 9 * * *",
+        executionConfig: JSON.stringify({ subtype: "expense_categorization" }),
+        requiresApproval: false,
+      },
+      {
+        name: "AR Collections Follow-Up",
+        workflowType: "custom" as const,
+        description: "Send payment reminders for overdue invoices",
+        triggerType: "scheduled" as const,
+        cronSchedule: "0 9 * * 1,4",
+        executionConfig: JSON.stringify({ subtype: "ar_collections" }),
+        requiresApproval: true,
+        autoApproveThreshold: "5000",
+      },
+      {
+        name: "Bank Reconciliation",
+        workflowType: "custom" as const,
+        description: "Reconcile bank transactions against internal records",
+        triggerType: "scheduled" as const,
+        cronSchedule: "0 6 * * *",
+        executionConfig: JSON.stringify({ subtype: "bank_reconciliation" }),
+        requiresApproval: false,
+      },
+      {
+        name: "Deal Follow-Up",
+        workflowType: "custom" as const,
+        description: "Send follow-up emails for stale deals in pipeline",
+        triggerType: "scheduled" as const,
+        cronSchedule: "0 8 * * 1-5",
+        executionConfig: JSON.stringify({ subtype: "deal_follow_up" }),
+        requiresApproval: true,
+        autoApproveThreshold: "0",
+      },
+      {
+        name: "Sales Order Processing",
+        workflowType: "custom" as const,
+        description: "Auto-confirm pending orders and trigger fulfillment",
+        triggerType: "event" as const,
+        triggerEvents: JSON.stringify(["order_created"]),
+        executionConfig: JSON.stringify({ subtype: "order_processing" }),
+        requiresApproval: false,
+      },
+      {
+        name: "Equity Vesting Updates",
+        workflowType: "custom" as const,
+        description: "Calculate and record monthly equity vesting for all grants",
+        triggerType: "scheduled" as const,
+        cronSchedule: "0 1 1 * *",
+        executionConfig: JSON.stringify({ subtype: "equity_vesting" }),
+        requiresApproval: false,
+      },
+      {
+        name: "Contract Renewal Tracking",
+        workflowType: "custom" as const,
+        description: "Alert on contracts expiring within 60 days",
+        triggerType: "scheduled" as const,
+        cronSchedule: "0 8 * * 1",
+        executionConfig: JSON.stringify({ subtype: "contract_renewal" }),
+        requiresApproval: false,
+      },
+      {
+        name: "Dispute Auto-Escalation",
+        workflowType: "custom" as const,
+        description: "Escalate unresolved disputes older than 30 days",
+        triggerType: "scheduled" as const,
+        cronSchedule: "0 9 * * 1",
+        executionConfig: JSON.stringify({ subtype: "dispute_escalation" }),
+        requiresApproval: false,
+      },
+      {
+        name: "KPI Report Generation",
+        workflowType: "custom" as const,
+        description: "Generate weekly KPI summary and update actuals",
+        triggerType: "scheduled" as const,
+        cronSchedule: "0 7 * * 1",
+        executionConfig: JSON.stringify({ subtype: "kpi_reporting" }),
+        requiresApproval: false,
+      },
+      {
+        name: "Email Triage & Routing",
+        workflowType: "custom" as const,
+        description: "Classify inbound emails and route to appropriate team",
+        triggerType: "event" as const,
+        triggerEvents: JSON.stringify(["email_received"]),
+        executionConfig: JSON.stringify({ subtype: "email_triage" }),
+        requiresApproval: false,
+      },
     ];
 
     for (const wf of defaultWorkflows) {
@@ -834,12 +927,10 @@ Please review and approve/reject at your earliest convenience.`,
         )
       );
 
-    // [Workflow] exceptionLog table removed - stub returns 0
-    const exceptionLog2: any = {} as any;
     const [exceptionCount] = await db
       .select({ count: sql<number>`COUNT(*)` })
-      .from(exceptionLog2)
-      .where(eq(exceptionLog2.status, "open"));
+      .from(exceptionLog)
+      .where(eq(exceptionLog.status, "open"));
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);

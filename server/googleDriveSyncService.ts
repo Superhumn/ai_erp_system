@@ -6,12 +6,9 @@
 import {
   syncDriveFolder,
   listDriveFolders,
-  downloadFile,
   getSimpleFileType,
-  DriveFile,
 } from './_core/googleDrive';
 import * as db from './db';
-import { storagePut } from './storage';
 
 interface SyncOptions {
   dataRoomId: number;
@@ -23,6 +20,7 @@ interface SyncOptions {
   excludeFileTypes?: string[];
   maxFileSizeMb: number;
   parentFolderId?: number | null;
+  uploadedBy?: number;
 }
 
 interface SyncResult {
@@ -130,7 +128,6 @@ export async function syncGoogleDriveFolder(options: SyncOptions): Promise<SyncR
             name: driveFolder.name,
             googleDriveFolderId: driveFolder.id,
           } as any);
-          const folderId = typeof folderResult === 'number' ? folderResult : (folderResult as any).id;
 
           folderMapping.set(driveFolder.id, folderResult.id);
           foldersCreated++;
@@ -181,53 +178,40 @@ export async function syncGoogleDriveFolder(options: SyncOptions): Promise<SyncR
         }
 
         if (existingDoc) {
-          // Check if file has been modified
           const driveModified = file.modifiedTime ? new Date(file.modifiedTime).getTime() : 0;
           const docModified = existingDoc.updatedAt ? new Date(existingDoc.updatedAt).getTime() : 0;
 
           if (driveModified > docModified) {
-            // File has been updated - re-download and update
-            const downloaded = await downloadAndUploadFile(file, options);
-
-            if (downloaded) {
-              await db.updateDataRoomDocument(existingDoc.id, {
-                name: file.name,
-                folderId,
-                storageUrl: downloaded.url,
-                storageKey: downloaded.key,
-                fileSize: file.size ? parseInt(file.size) : undefined,
-                mimeType: file.mimeType,
-              });
-              filesUpdated++;
-            } else {
-              warnings.push(`Failed to update "${file.name}"`);
-            }
+            // Refresh metadata only — file content stays in Google Drive and
+            // is served on demand via /api/drive/proxy/:documentId.
+            await db.updateDataRoomDocument(existingDoc.id, {
+              name: file.name,
+              folderId,
+              fileSize: file.size ? parseInt(file.size) : undefined,
+              mimeType: file.mimeType,
+            });
+            filesUpdated++;
           } else {
             filesSkipped++;
           }
         } else {
-          // New file - download and create
-          const downloaded = await downloadAndUploadFile(file, options);
-
-          if (downloaded) {
-            await db.createDataRoomDocument({
-              dataRoomId: options.dataRoomId,
-              folderId,
-              name: file.name,
-              fileType: getSimpleFileType(file.mimeType),
-              mimeType: file.mimeType,
-              fileSize: file.size ? parseInt(file.size) : undefined,
-              storageType: 's3',
-              storageUrl: downloaded.url,
-              storageKey: downloaded.key,
-              googleDriveFileId: file.id,
-              googleDriveWebViewLink: file.webViewLink,
-              thumbnailUrl: file.thumbnailLink,
-            });
-            filesAdded++;
-          } else {
-            warnings.push(`Failed to download "${file.name}"`);
-          }
+          // Create a metadata-only record pointing at the Drive file. The
+          // viewer streams the bytes through /api/drive/proxy/:documentId at
+          // render time, so no copy is ever made in our storage.
+          await db.createDataRoomDocument({
+            dataRoomId: options.dataRoomId,
+            folderId,
+            name: file.name,
+            fileType: getSimpleFileType(file.mimeType),
+            mimeType: file.mimeType,
+            fileSize: file.size ? parseInt(file.size) : undefined,
+            storageType: 'google_drive',
+            googleDriveFileId: file.id,
+            googleDriveWebViewLink: file.webViewLink,
+            thumbnailUrl: file.thumbnailLink,
+            uploadedBy: options.uploadedBy,
+          });
+          filesAdded++;
         }
       } catch (fileError: any) {
         warnings.push(`Error processing "${file.name}": ${fileError.message}`);
@@ -245,58 +229,6 @@ export async function syncGoogleDriveFolder(options: SyncOptions): Promise<SyncR
     };
   } catch (error: any) {
     throw new Error(`Sync failed: ${error.message}`);
-  }
-}
-
-/**
- * Download a file from Google Drive and upload to our storage
- */
-async function downloadAndUploadFile(
-  file: DriveFile,
-  options: SyncOptions
-): Promise<{ url: string; key: string } | null> {
-  try {
-    // Download the file from Google Drive
-    const { content, error } = await downloadFile(
-      options.accessToken,
-      file.id,
-      file.mimeType
-    );
-
-    if (error || !content) {
-      console.error(`[DriveSync] Failed to download ${file.name}:`, error);
-      return null;
-    }
-
-    // Upload to our storage with sanitized filename
-    // Sanitize filename to prevent path traversal and S3 key issues:
-    // 1. Replace path separators (/ \) with underscores
-    // 2. Keep only safe characters: alphanumeric, spaces, dots, dashes, underscores
-    // 3. Limit length to prevent excessively long keys
-    let sanitizedName = file.name
-      .replace(/[\/\\]/g, '_')     // Replace slashes with underscores
-      .replace(/[^\w\s.-]/g, '')   // Keep only word chars (\w includes a-zA-Z0-9_), spaces, dots, dashes
-      .replace(/\s+/g, '_')        // Replace spaces with underscores for cleaner URLs
-      .substring(0, 200);          // Limit filename length
-    
-    // Provide fallback if sanitization results in empty string
-    if (!sanitizedName || sanitizedName.trim() === '') {
-      sanitizedName = 'unnamed_file';
-    }
-    
-    const key = `dataroom/${options.dataRoomId}/drive-sync/${Date.now()}-${sanitizedName}`;
-
-    const result = await storagePut(key, content, file.mimeType);
-
-    if (!result.url) {
-      console.error(`[DriveSync] Failed to upload ${file.name}`);
-      return null;
-    }
-
-    return { url: result.url, key };
-  } catch (error: any) {
-    console.error(`[DriveSync] Error processing ${file.name}:`, error);
-    return null;
   }
 }
 

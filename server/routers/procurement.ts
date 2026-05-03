@@ -1259,14 +1259,14 @@ Ask if they received the original request and if they can provide a quote.`;
       .input(z.object({ token: z.string() }))
       .query(async ({ input }) => {
         const session = await db.getSupplierPortalSession(input.token);
-        if (!session) return [];
+        if (!session || session.status !== 'active' || new Date(session.expiresAt) < new Date()) return [];
         return db.getSupplierDocuments({ portalSessionId: session.id });
       }),
     getFreightInfo: publicProcedure
       .input(z.object({ token: z.string() }))
       .query(async ({ input }) => {
         const session = await db.getSupplierPortalSession(input.token);
-        if (!session) return null;
+        if (!session || session.status !== 'active' || new Date(session.expiresAt) < new Date()) return null;
         return db.getSupplierFreightInfo(session.purchaseOrderId);
       }),
     uploadDocument: publicProcedure
@@ -1399,9 +1399,10 @@ Ask if they received the original request and if they can provide a quote.`;
         }),
         markAsReceived: z.boolean().default(false),
         updateInventory: z.boolean().default(true),
+        createMissingVendor: z.boolean().default(false),
       }))
       .mutation(async ({ input, ctx }) => {
-        return importPurchaseOrder(input.poData as any, ctx.user.id, input.markAsReceived);
+        return importPurchaseOrder(input.poData as any, ctx.user.id, input.markAsReceived, input.createMissingVendor);
       }),
 
     // Import a freight invoice
@@ -1428,9 +1429,10 @@ Ask if they received the original request and if they can provide a quote.`;
           notes: z.string().optional(),
         }),
         linkToPO: z.boolean().default(true),
+        createMissingVendor: z.boolean().default(false),
       }))
       .mutation(async ({ input, ctx }) => {
-        return importFreightInvoice(input.invoiceData as any, ctx.user.id);
+        return importFreightInvoice(input.invoiceData as any, ctx.user.id, input.createMissingVendor);
       }),
 
     // Import a vendor invoice
@@ -1461,9 +1463,10 @@ Ask if they received the original request and if they can provide a quote.`;
         }),
         markAsReceived: z.boolean().default(false),
         updateInventory: z.boolean().default(true),
+        createMissingVendor: z.boolean().default(false),
       }))
       .mutation(async ({ input, ctx }) => {
-        return importVendorInvoice(input.invoiceData as any, ctx.user.id, input.markAsReceived);
+        return importVendorInvoice(input.invoiceData as any, ctx.user.id, input.markAsReceived, input.createMissingVendor);
       }),
 
     // Import a customs document
@@ -1505,9 +1508,10 @@ Ask if they received the original request and if they can provide a quote.`;
           notes: z.string().optional(),
         }),
         linkToPO: z.boolean().default(true),
+        createMissingVendor: z.boolean().default(false),
       }))
       .mutation(async ({ input, ctx }) => {
-        return importCustomsDocument(input.documentData as any, ctx.user.id);
+        return importCustomsDocument(input.documentData as any, ctx.user.id, input.createMissingVendor);
       }),
 
     // Get import history

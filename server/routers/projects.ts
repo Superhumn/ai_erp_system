@@ -96,6 +96,12 @@ export const projectsRouter = router({
         priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
         dueDate: z.date().optional(),
         estimatedHours: z.string().optional(),
+        accountId: z.number().optional(),
+        opportunityId: z.number().optional(),
+        sourceType: z.enum(['manual', 'email', 'meeting', 'ai_generated', 'crm_deal']).optional(),
+        sourceRefType: z.string().optional(),
+        sourceRefId: z.number().optional(),
+        sourceExternalId: z.string().max(255).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const result = await db.createProjectTask({ ...input, createdBy: ctx.user.id });
@@ -113,6 +119,8 @@ export const projectsRouter = router({
         dueDate: z.date().optional(),
         completedDate: z.date().optional(),
         actualHours: z.string().optional(),
+        accountId: z.number().optional(),
+        opportunityId: z.number().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
@@ -122,7 +130,7 @@ export const projectsRouter = router({
       }),
     tasks: protectedProcedure
       .input(z.object({ projectId: z.number() }))
-      .query(({ input }) => db.getProjectTasks(input.projectId)),
+      .query(({ input }) => input.projectId === 0 ? db.getAllProjectTasks() : db.getProjectTasks(input.projectId)),
     listAllTasks: protectedProcedure
       .query(() => db.getAllProjectTasks()),
   }),

@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { Card, CardContent } from "@/components/ui/card";
+import React, { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -7,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import {
@@ -16,19 +16,15 @@ import {
   Loader2,
   Users,
   ListTodo,
-  Clock,
-  Calendar,
-  ChevronDown,
-  ChevronRight,
   ExternalLink,
-  Play,
+  FileText,
   Zap,
   FolderPlus,
   Video,
-  Headphones,
   Tag,
-  ArrowRight,
   CheckCircle2,
+  Filter,
+  X,
 } from "lucide-react";
 
 export default function Meetings() {
@@ -36,23 +32,54 @@ export default function Meetings() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [panelMeeting, setPanelMeeting] = useState<any | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
   const [showProcessDialog, setShowProcessDialog] = useState(false);
   const [selectedMeetingId, setSelectedMeetingId] = useState<number | null>(null);
-  const [processCreateProject, setProcessCreateProject] = useState(false);
+  const [processCreateContacts, setProcessCreateContacts] = useState(true);
+  const [processCreateTasks, setProcessCreateTasks] = useState(true);
+  const [projectMode, setProjectMode] = useState<"none" | "new" | "existing">("none");
   const [processProjectName, setProcessProjectName] = useState("");
+  const [processExistingProjectId, setProcessExistingProjectId] = useState<number | undefined>(undefined);
+  const [predictedProjectId, setPredictedProjectId] = useState<number | undefined>(undefined);
 
-  const { data: meetingsRaw, isLoading, refetch } = trpc.fireflies.meetings.list.useQuery({
-    status: statusFilter !== "all" ? statusFilter : undefined,
-  });
+  const { data: projectsRaw } = trpc.projects.list.useQuery();
+  const availableProjects = (projectsRaw as Array<{ id: number; name: string }> | undefined) || [];
+
+  const { data: meetingsRaw, isLoading, refetch, error: meetingsError } = trpc.fireflies.meetings.list.useQuery({});
   const meetings = (meetingsRaw as any[] | undefined) || [];
-  const { data: statsRaw } = trpc.fireflies.meetings.getStats.useQuery();
-  const stats = statsRaw as any;
+
+  const openPanel = (meeting: any) => {
+    setPanelMeeting(meeting);
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (meeting != null) {
+      url.searchParams.set("meetingId", String(meeting.id));
+      url.searchParams.delete("firefliesId");
+    } else {
+      url.searchParams.delete("meetingId");
+      url.searchParams.delete("firefliesId");
+    }
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  };
+
+  const closePanel = () => {
+    setPanelMeeting(null);
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("meetingId");
+    url.searchParams.delete("firefliesId");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  };
+
+  const { data: statsRaw, refetch: refetchStats } = trpc.fireflies.meetings.getStats.useQuery();
+  const stats = statsRaw as { total?: number; pending?: number; processed?: number; thisWeek?: number } | undefined;
 
   const syncMutation = trpc.fireflies.syncMeetings.useMutation({
     onSuccess: (data) => {
       toast.success(`Synced ${data.synced} new meetings`);
       refetch();
+      refetchStats();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -65,370 +92,541 @@ export default function Meetings() {
       setShowProcessDialog(false);
       setSelectedMeetingId(null);
       refetch();
+      refetchStats();
     },
     onError: (error) => toast.error(error.message),
   });
 
-  // Client-side search filtering
-  const filtered = meetings.filter((m: any) => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    const title = (m.title || "").toLowerCase();
-    const participants = (m.participants || "").toLowerCase();
-    const summary = (m.summary || "").toLowerCase();
-    return title.includes(q) || participants.includes(q) || summary.includes(q);
-  }).filter((m: any) => {
-    if (!dateFrom && !dateTo) return true;
-    const d = m.date ? new Date(m.date) : null;
-    if (!d) return false;
-    if (dateFrom && d < new Date(dateFrom)) return false;
-    if (dateTo && d > new Date(dateTo + "T23:59:59")) return false;
-    return true;
-  });
-
-  const formatDuration = (seconds?: number | null) => {
-    if (!seconds) return "—";
-    const mins = Math.floor(seconds / 60);
-    return `${mins}m`;
-  };
-
-  const formatDate = (date?: string | Date | null) => {
-    if (!date) return "—";
-    return new Date(date).toLocaleDateString("en-US", {
-      month: "short", day: "numeric", year: "numeric",
-      hour: "2-digit", minute: "2-digit",
-    });
-  };
-
-  const statusBadge = (status: string) => {
-    switch (status) {
-      case "pending":
-        return <Badge variant="outline" className="text-yellow-600 border-yellow-300">Pending</Badge>;
-      case "fully_processed":
-        return <Badge className="bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">Processed</Badge>;
-      case "contacts_created":
-        return <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">Contacts Created</Badge>;
-      case "tasks_created":
-        return <Badge className="bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">Tasks Created</Badge>;
-      default:
-        return <Badge variant="secondary">{status}</Badge>;
+  const parseSafe = (json: string | null | undefined) => {
+    if (!json) return null;
+    try {
+      return JSON.parse(json);
+    } catch {
+      return null;
     }
   };
 
-  const parseSafe = (json: string | null | undefined) => {
-    if (!json) return null;
-    try { return JSON.parse(json); } catch { return null; }
+  const meetingsWithParsed = useMemo(
+    () =>
+      meetings.map((meeting: any) => ({
+        ...meeting,
+        parsedParticipants: parseSafe(meeting.participants) || [],
+        parsedSummary: parseSafe(meeting.summary),
+        parsedActionItems: parseSafe(meeting.actionItems) || [],
+      })),
+    [meetings]
+  );
+
+  const filtered = meetingsWithParsed
+    .filter((m: any) => {
+      if (statusFilter === "pending" && m.processingStatus !== "pending") return false;
+      if (statusFilter === "processed" && m.processingStatus !== "fully_processed") return false;
+      if (statusFilter !== "all" && statusFilter !== "pending" && statusFilter !== "processed" && m.processingStatus !== statusFilter) return false;
+      if (!search) return true;
+      const q = search.toLowerCase();
+      const title = (m.title || "").toLowerCase();
+      const summaryText = (m.parsedSummary?.overview || "").toLowerCase();
+      const bulletText = (() => {
+        const bullets = m.parsedSummary?.shorthand_bullet;
+        if (!bullets) return "";
+        return (Array.isArray(bullets) ? bullets : [bullets]).join(" ").toLowerCase();
+      })();
+      const participantText = (Array.isArray(m.parsedParticipants) ? m.parsedParticipants : [])
+        .map((p: any) =>
+          typeof p === "string" ? p : p?.displayName || p?.name || p?.email || ""
+        )
+        .join(" ")
+        .toLowerCase();
+      return title.includes(q) || summaryText.includes(q) || bulletText.includes(q) || participantText.includes(q);
+    })
+    .filter((m: any) => {
+      if (!dateFrom && !dateTo) return true;
+      const d = m.date ? new Date(m.date) : null;
+      if (!d) return false;
+      if (dateFrom && d < new Date(dateFrom)) return false;
+      if (dateTo && d > new Date(`${dateTo}T23:59:59`)) return false;
+      return true;
+    })
+    .sort((a: any, b: any) => {
+      const aTime = a?.date ? new Date(a.date).getTime() : 0;
+      const bTime = b?.date ? new Date(b.date).getTime() : 0;
+      return bTime - aTime;
+    });
+
+  const normalizeDurationSeconds = (raw?: number | string | null) => {
+    if (raw == null) return null;
+    const value = typeof raw === "string" ? Number(raw) : raw;
+    if (!Number.isFinite(value) || value <= 0) return null;
+    if (value <= 120 && Number.isInteger(value)) return value * 60;
+    if (value < 10 && !Number.isInteger(value)) return Math.round(value * 60);
+    return Math.round(value);
+  };
+
+  const fmtDur = (raw?: number | string | null) => {
+    const seconds = normalizeDurationSeconds(raw);
+    if (!seconds) return "-";
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    if (hours > 0) return `${hours}h${mins}m`;
+    return `${mins}m`;
+  };
+
+  const fmtDate = (date?: string | Date | null) => {
+    if (!date) return "-";
+    const d = new Date(date);
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  };
+
+  const fmtTime = (date?: string | Date | null) => {
+    if (!date) return "";
+    return new Date(date).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  };
+
+  const statusBadge = (status: string) => {
+    const base = "text-[10px] px-1.5 py-0";
+    switch (status) {
+      case "pending":
+        return <Badge variant="outline" className={`${base} text-yellow-600 border-yellow-300`}>Pending</Badge>;
+      case "fully_processed":
+        return <Badge className={`${base} bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400`}>Processed</Badge>;
+      case "contacts_created":
+        return <Badge className={`${base} bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400`}>Contacts</Badge>;
+      case "tasks_created":
+        return <Badge className={`${base} bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400`}>Tasks</Badge>;
+      case "project_created":
+        return <Badge className={`${base} bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400`}>Project</Badge>;
+      case "skipped":
+        return <Badge variant="outline" className={`${base} text-muted-foreground`}>Skipped</Badge>;
+      case "error":
+        return <Badge variant="destructive" className={base}>Error</Badge>;
+      default:
+        return <Badge variant="secondary" className={base}>{status}</Badge>;
+    }
+  };
+
+  const predictProject = (meetingTitle: string): number | undefined => {
+    const MIN_WORD_LENGTH = 2;
+    if (!availableProjects.length || !meetingTitle) return undefined;
+    const titleWords = meetingTitle.toLowerCase().split(/\W+/).filter((w) => w.length > MIN_WORD_LENGTH);
+    let bestId: number | undefined;
+    let bestScore = 0;
+    for (const p of availableProjects) {
+      const nameWordSet = new Set(
+        p.name.toLowerCase().split(/\W+/).filter((w: string) => w.length > MIN_WORD_LENGTH)
+      );
+      const score = titleWords.filter((w) => nameWordSet.has(w)).length;
+      if (score > bestScore) {
+        bestScore = score;
+        bestId = p.id;
+      }
+    }
+    return bestId;
   };
 
   const handleProcessMeeting = () => {
     if (!selectedMeetingId) return;
     processMeetingMutation.mutate({
-      meetingId: selectedMeetingId.toString(),
-      createContacts: true,
-      createTasks: true,
-      createProject: processCreateProject,
-      projectName: processProjectName || undefined,
+      meetingId: selectedMeetingId,
+      createContacts: processCreateContacts,
+      createTasks: processCreateTasks,
+      createProject: projectMode === "new",
+      projectName: projectMode === "new" ? (processProjectName || undefined) : undefined,
+      projectId: projectMode === "existing" ? processExistingProjectId : undefined,
     } as any);
   };
 
+  const hasActiveFilters = search || statusFilter !== "all" || dateFrom || dateTo;
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !meetingsWithParsed.length) return;
+    const params = new URLSearchParams(window.location.search);
+    const rawMeetingId = params.get("meetingId");
+    const firefliesId = params.get("firefliesId");
+
+    let matched: any | null = null;
+    if (rawMeetingId) {
+      const meetingId = Number(rawMeetingId);
+      if (Number.isFinite(meetingId) && meetingId > 0) {
+        matched = meetingsWithParsed.find((m: any) => m.id === meetingId) ?? null;
+      }
+    } else if (firefliesId) {
+      matched = meetingsWithParsed.find((m: any) => m.firefliesId === firefliesId) ?? null;
+    }
+
+    if (matched && panelMeeting?.id !== matched.id) {
+      setPanelMeeting(matched);
+      window.requestAnimationFrame(() => {
+        document.getElementById(`meeting-row-${matched.id}`)?.scrollIntoView({ block: "center" });
+      });
+    }
+  }, [meetingsWithParsed]);
+
+  const getBullets = (meeting: any): string[] => {
+    const summary = meeting.parsedSummary;
+    if (!summary) return [];
+    const raw = summary.shorthand_bullet;
+    if (!raw) return [];
+    const arr = Array.isArray(raw) ? raw : [raw];
+    return arr.slice(0, 4);
+  };
+
+  /** Render inline markdown bold (**text**) as <strong> elements. */
+  const renderInlineMd = (text: string): React.ReactNode => {
+    const parts = text.split(/\*\*(.+?)\*\*/g);
+    return parts.map((part, i) =>
+      i % 2 === 1 ? <strong key={i} className="font-semibold text-foreground">{part}</strong> : part
+    );
+  };
+
+  /**
+   * Parse an overview string that uses `- **Key:** value` list syntax into
+   * individual bullet strings. Falls back to a single-item array so the
+   * caller always gets an array.
+   */
+  const parseOverviewBullets = (overview: string): string[] => {
+    // Split on " - **" boundaries (each bullet starts "- **Label:**")
+    const parts = overview
+      .split(/\s+-\s+(?=\*\*)/)
+      .map((s) => s.replace(/^-\s+/, "").trim())
+      .filter(Boolean);
+    return parts.length > 1 ? parts : [overview];
+  };
+
+  /**
+   * Parse a shorthand_bullet that may be a single long string with emoji-headed
+   * sections (e.g. "🌱 **Title** text 🖥️ **Title2** text ...") into separate items.
+   */
+  const parseShorthandBullets = (raw: string | string[]): string[] => {
+    if (Array.isArray(raw)) return raw.filter(Boolean);
+    if (!raw) return [];
+    // Try newline split first
+    const byNewline = raw.split(/\n+/).map((s) => s.trim()).filter(Boolean);
+    if (byNewline.length > 1) return byNewline;
+    // Split before emoji characters that start a new section
+    // Covers most common emoji ranges (Miscellaneous Symbols, Pictographs, etc.)
+    const byEmoji = raw
+      .split(/\s+(?=[\u{1F300}-\u{1F9FF}\u{2600}-\u{27BF}\u{1FA00}-\u{1FAFF}])/u)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (byEmoji.length > 1) return byEmoji;
+    return [raw];
+  };
+
   return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
-            <Mic className="h-7 w-7" />
-            Meetings
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Meeting transcripts and summaries from Fireflies.ai
-          </p>
+    <div className="space-y-2">
+      {/* ── Compact toolbar: stats + search + actions ── */}
+      <div className="flex flex-wrap items-center gap-2">
+        <h1 className="text-sm font-bold tracking-[-0.02em] mr-1">Meetings</h1>
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span className="rounded bg-muted px-1.5 py-0.5 font-medium tabular-nums">{stats?.total ?? meetings.length}</span>
+          <span className="rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400 px-1.5 py-0.5 font-medium tabular-nums">{stats?.pending ?? 0} pending</span>
+          <span className="rounded bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 px-1.5 py-0.5 font-medium tabular-nums">{stats?.processed ?? 0} done</span>
         </div>
-        <Button
-          variant="outline"
-          onClick={() => (syncMutation.mutate as any)({})}
-          disabled={syncMutation.isPending}
-        >
-          {syncMutation.isPending ? (
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-          ) : (
-            <RefreshCw className="h-4 w-4 mr-2" />
+        <div className="ml-auto flex items-center gap-1.5">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="h-7 w-44 pl-7 text-xs"
+            />
+          </div>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="h-7 w-28 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="contacts_created">Contacts</SelectItem>
+              <SelectItem value="fully_processed">Processed</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            onClick={() => setShowFilters(!showFilters)}
+          >
+            <Filter className="h-3 w-3 mr-1" />
+            {showFilters ? "Hide" : "Date"}
+          </Button>
+          {hasActiveFilters && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs text-muted-foreground"
+              onClick={() => { setSearch(""); setStatusFilter("all"); setDateFrom(""); setDateTo(""); setShowFilters(false); }}
+            >
+              <X className="h-3 w-3" />
+            </Button>
           )}
-          Sync Meetings
-        </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={() => (syncMutation.mutate as any)({})}
+            disabled={syncMutation.isPending}
+          >
+            {syncMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3 mr-1" />}
+            Sync
+          </Button>
+        </div>
       </div>
 
-      {/* Stats Cards */}
-      {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="text-sm text-muted-foreground">Total</div>
-              <div className="text-2xl font-semibold">{stats.total}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="text-sm text-muted-foreground">Pending</div>
-              <div className="text-2xl font-semibold text-yellow-600">{stats.pending}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="text-sm text-muted-foreground">Processed</div>
-              <div className="text-2xl font-semibold text-green-600">{stats.processed}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="text-sm text-muted-foreground">This Week</div>
-              <div className="text-2xl font-semibold text-blue-600">
-                {meetings.filter((m: any) => {
-                  if (!m.date) return false;
-                  const d = new Date(m.date);
-                  const now = new Date();
-                  const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-                  return d >= weekAgo;
-                }).length}
-              </div>
-            </CardContent>
-          </Card>
+      {/* ── Collapsible date filters ── */}
+      {showFilters && (
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-muted-foreground">From</span>
+          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-7 w-36 text-xs" />
+          <span className="text-muted-foreground">to</span>
+          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-7 w-36 text-xs" />
         </div>
       )}
 
-      {/* Search and Filters */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search meetings by title, participants, or keywords..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
-          />
-        </div>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Status</SelectItem>
-            <SelectItem value="pending">Pending</SelectItem>
-            <SelectItem value="contacts_created">Contacts Created</SelectItem>
-            <SelectItem value="tasks_created">Tasks Created</SelectItem>
-            <SelectItem value="fully_processed">Processed</SelectItem>
-          </SelectContent>
-        </Select>
-        <Input
-          type="date"
-          value={dateFrom}
-          onChange={(e) => setDateFrom(e.target.value)}
-          className="w-[160px]"
-          placeholder="From"
-        />
-        <Input
-          type="date"
-          value={dateTo}
-          onChange={(e) => setDateTo(e.target.value)}
-          className="w-[160px]"
-          placeholder="To"
-        />
-      </div>
-
-      {/* Meetings List */}
+      {/* ── Dense meeting list ── */}
       {isLoading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : meetingsError ? (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-center text-sm dark:border-red-900/30 dark:bg-red-950/20">
+          <p className="font-medium text-red-700 dark:text-red-300">Error loading meetings</p>
+          <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">{meetingsError.message}</p>
         </div>
       ) : filtered.length === 0 ? (
-        <div className="text-center py-12 text-muted-foreground">
-          <Mic className="h-12 w-12 mx-auto mb-3 opacity-30" />
-          <p>{meetings.length === 0 ? "No meetings synced yet." : "No meetings match your search."}</p>
-          {meetings.length === 0 && (
-            <p className="text-sm mt-1">Click "Sync Meetings" to fetch your meetings from Fireflies.</p>
-          )}
+        <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">
+          {meetings.length === 0 ? "No meetings synced yet." : "No meetings match filters."}
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="divide-y divide-border/50 rounded-xl border">
           {filtered.map((meeting: any) => {
-            const participants = parseSafe(meeting.participants) || [];
-            const summary = parseSafe(meeting.summary);
-            const actionItems = parseSafe(meeting.actionItemsRaw) || [];
-            const isExpanded = expandedId === meeting.id;
+            const summary = meeting.parsedSummary;
+            const bullets = getBullets(meeting);
 
             return (
-              <Card key={meeting.id} className="overflow-hidden">
-                {/* Main Row */}
-                <button
-                  className="w-full text-left p-4 hover:bg-muted/50 transition-colors"
-                  onClick={() => setExpandedId(isExpanded ? null : meeting.id)}
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="shrink-0 text-muted-foreground">
-                      {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium truncate">{meeting.title || "Untitled Meeting"}</div>
-                      <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-                        <span className="flex items-center gap-1">
-                          <Calendar className="h-3 w-3" />
-                          {formatDate(meeting.date)}
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <Clock className="h-3 w-3" />
-                          {formatDuration(meeting.duration)}
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <Users className="h-3 w-3" />
-                          {Array.isArray(participants) ? participants.length : 0}
-                        </span>
-                        {actionItems.length > 0 && (
-                          <span className="flex items-center gap-1">
-                            <ListTodo className="h-3 w-3" />
-                            {actionItems.length} action items
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="shrink-0 flex items-center gap-2">
-                      {statusBadge((meeting as any).processingStatus || meeting.status)}
-                    </div>
-                  </div>
-                  {/* Summary excerpt */}
-                  {summary?.overview && (
-                    <div className="mt-2 ml-8 text-sm text-muted-foreground line-clamp-2">
-                      {summary.overview}
-                    </div>
-                  )}
-                </button>
-
-                {/* Expanded Detail */}
-                {isExpanded && (
-                  <div className="border-t px-4 pb-4 pt-3 bg-muted/30 space-y-4">
-                    {/* Participants */}
-                    {Array.isArray(participants) && participants.length > 0 && (
-                      <div>
-                        <Label className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Participants</Label>
-                        <div className="flex flex-wrap gap-1.5 mt-1.5">
-                          {participants.map((p: any, i: number) => (
-                            <Badge key={i} variant="secondary" className="text-xs">
-                              {typeof p === 'string' ? p : p.displayName || p.name || p.email || 'Unknown'}
-                            </Badge>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Full Summary */}
-                    {summary?.overview && (
-                      <div>
-                        <Label className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Summary</Label>
-                        <p className="mt-1.5 text-sm leading-relaxed">{summary.overview}</p>
-                      </div>
-                    )}
-
-                    {/* Bullet Points */}
-                    {summary?.shorthand_bullet && (
-                      <div>
-                        <Label className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Key Points</Label>
-                        <ul className="mt-1.5 space-y-1 text-sm">
-                          {(Array.isArray(summary.shorthand_bullet) ? summary.shorthand_bullet : [summary.shorthand_bullet]).map((bullet: string, i: number) => (
-                            <li key={i} className="flex items-start gap-2">
-                              <span className="text-muted-foreground mt-1">•</span>
-                              <span>{bullet}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-
-                    {/* Keywords */}
-                    {summary?.keywords && (
-                      <div>
-                        <Label className="text-xs text-muted-foreground font-medium uppercase tracking-wider flex items-center gap-1">
-                          <Tag className="h-3 w-3" /> Keywords
-                        </Label>
-                        <div className="flex flex-wrap gap-1.5 mt-1.5">
-                          {(Array.isArray(summary.keywords) ? summary.keywords : []).map((kw: string, i: number) => (
-                            <Badge key={i} variant="outline" className="text-xs">{kw}</Badge>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Action Items */}
-                    {actionItems.length > 0 && (
-                      <div>
-                        <Label className="text-xs text-muted-foreground font-medium uppercase tracking-wider flex items-center gap-1">
-                          <ListTodo className="h-3 w-3" /> Action Items ({actionItems.length})
-                        </Label>
-                        <ul className="mt-1.5 space-y-1.5">
-                          {actionItems.map((item: any, i: number) => (
-                            <li key={i} className="flex items-start gap-2 text-sm p-2 rounded bg-background border">
-                              <CheckCircle2 className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
-                              <div className="flex-1">
-                                <span>{typeof item === 'string' ? item : item.text || item.description || JSON.stringify(item)}</span>
-                                {item.assignee && (
-                                  <span className="ml-2 text-xs text-blue-600">@{item.assignee}</span>
-                                )}
-                              </div>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-
-                    {/* Links & Actions */}
-                    <div className="flex items-center gap-2 pt-2 border-t">
-                      {meeting.videoUrl && (
-                        <Button variant="outline" size="sm" asChild>
-                          <a href={meeting.videoUrl} target="_blank" rel="noopener noreferrer">
-                            <Video className="h-3 w-3 mr-1" /> Video
-                            <ExternalLink className="h-3 w-3 ml-1" />
-                          </a>
-                        </Button>
-                      )}
-                      {meeting.audioUrl && (
-                        <Button variant="outline" size="sm" asChild>
-                          <a href={meeting.audioUrl} target="_blank" rel="noopener noreferrer">
-                            <Headphones className="h-3 w-3 mr-1" /> Audio
-                            <ExternalLink className="h-3 w-3 ml-1" />
-                          </a>
-                        </Button>
-                      )}
-                      {meeting.transcript && (
-                        <Button variant="outline" size="sm" asChild>
-                          <a href={meeting.transcript} target="_blank" rel="noopener noreferrer">
-                            <Mic className="h-3 w-3 mr-1" /> Transcript
-                            <ExternalLink className="h-3 w-3 ml-1" />
-                          </a>
-                        </Button>
-                      )}
-                      {((meeting as any).processingStatus === 'pending' || meeting.status === 'pending') && (
+              <div
+                id={`meeting-row-${meeting.id}`}
+                key={meeting.id}
+                className="group cursor-pointer transition-colors hover:bg-accent/30"
+                onClick={() => openPanel(meeting)}
+              >
+                {/* ── Main row ── */}
+                <div className="flex items-start gap-2 px-3 py-2">
+                  {/* Content */}
+                  <div className="min-w-0 flex-1">
+                    {/* Title row */}
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-[13px] font-medium">
+                        {meeting.title || "Untitled"}
+                      </span>
+                      <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
+                        {fmtDate(meeting.date)} {fmtTime(meeting.date)}
+                      </span>
+                      <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
+                        {fmtDur(meeting.duration)}
+                      </span>
+                      <span className="shrink-0">{statusBadge(meeting.processingStatus)}</span>
+                      {meeting.processingStatus === "pending" && (
                         <Button
                           size="sm"
+                          className="h-5 px-2 text-[10px] shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
                           onClick={(e) => {
                             e.stopPropagation();
                             setSelectedMeetingId(meeting.id);
                             setProcessProjectName("");
-                            setProcessCreateProject(false);
+                            setProjectMode("none");
                             setShowProcessDialog(true);
                           }}
                         >
-                          <Zap className="h-3 w-3 mr-1" />
-                          Process Meeting
+                          <Zap className="h-2.5 w-2.5 mr-0.5" />
+                          Process
                         </Button>
                       )}
+                      {meeting.transcriptUrl && (
+                        <a
+                          href={meeting.transcriptUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="shrink-0 text-muted-foreground/50 hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <FileText className="h-3 w-3" />
+                        </a>
+                      )}
                     </div>
+
+                    {/* Inline preview bullets */}
+                    {bullets.length > 0 && (
+                      <ul className="mt-0.5 space-y-0">
+                        {bullets.map((bullet: string, i: number) => (
+                          <li key={i} className="flex items-start gap-1.5 text-[12px] text-muted-foreground leading-[1.4]">
+                            <span className="mt-[3px] h-1 w-1 shrink-0 rounded-full bg-muted-foreground/40" />
+                            <span className="line-clamp-1">{bullet}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {!bullets.length && summary?.overview && (
+                      <p className="mt-0.5 text-[12px] text-muted-foreground line-clamp-1 leading-[1.4]">{summary.overview}</p>
+                    )}
                   </div>
-                )}
-              </Card>
+                </div>
+              </div>
             );
           })}
         </div>
       )}
 
-      {/* Process Meeting Dialog */}
+      {/* ── Meeting detail side panel ── */}
+      <Sheet open={!!panelMeeting} onOpenChange={(open) => { if (!open) closePanel(); }}>
+        <SheetContent side="right" className="w-full sm:max-w-xl flex flex-col p-0 gap-0">
+          {panelMeeting && (() => {
+            const m = panelMeeting;
+            const summary = m.parsedSummary;
+            const actionItems = m.parsedActionItems || [];
+
+            return (
+              <>
+                {/* Header */}
+                <SheetHeader className="border-b px-5 py-4 gap-1">
+                  <SheetTitle className="text-base leading-snug pr-6">{m.title || "Untitled"}</SheetTitle>
+                  <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
+                    <span>{fmtDate(m.date)} {fmtTime(m.date)}</span>
+                    <span>·</span>
+                    <span>{fmtDur(m.duration)}</span>
+                    <span>·</span>
+                    {statusBadge(m.processingStatus)}
+                    {m.parsedParticipants?.length > 0 && (
+                      <>
+                        <span>·</span>
+                        <span className="flex items-center gap-1">
+                          <Users className="h-3 w-3" />
+                          {m.parsedParticipants
+                            .map((p: any) => typeof p === "string" ? p : p.displayName || p.name || p.email || "?")
+                            .join(", ")}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </SheetHeader>
+
+                {/* Scrollable content */}
+                <div className="flex-1 overflow-y-auto px-5 py-5 space-y-6">
+                  {/* Tasks */}
+                  {actionItems.length > 0 && (
+                    <section>
+                      <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Tasks ({actionItems.length})
+                      </h3>
+                      <ul className="space-y-2">
+                        {actionItems.map((item: any, i: number) => (
+                          <li key={i} className="flex items-start gap-2.5 text-[13px] leading-relaxed">
+                            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                            <span>
+                              {renderInlineMd(typeof item === "string" ? item : item.text || item.description || JSON.stringify(item))}
+                            </span>
+                            {item.assignee && (
+                              <span className="shrink-0 text-[11px] font-medium text-blue-600 dark:text-blue-400">@{item.assignee}</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  )}
+
+                  {/* Summary */}
+                  {summary?.overview && (() => {
+                    const bullets = parseOverviewBullets(summary.overview);
+                    return (
+                      <section>
+                        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Summary</h3>
+                        {bullets.length > 1 ? (
+                          <div className="space-y-3">
+                            {bullets.map((bullet, i) => (
+                              <p key={i} className="text-[13px] leading-relaxed">
+                                {renderInlineMd(bullet)}
+                              </p>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-[13px] leading-relaxed">{renderInlineMd(summary.overview)}</p>
+                        )}
+                      </section>
+                    );
+                  })()}
+
+                  {/* Key Points */}
+                  {summary?.shorthand_bullet && (() => {
+                    const points = parseShorthandBullets(summary.shorthand_bullet);
+                    return (
+                      <section>
+                        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Key Points</h3>
+                        <div className="space-y-3">
+                          {points.map((point: string, i: number) => (
+                            <p key={i} className="text-[13px] leading-relaxed">
+                              {renderInlineMd(point)}
+                            </p>
+                          ))}
+                        </div>
+                      </section>
+                    );
+                  })()}
+
+                  {/* Keywords */}
+                  {summary?.keywords && (Array.isArray(summary.keywords) ? summary.keywords : []).length > 0 && (
+                    <section>
+                      <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Tags</h3>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(Array.isArray(summary.keywords) ? summary.keywords : []).map((kw: string, i: number) => (
+                          <Badge key={i} variant="outline" className="text-[11px] px-2 py-0.5">{kw}</Badge>
+                        ))}
+                      </div>
+                    </section>
+                  )}
+                </div>
+
+                {/* Footer actions */}
+                <div className="border-t px-5 py-3 flex items-center gap-2">
+                  {m.recordingUrl && (
+                    <Button variant="outline" size="sm" className="text-xs" asChild>
+                      <a href={m.recordingUrl} target="_blank" rel="noopener noreferrer">
+                        <Video className="mr-1.5 h-3.5 w-3.5" /> Recording <ExternalLink className="ml-1 h-3 w-3" />
+                      </a>
+                    </Button>
+                  )}
+                  {m.transcriptUrl && (
+                    <Button variant="outline" size="sm" className="text-xs" asChild>
+                      <a href={m.transcriptUrl} target="_blank" rel="noopener noreferrer">
+                        <Mic className="mr-1.5 h-3.5 w-3.5" /> Transcript <ExternalLink className="ml-1 h-3 w-3" />
+                      </a>
+                    </Button>
+                  )}
+                  {m.processingStatus === "pending" && (
+                    <Button
+                      size="sm"
+                      className="ml-auto text-xs"
+                      onClick={() => {
+                        setSelectedMeetingId(m.id);
+                        setProcessProjectName("");
+                        setProjectMode("none");
+                        setShowProcessDialog(true);
+                      }}
+                    >
+                      <Zap className="mr-1.5 h-3.5 w-3.5" />
+                      Process Meeting
+                    </Button>
+                  )}
+                </div>
+              </>
+            );
+          })()}
+        </SheetContent>
+      </Sheet>
+
+      {/* ── Process dialog (unchanged logic) ── */}
       <Dialog open={showProcessDialog} onOpenChange={setShowProcessDialog}>
         <DialogContent>
           <DialogHeader>
@@ -438,37 +636,71 @@ export default function Meetings() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="flex items-center gap-3 p-3 bg-blue-50 dark:bg-blue-950/30 rounded-lg">
-              <Users className="h-5 w-5 text-blue-600" />
-              <div>
-                <div className="font-medium text-sm">Create CRM Contacts</div>
+            <div className="flex items-center gap-3 rounded-lg border p-3">
+              <Users className="h-5 w-5 text-blue-600 shrink-0" />
+              <div className="flex-1">
+                <div className="text-sm font-medium">Create CRM Contacts</div>
                 <div className="text-xs text-muted-foreground">From meeting participants</div>
               </div>
-              <ArrowRight className="h-4 w-4 text-blue-400 ml-auto" />
-              <CheckCircle2 className="h-4 w-4 text-green-500" />
+              <Switch checked={processCreateContacts} onCheckedChange={setProcessCreateContacts} />
             </div>
-            <div className="flex items-center gap-3 p-3 bg-purple-50 dark:bg-purple-950/30 rounded-lg">
-              <ListTodo className="h-5 w-5 text-purple-600" />
-              <div>
-                <div className="font-medium text-sm">Create Tasks</div>
+            <div className="flex items-center gap-3 rounded-lg border p-3">
+              <ListTodo className="h-5 w-5 text-purple-600 shrink-0" />
+              <div className="flex-1">
+                <div className="text-sm font-medium">Create Tasks</div>
                 <div className="text-xs text-muted-foreground">From meeting action items</div>
               </div>
-              <ArrowRight className="h-4 w-4 text-purple-400 ml-auto" />
-              <CheckCircle2 className="h-4 w-4 text-green-500" />
+              <Switch checked={processCreateTasks} onCheckedChange={setProcessCreateTasks} />
             </div>
-            <div className="border rounded-lg p-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <FolderPlus className="h-5 w-5 text-indigo-600" />
-                  <div>
-                    <div className="font-medium text-sm">Create Project</div>
-                    <div className="text-xs text-muted-foreground">Group tasks under a project</div>
-                  </div>
+            <div className="space-y-3 rounded-lg border p-3">
+              <div className="flex items-center gap-2">
+                <FolderPlus className="h-5 w-5 text-indigo-600 shrink-0" />
+                <div className="flex-1">
+                  <div className="text-sm font-medium">Project</div>
+                  <div className="text-xs text-muted-foreground">Group tasks under a project</div>
                 </div>
-                <Switch checked={processCreateProject} onCheckedChange={setProcessCreateProject} />
               </div>
-              {processCreateProject && (
-                <div className="pl-7">
+              <div className="flex gap-2 pl-7">
+                {(["none", "existing", "new"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setProjectMode(mode)}
+                    className={`rounded-full px-3 py-1 text-xs font-medium border transition-colors ${
+                      projectMode === mode
+                        ? "bg-indigo-600 text-white border-indigo-600"
+                        : "bg-background text-muted-foreground border-border hover:border-indigo-400"
+                    }`}
+                  >
+                    {mode === "none" ? "None" : mode === "existing" ? "Existing" : "New"}
+                  </button>
+                ))}
+              </div>
+              {projectMode === "existing" && (
+                <div className="pl-7 space-y-1">
+                  <Label className="text-xs">Select Project</Label>
+                  <Select
+                    value={processExistingProjectId !== undefined ? String(processExistingProjectId) : ""}
+                    onValueChange={(v) => setProcessExistingProjectId(Number(v))}
+                  >
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="Choose a project…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableProjects.map((p) => (
+                        <SelectItem key={p.id} value={String(p.id)}>
+                          {p.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {predictedProjectId !== undefined && processExistingProjectId === predictedProjectId && (
+                    <p className="text-[11px] text-indigo-600">✦ Auto-predicted from meeting title</p>
+                  )}
+                </div>
+              )}
+              {projectMode === "new" && (
+                <div className="pl-7 space-y-1">
                   <Label className="text-xs">Project Name (optional)</Label>
                   <Input
                     placeholder="Auto-generated from meeting title"
@@ -484,9 +716,9 @@ export default function Meetings() {
             <Button variant="outline" onClick={() => setShowProcessDialog(false)}>Cancel</Button>
             <Button onClick={handleProcessMeeting} disabled={processMeetingMutation.isPending}>
               {processMeetingMutation.isPending ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : (
-                <Zap className="h-4 w-4 mr-2" />
+                <Zap className="mr-2 h-4 w-4" />
               )}
               Process Meeting
             </Button>

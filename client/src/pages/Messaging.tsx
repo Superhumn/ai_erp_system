@@ -7,6 +7,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
+import { useOfflineMutation } from "@/hooks/useOfflineMutation";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { toast } from "sonner";
 import {
   MessageSquare,
@@ -26,6 +28,7 @@ import {
   WifiOff,
   Hash,
   ArrowRight,
+  ArrowLeft,
   Smartphone,
 } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
@@ -115,14 +118,28 @@ export default function Messaging() {
     );
   const messages = (messagesRaw as any[] | undefined) || [];
 
-  // Send message mutation
-  const sendMutation = trpc.crm.whatsapp.sendMessage.useMutation({
+  // Send message mutation. Wrapped in useOfflineMutation so a tap-to-send
+  // while offline writes to the IndexedDB queue and sync replays it on
+  // reconnect (see lib/offline/mutationQueue.ts).
+  const online = useOnlineStatus();
+  // Toasts are owned by the caller (handleSendMessage) so we don't double up
+  // with useOfflineMutation's "Saved offline" toast on a network failure.
+  const sendMutationTrpc = trpc.crm.whatsapp.sendMessage.useMutation({
     onSuccess: () => {
       toast.success("Message sent");
-      setMessageText("");
       refetchMessages();
     },
-    onError: (err) => toast.error(err.message),
+  });
+  const sendMutation = useOfflineMutation<{
+    contactId: number;
+    whatsappNumber: string;
+    contactName?: string;
+    content: string;
+    messageType: "text";
+  }>({
+    path: "crm.whatsapp.sendMessage",
+    label: "Message",
+    online: (input) => sendMutationTrpc.mutateAsync(input),
   });
 
   // Auto-scroll to bottom when messages change
@@ -166,7 +183,7 @@ export default function Messaging() {
     return list;
   }, [contacts, search, channelTab, lastMessageMap]);
 
-  function handleSendMessage() {
+  async function handleSendMessage() {
     if (!messageText.trim() || !selectedContact) return;
 
     const waNumber = selectedContact.whatsappNumber || selectedContact.phone;
@@ -175,13 +192,23 @@ export default function Messaging() {
       return;
     }
 
-    sendMutation.mutate({
-      contactId: selectedContact.id,
-      whatsappNumber: waNumber,
-      contactName: selectedContact.fullName,
-      content: messageText.trim(),
-      messageType: "text",
-    });
+    const text = messageText.trim();
+    setMessageText("");
+    try {
+      await sendMutation.mutate({
+        contactId: selectedContact.id,
+        whatsappNumber: waNumber,
+        contactName: selectedContact.fullName,
+        content: text,
+        messageType: "text",
+      });
+    } catch (err) {
+      // Restore the draft so the user doesn't lose their message on a hard error.
+      // Network errors don't reach this branch — useOfflineMutation queues them
+      // and toasts "Saved offline" on its own.
+      setMessageText(text);
+      toast.error(err instanceof Error ? err.message : "Failed to send message");
+    }
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -216,27 +243,36 @@ export default function Messaging() {
   // ----- Render -----
 
   return (
-    <div className="animate-fade-in space-y-6">
-      {/* Page Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Messaging</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Unified conversations across WhatsApp, Email, and Google Chat
-          </p>
-        </div>
+    <div className="animate-fade-in space-y-2">
+      {/* Header — single consolidated row */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h1 className="text-sm font-bold tracking-[-0.02em]">Messaging</h1>
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="gap-1.5">
-            <Wifi className="h-3 w-3 text-green-500" />
-            WhatsApp Connected
+            {online ? (
+              <>
+                <Wifi className="h-3 w-3 text-green-500" />
+                WhatsApp Connected
+              </>
+            ) : (
+              <>
+                <WifiOff className="h-3 w-3 text-amber-500" />
+                Offline — drafts queue locally
+              </>
+            )}
           </Badge>
         </div>
       </div>
 
-      {/* Main Layout */}
+      {/* Main Layout — on mobile, contact list and conversation stack: only
+          one is visible at a time, controlled by `selectedContactId`. */}
       <div className="flex gap-0 border rounded-lg overflow-hidden bg-background" style={{ height: "calc(100vh - 180px)" }}>
         {/* Left Panel - Contact List */}
-        <div className="w-80 border-r flex flex-col shrink-0">
+        <div
+          className={`w-full md:w-80 border-r flex flex-col shrink-0 ${
+            selectedContactId ? "hidden md:flex" : "flex"
+          }`}
+        >
           {/* Search */}
           <div className="p-3 border-b">
             <div className="relative">
@@ -280,7 +316,13 @@ export default function Messaging() {
         </div>
 
         {/* Right Panel - Conversation */}
-        <div className="flex-1 flex flex-col min-w-0">
+        <div
+          className={`flex-1 flex-col min-w-0 ${
+            selectedContactId || channelTab === "gchat"
+              ? "flex"
+              : "hidden md:flex"
+          }`}
+        >
           {channelTab === "gchat" ? (
             <GoogleChatPanel />
           ) : selectedContactId && selectedContact ? (
@@ -288,6 +330,15 @@ export default function Messaging() {
               {/* Conversation Header */}
               <div className="px-4 py-3 border-b flex items-center justify-between bg-muted/30">
                 <div className="flex items-center gap-3 min-w-0">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="md:hidden h-8 w-8 -ml-1 shrink-0"
+                    onClick={() => setSelectedContactId(null)}
+                    aria-label="Back to contacts"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                  </Button>
                   <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
                     <User className="h-4 w-4 text-primary" />
                   </div>
@@ -567,10 +618,20 @@ export default function Messaging() {
             </div>
             <h3 className="text-base font-medium text-foreground mb-1">Connect Google Chat</h3>
             <p className="text-sm text-center max-w-sm mb-4">
-              Google Chat API integration is not yet configured. You can embed Google Chat
-              directly or wait for the API connector to be set up.
+              Authorize your Google account so we can connect to Google Chat. Message
+              send/read support will be wired up in a follow-up — for now you can also
+              embed Google Chat directly.
             </p>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap justify-center">
+              <Button
+                size="sm"
+                onClick={() => {
+                  window.location.href = "/api/google/chat/auth?returnTo=/messaging";
+                }}
+              >
+                <Hash className="h-3.5 w-3.5 mr-1.5" />
+                Connect Google Chat
+              </Button>
               <Button
                 variant="outline"
                 size="sm"

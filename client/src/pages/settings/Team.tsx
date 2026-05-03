@@ -17,6 +17,7 @@ const ROLE_LABELS: Record<string, string> = {
   finance: "Finance",
   ops: "Operations",
   legal: "Legal",
+  sales: "Sales",
   exec: "Executive",
   copacker: "Copacker",
   vendor: "Vendor",
@@ -130,6 +131,14 @@ export default function Team() {
       toast.success("Team member reactivated");
       refetchMembers();
     },
+  });
+
+  const deleteUserMutation = trpc.users.delete.useMutation({
+    onSuccess: () => {
+      toast.success("User deleted");
+      refetchMembers();
+    },
+    onError: (err) => toast.error(err.message),
   });
   
   const revokeInvitation = trpc.invitations.revoke.useMutation({
@@ -478,6 +487,18 @@ export default function Team() {
                                   Reactivate
                                 </Button>
                               )}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive"
+                                onClick={() => {
+                                  if (confirm(`Delete ${member.name || member.email}? This cannot be undone.`)) {
+                                    deleteUserMutation.mutate({ userId: member.id });
+                                  }
+                                }}
+                              >
+                                Delete
+                              </Button>
                             </div>
                           </TableCell>
                         </TableRow>

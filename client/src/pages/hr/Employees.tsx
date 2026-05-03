@@ -30,11 +30,22 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { UserCircle, Plus, Search, Loader2, Award, Layers, Upload } from "lucide-react";
+import { UserCircle, Plus, Search, Loader2, Award, Layers, Upload, Trash2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { format, addMonths } from "date-fns";
 import { getStatusColor } from "@/lib/statusColors";
 import DocumentsCell from "@/components/DocumentsCell";
+import { DetailSheet } from "@/components/DetailSheet";
 
 // ── helpers ──────────────────────────────────────────────────────
 function fmt$(v: string | number | null | undefined): string {
@@ -113,12 +124,15 @@ const statusColors: Record<string, string> = {
 interface UnifiedRow {
   key: string;
   stakeholderId: number | null;
+  employeeId: number | null;
+  userId: number | null;
   name: string;
   email: string;
   type: string;
   title: string;
   department: string;
   salary: string;
+  hireDate: string | null;
   totalShares: number;
   totalGrantValue: number;
   ownershipPct: number | null;
@@ -227,6 +241,7 @@ export default function PeopleAndEquity() {
   const [isGrantOpen, setIsGrantOpen] = useState(false);
   const [isShareClassOpen, setIsShareClassOpen] = useState(false);
   const [selectedPerson, setSelectedPerson] = useState<UnifiedRow | null>(null);
+  const [employeeToDelete, setEmployeeToDelete] = useState<{ id: number; name: string } | null>(null);
   const [scForm, setScForm] = useState({ name: "", type: "common", authorizedShares: "", pricePerShare: "", parValue: "0.0001", liquidationPreference: "1", votingRights: true, isParticipating: false });
 
   // ── form state: add person ──
@@ -257,6 +272,15 @@ export default function PeopleAndEquity() {
   // ── mutations ──
   const createEmployee = trpc.employees.create.useMutation({
     onSuccess: () => { utils.employees.list.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const deleteEmployee = trpc.employees.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Employee deleted");
+      setEmployeeToDelete(null);
+      setSelectedPerson(null);
+      utils.employees.list.invalidate();
+    },
     onError: (e) => toast.error(e.message),
   });
   const createStakeholder = trpc.capTable.stakeholders.create.useMutation({
@@ -381,12 +405,15 @@ export default function PeopleAndEquity() {
       result.push({
         key: `sh-${sh.id}`,
         stakeholderId: sh.id,
+        employeeId: matchingEmp?.id ?? null,
+        userId: matchingEmp?.userId ?? sh.userId ?? null,
         name: personName,
         email,
         type: sh.type || (matchingEmp ? matchingEmp.employmentType : "-"),
         title: sh.title || matchingEmp?.jobTitle || "-",
         department: matchingEmp ? (matchingEmp.departmentId ? `Dept #${matchingEmp.departmentId}` : "-") : "-",
         salary: matchingEmp?.salary ? fmt$(matchingEmp.salary) : "-",
+        hireDate: matchingEmp?.hireDate ? String(matchingEmp.hireDate) : null,
         totalShares,
         totalGrantValue: totalValue,
         ownershipPct: totalOutstandingShares > 0 && totalShares > 0 ? (totalShares / totalOutstandingShares) * 100 : null,
@@ -400,12 +427,15 @@ export default function PeopleAndEquity() {
       result.push({
         key: `emp-${e.id}`,
         stakeholderId: null,
+        employeeId: e.id,
+        userId: (e as any).userId ?? null,
         name: `${e.firstName} ${e.lastName}`,
         email: e.email || "-",
         type: e.employmentType || "employee",
         title: e.jobTitle || "-",
         department: e.departmentId ? `Dept #${e.departmentId}` : "-",
         salary: e.salary ? fmt$(e.salary) : "-",
+        hireDate: e.hireDate ? String(e.hireDate) : null,
         totalShares: 0,
         totalGrantValue: 0,
         ownershipPct: null,
@@ -495,19 +525,20 @@ export default function PeopleAndEquity() {
 
   // ══════════════════════════════════════════════════════════════════
   return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Header */}
+    <div className="space-y-2 animate-fade-in">
+      {/* Header — single consolidated row */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
-            <UserCircle className="h-8 w-8" />
-            People &amp; Equity
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Team members, investors, advisors, and equity holdings
-          </p>
-        </div>
+        <h1 className="text-sm font-bold tracking-[-0.02em] flex items-center gap-1.5">
+          <UserCircle className="h-4 w-4" />
+          People
+        </h1>
         <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => window.location.href = "/hr/me"}>
+            <UserCircle className="h-4 w-4 mr-1" /> My Portal
+          </Button>
+          <Button variant="outline" onClick={() => window.location.href = "/hr/payroll"}>
+            <Layers className="h-4 w-4 mr-1" /> Payroll
+          </Button>
           <Button variant="outline" onClick={() => window.location.href = "/import"}>
             <Upload className="h-4 w-4 mr-1" /> Import
           </Button>
@@ -612,7 +643,7 @@ export default function PeopleAndEquity() {
             </DialogContent>
           </Dialog>
 
-          {/* Manage Share Classes dialog */}
+          {/* Share Classes and Grant moved to Investors page */}
           <Dialog open={isShareClassOpen} onOpenChange={setIsShareClassOpen}>
             <DialogTrigger asChild>
               <Button variant="outline" size="sm">
@@ -843,8 +874,40 @@ export default function PeopleAndEquity() {
         </div>
       </div>
 
-      {/* Cap Table Visual */}
-      {grants && grants.length > 0 && (
+      {/* Payroll Summary */}
+      {employees && employees.length > 0 && (() => {
+        const active = employees.filter((e) => e.status === "active");
+        const annualPayroll = active.reduce((sum, e) => {
+          const sal = parseFloat(String(e.salary || "0"));
+          if (!sal) return sum;
+          const freq = (e as any).salaryFrequency || "annual";
+          if (freq === "hourly") return sum + sal * 2080;
+          if (freq === "monthly") return sum + sal * 12;
+          if (freq === "biweekly") return sum + sal * 26;
+          if (freq === "weekly") return sum + sal * 52;
+          return sum + sal;
+        }, 0);
+        const avgSalary = active.length > 0 ? annualPayroll / active.length : 0;
+        return (
+          <div className="grid grid-cols-3 gap-4">
+            <Card><CardContent className="pt-4 pb-4">
+              <div className="text-sm text-muted-foreground">Active Employees</div>
+              <div className="text-2xl font-semibold">{active.length}</div>
+            </CardContent></Card>
+            <Card><CardContent className="pt-4 pb-4">
+              <div className="text-sm text-muted-foreground">Annual Payroll</div>
+              <div className="text-2xl font-semibold">{fmt$(annualPayroll)}</div>
+            </CardContent></Card>
+            <Card><CardContent className="pt-4 pb-4">
+              <div className="text-sm text-muted-foreground">Avg Salary</div>
+              <div className="text-2xl font-semibold">{fmt$(avgSalary)}</div>
+            </CardContent></Card>
+          </div>
+        );
+      })()}
+
+      {/* Cap Table Visual — moved to Investors page */}
+      {false && grants && grants.length > 0 && (
         <Card>
           <CardContent className="py-4">
             <div className="flex items-center gap-8">
@@ -944,6 +1007,7 @@ export default function PeopleAndEquity() {
                     <TableHead className="min-w-[90px] text-right">Ownership %</TableHead>
                     <TableHead className="min-w-[110px] text-right">Grant Value</TableHead>
                     <TableHead className="min-w-[100px]">Documents</TableHead>
+                    <TableHead className="w-10"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -967,8 +1031,21 @@ export default function PeopleAndEquity() {
                       <TableCell className="py-1.5 px-3 text-right tabular-nums">{r.totalGrantValue > 0 ? fmt$(r.totalGrantValue) : "-"}</TableCell>
                       <TableCell className="py-1.5 px-3" onClick={(e) => e.stopPropagation()}>
                         {r.stakeholderId ? (
-                          <DocumentsCell referenceType="stakeholder" referenceId={r.stakeholderId} />
+                          <DocumentsCell referenceType="stakeholder" referenceId={r.stakeholderId} docTypeSet="hr" />
                         ) : "-"}
+                      </TableCell>
+                      <TableCell className="py-1.5 px-3" onClick={(e) => e.stopPropagation()}>
+                        {r.employeeId ? (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                            onClick={() => setEmployeeToDelete({ id: r.employeeId!, name: r.name })}
+                            aria-label={`Delete ${r.name}`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        ) : null}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -979,43 +1056,227 @@ export default function PeopleAndEquity() {
         </CardContent>
       </Card>
 
-      {/* Person Detail Dialog */}
-      <Dialog open={selectedPerson !== null} onOpenChange={(open) => { if (!open) setSelectedPerson(null); }}>
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          {selectedPerson && (() => {
-            const personGrants = selectedPerson.stakeholderId
-              ? (grantsByStakeholder.get(selectedPerson.stakeholderId) || [])
-              : [];
+      {/* Person Detail Side Panel */}
+      <DetailSheet
+        open={selectedPerson !== null}
+        onOpenChange={(open) => { if (!open) setSelectedPerson(null); }}
+        title={selectedPerson?.name}
+        subtitle={[selectedPerson?.title !== "-" ? selectedPerson?.title : "", selectedPerson?.department !== "-" ? selectedPerson?.department : ""].filter(Boolean).join(" — ") || undefined}
+        width="lg"
+      >
+        {selectedPerson && (() => {
+          const personGrants = selectedPerson.stakeholderId
+            ? (grantsByStakeholder.get(selectedPerson.stakeholderId) || [])
+            : [];
+          return <PersonDetailContent person={selectedPerson} personGrants={personGrants} scMap={scMap} />;
+        })()}
+      </DetailSheet>
 
-            return (
-              <>
-                <DialogHeader>
-                  <DialogTitle className="text-xl">{selectedPerson.name}</DialogTitle>
-                  <DialogDescription>{selectedPerson.title !== "-" ? selectedPerson.title : ""} {selectedPerson.department !== "-" ? `- ${selectedPerson.department}` : ""}</DialogDescription>
-                </DialogHeader>
+      <AlertDialog open={!!employeeToDelete} onOpenChange={(open) => !open && setEmployeeToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete employee?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes <span className="font-medium">{employeeToDelete?.name}</span>
+              {" "}from the HR roster. Equity grants and historical payroll records are preserved.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteEmployee.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteEmployee.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (employeeToDelete) deleteEmployee.mutate({ id: employeeToDelete.id });
+              }}
+            >
+              {deleteEmployee.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Delete employee
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
 
+// ── Full Employee Detail Panel (all sections in one view) ──
+function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedRow; personGrants: any[]; scMap: Map<number, string> }) {
+  const { data: compHistory } = trpc.employees.compensationHistory.useQuery(
+    { employeeId: person.employeeId! },
+    { enabled: !!person.employeeId }
+  );
+  const { data: payments } = trpc.employeePayments.list.useQuery(
+    { employeeId: person.employeeId! },
+    { enabled: !!person.employeeId }
+  );
+  const { data: timeEntries } = trpc.timeTracking.entries.list.useQuery(
+    { userId: person.userId! },
+    { enabled: !!person.userId }
+  );
+  const { data: allContracts } = trpc.contracts.list.useQuery();
+  const personContracts = useMemo(() => {
+    if (!allContracts) return [];
+    return (allContracts as any[]).filter((c: any) =>
+      (c.partyType === "employee" && c.partyId === person.employeeId) ||
+      (c.partyName && person.name && c.partyName.toLowerCase().includes(person.name.toLowerCase()))
+    );
+  }, [allContracts, person]);
+
+  return (
                 <div className="space-y-5">
                   {/* Personal Information */}
                   <div>
                     <h4 className="text-sm font-semibold text-muted-foreground mb-2">Personal Information</h4>
                     <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
-                      <div className="flex justify-between"><span className="text-muted-foreground">Name</span><span>{selectedPerson.name}</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Email</span><span>{selectedPerson.email || "-"}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Name</span><span>{person.name}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Email</span><span>{person.email || "-"}</span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Type</span><span>
-                        {selectedPerson.type && selectedPerson.type !== "-" ? (
-                          <Badge className={typeColors[selectedPerson.type] || "bg-gray-500/10 text-gray-600"}>{selectedPerson.type.replace(/_/g, " ")}</Badge>
+                        {person.type && person.type !== "-" ? (
+                          <Badge className={typeColors[person.type] || "bg-gray-500/10 text-gray-600"}>{person.type.replace(/_/g, " ")}</Badge>
                         ) : "-"}
                       </span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Title</span><span>{selectedPerson.title}</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Department</span><span>{selectedPerson.department}</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Salary</span><span>{selectedPerson.salary}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Title</span><span>{person.title}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Department</span><span>{person.department}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Salary</span><span>{person.salary}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Hire Date</span><span>{person.hireDate ? fmtDate(person.hireDate) : "-"}</span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Status</span><span>
-                        {selectedPerson.status && selectedPerson.status !== "-" ? (
-                          <Badge className={statusColors[selectedPerson.status] || "bg-gray-500/10 text-gray-600"}>{selectedPerson.status.replace(/_/g, " ")}</Badge>
+                        {person.status && person.status !== "-" ? (
+                          <Badge className={statusColors[person.status] || "bg-gray-500/10 text-gray-600"}>{person.status.replace(/_/g, " ")}</Badge>
                         ) : "-"}
                       </span></div>
                     </div>
                   </div>
+
+                  {/* Compensation History */}
+                  {person.employeeId && (
+                    <div>
+                      <h4 className="text-sm font-semibold text-muted-foreground mb-2">Compensation History</h4>
+                      {compHistory && (compHistory as any[]).length > 0 ? (
+                        <div className="border rounded-lg overflow-hidden">
+                          <Table className="text-sm">
+                            <TableHeader><TableRow>
+                              <TableHead>Effective Date</TableHead>
+                              <TableHead className="text-right">Salary</TableHead>
+                              <TableHead>Frequency</TableHead>
+                              <TableHead>Reason</TableHead>
+                            </TableRow></TableHeader>
+                            <TableBody>
+                              {(compHistory as any[]).map((c: any) => (
+                                <TableRow key={c.id}>
+                                  <TableCell>{fmtDate(c.effectiveDate)}</TableCell>
+                                  <TableCell className="text-right font-medium">{fmt$(c.salary)}</TableCell>
+                                  <TableCell>{c.salaryFrequency || "-"}</TableCell>
+                                  <TableCell>{c.reason || "-"}</TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground italic">No compensation history recorded.</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Payments */}
+                  {person.employeeId && (
+                    <div>
+                      <h4 className="text-sm font-semibold text-muted-foreground mb-2">Payments</h4>
+                      {payments && (payments as any[]).length > 0 ? (
+                        <div className="border rounded-lg overflow-hidden">
+                          <Table className="text-sm">
+                            <TableHeader><TableRow>
+                              <TableHead>Date</TableHead>
+                              <TableHead>Type</TableHead>
+                              <TableHead className="text-right">Amount</TableHead>
+                              <TableHead>Method</TableHead>
+                              <TableHead>Status</TableHead>
+                            </TableRow></TableHeader>
+                            <TableBody>
+                              {(payments as any[]).slice(0, 20).map((p: any) => (
+                                <TableRow key={p.id}>
+                                  <TableCell>{fmtDate(p.paymentDate)}</TableCell>
+                                  <TableCell><Badge variant="outline">{p.type}</Badge></TableCell>
+                                  <TableCell className="text-right font-medium">{fmt$(p.amount)}</TableCell>
+                                  <TableCell>{p.paymentMethod?.replace(/_/g, " ") || "-"}</TableCell>
+                                  <TableCell><Badge variant="secondary">{p.status}</Badge></TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground italic">No payment records.</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Assigned Tasks */}
+                  {!["investor", "advisor", "board_member"].includes(person.type) && (
+                    <EmployeeTasksSection email={person.email} name={person.name} />
+                  )}
+
+                  {/* Time Tracked */}
+                  {person.userId && (
+                    <div>
+                      <h4 className="text-sm font-semibold text-muted-foreground mb-2">Time Tracked</h4>
+                      {timeEntries && (timeEntries as any[]).length > 0 ? (
+                        <div className="border rounded-lg overflow-hidden">
+                          <Table className="text-sm">
+                            <TableHeader><TableRow>
+                              <TableHead>Date</TableHead>
+                              <TableHead>Task</TableHead>
+                              <TableHead className="text-right">Hours</TableHead>
+                              <TableHead>Category</TableHead>
+                              <TableHead>Status</TableHead>
+                            </TableRow></TableHeader>
+                            <TableBody>
+                              {(timeEntries as any[]).slice(0, 15).map((t: any) => (
+                                <TableRow key={t.id}>
+                                  <TableCell>{fmtDate(t.date)}</TableCell>
+                                  <TableCell className="max-w-[200px] truncate">{t.taskDescription}</TableCell>
+                                  <TableCell className="text-right font-medium">{parseFloat(t.hours || "0").toFixed(1)}</TableCell>
+                                  <TableCell><Badge variant="outline">{t.category}</Badge></TableCell>
+                                  <TableCell><Badge variant="secondary">{t.status}</Badge></TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground italic">No time entries.</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Contracts */}
+                  {personContracts.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-semibold text-muted-foreground mb-2">Contracts</h4>
+                      <div className="border rounded-lg overflow-hidden">
+                        <Table className="text-sm">
+                          <TableHeader><TableRow>
+                            <TableHead>Title</TableHead>
+                            <TableHead>Type</TableHead>
+                            <TableHead className="text-right">Value</TableHead>
+                            <TableHead>Status</TableHead>
+                          </TableRow></TableHeader>
+                          <TableBody>
+                            {personContracts.map((c: any) => (
+                              <TableRow key={c.id}>
+                                <TableCell className="font-medium">{c.title}</TableCell>
+                                <TableCell>{c.type || "-"}</TableCell>
+                                <TableCell className="text-right">{c.value ? fmt$(c.value) : "-"}</TableCell>
+                                <TableCell><Badge variant="secondary">{c.status}</Badge></TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Equity Grants */}
                   <div>
@@ -1063,26 +1324,16 @@ export default function PeopleAndEquity() {
                     )}
                   </div>
 
-                  {/* Assigned Tasks — only for team members, not investors/advisors */}
-                  {!["investor", "advisor", "board_member"].includes(selectedPerson.type) && (
-                    <EmployeeTasksSection email={selectedPerson.email} name={selectedPerson.name} />
-                  )}
-
                   {/* Documents */}
                   <div>
                     <h4 className="text-sm font-semibold text-muted-foreground mb-2">Documents</h4>
-                    {selectedPerson.stakeholderId ? (
-                      <DocumentsCell referenceType="stakeholder" referenceId={selectedPerson.stakeholderId} />
+                    {person.stakeholderId ? (
+                      <DocumentsCell referenceType="stakeholder" referenceId={person.stakeholderId} />
                     ) : (
-                      <p className="text-sm text-muted-foreground italic">No stakeholder record linked for document uploads.</p>
+                      <p className="text-sm text-muted-foreground italic">No stakeholder record linked.</p>
                     )}
                   </div>
+
                 </div>
-              </>
-            );
-          })()}
-        </DialogContent>
-      </Dialog>
-    </div>
   );
 }

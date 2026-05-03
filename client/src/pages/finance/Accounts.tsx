@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -21,21 +21,52 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { DollarSign, Plus, Search, Loader2 } from "lucide-react";
+import { SpreadsheetTable, Column } from "@/components/SpreadsheetTable";
+import { DetailSheet } from "@/components/DetailSheet";
+import { DollarSign, Plus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/format";
 
+const typeOptions = [
+  { value: "asset", label: "Asset", color: "bg-blue-500/10 text-blue-600" },
+  { value: "liability", label: "Liability", color: "bg-red-500/10 text-red-600" },
+  { value: "equity", label: "Equity", color: "bg-purple-500/10 text-purple-600" },
+  { value: "revenue", label: "Revenue", color: "bg-green-500/10 text-green-600" },
+  { value: "expense", label: "Expense", color: "bg-amber-500/10 text-amber-600" },
+];
+
+function AccountSummaryBody({ account }: { account: any }) {
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 text-sm">
+        <div className="bg-muted/50 rounded-lg p-3">
+          <div className="text-xs text-muted-foreground mb-1">Code</div>
+          <div className="font-mono font-medium">{account.code}</div>
+        </div>
+        <div className="bg-muted/50 rounded-lg p-3">
+          <div className="text-xs text-muted-foreground mb-1">Subtype</div>
+          <div className="font-medium">{account.subtype || "—"}</div>
+        </div>
+        <div className="bg-muted/50 rounded-lg p-3 col-span-2">
+          <div className="text-xs text-muted-foreground mb-1">Balance</div>
+          <div className="font-mono text-lg font-semibold">{formatCurrency(account.balance)}</div>
+        </div>
+      </div>
+      {account.description && (
+        <div>
+          <h4 className="text-sm font-medium mb-1">Description</h4>
+          <p className="text-sm text-muted-foreground bg-muted/30 rounded p-2">
+            {account.description}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Accounts() {
-  const [search, setSearch] = useState("");
   const [isOpen, setIsOpen] = useState(false);
+  const [selectedAccount, setSelectedAccount] = useState<any | null>(null);
   const [formData, setFormData] = useState({
     code: "",
     name: "",
@@ -53,40 +84,51 @@ export default function Accounts() {
       setFormData({ code: "", name: "", type: "asset", subtype: "", description: "" });
       utils.accounts.list.invalidate();
     },
-    onError: (error) => {
-      toast.error(error.message);
-    },
+    onError: (err: any) => toast.error(err.message),
   });
 
-  const filteredAccounts = accounts?.filter(
-    (account) =>
-      account.name.toLowerCase().includes(search.toLowerCase()) ||
-      account.code.toLowerCase().includes(search.toLowerCase())
-  );
-
-  const typeColors: Record<string, string> = {
-    asset: "bg-blue-500/10 text-blue-600",
-    liability: "bg-red-500/10 text-red-600",
-    equity: "bg-purple-500/10 text-purple-600",
-    revenue: "bg-green-500/10 text-green-600",
-    expense: "bg-amber-500/10 text-amber-600",
-  };
+  const columns: Column<any>[] = [
+    { key: "code", header: "Code", type: "text", sortable: true },
+    { key: "name", header: "Name", type: "text", sortable: true },
+    { key: "type", header: "Type", type: "badge", options: typeOptions, filterable: true },
+    { key: "subtype", header: "Subtype", type: "text" },
+    { key: "balance", header: "Balance", type: "currency", sortable: true },
+    {
+      key: "isActive",
+      header: "Status",
+      type: "text",
+      render: (_row, val) => (val ? "Active" : "Inactive"),
+    },
+    {
+      key: "description",
+      header: "Description",
+      type: "text",
+      render: (_row, val) => {
+        const s = typeof val === "string" ? val : "";
+        return s.length > 40 ? s.slice(0, 40) + "…" : s || "—";
+      },
+    },
+  ];
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     createAccount.mutate(formData);
   };
 
+  const selectedType = selectedAccount
+    ? typeOptions.find((t) => t.value === selectedAccount.type)
+    : null;
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+          <h1 className="text-lg font-semibold flex items-center gap-2">
             <DollarSign className="h-8 w-8" />
             Chart of Accounts
           </h1>
           <p className="text-muted-foreground mt-1">
-            Manage your general ledger accounts.
+            Manage your general ledger accounts — click any row for details.
           </p>
         </div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
@@ -100,9 +142,7 @@ export default function Accounts() {
             <form onSubmit={handleSubmit}>
               <DialogHeader>
                 <DialogTitle>Create Account</DialogTitle>
-                <DialogDescription>
-                  Add a new account to your chart of accounts.
-                </DialogDescription>
+                <DialogDescription>Add a new account to your chart of accounts.</DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">
                 <div className="grid grid-cols-2 gap-4">
@@ -179,66 +219,38 @@ export default function Accounts() {
       </div>
 
       <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-4">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search accounts..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9"
-              />
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : !filteredAccounts || filteredAccounts.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <DollarSign className="h-12 w-12 mx-auto mb-4 opacity-20" />
-              <p>No accounts found</p>
-              <p className="text-sm">Create your first account to get started.</p>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Code</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Subtype</TableHead>
-                  <TableHead className="text-right">Balance</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredAccounts.map((account) => (
-                  <TableRow key={account.id}>
-                    <TableCell className="font-mono">{account.code}</TableCell>
-                    <TableCell className="font-medium">{account.name}</TableCell>
-                    <TableCell>
-                      <Badge className={typeColors[account.type]}>{account.type}</Badge>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{account.subtype || "-"}</TableCell>
-                    <TableCell className="text-right font-mono">
-                      {formatCurrency(account.balance)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={account.isActive ? "default" : "secondary"}>
-                        {account.isActive ? "Active" : "Inactive"}
-                      </Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+        <CardContent className="pt-6">
+          <SpreadsheetTable
+            data={(accounts || []) as any[]}
+            columns={columns}
+            isLoading={isLoading}
+            emptyMessage="No accounts yet — create your first account to get started."
+            showSearch
+            showFilters
+            showExport
+            onRowClick={(row) => setSelectedAccount(row)}
+            expandedRowId={selectedAccount?.id ?? null}
+            compact
+          />
         </CardContent>
       </Card>
+
+      <DetailSheet
+        open={!!selectedAccount}
+        onOpenChange={(o) => !o && setSelectedAccount(null)}
+        width="sm"
+        title={
+          selectedAccount && (
+            <span className="flex items-center gap-2">
+              {selectedAccount.name}
+              {selectedType && <Badge className={selectedType.color}>{selectedType.label}</Badge>}
+            </span>
+          )
+        }
+        subtitle={selectedAccount && `Code ${selectedAccount.code}`}
+      >
+        {selectedAccount && <AccountSummaryBody account={selectedAccount} />}
+      </DetailSheet>
     </div>
   );
 }

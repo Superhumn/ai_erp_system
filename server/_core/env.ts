@@ -48,11 +48,19 @@ export const ENV = {
     googleRedirectUri: process.env.GOOGLE_REDIRECT_URI ?? "",
     appUrl: process.env.APP_URL ?? "http://localhost:3000",
 
+    // Google Service Account (for reading private Drive folders shared with the
+    // service account directly, bypassing per-user OAuth). Either provide the
+    // whole JSON key via GOOGLE_SERVICE_ACCOUNT_JSON, or the email + private key
+    // pair. Private key literal newlines may be escaped as "\n".
+    googleServiceAccountJson: process.env.GOOGLE_SERVICE_ACCOUNT_JSON ?? "",
+    googleServiceAccountEmail: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ?? "",
+    googleServiceAccountPrivateKey: process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY ?? "",
+
     // QuickBooks OAuth configuration
     quickbooksClientId: process.env.QUICKBOOKS_CLIENT_ID ?? "",
     quickbooksClientSecret: process.env.QUICKBOOKS_CLIENT_SECRET ?? "",
     quickbooksRedirectUri: process.env.QUICKBOOKS_REDIRECT_URI ?? "",
-    quickbooksEnvironment: process.env.QUICKBOOKS_ENVIRONMENT ?? "sandbox", // sandbox or production
+    quickbooksEnvironment: process.env.QUICKBOOKS_ENVIRONMENT ?? "production", // sandbox or production
 
     // Shopify OAuth configuration
     shopifyClientId: process.env.SHOPIFY_CLIENT_ID ?? "",
@@ -68,8 +76,29 @@ export const ENV = {
     forgeApiUrl: process.env.FORGE_API_URL ?? "",
     forgeApiKey: process.env.FORGE_API_KEY ?? "",
 
+    // AWS S3 (file storage fallback when Forge API is not configured)
+    awsAccessKeyId: process.env.AWS_ACCESS_KEY_ID ?? "",
+    awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? "",
+    awsRegion: process.env.AWS_REGION ?? "us-east-1",
+    awsS3Bucket: process.env.AWS_S3_BUCKET ?? "",
+
+    // Cloudflare R2 (S3-compatible storage; takes priority over S3 and Forge when configured)
+    r2AccountId: process.env.R2_ACCOUNT_ID ?? "",
+    r2AccessKeyId: process.env.R2_ACCESS_KEY_ID ?? "",
+    r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY ?? "",
+    r2Bucket: process.env.R2_BUCKET ?? "",
+    // Optional: set to your bucket's public URL or custom domain (e.g. https://assets.example.com).
+    // When set, returned URLs point directly to R2 instead of using presigned GET URLs.
+    r2PublicUrl: process.env.R2_PUBLIC_URL ?? "",
+
     // Airtable integration
     airtablePersonalAccessToken: process.env.AIRTABLE_PERSONAL_ACCESS_TOKEN ?? "",
+
+    // CRM deduplication: set to "true" on the first deploy that includes
+    // migration 0035 so the app merges existing duplicates *before* the
+    // UNIQUE indexes are created. After migration 0035 is applied, unset
+    // or set to "false" to avoid the full-table scan on every boot.
+    crmDedupOnStartup: process.env.CRM_DEDUP_ON_STARTUP === "true",
 };
 
 /**

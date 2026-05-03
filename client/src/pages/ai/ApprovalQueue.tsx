@@ -19,6 +19,13 @@ import {
   TabsTrigger,
 } from "@/components/ui/tabs";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   CheckCircle,
   XCircle,
   Clock,
@@ -40,10 +47,12 @@ import {
   Boxes,
   Edit,
   Info,
+  Mic,
 } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/format";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 function formatDate(value: string | Date | null | undefined) {
   if (!value) return "-";
@@ -57,6 +66,275 @@ function formatDate(value: string | Date | null | undefined) {
   });
 }
 
+function normalizeSuggestedSource(taskData: Record<string, unknown> | null | undefined): {
+  kind: "email" | "fireflies" | "text";
+  label: string;
+} {
+  const raw = taskData?.source as string | undefined;
+  if (raw === "fireflies" || taskData?.sourceMeeting) {
+    return { kind: "fireflies", label: "Fireflies" };
+  }
+  if (raw === "email" || raw === "email_scan" || taskData?.sourceEmail) {
+    return { kind: "email", label: "Email" };
+  }
+  if (raw === "text" || taskData?.sourceText) {
+    return { kind: "text", label: "Text" };
+  }
+  return { kind: "text", label: "Text" };
+}
+
+function SuggestedSourceDialog({
+  task,
+  open,
+  onOpenChange,
+}: {
+  task: any | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  let taskData: Record<string, any> = {};
+  try {
+    taskData = JSON.parse(task?.taskData || "{}");
+  } catch {
+    /* ignore */
+  }
+  const src = normalizeSuggestedSource(taskData);
+
+  const messageId =
+    typeof taskData?.sourceEmail?.messageId === "string" ? taskData.sourceEmail.messageId : undefined;
+  const { data: emailFromDb, isLoading: emailLoading } = trpc.emailScanning.getByMessageId.useQuery(
+    { messageId: messageId! },
+    { enabled: open && src.kind === "email" && !!messageId },
+  );
+
+  const meetingIdRaw = taskData?.sourceMeeting?.meetingId;
+  const meetingId =
+    typeof meetingIdRaw === "number" && !Number.isNaN(meetingIdRaw) && meetingIdRaw > 0
+      ? meetingIdRaw
+      : undefined;
+  const ffId =
+    typeof taskData?.sourceMeeting?.firefliesId === "string" ? taskData.sourceMeeting.firefliesId : undefined;
+
+  const meetingQueryInput =
+    meetingId != null ? { id: meetingId } : ffId ? { firefliesId: ffId } : null;
+
+  const { data: meeting, isLoading: meetingLoading } = trpc.fireflies.meetings.get.useQuery(
+    meetingQueryInput as { id: number } | { firefliesId: string },
+    { enabled: open && src.kind === "fireflies" && meetingQueryInput != null },
+  );
+
+  const embeddedEmailBody =
+    typeof taskData?.sourceEmail?.bodyText === "string" ? taskData.sourceEmail.bodyText : "";
+
+  let summaryOverview: string | null = null;
+  if (meeting?.summary) {
+    try {
+      const s = typeof meeting.summary === "string" ? JSON.parse(meeting.summary) : meeting.summary;
+      summaryOverview = typeof s?.overview === "string" ? s.overview : null;
+    } catch {
+      summaryOverview = null;
+    }
+  }
+
+  let participantsParsed: Array<{ name?: string; email?: string; displayName?: string }> = [];
+  if (meeting?.participants) {
+    try {
+      const p = typeof meeting.participants === "string" ? JSON.parse(meeting.participants) : meeting.participants;
+      participantsParsed = Array.isArray(p) ? p : [];
+    } catch {
+      participantsParsed = [];
+    }
+  }
+
+  const emailSubject = emailFromDb?.subject ?? taskData?.sourceEmail?.subject;
+  const emailFrom = emailFromDb
+    ? [emailFromDb.fromName, emailFromDb.fromEmail].filter(Boolean).join(" · ") || String(emailFromDb.fromEmail ?? "")
+    : taskData?.sourceEmail?.from;
+
+  const bodyToShow =
+    emailFromDb?.bodyText ||
+    emailFromDb?.bodyHtml?.replace(/<[^>]+>/g, " ") ||
+    embeddedEmailBody ||
+    "";
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {src.kind === "email" && (
+              <>
+                <Mail className="h-5 w-5 shrink-0" /> Email
+              </>
+            )}
+            {src.kind === "fireflies" && (
+              <>
+                <Mic className="h-5 w-5 shrink-0" /> Fireflies meeting
+              </>
+            )}
+            {src.kind === "text" && (
+              <>
+                <FileText className="h-5 w-5 shrink-0" /> Text
+              </>
+            )}
+          </DialogTitle>
+          <DialogDescription>
+            Full source content for this suggestion (read-only).
+          </DialogDescription>
+        </DialogHeader>
+
+        <ScrollArea className="flex-1 min-h-0 max-h-[min(60vh,520px)] pr-3">
+          {src.kind === "email" && (
+            <div className="space-y-3 text-sm">
+              {emailLoading && (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading stored email…
+                </div>
+              )}
+              {!emailLoading && (
+                <>
+                  {emailFromDb?.id != null && (
+                    <p>
+                      <Link
+                        href={`/operations/email-inbox?emailId=${emailFromDb.id}`}
+                        className="text-primary inline-flex items-center gap-1 hover:underline font-medium"
+                      >
+                        Open in Email Inbox
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </Link>
+                      <span className="text-xs text-muted-foreground block mt-1">
+                        Stored as inbound email #{emailFromDb.id}. Select it in the list if needed.
+                      </span>
+                    </p>
+                  )}
+                  <p>
+                    <span className="font-medium">Subject:</span> {emailSubject || "—"}
+                  </p>
+                  <p>
+                    <span className="font-medium">From:</span> {emailFrom || "—"}
+                  </p>
+                  <div className="rounded-md border bg-muted/40 p-3 whitespace-pre-wrap text-muted-foreground">
+                    {bodyToShow || "No body was captured for this message."}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {src.kind === "fireflies" && (
+            <div className="space-y-3 text-sm">
+              {meetingLoading && (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading meeting…
+                </div>
+              )}
+              {!meetingLoading && meeting && (
+                <>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link
+                      href={meeting?.id != null ? `/meetings?meetingId=${meeting.id}` : ffId ? `/meetings?firefliesId=${encodeURIComponent(ffId)}` : "/meetings"}
+                      className="text-primary inline-flex items-center gap-1 hover:underline font-medium"
+                    >
+                      Open Meetings
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </Link>
+                    {meeting.transcriptUrl && (
+                      <a
+                        href={meeting.transcriptUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary inline-flex items-center gap-1 hover:underline font-medium"
+                      >
+                        Fireflies transcript
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    )}
+                  </div>
+                  <p className="font-semibold text-foreground">{meeting.title}</p>
+                  {meeting.date && (
+                    <p className="text-muted-foreground">
+                      {formatDate(meeting.date)}
+                      {meeting.duration != null ? ` · ${meeting.duration} min` : ""}
+                    </p>
+                  )}
+                  {participantsParsed.length > 0 && (
+                    <div>
+                      <p className="font-medium mb-1">Participants</p>
+                      <ul className="list-disc pl-5 text-muted-foreground space-y-0.5">
+                        {participantsParsed.map((p, i) => (
+                          <li key={i}>
+                            {typeof p === "string"
+                              ? p
+                              : p.displayName || p.name || p.email || "—"}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {summaryOverview && (
+                    <div>
+                      <p className="font-medium mb-1">Summary</p>
+                      <p className="text-muted-foreground whitespace-pre-wrap">{summaryOverview}</p>
+                    </div>
+                  )}
+                  {meeting.transcriptText && (
+                    <div>
+                      <p className="font-medium mb-1">Transcript</p>
+                      <div className="rounded-md border bg-muted/40 p-3 max-h-64 overflow-y-auto whitespace-pre-wrap text-muted-foreground text-xs">
+                        {meeting.transcriptText}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+              {!meetingLoading && !meeting && (
+                <div className="space-y-2 text-muted-foreground">
+                  <p className="font-medium text-foreground">{taskData?.sourceMeeting?.title || "Meeting"}</p>
+                  <p>
+                    This suggestion does not match a stored meeting, or the meeting was removed. Check Fireflies sync
+                    or process the meeting from the Meetings page.
+                  </p>
+                  <Link
+                    href={ffId ? `/meetings?firefliesId=${encodeURIComponent(ffId)}` : "/meetings"}
+                    className="text-primary inline-flex items-center gap-1 hover:underline"
+                  >
+                    Go to Meetings <ExternalLink className="h-3.5 w-3.5" />
+                  </Link>
+                </div>
+              )}
+            </div>
+          )}
+
+          {src.kind === "text" && (
+            <div className="space-y-2 text-sm">
+              <p>
+                <span className="font-medium">Title:</span> {taskData?.name || "—"}
+              </p>
+              {typeof taskData?.sourceText === "string" && taskData.sourceText.length > 0 ? (
+                <div className="rounded-md border bg-muted/40 p-3 whitespace-pre-wrap text-muted-foreground">
+                  {taskData.sourceText}
+                </div>
+              ) : (
+                <div className="rounded-md border bg-muted/40 p-3 whitespace-pre-wrap text-muted-foreground">
+                  {taskData?.description || "No additional text was stored with this suggestion."}
+                </div>
+              )}
+            </div>
+          )}
+        </ScrollArea>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 const taskTypeIcons: Record<string, any> = {
   generate_po: ShoppingCart,
   send_rfq: FileText,
@@ -68,6 +346,7 @@ const taskTypeIcons: Record<string, any> = {
   reconcile_payment: DollarSign,
   reorder_materials: Package,
   vendor_followup: Mail,
+  create_crm_deal: Building2,
 };
 
 const taskTypeLabels: Record<string, string> = {
@@ -81,6 +360,8 @@ const taskTypeLabels: Record<string, string> = {
   reconcile_payment: "Reconcile Payment",
   reorder_materials: "Reorder Materials",
   vendor_followup: "Vendor Follow-up",
+  query: "Suggested Task",
+  create_crm_deal: "Create CRM Deal",
 };
 
 const priorityColors: Record<string, string> = {
@@ -107,12 +388,15 @@ export default function ApprovalQueue() {
   const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false);
   const [editedTaskData, setEditedTaskData] = useState("");
   const [activeTab, setActiveTab] = useState("pending");
+  const [sourceViewerTask, setSourceViewerTask] = useState<any>(null);
   
   const utils = trpc.useUtils();
   
   const { data: pendingTasks, isLoading: pendingLoading } = trpc.aiAgent.tasks.pendingApprovals.useQuery();
   const { data: allTasks, isLoading: allLoading } = trpc.aiAgent.tasks.list.useQuery({});
   const { data: logs } = trpc.aiAgent.logs.list.useQuery({ limit: 50 });
+  const { data: teamMembers } = trpc.team.list.useQuery(undefined, { retry: false });
+  const { data: projects } = trpc.projects.list.useQuery();
   
   const approveMutation = trpc.aiAgent.tasks.approve.useMutation({
     onSuccess: () => {
@@ -173,6 +457,16 @@ export default function ApprovalQueue() {
     setEditedTaskData(task.taskData || "{}");
     setIsDetailDialogOpen(true);
   };
+
+  const updateTaskDataField = (field: string, value: unknown) => {
+    try {
+      const parsed = JSON.parse(editedTaskData || "{}");
+      parsed[field] = value;
+      setEditedTaskData(JSON.stringify(parsed, null, 2));
+    } catch {
+      // ignore malformed JSON edits until user fixes them
+    }
+  };
   
   const handleSaveTaskData = () => {
     if (selectedTask) {
@@ -195,9 +489,30 @@ export default function ApprovalQueue() {
     try {
       taskData = JSON.parse(task.taskData || "{}");
     } catch {}
-    
+    const isSuggestedProjectTask = task.taskType === "query" && taskData.action === "create_project_task";
+    const projectName = projects?.find((p: any) => p.id === taskData.projectId)?.name;
+    const assigneeName = teamMembers?.find((u: any) => u.id === taskData.assigneeId)?.name;
+    const title = isSuggestedProjectTask ? "Suggested Project Task" : (taskTypeLabels[task.taskType] || task.taskType);
+    const suggestedSource = isSuggestedProjectTask ? normalizeSuggestedSource(taskData) : null;
+
     return (
-      <Card key={task.id} className="mb-4">
+      <Card key={task.id} className="mb-4 overflow-hidden">
+        {suggestedSource && (
+          <div className="flex flex-wrap items-center gap-2 px-6 py-2.5 bg-muted/30 border-b border-border/60">
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Source</span>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium text-primary hover:bg-primary/10 transition-colors"
+              onClick={() => setSourceViewerTask(task)}
+            >
+              {suggestedSource.kind === "email" && <Mail className="h-3.5 w-3.5 shrink-0" />}
+              {suggestedSource.kind === "fireflies" && <Mic className="h-3.5 w-3.5 shrink-0" />}
+              {suggestedSource.kind === "text" && <FileText className="h-3.5 w-3.5 shrink-0" />}
+              <span>{suggestedSource.label}</span>
+              <ExternalLink className="h-3 w-3 opacity-70" />
+            </button>
+          </div>
+        )}
         <CardContent className="pt-6">
           <div className="flex items-start justify-between">
             <div className="flex items-start gap-4">
@@ -206,7 +521,7 @@ export default function ApprovalQueue() {
               </div>
               <div>
                 <div className="flex items-center gap-2 mb-1">
-                  <h3 className="font-semibold">{taskTypeLabels[task.taskType] || task.taskType}</h3>
+                  <h3 className="font-semibold">{title}</h3>
                   <Badge className={priorityColors[task.priority]}>
                     {task.priority}
                   </Badge>
@@ -270,6 +585,15 @@ export default function ApprovalQueue() {
                         </Link>
                       </p>
                     )}
+                  </div>
+                )}
+
+                {isSuggestedProjectTask && (
+                  <div className="text-sm text-muted-foreground space-y-1">
+                    <p><strong>Task:</strong> {taskData.name || "Untitled task"}</p>
+                    <p><strong>Project:</strong> {projectName || `Project #${taskData.projectId || "Unassigned"}`}</p>
+                    <p><strong>Assignee:</strong> {assigneeName || "Unassigned"}</p>
+                    {taskData.domain && <p><strong>Domain:</strong> {taskData.domain}</p>}
                   </div>
                 )}
                 
@@ -337,7 +661,26 @@ export default function ApprovalQueue() {
                     )}
                   </div>
                 )}
-                
+
+                {task.taskType === "create_crm_deal" && (
+                  <div className="text-sm text-muted-foreground space-y-1">
+                    <p><strong>Company:</strong> {taskData.company || "Unknown"}</p>
+                    {taskData.amount && <p><strong>Amount:</strong> {formatCurrency(taskData.amount)}</p>}
+                    {taskData.stage && <p><strong>Stage:</strong> {taskData.stage}</p>}
+                    {taskData.source && <p><strong>Source:</strong> {taskData.source}</p>}
+                    {taskData.notes && <p className="line-clamp-2"><strong>Notes:</strong> {taskData.notes}</p>}
+                    {task.resultData && (
+                      <p className="mt-2 p-2 bg-green-50 rounded border border-green-200">
+                        <strong>Created:</strong>{" "}
+                        <Link href={`/crm`} className="text-green-700 hover:underline inline-flex items-center gap-1">
+                          View Deal
+                          <ExternalLink className="h-3 w-3" />
+                        </Link>
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 {/* AI Reasoning */}
                 {task.aiReasoning && (
                   <div className="mt-3 p-3 bg-muted/50 rounded-lg">
@@ -748,6 +1091,52 @@ export default function ApprovalQueue() {
                   </pre>
                 )}
               </div>
+
+              {selectedTask.taskType === "query" && (() => {
+                try {
+                  const parsed = JSON.parse(editedTaskData || "{}");
+                  if (parsed.action !== "create_project_task") return null;
+                  return (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-sm font-medium mb-1 block">Project</label>
+                        <Select
+                          value={parsed.projectId ? String(parsed.projectId) : ""}
+                          onValueChange={(v) => updateTaskDataField("projectId", Number(v))}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select project" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {projects?.map((p: any) => (
+                              <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-1 block">Assignee</label>
+                        <Select
+                          value={parsed.assigneeId ? String(parsed.assigneeId) : "unassigned"}
+                          onValueChange={(v) => updateTaskDataField("assigneeId", v === "unassigned" ? null : Number(v))}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Unassigned" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="unassigned">Unassigned</SelectItem>
+                            {teamMembers?.map((u: any) => (
+                              <SelectItem key={u.id} value={String(u.id)}>{u.name || u.email || `User #${u.id}`}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  );
+                } catch {
+                  return null;
+                }
+              })()}
               
               {/* Execution Result - shown for completed tasks */}
               {selectedTask.executionResult && (
@@ -836,6 +1225,14 @@ export default function ApprovalQueue() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <SuggestedSourceDialog
+        task={sourceViewerTask}
+        open={!!sourceViewerTask}
+        onOpenChange={(next) => {
+          if (!next) setSourceViewerTask(null);
+        }}
+      />
     </div>
   );
 }

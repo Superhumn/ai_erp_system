@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { eq, and } from "drizzle-orm";
+import { safeDecryptToken } from "./_core/crypto";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
@@ -13,12 +14,16 @@ import * as sendgridProvider from "./_core/sendgridProvider";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials } from "./documentImportService";
 import { detectMaterialShortages, detectAnomalies, runShortageCheckAndNotify, runAnomalyCheckAndNotify } from "./materialShortageService";
 import { linkParsedEmailToEntities } from "./emailDocumentLinker";
+import { trackShipment, getFreightRates, getShippingLines, getVesselSchedules } from "./searatesService";
 import { generateVendorEmail, sendVendorEmail, sendBulkEmail, checkAndSendPoFollowups } from "./vendorEmailAutomation";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import { agentRouter } from "./agent";
+import { parseNoteWithLLM } from "./notesParser";
+import type { NoteAppliedItem, NoteParseResult, NoteParsedItem } from "@shared/notes";
+import { employeePortalRouter } from "./routers/employeePortal";
 import { parseCopackerInventoryEmail, applyCopackerInventoryUpdate } from "./copackerEmailExtractor";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 import { detectFinancialAnomalies, forecastRevenue, predictCashFlow, classifyTransactions } from "./financeAiService";
@@ -29,19 +34,43 @@ import { estimateEffort, optimizeResourceAllocation, predictProjectRisks, optimi
 import { detectEdiAnomalies, predictEdiErrors } from "./ediAiService";
 import { scoreSuppliers } from "./supplierScoringService";
 import * as db from "./db";
-import { storagePut } from "./storage";
+import * as manufacturingDb from "./db/manufacturing";
+import { storagePut, storageDelete } from "./storage";
 import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile, type GmailSendOptions, type GmailDraftOptions } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
-import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType, downloadDriveFile } from "./_core/googleDrive";
-import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems } from "./_core/quickbooks";
-import { listTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
+import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
+import { getServiceAccountEmail, isServiceAccountConfigured } from "./_core/googleServiceAccount";
+import { getQuickBooksAuthUrl, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems, getProfitAndLoss, parseProfitAndLossReport } from "./_core/quickbooks";
+import { listAllTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
+import { queueFirefliesActionItemsForApproval } from "./firefliesSyncService";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
 import type { InsertDataRoomDriveSyncConfig } from "../drizzle/schema";
 import { collectERPData, autoPopulateFields, generateApplicationNarrative, reviewApplication, generateApplicationDocument, DEFAULT_SECTIONS, searchOpportunities, evaluateOpportunityFit, analyzeWebFormFields, generateAutoFillScript, generateCopyPasteGuide, generateApiPayload } from "./grantBidService";
 import { runFormFillerAgent } from "./formFillerAgent";
 import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
 import { purchaseOrderTextEndpoints, shipmentTextEndpoints, paymentTextEndpoints, workOrderTextEndpoints, inventoryTextEndpoints } from "./naturalLanguageRouterExtensions";
+import { encrypt, decrypt } from "./_core/crypto";
+import { ENV } from "./_core/env";
+import { createDecipheriv, createHash } from "crypto";
+// Decrypts a stored password supporting both the current AES-256-GCM format
+// (iv:authTag:ciphertext) and the legacy AES-256-CBC format (plain hex ciphertext).
+function decryptPassword(encryptedText: string): string {
+  if (encryptedText.split(":").length === 3) {
+    return decrypt(encryptedText);
+  }
+  // Legacy CBC fallback for passwords stored before the GCM migration.
+  // Uses ENV.cookieSecret which is validated at startup (no insecure fallback).
+  const key = ENV.cookieSecret;
+  const decipher = createDecipheriv(
+    "aes-256-cbc",
+    createHash("sha256").update(key).digest().slice(0, 32),
+    Buffer.alloc(16, 0),
+  );
+  let decrypted = decipher.update(encryptedText, "hex", "utf8");
+  decrypted += decipher.final("utf8");
+  return decrypted;
+}
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -166,16 +195,20 @@ async function getValidGoogleToken(userId: number): Promise<{ accessToken: strin
   }
   
   // Check if token needs refresh
-  if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
+  if (token.expiresAt && new Date(token.expiresAt) < new Date()) {
+    if (!token.refreshToken) {
+      return { accessToken: '', error: 'Google token has expired. Please reconnect your Google account.' };
+    }
     const refreshed = await refreshGoogleToken(token.refreshToken);
     
     if (refreshed.accessToken && refreshed.expiresAt) {
-      // Update database with new token
+      // Update database with new token (preserve existing googleEmail via COALESCE)
       await db.upsertGoogleOAuthToken({
         userId,
         accessToken: refreshed.accessToken,
         refreshToken: token.refreshToken,
         expiresAt: refreshed.expiresAt,
+        googleEmail: token.googleEmail,
       });
       return { accessToken: refreshed.accessToken };
     }
@@ -202,14 +235,26 @@ function hashPassword(password: string): string {
   return `${salt}:${hash}`;
 }
 
-function verifyPassword(password: string, stored: string): boolean {
+function verifyPassword(password: string, stored: string): { valid: boolean; needsUpgrade: boolean } {
   const crypto = require('crypto');
   const [salt, hash] = stored.split(':');
-  if (!salt || !hash) return false;
-  const verifyHash = crypto.scryptSync(password, salt, 64).toString('hex');
-  return verifyHash === hash;
+  if (!salt || !hash) return { valid: false, needsUpgrade: false };
+  const computed = crypto.scryptSync(password, salt, 64);
+  const storedBuf = Buffer.from(hash, 'hex');
+  const valid = computed.length === storedBuf.length && crypto.timingSafeEqual(computed, storedBuf);
+  return { valid, needsUpgrade: false };
 }
 
+/** Verify that the calling user owns the data room containing the given email access rule. */
+async function assertEmailAccessRuleOwnership(ruleId: number, userId: number, userRole: string) {
+  const rule = await db.getEmailAccessRuleById(ruleId);
+  if (!rule) throw new TRPCError({ code: 'NOT_FOUND' });
+  const room = await db.getDataRoomById(rule.dataRoomId);
+  if (!room || (room.ownerId !== userId && userRole !== 'admin')) {
+    throw new TRPCError({ code: 'FORBIDDEN' });
+  }
+  return rule;
+}
 
 
 export const appRouter = router({
@@ -221,12 +266,13 @@ export const appRouter = router({
   // Reasoning Agent
   agent: agentRouter,
 
+  // Employee self-service portal
+  employeePortal: employeePortalRouter,
+
   auth: router({
     me: publicProcedure.query(opts => {
       if (!opts.ctx.user) return null;
-      // Strip sensitive fields from user response
-      const { passwordHash, ...safeUser } = opts.ctx.user;
-      return safeUser;
+      return opts.ctx.user;
     }),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
@@ -241,10 +287,36 @@ export const appRouter = router({
   users: router({
     list: adminProcedure.query(() => db.getAllUsers()),
     updateRole: adminProcedure
-      .input(z.object({ userId: z.number(), role: z.enum(['user', 'admin', 'finance', 'ops', 'legal', 'exec']) }))
+      .input(z.object({ userId: z.number(), role: z.enum(['user', 'admin', 'finance', 'ops', 'legal', 'exec', 'sales']) }))
       .mutation(async ({ input, ctx }) => {
         await db.updateUserRole(input.userId, input.role);
         await createAuditLog(ctx.user.id, 'update', 'user', input.userId, undefined, undefined, { role: input.role });
+        return { success: true };
+      }),
+    updateProfile: protectedProcedure
+      .input(z.object({ name: z.string().optional(), email: z.string().optional(), phone: z.string().optional() }))
+      .mutation(async ({ input, ctx }) => {
+        const updates: Record<string, string> = {};
+        if (input.name !== undefined) updates.name = input.name;
+        if (input.email !== undefined) updates.email = input.email;
+        if (input.phone !== undefined) updates.phone = input.phone;
+        if (Object.keys(updates).length > 0) {
+          await db.updateUser(ctx.user.id, updates);
+        }
+        return { success: true };
+      }),
+    changePassword: protectedProcedure
+      .input(z.object({ currentPassword: z.string(), newPassword: z.string().min(6) }))
+      .mutation(async ({ input, ctx }) => {
+        await db.changeUserPassword(ctx.user.id, input.currentPassword, input.newPassword);
+        return { success: true };
+      }),
+    delete: adminProcedure
+      .input(z.object({ userId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        if (input.userId === ctx.user.id) throw new TRPCError({ code: "BAD_REQUEST", message: "Cannot delete yourself" });
+        await db.deleteUser(input.userId);
+        await createAuditLog(ctx.user.id, 'delete', 'user', input.userId);
         return { success: true };
       }),
   }),
@@ -502,6 +574,54 @@ export const appRouter = router({
         country: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
+        const query = input.query.trim();
+        const defaultCountry = input.country?.trim() || "China";
+        const fallbackSuppliers = Array.from({ length: 8 }, (_, i) => {
+          const priceFloor = (0.6 + i * 0.35).toFixed(2);
+          const priceCeil = (1.8 + i * 0.55).toFixed(2);
+          const moq = 100 + i * 50;
+          const years = 3 + i;
+          const rating = Math.min(5, 4 + i * 0.1).toFixed(1);
+          const verified = i % 2 === 0 || i % 3 === 0;
+          const slug = query
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/(^-|-$)/g, "") || "product";
+          const companyPrefixes = [
+            "Shenzhen",
+            "Guangzhou",
+            "Ningbo",
+            "Dongguan",
+            "Wenzhou",
+            "Yiwu",
+            "Qingdao",
+            "Foshan",
+          ];
+          const companyTypes = [
+            "Industrial",
+            "Trading",
+            "Technology",
+            "Manufacturing",
+            "Supply Chain",
+            "Commerce",
+            "Export",
+            "Materials",
+          ];
+          const firstWord = query.split(" ")[0] || "Global";
+          return {
+            companyName: `${companyPrefixes[i]} ${firstWord} ${companyTypes[i]} Co., Ltd.`,
+            productName: `${query} - Model ${String.fromCharCode(65 + i)}`,
+            priceRange: `$${priceFloor} - $${priceCeil}`,
+            minOrder: `${moq} Pieces`,
+            country: defaultCountry,
+            yearsInBusiness: years,
+            responseRate: `${(88 + i).toFixed(1)}%`,
+            rating: Number(rating),
+            verified,
+            alibabaUrl: `https://www.alibaba.com/product-detail/${slug}_${String(62345678901 + i)}.html`,
+          };
+        });
+
         const prompt = `You are an international trade and procurement expert. Search Alibaba.com for suppliers matching this query:
 Product/Search: ${input.query}
 ${input.category ? `Category: ${input.category}` : ''}
@@ -524,21 +644,35 @@ Make the results diverse with different price points, company sizes, and special
 
 ONLY return the JSON array, no other text.`;
 
-        const response = await invokeLLM({
-          messages: [
-            { role: "system", content: "You are an international trade expert. Return only valid JSON arrays." },
-            { role: "user", content: prompt },
-          ],
-        });
-
-        const content = response.choices?.[0]?.message?.content || "[]";
         try {
-          const text = typeof content === 'string' ? content : String(content);
-          const jsonMatch = text.match(/\[[\s\S]*\]/);
-          const suppliers = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
-          return { suppliers: suppliers.slice(0, 10) };
-        } catch {
-          return { suppliers: [] };
+          const response = await invokeLLM({
+            messages: [
+              { role: "system", content: "You are an international trade expert. Return only valid JSON arrays." },
+              { role: "user", content: prompt },
+            ],
+          });
+
+          const content = response.choices?.[0]?.message?.content || "[]";
+          try {
+            const text = typeof content === "string" ? content : String(content);
+            const jsonMatch = text.match(/\[[\s\S]*\]/);
+            const suppliers = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+            return { suppliers: suppliers.slice(0, 10), usedFallback: false };
+          } catch {
+            return { suppliers: fallbackSuppliers, usedFallback: true };
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const isProviderOverloaded =
+            message.includes("529") ||
+            message.toLowerCase().includes("overloaded_error") ||
+            message.toLowerCase().includes("overloaded");
+
+          if (isProviderOverloaded) {
+            return { suppliers: fallbackSuppliers, usedFallback: true };
+          }
+
+          throw error;
         }
       }),
   }),
@@ -561,6 +695,7 @@ ONLY return the JSON array, no other text.`;
         description: z.string().optional(),
         category: z.string().optional(),
         type: z.enum(['physical', 'digital', 'service']).optional(),
+        manufacturingStage: z.enum(['raw_material', 'semi_finished_good', 'finished_product']).optional(),
         unitPrice: z.string().optional().default("0"),
         costPrice: z.string().optional(),
         currency: z.string().optional(),
@@ -580,11 +715,14 @@ ONLY return the JSON array, no other text.`;
         name: z.string().optional(),
         description: z.string().optional(),
         category: z.string().optional(),
+        type: z.enum(['physical', 'digital', 'service']).optional(),
+        manufacturingStage: z.enum(['raw_material', 'semi_finished_good', 'finished_product']).optional(),
         unitPrice: z.string().optional(),
         costPrice: z.string().optional(),
         status: z.enum(['active', 'inactive', 'discontinued']).optional(),
         taxable: z.boolean().optional(),
         taxRate: z.string().optional(),
+        preferredVendorId: z.number().nullable().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
@@ -979,6 +1117,13 @@ ONLY return the JSON array, no other text.`;
     approveAndEmail: financeProcedure
       .input(z.object({ invoiceId: z.number() }))
       .mutation(async () => ({ success: true, invoiceNumber: 'INV-STUB' })),
+    delete: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteInvoice(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'invoice', input.id);
+        return { success: true };
+      }),
   }),
 
   // ============================================
@@ -1202,6 +1347,29 @@ ONLY return the JSON array, no other text.`;
 
         return { success: true };
       }),
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        // Delete order items first
+        try { await db.deleteOrderItems(input.id); } catch { /* no items */ }
+        await db.deleteOrder(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'order', input.id);
+        return { success: true };
+      }),
+    bulkDelete: protectedProcedure
+      .input(z.object({ ids: z.array(z.number()) }))
+      .mutation(async ({ input, ctx }) => {
+        let deleted = 0;
+        for (const id of input.ids) {
+          try {
+            try { await db.deleteOrderItems(id); } catch { /* no items */ }
+            await db.deleteOrder(id);
+            deleted++;
+          } catch { /* skip */ }
+        }
+        await createAuditLog(ctx.user.id, 'delete', 'order', 0, undefined, undefined, { bulkDeleted: deleted });
+        return { success: true, deleted };
+      }),
   }),
 
   // ============================================
@@ -1209,8 +1377,8 @@ ONLY return the JSON array, no other text.`;
   // ============================================
   orderItems: router({
     list: protectedProcedure
-      .input(z.object({ orderId: z.number().optional() }).optional())
-      .query(() => [] as any[]),
+      .input(z.object({ orderId: z.number() }))
+      .query(({ input }) => db.getOrderItems(input.orderId)),
     get: protectedProcedure
       .input(z.object({ id: z.number() }))
       .query(() => null as any),
@@ -1545,6 +1713,13 @@ ONLY return the JSON array, no other text.`;
       .mutation(async ({ input, ctx }) => {
         await db.updateTransfer(input.id, { status: 'cancelled' });
         await createAuditLog(ctx.user.id, 'update', 'transfer', input.id, 'Cancelled transfer');
+        return { success: true };
+      }),
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteTransfer(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'transfer', input.id);
         return { success: true };
       }),
   }),
@@ -2032,6 +2207,13 @@ ONLY return the JSON array, no other text.`;
       }),
     // Natural language text-to-PO (V2 endpoints)
     createFromTextV2: purchaseOrderTextEndpoints.createFromText,
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deletePurchaseOrder(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'purchaseOrder', input.id);
+        return { success: true };
+      }),
   }),
 
   // ============================================
@@ -2155,6 +2337,13 @@ ONLY return the JSON array, no other text.`;
         } as any);
         await createAuditLog(ctx.user.id, 'create', 'shipment', result.id, shipmentNumber);
         return { trackingNumber, shipmentNumber, id: result.id };
+      }),
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteShipment(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'shipment', input.id);
+        return { success: true };
       }),
   }),
 
@@ -2499,8 +2688,108 @@ ONLY return the JSON array, no other text.`;
           mimeType,
           uploadedBy: ctx.user.id,
         });
-        
+
         await createAuditLog(ctx.user.id, 'create', 'document', result.id, input.name);
+
+        // If this is a 409A valuation report, parse it for FMV value
+        const isSpreadsheet = mimeType.includes("spreadsheet") || mimeType.includes("excel") || mimeType.includes("sheet") || input.name.match(/\.(xlsx|xls)$/i) !== null;
+        if (input.referenceType === "valuation" && (mimeType.includes("pdf") || mimeType.includes("image") || isSpreadsheet)) {
+          try {
+            const { invokeLLM } = await import("./_core/llm");
+            let userContent: any;
+
+            if (mimeType.includes("pdf")) {
+              // Extract text from PDF so we can pass it as text to the LLM
+              // (Sending a PDF as image_url is not supported by Anthropic)
+              let pdfText: string | null = null;
+              try {
+                let pdfBuffer: Buffer | null = null;
+                if (url.startsWith("data:")) {
+                  const base64Data = url.split(",")[1];
+                  if (base64Data) pdfBuffer = Buffer.from(base64Data, "base64");
+                } else {
+                  const pdfResponse = await fetch(url);
+                  if (pdfResponse.ok) pdfBuffer = Buffer.from(await pdfResponse.arrayBuffer());
+                }
+                if (pdfBuffer) {
+                  const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+                  const pdf = await (pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) })).promise;
+                  let text = "";
+                  for (let pageNumber = 1; pageNumber <= Math.min(pdf.numPages, 10); pageNumber++) {
+                    const page = await pdf.getPage(pageNumber);
+                    const tc = await page.getTextContent();
+                    text += tc.items.map((item: any) => item.str).join(" ") + "\n";
+                  }
+                  if (text.trim().length > 0) pdfText = text.substring(0, 30000);
+                }
+              } catch (pdfErr) {
+                console.warn("[409A] PDF text extraction failed:", pdfErr);
+              }
+              userContent = pdfText
+                ? `Document: ${input.name}\n\nEXTRACTED TEXT:\n${pdfText}`
+                : `Document: ${input.name} (PDF content could not be extracted)`;
+            } else if (isSpreadsheet) {
+              // Extract text from Excel/spreadsheet using xlsx library
+              let sheetText: string | null = null;
+              try {
+                const xlsxMod = await import("xlsx");
+                // CJS modules via dynamic import may expose exports under .default
+                const xlsxLib = ('default' in xlsxMod && typeof (xlsxMod as any).default?.read === 'function')
+                  ? (xlsxMod as any).default as typeof xlsxMod
+                  : xlsxMod;
+                const workbook = xlsxLib.read(buffer, { type: "buffer" });
+                let text = "";
+                for (const sheetName of workbook.SheetNames) {
+                  text += `Sheet: ${sheetName}\n`;
+                  text += xlsxLib.utils.sheet_to_csv(workbook.Sheets[sheetName]).substring(0, 10000);
+                  text += "\n";
+                }
+                if (text.trim().length > 0) sheetText = text.substring(0, 30000);
+              } catch (xlsxErr) {
+                console.warn("[409A] XLSX parse failed:", xlsxErr);
+              }
+              userContent = sheetText
+                ? `Document: ${input.name}\n\nSPREADSHEET CONTENT:\n${sheetText}`
+                : `Document: ${input.name} (Spreadsheet content could not be extracted)`;
+            } else {
+              // Image: pass directly as image_url
+              userContent = [
+                { type: "text" as const, text: `Document: ${input.name}` },
+                { type: "image_url" as const, image_url: { url } },
+              ];
+            }
+
+            const fmvResponse = await invokeLLM({
+              messages: [
+                { role: "system", content: "Extract the 409A fair market value per share from this valuation document. Return JSON: {\"fmvPerShare\": number, \"totalValuation\": number, \"valuationDate\": \"YYYY-MM-DD\", \"provider\": \"string\"}. If you cannot find the data, return {\"fmvPerShare\": null}." },
+                { role: "user", content: userContent },
+              ],
+            });
+            const fmvText = typeof fmvResponse.choices?.[0]?.message?.content === "string" ? fmvResponse.choices[0].message.content : "";
+            try {
+              const fmvData = JSON.parse(fmvText.replace(/```json\n?|\n?```/g, "").trim());
+              if (fmvData.fmvPerShare) {
+                // Always create a new valuation record to preserve history
+                const valuationDate = fmvData.valuationDate ? new Date(fmvData.valuationDate) : new Date();
+                const newValuation = await db.createValuation409a({
+                  fairMarketValue: String(fmvData.fmvPerShare),
+                  valuationDate,
+                  ...(fmvData.totalValuation ? { totalValuation: String(fmvData.totalValuation) } : {}),
+                  ...(fmvData.provider ? { provider: fmvData.provider } : {}),
+                  ...(input.companyId ? { companyId: input.companyId } : {}),
+                  reportUrl: url,
+                  status: "approved",
+                });
+                // Link the document to the newly created valuation record
+                await db.updateDocument(result.id, { referenceId: newValuation.id });
+                console.log(`[409A] Created new valuation from ${input.name}: $${fmvData.fmvPerShare}/share (id=${newValuation.id})`);
+              }
+            } catch { /* FMV parse failed, that's ok */ }
+          } catch (e) {
+            console.warn("[409A] Failed to parse valuation document:", e);
+          }
+        }
+
         return result;
       }),
     delete: protectedProcedure
@@ -2630,9 +2919,399 @@ ONLY return the JSON array, no other text.`;
         await createAuditLog(ctx.user.id, 'update', 'projectTask', id);
         return { success: true };
       }),
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteProject(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'project', input.id);
+        return { success: true };
+      }),
     tasks: protectedProcedure
       .input(z.object({ projectId: z.number() }))
       .query(({ input }) => input.projectId === 0 ? db.getAllProjectTasks() : db.getProjectTasks(input.projectId)),
+    listAllTasks: protectedProcedure
+      .query(() => db.getAllProjectTasks()),
+  }),
+
+  // ============================================
+  // R&D TAX CREDIT (IRC SECTION 41)
+  // ============================================
+  rdTaxCredit: router({
+    // Study CRUD
+    listStudies: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        taxYear: z.number().optional(),
+        status: z.string().optional(),
+      }).optional())
+      .query(({ input }) => db.getRdTaxCreditStudies(input)),
+    getStudy: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .query(({ input }) => db.getRdStudyWithDetails(input.id)),
+    createStudy: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        taxYear: z.number(),
+        studyName: z.string().min(1),
+        calculationMethod: z.enum(["regular", "asc"]).default("asc"),
+        priorYear1Qre: z.string().optional(),
+        priorYear2Qre: z.string().optional(),
+        priorYear3Qre: z.string().optional(),
+        fixedBasePercentage: z.string().optional(),
+        currentYearGrossReceipts: z.string().optional(),
+        averageBasePeriodGrossReceipts: z.string().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createRdTaxCreditStudy({ ...input, createdBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'create', 'rdTaxCreditStudy', result.id, input.studyName);
+        return result;
+      }),
+    updateStudy: financeProcedure
+      .input(z.object({
+        id: z.number(),
+        studyName: z.string().optional(),
+        status: z.enum(["draft", "in_progress", "under_review", "filed", "amended"]).optional(),
+        calculationMethod: z.enum(["regular", "asc"]).optional(),
+        priorYear1Qre: z.string().optional(),
+        priorYear2Qre: z.string().optional(),
+        priorYear3Qre: z.string().optional(),
+        fixedBasePercentage: z.string().optional(),
+        currentYearGrossReceipts: z.string().optional(),
+        averageBasePeriodGrossReceipts: z.string().optional(),
+        filingDate: z.date().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateRdTaxCreditStudy(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'rdTaxCreditStudy', id);
+        return { success: true };
+      }),
+    deleteStudy: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteRdTaxCreditStudy(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'rdTaxCreditStudy', input.id);
+        return { success: true };
+      }),
+
+    // Project CRUD
+    listProjects: financeProcedure
+      .input(z.object({ studyId: z.number() }))
+      .query(({ input }) => db.getRdProjects(input.studyId)),
+    getProject: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .query(({ input }) => db.getRdProjectById(input.id)),
+    createProject: financeProcedure
+      .input(z.object({
+        studyId: z.number(),
+        projectName: z.string().min(1),
+        description: z.string().optional(),
+        businessComponent: z.string().optional(),
+        technologicalInNature: z.boolean().optional(),
+        technologicalNatureNotes: z.string().optional(),
+        eliminationOfUncertainty: z.boolean().optional(),
+        eliminationOfUncertaintyNotes: z.string().optional(),
+        processOfExperimentation: z.boolean().optional(),
+        processOfExperimentationNotes: z.string().optional(),
+        permittedPurpose: z.boolean().optional(),
+        permittedPurposeNotes: z.string().optional(),
+        qualifies: z.boolean().optional(),
+        startDate: z.date().optional(),
+        endDate: z.date().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createRdProject(input);
+        await createAuditLog(ctx.user.id, 'create', 'rdProject', result.id, input.projectName);
+        return result;
+      }),
+    updateProject: financeProcedure
+      .input(z.object({
+        id: z.number(),
+        projectName: z.string().optional(),
+        description: z.string().optional(),
+        businessComponent: z.string().optional(),
+        technologicalInNature: z.boolean().optional(),
+        technologicalNatureNotes: z.string().optional(),
+        eliminationOfUncertainty: z.boolean().optional(),
+        eliminationOfUncertaintyNotes: z.string().optional(),
+        processOfExperimentation: z.boolean().optional(),
+        processOfExperimentationNotes: z.string().optional(),
+        permittedPurpose: z.boolean().optional(),
+        permittedPurposeNotes: z.string().optional(),
+        qualifies: z.boolean().optional(),
+        totalProjectQre: z.string().optional(),
+        startDate: z.date().optional(),
+        endDate: z.date().optional(),
+        status: z.enum(["active", "completed", "excluded"]).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateRdProject(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'rdProject', id);
+        return { success: true };
+      }),
+    deleteProject: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteRdProject(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'rdProject', input.id);
+        return { success: true };
+      }),
+
+    // Expense CRUD
+    listExpenses: financeProcedure
+      .input(z.object({ studyId: z.number().optional(), projectId: z.number().optional() }))
+      .query(({ input }) => {
+        if (input.projectId) return db.getRdExpensesByProject(input.projectId);
+        if (input.studyId) return db.getRdExpensesByStudy(input.studyId);
+        return [];
+      }),
+    createExpense: financeProcedure
+      .input(z.object({
+        projectId: z.number(),
+        studyId: z.number(),
+        category: z.enum(["wages", "supplies", "contract_research", "cloud_computing"]),
+        description: z.string().optional(),
+        employeeId: z.number().optional(),
+        employeeName: z.string().optional(),
+        rdPercentage: z.string().optional(),
+        grossAmount: z.string(),
+        contractResearchRate: z.string().optional(),
+        vendorId: z.number().optional(),
+        vendorName: z.string().optional(),
+        periodStart: z.date().optional(),
+        periodEnd: z.date().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { computeQualifiedAmount } = await import("./rdTaxCreditService");
+        // Verify project belongs to the provided study
+        const project = await db.getRdProjectById(input.projectId);
+        if (!project || project.studyId !== input.studyId) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Project does not belong to the specified study' });
+        }
+        // Compute qualified amount server-side
+        const gross = parseFloat(input.grossAmount) || 0;
+        const rdPct = parseFloat(input.rdPercentage || "100") || 100;
+        const contractRate = parseFloat(input.contractResearchRate || "65") || 65;
+        const qualifiedAmount = String(computeQualifiedAmount(input.category, gross, rdPct, contractRate).toFixed(2));
+        const result = await db.createRdExpense({ ...input, qualifiedAmount });
+        await createAuditLog(ctx.user.id, 'create', 'rdExpense', result.id, input.description || input.category);
+        return result;
+      }),
+    updateExpense: financeProcedure
+      .input(z.object({
+        id: z.number(),
+        category: z.enum(["wages", "supplies", "contract_research", "cloud_computing"]).optional(),
+        description: z.string().optional(),
+        employeeId: z.number().optional(),
+        employeeName: z.string().optional(),
+        rdPercentage: z.string().optional(),
+        grossAmount: z.string().optional(),
+        qualifiedAmount: z.string().optional(),
+        contractResearchRate: z.string().optional(),
+        vendorId: z.number().optional(),
+        vendorName: z.string().optional(),
+        periodStart: z.date().optional(),
+        periodEnd: z.date().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateRdExpense(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'rdExpense', id);
+        return { success: true };
+      }),
+    deleteExpense: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteRdExpense(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'rdExpense', input.id);
+        return { success: true };
+      }),
+
+    // Credit Calculation
+    calculate: financeProcedure
+      .input(z.object({ studyId: z.number(), elect280CReduction: z.boolean().optional() }))
+      .mutation(async ({ input, ctx }) => {
+        const { calculateRdTaxCredit, aggregateExpensesByCategory } = await import("./rdTaxCreditService");
+        const study = await db.getRdStudyWithDetails(input.studyId);
+        if (!study) throw new TRPCError({ code: 'NOT_FOUND', message: 'Study not found' });
+
+        // Only include expenses from qualifying projects
+        const qualifyingProjectIds = new Set(
+          study.projects.filter(p => p.qualifies && p.status !== 'excluded').map(p => p.id)
+        );
+        const qualifyingExpenses = study.expenses.filter(e => qualifyingProjectIds.has(e.projectId));
+        const qreTotals = aggregateExpensesByCategory(qualifyingExpenses);
+
+        const result = calculateRdTaxCredit({
+          calculationMethod: study.calculationMethod as "regular" | "asc",
+          wageQre: qreTotals.wageQre,
+          supplyQre: qreTotals.supplyQre,
+          contractQre: qreTotals.contractQre,
+          fixedBasePercentage: parseFloat(String(study.fixedBasePercentage)) || 0,
+          currentYearGrossReceipts: parseFloat(String(study.currentYearGrossReceipts)) || 0,
+          averageBasePeriodGrossReceipts: parseFloat(String(study.averageBasePeriodGrossReceipts)) || 0,
+          priorYear1Qre: parseFloat(String(study.priorYear1Qre)) || 0,
+          priorYear2Qre: parseFloat(String(study.priorYear2Qre)) || 0,
+          priorYear3Qre: parseFloat(String(study.priorYear3Qre)) || 0,
+          elect280CReduction: input.elect280CReduction,
+        });
+
+        // Save calculated values back to study
+        await db.updateRdTaxCreditStudy(input.studyId, {
+          totalWageQre: String(result.breakdown.wageQre),
+          totalSupplyQre: String(result.breakdown.supplyQre),
+          totalContractQre: String(result.breakdown.contractQre),
+          totalQre: String(result.totalQre),
+          baseAmount: String(result.baseAmount),
+          averagePriorQre: String(result.averagePriorQre),
+          grossCredit: String(result.grossCredit),
+          section280CReduction: String(result.section280CReduction),
+          netCredit: String(result.netCredit),
+        });
+
+        // Update project QRE totals concurrently in batches
+        const expensesByProjectId = new Map<number, typeof qualifyingExpenses>();
+        for (const expense of qualifyingExpenses) {
+          const existing = expensesByProjectId.get(expense.projectId) ?? [];
+          existing.push(expense);
+          expensesByProjectId.set(expense.projectId, existing);
+        }
+        const projectUpdates = study.projects.map((project) => {
+          const projectExpenses = expensesByProjectId.get(project.id) ?? [];
+          const projectQre = aggregateExpensesByCategory(projectExpenses);
+          return { projectId: project.id, totalProjectQre: String(projectQre.totalQre) };
+        });
+        const batchSize = 10;
+        for (let i = 0; i < projectUpdates.length; i += batchSize) {
+          await Promise.all(
+            projectUpdates.slice(i, i + batchSize).map(({ projectId, totalProjectQre }) =>
+              db.updateRdProject(projectId, { totalProjectQre })
+            )
+          );
+        }
+
+        await createAuditLog(ctx.user.id, 'update', 'rdTaxCreditStudy', input.studyId, 'Credit calculated');
+        return result;
+      }),
+
+    // Generate Form 6765 data
+    generateForm: financeProcedure
+      .input(z.object({ studyId: z.number() }))
+      .query(async ({ input }) => {
+        const { generateForm6765Data, calculateRdTaxCredit, aggregateExpensesByCategory } = await import("./rdTaxCreditService");
+        const study = await db.getRdStudyWithDetails(input.studyId);
+        if (!study) throw new TRPCError({ code: 'NOT_FOUND', message: 'Study not found' });
+
+        const qualifyingProjectIds = new Set(
+          study.projects.filter(p => p.qualifies && p.status !== 'excluded').map(p => p.id)
+        );
+        const qualifyingExpenses = study.expenses.filter(e => qualifyingProjectIds.has(e.projectId));
+        const qreTotals = aggregateExpensesByCategory(qualifyingExpenses);
+
+        const storedReduction = parseFloat(String(study.section280CReduction)) || 0;
+        const elect280CReduction = storedReduction > 0;
+
+        const result = calculateRdTaxCredit({
+          calculationMethod: study.calculationMethod as "regular" | "asc",
+          wageQre: qreTotals.wageQre,
+          supplyQre: qreTotals.supplyQre,
+          contractQre: qreTotals.contractQre,
+          fixedBasePercentage: parseFloat(String(study.fixedBasePercentage)) || 0,
+          currentYearGrossReceipts: parseFloat(String(study.currentYearGrossReceipts)) || 0,
+          averageBasePeriodGrossReceipts: parseFloat(String(study.averageBasePeriodGrossReceipts)) || 0,
+          priorYear1Qre: parseFloat(String(study.priorYear1Qre)) || 0,
+          priorYear2Qre: parseFloat(String(study.priorYear2Qre)) || 0,
+          priorYear3Qre: parseFloat(String(study.priorYear3Qre)) || 0,
+          elect280CReduction,
+        });
+
+        return {
+          form: generateForm6765Data(study, result),
+          projects: study.projects.filter(p => p.qualifies && p.status !== 'excluded'),
+          expenseCount: qualifyingExpenses.length,
+        };
+      }),
+
+    // Import expenses from QuickBooks bills
+    importFromQuickBooks: financeProcedure
+      .input(z.object({
+        studyId: z.number(),
+        projectId: z.number(),
+        startDate: z.string(),
+        endDate: z.string(),
+        category: z.enum(["wages", "supplies", "contract_research", "cloud_computing"]),
+        rdPercentage: z.string().default("100"),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { getQuickBooksBills, refreshQuickBooksToken } = await import("./_core/quickbooks");
+        const { computeQualifiedAmount } = await import("./rdTaxCreditService");
+        const token = await db.getQuickBooksOAuthToken(ctx.user.id);
+        if (!token || !token.accessToken || !token.realmId) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'QuickBooks not connected. Connect in Settings > Integrations.' });
+        }
+
+        let accessToken = token.accessToken;
+        if (token.expiresAt && new Date(token.expiresAt) <= new Date()) {
+          if (!token.refreshToken) throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'QuickBooks token expired' });
+          const refreshResult = await refreshQuickBooksToken(token.refreshToken);
+          if (refreshResult.error) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: refreshResult.error });
+          accessToken = refreshResult.access_token!;
+          await db.upsertQuickBooksOAuthToken({
+            userId: ctx.user.id,
+            accessToken: refreshResult.access_token!,
+            refreshToken: refreshResult.refresh_token!,
+            realmId: token.realmId,
+            expiresAt: new Date(Date.now() + (refreshResult.expires_in || 3600) * 1000),
+          });
+        }
+
+        const billsResult = await getQuickBooksBills(accessToken, token.realmId, {
+          startDate: input.startDate,
+          endDate: input.endDate,
+        });
+
+        const bills: any[] = billsResult?.data?.QueryResponse?.Bill || [];
+        const expensesToCreate: Parameters<typeof db.createRdExpense>[0][] = [];
+
+        for (const bill of bills) {
+          const lines = bill.Line || [];
+          for (const line of lines) {
+            if (line.DetailType === 'AccountBasedExpenseLineDetail' || line.DetailType === 'ItemBasedExpenseLineDetail') {
+              const grossAmount = parseFloat(line.Amount) || 0;
+              if (grossAmount <= 0) continue;
+              const rdPct = parseFloat(input.rdPercentage) || 100;
+              const qualified = computeQualifiedAmount(input.category, grossAmount, rdPct);
+              expensesToCreate.push({
+                projectId: input.projectId,
+                studyId: input.studyId,
+                category: input.category,
+                description: line.Description || `QB Bill #${bill.DocNumber || bill.Id}`,
+                grossAmount: String(grossAmount),
+                qualifiedAmount: String(qualified.toFixed(2)),
+                rdPercentage: String(rdPct),
+                vendorName: bill.VendorRef?.name || '',
+                periodStart: bill.TxnDate ? new Date(bill.TxnDate) : undefined,
+                periodEnd: bill.TxnDate ? new Date(bill.TxnDate) : undefined,
+                notes: `Imported from QuickBooks Bill ${bill.DocNumber || bill.Id}`,
+              });
+            }
+          }
+        }
+
+        const batchSize = 20;
+        for (let i = 0; i < expensesToCreate.length; i += batchSize) {
+          await Promise.all(expensesToCreate.slice(i, i + batchSize).map(e => db.createRdExpense(e)));
+        }
+        const imported = expensesToCreate.length;
+
+        await createAuditLog(ctx.user.id, 'create', 'rdTaxCreditStudy', input.studyId, `Imported ${imported} expenses from QuickBooks`);
+        return { imported, totalBills: bills.length };
+      }),
   }),
 
   // ============================================
@@ -2863,13 +3542,66 @@ ONLY return the JSON array, no other text.`;
       const activeShopifyStores = shopifyStores.filter(s => s.isEnabled);
       const syncHistory = await db.getSyncHistory(10);
       
-      // Check Google OAuth connection
+      // Check Google OAuth connection — attempt auto-refresh if expired
       const googleToken = await db.getGoogleOAuthToken(ctx.user.id);
-      const googleConnected = googleToken && (!googleToken.expiresAt || new Date(googleToken.expiresAt) > new Date());
+      let googleConnected = googleToken && (!googleToken.expiresAt || new Date(googleToken.expiresAt) > new Date());
+      if (googleToken && !googleConnected && googleToken.refreshToken) {
+        const refreshed = await refreshGoogleToken(googleToken.refreshToken);
+        if (refreshed.accessToken && refreshed.expiresAt) {
+          try {
+            await db.upsertGoogleOAuthToken({
+              userId: ctx.user.id,
+              accessToken: refreshed.accessToken,
+              refreshToken: googleToken.refreshToken,
+              expiresAt: refreshed.expiresAt,
+              googleEmail: googleToken.googleEmail,
+            });
+          } catch (e) {
+            console.warn('[getStatus] Failed to save refreshed Google token:', e);
+          }
+          googleConnected = true;
+        }
+      }
+      // If connected but missing email, try to fetch it from Google
+      if (googleConnected && googleToken && !googleToken.googleEmail) {
+        try {
+          const { accessToken: validToken } = await getValidGoogleToken(ctx.user.id);
+          if (validToken) {
+            const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', { headers: { Authorization: `Bearer ${validToken}` } });
+            if (userInfoRes.ok) {
+              const userInfo = await userInfoRes.json();
+              if (userInfo.email) {
+                await db.upsertGoogleOAuthToken({ userId: ctx.user.id, accessToken: validToken, googleEmail: userInfo.email });
+                googleToken.googleEmail = userInfo.email;
+              }
+            }
+          }
+        } catch { /* best-effort email fetch */ }
+      }
       
-      // Check QuickBooks OAuth connection
+      // Check QuickBooks OAuth connection and attempt refresh if expired
       const quickbooksToken = await db.getQuickBooksOAuthToken(ctx.user.id);
-      const quickbooksConnected = quickbooksToken && (!quickbooksToken.expiresAt || new Date(quickbooksToken.expiresAt) > new Date());
+      let quickbooksConnected = !!(quickbooksToken && (!quickbooksToken.expiresAt || new Date(quickbooksToken.expiresAt) > new Date()));
+      let quickbooksRealmId = quickbooksToken?.realmId;
+      if (quickbooksToken && !quickbooksConnected && quickbooksToken.refreshToken) {
+        try {
+          const refreshResult = await refreshQuickBooksToken(quickbooksToken.refreshToken);
+          if (refreshResult.access_token && refreshResult.expires_in) {
+            await db.upsertQuickBooksOAuthToken({
+              userId: ctx.user.id,
+              accessToken: refreshResult.access_token,
+              refreshToken: refreshResult.refresh_token || quickbooksToken.refreshToken,
+              expiresAt: new Date(Date.now() + (refreshResult.expires_in * 1000)),
+              realmId: quickbooksToken.realmId,
+              scope: quickbooksToken.scope || "com.intuit.quickbooks.accounting",
+            });
+            quickbooksConnected = true;
+            quickbooksRealmId = quickbooksToken.realmId;
+          }
+        } catch (e) {
+          console.warn("[getStatus] Failed to refresh QuickBooks token:", e);
+        }
+      }
       
       return {
         sendgrid: {
@@ -2897,12 +3629,29 @@ ONLY return the JSON array, no other text.`;
           status: googleConnected ? 'connected' : 'not_configured',
           email: googleToken?.googleEmail,
         },
+        googleDriveServiceAccount: {
+          configured: isServiceAccountConfigured(),
+          email: getServiceAccountEmail(),
+        },
         quickbooks: {
           configured: quickbooksConnected,
           status: quickbooksConnected ? 'connected' : 'not_configured',
-          realmId: quickbooksToken?.realmId,
+          realmId: quickbooksRealmId,
         },
         syncHistory,
+        fireflies: await (async () => {
+          try {
+            const config = await db.getFirefliesConfig(ctx.user.id);
+            console.log(`[getStatus] Fireflies config for user ${ctx.user.id}:`, config ? 'found' : 'not found');
+            return {
+              configured: !!config,
+              status: config ? 'connected' : 'not_configured',
+            };
+          } catch (e: any) {
+            console.warn(`[getStatus] Fireflies check failed:`, e.message);
+            return { configured: false, status: 'not_configured' };
+          }
+        })(),
       };
     }),
 
@@ -2976,8 +3725,9 @@ ONLY return the JSON array, no other text.`;
         .mutation(async ({ input }) => {
           const store = await db.getShopifyStoreById(input.storeId);
           if (!store || !store.accessToken) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Store not found or not connected' });
+          const accessToken = safeDecryptToken(store.accessToken);
           const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/shop.json`, {
-            headers: { 'X-Shopify-Access-Token': store.accessToken, 'Content-Type': 'application/json' },
+            headers: { 'X-Shopify-Access-Token': accessToken, 'Content-Type': 'application/json' },
           });
           if (!response.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: `Shopify API error: ${response.status}` });
           return { success: true, message: 'Connection is active' };
@@ -3324,7 +4074,8 @@ ONLY return the JSON array, no other text.`;
         return { connected: false, email: null };
       }
       // Check if token is expired and attempt refresh if so
-      const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
+      let isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
+      let currentAccessToken = token.accessToken;
       if (isExpired && token.refreshToken) {
         // Attempt to refresh the token automatically
         const refreshed = await refreshGoogleToken(token.refreshToken);
@@ -3336,14 +4087,30 @@ ONLY return the JSON array, no other text.`;
             expiresAt: refreshed.expiresAt,
             googleEmail: token.googleEmail,
           });
-          return { connected: true, email: token.googleEmail, needsRefresh: false };
+          currentAccessToken = refreshed.accessToken;
+          isExpired = false;
+        } else {
+          // Refresh failed — token is truly expired
+          return { connected: false, email: token.googleEmail, needsRefresh: true };
         }
-        // Refresh failed — token is truly expired
-        return { connected: false, email: token.googleEmail, needsRefresh: true };
+      }
+      // Backfill googleEmail if missing (for tokens created before email fetch was added)
+      let email = token.googleEmail;
+      if (!isExpired && !email && currentAccessToken) {
+        try {
+          const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', { headers: { Authorization: `Bearer ${currentAccessToken}` } });
+          if (userInfoRes.ok) {
+            const userInfo = await userInfoRes.json();
+            if (userInfo.email) {
+              email = userInfo.email;
+              await db.upsertGoogleOAuthToken({ userId: ctx.user.id, accessToken: currentAccessToken, googleEmail: email });
+            }
+          }
+        } catch { /* best-effort */ }
       }
       return {
         connected: !isExpired,
-        email: token.googleEmail,
+        email,
         needsRefresh: false
       };
     }),
@@ -3411,7 +4178,7 @@ ONLY return the JSON array, no other text.`;
           }
         }
         
-        const url = `https://www.googleapis.com/drive/v3/files?q=mimeType='application/vnd.google-apps.spreadsheet'&fields=files(id,name,modifiedTime,owners)&orderBy=modifiedTime desc&pageSize=50${input?.pageToken ? `&pageToken=${input.pageToken}` : ''}`;
+        const url = `https://www.googleapis.com/drive/v3/files?q=(mimeType='application/vnd.google-apps.spreadsheet' or mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or mimeType='text/csv')&fields=files(id,name,modifiedTime,owners,mimeType)&orderBy=modifiedTime desc&pageSize=100${input?.pageToken ? `&pageToken=${input.pageToken}` : ''}`;
         
         const response = await fetch(url, {
           headers: { Authorization: `Bearer ${accessToken}` },
@@ -3756,7 +4523,7 @@ ONLY return the JSON array, no other text.`;
 
         // 2. List all Google Sheets in Drive
         const sheetsResponse = await fetch(
-          'https://www.googleapis.com/drive/v3/files?q=mimeType%3D%27application%2Fvnd.google-apps.spreadsheet%27&fields=files(id,name,modifiedTime)&orderBy=modifiedTime%20desc&pageSize=50',
+          `https://www.googleapis.com/drive/v3/files?q=(mimeType='application/vnd.google-apps.spreadsheet' or mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or mimeType='text/csv')&fields=files(id,name,modifiedTime,mimeType)&orderBy=modifiedTime desc&pageSize=100`,
           { headers: { Authorization: `Bearer ${accessToken}` } },
         );
         if (!sheetsResponse.ok) {
@@ -3899,7 +4666,7 @@ ONLY return the JSON array, no other text.`;
                     const name = record.name || record.contact || record['contact name'] || record['full name'] || record.company || `Contact ${imported + 1}`;
                     const firstName = name.split(' ')[0] || name;
                     const lastName = name.split(' ').slice(1).join(' ') || '';
-                    await db.createCrmContact({
+                    const { created } = await db.findOrCreateCrmContact({
                       firstName,
                       lastName,
                       fullName: name,
@@ -3911,7 +4678,7 @@ ONLY return the JSON array, no other text.`;
                       notes: record.notes || record.comments || undefined,
                       status: (record.status === 'active' || record.status === 'inactive') ? record.status as any : 'active',
                     });
-                    imported++;
+                    if (created) imported++;
                     break;
                   }
                   case 'crm_deals': {
@@ -3926,29 +4693,46 @@ ONLY return the JSON array, no other text.`;
                       }
                     } catch {}
 
-                    // Create a placeholder contact for the deal
-                    const dealName = record.name || record.deal || record.opportunity || `Deal ${imported + 1}`;
+                    // Resolve company name — that's the deal title.
+                    const company = (record.company || record.organization || record.account || record.client || record.name || record.deal || record.opportunity || '').toString().trim();
+                    if (!company) { imported++; break; }
+
+                    // Skip duplicates — by existing deal or already-pending approval task.
+                    if (await db.findCrmDealByCompany(company)) { imported++; break; }
+                    if (await db.hasPendingDealApprovalForCompany(company)) { imported++; break; }
+
+                    // Create a placeholder contact tied to that company.
                     let contactId: number;
                     try {
-                      contactId = await db.createCrmContact({
-                        firstName: dealName,
+                      const { id } = await db.findOrCreateCrmContact({
+                        firstName: company,
                         lastName: '',
-                        fullName: dealName,
+                        fullName: company,
+                        organization: company,
                         source: 'import',
                         contactType: 'lead',
                       });
+                      contactId = id;
                     } catch {
                       contactId = 1;
                     }
 
-                    await db.createCrmDeal({
+                    const taskData = {
                       pipelineId,
                       contactId,
-                      name: dealName,
+                      company,
                       stage: record.stage || record.status || 'discovery',
                       amount: record.amount || record.value || record['deal size'] || undefined,
                       source: 'google_sheets',
                       notes: record.notes || undefined,
+                    };
+                    await db.createAiAgentTask({
+                      taskType: 'create_crm_deal',
+                      priority: 'medium',
+                      status: 'pending_approval',
+                      taskData: JSON.stringify(taskData),
+                      aiReasoning: `Imported CRM deal for "${company}" from Google Sheets — pending approval.`,
+                      aiConfidence: '90.00',
                     });
                     imported++;
                     break;
@@ -4617,6 +5401,24 @@ ONLY return the JSON array, no other text.`;
         return { connected: false, realmId: null };
       }
       const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
+      if (isExpired && token.refreshToken) {
+        const refreshResult = await refreshQuickBooksToken(token.refreshToken);
+        if (refreshResult.access_token && refreshResult.expires_in) {
+          await db.upsertQuickBooksOAuthToken({
+            userId: ctx.user.id,
+            accessToken: refreshResult.access_token,
+            refreshToken: refreshResult.refresh_token || token.refreshToken,
+            expiresAt: new Date(Date.now() + (refreshResult.expires_in * 1000)),
+            realmId: token.realmId,
+            scope: token.scope || "com.intuit.quickbooks.accounting",
+          });
+          return {
+            connected: true,
+            realmId: token.realmId,
+            needsRefresh: false,
+          };
+        }
+      }
       return { 
         connected: !isExpired, 
         realmId: token.realmId,
@@ -4792,8 +5594,48 @@ ONLY return the JSON array, no other text.`;
         });
 
         await createAuditLog(ctx.user.id, 'create', 'quickbooks_mapping', result.id, `Mapped ${input.mappingType} to QB account ${input.quickbooksAccountId}`);
-        
+
         return { success: true, id: result.id };
+      }),
+
+    // Fetch Profit & Loss from QuickBooks and return parsed monthly totals.
+    // Drives actual burn / gross margin / EBITDA on the CFO dashboard.
+    getProfitAndLoss: protectedProcedure
+      .input(z.object({
+        startDate: z.string().optional(),
+        endDate: z.string().optional(),
+        summarizeBy: z.enum(["Month", "Quarter", "Year"]).optional(),
+      }).optional())
+      .query(async ({ input, ctx }) => {
+        const token = await db.getQuickBooksOAuthToken(ctx.user.id);
+        if (!token || !token.realmId) return { connected: false, months: [] };
+
+        let accessToken = token.accessToken;
+        const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
+        if (isExpired && token.refreshToken) {
+          const refreshResult = await refreshQuickBooksToken(token.refreshToken);
+          if (!refreshResult.error && refreshResult.access_token && refreshResult.expires_in) {
+            await db.upsertQuickBooksOAuthToken({
+              userId: ctx.user.id,
+              accessToken: refreshResult.access_token,
+              refreshToken: refreshResult.refresh_token ?? token.refreshToken,
+              expiresAt: new Date(Date.now() + refreshResult.expires_in * 1000),
+              realmId: token.realmId,
+            });
+            accessToken = refreshResult.access_token;
+          }
+        }
+
+        const result = await getProfitAndLoss(accessToken, token.realmId, {
+          startDate: input?.startDate,
+          endDate: input?.endDate,
+          summarizeBy: input?.summarizeBy ?? "Month",
+        });
+        if (result.error) return { connected: true, error: result.error, months: [] };
+
+        const { months, expenseAccounts } = parseProfitAndLossReport(result.data);
+
+        return { connected: true, months, expenseAccounts };
       }),
   }),
 
@@ -4905,13 +5747,19 @@ const assistantMessage = typeof rawContent === 'string' ? rawContent : 'I apolog
           db.getPurchaseOrders(),
         ]);
 
-        const systemPrompt = `You are the AI assistant for Superhumn's ERP system. You have FULL access to create, read, update, and delete all data.
+        const systemPrompt = `You are the AI assistant for Superhumn's ERP system. You can read and analyze business data.
 
-CRITICAL: When a user asks you to CREATE something (PO, invoice, product, vendor, etc.), tell them you are creating it NOW and describe what you created. Do NOT list manual steps. Do NOT say "navigate to" or "click on". Just do it.
+IMPORTANT: You do NOT have write access. Do NOT pretend to create, update, or delete records. If a user asks you to create something (a PO, invoice, vendor, etc.), tell them clearly that you are a read-only assistant and guide them to use the AI command bar at the top of the page with the exact phrasing they need.
 
-For example:
-- "make a PO for 5000kg mushrooms" → "I've created PO #PO-2604-1234 for 5000kg of Chopped Mushrooms. I assigned it to your default vendor. You can view it in Purchase Orders."
-- "create vendor Pacific Foods" → "Done — Pacific Foods has been added as a vendor."
+For navigation questions, always give the exact location:
+- Purchase Orders are in the Operations section at path /operations/purchase-orders
+- Vendors are in the Operations section at path /operations/vendors
+- Invoices are in the Finance section
+- Orders are in the Sales section
+
+For creation requests, guide the user to type a command directly in the search bar at the top, for example:
+- To create a PO: type "make po for 3 tons of hemp protein" in the search bar
+- To create a vendor: type "create vendor Pacific Foods" in the search bar
 
 Current Business Data:
 - Invoices: ${recentInvoices.length} total
@@ -4919,7 +5767,7 @@ Current Business Data:
 - Purchase Orders: ${recentPOs.length} total
 - Dashboard: ${JSON.stringify(metrics)}
 
-Be concise. Don't explain what you can't do — just do it or ask for the one missing detail.`;
+Be concise and helpful. Always give actionable guidance.`;
 
         const response = await invokeLLM({
           messages: [
@@ -5074,7 +5922,7 @@ Be concise. Don't explain what you can't do — just do it or ask for the one mi
       
       create: protectedProcedure
         .input(z.object({
-          taskType: z.enum(['generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory', 'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials', 'vendor_followup', 'create_work_order', 'query', 'reply_email', 'approve_po', 'approve_invoice', 'create_vendor', 'create_material', 'create_product', 'create_bom', 'create_customer']),
+          taskType: z.enum(['generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory', 'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials', 'vendor_followup', 'create_work_order', 'query', 'reply_email', 'approve_po', 'approve_invoice', 'create_vendor', 'create_material', 'create_product', 'create_bom', 'create_customer', 'create_crm_deal']),
           priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium'),
           taskData: z.string(), // JSON string with task-specific data
           aiReasoning: z.string().optional(),
@@ -5129,6 +5977,60 @@ Be concise. Don't explain what you can't do — just do it or ask for the one mi
             status: 'success',
             message: `Task approved by ${ctx.user.name}`,
           });
+
+          // CRM deal approvals create the deal immediately on approval —
+          // no separate execute step required.
+          const task = await db.getAiAgentTaskById(input.id);
+          if (task?.taskType === 'create_crm_deal') {
+            try {
+              const taskData = JSON.parse(task.taskData || '{}');
+              const contact = taskData.contactId ? await db.getCrmContactById(taskData.contactId) : null;
+              if (!contact) throw new Error('Contact not found for CRM deal');
+              const company = (contact.organization || '').trim();
+              if (!company) throw new Error(`Contact "${contact.fullName}" has no company set`);
+              const existing = await db.findCrmDealByCompany(company);
+              if (existing) throw new Error(`A deal already exists for "${company}" (deal #${existing.id})`);
+              if (!taskData.pipelineId) throw new Error('Pipeline required to create CRM deal');
+
+              const dealId = await db.createCrmDeal({
+                pipelineId: taskData.pipelineId,
+                contactId: taskData.contactId,
+                name: company,
+                stage: taskData.stage || 'discovery',
+                amount: taskData.amount || undefined,
+                source: taskData.source || undefined,
+                notes: taskData.notes || undefined,
+                assignedTo: taskData.assignedTo || undefined,
+              });
+              const result = { created: true, dealId, dealName: company };
+              await db.updateAiAgentTask(input.id, {
+                status: 'completed',
+                executedAt: new Date(),
+                executionResult: JSON.stringify(result),
+              });
+              await db.createAiAgentLog({
+                taskId: input.id,
+                action: 'task_executed',
+                status: 'success',
+                message: `CRM deal created for ${company}`,
+                details: JSON.stringify(result),
+              });
+              return { success: true, autoExecuted: true, dealId, company };
+            } catch (error: any) {
+              await db.updateAiAgentTask(input.id, {
+                status: 'failed',
+                errorMessage: error.message,
+              });
+              await db.createAiAgentLog({
+                taskId: input.id,
+                action: 'task_execution_failed',
+                status: 'error',
+                message: `CRM deal creation failed: ${error.message}`,
+              });
+              throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
+            }
+          }
+
           return { success: true };
         }),
       
@@ -5535,7 +6437,39 @@ Be concise. Don't explain what you can't do — just do it or ask for the one mi
                 result = { created: true, customerId: customer.id, customerName: taskData.name };
                 break;
               }
-              
+
+              case 'create_crm_deal': {
+                // Resolve company name from contact's organization (the deal's title).
+                const contact = taskData.contactId ? await db.getCrmContactById(taskData.contactId) : null;
+                if (!contact) throw new Error('Contact not found for CRM deal');
+                const company = (contact.organization || '').trim();
+                if (!company) {
+                  throw new Error(`Cannot create deal: contact "${contact.fullName}" has no company set`);
+                }
+
+                // Re-check duplicates at execution time in case another deal was approved
+                // for the same company while this one was waiting.
+                const existing = await db.findCrmDealByCompany(company);
+                if (existing) {
+                  throw new Error(`A deal already exists for company "${company}" (deal #${existing.id})`);
+                }
+
+                if (!taskData.pipelineId) throw new Error('Pipeline required to create CRM deal');
+
+                const dealId = await db.createCrmDeal({
+                  pipelineId: taskData.pipelineId,
+                  contactId: taskData.contactId,
+                  name: company,
+                  stage: taskData.stage || 'discovery',
+                  amount: taskData.amount || undefined,
+                  source: taskData.source || undefined,
+                  notes: taskData.notes || undefined,
+                  assignedTo: taskData.assignedTo || undefined,
+                });
+                result = { created: true, dealId, dealName: company };
+                break;
+              }
+
               case 'create_work_order': {
                 // Create work order from BOM
                 const bom = taskData.bomId ? await db.getBomById(taskData.bomId) : null;
@@ -5895,6 +6829,52 @@ Be concise. Don't explain what you can't do — just do it or ask for the one mi
   freight: router({
     // Dashboard stats
     dashboardStats: protectedProcedure.query(() => db.getFreightDashboardStats()),
+
+    // SeaRates: Live container/BL tracking
+    trackShipment: protectedProcedure
+      .input(z.object({
+        number: z.string().min(1),
+        type: z.enum(["CT", "BL", "BK"]).optional(),
+        sealine: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return trackShipment(input.number, { type: input.type, sealine: input.sealine, route: true });
+      }),
+
+    // SeaRates: Get freight rate quotes
+    getQuotes: protectedProcedure
+      .input(z.object({
+        fromCity: z.string(),
+        toCity: z.string(),
+        fromCountry: z.string(),
+        toCountry: z.string(),
+        weight: z.number().optional(),
+        volume: z.number().optional(),
+        containerType: z.enum(["20ST", "40ST", "40HQ", "20RF", "40RF"]).optional(),
+        mode: z.enum(["fcl", "lcl", "air"]).optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return getFreightRates(input);
+      }),
+
+    // SeaRates: List supported shipping lines
+    shippingLines: protectedProcedure.query(async () => {
+      try { return await getShippingLines(); } catch { return { lines: [] }; }
+    }),
+
+    // SeaRates: Vessel sailing schedules
+    vesselSchedules: protectedProcedure
+      .input(z.object({
+        origin: z.string().min(2),
+        destination: z.string().min(2),
+        fromDate: z.string().optional(),
+        weeks: z.number().min(1).max(6).optional(),
+        cargoType: z.enum(["GC", "REEF", "LCL", "RORO"]).optional(),
+        directOnly: z.boolean().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return getVesselSchedules(input);
+      }),
     
     // Carriers
     discoverCarriers: protectedProcedure
@@ -7563,6 +8543,53 @@ Provide a brief status summary, any missing documents, and next steps.`;
         return { id: result.id, url };
       }),
 
+    // --- Shared recipes (read-only view of recipes shared with this copacker) ---
+    getSharedRecipes: copackerProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role === 'copacker' && !ctx.user.linkedWarehouseId) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'No warehouse assigned to this account' });
+      }
+      // Admin/ops viewing the portal see nothing unless they're linked to a warehouse.
+      const warehouseId = ctx.user.linkedWarehouseId;
+      if (!warehouseId) return [];
+      return manufacturingDb.getRecipesSharedWithWarehouse(warehouseId);
+    }),
+
+    getSharedRecipeDetail: copackerProcedure
+      .input(z.object({ recipeId: z.number() }))
+      .query(async ({ input, ctx }) => {
+        const warehouseId = ctx.user.linkedWarehouseId;
+        if (ctx.user.role === 'copacker' && !warehouseId) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'No warehouse assigned to this account' });
+        }
+        // Gate by share row unless caller is admin/ops.
+        let share = warehouseId
+          ? await manufacturingDb.getRecipeShareForWarehouse(input.recipeId, warehouseId)
+          : undefined;
+        if (ctx.user.role === 'copacker' && !share) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'This recipe is not shared with your facility' });
+        }
+        const recipe = await manufacturingDb.getRecipeById(input.recipeId);
+        if (!recipe) throw new TRPCError({ code: 'NOT_FOUND', message: 'Recipe not found' });
+
+        const shareIngredients = share?.shareIngredients ?? true;
+        const shareProcedures = share?.shareProcedures ?? true;
+
+        const lines = shareIngredients
+          ? await manufacturingDb.getRecipeLines(input.recipeId)
+          : [];
+        const procedures = shareProcedures
+          ? await manufacturingDb.getRecipeProcedures(input.recipeId)
+          : [];
+        return {
+          recipe,
+          share: share ?? null,
+          lines,
+          procedures,
+          shareIngredients,
+          shareProcedures,
+        };
+      }),
+
     // Get current biweekly period info
     getCurrentPeriod: copackerProcedure.query(async () => {
       const now = new Date();
@@ -8280,6 +9307,206 @@ Provide a brief status summary, any missing documents, and next steps.`;
       }),
   }),
 
+  ingredients: router({
+    list: protectedProcedure
+      .input(z.object({ category: z.string().optional(), active: z.boolean().optional() }).optional())
+      .query(({ input }) => manufacturingDb.getIngredients(input)),
+    create: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        sku: z.string().min(1),
+        category: z.enum(["protein", "spice", "liquid", "produce", "packaging", "other"]).default("other"),
+        unitOfMeasure: z.enum(["g", "kg", "lb", "oz", "ml", "l", "each"]).default("g"),
+        costPerUnit: z.string().default("0"),
+        costUnit: z.enum(["per_lb", "per_kg", "per_oz", "per_each"]).default("per_kg"),
+        supplierId: z.number().optional(),
+        leadTimeDays: z.number().optional(),
+        moistureContent: z.string().optional(),
+        shelfLifeDays: z.number().optional(),
+        isAllergen: z.boolean().optional(),
+        allergenType: z.string().optional(),
+        notes: z.string().optional(),
+        isActive: z.boolean().optional(),
+      }))
+      .mutation(({ input }) => manufacturingDb.createIngredient(input)),
+    addCost: protectedProcedure
+      .input(z.object({
+        ingredientId: z.number(),
+        costPerUnit: z.string(),
+        costUnit: z.enum(["per_lb", "per_kg", "per_oz", "per_each"]),
+        effectiveDate: z.date().optional(),
+        supplierId: z.number().optional(),
+        source: z.string().optional(),
+      }))
+      .mutation(({ input }) => manufacturingDb.addIngredientCostEntry({
+        ...input,
+        effectiveDate: input.effectiveDate || new Date(),
+      })),
+  }),
+
+  recipes: router({
+    list: protectedProcedure
+      .input(z.object({
+        category: z.string().optional(),
+        status: z.string().optional(),
+        isSubRecipe: z.boolean().optional(),
+      }).optional())
+      .query(({ input }) => manufacturingDb.getRecipes(input)),
+    create: protectedProcedure
+      .input(z.object({
+        recipeId: z.string().min(1),
+        name: z.string().min(1),
+        category: z.enum(["beef", "pork", "chicken", "seafood", "dairy", "blend", "other"]).default("other"),
+        status: z.enum(["development", "production", "discontinued"]).default("development"),
+        version: z.number().default(1),
+        isSubRecipe: z.boolean().optional(),
+        baseBatchGrams: z.string().default("0"),
+        expectedYieldPct: z.string().default("1.0000"),
+        hasMoistureVariants: z.boolean().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(({ input, ctx }) => manufacturingDb.createRecipe({ ...input, createdBy: ctx.user?.id })),
+    batchCost: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        formulation: z.enum(["wet", "dry"]).default("wet"),
+        batchGrams: z.number().optional(),
+        scaleFactor: z.number().optional(),
+        targetLbs: z.number().optional(),
+      }))
+      .query(({ input }) => manufacturingDb.calculateRecipeBatchCost({
+        recipeId: input.id,
+        formulation: input.formulation,
+        batchGrams: input.batchGrams,
+        scaleFactor: input.scaleFactor,
+        targetLbs: input.targetLbs,
+      })),
+    saveBatchSnapshot: protectedProcedure
+      .input(z.object({
+        recipeId: z.number(),
+        formulationType: z.enum(["wet", "dry"]),
+      }))
+      .mutation(async ({ input }) => {
+        const cost = await manufacturingDb.calculateRecipeBatchCost({
+          recipeId: input.recipeId,
+          formulation: input.formulationType,
+        });
+        if (!cost) throw new Error("Unable to calculate recipe cost");
+        return manufacturingDb.saveBatchCostSnapshot({
+          recipeId: input.recipeId,
+          formulationType: input.formulationType,
+          totalBatchGrams: String(cost.totalBatchGrams),
+          totalBatchCost: String(cost.totalCost),
+          costPerGram: String(cost.costPerGram),
+          costPerLb: String(cost.costPerLb),
+          costPerKg: String(cost.costPerKg),
+          yieldAdjustedCostPerLb: String(cost.yieldAdjustedCostPerLb),
+          ingredientCosts: cost.lines,
+          snapshotDate: new Date(),
+        });
+      }),
+    syncToBom: protectedProcedure
+      .input(z.object({
+        recipeId: z.number(),
+        productId: z.number(),
+        formulation: z.enum(["wet", "dry"]).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return db.syncRecipeToBom(input.recipeId, input.productId, {
+          userId: ctx.user?.id,
+          formulation: input.formulation,
+        });
+      }),
+    // List copackers a recipe is shared with
+    listShares: opsProcedure
+      .input(z.object({ recipeId: z.number() }))
+      .query(({ input }) => manufacturingDb.getRecipeShares(input.recipeId)),
+    // Share (or update share settings) for a recipe with a copacker warehouse
+    share: opsProcedure
+      .input(z.object({
+        recipeId: z.number(),
+        warehouseId: z.number(),
+        shareIngredients: z.boolean().optional(),
+        shareProcedures: z.boolean().optional(),
+        notes: z.string().nullish(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const warehouse = await db.getWarehouseById(input.warehouseId);
+        if (!warehouse) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Warehouse not found" });
+        }
+        if (warehouse.type !== "copacker") {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Recipes can only be shared with warehouses of type 'copacker'",
+          });
+        }
+        const result = await manufacturingDb.upsertRecipeShare({
+          recipeId: input.recipeId,
+          warehouseId: input.warehouseId,
+          shareIngredients: input.shareIngredients,
+          shareProcedures: input.shareProcedures,
+          notes: input.notes === undefined ? undefined : input.notes,
+          sharedBy: ctx.user?.id,
+        });
+        await createAuditLog(
+          ctx.user.id,
+          result.created ? "create" : "update",
+          "recipe_copacker_share",
+          result.id,
+          `recipe:${input.recipeId} → warehouse:${input.warehouseId}`,
+        );
+        return result;
+      }),
+    unshare: opsProcedure
+      .input(z.object({ recipeId: z.number(), warehouseId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const existingShares = await manufacturingDb.getRecipeShares(input.recipeId);
+        const shareToRemove = existingShares.find((share) => share.warehouseId === input.warehouseId);
+
+        await manufacturingDb.removeRecipeShare(input.recipeId, input.warehouseId);
+
+        if (shareToRemove) {
+          await createAuditLog(
+            ctx.user.id,
+            "delete",
+            "recipe_copacker_share",
+            shareToRemove.id,
+            `recipe:${input.recipeId} × warehouse:${input.warehouseId}`,
+          );
+        }
+        return { success: true };
+      }),
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await manufacturingDb.deleteRecipe(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'recipe', input.id);
+        return { success: true };
+      }),
+  }),
+
+  moisture: router({
+    calculate: protectedProcedure
+      .input(z.object({ wetWeight: z.number(), dryWeight: z.number() }))
+      .mutation(({ input }) => {
+        const moisturePct = input.wetWeight > 0 ? (input.wetWeight - input.dryWeight) / input.wetWeight : 0;
+        return { moisturePct, solidsPct: 1 - moisturePct };
+      }),
+    convert: protectedProcedure
+      .input(z.object({
+        sourceWeight: z.number(),
+        sourceMoisture: z.number(),
+        targetMoisture: z.number(),
+      }))
+      .mutation(({ input }) => {
+        const solids = input.sourceWeight * (1 - input.sourceMoisture);
+        const targetWeight = solids / (1 - input.targetMoisture);
+        const waterDelta = (targetWeight * input.targetMoisture) - (input.sourceWeight * input.sourceMoisture);
+        return { targetWeight, solids, waterDelta };
+      }),
+  }),
+
   // Work Orders
   workOrders: router({
     list: protectedProcedure.query(async () => {
@@ -8292,7 +9519,8 @@ Provide a brief status summary, any missing documents, and next steps.`;
       }),
     create: protectedProcedure
       .input(z.object({
-        bomId: z.number(),
+        bomId: z.number().optional(),
+        recipeId: z.number().optional(),
         productId: z.number(),
         warehouseId: z.number().optional(),
         quantity: z.string(),
@@ -8302,11 +9530,43 @@ Provide a brief status summary, any missing documents, and next steps.`;
         scheduledEndDate: z.date().optional(),
         notes: z.string().optional(),
         assignedTo: z.number().optional(),
+      }).refine((d) => d.bomId != null || d.recipeId != null, {
+        message: "Provide bomId or recipeId (recipe must be synced to a BOM first).",
       }))
       .mutation(async ({ input, ctx }) => {
-        const result = await db.createWorkOrder({ ...input, createdBy: ctx.user?.id });
-        // Auto-generate material requirements from BOM
-        await db.generateWorkOrderMaterialsFromBom(result.id, input.bomId, parseFloat(input.quantity));
+        let bomId = input.bomId;
+        let productId = input.productId;
+        if (input.recipeId != null) {
+          const recipe = await manufacturingDb.getRecipeById(input.recipeId);
+          if (!recipe) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "Recipe not found" });
+          }
+          if (!recipe.bomId) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "Recipe has no BOM. Run recipes.syncToBom with a finished product first.",
+            });
+          }
+          bomId = recipe.bomId;
+          if (recipe.outputProductId) productId = recipe.outputProductId;
+        }
+        if (bomId == null) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "bomId is required" });
+        }
+        const result = await db.createWorkOrder({
+          bomId,
+          productId,
+          warehouseId: input.warehouseId,
+          quantity: input.quantity,
+          unit: input.unit,
+          priority: input.priority,
+          scheduledStartDate: input.scheduledStartDate,
+          scheduledEndDate: input.scheduledEndDate,
+          notes: input.notes,
+          assignedTo: input.assignedTo,
+          createdBy: ctx.user?.id,
+        });
+        await db.generateWorkOrderMaterialsFromBom(result.id, bomId, parseFloat(input.quantity));
         return result;
       }),
     update: protectedProcedure
@@ -8443,6 +9703,13 @@ Provide a brief status summary, any missing documents, and next steps.`;
     createFromText: opsProcedure
       .input(z.object({ text: z.string() }))
       .mutation(async () => ({ id: 0, workOrderNumber: 'WO-STUB' })),
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await manufacturingDb.deleteWorkOrder(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'work_order', input.id);
+        return { success: true };
+      }),
   }),
 
   // Production Orders
@@ -9656,7 +10923,9 @@ Ask if they received the original request and if they can provide a quote.`;
         .input(z.object({
           id: z.number(),
           storeName: z.string().optional(),
-          isActive: z.boolean().optional(),
+          isEnabled: z.boolean().optional(),
+          syncOrders: z.boolean().optional(),
+          syncInventory: z.boolean().optional(),
           lastSyncAt: z.date().optional(),
         }))
         .mutation(async ({ input }) => {
@@ -9700,111 +10969,6 @@ Ask if they received the original request and if they can provide a quote.`;
           return db.createShopifyLocationMapping(input);
         }),
     }),
-    // Webhook handler (would be called by Shopify webhooks)
-    handleWebhook: publicProcedure
-      .input(z.object({
-        topic: z.string(),
-        shopDomain: z.string(),
-        payload: z.any(),
-        idempotencyKey: z.string(),
-      }))
-      .mutation(async ({ input }) => {
-        // Check idempotency
-        const existing = await db.getWebhookEventByIdempotencyKey(input.idempotencyKey);
-        if (existing) {
-          return { success: true, message: 'Already processed' };
-        }
-        
-        // Get store
-        const store = await db.getShopifyStoreByDomain(input.shopDomain);
-        if (!store) {
-          throw new Error('Unknown store');
-        }
-        
-        // Create webhook event
-        const { id: eventId } = await db.createWebhookEvent({
-          source: 'shopify',
-          topic: input.topic,
-          payload: JSON.stringify(input.payload),
-          idempotencyKey: input.idempotencyKey,
-          status: 'received',
-        });
-        
-        try {
-          // Process based on topic
-          if (input.topic === 'orders/create' || input.topic === 'orders/updated') {
-            // Create/update sales order from Shopify order
-            const shopifyOrder = input.payload;
-            const existingOrder = await db.getSalesOrderByShopifyId(shopifyOrder.id.toString());
-            
-            if (existingOrder) {
-              await db.updateSalesOrder(existingOrder.id, {
-                status: mapShopifyOrderStatusToDb(shopifyOrder.financial_status, shopifyOrder.fulfillment_status),
-                totalAmount: shopifyOrder.total_price,
-              });
-            } else {
-              const { id: orderId } = await db.createSalesOrder({
-                source: 'shopify',
-                shopifyOrderId: shopifyOrder.id.toString(),
-                customerId: undefined,
-                status: mapShopifyOrderStatusToDb(shopifyOrder.financial_status, shopifyOrder.fulfillment_status),
-                orderDate: new Date(shopifyOrder.created_at),
-                totalAmount: shopifyOrder.total_price,
-                currency: shopifyOrder.currency,
-                shippingAddress: JSON.stringify(shopifyOrder.shipping_address),
-              });
-              
-              // Create order lines
-              const createdLines: Array<{ productId: number; quantity: number; unitPrice: number }> = [];
-              for (const item of shopifyOrder.line_items || []) {
-                const product = await db.getProductByShopifySku(store.id, item.variant_id?.toString());
-                if (product) {
-                  await db.createSalesOrderLine({
-                    salesOrderId: orderId,
-                    productId: product.id,
-                    shopifyLineItemId: item.id?.toString(),
-                    sku: item.sku,
-                    quantity: item.quantity?.toString() || '0',
-                    unitPrice: item.price || '0',
-                    totalPrice: (parseFloat(item.price || '0') * (item.quantity || 0)).toString(),
-                  });
-                  createdLines.push({
-                    productId: product.id,
-                    quantity: item.quantity || 0,
-                    unitPrice: parseFloat(item.price || '0'),
-                  });
-                }
-              }
-
-              // Auto-record COGS for Shopify order lines
-              try {
-                const { recordCogs } = await import("./inventoryCostingService");
-                for (const line of createdLines) {
-                  if (line.productId && line.quantity > 0) {
-                    await recordCogs({
-                      productId: line.productId,
-                      quantitySold: line.quantity,
-                      orderId: orderId,
-                      unitRevenue: line.unitPrice,
-                    });
-                  }
-                }
-              } catch (e) {
-                console.warn("[COGS] Failed to auto-record COGS on Shopify order:", e);
-              }
-            }
-          }
-          
-          await db.updateWebhookEvent(eventId, { status: 'processed', processedAt: new Date() });
-          return { success: true };
-        } catch (error) {
-          await db.updateWebhookEvent(eventId, {
-            status: 'failed',
-            errorMessage: error instanceof Error ? error.message : 'Unknown error'
-          });
-          throw error;
-        }
-      }),
     // Sync operations
     sync: router({
       // Sync orders from Shopify store
@@ -9829,7 +10993,7 @@ Ask if they received the original request and if they can provide a quote.`;
             try {
               const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/orders.json?status=any&limit=50`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': safeDecryptToken(store.accessToken!),
                   'Content-Type': 'application/json',
                 },
               });
@@ -9916,7 +11080,7 @@ Ask if they received the original request and if they can provide a quote.`;
             try {
               const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/products.json?limit=100`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': safeDecryptToken(store.accessToken!),
                   'Content-Type': 'application/json',
                 },
               });
@@ -9989,10 +11153,29 @@ Ask if they received the original request and if they can provide a quote.`;
           for (const store of activeStores) {
             if (!store) continue;
             try {
-              // Get inventory levels from Shopify
-              const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/inventory_levels.json?limit=100`, {
+              const token = safeDecryptToken(store.accessToken!);
+              const apiBase = `https://${store.storeDomain}/admin/api/2024-01`;
+
+              // Step 1: Fetch active locations (inventory_levels requires location_ids)
+              const locResp = await fetch(`${apiBase}/locations.json`, {
+                headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+              });
+              if (!locResp.ok) throw new Error(`Shopify locations API error: ${locResp.status}`);
+              const locData = await locResp.json();
+              const locationIds: number[] = (locData.locations || [])
+                .filter((l: any) => l.active)
+                .map((l: any) => l.id);
+
+              if (locationIds.length === 0) {
+                console.warn(`[Shopify Sync] No active locations for ${store.storeDomain}, skipping inventory sync`);
+                await db.updateShopifyStore(store.id, { lastSyncAt: new Date() });
+                continue;
+              }
+
+              // Step 2: Fetch inventory levels for those locations
+              const response = await fetch(`${apiBase}/inventory_levels.json?location_ids=${locationIds.join(',')}&limit=250`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': token,
                   'Content-Type': 'application/json',
                 },
               });
@@ -10062,7 +11245,7 @@ Ask if they received the original request and if they can provide a quote.`;
             try {
               const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/customers.json?limit=100`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': safeDecryptToken(store.accessToken!),
                   'Content-Type': 'application/json',
                 },
               });
@@ -10407,6 +11590,83 @@ Ask if they received the original request and if they can provide a quote.`;
   // EMAIL SCANNING & DOCUMENT PARSING
   // ============================================
   emailScanning: router({
+    // Manual scan — scan specific folders, date range, all emails (not just unseen)
+    scanNow: protectedProcedure
+      .input(z.object({
+        folders: z.array(z.string()).optional(), // e.g. ["INBOX", "[Gmail]/All Mail", "Archive"]
+        since: z.string().optional(), // ISO date string
+        unseenOnly: z.boolean().optional(),
+        limit: z.number().optional(),
+      }).optional())
+      .mutation(async ({ input }) => {
+        const { scanAndCategorizeInbox, getImapConfig } = await import("./_core/emailInboxScanner");
+        const { parseUploadedDocument } = await import("./documentImportService");
+        const config = getImapConfig();
+        if (!config) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "IMAP not configured. Set IMAP_HOST, IMAP_USER, IMAP_PASSWORD in env." });
+
+        const folders = input?.folders || ["INBOX", "[Gmail]/All Mail"];
+        const since = input?.since ? new Date(input.since) : undefined;
+        const limit = input?.limit || 100;
+        const unseenOnly = input?.unseenOnly ?? false; // Default: scan ALL emails, not just unseen
+
+        let totalProcessed = 0;
+        let totalAttachmentsParsed = 0;
+        const errors: string[] = [];
+
+        for (const folder of folders) {
+          try {
+            const { scanResult, parsedResults } = await scanAndCategorizeInbox(config, {
+              folder,
+              unseenOnly,
+              limit,
+              since,
+              fullAiParsing: true,
+              markAsSeen: false,
+            });
+
+            for (const { email } of parsedResults) {
+              try {
+                await db.createInboundEmail?.({
+                  messageId: email.messageId,
+                  fromEmail: email.from.address,
+                  fromName: email.from.name || "",
+                  toEmail: email.to.join(", ") || "inbox",
+                  subject: email.subject,
+                  bodyText: email.bodyText?.substring(0, 10000) || "",
+                  receivedAt: email.date,
+                  status: "parsed",
+                  category: email.categorization?.category || "other",
+                } as any);
+
+                // Parse attachments and AUTO-IMPORT into correct DB tables
+                if ((email as any).attachmentContents?.length > 0) {
+                  const { bulkImportDocuments } = await import("./documentImportService");
+                  const docs = (email as any).attachmentContents.map((att: any) => ({
+                    content: `data:${att.contentType};base64,${att.data.toString("base64")}`,
+                    filename: att.filename,
+                  }));
+                  try {
+                    const importResult = await bulkImportDocuments(docs, 1, true);
+                    totalAttachmentsParsed += importResult.successful;
+                  } catch { /* skip */ }
+                }
+                totalProcessed++;
+              } catch { /* skip */ }
+            }
+          } catch (e: any) {
+            errors.push(`${folder}: ${e.message}`);
+          }
+        }
+
+        return {
+          success: true,
+          foldersScanned: folders,
+          emailsProcessed: totalProcessed,
+          attachmentsParsed: totalAttachmentsParsed,
+          errors,
+        };
+      }),
+
     // List inbound emails with category filtering
     list: protectedProcedure
       .input(z.object({
@@ -10436,6 +11696,18 @@ Ask if they received the original request and if they can provide a quote.`;
         const attachments = await db.getEmailAttachments(input.id);
         const documents = await db.getParsedDocuments({ emailId: input.id });
         
+        return { ...email, attachments, documents };
+      }),
+
+    /** Resolve by RFC Message-ID (approval queue source links). */
+    getByMessageId: protectedProcedure
+      .input(z.object({ messageId: z.string().min(1) }))
+      .query(async ({ input }) => {
+        const email = await db.findInboundEmailByMessageId(input.messageId);
+        if (!email) return null;
+        const id = (email as { id: number }).id;
+        const attachments = await db.getEmailAttachments(id);
+        const documents = await db.getParsedDocuments({ emailId: id });
         return { ...email, attachments, documents };
       }),
 
@@ -10825,15 +12097,72 @@ Ask if they received the original request and if they can provide a quote.`;
     // Archive email
     archiveEmail: protectedProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        if (!['admin', 'ops'].includes(ctx.user.role)) {
+          throw new TRPCError({ code: 'FORBIDDEN' });
+        }
+        const email = await db.getInboundEmailById(input.id);
+        // Archive in Gmail — mark as read and move out of inbox
+        if (email?.messageId) {
+          try {
+            const { getImapConfig } = await import("./_core/emailInboxScanner");
+            const { ImapFlow } = await import("imapflow");
+            const config = getImapConfig();
+            if (config) {
+              const client = new ImapFlow({ host: config.host, port: config.port, secure: config.secure, auth: config.auth, logger: false });
+              await client.connect();
+              await client.mailboxOpen("INBOX");
+              const uids = await client.search({ header: { "message-id": email.messageId } }, { uid: true });
+              if (uids && uids.length > 0) {
+                await client.messageFlagsAdd(uids, ["\\Seen"], { uid: true });
+              }
+              await client.logout();
+            }
+          } catch (e) {
+            console.warn(`[Email] Failed to archive in Gmail:`, e instanceof Error ? e.message : e);
+          }
+        }
         await db.updateInboundEmailStatus(input.id, "archived");
         return { success: true };
       }),
 
-    // Delete email permanently
+    // Delete email permanently — also deletes from Gmail via IMAP
     deleteEmail: protectedProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        if (!['admin', 'ops'].includes(ctx.user.role)) {
+          throw new TRPCError({ code: 'FORBIDDEN' });
+        }
+        // Get the email to find its messageId
+        const email = await db.getInboundEmailById(input.id);
+
+        // Try to delete from Gmail via IMAP
+        if (email?.messageId) {
+          try {
+            const { getImapConfig } = await import("./_core/emailInboxScanner");
+            const { ImapFlow } = await import("imapflow");
+            const config = getImapConfig();
+            if (config) {
+              const client = new ImapFlow({
+                host: config.host, port: config.port, secure: config.secure,
+                auth: config.auth, logger: false,
+              });
+              await client.connect();
+              await client.mailboxOpen("INBOX");
+              // Search by message ID header
+              const uids = await client.search({ header: { "message-id": email.messageId } }, { uid: true });
+              if (uids && uids.length > 0) {
+                await client.messageDelete(uids, { uid: true });
+                console.log(`[Email] Deleted message ${email.messageId} from Gmail`);
+              }
+              await client.logout();
+            }
+          } catch (e) {
+            console.warn(`[Email] Failed to delete from Gmail:`, e instanceof Error ? e.message : e);
+          }
+        }
+
+        // Delete from ERP DB
         await db.deleteInboundEmail(input.id);
         return { success: true };
       }),
@@ -11500,6 +12829,8 @@ Ask if they received the original request and if they can provide a quote.`;
         brandingLogo: z.string().nullable().optional(),
         brandingColor: z.string().nullable().optional(),
         brandingCompanyName: z.string().nullable().optional(),
+        showLiveFinancials: z.boolean().optional(),
+        liveFinancialsIncludeAr: z.boolean().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const room = await db.getDataRoomById(input.id);
@@ -11634,7 +12965,7 @@ Ask if they received the original request and if they can provide a quote.`;
         .mutation(async ({ input, ctx }) => {
           // Upload to S3
           const buffer = Buffer.from(input.base64Content, 'base64');
-          const key = `dataroom/${input.dataRoomId}/${nanoid()}-${input.name}`;
+          const key = `dataroom/${input.dataRoomId}/${nanoid()}-${input.name.replace(/[/\\]/g, '_')}`;
           const { url } = await storagePut(key, buffer, input.mimeType);
 
           // Create document record
@@ -11673,6 +13004,112 @@ Ask if they received the original request and if they can provide a quote.`;
         .mutation(async ({ input }) => {
           await db.deleteDataRoomDocument(input.id);
           return { success: true };
+        }),
+
+      // Refresh a single Drive-backed document from Google Drive — pulls the
+      // latest metadata (name, size, mime type, web view link, thumbnail) and
+      // bumps the document's version. The bytes themselves still stream
+      // through /api/drive/proxy so no download is needed.
+      refreshFromDrive: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const doc = await db.getDataRoomDocumentById(input.id);
+          if (!doc) throw new TRPCError({ code: 'NOT_FOUND', message: 'Document not found' });
+          if (doc.storageType !== 'google_drive' || !doc.googleDriveFileId) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'This file is not linked to Google Drive. Use "Upload new version" instead.',
+            });
+          }
+
+          const room = await db.getDataRoomById(doc.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
+
+          // Drive bytes are fetched with the data room owner's OAuth token
+          // (matching /api/drive/proxy), so admins can refresh without
+          // having connected their own Google account.
+          const { accessToken, error } = await getValidGoogleToken(room.ownerId);
+          if (error) throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+
+          const { file: driveFile, error: metaError } = await getFileMetadata(accessToken, doc.googleDriveFileId);
+          if (metaError || !driveFile) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: metaError || 'File not found in Google Drive' });
+          }
+
+          const fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
+            ? parseInt(driveFile.size)
+            : undefined;
+
+          const newVersion = await db.updateDataRoomDocumentBumpVersion(doc.id, {
+            name: driveFile.name,
+            fileType: getSimpleFileType(driveFile.mimeType),
+            mimeType: driveFile.mimeType,
+            fileSize,
+            storageUrl: driveFile.webViewLink || undefined,
+            googleDriveWebViewLink: driveFile.webViewLink,
+            thumbnailUrl: driveFile.thumbnailLink,
+          });
+
+          return { success: true, name: driveFile.name, version: newVersion };
+        }),
+
+      // Replace a document's contents with a new uploaded file. Bumps version
+      // and stores the new bytes in S3. If the document was previously linked
+      // to Google Drive, the Drive link is detached because the uploaded file
+      // is now the source of truth.
+      uploadNewVersion: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          fileType: z.string(),
+          mimeType: z.string(),
+          fileSize: z.number(),
+          base64Content: z.string(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const doc = await db.getDataRoomDocumentById(input.id);
+          if (!doc) throw new TRPCError({ code: 'NOT_FOUND', message: 'Document not found' });
+
+          const room = await db.getDataRoomById(doc.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
+
+          const newName = input.name || doc.name;
+          const buffer = Buffer.from(input.base64Content, 'base64');
+          const key = `dataroom/${doc.dataRoomId}/${nanoid()}-${newName.replace(/[/\\]/g, '_')}`;
+          const { url } = await storagePut(key, buffer, input.mimeType);
+
+          const previousStorageKey = doc.storageType === 's3' ? doc.storageKey : null;
+
+          const newVersion = await db.updateDataRoomDocumentBumpVersion(doc.id, {
+            name: newName,
+            fileType: input.fileType,
+            mimeType: input.mimeType,
+            fileSize: input.fileSize,
+            storageType: 's3',
+            storageUrl: url,
+            storageKey: key,
+            googleDriveFileId: null,
+            googleDriveWebViewLink: null,
+            thumbnailUrl: null,
+          });
+
+          // Best-effort cleanup of the previous S3 object so replacing a
+          // file's bytes doesn't leave an orphaned blob behind. We swallow
+          // failures so a transient delete error doesn't fail the upload —
+          // the new version is already persisted at this point.
+          if (previousStorageKey) {
+            storageDelete(previousStorageKey).catch((err) => {
+              console.warn(`[dataRoom] failed to delete prior storage key ${previousStorageKey}:`, err);
+            });
+          }
+
+          return { id: doc.id, url, version: newVersion };
         }),
     }),
 
@@ -11741,6 +13178,43 @@ Ask if they received the original request and if they can provide a quote.`;
         .mutation(async ({ input }) => {
           await db.deleteDataRoomLink(input.id);
           return { success: true };
+        }),
+
+      // Owner preview: get or create a permanent no-gate link so the owner
+      // can see the exact investor view without needing a share link.
+      getOrCreateOwnerPreviewLink: protectedProcedure
+        .input(z.object({ dataRoomId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const room = await db.getDataRoomById(input.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
+
+          // Look for an existing owner-preview link
+          const allLinks = await db.getDataRoomLinks(input.dataRoomId);
+          const existing = allLinks.find((l) => l.name === '__owner_preview__');
+          if (existing) return { linkCode: existing.linkCode };
+
+          // Create a permanent, no-gate link
+          const linkCode = `owner-preview-${nanoid(12)}`;
+          await db.createDataRoomLink({
+            dataRoomId: input.dataRoomId,
+            linkCode,
+            name: '__owner_preview__',
+            password: null,
+            expiresAt: null,
+            maxViews: null,
+            allowDownload: true,
+            allowPrint: true,
+            requireEmail: false,
+            requireName: false,
+            requireCompany: false,
+            requirePhone: false,
+            isActive: true,
+            createdBy: ctx.user.id,
+          });
+          return { linkCode };
         }),
     }),
 
@@ -11922,92 +13396,6 @@ Ask if they received the original request and if they can provide a quote.`;
         }),
     }),
 
-    // Re-download all documents that still have storageType='google_drive' and no storageUrl
-    redownloadAll: protectedProcedure
-      .input(z.object({ dataRoomId: z.number() }))
-      .mutation(async ({ input, ctx }) => {
-        const room = await db.getDataRoomById(input.dataRoomId);
-        if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
-        if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
-          throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-        }
-
-        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
-        if (error) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
-        }
-
-        // Get all documents that are still google_drive type with no storageUrl
-        const allDocs = await db.getDataRoomDocuments(input.dataRoomId);
-        const docsToRedownload = allDocs.filter(
-          (d) => d.storageType === 'google_drive' && !d.storageUrl && d.googleDriveFileId
-        );
-
-        let successCount = 0;
-        let failCount = 0;
-
-        for (const doc of docsToRedownload) {
-          try {
-            const downloaded = await downloadDriveFile(
-              accessToken,
-              doc.googleDriveFileId!,
-              doc.mimeType || 'application/octet-stream'
-            );
-
-            if ('error' in downloaded) {
-              console.warn(`[RedownloadAll] Failed to download ${doc.name}: ${downloaded.error}`);
-              failCount++;
-              continue;
-            }
-
-            const isGoogleWorkspaceFile = (doc.mimeType || '').startsWith('application/vnd.google-apps.');
-            const effectiveMimeType = downloaded.exportedMimeType;
-            const displayName = isGoogleWorkspaceFile && !doc.name.endsWith('.pdf')
-              ? `${doc.name}.pdf`
-              : doc.name;
-
-            let newStorageUrl: string | undefined;
-            let newStorageKey: string | undefined;
-
-            // Try S3 first
-            try {
-              const fileKey = `dataroom/${input.dataRoomId}/${nanoid()}-${displayName}`;
-              const result = await storagePut(fileKey, downloaded.buffer, effectiveMimeType);
-              newStorageUrl = result.url;
-              newStorageKey = result.key;
-            } catch {
-              // S3 not configured — store as base64 data URL for files < 5MB
-              if (downloaded.buffer.length < 5 * 1024 * 1024) {
-                newStorageUrl = `data:${effectiveMimeType};base64,${downloaded.buffer.toString('base64')}`;
-              }
-            }
-
-            if (newStorageUrl) {
-              await db.updateDataRoomDocument(doc.id, {
-                storageUrl: newStorageUrl,
-                storageKey: newStorageKey,
-                storageType: 's3',
-                mimeType: effectiveMimeType,
-                name: displayName,
-                fileSize: downloaded.buffer.length,
-              } as any);
-              successCount++;
-            } else {
-              failCount++;
-            }
-          } catch (e) {
-            console.warn(`[RedownloadAll] Error processing ${doc.name}:`, e);
-            failCount++;
-          }
-        }
-
-        return {
-          total: docsToRedownload.length,
-          success: successCount,
-          failed: failCount,
-        };
-      }),
-
     // Sync from Google Drive — one-click sync of an entire Drive folder (and subfolders) into the data room
     syncFromDrive: protectedProcedure
       .input(z.object({
@@ -12078,18 +13466,14 @@ Ask if they received the original request and if they can provide a quote.`;
             .map(d => d.googleDriveFileId!)
         );
 
-        // Create folder hierarchy in data room
+        // Create folder hierarchy in data room.
+        // syncDriveFolder pushes folders in DFS pre-order, so parents
+        // already precede their children — no sort needed.
         const folderMap = new Map<string, number>();
-        const sortedFolders = [...syncResult.folders].sort((a, b) => {
-          const aDepth = a.parents?.length || 0;
-          const bDepth = b.parents?.length || 0;
-          return aDepth - bDepth;
-        });
-
         const results: { name: string; type: string; status: string }[] = [];
 
         // Process folders
-        for (const driveFolder of sortedFolders) {
+        for (const driveFolder of syncResult.folders) {
           if (existingFoldersByDriveId.has(driveFolder.id)) {
             folderMap.set(driveFolder.id, existingFoldersByDriveId.get(driveFolder.id)!);
             results.push({ name: driveFolder.name, type: 'folder', status: 'exists' });
@@ -12112,7 +13496,7 @@ Ask if they received the original request and if they can provide a quote.`;
           results.push({ name: driveFolder.name, type: 'folder', status: 'created' });
         }
 
-        // Process files — download actual content instead of just linking
+        // Process files — store by reference in Google Drive (no download)
         for (const driveFile of syncResult.files) {
           if (existingDocsByDriveId.has(driveFile.id)) {
             results.push({ name: driveFile.name, type: 'file', status: 'exists' });
@@ -12127,40 +13511,22 @@ Ask if they received the original request and if they can provide a quote.`;
             fileFolderId = folderMap.get(parentDriveId) || existingFoldersByDriveId.get(parentDriveId) || null;
           }
 
-          // Create file record first (fast), download content async later
-          const isGoogleWorkspaceFile = driveFile.mimeType.startsWith('application/vnd.google-apps.');
-          const displayName = isGoogleWorkspaceFile ? `${driveFile.name}.pdf` : driveFile.name;
-          const fileType = getSimpleFileType(isGoogleWorkspaceFile ? 'application/pdf' : driveFile.mimeType);
-          let storageType: 'google_drive' | 's3' = 'google_drive';
-          let storageUrl: string | undefined = driveFile.webViewLink || undefined;
-          let storageKey: string | undefined = undefined;
+          const displayName = driveFile.name;
+          const fileType = getSimpleFileType(driveFile.mimeType);
           const fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
             ? parseInt(driveFile.size)
             : undefined;
-
-          // Try to download small files (<2MB) inline, skip large ones
-          if (fileSize && fileSize < 2 * 1024 * 1024) {
-            try {
-              const downloaded = await downloadDriveFile(accessToken, driveFile.id, driveFile.mimeType);
-              if ('buffer' in downloaded && downloaded.buffer.length < 5 * 1024 * 1024) {
-                storageUrl = `data:${downloaded.exportedMimeType};base64,${downloaded.buffer.toString('base64')}`;
-                storageType = 's3';
-              }
-            } catch { /* download failed, keep Google link */ }
-          }
-
-          const effectiveMimeType = isGoogleWorkspaceFile ? 'application/pdf' : driveFile.mimeType;
 
           await db.createDataRoomDocument({
             dataRoomId: input.dataRoomId,
             folderId: fileFolderId,
             name: displayName,
             fileType,
-            mimeType: effectiveMimeType,
+            mimeType: driveFile.mimeType,
             fileSize,
-            storageType,
-            storageUrl,
-            storageKey,
+            storageType: 'google_drive',
+            storageUrl: driveFile.webViewLink || undefined,
+            storageKey: undefined,
             googleDriveFileId: driveFile.id,
             googleDriveWebViewLink: driveFile.webViewLink,
             thumbnailUrl: driveFile.thumbnailLink,
@@ -12190,10 +13556,10 @@ Ask if they received the original request and if they can provide a quote.`;
 
     // Google Drive sync
     googleDrive: router({
-      // List available Google Drive folders
-      listFolders: protectedProcedure
-        .input(z.object({ 
-          parentFolderId: z.string().optional() 
+      // List files (non-folders) inside a Google Drive folder
+      listFiles: protectedProcedure
+        .input(z.object({
+          folderId: z.string(),
         }))
         .query(async ({ ctx, input }) => {
           const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
@@ -12201,199 +13567,69 @@ Ask if they received the original request and if they can provide a quote.`;
             throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
           }
 
-          const result = await listDriveFolders(accessToken, input.parentFolderId);
+          const result = await listDriveFiles(accessToken, input.folderId);
           if (result.error) {
             throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
           }
 
-          return { folders: result.folders };
+          return { files: result.files };
         }),
 
-      // Sync a Google Drive folder to a data room
-      syncFolder: protectedProcedure
+      // Sync a single Google Drive file to a data room
+      syncFile: protectedProcedure
         .input(z.object({
           dataRoomId: z.number(),
-          googleDriveFolderId: z.string(),
+          googleDriveFileId: z.string(),
+          folderId: z.number().nullable().optional(),
         }))
         .mutation(async ({ ctx, input }) => {
-          // Verify data room ownership
           const room = await db.getDataRoomById(input.dataRoomId);
           if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
           if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
             throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
           }
 
-          // Get valid Google OAuth token
           const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
           if (error) {
             throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
           }
 
-          // Verify folder exists and get info
-          const folderInfo = await getFolderInfo(accessToken, input.googleDriveFolderId);
-          if (folderInfo.error || !folderInfo.folder) {
-            throw new TRPCError({ code: 'BAD_REQUEST', message: folderInfo.error || 'Folder not found' });
+          // Fetch file metadata
+          const { file: driveFile, error: metaError } = await getFileMetadata(accessToken, input.googleDriveFileId);
+          if (metaError || !driveFile) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: metaError || 'File not found in Google Drive' });
           }
 
-          // Sync folder structure and files
-          const syncResult = await syncDriveFolder(accessToken, input.googleDriveFolderId);
-          if (!syncResult.success) {
-            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: syncResult.error || 'Sync failed' });
+          // Check if already synced
+          const existingDocs = await db.getDataRoomDocuments(input.dataRoomId);
+          if (existingDocs.some(d => d.googleDriveFileId === driveFile.id)) {
+            throw new TRPCError({ code: 'CONFLICT', message: 'This file has already been synced to this data room' });
           }
 
-          // Get existing folders and documents to avoid duplicates
-          const existingFolders = await db.getDataRoomFolders(input.dataRoomId, null);
-          const existingDocs = await db.getDataRoomDocuments(input.dataRoomId, null);
-          const existingFoldersByDriveId = new Map(
-            existingFolders
-              .filter(f => f.googleDriveFolderId)
-              .map(f => [f.googleDriveFolderId!, f.id])
-          );
-          const existingDocsByDriveId = new Map(
-            existingDocs
-              .filter(d => d.googleDriveFileId)
-              .map(d => [d.googleDriveFileId!, d.id])
-          );
+          // Store by reference in Google Drive (no download)
+          const displayName = driveFile.name;
+          const fileType = getSimpleFileType(driveFile.mimeType);
+          const fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
+            ? parseInt(driveFile.size)
+            : undefined;
 
-          // Create folder hierarchy in data room
-          const folderMap = new Map<string, number>(); // Google Drive folder ID -> data room folder ID
-          
-          // Sort folders by depth to ensure parents are created before children
-          const sortedFolders = [...syncResult.folders].sort((a, b) => {
-            const aDepth = a.parents?.length || 0;
-            const bDepth = b.parents?.length || 0;
-            return aDepth - bDepth;
-          });
-          
-          // Process folders
-          let foldersCreated = 0;
-          for (const driveFolder of sortedFolders) {
-            // Check if folder already exists
-            if (existingFoldersByDriveId.has(driveFolder.id)) {
-              folderMap.set(driveFolder.id, existingFoldersByDriveId.get(driveFolder.id)!);
-              continue;
-            }
-
-            const parentDriveId = driveFolder.parents?.[0];
-            const parentDataRoomId = parentDriveId && parentDriveId !== input.googleDriveFolderId 
-              ? folderMap.get(parentDriveId) 
-              : null;
-
-            // Log warning if parent folder is missing
-            if (parentDriveId && parentDriveId !== input.googleDriveFolderId && !parentDataRoomId) {
-              console.warn(`[GoogleDrive Sync] Parent folder ${parentDriveId} not found for folder ${driveFolder.name}`);
-            }
-
-            const { id } = await db.createDataRoomFolder({
-              dataRoomId: input.dataRoomId,
-              parentId: parentDataRoomId,
-              name: driveFolder.name,
-              googleDriveFolderId: driveFolder.id,
-            });
-
-            folderMap.set(driveFolder.id, id);
-            foldersCreated++;
-          }
-
-          // Process files — download actual content instead of just linking
-          let filesCreated = 0;
-          for (const driveFile of syncResult.files) {
-            // Check if file already exists
-            if (existingDocsByDriveId.has(driveFile.id)) {
-              continue;
-            }
-
-            const parentDriveId = driveFile.parents?.[0];
-            let folderId: number | null = null;
-
-            // Determine which folder this file belongs to
-            if (parentDriveId === input.googleDriveFolderId) {
-              // Root level file
-              folderId = null;
-            } else if (parentDriveId) {
-              folderId = folderMap.get(parentDriveId) || existingFoldersByDriveId.get(parentDriveId) || null;
-
-              // Log warning if parent folder is missing
-              if (!folderId) {
-                console.warn(`[GoogleDrive Sync] Parent folder ${parentDriveId} not found for file ${driveFile.name}`);
-              }
-            }
-
-            // Download the actual file content from Google Drive
-            const downloaded = await downloadDriveFile(accessToken, driveFile.id, driveFile.mimeType);
-
-            // Determine display name — exported Google Workspace files get .pdf extension
-            const isGoogleWorkspaceFile = driveFile.mimeType.startsWith('application/vnd.google-apps.');
-            const displayName = isGoogleWorkspaceFile
-              ? `${driveFile.name}.pdf`
-              : driveFile.name;
-
-            // Determine the effective MIME type and file type after export
-            const effectiveMimeType = ('exportedMimeType' in downloaded)
-              ? downloaded.exportedMimeType
-              : driveFile.mimeType;
-            const fileType = getSimpleFileType(effectiveMimeType);
-
-            let storageType: 'google_drive' | 's3' = 'google_drive';
-            let storageUrl: string | undefined;
-            let storageKey: string | undefined;
-            let fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
-              ? parseInt(driveFile.size)
-              : undefined;
-
-            if ('buffer' in downloaded) {
-              fileSize = downloaded.buffer.length;
-              // Try to store via storagePut (S3/storage proxy)
-              try {
-                const fileKey = `dataroom/${input.dataRoomId}/${nanoid()}-${displayName}`;
-                const result = await storagePut(fileKey, downloaded.buffer, downloaded.exportedMimeType);
-                storageUrl = result.url;
-                storageKey = result.key;
-                storageType = 's3';
-              } catch {
-                // Storage not configured — store as base64 data URL for small files (<5MB)
-                if (downloaded.buffer.length < 5 * 1024 * 1024) {
-                  storageUrl = `data:${downloaded.exportedMimeType};base64,${downloaded.buffer.toString('base64')}`;
-                  storageType = 's3'; // treat as locally-stored, not a Drive link
-                }
-                // For larger files without storage, keep Google link as fallback
-              }
-            } else {
-              console.warn(`[GoogleDrive Sync] Failed to download ${driveFile.name}: ${downloaded.error}`);
-            }
-
-            await db.createDataRoomDocument({
-              dataRoomId: input.dataRoomId,
-              folderId,
-              name: displayName,
-              fileType,
-              mimeType: effectiveMimeType,
-              fileSize,
-              storageType,
-              storageUrl,
-              storageKey,
-              googleDriveFileId: driveFile.id,
-              googleDriveWebViewLink: driveFile.webViewLink,
-              thumbnailUrl: driveFile.thumbnailLink,
-              uploadedBy: ctx.user.id,
-            });
-
-            filesCreated++;
-          }
-
-          // Update data room with Google Drive folder ID and last sync time
-          await db.updateDataRoom(input.dataRoomId, {
-            googleDriveFolderId: input.googleDriveFolderId,
-            lastSyncedAt: new Date(),
+          await db.createDataRoomDocument({
+            dataRoomId: input.dataRoomId,
+            folderId: input.folderId ?? null,
+            name: displayName,
+            fileType,
+            mimeType: driveFile.mimeType,
+            fileSize,
+            storageType: 'google_drive',
+            storageUrl: driveFile.webViewLink || undefined,
+            storageKey: undefined,
+            googleDriveFileId: driveFile.id,
+            googleDriveWebViewLink: driveFile.webViewLink,
+            thumbnailUrl: driveFile.thumbnailLink,
+            uploadedBy: ctx.user.id,
           });
 
-          return {
-            success: true,
-            foldersCreated,
-            filesCreated,
-            totalFolders: syncResult.folders.length,
-            totalFiles: syncResult.files.length,
-          };
+          return { success: true, fileName: displayName };
         }),
     }),
 
@@ -12434,16 +13670,20 @@ Ask if they received the original request and if they can provide a quote.`;
             return { requiresInfo: true, requiredFields: ['email'], dataRoomId: null, visitorId: null };
           }
 
-          // Check password
           if (link.password) {
             if (!input.password) {
               return { requiresPassword: true, dataRoomId: null, visitorId: null };
             }
-            const matches = link.password.includes(':')
-              ? verifyPassword(input.password, link.password)
-              : require('crypto').createHash('sha256').update(input.password).digest('hex') === link.password;
-            if (!matches) {
+
+            const { valid, needsUpgrade } = verifyPassword(input.password, link.password);
+
+            if (!valid) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid password' });
+            }
+
+            if (needsUpgrade) {
+              const upgradedHash = hashPassword(input.password);
+              await db.updateDataRoomLink(link.id, { password: upgradedHash });
             }
           }
 
@@ -12604,6 +13844,7 @@ Ask if they received the original request and if they can provide a quote.`;
               brandingLogo: room.brandingLogo,
               brandingColor: room.brandingColor,
               brandingCompanyName: room.brandingCompanyName,
+              showLiveFinancials: room.showLiveFinancials,
             },
             folders: folders.filter(f => !f.googleDriveFolderId || true),
             documents: documents.filter(d => !d.isHidden),
@@ -12680,6 +13921,103 @@ Ask if they received the original request and if they can provide a quote.`;
           }
 
           return { id };
+        }),
+
+      // Live current-financials feed for the data room's public page.
+      // This is the investor-facing counterpart to the frozen projections
+      // snapshot: metrics are recomputed at request time, gated by a valid
+      // link + any NDA requirement that applied to `accessByLink`.
+      //
+      // Intentionally narrow: cash, last-3-mo revenue, last-3-mo burn,
+      // avg burn, runway, and optionally an AR total when the room owner
+      // has explicitly opted in. No customer-level detail, no AR aging,
+      // no risk radar.
+      getFinancials: publicProcedure
+        .input(z.object({
+          linkCode: z.string(),
+          visitorId: z.number().optional(),
+        }))
+        .query(async ({ input }) => {
+          const link = await db.getDataRoomLinkByCode(input.linkCode);
+          if (!link || !link.isActive) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Invalid link' });
+          }
+          if (link.expiresAt && new Date(link.expiresAt) < new Date()) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Link has expired' });
+          }
+
+          const room = await db.getDataRoomById(link.dataRoomId);
+          if (!room) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          }
+          if (!room.showLiveFinancials) {
+            throw new TRPCError({
+              code: 'FORBIDDEN',
+              message: 'Live financials are not enabled for this data room',
+            });
+          }
+
+          // Re-enforce every gate that applied at `accessByLink` time.
+          // This endpoint is separately reachable with only a link code, so
+          // any gate the room relies on (password, required visitor info,
+          // NDA) has to be checked here too — otherwise a caller who knows
+          // the link could skip the password/info prompt and fetch
+          // financials directly. The gates we implement via "visitor must
+          // exist" because `accessByLink` only issues a visitor row once
+          // its own checks pass.
+          const requiresVisitor =
+            !!link.password ||
+            !!link.requireEmail ||
+            !!link.requireName ||
+            !!link.requireCompany ||
+            !!room.requiresEmail ||
+            !!room.requiresNda;
+
+          if (requiresVisitor) {
+            if (!input.visitorId) {
+              throw new TRPCError({
+                code: 'FORBIDDEN',
+                message: 'Please access the data room through the normal flow before viewing live financials.',
+              });
+            }
+            const visitor = await db.getDataRoomVisitorById(input.visitorId);
+            if (!visitor || visitor.dataRoomId !== room.id) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'Invalid visitor for this data room' });
+            }
+            if (visitor.accessStatus === 'blocked' || visitor.accessStatus === 'revoked') {
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'Your access has been revoked' });
+            }
+            if (room.requiresNda && !visitor.ndaAcceptedAt) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'NDA signature required' });
+            }
+          } else if (input.visitorId) {
+            // Even without gates, still honor blocked/revoked on known visitors.
+            const visitor = await db.getDataRoomVisitorById(input.visitorId);
+            if (visitor && (visitor.accessStatus === 'blocked' || visitor.accessStatus === 'revoked')) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'Your access has been revoked' });
+            }
+          }
+
+          const { computeLiveFinancials } = await import('./dataRoomLiveFinancials');
+          // dataRooms has no companyId column today (single-tenant); the helper
+          // still accepts one for when multi-tenancy lands per-room.
+          const snapshot = await computeLiveFinancials({
+            includeAr: !!room.liveFinancialsIncludeAr,
+          });
+
+          return {
+            room: {
+              name: room.name,
+              brandingCompanyName: room.brandingCompanyName,
+              brandingLogo: room.brandingLogo,
+              brandingColor: room.brandingColor,
+              brandColor: room.brandColor,
+              logoUrl: room.logoUrl,
+              watermarkEnabled: room.watermarkEnabled,
+              watermarkText: room.watermarkText,
+            },
+            financials: snapshot,
+          };
         }),
     }),
 
@@ -12804,8 +14142,8 @@ Ask if they received the original request and if they can provide a quote.`;
           try {
             // Get Google OAuth token for the user configured for sync (or current user as fallback)
             const syncUserId = config.syncUserId || ctx.user.id;
-            const token = await db.getGoogleOAuthTokenByUserId(syncUserId);
-            if (!token) {
+            const { accessToken: syncAccessToken, error: syncTokenErr } = await getValidGoogleToken(syncUserId);
+            if (syncTokenErr || !syncAccessToken) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected. Please connect your Google account first.' });
             }
 
@@ -12815,12 +14153,12 @@ Ask if they received the original request and if they can provide a quote.`;
             const result = await syncGoogleDriveFolder({
               dataRoomId: input.dataRoomId,
               folderId: config.googleDriveFolderId,
-              accessToken: token.accessToken,
-              refreshToken: token.refreshToken || undefined,
+              accessToken: syncAccessToken,
               syncSubfolders: config.syncSubfolders,
               includeFileTypes: config.includeFileTypes ? JSON.parse(config.includeFileTypes) : undefined,
               excludeFileTypes: config.excludeFileTypes ? JSON.parse(config.excludeFileTypes) : undefined,
               maxFileSizeMb: config.maxFileSizeMb || 100,
+              uploadedBy: ctx.user.id,
             });
 
             // Update sync log with results
@@ -12865,13 +14203,13 @@ Ask if they received the original request and if they can provide a quote.`;
       listDriveFolders: protectedProcedure
         .input(z.object({ parentId: z.string().optional() }))
         .query(async ({ input, ctx }) => {
-          const token = await db.getGoogleOAuthTokenByUserId(ctx.user.id);
-          if (!token) {
+          const { accessToken: listAccessToken, error: listTokenErr } = await getValidGoogleToken(ctx.user.id);
+          if (listTokenErr || !listAccessToken) {
             throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected' });
           }
 
           const { listGoogleDriveFolders } = await import('./googleDriveSyncService');
-          return listGoogleDriveFolders(token.accessToken, input.parentId);
+          return listGoogleDriveFolders(listAccessToken, input.parentId);
         }),
     }),
 
@@ -13136,7 +14474,8 @@ Ask if they received the original request and if they can provide a quote.`;
           priority: z.number().optional(),
           isActive: z.boolean().optional(),
         }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertEmailAccessRuleOwnership(input.id, ctx.user.id, ctx.user.role);
           const { id, ...data } = input;
           await db.updateEmailAccessRule(id, data);
           return { success: true };
@@ -13145,7 +14484,8 @@ Ask if they received the original request and if they can provide a quote.`;
       // Delete a rule
       delete: protectedProcedure
         .input(z.object({ id: z.number() }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertEmailAccessRuleOwnership(input.id, ctx.user.id, ctx.user.role);
           await db.deleteEmailAccessRule(input.id);
           return { success: true };
         }),
@@ -13621,14 +14961,7 @@ Ask if they received the original request and if they can provide a quote.`;
       }))
       .mutation(async ({ input, ctx }) => {
         // Encrypt password
-        const crypto = await import('crypto');
-        const key = process.env.JWT_SECRET || 'default-key';
-        const cipher = crypto.createCipheriv('aes-256-cbc', 
-          crypto.createHash('sha256').update(key).digest().slice(0, 32),
-          Buffer.alloc(16, 0)
-        );
-        let encrypted = cipher.update(input.password, 'utf8', 'hex');
-        encrypted += cipher.final('hex');
+        const encrypted = encrypt(input.password);
 
         const { id } = await db.createImapCredential({
           ...input,
@@ -13681,14 +15014,7 @@ Ask if they received the original request and if they can provide a quote.`;
         }
 
         // Decrypt password
-        const crypto = await import('crypto');
-        const key = process.env.JWT_SECRET || 'default-key';
-        const decipher = crypto.createDecipheriv('aes-256-cbc',
-          crypto.createHash('sha256').update(key).digest().slice(0, 32),
-          Buffer.alloc(16, 0)
-        );
-        let decrypted = decipher.update(credential.encryptedPassword, 'hex', 'utf8');
-        decrypted += decipher.final('utf8');
+        const decrypted = decryptPassword(credential.encryptedPassword);
 
         return {
           ...credential,
@@ -13736,14 +15062,7 @@ Ask if they received the original request and if they can provide a quote.`;
         // Encrypt password if provided
         let encryptedPassword = input.imapPassword;
         if (input.imapPassword) {
-          const crypto = await import('crypto');
-          const key = process.env.JWT_SECRET || 'default-key';
-          const cipher = crypto.createCipheriv('aes-256-cbc',
-            crypto.createHash('sha256').update(key).digest().slice(0, 32),
-            Buffer.alloc(16, 0)
-          );
-          encryptedPassword = cipher.update(input.imapPassword, 'utf8', 'hex');
-          encryptedPassword += cipher.final('hex');
+          encryptedPassword = encrypt(input.imapPassword);
         }
 
         const { id } = await db.createEmailCredential({
@@ -13781,15 +15100,7 @@ Ask if they received the original request and if they can provide a quote.`;
 
         // Encrypt new password if provided
         if (imapPassword) {
-          const crypto = await import('crypto');
-          const key = process.env.JWT_SECRET || 'default-key';
-          const cipher = crypto.createCipheriv('aes-256-cbc',
-            crypto.createHash('sha256').update(key).digest().slice(0, 32),
-            Buffer.alloc(16, 0)
-          );
-          let encrypted = cipher.update(imapPassword, 'utf8', 'hex');
-          encrypted += cipher.final('hex');
-          updateData.imapPassword = encrypted;
+          updateData.imapPassword = encrypt(imapPassword);
         }
 
         await db.updateEmailCredential(id, updateData);
@@ -13829,15 +15140,7 @@ Ask if they received the original request and if they can provide a quote.`;
 
           // Decrypt password
           if (credential.imapPassword) {
-            const crypto = await import('crypto');
-            const key = process.env.JWT_SECRET || 'default-key';
-            const decipher = crypto.createDecipheriv('aes-256-cbc',
-              crypto.createHash('sha256').update(key).digest().slice(0, 32),
-              Buffer.alloc(16, 0)
-            );
-            let decrypted = decipher.update(credential.imapPassword, 'hex', 'utf8');
-            decrypted += decipher.final('utf8');
-            config = { ...credential, imapPassword: decrypted };
+            config = { ...credential, imapPassword: decryptPassword(credential.imapPassword) };
           }
         }
 
@@ -13952,8 +15255,7 @@ Ask if they received the original request and if they can provide a quote.`;
           dataRoomId: z.number(),
           name: z.string(),
           version: z.string().optional(),
-          storageKey: z.string(),
-          storageUrl: z.string(),
+          fileContent: z.string(),
           mimeType: z.string().optional(),
           fileSize: z.number().optional(),
           pageCount: z.number().optional(),
@@ -13962,11 +15264,18 @@ Ask if they received the original request and if they can provide a quote.`;
           allowDrawnSignature: z.boolean().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
+          const { fileContent, ...rest } = input;
+          const buffer = Buffer.from(fileContent, 'base64');
+          const key = `nda/${input.dataRoomId}/${Date.now()}-${input.name.replace(/[/\\]/g, '_')}`;
+          const mimeType = input.mimeType || 'application/pdf';
+          const { url } = await storagePut(key, buffer, mimeType);
           const { id } = await db.createNdaDocument({
-            ...input,
+            ...rest,
+            storageKey: key,
+            storageUrl: url,
             uploadedBy: ctx.user.id,
           });
-          return { id };
+          return { id, url };
         }),
 
       update: protectedProcedure
@@ -14037,16 +15346,17 @@ Ask if they received the original request and if they can provide a quote.`;
           signerTitle: z.string().optional(),
           signerCompany: z.string().optional(),
           signatureType: z.enum(['typed', 'drawn']),
-          signatureData: z.string(), // Base64 for drawn, typed name for typed
-          consentCheckbox: z.boolean(),
+          signatureData: z.string().max(2_000_000), // ~1.43 MB decoded (2 MB base64 chars × 3/4)
+          consentCheckbox: z.literal(true),
         }))
         .mutation(async ({ input, ctx }) => {
           // Get the NDA document
           const ndaDoc = await db.getNdaDocumentById(input.ndaDocumentId);
           if (!ndaDoc) throw new TRPCError({ code: 'NOT_FOUND', message: 'NDA document not found' });
+          if (ndaDoc.dataRoomId !== input.dataRoomId) throw new TRPCError({ code: 'BAD_REQUEST', message: 'NDA document does not belong to this data room' });
 
           // Get IP address from request
-          const ipAddress = ctx.req.headers['x-forwarded-for'] as string || ctx.req.socket.remoteAddress || 'unknown';
+          const ipAddress = (ctx.req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || ctx.req.socket.remoteAddress || 'unknown';
           const userAgent = ctx.req.headers['user-agent'] || '';
 
           // Store signature image if drawn
@@ -14164,808 +15474,6 @@ Ask if they received the original request and if they can provide a quote.`;
         .input(z.object({ signatureId: z.number() }))
         .query(async ({ input }) => {
           return db.getNdaAuditLogs(input.signatureId);
-        }),
-    }),
-
-    // ============================================
-    // GOOGLE DRIVE SYNC
-    // ============================================
-    driveSync: router({
-      // Get sync configuration for a data room
-      getConfig: protectedProcedure
-        .input(z.object({ dataRoomId: z.number() }))
-        .query(async ({ input, ctx }) => {
-          // Check authorization
-          const room = await db.getDataRoomById(input.dataRoomId);
-          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
-          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
-            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-          }
-          return db.getDriveSyncConfig(input.dataRoomId);
-        }),
-
-      // Create or update sync configuration
-      saveConfig: protectedProcedure
-        .input(z.object({
-          dataRoomId: z.number(),
-          googleDriveFolderId: z.string(),
-          googleDriveFolderName: z.string().optional(),
-          googleDriveFolderUrl: z.string().optional(),
-          syncEnabled: z.boolean().default(true),
-          syncFrequencyMinutes: z.number().default(60),
-          syncMode: z.enum(['one_way_import', 'one_way_export', 'bidirectional']).default('one_way_import'),
-          syncSubfolders: z.boolean().default(true),
-          includeFileTypes: z.array(z.string()).optional(),
-          excludeFileTypes: z.array(z.string()).optional(),
-          maxFileSizeMb: z.number().default(100),
-        }))
-        .mutation(async ({ input, ctx }) => {
-          // Check authorization
-          const room = await db.getDataRoomById(input.dataRoomId);
-          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
-          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
-            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-          }
-
-          const existingConfig = await db.getDriveSyncConfig(input.dataRoomId);
-
-          const configData: Omit<InsertDataRoomDriveSyncConfig, 'id'> = {
-            dataRoomId: input.dataRoomId,
-            googleDriveFolderId: input.googleDriveFolderId,
-            googleDriveFolderName: input.googleDriveFolderName,
-            googleDriveFolderUrl: input.googleDriveFolderUrl,
-            syncEnabled: input.syncEnabled,
-            syncFrequencyMinutes: input.syncFrequencyMinutes,
-            syncMode: input.syncMode,
-            syncSubfolders: input.syncSubfolders,
-            includeFileTypes: input.includeFileTypes ? JSON.stringify(input.includeFileTypes) : null,
-            excludeFileTypes: input.excludeFileTypes ? JSON.stringify(input.excludeFileTypes) : null,
-            maxFileSizeMb: input.maxFileSizeMb,
-            syncUserId: ctx.user.id,
-          };
-
-          if (existingConfig) {
-            await db.updateDriveSyncConfig(existingConfig.id, configData);
-            return { id: existingConfig.id, updated: true };
-          } else {
-            const id = await db.createDriveSyncConfig(configData);
-            return { id, updated: false };
-          }
-        }),
-
-      // Delete sync configuration
-      deleteConfig: protectedProcedure
-        .input(z.object({ dataRoomId: z.number() }))
-        .mutation(async ({ input, ctx }) => {
-          // Check authorization
-          const room = await db.getDataRoomById(input.dataRoomId);
-          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
-          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
-            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-          }
-          await db.deleteDriveSyncConfig(input.dataRoomId);
-          return { success: true };
-        }),
-
-      // Get sync logs
-      getLogs: protectedProcedure
-        .input(z.object({ dataRoomId: z.number(), limit: z.number().default(50) }))
-        .query(async ({ input, ctx }) => {
-          // Check authorization
-          const room = await db.getDataRoomById(input.dataRoomId);
-          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
-          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
-            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-          }
-          return db.getDriveSyncLogs(input.dataRoomId, input.limit);
-        }),
-
-      // Trigger manual sync
-      syncNow: protectedProcedure
-        .input(z.object({ dataRoomId: z.number() }))
-        .mutation(async ({ input, ctx }) => {
-          // Check authorization
-          const room = await db.getDataRoomById(input.dataRoomId);
-          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
-          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
-            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-          }
-
-          const config = await db.getDriveSyncConfig(input.dataRoomId);
-          if (!config) {
-            throw new TRPCError({ code: 'NOT_FOUND', message: 'No sync configuration found for this data room' });
-          }
-
-          // Create sync log entry
-          const logId = await db.createDriveSyncLog({
-            dataRoomId: input.dataRoomId,
-            syncConfigId: config.id,
-            syncType: 'manual',
-            status: 'started',
-            triggeredBy: ctx.user.id,
-          });
-
-          try {
-            // Get Google OAuth token for the user configured for sync (or current user as fallback)
-            const syncUserId = config.syncUserId || ctx.user.id;
-            const token = await db.getGoogleOAuthToken(syncUserId);
-            if (!token) {
-              throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected. Please connect your Google account first.' });
-            }
-
-            // Import Google Drive sync service
-            const { syncGoogleDriveFolder } = await import('./googleDriveSyncService');
-
-            const result = await syncGoogleDriveFolder({
-              dataRoomId: input.dataRoomId,
-              folderId: config.googleDriveFolderId,
-              accessToken: token.accessToken,
-              refreshToken: token.refreshToken || undefined,
-              syncSubfolders: config.syncSubfolders,
-              includeFileTypes: config.includeFileTypes ? JSON.parse(config.includeFileTypes) : undefined,
-              excludeFileTypes: config.excludeFileTypes ? JSON.parse(config.excludeFileTypes) : undefined,
-              maxFileSizeMb: config.maxFileSizeMb || 100,
-            });
-
-            // Update sync log with results
-            await db.updateDriveSyncLog(logId, {
-              status: 'completed',
-              completedAt: new Date(),
-              filesScanned: result.filesScanned,
-              filesAdded: result.filesAdded,
-              filesUpdated: result.filesUpdated,
-              filesSkipped: result.filesSkipped,
-              foldersCreated: result.foldersCreated,
-              durationMs: result.durationMs,
-              warnings: result.warnings?.length ? JSON.stringify(result.warnings) : null,
-            });
-
-            // Update config last sync status
-            await db.updateDriveSyncConfig(config.id, {
-              lastSyncAt: new Date(),
-              lastSyncStatus: 'success',
-              lastSyncFilesAdded: result.filesAdded,
-              lastSyncFilesUpdated: result.filesUpdated,
-            });
-
-            return { success: true, ...result };
-          } catch (error: any) {
-            await db.updateDriveSyncLog(logId, {
-              status: 'failed',
-              completedAt: new Date(),
-              errors: JSON.stringify([error.message]),
-            });
-
-            await db.updateDriveSyncConfig(config.id, {
-              lastSyncStatus: 'failed',
-              lastSyncError: error.message,
-            });
-
-            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
-          }
-        }),
-
-      // List folders in Google Drive for selection
-      listDriveFolders: protectedProcedure
-        .input(z.object({ parentId: z.string().optional() }))
-        .query(async ({ input, ctx }) => {
-          const token = await db.getGoogleOAuthToken(ctx.user.id);
-          if (!token) {
-            throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected' });
-          }
-
-          const { listGoogleDriveFolders } = await import('./googleDriveSyncService');
-          return listGoogleDriveFolders(token.accessToken, input.parentId);
-        }),
-    }),
-
-    // ============================================
-    // PAGE-LEVEL TRACKING
-    // ============================================
-    pageTracking: router({
-      // Record page view (public - for visitors)
-      recordPageView: publicProcedure
-        .input(z.object({
-          documentId: z.number(),
-          visitorId: z.number(),
-          sessionId: z.number().optional(),
-          linkId: z.number().optional(),
-          pageNumber: z.number(),
-          pageLabel: z.string().optional(),
-          durationMs: z.number().optional(),
-          scrollDepth: z.number().optional(),
-          mouseMovements: z.number().optional(),
-          clicks: z.number().optional(),
-          zoomLevel: z.number().optional(),
-          deviceType: z.string().optional(),
-          screenWidth: z.number().optional(),
-          screenHeight: z.number().optional(),
-          viewportWidth: z.number().optional(),
-          viewportHeight: z.number().optional(),
-        }))
-        .mutation(async ({ input }) => {
-          const id = await db.createDocumentPageView({
-            documentId: input.documentId,
-            visitorId: input.visitorId,
-            viewSessionId: input.sessionId,
-            linkId: input.linkId,
-            pageNumber: input.pageNumber,
-            pageLabel: input.pageLabel,
-            durationMs: input.durationMs || 0,
-            scrollDepth: input.scrollDepth,
-            mouseMovements: input.mouseMovements,
-            clicks: input.clicks,
-            zoomLevel: input.zoomLevel,
-            deviceType: input.deviceType,
-            screenWidth: input.screenWidth,
-            screenHeight: input.screenHeight,
-            viewportWidth: input.viewportWidth,
-            viewportHeight: input.viewportHeight,
-          });
-          return { id };
-        }),
-
-      // Update page view (when visitor leaves page)
-      updatePageView: publicProcedure
-        .input(z.object({
-          id: z.number(),
-          sessionToken: z.string(), // Session token to verify the page view belongs to the current visitor session
-          durationMs: z.number(),
-          scrollDepth: z.number().optional(),
-          mouseMovements: z.number().optional(),
-          clicks: z.number().optional(),
-        }))
-        .mutation(async ({ input }) => {
-          // Verify the page view belongs to this session
-          const pageView = await db.getDocumentPageViewById(input.id);
-          
-          if (!pageView) {
-            throw new TRPCError({ code: 'NOT_FOUND', message: 'Page view not found' });
-          }
-
-          // Verify session token matches (get session for this page view's visitor)
-          const sessions = await db.getVisitorSessions(pageView.visitorId);
-          const validSession = sessions.find(s => s.sessionToken === input.sessionToken);
-          
-          if (!validSession) {
-            throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid session token' });
-          }
-
-          await db.updateDocumentPageView(input.id, {
-            exitTime: new Date(),
-            durationMs: input.durationMs,
-            scrollDepth: input.scrollDepth,
-            mouseMovements: input.mouseMovements,
-            clicks: input.clicks,
-          });
-          return { success: true };
-        }),
-
-      // Get page views for a document (admin)
-      getForDocument: protectedProcedure
-        .input(z.object({ documentId: z.number(), visitorId: z.number().optional() }))
-        .query(async ({ input }) => {
-          return db.getDocumentPageViews(input.documentId, input.visitorId);
-        }),
-
-      // Get page views by visitor (admin)
-      getByVisitor: protectedProcedure
-        .input(z.object({ visitorId: z.number() }))
-        .query(async ({ input }) => {
-          return db.getPageViewsByVisitor(input.visitorId);
-        }),
-    }),
-
-    // ============================================
-    // VISITOR SESSIONS
-    // ============================================
-    sessions: router({
-      // Start a new session (public)
-      start: publicProcedure
-        .input(z.object({
-          dataRoomId: z.number(),
-          visitorId: z.number(),
-          linkId: z.number().optional(),
-          deviceType: z.string().optional(),
-          browser: z.string().optional(),
-          browserVersion: z.string().optional(),
-          os: z.string().optional(),
-          osVersion: z.string().optional(),
-          screenResolution: z.string().optional(),
-          referrer: z.string().optional(),
-          utmSource: z.string().optional(),
-          utmMedium: z.string().optional(),
-          utmCampaign: z.string().optional(),
-        }))
-        .mutation(async ({ input, ctx }) => {
-          const sessionToken = `sess_${nanoid()}`;
-          const ipAddress = (ctx.req.headers['x-forwarded-for'] as string)?.split(',')[0] || ctx.req.socket.remoteAddress || '';
-
-          const id = await db.createVisitorSession({
-            dataRoomId: input.dataRoomId,
-            visitorId: input.visitorId,
-            linkId: input.linkId,
-            sessionToken,
-            deviceType: input.deviceType,
-            browser: input.browser,
-            browserVersion: input.browserVersion,
-            os: input.os,
-            osVersion: input.osVersion,
-            screenResolution: input.screenResolution,
-            ipAddress,
-            referrer: input.referrer,
-            utmSource: input.utmSource,
-            utmMedium: input.utmMedium,
-            utmCampaign: input.utmCampaign,
-          });
-
-          return { id, sessionToken };
-        }),
-
-      // Update session activity (public)
-      updateActivity: publicProcedure
-        .input(z.object({
-          sessionToken: z.string(),
-          documentsViewed: z.number().optional(),
-          pagesViewed: z.number().optional(),
-          totalScrollDistance: z.number().optional(),
-          totalClicks: z.number().optional(),
-          downloadsCount: z.number().optional(),
-          printsCount: z.number().optional(),
-          activeDurationMs: z.number().optional(),
-          idleDurationMs: z.number().optional(),
-        }))
-        .mutation(async ({ input }) => {
-          const session = await db.getSessionByToken(input.sessionToken);
-          if (!session) {
-            throw new TRPCError({ code: 'NOT_FOUND', message: 'Session not found' });
-          }
-
-          const { sessionToken, ...updateData } = input;
-          await db.updateVisitorSession(session.id, {
-            ...updateData,
-            totalDurationMs: (updateData.activeDurationMs || 0) + (updateData.idleDurationMs || 0),
-          });
-
-          return { success: true };
-        }),
-
-      // End session (public)
-      end: publicProcedure
-        .input(z.object({
-          sessionToken: z.string(),
-          totalDurationMs: z.number(),
-          activeDurationMs: z.number().optional(),
-        }))
-        .mutation(async ({ input }) => {
-          const session = await db.getSessionByToken(input.sessionToken);
-          if (!session) {
-            throw new TRPCError({ code: 'NOT_FOUND', message: 'Session not found' });
-          }
-
-          await db.updateVisitorSession(session.id, {
-            sessionEndAt: new Date(),
-            totalDurationMs: input.totalDurationMs,
-            activeDurationMs: input.activeDurationMs,
-            isActive: false,
-          });
-
-          return { success: true };
-        }),
-
-      // Get sessions for a data room (admin)
-      list: protectedProcedure
-        .input(z.object({ dataRoomId: z.number(), limit: z.number().default(100) }))
-        .query(async ({ input }) => {
-          return db.getDataRoomSessions(input.dataRoomId, input.limit);
-        }),
-
-      // Get sessions for a visitor (admin)
-      getByVisitor: protectedProcedure
-        .input(z.object({ visitorId: z.number() }))
-        .query(async ({ input }) => {
-          return db.getVisitorSessions(input.visitorId);
-        }),
-    }),
-
-    // ============================================
-    // EMAIL ACCESS RULES
-    // ============================================
-    emailRules: router({
-      // List rules for a data room
-      list: protectedProcedure
-        .input(z.object({ dataRoomId: z.number() }))
-        .query(async ({ input }) => {
-          return db.getEmailAccessRules(input.dataRoomId);
-        }),
-
-      // Create a new rule
-      create: protectedProcedure
-        .input(z.object({
-          dataRoomId: z.number(),
-          ruleType: z.enum(['allow_email', 'allow_domain', 'block_email', 'block_domain']),
-          emailPattern: z.string(),
-          allowDownload: z.boolean().default(true),
-          allowPrint: z.boolean().default(true),
-          maxViews: z.number().optional(),
-          expiresAt: z.date().optional(),
-          requireNdaSignature: z.boolean().default(true),
-          autoApprove: z.boolean().default(false),
-          notifyOnAccess: z.boolean().default(true),
-          notifyEmail: z.string().optional(),
-          priority: z.number().default(0),
-        }))
-        .mutation(async ({ input, ctx }) => {
-          const id = await db.createEmailAccessRule({
-            ...input,
-            createdBy: ctx.user.id,
-          });
-          return { id };
-        }),
-
-      // Update a rule
-      update: protectedProcedure
-        .input(z.object({
-          id: z.number(),
-          ruleType: z.enum(['allow_email', 'allow_domain', 'block_email', 'block_domain']).optional(),
-          emailPattern: z.string().optional(),
-          allowDownload: z.boolean().optional(),
-          allowPrint: z.boolean().optional(),
-          maxViews: z.number().optional(),
-          expiresAt: z.date().optional(),
-          requireNdaSignature: z.boolean().optional(),
-          autoApprove: z.boolean().optional(),
-          notifyOnAccess: z.boolean().optional(),
-          notifyEmail: z.string().optional(),
-          priority: z.number().optional(),
-          isActive: z.boolean().optional(),
-        }))
-        .mutation(async ({ input }) => {
-          const { id, ...data } = input;
-          await db.updateEmailAccessRule(id, data);
-          return { success: true };
-        }),
-
-      // Delete a rule
-      delete: protectedProcedure
-        .input(z.object({ id: z.number() }))
-        .mutation(async ({ input }) => {
-          await db.deleteEmailAccessRule(input.id);
-          return { success: true };
-        }),
-
-      // Check if an email has access (for public access flow)
-      checkAccess: publicProcedure
-        .input(z.object({ dataRoomId: z.number(), email: z.string().email() }))
-        .query(async ({ input }) => {
-          const result = await db.checkEmailAccess(input.dataRoomId, input.email);
-          if (!result) {
-            return { allowed: false, permissions: undefined };
-          }
-          const { allowed, permissions } = result as { allowed: boolean; permissions?: unknown };
-          return { allowed, permissions };
-        }),
-    }),
-
-    // ============================================
-    // DETAILED ANALYTICS
-    // ============================================
-    detailedAnalytics: router({
-      // Get page-level analytics for a data room
-      getPageAnalytics: protectedProcedure
-        .input(z.object({ dataRoomId: z.number() }))
-        .query(async ({ input }) => {
-          return db.getPageViewAnalytics(input.dataRoomId);
-        }),
-
-      // Get detailed analytics for a specific visitor
-      getVisitorDetails: protectedProcedure
-        .input(z.object({ dataRoomId: z.number(), visitorId: z.number() }))
-        .query(async ({ input }) => {
-          return db.getDetailedVisitorAnalytics(input.dataRoomId, input.visitorId);
-        }),
-
-      // Get engagement report for a data room
-      getEngagementReport: protectedProcedure
-        .input(z.object({
-          dataRoomId: z.number(),
-          startDate: z.date().optional(),
-          endDate: z.date().optional(),
-        }))
-        .query(async ({ input }) => {
-          return db.getDataRoomEngagementReport(input.dataRoomId, input.startDate, input.endDate);
-        }),
-
-      // Get document-level heatmap data (which pages are most viewed)
-      getDocumentHeatmap: protectedProcedure
-        .input(z.object({ documentId: z.number() }))
-        .query(async ({ input }) => {
-          const pageViews = await db.getDocumentPageViews(input.documentId);
-
-          // Aggregate by page number
-          const pageStats: Record<number, { views: number; totalDuration: number; uniqueVisitors: Set<number> }> = {};
-
-          pageViews.forEach(pv => {
-            if (!pageStats[pv.pageNumber]) {
-              pageStats[pv.pageNumber] = { views: 0, totalDuration: 0, uniqueVisitors: new Set() };
-            }
-            pageStats[pv.pageNumber].views++;
-            pageStats[pv.pageNumber].totalDuration += pv.durationMs || 0;
-            pageStats[pv.pageNumber].uniqueVisitors.add(pv.visitorId);
-          });
-
-          return Object.entries(pageStats).map(([page, stats]) => ({
-            pageNumber: parseInt(page),
-            views: stats.views,
-            totalDurationMs: stats.totalDuration,
-            avgDurationMs: stats.views > 0 ? stats.totalDuration / stats.views : 0,
-            uniqueVisitors: stats.uniqueVisitors.size,
-          })).sort((a, b) => a.pageNumber - b.pageNumber);
-        }),
-
-      // Export analytics as CSV
-      exportCsv: protectedProcedure
-        .input(z.object({
-          dataRoomId: z.number(),
-          type: z.enum(['visitors', 'documents']), // Only supported types
-        }))
-        .mutation(async ({ input }) => {
-          const report = await db.getDataRoomEngagementReport(input.dataRoomId);
-          if (!report) {
-            throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
-          }
-
-          let csv = '';
-          let filename = '';
-
-          if (input.type === 'visitors') {
-            filename = `visitors_${input.dataRoomId}_${Date.now()}.csv`;
-            csv = 'Email,Name,Company,Status,Sessions,Total Time (min),Documents Viewed,Pages Viewed,NDA Signed,Last Activity\n';
-            report.visitorEngagement.forEach(v => {
-              csv += `"${v.email || ''}","${v.name || ''}","${v.company || ''}","${v.accessStatus}",${v.sessionsCount},${Math.round(v.totalTimeMs / 60000)},${v.documentsViewed},${v.pagesViewed},"${v.ndaAcceptedAt ? 'Yes' : 'No'}","${v.lastActivity || ''}"\n`;
-            });
-          } else if (input.type === 'documents') {
-            filename = `documents_${input.dataRoomId}_${Date.now()}.csv`;
-            csv = 'Document,Pages,Views,Unique Visitors,Total Time (min),Avg Time per Page (sec)\n';
-            report.documentEngagement.forEach(d => {
-              csv += `"${d.documentName}",${d.pageCount},${d.views},${d.uniqueVisitors},${Math.round(d.totalTimeMs / 60000)},${Math.round(d.avgTimePerPageMs / 1000)}\n`;
-            });
-          }
-
-          return { csv, filename };
-        }),
-    }),
-
-    // ============================================
-    // DUE DILIGENCE CHECKLISTS
-    // ============================================
-    dueDiligence: router({
-      // Get checklist summary for a data room
-      getSummary: protectedProcedure
-        .input(z.object({ dataRoomId: z.number() }))
-        .query(async ({ input }) => {
-          return db.getChecklistSummary(input.dataRoomId);
-        }),
-
-      // List all checklists for a data room
-      list: protectedProcedure
-        .input(z.object({ dataRoomId: z.number() }))
-        .query(async ({ input }) => {
-          return db.getDataRoomChecklists(input.dataRoomId);
-        }),
-
-      // Get a checklist with all its items
-      getById: protectedProcedure
-        .input(z.object({ id: z.number() }))
-        .query(async ({ input }) => {
-          return db.getChecklistWithItems(input.id);
-        }),
-
-      // Create a standard due diligence checklist
-      createStandard: protectedProcedure
-        .input(z.object({
-          dataRoomId: z.number(),
-          checklistType: z.enum(['fundraising', 'ma', 'full', 'series_b']).default('full'),
-          customName: z.string().optional(),
-        }))
-        .mutation(async ({ input, ctx }) => {
-          const checklist = await db.createStandardChecklist(
-            input.dataRoomId,
-            ctx.user.id,
-            input.checklistType,
-            input.customName
-          );
-          return checklist;
-        }),
-
-      // Create from a template
-      createFromTemplate: protectedProcedure
-        .input(z.object({
-          dataRoomId: z.number(),
-          templateId: z.number(),
-          customName: z.string().optional(),
-        }))
-        .mutation(async ({ input, ctx }) => {
-          return db.createChecklistFromTemplate(
-            input.dataRoomId,
-            input.templateId,
-            ctx.user.id,
-            input.customName
-          );
-        }),
-
-      // Auto-match documents against checklist items
-      autoMatch: protectedProcedure
-        .input(z.object({ checklistId: z.number() }))
-        .mutation(async ({ input }) => {
-          return db.autoMatchChecklistDocuments(input.checklistId);
-        }),
-
-      // Update checklist item status
-      updateItem: protectedProcedure
-        .input(z.object({
-          id: z.number(),
-          status: z.enum(['missing', 'partial', 'complete', 'not_applicable', 'waived']).optional(),
-          notes: z.string().optional(),
-          internalNotes: z.string().optional(),
-          waiverReason: z.string().optional(),
-        }))
-        .mutation(async ({ input, ctx }) => {
-          const { id, waiverReason, ...data } = input;
-
-          const updateData: any = { ...data };
-
-          // If waiving the item, set the waiver info
-          if (input.status === 'waived' && waiverReason) {
-            updateData.waivedBy = ctx.user.id;
-            updateData.waivedAt = new Date();
-            updateData.waiverReason = waiverReason;
-          }
-
-          await db.updateChecklistItem(id, updateData);
-
-          // Get the item to recalculate parent checklist
-          const item = await db.getChecklistItemById(id);
-          if (item) {
-            await db.recalculateChecklistProgress(item.checklistId);
-          }
-
-          return { success: true };
-        }),
-
-      // Link a document to a checklist item
-      linkDocument: protectedProcedure
-        .input(z.object({
-          itemId: z.number(),
-          documentId: z.number(),
-        }))
-        .mutation(async ({ input }) => {
-          const item = await db.getChecklistItemById(input.itemId);
-          if (!item) {
-            throw new TRPCError({ code: 'NOT_FOUND', message: 'Checklist item not found' });
-          }
-
-          let linkedIds: number[] = [];
-          try {
-            linkedIds = (item as any).linkedDocumentIds ? JSON.parse((item as any).linkedDocumentIds) : [];
-          } catch (e) {
-            linkedIds = [];
-          }
-
-          if (!linkedIds.includes(input.documentId)) {
-            linkedIds.push(input.documentId);
-          }
-
-          await db.updateChecklistItem(input.itemId, {
-            linkedDocumentIds: JSON.stringify(linkedIds),
-            linkedDocumentCount: linkedIds.length,
-            status: linkedIds.length > 0 ? 'complete' : 'missing',
-          } as any);
-
-          await db.recalculateChecklistProgress(item.checklistId);
-
-          return { success: true };
-        }),
-
-      // Unlink a document from a checklist item
-      unlinkDocument: protectedProcedure
-        .input(z.object({
-          itemId: z.number(),
-          documentId: z.number(),
-        }))
-        .mutation(async ({ input }) => {
-          const item = await db.getChecklistItemById(input.itemId);
-          if (!item) {
-            throw new TRPCError({ code: 'NOT_FOUND', message: 'Checklist item not found' });
-          }
-
-          let linkedIds: number[] = [];
-          try {
-            linkedIds = (item as any).linkedDocumentIds ? JSON.parse((item as any).linkedDocumentIds) : [];
-          } catch (e) {
-            linkedIds = [];
-          }
-
-          linkedIds = linkedIds.filter(id => id !== input.documentId);
-
-          await db.updateChecklistItem(input.itemId, {
-            linkedDocumentIds: JSON.stringify(linkedIds),
-            linkedDocumentCount: linkedIds.length,
-            status: linkedIds.length > 0 ? 'complete' : 'missing',
-          } as any);
-
-          await db.recalculateChecklistProgress(item.checklistId);
-
-          return { success: true };
-        }),
-
-      // Add a custom item to a checklist
-      addItem: protectedProcedure
-        .input(z.object({
-          checklistId: z.number(),
-          categoryName: z.string(),
-          itemName: z.string(),
-          itemDescription: z.string().optional(),
-          requirement: z.enum(['required', 'recommended', 'optional']).default('required'),
-          matchKeywords: z.array(z.string()).optional(),
-        }))
-        .mutation(async ({ input }) => {
-          const checklist = await db.getDataRoomChecklistById(input.checklistId);
-          if (!checklist) {
-            throw new TRPCError({ code: 'NOT_FOUND', message: 'Checklist not found' });
-          }
-
-          const result = await db.createDataRoomChecklistItem({
-            checklistId: input.checklistId,
-            dataRoomId: (checklist as any).dataRoomId,
-            categoryName: input.categoryName,
-            itemName: input.itemName,
-            itemDescription: input.itemDescription,
-            requirement: input.requirement,
-            matchKeywords: input.matchKeywords ? JSON.stringify(input.matchKeywords) : undefined,
-            status: 'missing',
-          } as any);
-
-          await db.recalculateChecklistProgress(input.checklistId);
-
-          return result;
-        }),
-
-      // Delete a checklist item
-      deleteItem: protectedProcedure
-        .input(z.object({ id: z.number() }))
-        .mutation(async ({ input }) => {
-          const item = await db.getChecklistItemById(input.id);
-          if (item) {
-            await db.deleteChecklistItem(input.id);
-            await db.recalculateChecklistProgress(item.checklistId);
-          }
-          return { success: true };
-        }),
-
-      // Delete entire checklist
-      delete: protectedProcedure
-        .input(z.object({ id: z.number() }))
-        .mutation(async ({ input }) => {
-          await db.deleteDataRoomChecklist(input.id);
-          return { success: true };
-        }),
-
-      // Review an item
-      reviewItem: protectedProcedure
-        .input(z.object({
-          id: z.number(),
-          reviewStatus: z.enum(['pending', 'approved', 'needs_attention', 'rejected']),
-          reviewNotes: z.string().optional(),
-        }))
-        .mutation(async ({ input, ctx }) => {
-          await db.updateChecklistItem(input.id, {
-            reviewStatus: input.reviewStatus,
-            reviewNotes: input.reviewNotes,
-            reviewedBy: ctx.user.id,
-            reviewedAt: new Date(),
-          } as any);
-          return { success: true };
         }),
     }),
   }),
@@ -15177,14 +15685,14 @@ Ask if they received the original request and if they can provide a quote.`;
       .input(z.object({ token: z.string() }))
       .query(async ({ input }) => {
         const session = await db.getSupplierPortalSession(input.token);
-        if (!session) return [];
+        if (!session || session.status !== 'active') return [];
         return db.getSupplierDocuments({ portalSessionId: session.id });
       }),
     getFreightInfo: publicProcedure
       .input(z.object({ token: z.string() }))
       .query(async ({ input }) => {
         const session = await db.getSupplierPortalSession(input.token);
-        if (!session) return null;
+        if (!session || session.status !== 'active') return null;
         return db.getSupplierFreightInfo(session.purchaseOrderId);
       }),
     uploadDocument: publicProcedure
@@ -15318,9 +15826,10 @@ Ask if they received the original request and if they can provide a quote.`;
         }),
         markAsReceived: z.boolean().default(false),
         updateInventory: z.boolean().default(true),
+        createMissingVendor: z.boolean().default(false),
       }))
       .mutation(async ({ input, ctx }) => {
-        return importPurchaseOrder(input.poData as any, ctx.user.id, input.markAsReceived);
+        return importPurchaseOrder(input.poData as any, ctx.user.id, input.markAsReceived, input.createMissingVendor);
       }),
 
     // Import a freight invoice
@@ -15347,9 +15856,10 @@ Ask if they received the original request and if they can provide a quote.`;
           notes: z.string().optional(),
         }),
         linkToPO: z.boolean().default(true),
+        createMissingVendor: z.boolean().default(false),
       }))
       .mutation(async ({ input, ctx }) => {
-        return importFreightInvoice(input.invoiceData as any, ctx.user.id);
+        return importFreightInvoice(input.invoiceData as any, ctx.user.id, input.createMissingVendor);
       }),
 
     // Import a vendor invoice
@@ -15380,9 +15890,10 @@ Ask if they received the original request and if they can provide a quote.`;
         }),
         markAsReceived: z.boolean().default(false),
         updateInventory: z.boolean().default(true),
+        createMissingVendor: z.boolean().default(false),
       }))
       .mutation(async ({ input, ctx }) => {
-        return importVendorInvoice(input.invoiceData as any, ctx.user.id, input.markAsReceived);
+        return importVendorInvoice(input.invoiceData as any, ctx.user.id, input.markAsReceived, input.createMissingVendor);
       }),
 
     // Import a customs document
@@ -15424,9 +15935,10 @@ Ask if they received the original request and if they can provide a quote.`;
           notes: z.string().optional(),
         }),
         linkToPO: z.boolean().default(true),
+        createMissingVendor: z.boolean().default(false),
       }))
       .mutation(async ({ input, ctx }) => {
-        return importCustomsDocument(input.documentData as any, ctx.user.id);
+        return importCustomsDocument(input.documentData as any, ctx.user.id, input.createMissingVendor);
       }),
 
     // Get import history
@@ -15778,7 +16290,9 @@ Ask if they received the original request and if they can provide a quote.`;
           limit: z.number().optional(),
           offset: z.number().optional(),
         }).optional())
-        .query(({ input }) => db.getCrmContacts(input)),
+        .query(({ input, ctx }) =>
+          db.getCrmContacts({ ...input, excludeEmail: ctx.user.email || undefined }),
+        ),
 
       get: protectedProcedure
         .input(z.object({ id: z.number() }))
@@ -15815,13 +16329,23 @@ Ask if they received the original request and if they can provide a quote.`;
         }))
         .mutation(async ({ input, ctx }) => {
           const fullName = input.fullName || `${input.firstName} ${input.lastName || ""}`.trim();
-          const id = await db.createCrmContact({
+
+          // Skip self: don't let the logged-in user create a contact for themselves.
+          const ownEmail = ctx.user.email?.trim().toLowerCase();
+          if (ownEmail && input.email && input.email.trim().toLowerCase() === ownEmail) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "This is your own email. Update your user profile instead of creating a CRM contact.",
+            });
+          }
+
+          const { id, created } = await db.findOrCreateCrmContact({
             ...input,
             fullName,
             capturedBy: ctx.user.id,
           });
-          await createAuditLog(ctx.user.id, 'create', 'crm_contact', id, fullName);
-          return { id };
+          await createAuditLog(ctx.user.id, created ? 'create' : 'update', 'crm_contact', id, fullName);
+          return { id, merged: !created };
         }),
 
       update: protectedProcedure
@@ -15901,6 +16425,40 @@ Ask if they received the original request and if they can provide a quote.`;
         }),
 
       getStats: protectedProcedure.query(() => db.getCrmContactStats()),
+
+      findDuplicates: protectedProcedure.query(async () => {
+        const groups = await db.findDuplicateCrmContactGroups();
+        return { groups, totalDuplicates: groups.reduce((n, g) => n + g.contacts.length - 1, 0) };
+      }),
+
+      merge: protectedProcedure
+        .input(z.object({ primaryId: z.number(), duplicateIds: z.array(z.number()).min(1) }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.mergeCrmContacts(input.primaryId, input.duplicateIds);
+          await createAuditLog(ctx.user.id, 'update', 'crm_contact', input.primaryId, `merged ${result.merged} duplicates`);
+          return result;
+        }),
+
+      // One-click cleanup: auto-merge every duplicate group, keeping the
+      // oldest contact (lowest id) as the primary.
+      autoMergeDuplicates: protectedProcedure.mutation(async ({ ctx }) => {
+        const groups = await db.findDuplicateCrmContactGroups();
+        let merged = 0;
+        let groupsMerged = 0;
+        for (const g of groups) {
+          const sorted = [...g.contacts].sort((a: any, b: any) => a.id - b.id);
+          const primary = sorted[0];
+          const dupeIds = sorted.slice(1).map((c: any) => c.id);
+          if (dupeIds.length === 0) continue;
+          const result = await db.mergeCrmContacts(primary.id, dupeIds);
+          merged += result.merged;
+          groupsMerged++;
+        }
+        if (merged > 0) {
+          await createAuditLog(ctx.user.id, 'update', 'crm_contact', 0, `auto-merged ${merged} duplicates across ${groupsMerged} groups`);
+        }
+        return { merged, groupsMerged };
+      }),
 
       getTimeline: protectedProcedure
         .input(z.object({ contactId: z.number(), limit: z.number().optional() }))
@@ -16219,7 +16777,7 @@ Ask if they received the original request and if they can provide a quote.`;
         .input(z.object({
           pipelineId: z.number(),
           contactId: z.number(),
-          name: z.string().min(1),
+          name: z.string().min(1).optional(), // Ignored — deal title is always the contact's company.
           description: z.string().optional(),
           stage: z.string(),
           amount: z.string().optional(),
@@ -16232,18 +16790,69 @@ Ask if they received the original request and if they can provide a quote.`;
           assignedTo: z.number().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const id = await db.createCrmDeal({
-            ...input,
+          // Deal title must be the contact's client company name.
+          const contact = await db.getCrmContactById(input.contactId);
+          if (!contact) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Contact not found' });
+          }
+          const company = (contact.organization || '').trim();
+          if (!company) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: `Cannot create deal: contact "${contact.fullName}" has no company. Add a company to the contact first.`,
+            });
+          }
+
+          // Reject duplicates up front — same company can't have two deals.
+          const existing = await db.findCrmDealByCompany(company);
+          if (existing) {
+            throw new TRPCError({
+              code: 'CONFLICT',
+              message: `A deal already exists for "${company}" (deal #${existing.id}).`,
+            });
+          }
+
+          // Block if another approval task is already queued for this company.
+          if (await db.hasPendingDealApprovalForCompany(company)) {
+            throw new TRPCError({
+              code: 'CONFLICT',
+              message: `An approval is already pending for "${company}".`,
+            });
+          }
+
+          const taskData = {
+            pipelineId: input.pipelineId,
+            contactId: input.contactId,
+            company,
+            stage: input.stage,
+            amount: input.amount,
+            source: input.source,
+            notes: input.notes,
             assignedTo: input.assignedTo || ctx.user.id,
+          };
+          const task = await db.createAiAgentTask({
+            taskType: 'create_crm_deal',
+            priority: 'medium',
+            status: 'pending_approval',
+            taskData: JSON.stringify(taskData),
+            aiReasoning: `New CRM deal for "${company}" submitted by ${ctx.user.name} for approval.`,
+            aiConfidence: '100.00',
           });
-          await createAuditLog(ctx.user.id, 'create', 'crm_deal', id, input.name);
-          return { id };
+          await db.createAiAgentLog({
+            taskId: task.id,
+            action: 'task_created',
+            status: 'info',
+            message: `CRM deal approval requested by ${ctx.user.name}`,
+            details: JSON.stringify(taskData),
+          });
+          await createAuditLog(ctx.user.id, 'create', 'crm_deal_request', task.id, company);
+          return { taskId: task.id, pendingApproval: true, company };
         }),
 
       update: protectedProcedure
         .input(z.object({
           id: z.number(),
-          name: z.string().optional(),
+          // Deal title is locked to the contact's company — not editable.
           description: z.string().optional(),
           stage: z.string().optional(),
           amount: z.string().optional(),
@@ -16437,24 +17046,25 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           notes: z.string().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          // Check for existing contact
-          const contacts = await db.getCrmContacts({ search: input.whatsappNumber, limit: 1 });
-          const existing = contacts[0];
+          // Check for existing contact by normalized phone/whatsapp.
+          const existing = await db.findCrmContactMatch({
+            whatsappNumber: input.whatsappNumber,
+            phone: input.whatsappNumber,
+          });
 
           if (existing) {
-            // Update WhatsApp number if needed
             if (!existing.whatsappNumber) {
               await db.updateCrmContact(existing.id, { whatsappNumber: input.whatsappNumber });
             }
             return { contactId: existing.id, isNew: false };
           }
 
-          // Create new contact
+          // Create new contact (findOrCreate for race-safety)
           const firstName = input.name?.split(" ")[0] || "WhatsApp";
           const lastName = input.name?.split(" ").slice(1).join(" ") || "Contact";
           const fullName = input.name || `WhatsApp ${input.whatsappNumber}`;
 
-          const contactId = await db.createCrmContact({
+          const { id: contactId } = await db.findOrCreateCrmContact({
             firstName,
             lastName,
             fullName,
@@ -16512,25 +17122,13 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             notes: input.notes,
           });
 
-          // If we have parsed data, create the contact
+          // If we have parsed data, upsert the contact (matches on email/phone/linkedin)
           if (input.parsedData) {
             const firstName = input.parsedData.firstName || input.parsedData.fullName?.split(" ")[0] || "Business";
             const lastName = input.parsedData.lastName || input.parsedData.fullName?.split(" ").slice(1).join(" ") || "Card";
             const fullName = input.parsedData.fullName || `${firstName} ${lastName}`.trim();
 
-            // Check for existing
-            let existing = null;
-            if (input.parsedData.email) {
-              existing = await db.getCrmContactByEmail(input.parsedData.email);
-            }
-
-            if (existing) {
-              await db.updateCrmContact(existing.id, input.parsedData);
-              await db.updateContactCapture(captureId, { contactId: existing.id, status: "merged" });
-              return { captureId, contactId: existing.id, isNew: false };
-            }
-
-            const contactId = await db.createCrmContact({
+            const { id: contactId, created } = await db.findOrCreateCrmContact({
               ...input.parsedData,
               firstName,
               lastName,
@@ -16539,8 +17137,11 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
               capturedBy: ctx.user.id,
             });
 
-            await db.updateContactCapture(captureId, { contactId, status: "contact_created" });
-            return { captureId, contactId, isNew: true };
+            await db.updateContactCapture(captureId, {
+              contactId,
+              status: created ? "contact_created" : "merged",
+            });
+            return { captureId, contactId, isNew: created };
           }
 
           return { captureId, contactId: null, isNew: false };
@@ -16569,23 +17170,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
 
           const fullName = input.contactData.fullName || `${input.contactData.firstName} ${input.contactData.lastName || ""}`.trim();
 
-          // Check for existing
-          let existing = null;
-          if (input.contactData.email) {
-            existing = await db.getCrmContactByEmail(input.contactData.email);
-          }
-
-          if (existing) {
-            await db.updateCrmContact(existing.id, input.contactData);
-            await db.updateContactCapture(input.captureId, {
-              contactId: existing.id,
-              status: "merged",
-              parsedData: JSON.stringify(input.contactData),
-            });
-            return { contactId: existing.id, isNew: false };
-          }
-
-          const contactId = await db.createCrmContact({
+          const { id: contactId, created } = await db.findOrCreateCrmContact({
             ...input.contactData,
             fullName,
             source: capture.captureMethod === "iphone_bump" ? "iphone_bump" :
@@ -16597,11 +17182,11 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
 
           await db.updateContactCapture(input.captureId, {
             contactId,
-            status: "contact_created",
+            status: created ? "contact_created" : "merged",
             parsedData: JSON.stringify(input.contactData),
           });
 
-          return { contactId, isNew: true };
+          return { contactId, isNew: created };
         }),
     }),
 
@@ -16688,13 +17273,84 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         status: z.enum(["planning", "active", "paused", "closed", "cancelled"]).default("planning"),
         notes: z.string().optional(),
       }))
-      .mutation(({ input }) => db.createFundraisingCampaign(input as any)),
+      .mutation(({ input, ctx }) => {
+        const cleaned: Record<string, any> = {
+          name: input.name,
+          roundType: input.roundType,
+          status: input.status,
+          createdBy: ctx.user.id,
+          companyId: (ctx.user as any).companyId ?? null,
+        };
+        if (input.description) cleaned.description = input.description;
+        if (input.targetAmount) cleaned.targetAmount = input.targetAmount;
+        if (input.minimumInvestment) cleaned.minimumInvestment = input.minimumInvestment;
+        if (input.valuation) cleaned.valuation = input.valuation;
+        if (input.equityOffered) cleaned.equityOffered = input.equityOffered;
+        if (input.notes) cleaned.notes = input.notes;
+        return db.createFundraisingCampaign(cleaned as any);
+      }),
+    updateCampaign: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().min(1),
+        description: z.string().optional(),
+        targetAmount: z.string().optional(),
+        minimumInvestment: z.string().optional(),
+        valuation: z.string().optional(),
+        roundType: z.enum(["pre_seed", "seed", "series_a", "series_b", "series_c", "bridge", "other"]).default("seed"),
+        equityOffered: z.string().optional(),
+        status: z.enum(["planning", "active", "paused", "closed", "cancelled"]).default("planning"),
+        notes: z.string().optional(),
+      }))
+      .mutation(({ input }) => {
+        const { id, ...values } = input;
+        const cleaned: Record<string, any> = {
+          name: values.name,
+          roundType: values.roundType,
+          status: values.status,
+        };
+        cleaned.description = values.description || null;
+        cleaned.targetAmount = values.targetAmount || null;
+        cleaned.minimumInvestment = values.minimumInvestment || null;
+        cleaned.valuation = values.valuation || null;
+        cleaned.equityOffered = values.equityOffered || null;
+        cleaned.notes = values.notes || null;
+        return db.updateFundraisingCampaign(id, cleaned);
+      }),
     listInvestments: protectedProcedure
       .input(z.object({ investorId: z.number().optional() }).optional())
       .query(({ input }) => db.getInvestorInvestments(input?.investorId)),
     listReminders: protectedProcedure
       .input(z.object({ status: z.string().optional(), dueBefore: z.date().optional() }).optional())
       .query(({ input }) => db.getFundraisingReminders(input ? { status: input.status } : undefined)),
+
+    // Admin view of pro-rata interest signaled by existing investors on
+    // an open round. Joined with the stakeholder name so IR can follow
+    // up offline. Counterpart to `investorPortal.indicateInterest`.
+    listProRataIndications: protectedProcedure
+      .input(z.object({ campaignId: z.number() }))
+      .query(async ({ input }) => {
+        const indications = await db.getProRataIndicationsForCampaign(input.campaignId);
+        const stakeholderById = new Map(
+          (await db.getStakeholders()).map((s: { id: number; name: string; email?: string | null }) => [s.id, s]),
+        );
+        return (indications as Array<{
+          id: number; stakeholderId: number; indicatedAmount: string | null;
+          notes: string | null; status: string; createdAt: Date;
+        }>).map((i) => {
+          const s = stakeholderById.get(i.stakeholderId);
+          return {
+            id: i.id,
+            stakeholderId: i.stakeholderId,
+            stakeholderName: s?.name ?? "Unknown",
+            stakeholderEmail: s?.email ?? null,
+            indicatedAmount: i.indicatedAmount,
+            notes: i.notes,
+            status: i.status,
+            createdAt: i.createdAt,
+          };
+        });
+      }),
   }),
   inventoryCosting: router({
     // Costing config per product
@@ -17413,36 +18069,56 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
     }),
     configure: protectedProcedure
       .input(z.object({
-        apiKey: z.string().min(1),
+        apiKey: z.string().min(1).optional(),
         autoCreateContacts: z.boolean().optional(),
         autoCreateTasks: z.boolean().optional(),
         autoCreateProjects: z.boolean().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        // Validate the API key
-        const isValid = await validateFirefliesApiKey(input.apiKey);
-        if (!isValid) {
-          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid Fireflies API key' });
+        const existingConfig = await db.getFirefliesConfig(ctx.user.id);
+        const apiKeyToStore = input.apiKey?.trim() || existingConfig?.apiKey;
+        if (!apiKeyToStore) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Please provide a Fireflies API key' });
         }
-        return db.upsertFirefliesConfig(ctx.user.id, input);
+
+        // Validate only when a new API key is provided
+        if (input.apiKey) {
+          const validation = await validateFirefliesApiKey(input.apiKey);
+          if (!validation.valid) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: validation.error || 'Invalid Fireflies API key' });
+          }
+        }
+        console.log(`[Fireflies] API key validated for user ${ctx.user.id}, saving config...`);
+        return db.upsertFirefliesConfig(ctx.user.id, {
+          apiKey: apiKeyToStore,
+          autoCreateContacts: input.autoCreateContacts,
+          autoCreateTasks: input.autoCreateTasks,
+          autoCreateProjects: input.autoCreateProjects,
+        });
       }),
     disconnect: protectedProcedure.mutation(async ({ ctx }) => {
       await db.deleteFirefliesConfig(ctx.user.id);
       return { success: true };
     }),
     syncMeetings: protectedProcedure
-      .input(z.object({}).optional())
-      .mutation(async ({ ctx }) => {
+      .input(z.object({ limit: z.number().min(1).max(500).optional() }).optional())
+      .mutation(async ({ ctx, input }) => {
       const config = await db.getFirefliesConfig(ctx.user.id);
       if (!config) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Fireflies not configured' });
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Fireflies not configured. Go to Settings → Fireflies to enter your API key.' });
       }
-      const transcripts = await listTranscripts(config.apiKey);
+      console.log(`[Fireflies Sync] Fetching transcripts for user ${ctx.user.id} with key ${config.apiKey.substring(0, 8)}...`);
+      const transcripts = await listAllTranscripts(config.apiKey, input?.limit ?? 100);
+      console.log(`[Fireflies Sync] Got ${transcripts.length} transcripts from API`);
       let synced = 0;
       let skipped = 0;
-      let dealsCreated = 0;
+      let dealApprovalsQueued = 0;
       let contactsCreated = 0;
-      let actionItemNotifications = 0;
+      let tasksSuggested = 0;
+
+      // Fetch internal emails once so we never create CRM contacts for team members
+      const internalEmails = await db.getInternalEmailSet();
+
       for (const t of transcripts) {
         const existing = await db.getFirefliesMeetingByFirefliesId(t.id);
         if (existing) {
@@ -17451,17 +18127,19 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         }
         const fullTranscript = await getTranscript(config.apiKey, t.id);
         const participants = fullTranscript ? extractParticipants(fullTranscript) : [];
-        await db.createFirefliesMeeting({
+        const createdMeeting = await db.createFirefliesMeeting({
           firefliesId: t.id,
-          title: t.title,
+          title: t.title || 'Untitled Meeting',
           date: t.date ? new Date(t.date) : new Date(),
           duration: t.duration,
+          organizerEmail: fullTranscript?.organizer_email || t.organizer_email || null,
           participants: JSON.stringify(participants),
-          transcript: fullTranscript?.transcript_url || null,
+          transcriptUrl: fullTranscript?.transcript_url || null,
           summary: fullTranscript?.summary ? JSON.stringify(fullTranscript.summary) : null,
-          actionItemsRaw: fullTranscript ? JSON.stringify(parseActionItems(fullTranscript?.summary?.action_items || [])) : null,
-          status: 'pending',
+          actionItems: fullTranscript ? JSON.stringify(parseActionItems(fullTranscript?.summary?.action_items || [])) : null,
+          processingStatus: 'pending',
         });
+        const newMeetingDbId = Number(createdMeeting.id);
         synced++;
 
         // Auto-create CRM deals from meeting notes
@@ -17488,34 +18166,48 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             }
 
             for (const participant of participants) {
-              if (participant.email) {
+              if (participant.email && !internalEmails.has(participant.email.toLowerCase())) {
                 try {
-                  let contact = await db.getCrmContactByEmail(participant.email);
-                  if (!contact) {
-                    // Create new CRM contact from meeting participant
-                    const contactId = await db.createCrmContact({
-                      firstName: (participant.name || participant.email.split("@")[0]).split(" ")[0] || "",
-                      fullName: participant.name || participant.email.split("@")[0],
-                      email: participant.email,
-                      source: "meeting" as any,
-                    });
-                    contact = await db.getCrmContactById(contactId);
-                    contactsCreated++;
-                  }
+                  const { id: contactFoundId, created } = await db.findOrCreateCrmContact({
+                    firstName: (participant.name || participant.email.split("@")[0]).split(" ")[0] || "",
+                    fullName: participant.name || participant.email.split("@")[0],
+                    email: participant.email,
+                    source: "fireflies" as any,
+                  });
+                  if (created) contactsCreated++;
+                  const contact = await db.getCrmContactById(contactFoundId);
 
                   if (contact) {
-                    // Create CRM deal from meeting
-                    await db.createCrmDeal({
-                      pipelineId,
-                      contactId: contact.id,
-                      name: `Deal from: ${fullTranscript?.title || t.title || "Meeting"}`,
-                      stage: "discovery",
-                      source: "meeting",
-                      notes: `Auto-created from Fireflies meeting. Key topics: ${overview.substring(0, 200)}`,
-                    });
-                    dealsCreated++;
+                    if (created) {
+                      // Auto-deals from meetings also flow through the approval queue.
+                      // Deal title must be the contact's company; skip if missing or duplicate.
+                      const company = (contact.organization || "").trim();
+                      const dupe = company
+                        ? (await db.findCrmDealByCompany(company)) || (await db.hasPendingDealApprovalForCompany(company))
+                        : true;
+                      if (company && !dupe) {
+                        const taskData = {
+                          pipelineId,
+                          contactId: contact.id,
+                          company,
+                          stage: "discovery",
+                          source: "meeting",
+                          notes: `Auto-created from Fireflies meeting. Key topics: ${overview.substring(0, 200)}`,
+                        };
+                        await db.createAiAgentTask({
+                          taskType: 'create_crm_deal',
+                          priority: 'medium',
+                          status: 'pending_approval',
+                          taskData: JSON.stringify(taskData),
+                          aiReasoning: `Deal signals detected in Fireflies meeting "${fullTranscript?.title || t.title || 'Meeting'}" with ${contact.fullName} at ${company}.`,
+                          aiConfidence: '80.00',
+                        });
+                        dealApprovalsQueued++;
+                      }
+                    }
 
-                    // Log meeting as CRM interaction
+                    // Always log meeting as CRM interaction regardless of whether
+                    // the contact already existed.
                     await db.createCrmInteraction({
                       contactId: contact.id,
                       channel: "meeting",
@@ -17529,23 +18221,27 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             }
           }
 
-          // Auto-create notifications from action items
-          for (const item of actionItems) {
-            try {
-              await db.createNotification({
-                userId: ctx.user.id,
-                type: "reminder",
-                title: `Meeting Action Item: ${typeof item === "string" ? item.substring(0, 100) : String(item).substring(0, 100)}`,
-                message: `From meeting: ${fullTranscript?.title || t.title || "Unknown"}`,
-              });
-              actionItemNotifications++;
-            } catch { /* skip failed notification */ }
+          const suggested = await queueFirefliesActionItemsForApproval({
+            userId: ctx.user.id,
+            meetingId: newMeetingDbId,
+            meetingTitle: fullTranscript?.title || t.title || "Unknown meeting",
+            firefliesId: t.id,
+            actionItems: parseActionItems(actionItems),
+            participants,
+          });
+          tasksSuggested += suggested;
+          if (suggested > 0) {
+            await db.updateFirefliesMeeting(newMeetingDbId, {
+              processingStatus: "tasks_created",
+              processedAt: new Date(),
+              autoCreatedTaskCount: suggested,
+            });
           }
         } catch (e) {
           console.warn("[CRM Auto-Deal] Failed to create deal from meeting:", e);
         }
       }
-      return { synced, skipped, dealsCreated, contactsCreated, actionItemNotifications };
+      return { synced, skipped, dealApprovalsQueued, contactsCreated, tasksSuggested };
     }),
     processMeeting: protectedProcedure
       .input(z.object({
@@ -17554,6 +18250,8 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         createTasks: z.boolean().optional(),
         createProject: z.boolean().optional(),
         projectName: z.string().optional(),
+        projectId: z.number().optional(),
+        assigneeId: z.number().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const meeting = await db.getFirefliesMeetingById(input.meetingId);
@@ -17565,18 +18263,22 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         let projectId: number | undefined;
 
         // Create contacts from participants
-        if (input.createContacts && Array.isArray(meeting.participants)) {
-          for (const p of meeting.participants as Array<{ name: string; email: string }>) {
-            if (p.email) {
+        const parsedParticipants: Array<{ name: string; email: string }> =
+          typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
+          Array.isArray(meeting.participants) ? meeting.participants : [];
+        if (input.createContacts && parsedParticipants.length > 0) {
+          const internalEmails = await db.getInternalEmailSet();
+          for (const p of parsedParticipants) {
+            if (p.email && !internalEmails.has(p.email.toLowerCase())) {
               try {
-                await db.createCrmContact({
+                const { created } = await db.findOrCreateCrmContact({
                   firstName: (p.name || p.email.split('@')[0]).split(' ')[0] || '',
                   fullName: p.name || p.email.split('@')[0],
                   email: p.email,
                   source: 'manual' as const,
                 } as any);
-                contactsCreated++;
-              } catch { /* duplicate, skip */ }
+                if (created) contactsCreated++;
+              } catch { /* skip on error */ }
             }
           }
         }
@@ -17591,62 +18293,117 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           } as any);
           projectId = project.id;
         }
-
-        // Create tasks from action items
-        if (input.createTasks && Array.isArray(meeting.actionItemsRaw)) {
-          for (const item of (meeting.actionItemsRaw ? JSON.parse(meeting.actionItemsRaw) : []) as Array<{ text: string }>) {
-            if (projectId) {
-              await db.createProjectTask({
-                projectId,
-                name: item.text,
-                status: 'todo',
-              } as any);
-              tasksCreated++;
-            }
-          }
+        if (!projectId && input.projectId) {
+          projectId = input.projectId;
         }
 
-        const status = contactsCreated > 0 && tasksCreated > 0 ? 'fully_processed'
+        // Queue tasks from action items for approval
+        if (input.createTasks && meeting.actionItems) {
+          const parsedParticipants: Array<{ name: string; email: string }> =
+            typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
+            Array.isArray(meeting.participants) ? meeting.participants : [];
+          tasksCreated += await queueFirefliesActionItemsForApproval({
+            userId: ctx.user.id,
+            meetingId: meeting.id,
+            meetingTitle: meeting.title || 'Untitled meeting',
+            actionItems: (meeting.actionItems ? JSON.parse(meeting.actionItems) : []) as Array<{ text: string; assignee?: string; dueDate?: string }>,
+            participants: parsedParticipants,
+            preferredProjectId: projectId,
+            preferredAssigneeId: input.assigneeId,
+          });
+        }
+
+        const status: 'fully_processed' | 'contacts_created' | 'tasks_created' | 'pending' =
+          contactsCreated > 0 && tasksCreated > 0 ? 'fully_processed'
           : contactsCreated > 0 ? 'contacts_created'
           : tasksCreated > 0 ? 'tasks_created'
           : 'pending';
 
         await db.updateFirefliesMeeting(input.meetingId, {
-          aiSummary: JSON.stringify({ status, contactsCreated, tasksCreated, projectId }),
-        } as any);
+          processingStatus: status,
+          processedAt: new Date(),
+          processedBy: ctx.user.id,
+          processingNotes: JSON.stringify({ contactsCreated, tasksCreated, projectId }),
+          autoCreatedContactCount: contactsCreated,
+          autoCreatedTaskCount: tasksCreated,
+          autoCreatedProjectId: projectId,
+        });
 
         return { contactsCreated, tasksCreated, projectId };
       }),
+    taskRoutingOptions: protectedProcedure.query(async () => {
+      const projects = await db.getProjects();
+      const teamMembers = await db.getTeamMembers();
+      return {
+        projects: (projects || []).map((p: any) => ({ id: p.id, name: p.name })),
+        assignees: (teamMembers || []).map((u: any) => ({ id: u.id, name: u.name, email: u.email })),
+      };
+    }),
     processAllPending: protectedProcedure
       .input(z.object({
         createContacts: z.boolean().optional(),
         createTasks: z.boolean().optional(),
         createProjects: z.boolean().optional(),
       }).optional())
-      .mutation(async ({ ctx }) => {
+      .mutation(async ({ input, ctx }) => {
       const meetings = await db.getFirefliesMeetings({ status: 'pending' });
       let processed = 0;
       let contactsCreated = 0;
       let tasksCreated = 0;
       let projectsCreated = 0;
+      const doContacts = input?.createContacts !== false;
+      const doTasks = input?.createTasks === true;
+      const doProjects = input?.createProjects === true;
+
+      // Collect internal user emails once so we never create CRM contacts for them
+      const internalEmails = doContacts ? await db.getInternalEmailSet() : new Set<string>();
+
       for (const meeting of meetings) {
-        // Auto-create contacts from participants
-        if (Array.isArray(meeting.participants)) {
-          for (const p of meeting.participants as Array<{ name: string; email: string }>) {
-            if (p.email) {
+        if (doContacts) {
+          // Auto-create contacts from participants
+          const parsedParticipants: Array<{ name: string; email: string }> =
+            typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
+            Array.isArray(meeting.participants) ? meeting.participants : [];
+          for (const p of parsedParticipants) {
+            if (p.email && !internalEmails.has(p.email.toLowerCase())) {
               try {
-                await db.createCrmContact({
+                const { created } = await db.findOrCreateCrmContact({
                   firstName: (p.name || p.email.split('@')[0]).split(' ')[0] || '',
                   fullName: p.name || p.email.split('@')[0],
                   email: p.email,
                   source: 'manual' as const,
                 } as any);
-                contactsCreated++;
-              } catch { /* duplicate */ }
+                if (created) contactsCreated++;
+              } catch { /* skip on error */ }
             }
           }
         }
-        await db.updateFirefliesMeeting(meeting.id, { aiSummary: 'fully_processed' } as any);
+        if (doTasks && meeting.actionItems) {
+          const items = (meeting.actionItems ? JSON.parse(meeting.actionItems) : []) as Array<{ text: string }>;
+          let projectId: number | undefined;
+          if (doProjects) {
+            const project = await db.createProject({
+              projectNumber: `FF-${Date.now()}`,
+              name: meeting.title || 'Untitled Meeting Project',
+              status: 'planning',
+              createdBy: ctx.user.id,
+            } as any);
+            projectId = project.id;
+            projectsCreated++;
+          }
+          const parsedParticipants: Array<{ name: string; email: string }> =
+            typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
+            Array.isArray(meeting.participants) ? meeting.participants : [];
+          tasksCreated += await queueFirefliesActionItemsForApproval({
+            userId: ctx.user.id,
+            meetingId: meeting.id,
+            meetingTitle: meeting.title || 'Untitled meeting',
+            actionItems: items as Array<{ text: string; assignee?: string; dueDate?: string }>,
+            participants: parsedParticipants,
+            preferredProjectId: projectId,
+          });
+        }
+        await db.updateFirefliesMeeting(meeting.id, { processingStatus: 'fully_processed' });
         processed++;
       }
       return { processed, contactsCreated, tasksCreated, projectsCreated };
@@ -17655,6 +18412,26 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
       list: protectedProcedure
         .input(z.object({ status: z.string().optional() }).optional())
         .query(({ input }) => db.getFirefliesMeetings(input || undefined)),
+      get: protectedProcedure
+        .input(
+          z
+            .object({
+              id: z.number().optional(),
+              firefliesId: z.string().optional(),
+            })
+            .refine((i) => i.id != null || (i.firefliesId != null && i.firefliesId.length > 0), {
+              message: "Provide id or firefliesId",
+            }),
+        )
+        .query(async ({ input }) => {
+          if (input.id != null) {
+            return db.getFirefliesMeetingById(input.id);
+          }
+          if (input.firefliesId) {
+            return db.getFirefliesMeetingByFirefliesId(input.firefliesId);
+          }
+          return null;
+        }),
       getStats: protectedProcedure.query(async () => {
         const stats = await db.getFirefliesMeetingStats();
         return { ...stats, contactsCreated: 0, tasksCreated: 0 };
@@ -18660,7 +19437,12 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           type: z.enum(["founder", "employee", "investor", "advisor", "board_member", "contractor"]).optional(),
           title: z.string().optional(),
           relationship: z.string().optional(),
+          // Investor-portal entitlement tier — admin-only setting that drives
+          // which gated portal sections become visible.
+          tier: z.enum(["ordinary", "major", "board"]).optional(),
           address: z.string().optional(),
+          mailingAddress: z.string().optional(),
+          paymentPreference: z.string().optional(),
           taxId: z.string().optional(),
           accreditedInvestor: z.boolean().optional(),
           notes: z.string().optional(),
@@ -18696,6 +19478,67 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           await createAuditLog(ctx.user.id, 'delete', 'stakeholder', 0, `Deleted ${placeholders.length} placeholder stakeholders`);
           return { deleted: placeholders.length };
         }),
+
+      // Admin-side per-stakeholder document locker. Mirrors the
+      // investor-facing `investorPortal.documents.*` endpoints but lets
+      // an admin manage docs for any stakeholder. Files come up the wire
+      // as base64 — fine for typical investor docs (PDFs <10MB), and
+      // saves a presigned-URL round trip. We cap upload size at 25MB.
+      documents: router({
+        list: adminProcedure
+          .input(z.object({ stakeholderId: z.number() }))
+          .query(({ input }) => db.getStakeholderDocuments(input.stakeholderId)),
+        upload: adminProcedure
+          .input(z.object({
+            stakeholderId: z.number(),
+            title: z.string().min(1).max(256),
+            description: z.string().max(2000).optional(),
+            category: z.enum(["agreement", "side_letter", "k1", "capital_call", "distribution", "other"]).default("other"),
+            fileName: z.string().min(1).max(256),
+            mimeType: z.string().max(128),
+            // base64-encoded file body. 25MB raw → ~33MB base64; reject anything bigger.
+            base64: z.string().max(35_000_000),
+          }))
+          .mutation(async ({ input, ctx }) => {
+            const stakeholder = await db.getStakeholderById(input.stakeholderId);
+            if (!stakeholder) {
+              throw new TRPCError({ code: "NOT_FOUND", message: "Stakeholder not found" });
+            }
+            const buffer = Buffer.from(input.base64, "base64");
+            if (buffer.length > 25 * 1024 * 1024) {
+              throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: "File exceeds 25MB upload limit" });
+            }
+            // Slug the filename so storage keys stay tame; timestamp prefix
+            // prevents collisions across re-uploads of the same name.
+            const safeName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 200);
+            const key = `investor-docs/${stakeholder.id}/${Date.now()}-${safeName}`;
+            const { storagePut } = await import("./storage");
+            const { url } = await storagePut(key, buffer, input.mimeType);
+            const ext = input.fileName.split(".").pop()?.toLowerCase() ?? null;
+            const result = await db.createStakeholderDocument({
+              companyId: stakeholder.companyId ?? undefined,
+              stakeholderId: stakeholder.id,
+              title: input.title,
+              description: input.description,
+              category: input.category,
+              fileType: ext,
+              mimeType: input.mimeType,
+              fileSize: buffer.length,
+              storageKey: key,
+              storageUrl: url,
+              uploadedBy: ctx.user.id,
+            });
+            await createAuditLog(ctx.user.id, "create", "stakeholder_document", result.id, input.title);
+            return { id: result.id };
+          }),
+        delete: adminProcedure
+          .input(z.object({ id: z.number() }))
+          .mutation(async ({ input, ctx }) => {
+            await db.deleteStakeholderDocument(input.id);
+            await createAuditLog(ctx.user.id, "delete", "stakeholder_document", input.id);
+            return { success: true };
+          }),
+      }),
     }),
 
     grants: router({
@@ -18906,7 +19749,9 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         const transactions = await db.getEquityTransactions();
         const valuations = await db.getValuations409a();
 
-        const totalSharesNum = grants.reduce((acc, g) => acc + parseFloat(g.shares || "0"), 0);
+        // Exclude terminated/cancelled grants from share counts
+        const activeGrants = grants.filter(g => g.status !== "cancelled" && g.status !== "expired");
+        const totalSharesNum = activeGrants.reduce((acc, g) => acc + parseFloat(g.shares || "0"), 0);
         const generatedAt = new Date().toISOString();
         let headers: string[] = [];
         let rows: any[][] = [];
@@ -18930,7 +19775,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             if (input.reportType === "raw_captable") {
               headers = ["Share Class", "Type", "Seniority", "Authorized", "Issued", "Outstanding (Vested)", "Available", "% of Total", "Par Value", "Price/Share", "Liq. Pref.", "Voting"];
               rows = shareClasses.map(sc => {
-                const classGrants = grants.filter(g => g.shareClassId === sc.id);
+                const classGrants = activeGrants.filter(g => g.shareClassId === sc.id);
                 const issued = classGrants.reduce((a, g) => a + parseFloat(g.shares || "0"), 0);
                 const vested = classGrants.reduce((a, g) => a + parseFloat(g.sharesVested || "0"), 0);
                 const authorized = parseFloat(sc.authorizedShares || "0");
@@ -18943,25 +19788,47 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
                 ];
               });
             } else {
-              headers = ["Share Class", "Type", "Authorized", "Issued", "Outstanding (Vested)", "Available", "% of Total"];
-              rows = shareClasses.map(sc => {
-                const classGrants = grants.filter(g => g.shareClassId === sc.id);
-                const issued = classGrants.reduce((a, g) => a + parseFloat(g.shares || "0"), 0);
-                const vested = classGrants.reduce((a, g) => a + parseFloat(g.sharesVested || "0"), 0);
+              // Detailed cap table: share class summary + per-stakeholder breakdown
+              headers = ["Stakeholder / Class", "Type", "Grant Type", "Shares", "Vested", "Unvested", "Exercise Price", "Status", "% Ownership"];
+
+              for (const sc of shareClasses) {
+                const classGrants = activeGrants.filter(g => g.shareClassId === sc.id);
+                const classIssued = classGrants.reduce((a, g) => a + parseFloat(g.shares || "0"), 0);
+                const classVested = classGrants.reduce((a, g) => a + parseFloat(g.sharesVested || "0"), 0);
                 const authorized = parseFloat(sc.authorizedShares || "0");
-                const available = Math.max(0, authorized - issued);
-                const pct = totalSharesNum > 0 ? (issued / totalSharesNum) * 100 : 0;
-                return [sc.name, sc.type, fmtNum(authorized), fmtNum(issued), fmtNum(vested), fmtNum(available), fmtPct(pct)];
-              });
+                const classPct = totalSharesNum > 0 ? (classIssued / totalSharesNum) * 100 : 0;
+                // Section header for share class
+                rows.push([`── ${sc.name} ──`, sc.type, "", fmtNum(authorized) + " auth", fmtNum(classIssued) + " issued", fmtNum(classVested) + " vested", sc.pricePerShare || "-", "", fmtPct(classPct)]);
+
+                // Per-stakeholder rows within this class
+                for (const g of classGrants) {
+                  const sh = stakeholderMap.get(g.stakeholderId!);
+                  const shares = parseFloat(g.shares || "0");
+                  const vested = parseFloat(g.sharesVested || "0");
+                  const unvested = Math.max(0, shares - vested);
+                  const pct = totalSharesNum > 0 ? (shares / totalSharesNum) * 100 : 0;
+                  rows.push([
+                    sh?.name || `#${g.stakeholderId}`,
+                    sh?.type || "-",
+                    g.grantType || "-",
+                    fmtNum(shares),
+                    fmtNum(vested),
+                    fmtNum(unvested),
+                    g.exercisePrice || g.pricePerShare || "-",
+                    g.status || "-",
+                    fmtPct(pct),
+                  ]);
+                }
+              }
             }
             // Add totals row
             const totalAuthorized = shareClasses.reduce((a, sc) => a + parseFloat(sc.authorizedShares || "0"), 0);
             const totalIssued = totalSharesNum;
-            const totalVested = grants.reduce((a, g) => a + parseFloat(g.sharesVested || "0"), 0);
+            const totalVested = activeGrants.reduce((a, g) => a + parseFloat(g.sharesVested || "0"), 0);
             if (input.reportType === "raw_captable") {
               rows.push(["TOTAL", "", "", fmtNum(totalAuthorized), fmtNum(totalIssued), fmtNum(totalVested), fmtNum(Math.max(0, totalAuthorized - totalIssued)), "100.00%", "", "", "", ""]);
             } else {
-              rows.push(["TOTAL", "", fmtNum(totalAuthorized), fmtNum(totalIssued), fmtNum(totalVested), fmtNum(Math.max(0, totalAuthorized - totalIssued)), "100.00%"]);
+              rows.push(["TOTAL", "", "", fmtNum(totalIssued), fmtNum(totalVested), fmtNum(totalIssued - totalVested), "", "", "100.00%"]);
             }
             break;
           }
@@ -18970,7 +19837,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             title = "Stakeholders";
             headers = ["Name", "Email", "Type", "Title", "Relationship", "Accredited", "Total Shares", "% Ownership"];
             rows = allStakeholders.map(s => {
-              const sGrants = grants.filter(g => g.stakeholderId === s.id);
+              const sGrants = activeGrants.filter(g => g.stakeholderId === s.id);
               const totalShares = sGrants.reduce((a, g) => a + parseFloat(g.shares || "0"), 0);
               const pct = totalSharesNum > 0 ? (totalShares / totalSharesNum) * 100 : 0;
               return [s.name, s.email || "-", s.type, s.title || "-", s.relationship || "-", s.accreditedInvestor ? "Yes" : "No", fmtNum(totalShares), fmtPct(pct)];
@@ -20006,6 +20873,552 @@ Return JSON array only. No markdown.`;
     }),
   }),
 
+  // ============================================
+  // INVESTOR PORTAL (logged-in existing-investor view)
+  // ============================================
+  //
+  // Three procedures are gated to users with role='investor' (or admin/exec
+  // for support/testing). A fourth, `inviteToPortal`, is admin-only and
+  // drives the invite flow that turns a cap-table stakeholder into a user.
+  investorPortal: router({
+    // The logged-in investor's own cap-table position. Returns their
+    // stakeholder row, every grant, and the total-shares figure used to
+    // derive ownership % — but never data about other stakeholders.
+    me: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
+      }
+      const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+      if (!stakeholder) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "No cap-table record is linked to your account. Ask the admin to link your stakeholder row.",
+        });
+      }
+      const grants = await db.getEquityGrantsByStakeholder(stakeholder.id);
+      const allGrants = await db.getEquityGrants(stakeholder.companyId ?? undefined);
+      const shareClasses = await db.getShareClasses(stakeholder.companyId ?? undefined);
+
+      const totalShares = allGrants.reduce(
+        (s: number, g: { shares?: string | number | null }) =>
+          s + parseFloat(String(g.shares ?? "0")),
+        0,
+      );
+      const mySharesOutstanding = grants.reduce(
+        (s, g: { shares?: string | number | null }) =>
+          s + parseFloat(String(g.shares ?? "0")),
+        0,
+      );
+      const ownershipPct = totalShares > 0 ? (mySharesOutstanding / totalShares) * 100 : 0;
+
+      // Decorate each grant with its share-class name so the UI doesn't
+      // have to make another call to resolve `shareClassId`.
+      const classById = new Map(shareClasses.map((c: { id: number }) => [c.id, c]));
+      const decoratedGrants = grants.map((g: { shareClassId: number } & Record<string, unknown>) => ({
+        ...g,
+        shareClass: classById.get(g.shareClassId) ?? null,
+      }));
+
+      return {
+        stakeholder: {
+          id: stakeholder.id,
+          name: stakeholder.name,
+          email: stakeholder.email,
+          type: stakeholder.type,
+          title: stakeholder.title,
+          relationship: stakeholder.relationship,
+          // Surfaced so the client can hide tier-gated sections (board
+          // materials, top-holder list) without a wasted FORBIDDEN call.
+          tier: stakeholder.tier,
+          accreditedInvestor: stakeholder.accreditedInvestor,
+        },
+        grants: decoratedGrants,
+        ownershipPct,
+        sharesOutstanding: mySharesOutstanding,
+        totalSharesOutstanding: totalShares,
+      };
+    }),
+
+    // Wider financials snapshot than the prospect-facing /dr/:code page.
+    financials: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
+      }
+      // Gate on stakeholder linkage too — admins hitting this for support
+      // are fine, but an investor-role user without a cap-table link is a
+      // broken onboarding state and should surface the same message as `me`.
+      // Also picks up the stakeholder's companyId so the snapshot is
+      // scoped rather than aggregated across all companies in the DB.
+      const stakeholder = ctx.user.role === "investor"
+        ? await db.getStakeholderByUserId(ctx.user.id)
+        : undefined;
+      if (ctx.user.role === "investor" && !stakeholder) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+      }
+      const { computeInvestorPortalFinancials } = await import("./investorPortalFinancials");
+      return computeInvestorPortalFinancials({
+        companyId: stakeholder?.companyId ?? undefined,
+      });
+    }),
+
+    // Investor updates the admin has published. We only show `status='sent'`
+    // so drafts and in-review pieces don't leak.
+    updates: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
+      }
+      const updates = await db.getInvestorUpdates({ status: "sent" });
+      return updates.map((u: Record<string, unknown>) => ({
+        id: u.id,
+        title: u.title,
+        period: u.period,
+        type: u.type,
+        content: u.content,
+        highlights: u.highlights,
+        sentAt: u.sentAt,
+      }));
+    }),
+
+    // Admin-only: provision an investor user by inviting a stakeholder to
+    // the portal. Creates a `team_invites` row with role=investor and a
+    // link back to the stakeholder; when the invite is accepted,
+    // localAuth attaches the new user to that cap-table row.
+    inviteToPortal: adminProcedure
+      .input(z.object({ stakeholderId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const stakeholder = await db.getStakeholderById(input.stakeholderId);
+        if (!stakeholder) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Stakeholder not found" });
+        }
+        if (!stakeholder.email) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Stakeholder has no email on file — add one before inviting.",
+          });
+        }
+        if (stakeholder.userId) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "Stakeholder is already linked to a user account.",
+          });
+        }
+
+        const crypto = await import("crypto");
+        const token = crypto.randomBytes(32).toString("hex");
+        const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+
+        await db.createTeamInvite({
+          email: stakeholder.email.toLowerCase(),
+          name: stakeholder.name,
+          role: "investor",
+          invitedBy: ctx.user.id,
+          token,
+          expiresAt,
+          linkedStakeholderId: stakeholder.id,
+        });
+
+        const inviteUrl = `${ENV.publicAppUrl}/login?invite=${token}`;
+        // Names come from admin-editable fields, so they can contain '<' / '&'
+        // that would either break the email HTML or smuggle markup into the
+        // investor's inbox. Escape before interpolation.
+        const escapeHtml = (s: string) => s
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+        const safeStakeholder = escapeHtml(stakeholder.name || "");
+        const safeInviter = escapeHtml(ctx.user.name || "The team");
+
+        let emailResult: { success: boolean; error?: unknown };
+        try {
+          emailResult = await sendEmail({
+            to: stakeholder.email,
+            subject: "You have access to your investor portal",
+            html: `
+              <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+                <h2>Welcome to your investor portal</h2>
+                <p>Hi ${safeStakeholder},</p>
+                <p>${safeInviter} has invited you to log in to your investor portal, where you can review your equity position and the company's current financials whenever you'd like.</p>
+                <a href="${inviteUrl}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; margin: 16px 0;">
+                  Activate your portal
+                </a>
+                <p style="color: #888; font-size: 12px;">This invitation expires in 14 days. If the button doesn't work, copy this link: ${inviteUrl}</p>
+              </div>
+            `,
+          });
+        } catch (e) {
+          console.warn("[Investor Portal] sendEmail threw:", e);
+          emailResult = { success: false, error: e };
+        }
+
+        // `sendEmail` returns `{ success: false, error }` when SendGrid or its
+        // env is missing — it does NOT throw. Surface that to the admin so
+        // they know to reconfigure or resend. The invite row still exists
+        // and remains valid, so the admin can hit "Invite" again after
+        // fixing the email setup.
+        if (!emailResult.success) {
+          console.warn("[Investor Portal] invite created but email not sent:", emailResult.error);
+        }
+        return { success: true, emailSent: emailResult.success };
+      }),
+
+    // ─── Active rounds + pro-rata signaling ─────────────────────────
+    //
+    // Surfaces fundraisingCampaigns with status='active' so existing
+    // investors can see when a round is open and signal pro-rata
+    // interest. The signal is non-binding — IR follows up offline to
+    // collect subscription docs. We deliberately don't expose the
+    // campaign's existing investor list (other check sizes / commits)
+    // here; that's an IR/founder view, not an investor view.
+    activeRounds: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
+      }
+      const stakeholder = ctx.user.role === "investor"
+        ? await db.getStakeholderByUserId(ctx.user.id)
+        : undefined;
+      if (ctx.user.role === "investor" && !stakeholder) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+      }
+
+      const all = await db.getFundraisingCampaigns(stakeholder?.companyId ?? undefined);
+      type Campaign = {
+        id: number; name: string; description: string | null;
+        targetAmount: string | null; raisedAmount: string | null;
+        minimumInvestment: string | null; valuation: string | null;
+        roundType: string; equityOffered: string | null;
+        startDate: Date | null; targetCloseDate: Date | null;
+        status: string;
+      };
+      const open = (all as Campaign[]).filter((c) => c.status === "active");
+
+      // Decorate each open round with the caller's existing pro-rata
+      // signal (if any) so the UI can show "you indicated $X" instead
+      // of a generic CTA. Admins viewing for support get null here.
+      const decorated = await Promise.all(
+        open.map(async (c) => {
+          const myIndication = stakeholder
+            ? await db.getProRataIndication(c.id, stakeholder.id)
+            : undefined;
+          return {
+            id: c.id,
+            name: c.name,
+            description: c.description,
+            roundType: c.roundType,
+            targetAmount: c.targetAmount,
+            raisedAmount: c.raisedAmount,
+            minimumInvestment: c.minimumInvestment,
+            valuation: c.valuation,
+            equityOffered: c.equityOffered,
+            targetCloseDate: c.targetCloseDate,
+            myIndication: myIndication
+              ? {
+                  indicatedAmount: myIndication.indicatedAmount,
+                  notes: myIndication.notes,
+                  status: myIndication.status,
+                  createdAt: myIndication.createdAt,
+                }
+              : null,
+          };
+        }),
+      );
+      return decorated;
+    }),
+
+    indicateInterest: protectedProcedure
+      .input(z.object({
+        campaignId: z.number(),
+        // Decimal-as-string: stays out of float-rounding territory and
+        // matches how Drizzle's decimal column accepts values.
+        indicatedAmount: z.string()
+          .regex(/^\d+(\.\d{1,2})?$/, "Enter an amount like 50000 or 50000.00")
+          .optional(),
+        notes: z.string().max(2000).optional(),
+        // Investors can withdraw a prior indication; the IR team still
+        // sees the row historically so they know it was withdrawn.
+        withdraw: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        if (ctx.user.role !== "investor") {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Only investors can signal pro-rata interest." });
+        }
+        const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+        if (!stakeholder) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+        }
+        // Verify the campaign is real, active, and in the same company.
+        const all = await db.getFundraisingCampaigns(stakeholder.companyId ?? undefined);
+        const campaign = (all as Array<{ id: number; status: string }>).find((c) => c.id === input.campaignId);
+        if (!campaign) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Round not found" });
+        }
+        if (campaign.status !== "active") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "This round is no longer open." });
+        }
+        await db.upsertProRataIndication({
+          campaignId: input.campaignId,
+          stakeholderId: stakeholder.id,
+          indicatedAmount: input.indicatedAmount,
+          notes: input.notes,
+          status: input.withdraw ? "withdrawn" : "interested",
+        });
+        return { success: true };
+      }),
+
+    // ─── Board materials (board-tier only) ──────────────────────────
+    //
+    // Surfaces approved/signed board resolutions to investors with a
+    // board seat. Only `tier='board'` (or admin/exec for support) sees
+    // them — major investors without a seat get a clear FORBIDDEN, not
+    // an empty list, so they know the section exists but isn't theirs.
+    //
+    // Drafts and in-review resolutions are excluded so we don't leak
+    // pre-decisional material.
+    boardMaterials: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
+      }
+      const stakeholder = ctx.user.role === "investor"
+        ? await db.getStakeholderByUserId(ctx.user.id)
+        : undefined;
+
+      // Tier gate: investor must hold tier='board'. Admin/exec bypass.
+      const allowed = ctx.user.role === "admin"
+        || ctx.user.role === "exec"
+        || stakeholder?.tier === "board";
+      if (!allowed) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Board materials are only available to investors with a board seat.",
+        });
+      }
+
+      const resolutions = await db.getBoardResolutions({
+        companyId: stakeholder?.companyId ?? undefined,
+      });
+      // Whitelist statuses we're willing to show. `approved`/`signed`/
+      // `archived` are board-history; everything else is pre-decisional.
+      const visible = (resolutions as Array<{
+        id: number; title: string; type: string; description: string | null;
+        documentUrl: string | null; status: string | null;
+        approvedAt: Date | null; submittedAt: Date | null;
+      }>).filter((r) =>
+        r.status === "approved" || r.status === "signed" || r.status === "archived",
+      );
+      return visible.map((r) => ({
+        id: r.id,
+        title: r.title,
+        type: r.type,
+        description: r.description,
+        documentUrl: r.documentUrl,
+        status: r.status,
+        approvedAt: r.approvedAt,
+      }));
+    }),
+
+    // ─── Cap table summary (tier-aware) ─────────────────────────────
+    //
+    // Every authenticated investor sees aggregate share-class totals and
+    // the option-pool size. Major / board tiers additionally see a top-
+    // holders list (name + ownership %, never check size). Ordinary
+    // tier deliberately doesn't get other-investor names — that's the
+    // line-item leak we want to avoid.
+    capTableSummary: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
+      }
+      const stakeholder = ctx.user.role === "investor"
+        ? await db.getStakeholderByUserId(ctx.user.id)
+        : undefined;
+      if (ctx.user.role === "investor" && !stakeholder) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+      }
+
+      const companyId = stakeholder?.companyId ?? undefined;
+      const [grants, classes, allStakeholders] = await Promise.all([
+        db.getEquityGrants(companyId),
+        db.getShareClasses(companyId),
+        db.getStakeholders(companyId),
+      ]);
+
+      // Aggregate by share class. We only count grants that aren't fully
+      // cancelled / expired; partially-vested counts since the underlying
+      // shares still exist.
+      type Grant = { stakeholderId: number; shareClassId: number; shares: string | number | null; status?: string | null };
+      type ShareClass = { id: number; name: string; type: string; authorizedShares?: string | number | null };
+      type Stk = { id: number; name: string };
+
+      const live = (grants as Grant[]).filter(
+        (g) => g.status !== "cancelled" && g.status !== "expired",
+      );
+      const totalOutstanding = live.reduce(
+        (s, g) => s + parseFloat(String(g.shares ?? "0")),
+        0,
+      );
+
+      const classBreakdown = (classes as ShareClass[]).map((c) => {
+        const classGrants = live.filter((g) => g.shareClassId === c.id);
+        const sharesIssued = classGrants.reduce(
+          (s, g) => s + parseFloat(String(g.shares ?? "0")),
+          0,
+        );
+        const authorized = c.authorizedShares
+          ? parseFloat(String(c.authorizedShares))
+          : null;
+        return {
+          id: c.id,
+          name: c.name,
+          type: c.type,
+          sharesIssued,
+          authorized,
+          ownershipPct: totalOutstanding > 0 ? (sharesIssued / totalOutstanding) * 100 : 0,
+        };
+      });
+
+      // Option pool: the total of share classes with type="option_pool"
+      // (already in classBreakdown), so callers don't need to compute it.
+      const optionPool = classBreakdown.find((c) => c.type === "option_pool") ?? null;
+
+      // Top-holder list — only exposed to major / board tiers (or when
+      // the caller is an admin/exec doing support work). Aggregates each
+      // stakeholder's grants across all their share classes.
+      const tier = stakeholder?.tier ?? "ordinary";
+      const showTopHolders = tier === "major" || tier === "board"
+        || ctx.user.role === "admin" || ctx.user.role === "exec";
+
+      let topHolders: Array<{ name: string; sharesOutstanding: number; ownershipPct: number }> | null = null;
+      if (showTopHolders) {
+        const stakeholderById = new Map((allStakeholders as Stk[]).map((s) => [s.id, s]));
+        const bySh = new Map<number, number>();
+        for (const g of live) {
+          bySh.set(
+            g.stakeholderId,
+            (bySh.get(g.stakeholderId) ?? 0) + parseFloat(String(g.shares ?? "0")),
+          );
+        }
+        topHolders = Array.from(bySh.entries())
+          .map(([sid, shares]) => ({
+            name: stakeholderById.get(sid)?.name ?? "Unknown",
+            sharesOutstanding: shares,
+            ownershipPct: totalOutstanding > 0 ? (shares / totalOutstanding) * 100 : 0,
+          }))
+          .sort((a, b) => b.sharesOutstanding - a.sharesOutstanding)
+          .slice(0, 10);
+      }
+
+      return {
+        tier,
+        totalSharesOutstanding: totalOutstanding,
+        classBreakdown,
+        optionPool,
+        topHolders,
+      };
+    }),
+
+    // ─── My Documents (per-stakeholder document locker) ─────────────
+    //
+    // The investor sees only documents attached to their own stakeholder
+    // record. Admins can browse any stakeholder's locker via the
+    // `capTable.stakeholders.documents.*` admin endpoints.
+    documents: router({
+      list: protectedProcedure.query(async ({ ctx }) => {
+        const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+        if (!stakeholder) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+        }
+        const docs = await db.getStakeholderDocuments(stakeholder.id);
+        // Strip storageKey from the wire response — it's an internal
+        // bucket path the client has no business holding. Downloads go
+        // through `downloadUrl` which re-resolves it server-side.
+        return docs.map((d) => ({
+          id: d.id,
+          title: d.title,
+          description: d.description,
+          category: d.category,
+          fileType: d.fileType,
+          mimeType: d.mimeType,
+          fileSize: d.fileSize,
+          createdAt: d.createdAt,
+        }));
+      }),
+      // Returns a short-lived signed URL the browser can hit directly.
+      // We re-validate ownership on every call so a leaked id from one
+      // investor can't be replayed by another.
+      downloadUrl: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+          if (!stakeholder) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+          }
+          const doc = await db.getStakeholderDocumentById(input.id);
+          if (!doc || doc.stakeholderId !== stakeholder.id) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "Document not found" });
+          }
+          const { storageGet } = await import("./storage");
+          const { url } = await storageGet(doc.storageKey);
+          return { url, mimeType: doc.mimeType, title: doc.title };
+        }),
+    }),
+
+    // ─── Profile & Preferences (self-service) ───────────────────────
+    //
+    // The investor edits their own contact + payment + accreditation
+    // info. Email is editable but `userId` and `type` aren't — those
+    // are admin-controlled.
+    profile: router({
+      get: protectedProcedure.query(async ({ ctx }) => {
+        const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+        if (!stakeholder) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+        }
+        return {
+          name: stakeholder.name,
+          email: stakeholder.email,
+          address: stakeholder.address,
+          mailingAddress: stakeholder.mailingAddress,
+          paymentPreference: stakeholder.paymentPreference,
+          accreditedInvestor: stakeholder.accreditedInvestor,
+          accreditedReAttestedAt: stakeholder.accreditedReAttestedAt,
+        };
+      }),
+      update: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1).max(256).optional(),
+          email: z.string().email().optional(),
+          address: z.string().max(2000).optional(),
+          mailingAddress: z.string().max(2000).optional(),
+          paymentPreference: z.string().max(2000).optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+          if (!stakeholder) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+          }
+          await db.updateStakeholder(stakeholder.id, input);
+          return { success: true };
+        }),
+      // Re-attestation creates a timestamped self-certification that the
+      // investor still qualifies as accredited under the SEC's Reg D
+      // criteria. We don't re-validate the criteria here — that's a
+      // legal review the investor does themselves.
+      reAttestAccreditation: protectedProcedure
+        .input(z.object({ accredited: z.boolean() }))
+        .mutation(async ({ input, ctx }) => {
+          const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+          if (!stakeholder) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+          }
+          await db.updateStakeholder(stakeholder.id, {
+            accreditedInvestor: input.accredited,
+            accreditedReAttestedAt: new Date(),
+          });
+          return { success: true };
+        }),
+    }),
+  }),
+
   // Investor Updates
   investorUpdates: router({
     list: protectedProcedure
@@ -20038,6 +21451,7 @@ Return JSON array only. No markdown.`;
         asks: z.string().optional(),
         callsToAction: z.string().optional(),
         status: z.enum(["draft", "review", "sent"]).optional(),
+        sentAt: z.date().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
@@ -20249,6 +21663,751 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
         const { kpiGoals: kg } = await import("../drizzle/schema");
         const rows = await database.selectDistinct({ category: kg.category }).from(kg);
         return rows.map(r => r.category).filter(Boolean);
+      }),
+  }),
+
+  // ============================================
+  // LEGAL CASES
+  // ============================================
+  legalCases: router({
+    list: protectedProcedure
+      .input(z.object({
+        status: z.string().optional(),
+        type: z.string().optional(),
+        priority: z.string().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) return [];
+        const conditions: string[] = [];
+        const params: any[] = [];
+        if (input?.status) { conditions.push('status = ?'); params.push(input.status); }
+        if (input?.type) { conditions.push('type = ?'); params.push(input.type); }
+        if (input?.priority) { conditions.push('priority = ?'); params.push(input.priority); }
+        const where = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
+        const conn = (database as any)._.session?.client;
+        if (!conn) return [];
+        const [rows] = await conn.query('SELECT * FROM legal_cases' + where + ' ORDER BY createdAt DESC', params);
+        return rows as any[];
+      }),
+    create: legalProcedure
+      .input(z.object({
+        caseNumber: z.string().optional(),
+        title: z.string().min(1),
+        type: z.enum(['trademark','litigation','compliance','contract_dispute','ip','regulatory','employment','other']).default('other'),
+        status: z.enum(['open','pending','in_review','resolved','closed','dismissed']).default('open'),
+        priority: z.enum(['low','medium','high','critical']).default('medium'),
+        opposingParty: z.string().optional(),
+        attorney: z.string().optional(),
+        lawFirm: z.string().optional(),
+        filedDate: z.string().optional(),
+        nextHearingDate: z.string().optional(),
+        jurisdiction: z.string().optional(),
+        description: z.string().optional(),
+        notes: z.string().optional(),
+        assignedTo: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const conn = (database as any)._.session?.client;
+        if (!conn) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database connection not available' });
+        const [result] = await conn.query(
+          'INSERT INTO legal_cases (caseNumber, title, type, status, priority, opposingParty, attorney, lawFirm, filedDate, nextHearingDate, jurisdiction, description, notes, assignedTo, createdBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [input.caseNumber || null, input.title, input.type, input.status, input.priority, input.opposingParty || null, input.attorney || null, input.lawFirm || null, input.filedDate || null, input.nextHearingDate || null, input.jurisdiction || null, input.description || null, input.notes || null, input.assignedTo || null, ctx.user.id]
+        );
+        return { id: result.insertId, success: true };
+      }),
+    update: legalProcedure
+      .input(z.object({
+        id: z.number(),
+        caseNumber: z.string().optional(),
+        title: z.string().optional(),
+        type: z.enum(['trademark','litigation','compliance','contract_dispute','ip','regulatory','employment','other']).optional(),
+        status: z.enum(['open','pending','in_review','resolved','closed','dismissed']).optional(),
+        priority: z.enum(['low','medium','high','critical']).optional(),
+        opposingParty: z.string().optional(),
+        attorney: z.string().optional(),
+        lawFirm: z.string().optional(),
+        filedDate: z.string().optional(),
+        nextHearingDate: z.string().optional(),
+        jurisdiction: z.string().optional(),
+        description: z.string().optional(),
+        notes: z.string().optional(),
+        assignedTo: z.number().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const conn = (database as any)._.session?.client;
+        if (!conn) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database connection not available' });
+        const { id, ...fields } = input;
+        const sets = Object.entries(fields).filter(([, v]) => v !== undefined).map(([k]) => `${k} = ?`);
+        const vals = Object.entries(fields).filter(([, v]) => v !== undefined).map(([, v]) => v);
+        if (sets.length === 0) return { success: true };
+        await conn.query('UPDATE legal_cases SET ' + sets.join(', ') + ' WHERE id = ?', [...vals, id]);
+        return { success: true };
+      }),
+  }),
+
+  // ============================================
+  // FINANCIAL REPORTS
+  // ============================================
+  financialReports: router({
+    generate: financeProcedure
+      .input(z.object({
+        reportType: z.string(),
+        startDate: z.string().optional(),
+        endDate: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const safeQuery = async <T>(fn: () => Promise<T>, fallback: T): Promise<T> => {
+          try { return await fn(); } catch { return fallback; }
+        };
+
+        const now = new Date();
+        const startDate = input.startDate ? new Date(input.startDate) : new Date(now.getFullYear(), now.getMonth(), 1);
+        const endDate = input.endDate ? new Date(input.endDate) : now;
+
+        const [invoices, bills, accounts, orders, customers, vendors, inventory] = await Promise.all([
+          safeQuery(() => db.getInvoices(), []),
+          safeQuery(() => db.getBills(), []),
+          safeQuery(() => db.getAccounts(), []),
+          safeQuery(() => db.getOrders(), []),
+          safeQuery(() => db.getCustomers(), []),
+          safeQuery(() => db.getVendors(), []),
+          safeQuery(() => db.getInventory(), []),
+        ]);
+
+        const paidInvoices = (invoices as any[]).filter((i: any) => i.status === 'paid');
+        const totalRevenue = paidInvoices.reduce((s: number, i: any) => s + parseFloat(i.totalAmount || '0'), 0);
+        const totalExpenses = (bills as any[]).reduce((s: number, b: any) => s + parseFloat(b.totalAmount || '0'), 0);
+        const netIncome = totalRevenue - totalExpenses;
+
+        type ReportRow = {
+          label: string;
+          amount: number | string | null;
+          type: string;
+          pct?: string;
+          count?: number;
+          quantity?: number | null;
+          unitCost?: number | null;
+          revenue?: number;
+          expenses?: number;
+          cumulative?: number;
+        };
+
+        let title = 'Financial Report';
+        let headers: string[] = ['Item', 'Amount'];
+        let rows: ReportRow[] = [];
+        let summary = '';
+
+        switch (input.reportType) {
+          case 'profit_loss': {
+            title = 'Profit & Loss Statement';
+            headers = ['Item', 'Amount'];
+            rows = [
+              { label: 'Revenue', amount: totalRevenue, type: 'header' },
+              ...paidInvoices.slice(0, 10).map((i: any) => ({
+                label: `  Invoice #${i.invoiceNumber || i.id}`,
+                amount: parseFloat(i.totalAmount || '0'),
+                type: 'item',
+              })),
+              { label: 'Total Revenue', amount: totalRevenue, type: 'total' },
+              { label: 'Expenses', amount: null, type: 'header' },
+              ...(bills as any[]).slice(0, 10).map((b: any) => ({
+                label: `  Bill #${b.billNumber || b.id}`,
+                amount: parseFloat(b.totalAmount || '0'),
+                type: 'item',
+              })),
+              { label: 'Total Expenses', amount: totalExpenses, type: 'total' },
+              { label: 'Net Income', amount: netIncome, type: 'grand_total' },
+            ];
+            summary = `Net income: $${netIncome.toLocaleString()} on revenue of $${totalRevenue.toLocaleString()}`;
+            break;
+          }
+          case 'balance_sheet': {
+            title = 'Balance Sheet';
+            headers = ['Item', 'Amount'];
+            const assetAccounts = (accounts as any[]).filter((a: any) => a.type === 'asset');
+            const liabilityAccounts = (accounts as any[]).filter((a: any) => a.type === 'liability');
+            const equityAccounts = (accounts as any[]).filter((a: any) => a.type === 'equity');
+            const totalAssets = assetAccounts.reduce((s: number, a: any) => s + parseFloat(a.balance || '0'), 0);
+            const totalLiabilities = liabilityAccounts.reduce((s: number, a: any) => s + parseFloat(a.balance || '0'), 0);
+            const totalEquity = equityAccounts.reduce((s: number, a: any) => s + parseFloat(a.balance || '0'), 0);
+            rows = [
+              { label: 'Assets', amount: null, type: 'header' },
+              ...assetAccounts.map((a: any) => ({ label: `  ${a.name}`, amount: parseFloat(a.balance || '0'), type: 'item' })),
+              { label: 'Total Assets', amount: totalAssets, type: 'total' },
+              { label: 'Liabilities', amount: null, type: 'header' },
+              ...liabilityAccounts.map((a: any) => ({ label: `  ${a.name}`, amount: parseFloat(a.balance || '0'), type: 'item' })),
+              { label: 'Total Liabilities', amount: totalLiabilities, type: 'total' },
+              { label: 'Equity', amount: null, type: 'header' },
+              ...equityAccounts.map((a: any) => ({ label: `  ${a.name}`, amount: parseFloat(a.balance || '0'), type: 'item' })),
+              { label: 'Total Equity', amount: totalEquity, type: 'total' },
+              { label: "Total Liabilities & Equity", amount: totalLiabilities + totalEquity, type: 'grand_total' },
+            ];
+            summary = `Total assets: $${totalAssets.toLocaleString()}, liabilities: $${totalLiabilities.toLocaleString()}`;
+            break;
+          }
+          case 'accounts_receivable': {
+            title = 'Accounts Receivable Aging';
+            headers = ['Customer', 'Amount', 'Age (days)'];
+            const openInvoices = (invoices as any[]).filter((i: any) => ['sent', 'overdue', 'partial'].includes(i.status));
+            rows = openInvoices.map((i: any) => {
+              const daysOld = Math.floor((now.getTime() - new Date(i.createdAt || now).getTime()) / 86400000);
+              return { label: i.customerName || `Invoice #${i.invoiceNumber}`, amount: parseFloat(i.totalAmount || '0'), type: daysOld > 90 ? 'overdue' : 'item', count: daysOld };
+            });
+            summary = `${openInvoices.length} open invoices totalling $${openInvoices.reduce((s: number, i: any) => s + parseFloat(i.totalAmount || '0'), 0).toLocaleString()}`;
+            break;
+          }
+          case 'revenue_by_customer': {
+            title = 'Revenue by Customer';
+            headers = ['Customer', 'Revenue', '% of Total'];
+            const byCustomer: Record<string, number> = {};
+            for (const inv of paidInvoices) {
+              const name = inv.customerName || `Customer #${inv.customerId}`;
+              byCustomer[name] = (byCustomer[name] || 0) + parseFloat(inv.totalAmount || '0');
+            }
+            rows = Object.entries(byCustomer)
+              .sort(([, a], [, b]) => b - a)
+              .map(([name, amount]) => ({
+                label: name,
+                amount,
+                type: 'item',
+                pct: totalRevenue > 0 ? `${((amount / totalRevenue) * 100).toFixed(1)}%` : '0%',
+              }));
+            summary = `${Object.keys(byCustomer).length} customers, total revenue $${totalRevenue.toLocaleString()}`;
+            break;
+          }
+          case 'expense_by_vendor': {
+            title = 'Expenses by Vendor';
+            headers = ['Vendor', 'Amount', '% of Total'];
+            const byVendor: Record<string, number> = {};
+            for (const bill of bills as any[]) {
+              const name = bill.vendorName || `Vendor #${bill.vendorId}`;
+              byVendor[name] = (byVendor[name] || 0) + parseFloat(bill.totalAmount || '0');
+            }
+            rows = Object.entries(byVendor)
+              .sort(([, a], [, b]) => b - a)
+              .map(([name, amount]) => ({
+                label: name,
+                amount,
+                type: 'item',
+                pct: totalExpenses > 0 ? `${((amount / totalExpenses) * 100).toFixed(1)}%` : '0%',
+              }));
+            summary = `${Object.keys(byVendor).length} vendors, total spend $${totalExpenses.toLocaleString()}`;
+            break;
+          }
+          case 'tax_summary': {
+            title = 'Tax Summary';
+            headers = ['Item', 'Amount'];
+            const totalTax = paidInvoices.reduce((s: number, i: any) => s + parseFloat(i.taxAmount || '0'), 0);
+            rows = [
+              { label: 'Gross Revenue', amount: totalRevenue, type: 'item' },
+              { label: 'Total Tax Collected', amount: totalTax, type: 'item' },
+              { label: 'Net Revenue (ex-tax)', amount: totalRevenue - totalTax, type: 'total' },
+              { label: 'Deductible Expenses', amount: totalExpenses, type: 'item' },
+              { label: 'Estimated Taxable Income', amount: netIncome, type: 'grand_total' },
+            ];
+            summary = `Estimated taxable income: $${netIncome.toLocaleString()}`;
+            break;
+          }
+          default: {
+            title = 'Monthly Financial Summary';
+            headers = ['Metric', 'Value'];
+            rows = [
+              { label: 'Total Revenue', amount: totalRevenue, type: 'item' },
+              { label: 'Total Expenses', amount: totalExpenses, type: 'item' },
+              { label: 'Net Income', amount: netIncome, type: 'total' },
+              { label: 'Open Orders', amount: (orders as any[]).length, type: 'item' },
+              { label: 'Active Customers', amount: (customers as any[]).length, type: 'item' },
+              { label: 'Active Vendors', amount: (vendors as any[]).length, type: 'item' },
+              { label: 'Inventory SKUs', amount: (inventory as any[]).length, type: 'item' },
+            ];
+            summary = `Revenue $${totalRevenue.toLocaleString()}, expenses $${totalExpenses.toLocaleString()}, net $${netIncome.toLocaleString()}`;
+          }
+        }
+
+        return { title, headers, rows, generatedAt: new Date().toISOString(), summary };
+      }),
+
+    aiAnalysis: financeProcedure
+      .input(z.object({
+        reportType: z.string(),
+        reportData: z.string(),
+        strategyId: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const prompt = input.reportType === 'cfo_strategy'
+          ? `As a CFO advisor, analyze this financial strategy scenario and provide actionable recommendations:\n\n${input.reportData}`
+          : `As a financial analyst, review this ${input.reportType.replace(/_/g, ' ')} report and provide key insights, trends, risks, and recommendations:\n\n${input.reportData}`;
+
+        const response = await invokeLLM({
+          messages: [
+            { role: 'system', content: 'You are a senior CFO and financial analyst. Provide concise, data-driven financial insights and specific action items.' },
+            { role: 'user', content: prompt },
+          ],
+        });
+        const analysis = response.choices?.[0]?.message?.content;
+        return { analysis: typeof analysis === 'string' ? analysis : 'Analysis unavailable at this time.' };
+      }),
+  }),
+
+  // ============================================
+  // QUICK NOTES — Apple-Notes-style capture + LLM routing
+  // ============================================
+  notes: router({
+    list: protectedProcedure
+      .input(z.object({ limit: z.number().min(1).max(200).optional() }).optional())
+      .query(async ({ input, ctx }) => {
+        return db.listNotesForUser(ctx.user.id, input?.limit ?? 100);
+      }),
+
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input, ctx }) => {
+        const note = await db.getNoteById(input.id, ctx.user.id);
+        if (!note) throw new TRPCError({ code: "NOT_FOUND", message: "Note not found" });
+        return note;
+      }),
+
+    create: protectedProcedure
+      .input(z.object({
+        content: z.string().min(1, "Note is empty"),
+        title: z.string().optional(),
+        autoParse: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id } = await db.createNote({
+          userId: ctx.user.id,
+          title: input.title,
+          content: input.content,
+          status: "draft",
+        });
+
+        if (input.autoParse === false) {
+          return { id, parsed: null as NoteParseResult | null };
+        }
+
+        try {
+          const parsed = await parseNoteWithLLM(input.content, new Date().toISOString().slice(0, 10));
+          await db.updateNote(id, {
+            title: input.title || parsed.title || undefined,
+            parsedItems: parsed,
+            status: "parsed",
+            parsedAt: new Date(),
+            parseError: null,
+          });
+          return { id, parsed };
+        } catch (err) {
+          await db.updateNote(id, {
+            parseError: err instanceof Error ? err.message : String(err),
+          });
+          return { id, parsed: null };
+        }
+      }),
+
+    parse: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const note = await db.getNoteById(input.id, ctx.user.id);
+        if (!note) throw new TRPCError({ code: "NOT_FOUND", message: "Note not found" });
+        try {
+          const parsed = await parseNoteWithLLM(note.content, new Date().toISOString().slice(0, 10));
+          await db.updateNote(input.id, {
+            title: note.title || parsed.title || undefined,
+            parsedItems: parsed,
+            status: "parsed",
+            parsedAt: new Date(),
+            parseError: null,
+          });
+          return parsed;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await db.updateNote(input.id, { parseError: msg });
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: msg });
+        }
+      }),
+
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        content: z.string().optional(),
+        title: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const note = await db.getNoteById(input.id, ctx.user.id);
+        if (!note) throw new TRPCError({ code: "NOT_FOUND", message: "Note not found" });
+
+        // When the content changes, any prior parse is stale — clear parse
+        // state and drop the note back to draft so the user re-parses.
+        const patch: Partial<typeof note> = { title: input.title };
+        if (input.content !== undefined && input.content !== note.content) {
+          patch.content = input.content;
+          patch.parsedItems = null;
+          patch.parsedAt = null;
+          patch.parseError = null;
+          patch.status = "draft";
+        }
+        await db.updateNote(input.id, patch);
+        return { ok: true };
+      }),
+
+    applyItems: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        itemIds: z.array(z.string()).min(1, "Pick at least one item to apply"),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const note = await db.getNoteById(input.id, ctx.user.id);
+        if (!note) throw new TRPCError({ code: "NOT_FOUND", message: "Note not found" });
+        const parsed = note.parsedItems;
+        if (!parsed || !Array.isArray(parsed.items)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Note has not been parsed yet" });
+        }
+
+        const selected = parsed.items.filter((it) => input.itemIds.includes(it.id));
+        const applied: NoteAppliedItem[] = [];
+
+        for (const item of selected) {
+          if (item.kind === "task") {
+            const projectId = await db.getOrCreateNotesInboxProject(ctx.user.id);
+            const due = item.dueDate ? new Date(item.dueDate) : undefined;
+            const { id: taskId } = await db.createProjectTask({
+              projectId,
+              name: item.title || item.summary.slice(0, 200),
+              description: item.description || `From note #${note.id}`,
+              status: "todo",
+              priority: item.priority || "medium",
+              dueDate: due && !isNaN(due.getTime()) ? due : undefined,
+              sourceType: "manual",
+              sourceRefType: "note",
+              sourceRefId: note.id,
+              createdBy: ctx.user.id,
+            });
+            applied.push({
+              kind: "task",
+              itemId: item.id,
+              entityType: "project_task",
+              entityId: Number(taskId),
+              label: item.title || item.summary,
+            });
+          } else if (item.kind === "crm_contact") {
+            const fullName = [item.firstName, item.lastName].filter(Boolean).join(" ").trim()
+              || item.firstName || item.organization || "Unnamed contact";
+            const { id: contactId, created } = await db.findOrCreateCrmContact({
+              firstName: item.firstName || fullName,
+              lastName: item.lastName,
+              fullName,
+              email: item.email,
+              phone: item.phone,
+              organization: item.organization,
+              jobTitle: item.jobTitle,
+              contactType: item.contactType || "lead",
+              source: "manual",
+              notes: item.notes || `From note #${note.id}`,
+              capturedBy: ctx.user.id,
+              captureData: JSON.stringify({ noteId: note.id, sourceQuote: item.sourceQuote }),
+            });
+            applied.push({
+              kind: "crm_contact",
+              itemId: item.id,
+              entityType: "crm_contact",
+              entityId: Number(contactId),
+              label: `${created ? "Created" : "Merged into"} ${fullName}`,
+            });
+          } else if (item.kind === "reminder") {
+            const remindAt = item.remindAt ? new Date(item.remindAt) : undefined;
+            // Reminders piggyback on the notifications table so they show up
+            // in the existing notification center.
+            const notificationId = await db.createNotification({
+              userId: ctx.user.id,
+              type: "reminder",
+              title: item.title || "Reminder",
+              message: item.summary,
+              entityType: "note",
+              entityId: note.id,
+              link: `/notes`,
+              metadata: remindAt && !isNaN(remindAt.getTime())
+                ? { remindAt: remindAt.toISOString(), noteId: note.id }
+                : { noteId: note.id },
+            });
+            applied.push({
+              kind: "reminder",
+              itemId: item.id,
+              entityType: "notification",
+              entityId: notificationId ? Number(notificationId) : null,
+              label: item.title || item.summary,
+            });
+          } else if (item.kind === "idea") {
+            // Ideas just stay on the note — no external entity to create.
+            applied.push({
+              kind: "idea",
+              itemId: item.id,
+              entityType: "idea",
+              entityId: null,
+              label: item.title || item.summary,
+            });
+          }
+        }
+
+        // Idempotent merge: if an item was already applied (by itemId),
+        // keep the older record so retries don't create duplicate entries.
+        const existingApplied = note.appliedItems ?? [];
+        const existingIds = new Set(existingApplied.map((a) => a.itemId));
+        const newOnes = applied.filter((a) => !existingIds.has(a.itemId));
+        const merged: NoteAppliedItem[] = [...existingApplied, ...newOnes];
+
+        await db.updateNote(note.id, {
+          appliedItems: merged,
+          status: "applied",
+          appliedAt: new Date(),
+        });
+
+        return { applied };
+      }),
+
+    discard: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const note = await db.getNoteById(input.id, ctx.user.id);
+        if (!note) throw new TRPCError({ code: "NOT_FOUND", message: "Note not found" });
+        await db.updateNote(input.id, { status: "discarded" });
+        return { ok: true };
+      }),
+
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const note = await db.getNoteById(input.id, ctx.user.id);
+        if (!note) throw new TRPCError({ code: "NOT_FOUND", message: "Note not found" });
+        await db.deleteNote(input.id, ctx.user.id);
+        return { ok: true };
+      }),
+  }),
+
+  // ============================================
+  // EMAIL SEQUENCES
+  // ============================================
+  emailSequences: router({
+    list: protectedProcedure.query(async ({ ctx }) => {
+      const database = await db.getDb();
+      if (!database) return [];
+      const { emailSequences, emailSequenceSteps } = await import("../drizzle/schema");
+      const rows = await database.select().from(emailSequences).where(eq(emailSequences.userId, ctx.user.id));
+      // Attach step count
+      const withSteps = await Promise.all(rows.map(async (seq: any) => {
+        const steps = await database.select().from(emailSequenceSteps).where(eq(emailSequenceSteps.sequenceId, seq.id));
+        return { ...seq, stepCount: steps.length, steps };
+      }));
+      return withSteps;
+    }),
+
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailSequences, emailSequenceSteps } = await import("../drizzle/schema");
+        const [seq] = await database.select().from(emailSequences).where(and(eq(emailSequences.id, input.id), eq(emailSequences.userId, ctx.user.id)));
+        if (!seq) throw new TRPCError({ code: "NOT_FOUND", message: "Sequence not found" });
+        const steps = await database.select().from(emailSequenceSteps).where(eq(emailSequenceSteps.sequenceId, input.id));
+        return { ...seq, steps: steps.sort((a: any, b: any) => a.stepOrder - b.stepOrder) };
+      }),
+
+    create: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        description: z.string().optional(),
+        status: z.enum(["draft", "active", "paused", "archived"]).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailSequences } = await import("../drizzle/schema");
+        const result = await database.insert(emailSequences).values({
+          userId: ctx.user.id,
+          name: input.name,
+          description: input.description ?? null,
+          status: input.status ?? "draft",
+        });
+        return { id: (result as any)[0].insertId };
+      }),
+
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().min(1).optional(),
+        description: z.string().optional(),
+        status: z.enum(["draft", "active", "paused", "archived"]).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailSequences } = await import("../drizzle/schema");
+        const patch: Record<string, unknown> = {};
+        if (input.name !== undefined) patch.name = input.name;
+        if (input.description !== undefined) patch.description = input.description;
+        if (input.status !== undefined) patch.status = input.status;
+        await database.update(emailSequences).set(patch).where(and(eq(emailSequences.id, input.id), eq(emailSequences.userId, ctx.user.id)));
+        return { ok: true };
+      }),
+
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailSequences, emailSequenceSteps } = await import("../drizzle/schema");
+        // Verify ownership before deleting steps
+        const [seq] = await database.select().from(emailSequences).where(and(eq(emailSequences.id, input.id), eq(emailSequences.userId, ctx.user.id)));
+        if (!seq) throw new TRPCError({ code: "NOT_FOUND", message: "Sequence not found" });
+        await database.delete(emailSequenceSteps).where(eq(emailSequenceSteps.sequenceId, input.id));
+        await database.delete(emailSequences).where(eq(emailSequences.id, input.id));
+        return { ok: true };
+      }),
+
+    addStep: protectedProcedure
+      .input(z.object({
+        sequenceId: z.number(),
+        subject: z.string().min(1),
+        body: z.string().min(1),
+        delayDays: z.number().min(0).default(1),
+        stepOrder: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailSequences, emailSequenceSteps } = await import("../drizzle/schema");
+        const [seq] = await database.select().from(emailSequences).where(and(eq(emailSequences.id, input.sequenceId), eq(emailSequences.userId, ctx.user.id)));
+        if (!seq) throw new TRPCError({ code: "NOT_FOUND", message: "Sequence not found" });
+        const existing = await database.select().from(emailSequenceSteps).where(eq(emailSequenceSteps.sequenceId, input.sequenceId));
+        const order = input.stepOrder ?? existing.length + 1;
+        const result = await database.insert(emailSequenceSteps).values({
+          sequenceId: input.sequenceId,
+          stepOrder: order,
+          subject: input.subject,
+          body: input.body,
+          delayDays: input.delayDays,
+        });
+        return { id: (result as any)[0].insertId };
+      }),
+
+    updateStep: protectedProcedure
+      .input(z.object({
+        stepId: z.number(),
+        subject: z.string().min(1).optional(),
+        body: z.string().min(1).optional(),
+        delayDays: z.number().min(0).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailSequences, emailSequenceSteps } = await import("../drizzle/schema");
+        // Verify the step's parent sequence belongs to the user
+        const [step] = await database.select().from(emailSequenceSteps).where(eq(emailSequenceSteps.id, input.stepId));
+        if (!step) throw new TRPCError({ code: "NOT_FOUND", message: "Step not found" });
+        const [seq] = await database.select().from(emailSequences).where(and(eq(emailSequences.id, step.sequenceId), eq(emailSequences.userId, ctx.user.id)));
+        if (!seq) throw new TRPCError({ code: "FORBIDDEN", message: "Not authorized" });
+        const patch: Record<string, unknown> = {};
+        if (input.subject !== undefined) patch.subject = input.subject;
+        if (input.body !== undefined) patch.body = input.body;
+        if (input.delayDays !== undefined) patch.delayDays = input.delayDays;
+        await database.update(emailSequenceSteps).set(patch).where(eq(emailSequenceSteps.id, input.stepId));
+        return { ok: true };
+      }),
+
+    deleteStep: protectedProcedure
+      .input(z.object({ stepId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailSequences, emailSequenceSteps } = await import("../drizzle/schema");
+        // Verify the step's parent sequence belongs to the user
+        const [step] = await database.select().from(emailSequenceSteps).where(eq(emailSequenceSteps.id, input.stepId));
+        if (!step) throw new TRPCError({ code: "NOT_FOUND", message: "Step not found" });
+        const [seq] = await database.select().from(emailSequences).where(and(eq(emailSequences.id, step.sequenceId), eq(emailSequences.userId, ctx.user.id)));
+        if (!seq) throw new TRPCError({ code: "FORBIDDEN", message: "Not authorized" });
+        await database.delete(emailSequenceSteps).where(eq(emailSequenceSteps.id, input.stepId));
+        return { ok: true };
+      }),
+  }),
+
+  // ============================================
+  // EMAIL CANNED RESPONSES
+  // ============================================
+  emailCannedResponses: router({
+    list: protectedProcedure.query(async ({ ctx }) => {
+      const database = await db.getDb();
+      if (!database) return [];
+      const { emailCannedResponses } = await import("../drizzle/schema");
+      return database.select().from(emailCannedResponses).where(eq(emailCannedResponses.userId, ctx.user.id));
+    }),
+
+    create: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        content: z.string().min(1),
+        shortcut: z.string().optional(),
+        category: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailCannedResponses } = await import("../drizzle/schema");
+        const result = await database.insert(emailCannedResponses).values({
+          userId: ctx.user.id,
+          name: input.name,
+          content: input.content,
+          shortcut: input.shortcut ?? null,
+          category: input.category ?? null,
+        });
+        return { id: (result as any)[0].insertId };
+      }),
+
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().min(1).optional(),
+        content: z.string().min(1).optional(),
+        shortcut: z.string().optional(),
+        category: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailCannedResponses } = await import("../drizzle/schema");
+        const patch: Record<string, unknown> = {};
+        if (input.name !== undefined) patch.name = input.name;
+        if (input.content !== undefined) patch.content = input.content;
+        if (input.shortcut !== undefined) patch.shortcut = input.shortcut;
+        if (input.category !== undefined) patch.category = input.category;
+        await database.update(emailCannedResponses).set(patch).where(and(eq(emailCannedResponses.id, input.id), eq(emailCannedResponses.userId, ctx.user.id)));
+        return { ok: true };
+      }),
+
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { emailCannedResponses } = await import("../drizzle/schema");
+        await database.delete(emailCannedResponses).where(and(eq(emailCannedResponses.id, input.id), eq(emailCannedResponses.userId, ctx.user.id)));
+        return { ok: true };
+      }),
+
+    incrementUsage: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) return { ok: true };
+        const { emailCannedResponses } = await import("../drizzle/schema");
+        const [row] = await database.select().from(emailCannedResponses).where(and(eq(emailCannedResponses.id, input.id), eq(emailCannedResponses.userId, ctx.user.id)));
+        if (row) {
+          await database.update(emailCannedResponses).set({ usageCount: (row.usageCount ?? 0) + 1 }).where(and(eq(emailCannedResponses.id, input.id), eq(emailCannedResponses.userId, ctx.user.id)));
+        }
+        return { ok: true };
       }),
   }),
 });

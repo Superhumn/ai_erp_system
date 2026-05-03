@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -22,36 +22,65 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Truck, Plus, Search, Loader2, Package } from "lucide-react";
+import { SpreadsheetTable, Column } from "@/components/SpreadsheetTable";
+import { DetailSheet } from "@/components/DetailSheet";
+import { Truck, Plus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
-import { getStatusColor } from "@/lib/statusColors";
 
-type Shipment = {
-  id?: number;
-  shipmentNumber: string;
-  type: "inbound" | "outbound";
-  status: "pending" | "in_transit" | "delivered" | "returned" | "cancelled";
-  carrier: string | null;
-  trackingNumber: string | null;
-  shipDate: Date | null;
-  deliveryDate: Date | null;
-  notes: string | null;
-  createdAt: Date;
-};
+const statusOptions = [
+  { value: "pending", label: "Pending", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
+  { value: "in_transit", label: "In Transit", color: "bg-amber-500/8 text-amber-600 dark:text-amber-400" },
+  { value: "delivered", label: "Delivered", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
+  { value: "returned", label: "Returned", color: "bg-violet-500/8 text-violet-600 dark:text-violet-400" },
+  { value: "cancelled", label: "Cancelled", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
+];
+
+const typeOptions = [
+  { value: "inbound", label: "Inbound", color: "bg-blue-500/10 text-blue-600" },
+  { value: "outbound", label: "Outbound", color: "bg-green-500/10 text-green-600" },
+];
+
+function ShipmentSummaryBody({ s }: { s: any }) {
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 text-sm">
+        <div className="bg-muted/50 rounded-lg p-3">
+          <div className="text-xs text-muted-foreground mb-1">Carrier</div>
+          <div className="font-medium">{s.carrier || "—"}</div>
+        </div>
+        <div className="bg-muted/50 rounded-lg p-3">
+          <div className="text-xs text-muted-foreground mb-1">Tracking</div>
+          <div className="font-mono text-sm">{s.trackingNumber || "—"}</div>
+        </div>
+        <div className="bg-muted/50 rounded-lg p-3">
+          <div className="text-xs text-muted-foreground mb-1">Ship Date</div>
+          <div className="font-medium">
+            {s.shipDate ? format(new Date(s.shipDate), "MMM d, yyyy") : "—"}
+          </div>
+        </div>
+        <div className="bg-muted/50 rounded-lg p-3">
+          <div className="text-xs text-muted-foreground mb-1">Delivery Date</div>
+          <div className="font-medium">
+            {s.deliveryDate ? format(new Date(s.deliveryDate), "MMM d, yyyy") : "—"}
+          </div>
+        </div>
+      </div>
+      {s.notes && (
+        <div>
+          <h4 className="text-sm font-medium mb-1">Notes</h4>
+          <p className="text-sm text-muted-foreground bg-muted/30 rounded p-2 whitespace-pre-wrap">
+            {s.notes}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function Shipments() {
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
+  const [selectedShipment, setSelectedShipment] = useState<any | null>(null);
   const [formData, setFormData] = useState({
     type: "outbound" as "inbound" | "outbound",
     carrier: "",
@@ -73,24 +102,45 @@ export default function Shipments() {
       });
       utils.shipments.list.invalidate();
     },
-    onError: (error) => {
-      toast.error(error.message);
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const deleteShipment = trpc.shipments.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Shipment deleted");
+      utils.shipments.list.invalidate();
     },
+    onError: (err: any) => toast.error(err.message),
   });
 
-  const filteredShipments = (shipments as unknown as Shipment[] | undefined)?.filter((shipment) => {
-    const matchesSearch =
-      shipment.shipmentNumber.toLowerCase().includes(search.toLowerCase()) ||
-      shipment.trackingNumber?.toLowerCase().includes(search.toLowerCase()) ||
-      shipment.carrier?.toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = statusFilter === "all" || shipment.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  const counts = useMemo(() => {
+    const list = (shipments || []) as any[];
+    return {
+      total: list.length,
+      pending: list.filter((s) => s.status === "pending").length,
+      inTransit: list.filter((s) => s.status === "in_transit").length,
+      delivered: list.filter((s) => s.status === "delivered").length,
+    };
+  }, [shipments]);
 
-  const typeColors: Record<string, string> = {
-    inbound: "bg-blue-500/10 text-blue-600",
-    outbound: "bg-green-500/10 text-green-600",
-  };
+  const columns: Column<any>[] = [
+    { key: "shipmentNumber", header: "Shipment #", type: "text", sortable: true },
+    { key: "type", header: "Type", type: "badge", options: typeOptions, filterable: true },
+    { key: "carrier", header: "Carrier", type: "text", sortable: true },
+    { key: "trackingNumber", header: "Tracking", type: "text" },
+    { key: "shipDate", header: "Ship Date", type: "date", sortable: true },
+    { key: "deliveryDate", header: "Delivery", type: "date", sortable: true },
+    { key: "status", header: "Status", type: "status", options: statusOptions, filterable: true },
+    {
+      key: "notes",
+      header: "Notes",
+      type: "text",
+      render: (_row, val) => {
+        const s = typeof val === "string" ? val : "";
+        return s.length > 40 ? s.slice(0, 40) + "…" : s || "—";
+      },
+    },
+  ];
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,21 +153,20 @@ export default function Shipments() {
     });
   };
 
-  // Calculate summary stats
-  const inTransitCount = (shipments as unknown as Shipment[] | undefined)?.filter((s) => s.status === "in_transit").length || 0;
-  const deliveredCount = (shipments as unknown as Shipment[] | undefined)?.filter((s) => s.status === "delivered").length || 0;
-  const pendingCount = (shipments as unknown as Shipment[] | undefined)?.filter((s) => s.status === "pending").length || 0;
+  const selectedStatus = selectedShipment
+    ? statusOptions.find((s) => s.value === selectedShipment.status)
+    : null;
 
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+          <h1 className="text-lg font-semibold flex items-center gap-2">
             <Truck className="h-8 w-8" />
             Shipments
           </h1>
           <p className="text-muted-foreground mt-1">
-            Track shipments and logistics.
+            Track shipments and logistics — click any row for details.
           </p>
         </div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
@@ -131,9 +180,7 @@ export default function Shipments() {
             <form onSubmit={handleSubmit}>
               <DialogHeader>
                 <DialogTitle>New Shipment</DialogTitle>
-                <DialogDescription>
-                  Create a new shipment record.
-                </DialogDescription>
+                <DialogDescription>Create a new shipment record.</DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">
                 <div className="grid grid-cols-2 gap-4">
@@ -149,7 +196,6 @@ export default function Shipments() {
                       <SelectContent>
                         <SelectItem value="inbound">Inbound</SelectItem>
                         <SelectItem value="outbound">Outbound</SelectItem>
-                        
                       </SelectContent>
                     </Select>
                   </div>
@@ -221,110 +267,71 @@ export default function Shipments() {
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardContent className="pt-6">
-            <div className="text-xl font-semibold tracking-[-0.02em]">{shipments?.length || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{counts.total}</div>
             <p className="text-xs text-muted-foreground">Total Shipments</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-xl font-semibold tracking-[-0.02em] text-gray-600">{pendingCount}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-gray-600">{counts.pending}</div>
             <p className="text-xs text-muted-foreground">Pending</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-xl font-semibold tracking-[-0.02em] text-amber-600">{inTransitCount}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-amber-600">{counts.inTransit}</div>
             <p className="text-xs text-muted-foreground">In Transit</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{deliveredCount}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{counts.delivered}</div>
             <p className="text-xs text-muted-foreground">Delivered</p>
           </CardContent>
         </Card>
       </div>
 
       <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-4 flex-wrap">
-            <div className="relative flex-1 min-w-[200px] max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search shipments..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9"
-              />
-            </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-[150px]">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="returned">Returned</SelectItem>
-                <SelectItem value="in_transit">In Transit</SelectItem>
-                <SelectItem value="delivered">Delivered</SelectItem>
-                <SelectItem value="cancelled">Cancelled</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : !filteredShipments || filteredShipments.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <Package className="h-12 w-12 mx-auto mb-4 opacity-20" />
-              <p>No shipments found</p>
-              <p className="text-sm">Create your first shipment to get started.</p>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Shipment #</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Carrier</TableHead>
-                  <TableHead>Tracking</TableHead>
-                  <TableHead>Ship Date</TableHead>
-                  <TableHead>Delivery</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(filteredShipments as Shipment[]).map((shipment) => (
-                  <TableRow key={shipment.id}>
-                    <TableCell className="font-mono">{shipment.shipmentNumber}</TableCell>
-                    <TableCell>
-                      <Badge className={typeColors[shipment.type]}>{shipment.type}</Badge>
-                    </TableCell>
-                    <TableCell>{shipment.carrier || "-"}</TableCell>
-                    <TableCell className="font-mono">{shipment.trackingNumber || "-"}</TableCell>
-                    <TableCell>
-                      {shipment.shipDate
-                        ? format(new Date(shipment.shipDate), "MMM d, yyyy")
-                        : "-"}
-                    </TableCell>
-                    <TableCell>
-                      {shipment.deliveryDate
-                        ? format(new Date(shipment.deliveryDate), "MMM d, yyyy")
-                        : "-"}
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={getStatusColor(shipment.status)}>{shipment.status.replace("_", " ")}</Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+        <CardContent className="pt-6">
+          <SpreadsheetTable
+            data={(shipments || []) as any[]}
+            columns={columns}
+            isLoading={isLoading}
+            emptyMessage="No shipments yet — create your first shipment to get started."
+            showSearch
+            showFilters
+            showExport
+            onRowClick={(row) => setSelectedShipment(row)}
+            expandedRowId={selectedShipment?.id ?? null}
+            compact
+            bulkActions={[{ key: "delete", label: "Delete", variant: "destructive" }]}
+            onBulkAction={(action, ids) => {
+              if (action === "delete") {
+                Array.from(ids).forEach((id) => deleteShipment.mutate({ id: Number(id) }));
+              }
+            }}
+          />
         </CardContent>
       </Card>
+
+      <DetailSheet
+        open={!!selectedShipment}
+        onOpenChange={(o) => !o && setSelectedShipment(null)}
+        width="md"
+        title={
+          selectedShipment && (
+            <span className="flex items-center gap-2 font-mono">
+              {selectedShipment.shipmentNumber}
+              {selectedStatus && (
+                <Badge className={selectedStatus.color}>{selectedStatus.label}</Badge>
+              )}
+            </span>
+          )
+        }
+        subtitle={selectedShipment?.type && (selectedShipment.type === "inbound" ? "Inbound" : "Outbound")}
+      >
+        {selectedShipment && <ShipmentSummaryBody s={selectedShipment} />}
+      </DetailSheet>
     </div>
   );
 }

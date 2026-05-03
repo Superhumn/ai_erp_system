@@ -17,16 +17,72 @@ import {
   getTranscript,
   extractParticipants,
   parseActionItems,
+  type FirefliesActionItem,
 } from "./_core/fireflies";
 import * as db from "./db";
+import { extractMeetingActionItems } from "./meetingTaskExtractor";
 
 export interface FirefliesSyncResult {
   totalSynced: number;
   totalSkipped: number;
   contactsCreated: number;
-  dealsCreated: number;
+  // CRM deals queued in the approval queue (not yet inserted as deals).
+  dealApprovalsQueued: number;
   notificationsCreated: number;
+  tasksSuggested: number;
   errors: string[];
+}
+
+/**
+ * Convert Fireflies action items to project_tasks via the importance-scored
+ * meeting extractor. Returns the number of tasks actually created (skipped /
+ * deduped / rejected items aren't counted).
+ *
+ * Replaces the previous queueFirefliesActionItemsForApproval which:
+ *   - was hard-limited to fundraising/sales/legal domains
+ *   - routed everything through aiAgentTasks (approval queue)
+ *   - had a fixed 75% confidence with no actual scoring
+ */
+export async function extractFirefliesActionItems(params: {
+  meetingId: number;
+  meetingTitle: string;
+  firefliesId: string;
+  meetingDate?: Date;
+  actionItems: FirefliesActionItem[];
+  participants: Array<{ name?: string; email?: string }>;
+}): Promise<number> {
+  const outcomes = await extractMeetingActionItems(params.actionItems, {
+    meetingId: params.meetingId,
+    firefliesId: params.firefliesId,
+    title: params.meetingTitle,
+    date: params.meetingDate,
+    participants: params.participants,
+  });
+  return outcomes.filter(o => o.kind === "created").length;
+}
+
+/**
+ * Backward-compatible shim for callers in routers.ts. New code should use
+ * extractFirefliesActionItems directly.
+ */
+export async function queueFirefliesActionItemsForApproval(params: {
+  userId: number;
+  meetingId?: number;
+  meetingTitle: string;
+  firefliesId?: string;
+  actionItems: FirefliesActionItem[];
+  participants: Array<{ name: string; email: string }>;
+  preferredProjectId?: number;
+  preferredAssigneeId?: number;
+}): Promise<number> {
+  if (!params.meetingId) return 0;
+  return extractFirefliesActionItems({
+    meetingId: params.meetingId,
+    meetingTitle: params.meetingTitle,
+    firefliesId: params.firefliesId ?? `meeting-${params.meetingId}`,
+    actionItems: params.actionItems,
+    participants: params.participants,
+  });
 }
 
 /**
@@ -40,13 +96,17 @@ export async function syncFirefliesMeetingsForUser(
     totalSynced: 0,
     totalSkipped: 0,
     contactsCreated: 0,
-    dealsCreated: 0,
+    dealApprovalsQueued: 0,
     notificationsCreated: 0,
+    tasksSuggested: 0,
     errors: [],
   };
 
   try {
     const transcripts = await listTranscripts(apiKey);
+
+    // Fetch internal emails once before the loop to avoid repeated DB queries
+    const internalEmails = await db.getInternalEmailSet();
 
     for (const t of transcripts) {
       try {
@@ -62,23 +122,23 @@ export async function syncFirefliesMeetingsForUser(
           : [];
 
         // Save meeting to database
-        await db.createFirefliesMeeting({
+        const createdMeeting = await db.createFirefliesMeeting({
           firefliesId: t.id,
           title: t.title,
           date: t.date ? new Date(t.date) : new Date(),
           duration: t.duration,
           participants: JSON.stringify(participants),
-          transcript: fullTranscript?.transcript_url || null,
+          transcriptUrl: fullTranscript?.transcript_url || null,
           summary: fullTranscript?.summary
             ? JSON.stringify(fullTranscript.summary)
             : null,
-          actionItemsRaw: fullTranscript
+          actionItems: fullTranscript
             ? JSON.stringify(
                 parseActionItems(fullTranscript?.summary?.action_items || [])
               )
             : null,
-          status: "pending",
         });
+        const newMeetingDbId = Number(createdMeeting.id);
         result.totalSynced++;
 
         // Auto-create CRM deals from meeting notes
@@ -113,35 +173,51 @@ export async function syncFirefliesMeetingsForUser(
           }
 
           for (const participant of participants) {
-            if (participant.email) {
+            if (participant.email && !internalEmails.has(participant.email.toLowerCase())) {
               try {
-                let contact = await db.getCrmContactByEmail(participant.email);
-                if (!contact) {
-                  const contactId = await db.createCrmContact({
-                    firstName:
-                      (participant.name || participant.email.split("@")[0])
-                        .split(" ")[0] || "",
-                    fullName:
-                      participant.name || participant.email.split("@")[0],
-                    email: participant.email,
-                    source: "meeting" as any,
-                  });
-                  contact = await db.getCrmContactById(contactId);
-                  result.contactsCreated++;
-                }
+                const { id: contactFoundId, created } = await db.findOrCreateCrmContact({
+                  firstName:
+                    (participant.name || participant.email.split("@")[0])
+                      .split(" ")[0] || "",
+                  fullName:
+                    participant.name || participant.email.split("@")[0],
+                  email: participant.email,
+                  source: "fireflies" as any,
+                });
+                if (created) result.contactsCreated++;
+                const contact = await db.getCrmContactById(contactFoundId);
 
                 if (contact) {
-                  await db.createCrmDeal({
-                    pipelineId,
-                    contactId: contact.id,
-                    name: `Deal from: ${fullTranscript?.title || t.title || "Meeting"}`,
-                    stage: "discovery",
-                    source: "meeting",
-                    notes: `Auto-created from Fireflies meeting. Key topics: ${overview.substring(0, 200)}`,
-                  });
-                  result.dealsCreated++;
+                  if (created) {
+                    // Auto-deals from meetings flow through the approval queue.
+                    // Title = contact's company; skip if missing or duplicate company.
+                    const company = (contact.organization || "").trim();
+                    const dupe = company
+                      ? (await db.findCrmDealByCompany(company)) || (await db.hasPendingDealApprovalForCompany(company))
+                      : true;
+                    if (company && !dupe) {
+                      const taskData = {
+                        pipelineId,
+                        contactId: contact.id,
+                        company,
+                        stage: "discovery",
+                        source: "meeting",
+                        notes: `Auto-created from Fireflies meeting. Key topics: ${overview.substring(0, 200)}`,
+                      };
+                      await db.createAiAgentTask({
+                        taskType: 'create_crm_deal',
+                        priority: 'medium',
+                        status: 'pending_approval',
+                        taskData: JSON.stringify(taskData),
+                        aiReasoning: `Deal signals in Fireflies meeting "${fullTranscript?.title || t.title || 'Meeting'}" with ${contact.fullName} at ${company}.`,
+                        aiConfidence: '80.00',
+                      });
+                      result.dealApprovalsQueued++;
+                    }
+                  }
 
-                  // Log meeting as CRM interaction
+                  // Always log meeting as CRM interaction regardless of whether
+                  // the contact already existed.
                   await db.createCrmInteraction({
                     contactId: contact.id,
                     channel: "meeting",
@@ -157,19 +233,21 @@ export async function syncFirefliesMeetingsForUser(
           }
         }
 
-        // Auto-create notifications from action items
-        for (const item of actionItems) {
-          try {
-            await db.createNotification({
-              userId,
-              type: "reminder",
-              title: `Meeting Action Item: ${typeof item === "string" ? item.substring(0, 100) : String(item).substring(0, 100)}`,
-              message: `From meeting: ${fullTranscript?.title || t.title || "Unknown"}`,
-            });
-            result.notificationsCreated++;
-          } catch {
-            /* skip failed notification */
-          }
+        const suggested = await extractFirefliesActionItems({
+          meetingId: newMeetingDbId,
+          meetingTitle: fullTranscript?.title || t.title || "Unknown meeting",
+          firefliesId: t.id,
+          meetingDate: t.date ? new Date(t.date) : undefined,
+          actionItems: parseActionItems(actionItems),
+          participants,
+        });
+        result.tasksSuggested += suggested;
+        if (suggested > 0) {
+          await db.updateFirefliesMeeting(newMeetingDbId, {
+            processingStatus: "tasks_created",
+            processedAt: new Date(),
+            autoCreatedTaskCount: suggested,
+          });
         }
       } catch (meetingErr) {
         result.errors.push(
@@ -195,8 +273,9 @@ export async function syncAllFirefliesMeetings(): Promise<FirefliesSyncResult> {
     totalSynced: 0,
     totalSkipped: 0,
     contactsCreated: 0,
-    dealsCreated: 0,
+    dealApprovalsQueued: 0,
     notificationsCreated: 0,
+    tasksSuggested: 0,
     errors: [],
   };
 
@@ -213,8 +292,9 @@ export async function syncAllFirefliesMeetings(): Promise<FirefliesSyncResult> {
         aggregate.totalSynced += result.totalSynced;
         aggregate.totalSkipped += result.totalSkipped;
         aggregate.contactsCreated += result.contactsCreated;
-        aggregate.dealsCreated += result.dealsCreated;
+        aggregate.dealApprovalsQueued += result.dealApprovalsQueued;
         aggregate.notificationsCreated += result.notificationsCreated;
+        aggregate.tasksSuggested += result.tasksSuggested;
         aggregate.errors.push(...result.errors);
       } catch (userErr) {
         aggregate.errors.push(

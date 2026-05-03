@@ -11,6 +11,7 @@ import {
   FolderOpen, FileText, File, Download, Eye, Lock,
   ChevronRight, ChevronDown, Folder, ArrowLeft, Shield,
   X, ChevronLeft, Image, FileSpreadsheet, Presentation, Loader2,
+  LineChart,
 } from "lucide-react";
 import { useParams } from "wouter";
 
@@ -26,6 +27,7 @@ interface DocumentItem {
   fileSize: number | null;
   pageCount: number | null;
   storageUrl: string | null;
+  googleDriveFileId: string | null;
   googleDriveWebViewLink: string | null;
   thumbnailUrl: string | null;
   folderId: number | null;
@@ -51,6 +53,46 @@ function formatFileSize(bytes: number | null): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Returns the correct embed/viewer URL for any document type so that the
+ * FULL content is always visible (not just a thumbnail or partial preview).
+ *
+ * Priority order:
+ *  1. Google Drive files  → our server-side proxy endpoint that streams the
+ *                            file via OAuth. The browser sees it as a
+ *                            same-origin asset, so Google's third-party
+ *                            iframe block doesn't apply and the folder can
+ *                            stay private.
+ *  2. Office files        → Microsoft Office Online embed (full workbook/doc)
+ *  3. PDF / txt / html    → direct URL (native browser viewer)
+ *  4. Images              → returns storageUrl; caller renders as <img>
+ *  5. Anything else       → null (show "preview unavailable")
+ */
+function getViewerSrc(doc: DocumentItem, linkCode?: string): { src: string | null; isImg: boolean } {
+  const ft = (doc.fileType || "").toLowerCase();
+  const isImg = ["png", "jpg", "jpeg", "gif", "svg", "webp"].includes(ft);
+  const isOffice = ["doc", "docx", "xls", "xlsx", "ppt", "pptx"].includes(ft);
+
+  // ── Google Drive: stream through our own proxy so private folders work
+  //    without exposing OAuth tokens to the browser and without requiring
+  //    the viewer's browser to be signed into a Google account.
+  if (doc.googleDriveFileId && doc.id != null) {
+    const qs = linkCode ? `?linkCode=${encodeURIComponent(linkCode)}` : "";
+    return { src: `/api/drive/proxy/${doc.id}${qs}`, isImg: false };
+  }
+
+  if (!doc.storageUrl) return { src: null, isImg: false };
+
+  if (isImg) return { src: doc.storageUrl, isImg: true };
+
+  if (isOffice) {
+    const encoded = encodeURIComponent(doc.storageUrl);
+    return { src: `https://view.officeapps.live.com/op/embed.aspx?src=${encoded}`, isImg: false };
+  }
+
+  return { src: doc.storageUrl, isImg: false };
 }
 
 function getFileIcon(fileType: string) {
@@ -541,26 +583,37 @@ export default function DataRoomPublic() {
               key={pageKey}
               className={`w-full h-full ${pageDirection === "left" ? "dr-page-left" : "dr-page-right"}`}
             >
-              {isImage && (doc.storageUrl || doc.googleDriveWebViewLink) ? (
-                <div className="flex items-center justify-center h-full p-6">
-                  <img
-                    src={doc.storageUrl || doc.googleDriveWebViewLink || ''}
-                    alt={doc.name}
-                    className="max-w-full max-h-full object-contain rounded-lg"
-                  />
-                </div>
-              ) : (doc.storageUrl || doc.googleDriveWebViewLink) ? (
-                <iframe
-                  src={doc.storageUrl || doc.googleDriveWebViewLink || ''}
-                  className="w-full h-full border-0"
-                  title={doc.name}
-                />
-              ) : (
-                <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                  <File className="h-16 w-16 mb-4 text-gray-600" />
-                  <p className="text-sm">Preview not available</p>
-                </div>
-              )}
+              {(() => {
+                const { src, isImg } = getViewerSrc(doc, linkCode);
+                if (isImg && src) {
+                  return (
+                    <div className="flex items-center justify-center h-full p-6">
+                      <img
+                        src={src}
+                        alt={doc.name}
+                        className="max-w-full max-h-full object-contain rounded-lg"
+                      />
+                    </div>
+                  );
+                }
+                if (src) {
+                  return (
+                    <iframe
+                      key={src}
+                      src={src}
+                      className="w-full h-full border-0"
+                      title={doc.name}
+                      allow="autoplay"
+                    />
+                  );
+                }
+                return (
+                  <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                    <File className="h-16 w-16 mb-4 text-gray-600" />
+                    <p className="text-sm">Preview not available</p>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Page navigation arrows */}
@@ -705,8 +758,25 @@ export default function DataRoomPublic() {
       {/* Main layout */}
       <div className="flex-1 flex flex-col lg:flex-row max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 gap-6">
         {/* Sidebar - folder tree */}
-        {folders.length > 0 && (
-          <aside className="w-full lg:w-64 flex-shrink-0 dr-fade-in">
+        {(folders.length > 0 || content?.room.showLiveFinancials) && (
+          <aside className="w-full lg:w-64 flex-shrink-0 dr-fade-in space-y-3">
+            {content?.room.showLiveFinancials && (
+              <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-gray-500 px-2 mb-2">
+                  Live Data
+                </p>
+                <a
+                  // Preserve whichever route prefix the visitor arrived under
+                  // (/dr vs /share) so navigation stays on the same variant.
+                  href={`${typeof window !== "undefined" && window.location.pathname.startsWith("/share/") ? "/share" : "/dr"}/${linkCode}/financials`}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm text-gray-300 hover:text-white hover:bg-white/[0.04] transition-colors"
+                >
+                  <LineChart className="h-4 w-4 flex-shrink-0" style={{ color: brandColor || "#818cf8" }} />
+                  <span className="truncate">Live Financials</span>
+                </a>
+              </div>
+            )}
+            {folders.length > 0 && (
             <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3">
               <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-gray-500 px-2 mb-2">
                 Folders
@@ -758,6 +828,7 @@ export default function DataRoomPublic() {
                 })}
               </nav>
             </div>
+            )}
           </aside>
         )}
 
@@ -921,7 +992,7 @@ export default function DataRoomPublic() {
           <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          Interested in Investing?
+          Request Allocation
         </button>
       </div>
 
@@ -1118,8 +1189,10 @@ export default function DataRoomPublic() {
 
 // ---------------------------------------------------------------------------
 // NDA Signing Gate Component (preserved from original)
+// Exported so sibling public pages (e.g. /dr/:code/financials) can gate on
+// the same NDA flow without duplicating signature-capture UI.
 // ---------------------------------------------------------------------------
-function NdaSigningGate({
+export function NdaSigningGate({
   dataRoomId,
   visitorId,
   visitorEmail,
@@ -1221,6 +1294,10 @@ function NdaSigningGate({
       toast.error("Please provide your signature");
       return;
     }
+    if (!consentChecked) {
+      toast.error("Please accept the terms to proceed");
+      return;
+    }
     signMutation.mutate({
       ndaDocumentId: activeNda.id,
       dataRoomId,
@@ -1231,7 +1308,7 @@ function NdaSigningGate({
       signerCompany: signerCompany || undefined,
       signatureType,
       signatureData,
-      consentCheckbox: consentChecked,
+      consentCheckbox: consentChecked as true,
     });
   };
 

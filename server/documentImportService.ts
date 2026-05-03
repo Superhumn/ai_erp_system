@@ -11,6 +11,7 @@ import { randomBytes } from "crypto";
 
 // Configuration constants
 const MIN_TEXT_LENGTH_FOR_SCANNED_DETECTION = 100; // Minimum text length to consider PDF as text-based
+const MAX_SCANNED_PDF_PAGES = 10; // Maximum pages to OCR for scanned PDFs (balances cost vs completeness)
 
 // Types for document import
 export interface ImportedLineItem {
@@ -361,15 +362,16 @@ If document type is unknown, return all as null.`;
         // Check if we got sufficient text (less than threshold suggests scanned/image PDF)
         if (fullText.trim().length < MIN_TEXT_LENGTH_FOR_SCANNED_DETECTION) {
           console.log("[DocumentImport] Insufficient text extracted, PDF appears to be scanned. Falling back to OCR...");
-          
-          // Log warning for multi-page PDFs
-          if (pdf.numPages > 1) {
-            console.warn(`[DocumentImport] PDF has ${pdf.numPages} pages, but only processing first page for OCR. Additional pages will be ignored.`);
+
+          const pagesToProcess = Math.min(pdf.numPages, MAX_SCANNED_PDF_PAGES);
+          if (pdf.numPages > MAX_SCANNED_PDF_PAGES) {
+            console.warn(`[DocumentImport] PDF has ${pdf.numPages} pages, capping OCR at first ${MAX_SCANNED_PDF_PAGES} pages.`);
           }
-          
+          console.log(`[DocumentImport] Processing ${pagesToProcess} page(s) for OCR`);
+
           // Create buffer for pdf2pic (only needed for scanned PDFs)
           const buffer = Buffer.from(arrayBuffer);
-          
+
           // Convert PDF to images using pdf2pic for OCR
           // Use crypto.randomBytes for unique directory name to avoid collisions
           const uniqueId = randomBytes(8).toString('hex');
@@ -377,7 +379,7 @@ If document type is unknown, return all as null.`;
           if (!existsSync(tempDir)) {
             mkdirSync(tempDir, { recursive: true });
           }
-          
+
           try {
             const options = {
               density: 200, // DPI for image conversion
@@ -387,29 +389,37 @@ If document type is unknown, return all as null.`;
               width: 2000,
               height: 2800
             };
-            
+
             console.log("[DocumentImport] Converting PDF to images for OCR...");
             const convert = fromBuffer(buffer, options);
-            
+
             // Configure to use ImageMagick (not GraphicsMagick)
             convert.setGMClass(true); // true = use ImageMagick
-            
-            // Convert first page to base64 for vision OCR (limiting to first page for efficiency)
-            const pageResult = await convert(1, { responseType: "base64" });
-            
-            if (!pageResult || !pageResult.base64) {
-              throw new Error("PDF to image conversion failed");
+
+            // Convert all pages to base64 for vision OCR
+            const imageContents: any[] = [];
+            for (let pageNum = 1; pageNum <= pagesToProcess; pageNum++) {
+              const pageResult = await convert(pageNum, { responseType: "base64" });
+              if (!pageResult || !pageResult.base64) {
+                console.warn(`[DocumentImport] Failed to convert page ${pageNum}, skipping`);
+                continue;
+              }
+              const dataUrl = `data:image/png;base64,${pageResult.base64}`;
+              imageContents.push({ type: "image_url", image_url: { url: dataUrl, detail: "high" } });
             }
-            
-            console.log("[DocumentImport] PDF converted to image, using vision OCR");
-            const dataUrl = `data:image/png;base64,${pageResult.base64}`;
-            
-            // Use vision-based OCR (similar to image processing)
+
+            if (imageContents.length === 0) {
+              throw new Error("PDF to image conversion failed for all pages");
+            }
+
+            console.log(`[DocumentImport] Converted ${imageContents.length} page(s) to images, using vision OCR`);
+
+            // Use vision-based OCR with all pages
             messageContent = [
               { type: "text", text: prompt },
-              { type: "image_url", image_url: { url: dataUrl, detail: "high" } }
+              ...imageContents
             ];
-            
+
             // Clean up temp directory using safe fs.rmSync
             try {
               rmSync(tempDir, { recursive: true, force: true });
@@ -736,16 +746,27 @@ export async function matchLineItemsToMaterials(
 export async function importPurchaseOrder(
   po: ImportedPurchaseOrder,
   userId: number,
-  markAsReceived: boolean = true
+  markAsReceived: boolean = true,
+  createMissingVendor: boolean = false
 ): Promise<ImportResult> {
   const createdRecords: ImportResult["createdRecords"] = [];
   const updatedRecords: ImportResult["updatedRecords"] = [];
   const warnings: string[] = [];
 
   try {
-    // 1. Find or create vendor
+    // 1. Find vendor; only create if caller opted in
     let vendor = await db.getVendorByName(po.vendorName);
     if (!vendor) {
+      if (!createMissingVendor) {
+        return {
+          success: false,
+          documentType: "purchase_order",
+          createdRecords,
+          updatedRecords,
+          warnings,
+          error: `Vendor "${po.vendorName}" was not found. Enable "Add vendor if missing" to create it, or add the vendor first.`
+        };
+      }
       const vendorResult = await db.createVendor({
         name: po.vendorName,
         email: po.vendorEmail || "",
@@ -854,16 +875,27 @@ export async function importPurchaseOrder(
  */
 export async function importFreightInvoice(
   invoice: ImportedFreightInvoice,
-  userId: number
+  userId: number,
+  createMissingVendor: boolean = false
 ): Promise<ImportResult> {
   const createdRecords: ImportResult["createdRecords"] = [];
   const updatedRecords: ImportResult["updatedRecords"] = [];
   const warnings: string[] = [];
 
   try {
-    // 1. Find or create carrier as vendor
+    // 1. Find carrier as vendor; only create if caller opted in
     let carrier = await db.getVendorByName(invoice.carrierName);
     if (!carrier) {
+      if (!createMissingVendor) {
+        return {
+          success: false,
+          documentType: "freight_invoice",
+          createdRecords,
+          updatedRecords,
+          warnings,
+          error: `Carrier "${invoice.carrierName}" was not found as a vendor. Enable "Add vendor if missing" to create it, or add the carrier first.`
+        };
+      }
       const carrierResult = await db.createVendor({
         name: invoice.carrierName,
         email: invoice.carrierEmail || "",
@@ -944,16 +976,27 @@ export async function importFreightInvoice(
 export async function importVendorInvoice(
   invoice: ImportedVendorInvoice,
   userId: number,
-  markAsReceived: boolean = false
+  markAsReceived: boolean = false,
+  createMissingVendor: boolean = false
 ): Promise<ImportResult> {
   const createdRecords: ImportResult["createdRecords"] = [];
   const updatedRecords: ImportResult["updatedRecords"] = [];
   const warnings: string[] = [];
 
   try {
-    // 1. Find or create vendor
+    // 1. Find vendor; only create if caller opted in
     let vendor = await db.getVendorByName(invoice.vendorName);
     if (!vendor) {
+      if (!createMissingVendor) {
+        return {
+          success: false,
+          documentType: "vendor_invoice",
+          createdRecords,
+          updatedRecords,
+          warnings,
+          error: `Vendor "${invoice.vendorName}" was not found. Enable "Add vendor if missing" to create it, or add the vendor first.`
+        };
+      }
       const vendorResult = await db.createVendor({
         name: invoice.vendorName,
         email: invoice.vendorEmail || "",
@@ -1073,16 +1116,27 @@ export async function importVendorInvoice(
  */
 export async function importCustomsDocument(
   doc: ImportedCustomsDocument,
-  userId: number
+  userId: number,
+  createMissingVendor: boolean = false
 ): Promise<ImportResult> {
   const createdRecords: ImportResult["createdRecords"] = [];
   const updatedRecords: ImportResult["updatedRecords"] = [];
   const warnings: string[] = [];
 
   try {
-    // 1. Find or create the shipper as a vendor
+    // 1. Find shipper as a vendor; only create if caller opted in
     let shipper = await db.getVendorByName(doc.shipperName);
     if (!shipper) {
+      if (!createMissingVendor) {
+        return {
+          success: false,
+          documentType: "customs_document",
+          createdRecords,
+          updatedRecords,
+          warnings,
+          error: `Shipper "${doc.shipperName}" was not found as a vendor. Enable "Add vendor if missing" to create it, or add the shipper first.`
+        };
+      }
       const shipperResult = await db.createVendor({
         name: doc.shipperName,
         email: "",
@@ -1094,19 +1148,21 @@ export async function importCustomsDocument(
       createdRecords.push({ type: "vendor", id: shipperResult.id, name: doc.shipperName });
     }
 
-    // 2. Find or create customs broker as a vendor (if specified)
+    // 2. Find customs broker as a vendor (if specified); only create if caller opted in
     let broker = null;
     if (doc.brokerName) {
       broker = await db.getVendorByName(doc.brokerName);
       if (!broker) {
-        const brokerResult = await db.createVendor({
-          name: doc.brokerName,
-          email: "",
-          type: "service",
-          status: "active"
-        });
-        broker = await db.getVendorById(brokerResult.id) || null;
-        createdRecords.push({ type: "vendor", id: brokerResult.id, name: doc.brokerName });
+        if (!createMissingVendor) {
+          warnings.push(`Broker "${doc.brokerName}" was not found; skipped (enable "Add vendor if missing" to create).`);
+        } else {
+          const brokerResult = await db.createVendor({
+            name: doc.brokerName,
+            email: "",
+            type: "service",
+            status: "active"
+          });
+        }
       }
     }
 
@@ -1216,7 +1272,8 @@ export async function importCustomsDocument(
 export async function bulkImportDocuments(
   documents: { content: string; filename: string; hint?: "purchase_order" | "vendor_invoice" | "freight_invoice" | "customs_document" }[],
   userId: number,
-  markPOsAsReceived: boolean = true
+  markPOsAsReceived: boolean = true,
+  createMissingVendor: boolean = false
 ): Promise<{
   totalProcessed: number;
   successful: number;
@@ -1246,13 +1303,13 @@ export async function bulkImportDocuments(
     let importResult: ImportResult;
 
     if (parseResult.documentType === "purchase_order" && parseResult.purchaseOrder) {
-      importResult = await importPurchaseOrder(parseResult.purchaseOrder, userId, markPOsAsReceived);
+      importResult = await importPurchaseOrder(parseResult.purchaseOrder, userId, markPOsAsReceived, createMissingVendor);
     } else if (parseResult.documentType === "vendor_invoice" && parseResult.vendorInvoice) {
-      importResult = await importVendorInvoice(parseResult.vendorInvoice, userId, markPOsAsReceived);
+      importResult = await importVendorInvoice(parseResult.vendorInvoice, userId, markPOsAsReceived, createMissingVendor);
     } else if (parseResult.documentType === "freight_invoice" && parseResult.freightInvoice) {
-      importResult = await importFreightInvoice(parseResult.freightInvoice, userId);
+      importResult = await importFreightInvoice(parseResult.freightInvoice, userId, createMissingVendor);
     } else if (parseResult.documentType === "customs_document" && parseResult.customsDocument) {
-      importResult = await importCustomsDocument(parseResult.customsDocument, userId);
+      importResult = await importCustomsDocument(parseResult.customsDocument, userId, createMissingVendor);
     } else {
       importResult = {
         success: false,

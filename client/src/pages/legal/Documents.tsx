@@ -30,9 +30,20 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { FileArchive, Plus, Search, Loader2, ExternalLink, Upload } from "lucide-react";
+import { FileArchive, Plus, Search, Loader2, ExternalLink, Upload, Trash2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { DetailSheet } from "@/components/DetailSheet";
 
 type LegalDocument = {
   id: number;
@@ -48,6 +59,8 @@ export default function Documents() {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
+  const [documentToDelete, setDocumentToDelete] = useState<{ id: number; name: string } | null>(null);
+  const [selectedDocument, setSelectedDocument] = useState<any | null>(null);
   const [formData, setFormData] = useState({
     name: "",
     type: "legal" as "contract" | "invoice" | "receipt" | "report" | "legal" | "hr" | "other",
@@ -68,6 +81,15 @@ export default function Documents() {
     onError: (error) => {
       toast.error(error.message);
     },
+  });
+
+  const deleteDocument = trpc.documents.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Document deleted");
+      setDocumentToDelete(null);
+      refetch();
+    },
+    onError: (error) => toast.error(error.message),
   });
 
   const filteredDocuments = documents?.filter((doc: any) => {
@@ -114,7 +136,7 @@ export default function Documents() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+          <h1 className="text-lg font-semibold flex items-center gap-2">
             <FileArchive className="h-8 w-8" />
             Documents
           </h1>
@@ -263,7 +285,7 @@ export default function Documents() {
               </TableHeader>
               <TableBody>
                 {filteredDocuments.map((doc: any) => (
-                  <TableRow key={doc.id}>
+                  <TableRow key={doc.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setSelectedDocument(doc)}>
                     <TableCell className="font-medium">{doc.name}</TableCell>
                     <TableCell>
                       <Badge className={typeColors[doc.type]}>{doc.type}</Badge>
@@ -274,14 +296,25 @@ export default function Documents() {
                         ? format(new Date(doc.createdAt), "MMM d, yyyy")
                         : "-"}
                     </TableCell>
-                    <TableCell>
-                      {doc.fileUrl && (
-                        <Button variant="ghost" size="sm" asChild>
-                          <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer">
-                            <ExternalLink className="h-4 w-4" />
-                          </a>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-1">
+                        {doc.fileUrl && (
+                          <Button variant="ghost" size="sm" asChild>
+                            <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer">
+                              <ExternalLink className="h-4 w-4" />
+                            </a>
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          onClick={() => setDocumentToDelete({ id: doc.id, name: doc.name })}
+                          aria-label={`Delete ${doc.name}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
                         </Button>
-                      )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -290,6 +323,71 @@ export default function Documents() {
           )}
         </CardContent>
       </Card>
+
+      <DetailSheet
+        open={!!selectedDocument}
+        onOpenChange={(o) => !o && setSelectedDocument(null)}
+        title={selectedDocument?.name}
+        subtitle={selectedDocument ? format(new Date(selectedDocument.createdAt), "MMM d, yyyy") : undefined}
+        width="md"
+      >
+        {selectedDocument && (
+          <div className="space-y-4 text-sm">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Type</p>
+                <Badge className={typeColors[selectedDocument.type]}>{selectedDocument.type}</Badge>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Uploaded</p>
+                <p className="font-medium">{format(new Date(selectedDocument.createdAt), "MMM d, yyyy")}</p>
+              </div>
+            </div>
+            {selectedDocument.description && (
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Description</p>
+                <p className="text-sm whitespace-pre-wrap">{selectedDocument.description}</p>
+              </div>
+            )}
+            {selectedDocument.fileUrl && (
+              <div>
+                <Button variant="outline" size="sm" asChild>
+                  <a href={selectedDocument.fileUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5">
+                    <ExternalLink className="h-4 w-4" />
+                    Open File
+                  </a>
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+      </DetailSheet>
+
+      <AlertDialog open={!!documentToDelete} onOpenChange={(open) => !open && setDocumentToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete document?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes <span className="font-medium">{documentToDelete?.name}</span>
+              {" "}from the system. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteDocument.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteDocument.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (documentToDelete) deleteDocument.mutate({ id: documentToDelete.id });
+              }}
+            >
+              {deleteDocument.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Delete document
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

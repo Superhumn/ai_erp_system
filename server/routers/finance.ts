@@ -893,9 +893,9 @@ export const financeRouter = router({
 
             const inventory = await db.getInventory();
             const products = await db.getProducts();
-            const productMap = new Map(products.map((p: any) => [p.id, p]));
+            const productMap = new Map((products as any[]).map((p: any) => [p.id, p]));
             const inventoryValue = inventory.reduce((s, inv) => {
-              const prod = productMap.get((inv as any).productId);
+              const prod = productMap.get((inv as any).productId) as any;
               return s + toNum(inv.quantity) * toNum(prod?.costPrice || 0);
             }, 0);
 
@@ -1024,7 +1024,7 @@ export const financeRouter = router({
               try {
                 const items = await db.getOrderItems(order.id);
                 for (const item of items) {
-                  const name = prodMap.get((item as any).productId) || 'Unknown Product';
+                  const name = String(prodMap.get((item as any).productId) || 'Unknown Product');
                   revenueMap[name] = (revenueMap[name] || 0) + toNum((item as any).totalAmount);
                 }
               } catch { /* skip */ }
@@ -1169,10 +1169,11 @@ export const financeRouter = router({
             const prodMap = new Map(products.map((p: any) => [p.id, p.name || p.sku || `Product ${p.id}`]));
             const cogsMap: Record<string, { qty: number; cost: number }> = {};
             for (const r of cogsRecords) {
-              const name = prodMap.get((r as any).productId) || 'Unknown';
-              if (!cogsMap[name]) cogsMap[name] = { qty: 0, cost: 0 };
-              cogsMap[name].qty += toNum((r as any).quantitySold);
-              cogsMap[name].cost += toNum((r as any).totalCost);
+              const name = String(prodMap.get((r as any).productId) || 'Unknown');
+              const current = cogsMap[name] || { qty: 0, cost: 0 };
+              current.qty += toNum((r as any).quantitySold);
+              current.cost += toNum((r as any).totalCost);
+              cogsMap[name] = current;
             }
             const sorted = Object.entries(cogsMap).sort((a, b) => b[1].cost - a[1].cost);
             const total = sorted.reduce((s, [, v]) => s + v.cost, 0);
@@ -1193,11 +1194,11 @@ export const financeRouter = router({
           case "inventory_valuation": {
             const inventory = await db.getInventory();
             const products = await db.getProducts();
-            const prodMap = new Map(products.map((p: any) => [p.id, p]));
+            const prodMap = new Map((products as any[]).map((p: any) => [p.id, p]));
             const rows: any[] = [];
             let totalValue = 0;
             for (const inv of inventory) {
-              const prod = prodMap.get((inv as any).productId);
+              const prod = prodMap.get((inv as any).productId) as any;
               const qty = toNum(inv.quantity);
               const cost = toNum(prod?.costPrice || 0);
               const value = qty * cost;

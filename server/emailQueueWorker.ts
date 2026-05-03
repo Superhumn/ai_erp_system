@@ -174,12 +174,18 @@ export async function triggerProcessing(): Promise<{
       return { processed: 0, successful: 0, failed: 0 };
     }
 
-    const results = await Promise.all(
-      queuedMessages.map(async (message) => {
-        const result = await emailService.sendQueuedEmail(message.id);
-        return { success: result.success };
-      })
-    );
+    const results: Array<{ success: boolean }> = [];
+
+    for (let i = 0; i < queuedMessages.length; i += config.maxConcurrent) {
+      const batch = queuedMessages.slice(i, i + config.maxConcurrent);
+      const batchResults = await Promise.all(
+        batch.map(async (message) => {
+          const result = await emailService.sendQueuedEmail(message.id);
+          return { success: result.success };
+        })
+      );
+      results.push(...batchResults);
+    }
 
     return {
       processed: results.length,
