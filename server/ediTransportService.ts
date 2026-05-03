@@ -2,9 +2,15 @@
  * EDI Transport Service
  *
  * Handles the actual transport of EDI documents to/from trading partners.
- * Supports SFTP, AS2 (stub), VAN webhook ingestion, and email-based exchange.
+ * Supports SFTP, AS2, VAN webhook ingestion, and email-based exchange.
  *
- * For SFTP: Uses ssh2-sftp-client if available, otherwise provides a
+ * AS2: posts the EDI payload over HTTPS with AS2-* headers, optionally
+ * S/MIME-signs the MIME body using a PEM key in `connectionCertificate`,
+ * requests a synchronous MDN, and updates the EDI transaction row with the
+ * disposition. Encryption (recipient cert) is not yet implemented — partners
+ * that require encrypted AS2 will reject the unencrypted payload.
+ *
+ * SFTP: uses ssh2-sftp-client if available, otherwise falls back to a
  * file-system-based simulation for development/testing.
  */
 

@@ -1,7 +1,7 @@
 import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray, ne, sum, max, min } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
-  InsertUser, users, localAuthCredentials, InsertLocalAuthCredential, companies, customers, vendors, products,
+  InsertUser, users, authTokens, InsertAuthToken, localAuthCredentials, InsertLocalAuthCredential, companies, customers, vendors, products,
   accounts, invoices, invoiceItems, payments, transactions, transactionLines,
   orders, orderItems, inventory, warehouses, productionBatches,
   purchaseOrders, purchaseOrderItems, shipments,
@@ -378,6 +378,62 @@ export async function updateLocalAuthCredential(openId: string, updates: Partial
     await db.update(localAuthCredentials).set(updates).where(eq(localAuthCredentials.openId, openId));
 }
 
+// ============================================
+// AUTH TOKENS (email verification, password reset)
+// ============================================
+
+export async function createAuthToken(data: InsertAuthToken) {
+  const db = await getDb();
+  if (!db) throw new Error("[Database] Cannot create auth token: database not available");
+  await db.insert(authTokens).values(data);
+}
+
+export async function getAuthToken(token: string, type: "email_verification" | "password_reset") {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db
+    .select()
+    .from(authTokens)
+    .where(and(eq(authTokens.token, token), eq(authTokens.type, type)))
+    .limit(1);
+  return result[0];
+}
+
+export async function deleteAuthToken(token: string) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(authTokens).where(eq(authTokens.token, token));
+}
+
+export async function deleteAuthTokensByEmail(email: string, type: "email_verification" | "password_reset") {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(authTokens).where(and(eq(authTokens.email, email), eq(authTokens.type, type)));
+}
+
+export async function deleteExpiredAuthTokens() {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(authTokens).where(lt(authTokens.expiresAt, new Date()));
+}
+
+export async function setUserEmailVerified(email: string, verified: boolean = true) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(users).set({ emailVerified: verified }).where(eq(users.email, email));
+}
+
+export async function isUserEmailVerified(email: string): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  const result = await db
+    .select({ emailVerified: users.emailVerified })
+    .from(users)
+    .where(eq(users.email, email))
+    .limit(1);
+  return result[0]?.emailVerified ?? false;
+}
+
 export async function getCompanies() {
   const db = await getDb();
   if (!db) return [];
@@ -442,6 +498,13 @@ export async function getCustomerByEmail(email: string) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(customers).where(eq(customers.email, email)).limit(1);
+  return result[0];
+}
+
+export async function getCustomerByName(name: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(customers).where(eq(customers.name, name)).limit(1);
   return result[0];
 }
 
