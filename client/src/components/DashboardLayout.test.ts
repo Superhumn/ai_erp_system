@@ -67,12 +67,14 @@ describe("Sidebar navigation structure", () => {
     ]);
   });
 
-  it("Sales contains Orders, CRM, Marketing for admin", () => {
+  it("Sales contains Orders, CRM, Marketing, CX, Sales AI for admin", () => {
     const sales = adminGroups.find((g) => g.label === "Sales")!;
     expect(sales.items.map((i) => i.label)).toEqual([
       "Orders",
       "CRM",
       "Marketing",
+      "CX",
+      "Sales AI",
     ]);
   });
 
@@ -156,9 +158,9 @@ describe("Sidebar navigation structure", () => {
       expect(labels).not.toContain("Finance");
     });
 
-    it("ops user Sales section has Orders only (no CRM / Marketing)", () => {
+    it("ops user Sales section has Orders, CX (no CRM / Marketing / Sales AI)", () => {
       const sales = getMenuGroups("ops").find((g) => g.label === "Sales")!;
-      expect(sales.items.map((i) => i.label)).toEqual(["Orders"]);
+      expect(sales.items.map((i) => i.label)).toEqual(["Orders", "CX"]);
     });
 
     it("sales user sees Sales but not Finance or Operations", () => {
@@ -168,12 +170,13 @@ describe("Sidebar navigation structure", () => {
       expect(labels).not.toContain("Operations");
     });
 
-    it("sales user Sales section has Orders, CRM, Marketing", () => {
+    it("sales user Sales section has Orders, CRM, Marketing, CX (no Sales AI)", () => {
       const sales = getMenuGroups("sales").find((g) => g.label === "Sales")!;
       expect(sales.items.map((i) => i.label)).toEqual([
         "Orders",
         "CRM",
         "Marketing",
+        "CX",
       ]);
     });
 

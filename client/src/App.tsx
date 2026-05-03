@@ -40,6 +40,10 @@ const SalesHub = lazy(() => import("./pages/sales/SalesHub"));
 const CRMDashboard = lazy(() => import("./pages/sales/CRMDashboard"));
 const CRMInvestors = lazy(() => import("./pages/sales/CRMInvestors"));
 const FundraisingCampaigns = lazy(() => import("./pages/sales/FundraisingCampaigns"));
+const SalesAutomation = lazy(() => import("./pages/sales/SalesAutomation"));
+
+// CX
+const CustomerSupport = lazy(() => import("./pages/cx/CustomerSupport"));
 
 // CRM
 const CRMHub = lazy(() => import("./pages/crm/CRMHub"));
@@ -236,6 +240,8 @@ function Router() {
           <Route path="/sales/customers/:id" component={CustomerDetail} />
           <Route path="/sales/customers" component={Customers} />
           <Route path="/sales/hub" component={SalesHub} />
+          <Route path="/cx/support" component={CustomerSupport} />
+          <Route path="/sales/automation" component={SalesAutomation} />
           <Route path="/crm/investors" component={CRMInvestors} />
           <Route path="/crm/campaigns" component={FundraisingCampaigns} />
 
