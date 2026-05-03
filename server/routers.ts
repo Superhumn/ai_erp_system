@@ -4878,6 +4878,149 @@ ONLY return the JSON array, no other text.`;
         return { results, totalSheets: files.length };
       }),
 
+    // List files from Google Drive (all types, not just spreadsheets)
+    listDriveFiles: protectedProcedure
+      .input(z.object({
+        mimeType: z.enum([
+          'application/vnd.google-apps.document',
+          'application/vnd.google-apps.spreadsheet',
+          'application/vnd.google-apps.presentation',
+          'application/pdf',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        ]).optional(),
+        pageToken: z.string().optional(),
+      }).optional())
+      .query(async ({ ctx, input }) => {
+        const { accessToken, error: tokenError } = await getValidGoogleToken(ctx.user.id);
+        if (tokenError || !accessToken) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: tokenError || 'Google not connected' });
+        }
+
+        let query = 'trashed=false';
+        if (input?.mimeType) {
+          // mimeType is validated against an enum above — safe to interpolate
+          query += ` and mimeType='${input.mimeType}'`;
+        }
+
+        const params = new URLSearchParams({
+          q: query,
+          fields: 'files(id,name,mimeType,modifiedTime,size),nextPageToken',
+          orderBy: 'modifiedTime desc',
+          pageSize: '30',
+        });
+        if (input?.pageToken) {
+          params.set('pageToken', input.pageToken);
+        }
+
+        const response = await fetch(
+          `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+
+        if (!response.ok) {
+          if (response.status === 401) {
+            throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google token expired. Please reconnect.' });
+          }
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list Drive files' });
+        }
+
+        const data = await response.json();
+        return {
+          files: data.files || [],
+          nextPageToken: data.nextPageToken || null,
+        };
+      }),
+
+    // Export / download a file from Google Drive
+    exportFile: protectedProcedure
+      .input(z.object({
+        fileId: z.string().min(1),
+        exportFormat: z.enum(['pdf', 'xlsx', 'docx', 'csv']),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { accessToken, error: tokenError } = await getValidGoogleToken(ctx.user.id);
+        if (tokenError || !accessToken) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: tokenError || 'Google not connected' });
+        }
+
+        const { fileId, exportFormat } = input;
+
+        // Fetch file metadata from Drive — never trust client-supplied mimeType/name
+        const metaResp = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id%2Cname%2CmimeType`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+        if (!metaResp.ok) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'File not found or access denied' });
+        }
+        const meta = await metaResp.json() as { id: string; name: string; mimeType: string };
+        const fileMimeType = meta.mimeType;
+        // Sanitize filename: strip path separators and control characters, ensure non-empty
+        const rawName = meta.name ?? 'download';
+        const safeName = rawName.replace(/[/\\?%*:|"<>\x00-\x1f]/g, '_').trim() || 'download';
+
+        // Determine the download URL based on file type
+        let url: string;
+        let outputMimeType: string;
+        let extension: string;
+
+        const isGoogleDoc = fileMimeType === 'application/vnd.google-apps.document';
+        const isGoogleSheet = fileMimeType === 'application/vnd.google-apps.spreadsheet';
+        const isGoogleSlides = fileMimeType === 'application/vnd.google-apps.presentation';
+
+        const exportMimeTypes: Record<string, string> = {
+          pdf: 'application/pdf',
+          xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          csv: 'text/csv',
+        };
+
+        if (isGoogleDoc || isGoogleSheet || isGoogleSlides) {
+          // Google Workspace files need export
+          outputMimeType = exportMimeTypes[exportFormat];
+          url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(outputMimeType)}`;
+          extension = exportFormat;
+        } else {
+          // Native files (PDF, XLSX, etc.) — direct download
+          url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`;
+          outputMimeType = fileMimeType;
+          const extMap: Record<string, string> = {
+            'application/pdf': 'pdf',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+            'text/csv': 'csv',
+          };
+          extension = extMap[fileMimeType] || exportFormat;
+        }
+
+        const response = await fetch(url, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+
+        if (!response.ok) {
+          const errText = await response.text().catch(() => 'Unknown error');
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: `Failed to export file: ${response.status} ${errText.slice(0, 200)}`,
+          });
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        const base64 = Buffer.from(arrayBuffer).toString('base64');
+
+        // Build filename with correct extension (strip any existing extension from safe name)
+        const baseName = safeName.replace(/\.[^/.]+$/, '');
+        const outputFilename = `${baseName}.${extension}`;
+
+        return {
+          filename: outputFilename,
+          base64,
+          mimeType: outputMimeType,
+          size: arrayBuffer.byteLength,
+        };
+      }),
+
     // Get past Google Drive sync history so results persist across page reloads
     getSyncHistory: protectedProcedure.query(async ({ ctx }) => {
       const history = await db.getSyncHistory(20);
@@ -16869,7 +17012,7 @@ Ask if they received the original request and if they can provide a quote.`;
       update: protectedProcedure
         .input(z.object({
           id: z.number(),
-          // Deal title is locked to the contact's company — not editable.
+          name: z.string().optional(),
           description: z.string().optional(),
           stage: z.string().optional(),
           amount: z.string().optional(),

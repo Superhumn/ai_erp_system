@@ -883,9 +883,7 @@ export default function CRMHub() {
                       <TableCell className="font-medium">
                         <div className="flex items-center gap-1">
                           {expandedDealId === deal.id ? <ChevronUp className="h-3 w-3 text-muted-foreground" /> : <ChevronDown className="h-3 w-3 text-muted-foreground" />}
-                          <span onClick={(e) => e.stopPropagation()}>
-                            <span className="font-medium">{deal.name}</span>
-                          </span>
+                          <span className="font-medium">{deal.name}</span>
                         </div>
                       </TableCell>
                       <TableCell>{deal._contactName}</TableCell>
