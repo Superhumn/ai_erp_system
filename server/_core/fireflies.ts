@@ -108,17 +108,19 @@ export async function getFirefliesUser(apiKey: string): Promise<FirefliesUser> {
 }
 
 /**
- * List recent transcripts from Fireflies
+ * List recent transcripts from Fireflies. Supports a `toDate` cursor (Unix
+ * ms) so callers can paginate backwards in time when `skip` is unreliable.
  */
 export async function listTranscripts(
   apiKey: string,
-  options: { limit?: number; skip?: number } = {}
+  options: { limit?: number; skip?: number; toDate?: number } = {}
 ): Promise<FirefliesTranscript[]> {
   const limit = options.limit ?? 50;
   const skip = options.skip ?? 0;
+  const toDate = options.toDate;
   const query = `
-    query ListTranscripts($limit: Int, $skip: Int) {
-      transcripts(limit: $limit, skip: $skip) {
+    query ListTranscripts($limit: Int, $skip: Int, $toDate: DateTime) {
+      transcripts(limit: $limit, skip: $skip, toDate: $toDate) {
         id
         title
         date
@@ -144,46 +146,69 @@ export async function listTranscripts(
     }
   `;
 
-  const data = await firefliesQuery<{ transcripts: FirefliesTranscript[] }>(apiKey, query, { limit, skip });
+  const variables: Record<string, unknown> = { limit, skip };
+  if (toDate != null) variables.toDate = new Date(toDate).toISOString();
+  const data = await firefliesQuery<{ transcripts: FirefliesTranscript[] }>(apiKey, query, variables);
   return data.transcripts || [];
 }
 
 /**
- * Fetch all available transcripts using paginated requests.
- * Falls back to a single request if the API does not support `skip`.
+ * Fetch transcripts from Fireflies using a date cursor.
+ *
+ * Fireflies caps `limit` at 50 and `skip` is unreliable past the first page,
+ * so we paginate by `toDate`: each subsequent request asks for transcripts
+ * older than the oldest one we just received. This works regardless of the
+ * account plan and lets callers walk all the way back in history.
+ *
+ * Pass `untilDateMs` to stop once a transcript at or before that timestamp
+ * is reached — useful for "fetch everything older than what we already have".
  */
-export async function listAllTranscripts(apiKey: string, pageSize: number = 50): Promise<FirefliesTranscript[]> {
-  const size = Math.max(1, Math.min(pageSize, 100));
+export async function listAllTranscripts(
+  apiKey: string,
+  options: { pageSize?: number; maxItems?: number; untilDateMs?: number; startToDateMs?: number } = {},
+): Promise<FirefliesTranscript[]> {
+  const size = Math.max(1, Math.min(options.pageSize ?? 50, 50));
+  const maxItems = options.maxItems ?? 2000;
+  const untilDateMs = options.untilDateMs;
   const all: FirefliesTranscript[] = [];
   const seenIds = new Set<string>();
 
-  try {
-    let skip = 0;
-    while (true) {
-      const page = await listTranscripts(apiKey, { limit: size, skip });
-      if (!page.length) break;
+  let toDate: number | undefined = options.startToDateMs;
+  let firstCall = true;
+  while (true) {
+    let page: FirefliesTranscript[] = [];
+    try {
+      page = await listTranscripts(apiKey, { limit: size, toDate });
+    } catch (error: any) {
+      if (firstCall) throw error;
+      console.warn(`[Fireflies] Pagination stopped at toDate=${toDate}: ${error?.message || error}`);
+      break;
+    }
+    firstCall = false;
+    if (!page.length) break;
 
-      for (const item of page) {
-        if (!item?.id || seenIds.has(item.id)) continue;
-        seenIds.add(item.id);
-        all.push(item);
-      }
-
-      if (page.length < size) break;
-      skip += size;
-
-      // Hard cap to prevent runaway loops if upstream pagination behaves unexpectedly.
-      if (all.length >= 2000) break;
+    let oldestInPage: number | undefined;
+    let hitFloor = false;
+    for (const item of page) {
+      if (!item?.id || seenIds.has(item.id)) continue;
+      const itemDate = typeof item.date === "number" ? item.date : Number(item.date) || 0;
+      if (untilDateMs != null && itemDate <= untilDateMs) { hitFloor = true; continue; }
+      seenIds.add(item.id);
+      all.push(item);
+      if (oldestInPage === undefined || itemDate < oldestInPage) oldestInPage = itemDate;
     }
 
-    return all;
-  } catch (error: any) {
-    // Older Fireflies API variants may not support `skip`.
-    if (typeof error?.message === "string" && /skip/i.test(error.message)) {
-      return listTranscripts(apiKey, { limit: size });
-    }
-    throw error;
+    if (hitFloor) break;
+    if (page.length < size) break;
+    if (oldestInPage === undefined) break;
+    // Step the cursor 1ms before the oldest item to avoid re-fetching it.
+    const next = oldestInPage - 1;
+    if (toDate !== undefined && next >= toDate) break; // no progress, stop
+    toDate = next;
+    if (all.length >= maxItems) break;
   }
+
+  return all;
 }
 
 /**
@@ -234,6 +259,58 @@ export async function getTranscript(apiKey: string, transcriptId: string): Promi
  * assignee names and due dates from natural language.
  */
 export function parseActionItems(rawItems: unknown): FirefliesActionItem[] {
+  // Strip embedded transcript timestamps in any of these shapes:
+  //   (00:30)            single
+  //   (1:23:45)          single with hours
+  //   (00:30 - 01:45)    range
+  //   * (00:00 - 10:46)  bullet-prefixed leading artifact
+  //   - 08:40)           orphan closing fragment
+  const TS = String.raw`\d{1,2}:\d{2}(?::\d{2})?`;
+  const stripTimestamps = (s: string) =>
+    s
+      .replace(new RegExp(String.raw`\(\s*${TS}(?:\s*[-–]\s*${TS})?\s*\)`, "g"), " ")
+      .replace(new RegExp(String.raw`(?:^|\s)[-–]\s*${TS}\s*\)`, "g"), " ")
+      .replace(new RegExp(String.raw`(?:^|\s)\(\s*${TS}\s*[-–]\s*${TS}\s*(?=\s|$)`, "g"), " ")
+      .replace(/^\s*[*•]\s+/, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  // Fireflies returns `summary.action_items` as a single markdown string
+  // shaped like:
+  //   **Speaker Name**
+  //   - Do the thing (00:30)
+  //   - Follow up next week (01:45)
+  //
+  //   **Other Speaker**
+  //   - Send the deck
+  // Parse into individual items, treating the bold header as the assignee.
+  const itemsFromMarkdown = (raw: string): FirefliesActionItem[] => {
+    const lines = raw.split(/\r?\n/);
+    let currentAssignee: string | undefined;
+    const out: FirefliesActionItem[] = [];
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      const headerMatch = line.match(/^\*\*(.+?)\*\*:?\s*$/);
+      if (headerMatch) {
+        currentAssignee = headerMatch[1].trim();
+        continue;
+      }
+      // Accept "- text", "* text", "1. text", or a bare line
+      const bulletMatch = line.match(/^(?:[-*•]|\d+[.)])\s+(.*)$/);
+      const text = stripTimestamps(bulletMatch ? bulletMatch[1] : line);
+      if (!text) continue;
+      const item: FirefliesActionItem = { text };
+      if (currentAssignee) item.assignee = currentAssignee;
+      out.push(item);
+    }
+    return out;
+  };
+
+  if (typeof rawItems === "string") {
+    return rawItems.trim() ? itemsFromMarkdown(rawItems) : [];
+  }
+
   const normalizedItems: string[] = Array.isArray(rawItems)
     ? rawItems
         .map((item) => {
@@ -247,15 +324,21 @@ export function parseActionItems(rawItems: unknown): FirefliesActionItem[] {
         .filter((text) => text.trim().length > 0)
     : [];
 
-  return normalizedItems.map((text) => {
-    const item: FirefliesActionItem = { text: text.trim() };
+  // If the array elements themselves contain markdown (one giant string per
+  // entry, or "**Speaker**\n- item" blocks), defer to the markdown parser.
+  if (normalizedItems.some((t) => /^\s*\*\*.+\*\*/m.test(t) || /\n\s*[-*•]/.test(t))) {
+    return itemsFromMarkdown(normalizedItems.join("\n"));
+  }
 
-    // Try to extract assignee patterns like "John:" or "@John" or "assigned to John"
+  return normalizedItems.map((rawText) => {
+    const text = stripTimestamps(rawText);
+    const item: FirefliesActionItem = { text };
+
+    // Only match unambiguous assignee markers. The leading "Name:" pattern was
+    // removed because it false-matches things like "Marketing: prepare deck".
     const assigneePatterns = [
-      /^([A-Z][a-z]+ ?[A-Z]?[a-z]*):\s*/,           // "John Smith: do something"
-      /@(\w+ ?\w*)/,                                    // "@John do something"
+      /@(\w+ ?\w*)/,                                  // "@John do something"
       /assigned to ([A-Z][a-z]+ ?[A-Z]?[a-z]*)/i,     // "assigned to John"
-      /\(([A-Z][a-z]+ ?[A-Z]?[a-z]*)\)\s*$/,          // "do something (John)"
     ];
 
     for (const pattern of assigneePatterns) {

@@ -18268,8 +18268,36 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'Fireflies not configured. Go to Settings → Fireflies to enter your API key.' });
       }
       console.log(`[Fireflies Sync] Fetching transcripts for user ${ctx.user.id} with key ${config.apiKey.substring(0, 8)}...`);
-      const transcripts = await listAllTranscripts(config.apiKey, input?.limit ?? 100);
-      console.log(`[Fireflies Sync] Got ${transcripts.length} transcripts from API`);
+
+      // Two-pass sync to work around Fireflies' broken `skip` pagination:
+      //   1. Catch up on anything new since our newest stored meeting.
+      //   2. Walk backwards from our oldest stored meeting to pull more history.
+      // Each pass is bounded so a single click stays responsive — repeat
+      // clicks keep extending coverage until exhausted.
+      const existing = await db.getFirefliesMeetings();
+      const dates = existing
+        .map((m: any) => (m?.date ? new Date(m.date).getTime() : 0))
+        .filter((n: number) => n > 0);
+      const newestStoredMs = dates.length ? Math.max(...dates) : undefined;
+      const oldestStoredMs = dates.length ? Math.min(...dates) : undefined;
+      const perClickCap = input?.limit ?? 100;
+
+      const fresh = await listAllTranscripts(config.apiKey, {
+        maxItems: perClickCap,
+        untilDateMs: newestStoredMs,
+      });
+      const backfill = oldestStoredMs
+        ? await listAllTranscripts(config.apiKey, {
+            maxItems: perClickCap,
+            startToDateMs: oldestStoredMs - 1,
+          })
+        : [];
+
+      // Dedup by id in case the two passes overlap.
+      const byId = new Map<string, typeof fresh[number]>();
+      for (const t of [...fresh, ...backfill]) if (t?.id) byId.set(t.id, t);
+      const transcripts = Array.from(byId.values());
+      console.log(`[Fireflies Sync] Got ${fresh.length} new + ${backfill.length} backfill = ${transcripts.length} unique transcripts`);
       let synced = 0;
       let skipped = 0;
       let dealApprovalsQueued = 0;
@@ -18287,6 +18315,11 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         }
         const fullTranscript = await getTranscript(config.apiKey, t.id);
         const participants = fullTranscript ? extractParticipants(fullTranscript) : [];
+        const sentences = Array.isArray(fullTranscript?.sentences)
+          ? fullTranscript!.sentences!
+              .map((s) => ({ speaker: s.speaker_name || "Unknown", text: (s.text || "").trim() }))
+              .filter((s) => s.text)
+          : [];
         const createdMeeting = await db.createFirefliesMeeting({
           firefliesId: t.id,
           title: t.title || 'Untitled Meeting',
@@ -18295,6 +18328,8 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           organizerEmail: fullTranscript?.organizer_email || t.organizer_email || null,
           participants: JSON.stringify(participants),
           transcriptUrl: fullTranscript?.transcript_url || null,
+          recordingUrl: fullTranscript?.audio_url || null,
+          transcriptText: sentences.length > 0 ? JSON.stringify(sentences) : null,
           summary: fullTranscript?.summary ? JSON.stringify(fullTranscript.summary) : null,
           actionItems: fullTranscript ? JSON.stringify(parseActionItems(fullTranscript?.summary?.action_items || [])) : null,
           processingStatus: 'pending',
@@ -18412,6 +18447,8 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         projectName: z.string().optional(),
         projectId: z.number().optional(),
         assigneeId: z.number().optional(),
+        existingContactIds: z.array(z.number()).optional(),
+        selectedActionItemIndices: z.array(z.number()).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const meeting = await db.getFirefliesMeetingById(input.meetingId);
@@ -18443,6 +18480,29 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           }
         }
 
+        // Log this meeting as a CRM interaction for any explicitly chosen
+        // existing contacts (separate from the auto-create-from-participants
+        // path above so users can link meetings to contacts who weren't on
+        // the call).
+        let linkedContactCount = 0;
+        if (input.existingContactIds?.length) {
+          const overview = (() => {
+            try { return JSON.parse(meeting.summary || "")?.overview || ""; } catch { return ""; }
+          })();
+          for (const contactId of input.existingContactIds) {
+            try {
+              await db.createCrmInteraction({
+                contactId,
+                channel: "meeting",
+                interactionType: "meeting_completed",
+                subject: meeting.title || "Meeting",
+                content: overview.substring(0, 500) || undefined,
+              });
+              linkedContactCount++;
+            } catch { /* skip duplicates / failures */ }
+          }
+        }
+
         // Create project if requested
         if (input.createProject) {
           const project = await db.createProject({
@@ -18457,25 +18517,66 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           projectId = input.projectId;
         }
 
-        // Queue tasks from action items for approval
-        if (input.createTasks && meeting.actionItems) {
-          const parsedParticipants: Array<{ name: string; email: string }> =
-            typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
-            Array.isArray(meeting.participants) ? meeting.participants : [];
-          tasksCreated += await queueFirefliesActionItemsForApproval({
-            userId: ctx.user.id,
-            meetingId: meeting.id,
-            meetingTitle: meeting.title || 'Untitled meeting',
-            actionItems: (meeting.actionItems ? JSON.parse(meeting.actionItems) : []) as Array<{ text: string; assignee?: string; dueDate?: string }>,
-            participants: parsedParticipants,
-            preferredProjectId: projectId,
-            preferredAssigneeId: input.assigneeId,
-          });
+        // Queue tasks from action items for approval. Older meetings may have
+        // an empty `actionItems` column (the previous parser didn't handle
+        // Fireflies' markdown string format) — fall back to re-parsing from
+        // the stored `summary` JSON so the Process button still works.
+        let actionItemsAvailable = 0;
+        if (input.createTasks) {
+          let storedItems: Array<{ text: string; assignee?: string; dueDate?: string }> = [];
+          try {
+            storedItems = meeting.actionItems ? JSON.parse(meeting.actionItems) : [];
+          } catch { storedItems = []; }
+          if (storedItems.length === 0 && meeting.summary) {
+            try {
+              const summaryObj = JSON.parse(meeting.summary);
+              storedItems = parseActionItems(summaryObj?.action_items);
+            } catch { /* leave empty */ }
+          }
+          actionItemsAvailable = storedItems.length;
+          // Honor the user's explicit selection from the preview UI. If
+          // selectedActionItemIndices is omitted, default to all items so
+          // existing callers stay backwards-compatible. If it's an empty
+          // array, the user unchecked everything — process zero.
+          let selectedItems: typeof storedItems;
+          let stableIndices: number[];
+          if (input.selectedActionItemIndices === undefined) {
+            selectedItems = storedItems;
+            stableIndices = storedItems.map((_, i) => i);
+          } else {
+            const set = new Set(input.selectedActionItemIndices);
+            selectedItems = storedItems.filter((_, i) => set.has(i));
+            stableIndices = storedItems
+              .map((_, i) => i)
+              .filter((i) => set.has(i));
+          }
+          if (selectedItems.length > 0) {
+            const parsedParticipants: Array<{ name: string; email: string }> =
+              typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
+              Array.isArray(meeting.participants) ? meeting.participants : [];
+            // forceCreate: user is explicitly invoking Process, so bypass the
+            // importance/confidence gates that exist to keep auto-sync quiet.
+            tasksCreated += await queueFirefliesActionItemsForApproval({
+              userId: ctx.user.id,
+              meetingId: meeting.id,
+              meetingTitle: meeting.title || 'Untitled meeting',
+              actionItems: selectedItems,
+              participants: parsedParticipants,
+              preferredProjectId: projectId,
+              preferredAssigneeId: input.assigneeId,
+              forceCreate: true,
+              stableIndices,
+            });
+            await db.updateFirefliesMeeting(input.meetingId, {
+              actionItems: JSON.stringify(storedItems),
+            });
+          }
         }
 
+        const totalContactWork = contactsCreated + linkedContactCount;
         const status: 'fully_processed' | 'contacts_created' | 'tasks_created' | 'pending' =
-          contactsCreated > 0 && tasksCreated > 0 ? 'fully_processed'
-          : contactsCreated > 0 ? 'contacts_created'
+          totalContactWork > 0 && tasksCreated > 0 ? 'fully_processed'
+          : totalContactWork > 0 ? 'contacts_created'
           : tasksCreated > 0 ? 'tasks_created'
           : 'pending';
 
@@ -18483,13 +18584,13 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           processingStatus: status,
           processedAt: new Date(),
           processedBy: ctx.user.id,
-          processingNotes: JSON.stringify({ contactsCreated, tasksCreated, projectId }),
-          autoCreatedContactCount: contactsCreated,
+          processingNotes: JSON.stringify({ contactsCreated, linkedContactCount, tasksCreated, projectId }),
+          autoCreatedContactCount: contactsCreated + linkedContactCount,
           autoCreatedTaskCount: tasksCreated,
           autoCreatedProjectId: projectId,
         });
 
-        return { contactsCreated, tasksCreated, projectId };
+        return { contactsCreated, linkedContactCount, tasksCreated, projectId, actionItemsAvailable };
       }),
     taskRoutingOptions: protectedProcedure.query(async () => {
       const projects = await db.getProjects();
@@ -18593,8 +18694,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           return null;
         }),
       getStats: protectedProcedure.query(async () => {
-        const stats = await db.getFirefliesMeetingStats();
-        return { ...stats, contactsCreated: 0, tasksCreated: 0 };
+        return db.getFirefliesMeetingStats();
       }),
     }),
   }),

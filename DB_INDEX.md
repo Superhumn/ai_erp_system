@@ -395,1010 +395,1010 @@ Source: `server/db.ts` (13139 lines, 946 top-level exports, 110 comment-banner s
 
 - `getDashboardMetrics` — L2047 — ✓ `db/sales`
 
-### SEARCH  L2092–L2123
+### SEARCH  L2029–L2060
 
-- `globalSearch` — L2096 — ✓ `db/sales`
+- `globalSearch` — L2033 — ✓ `db/sales`
 
-### GOOGLE OAUTH TOKENS  L2124–L2192
+### GOOGLE OAUTH TOKENS  L2061–L2129
 
-- `getGoogleOAuthToken` — L2128 — ✓ `db/auth`
-- `upsertGoogleOAuthToken` — L2135 — ✓ `db/auth`
-- `deleteGoogleOAuthToken` — L2155 — ✓ `db/auth`
-- `getQuickBooksOAuthToken` — L2162 — ✓ `db/auth`
-- `upsertQuickBooksOAuthToken` — L2169 — ✓ `db/auth`
-- `deleteQuickBooksOAuthToken` — L2187 — ✓ `db/auth`
-
-### FREIGHT CARRIERS  L2193–L2238
-
-- `getFreightCarriers` — L2197 — ✓ `db/freight`
-- `getFreightCarrierById` — L2218 — ✓ `db/freight`
-- `createFreightCarrier` — L2225 — ✓ `db/freight`
-- `updateFreightCarrier` — L2232 — ✓ `db/freight`
-
-### FREIGHT RFQs  L2239–L2282
-
-- `getFreightRfqs` — L2243 — ✓ `db/freight`
-- `getFreightRfqById` — L2256 — ✓ `db/freight`
-- `createFreightRfq` — L2263 — ✓ `db/freight`
-- `updateFreightRfq` — L2276 — ✓ `db/freight`
-
-### FREIGHT QUOTES  L2283–L2320
-
-- `getFreightQuotes` — L2287 — ✓ `db/freight`
-- `getFreightQuoteById` — L2300 — ✓ `db/freight`
-- `createFreightQuote` — L2307 — ✓ `db/freight`
-- `updateFreightQuote` — L2314 — ✓ `db/freight`
-
-### STANDALONE FREIGHT QUOTES  L2321–L2361
-
-- `getFreightQuotesStandalone` — L2325 — ✗ legacy-only
-- `getFreightQuotesStandaloneByShipment` — L2340 — ✗ legacy-only
-- `createFreightQuoteStandalone` — L2348 — ✗ legacy-only
-- `updateFreightQuoteStandalone` — L2355 — ✗ legacy-only
-
-### FREIGHT EMAILS  L2362–L2403
-
-- `getFreightEmails` — L2366 — ✓ `db/freight`
-- `createFreightEmail` — L2390 — ✓ `db/freight`
-- `updateFreightEmail` — L2397 — ✓ `db/freight`
-
-### CUSTOMS CLEARANCES  L2404–L2455
-
-- `getCustomsClearances` — L2408 — ✓ `db/freight`
-- `getCustomsClearanceById` — L2429 — ✓ `db/freight`
-- `createCustomsClearance` — L2436 — ✓ `db/freight`
-- `updateCustomsClearance` — L2449 — ✓ `db/freight`
-
-### CUSTOMS DOCUMENTS  L2456–L2479
-
-- `getCustomsDocuments` — L2460 — ✓ `db/freight`
-- `createCustomsDocument` — L2466 — ✓ `db/freight`
-- `updateCustomsDocument` — L2473 — ✓ `db/freight`
-
-### FREIGHT BOOKINGS  L2480–L2528
-
-- `getFreightBookings` — L2484 — ✓ `db/freight`
-- `getFreightBookingById` — L2502 — ✓ `db/freight`
-- `createFreightBooking` — L2509 — ✓ `db/freight`
-- `updateFreightBooking` — L2522 — ✓ `db/freight`
-
-### FREIGHT ANALYTICS  L2529–L2576
-
-- `getFreightDashboardStats` — L2533 — ✓ `db/freight`
-
-### INVENTORY BY LOCATION  L2577–L2645
-
-- `getInventoryByLocation` — L2581 — ✓ `db/operations`
-- `getConsolidatedInventory` — L2591 — ✓ `db/operations`
-- `getInventoryByProduct` — L2606 — ✓ `db/operations`
-- `getInventoryByProductId` — L2613 — ✓ `db/operations`
-- `updateInventoryQuantity` — L2620 — ✓ `db/operations`
-
-### INVENTORY TRANSFERS  L2646–L2818
-
-- `getInventoryTransfers` — L2650 — ✓ `db/operations`
-- `getTransferById` — L2674 — ✓ `db/operations`
-- `getTransferItems` — L2681 — ✓ `db/operations`
-- `createTransfer` — L2687 — ✓ `db/operations`
-- `addTransferItem` — L2702 — ✓ `db/operations`
-- `createInventoryTransfer` — L2709 — ✓ `db/operations`
-- `createInventoryTransferItem` — L2710 — ✓ `db/operations`
-- `updateTransfer` — L2712 — ✓ `db/operations`
-- `updateTransferItem` — L2719 — ✓ `db/operations`
-- `deleteTransfer` — L2726 — ✗ legacy-only
-- `processTransferShipment` — L2735 — ✓ `db/operations`
-- `processTransferReceipt` — L2767 — ✓ `db/operations`
-- `getLocationInventorySummary` — L2795 — ✓ `db/operations`
-
-### TEAM & PERMISSION MANAGEMENT  L2819–L3203
-
-- `ROLE_PERMISSIONS` — L2824 — ✓ `db/auth`
-- `getTeamMembers` — L2862 — ✓ `db/auth`
-- `getTeamMemberById` — L2869 — ✓ `db/auth`
-- `updateTeamMember` — L2877 — ✓ `db/auth`
-- `getUserById` — L2887 — ✓ `db/auth`
-- `getUsersByRoles` — L2894 — ✓ `db/auth`
-- `getInvitationByIdWithDataRoom` — L2905 — ✓ `db/dataRoom`
-- `deactivateTeamMember` — L2924 — ✓ `db/auth`
-- `reactivateTeamMember` — L2934 — ✓ `db/auth`
-- `createTeamInvitation` — L2945 — ✓ `db/auth`
-- `getTeamInvitations` — L2960 — ✓ `db/auth`
-- `getTeamInvitationByCode` — L2967 — ✓ `db/auth`
-- `acceptTeamInvitation` — L2977 — ✓ `db/auth`
-- `revokeTeamInvitation` — L3030 — ✓ `db/auth`
-- `getUserPermissions` — L3039 — ✓ `db/auth`
-- `addUserPermission` — L3046 — ✓ `db/auth`
-- `removeUserPermission` — L3066 — ✓ `db/auth`
-- `setUserPermissions` — L3076 — ✓ `db/auth`
-- `userHasPermission` — L3096 — ✓ `db/auth`
-- `getUserEffectivePermissions` — L3139 — ✓ `db/auth`
-- `getInventoryByWarehouse` — L3159 — ✓ `db/operations`
-- `updateInventoryQuantityById` — L3173 — ✓ `db/operations`
-
-### BILL OF MATERIALS (BOM) FUNCTIONS  L3204–L3576
-
-- `getBillOfMaterials` — L3208 — ✓ `db/manufacturing`
-- `getBomById` — L3224 — ✓ `db/manufacturing`
-- `createBom` — L3232 — ✓ `db/manufacturing`
-- `updateBom` — L3240 — ✓ `db/manufacturing`
-- `deleteBom` — L3250 — ✓ `db/manufacturing`
-- `getBomComponents` — L3263 — ✓ `db/manufacturing`
-- `createBomComponent` — L3272 — ✓ `db/manufacturing`
-- `updateBomComponent` — L3280 — ✓ `db/manufacturing`
-- `deleteBomComponent` — L3290 — ✓ `db/manufacturing`
-- `getRawMaterials` — L3298 — ✓ `db/manufacturing`
-- `getRawMaterialById` — L3313 — ✓ `db/manufacturing`
-- `getRawMaterialByNameOrSku` — L3321 — ✓ `db/manufacturing`
-- `createPurchaseOrderRawMaterialLink` — L3334 — ✓ `db/manufacturing`
-- `createRawMaterial` — L3355 — ✓ `db/manufacturing`
-- `updateRawMaterial` — L3363 — ✓ `db/manufacturing`
-- `deleteRawMaterial` — L3373 — ✓ `db/manufacturing`
-- `getBomVersionHistory` — L3381 — ✓ `db/manufacturing`
-- `createBomVersionHistory` — L3390 — ✓ `db/manufacturing`
-- `calculateBomCosts` — L3399 — ✓ `db/manufacturing`
-- `syncRecipeToBom` — L3456 — ✗ legacy-only
-
-### WORK ORDERS  L3577–L3639
-
-- `getWorkOrders` — L3581 — ✓ `db/manufacturing`
-- `getWorkOrderById` — L3619 — ✓ `db/manufacturing`
-- `createWorkOrder` — L3626 — ✓ `db/manufacturing`
-- `updateWorkOrder` — L3634 — ✓ `db/manufacturing`
-
-### WORK ORDER MATERIALS  L3640–L3691
-
-- `getWorkOrderMaterials` — L3644 — ✓ `db/manufacturing`
-- `createWorkOrderMaterial` — L3650 — ✓ `db/manufacturing`
-- `updateWorkOrderMaterial` — L3657 — ✓ `db/manufacturing`
-- `generateWorkOrderMaterialsFromBom` — L3664 — ✓ `db/manufacturing`
-
-### RAW MATERIAL INVENTORY  L3692–L3739
-
-- `getRawMaterialInventory` — L3696 — ✓ `db/manufacturing`
-- `getRawMaterialInventoryByLocation` — L3709 — ✓ `db/manufacturing`
-- `upsertRawMaterialInventory` — L3721 — ✓ `db/manufacturing`
-
-### RAW MATERIAL TRANSACTIONS  L3740–L3759
-
-- `createRawMaterialTransaction` — L3744 — ✓ `db/manufacturing`
-- `getRawMaterialTransactions` — L3751 — ✓ `db/manufacturing`
-
-### PO RECEIVING  L3760–L4024
-
-- `createPoReceivingRecord` — L3764 — ✓ `db/manufacturing`
-- `getPoReceivingRecords` — L3771 — ✓ `db/manufacturing`
-- `createPoReceivingItem` — L3779 — ✓ `db/manufacturing`
-- `getPoReceivingItems` — L3786 — ✓ `db/manufacturing`
-- `receivePurchaseOrderItems` — L3794 — ✓ `db/manufacturing`
-- `consumeWorkOrderMaterials` — L3954 — ✓ `db/manufacturing`
-- `getPurchaseOrderItems` — L4011 — ✓ `db/procurement`
-- `updatePurchaseOrderItem` — L4017 — ✓ `db/procurement`
-
-### AI PRODUCTION FORECASTING  L4025–L4582
-
-- `getDemandForecasts` — L4054 — ✓ `db/manufacturing`
-- `getDemandForecastById` — L4067 — ✓ `db/manufacturing`
-- `createDemandForecast` — L4074 — ✓ `db/manufacturing`
-- `updateDemandForecast` — L4082 — ✓ `db/manufacturing`
-- `getProductionPlans` — L4089 — ✓ `db/manufacturing`
-- `getProductionPlanById` — L4102 — ✓ `db/manufacturing`
-- `createProductionPlan` — L4109 — ✓ `db/manufacturing`
-- `updateProductionPlan` — L4117 — ✓ `db/manufacturing`
-- `getMaterialRequirements` — L4124 — ✓ `db/manufacturing`
-- `createMaterialRequirement` — L4131 — ✓ `db/manufacturing`
-- `updateMaterialRequirement` — L4138 — ✓ `db/manufacturing`
-- `getSuggestedPurchaseOrders` — L4145 — ✓ `db/manufacturing`
-- `getSuggestedPurchaseOrderById` — L4158 — ✓ `db/manufacturing`
-- `createSuggestedPurchaseOrder` — L4165 — ✓ `db/manufacturing`
-- `updateSuggestedPurchaseOrder` — L4173 — ✓ `db/manufacturing`
-- `getSuggestedPoItems` — L4180 — ✓ `db/manufacturing`
-- `createSuggestedPoItem` — L4186 — ✓ `db/manufacturing`
-- `getForecastAccuracyHistory` — L4194 — ✓ `db/manufacturing`
-- `createForecastAccuracyRecord` — L4207 — ✓ `db/manufacturing`
-- `getHistoricalSalesData` — L4215 — ✓ `db/sales`
-- `getPendingOrdersForMaterial` — L4244 — ✓ `db/procurement`
-- `getPendingInventoryFromPOs` — L4317 — ✓ `db/procurement`
-- `getInboundShipmentsFromPOs` — L4445 — ✓ `db/procurement`
-- `convertSuggestedPoToActualPo` — L4477 — ✓ `db/manufacturing`
-- `getProductsWithBoms` — L4544 — ✓ `db/operations`
-- `getPreferredVendorForMaterial` — L4559 — ✓ `db/procurement`
-
-### LOT/BATCH TRACKING  L4583–L4859
-
-- `createInventoryLot` — L4587 — ✓ `db/operations`
-- `getInventoryLots` — L4595 — ✓ `db/operations`
-- `getInventoryLotById` — L4606 — ✓ `db/operations`
-- `updateInventoryLot` — L4613 — ✓ `db/operations`
-- `getInventoryBalances` — L4620 — ✓ `db/operations`
-- `upsertInventoryBalance` — L4633 — ✓ `db/operations`
-- `updateInventoryBalanceQuantity` — L4663 — ✓ `db/operations`
-- `createInventoryTransaction` — L4678 — ✓ `db/operations`
-- `getInventoryTransactionHistory` — L4686 — ✓ `db/operations`
-- `reserveInventory` — L4705 — ✓ `db/operations`
-- `releaseReservation` — L4755 — ✓ `db/operations`
-- `shipInventory` — L4816 — ✓ `db/operations`
-
-### WORK ORDER OUTPUTS  L4860–L4918
-
-- `createWorkOrderOutput` — L4864 — ✓ `db/operations`
-- `getWorkOrderOutputs` — L4911 — ✓ `db/operations`
-
-### ALERT SYSTEM  L4919–L5061
-
-- `createAlert` — L4923 — ✓ `db/system`
-- `getAlerts` — L4931 — ✓ `db/system`
-- `getAlertById` — L4945 — ✓ `db/system`
-- `updateAlert` — L4952 — ✓ `db/system`
-- `acknowledgeAlert` — L4958 — ✓ `db/system`
-- `resolveAlert` — L4968 — ✓ `db/system`
-- `generateLowStockAlerts` — L4980 — ✓ `db/system`
-- `createRecommendation` — L5022 — ✓ `db/system`
-- `getRecommendations` — L5029 — ✓ `db/system`
-- `approveRecommendation` — L5041 — ✓ `db/system`
-- `rejectRecommendation` — L5051 — ✓ `db/system`
-
-### SHOPIFY INTEGRATION  L5062–L5189
-
-- `getShopifyStores` — L5066 — ✓ `db/operations`
-- `getShopifyStoreById` — L5072 — ✓ `db/operations`
-- `getShopifyStoreByDomain` — L5079 — ✓ `db/operations`
-- `createShopifyStore` — L5086 — ✓ `db/operations`
-- `updateShopifyStore` — L5093 — ✓ `db/operations`
-- `upsertShopifyStore` — L5099 — ✓ `db/operations`
-- `createWebhookEvent` — L5112 — ✓ `db/operations`
-- `getWebhookEventByIdempotencyKey` — L5119 — ✓ `db/operations`
-- `updateWebhookEvent` — L5126 — ✓ `db/operations`
-- `getShopifySkuMappings` — L5133 — ✓ `db/operations`
-- `createShopifySkuMapping` — L5139 — ✓ `db/operations`
-- `getProductByShopifySku` — L5146 — ✓ `db/operations`
-- `getShopifyLocationMappings` — L5162 — ✓ `db/operations`
-- `createShopifyLocationMapping` — L5168 — ✓ `db/operations`
-- `getWarehouseByShopifyLocation` — L5175 — ✓ `db/operations`
-
-### SALES ORDERS & RESERVATIONS  L5190–L5267
-
-- `createSalesOrder` — L5194 — ✓ `db/sales`
-- `getSalesOrders` — L5202 — ✓ `db/sales`
-- `getSalesOrderById` — L5215 — ✓ `db/sales`
-- `getSalesOrderByShopifyId` — L5222 — ✓ `db/sales`
-- `updateSalesOrder` — L5229 — ✓ `db/sales`
-- `createSalesOrderLine` — L5235 — ✓ `db/sales`
-- `getSalesOrderLines` — L5242 — ✓ `db/sales`
-- `createInventoryReservation` — L5249 — ✓ `db/sales`
-- `getInventoryReservations` — L5256 — ✓ `db/sales`
-- `updateInventoryReservation` — L5262 — ✓ `db/sales`
-
-### INVENTORY ALLOCATION  L5268–L5317
-
-- `createInventoryAllocation` — L5272 — ✓ `db/sales`
-- `getInventoryAllocations` — L5279 — ✓ `db/sales`
-- `updateInventoryAllocation` — L5292 — ✓ `db/sales`
-- `createSalesEvent` — L5299 — ✓ `db/sales`
-- `getSalesEvents` — L5306 — ✓ `db/sales`
-
-### INVENTORY RECONCILIATION  L5318–L5495
-
-- `createReconciliationRun` — L5322 — ✓ `db/finance`
-- `getReconciliationRuns` — L5330 — ✓ `db/finance`
-- `getReconciliationRunById` — L5342 — ✓ `db/finance`
-- `updateReconciliationRun` — L5349 — ✓ `db/finance`
-- `createReconciliationLine` — L5355 — ✓ `db/finance`
-- `getReconciliationLines` — L5362 — ✓ `db/finance`
-- `runInventoryReconciliation` — L5371 — ✓ `db/operations`
-- `getAvailableInventoryByProduct` — L5472 — ✓ `db/operations`
-
-### SYNC LOGS  L5496–L5540
-
-- `createSyncLog` — L5500 — ✓ `db/system`
-- `getSyncHistory` — L5525 — ✓ `db/system`
-- `clearSyncHistory` — L5534 — ✓ `db/system`
-
-### NOTIFICATION FUNCTIONS  L5541–L5824
-
-- `NotificationType` — L5545 — ✓ `db/system`
-- `CreateNotificationInput` — L5553 — ✓ `db/system`
-- `createNotification` — L5565 — ✓ `db/system`
-- `createNotificationsForAllUsers` — L5585 — ✓ `db/system`
-- `getUserNotifications` — L5609 — ✓ `db/system`
-- `getUnreadNotificationCount` — L5630 — ✓ `db/system`
-- `markNotificationAsRead` — L5644 — ✓ `db/system`
-- `markAllNotificationsAsRead` — L5658 — ✓ `db/system`
-- `deleteNotification` — L5672 — ✓ `db/system`
-- `deleteOldNotifications` — L5685 — ✓ `db/system`
-- `getUserNotificationPreferences` — L5699 — ✓ `db/system`
-- `updateNotificationPreference` — L5708 — ✓ `db/system`
-- `shouldNotifyUser` — L5735 — ✓ `db/system`
-- `notifyUsersOfEvent` — L5753 — ✓ `db/system`
-
-### EMAIL SCANNING & DOCUMENT PARSING  L5825–L6475
-
-- `createInboundEmail` — L5829 — ✓ `db/email`
-- `getInboundEmails` — L5854 — ✓ `db/email`
-- `getInboundEmailById` — L5890 — ✓ `db/email`
-- `updateInboundEmailStatus` — L5898 — ✓ `db/email`
-- `deleteInboundEmail` — L5917 — ✓ `db/email`
-- `createEmailAttachment` — L5929 — ✓ `db/email`
-- `getEmailAttachments` — L5937 — ✓ `db/email`
-- `updateAttachmentProcessed` — L5944 — ✓ `db/email`
-- `getAutoReplyRules` — L5955 — ✓ `db/email`
-- `getAutoReplyRuleById` — L5974 — ✓ `db/email`
-- `createAutoReplyRule` — L5982 — ✓ `db/email`
-- `updateAutoReplyRule` — L6012 — ✓ `db/email`
-- `deleteAutoReplyRule` — L6041 — ✓ `db/email`
-- `incrementAutoReplyRuleTriggered` — L6048 — ✓ `db/email`
-- `getSentEmails` — L6059 — ✓ `db/email`
-- `getSentEmailById` — L6087 — ✓ `db/email`
-- `createSentEmail` — L6095 — ✓ `db/email`
-- `updateSentEmailStatus` — L6123 — ✓ `db/email`
-- `getEmailThread` — L6139 — ✓ `db/email`
-- `createParsedDocument` — L6154 — ✓ `db/email`
-- `getParsedDocuments` — L6162 — ✓ `db/email`
-- `getParsedDocumentById` — L6202 — ✓ `db/email`
-- `updateParsedDocument` — L6210 — ✓ `db/email`
-- `approveParsedDocument` — L6217 — ✓ `db/email`
-- `rejectParsedDocument` — L6229 — ✓ `db/email`
-- `createParsedDocumentLineItem` — L6242 — ✓ `db/email`
-- `getParsedDocumentLineItems` — L6250 — ✓ `db/email`
-- `linkParsedDocumentToVendor` — L6259 — ✓ `db/email`
-- `linkParsedDocumentToPO` — L6266 — ✓ `db/email`
-- `linkParsedDocumentToShipment` — L6273 — ✓ `db/email`
-- `setCreatedTransaction` — L6280 — ✓ `db/email`
-- `setCreatedVendor` — L6287 — ✓ `db/email`
-- `findVendorByEmailOrName` — L6295 — ✓ `db/procurement`
-- `findPurchaseOrderByNumber` — L6330 — ✓ `db/procurement`
-- `findShipmentByTracking` — L6341 — ✓ `db/procurement`
-- `getEmailScanningStats` — L6352 — ✓ `db/email`
-- `updateEmailCategorization` — L6388 — ✓ `db/email`
-- `getEmailCategoryStats` — L6413 — ✓ `db/email`
-- `findInboundEmailByMessageId` — L6440 — ✓ `db/email`
-- `getUncategorizedEmails` — L6452 — ✓ `db/email`
-
-### DATA ROOM MANAGEMENT  L6476–L6772
-
-- `createDataRoom` — L6481 — ✓ `db/dataRoom`
-- `getDataRooms` — L6488 — ✓ `db/dataRoom`
-- `getDataRoomById` — L6498 — ✓ `db/dataRoom`
-- `getDataRoomBySlug` — L6505 — ✓ `db/dataRoom`
-- `updateDataRoom` — L6512 — ✓ `db/dataRoom`
-- `deleteDataRoom` — L6518 — ✓ `db/dataRoom`
-- `createDataRoomFolder` — L6525 — ✓ `db/dataRoom`
-- `getDataRoomFolders` — L6532 — ✓ `db/dataRoom`
-- `getDataRoomFolderById` — L6551 — ✓ `db/dataRoom`
-- `updateDataRoomFolder` — L6558 — ✓ `db/dataRoom`
-- `deleteDataRoomFolder` — L6564 — ✓ `db/dataRoom`
-- `createDataRoomDocument` — L6571 — ✓ `db/dataRoom`
-- `getDataRoomDocuments` — L6578 — ✓ `db/dataRoom`
-- `getDataRoomDocumentById` — L6597 — ✓ `db/dataRoom`
-- `updateDataRoomDocument` — L6604 — ✓ `db/dataRoom`
-- `updateDataRoomDocumentBumpVersion` — L6614 — ✗ legacy-only
-- `deleteDataRoomDocument` — L6632 — ✓ `db/dataRoom`
-- `createDataRoomLink` — L6639 — ✓ `db/dataRoom`
-- `getDataRoomLinks` — L6646 — ✓ `db/dataRoom`
-- `getDataRoomLinkByCode` — L6654 — ✓ `db/dataRoom`
-- `updateDataRoomLink` — L6661 — ✓ `db/dataRoom`
-- `incrementLinkViewCount` — L6667 — ✓ `db/dataRoom`
-- `deleteDataRoomLink` — L6675 — ✓ `db/dataRoom`
-- `createDataRoomVisitor` — L6682 — ✓ `db/dataRoom`
-- `getDataRoomVisitors` — L6689 — ✓ `db/dataRoom`
-- `getVisitorByEmail` — L6697 — ✓ `db/dataRoom`
-- `updateDataRoomVisitor` — L6706 — ✓ `db/dataRoom`
-- `createDocumentView` — L6713 — ✓ `db/dataRoom`
-- `getDocumentViews` — L6720 — ✓ `db/dataRoom`
-- `getVisitorDocumentViews` — L6728 — ✓ `db/dataRoom`
-- `updateDocumentView` — L6736 — ✓ `db/dataRoom`
-- `createDataRoomInvitation` — L6743 — ✓ `db/dataRoom`
-- `getDataRoomInvitations` — L6750 — ✓ `db/dataRoom`
-- `getInvitationByCode` — L6758 — ✓ `db/dataRoom`
-- `updateDataRoomInvitation` — L6767 — ✓ `db/dataRoom`
-
-### IMAP CREDENTIALS MANAGEMENT  L6773–L6818
-
-- `createImapCredential` — L6777 — ✓ `db/email`
-- `getImapCredentials` — L6784 — ✓ `db/email`
-- `getImapCredentialById` — L6792 — ✓ `db/email`
-- `getActivePollingCredentials` — L6799 — ✗ legacy-only
-- `updateImapCredential` — L6806 — ✓ `db/email`
-- `deleteImapCredential` — L6812 — ✓ `db/email`
-
-### DATA ROOM ANALYTICS  L6819–L6905
-
-- `getDataRoomAnalytics` — L6823 — ✓ `db/dataRoom`
-- `getDocumentAnalytics` — L6863 — ✓ `db/dataRoom`
-- `getVisitorTimeline` — L6885 — ✓ `db/dataRoom`
-
-### EMAIL CREDENTIALS & SCHEDULED SCANNING  L6906–L7134
-
-- `getEmailCredentials` — L6910 — ✓ `db/email`
-- `getEmailCredentialById` — L6927 — ✓ `db/email`
-- `createEmailCredential` — L6935 — ✓ `db/email`
-- `updateEmailCredential` — L6961 — ✓ `db/email`
-- `deleteEmailCredential` — L6987 — ✓ `db/email`
-- `getScheduledScans` — L6998 — ✓ `db/email`
-- `createScheduledScan` — L7010 — ✓ `db/email`
-- `updateScheduledScan` — L7028 — ✓ `db/email`
-- `deleteScheduledScan` — L7045 — ✓ `db/email`
-- `getDueScheduledScans` — L7052 — ✗ legacy-only
-- `createScanLog` — L7070 — ✗ legacy-only
-- `updateScanLog` — L7081 — ✗ legacy-only
-- `getScanLogs` — L7096 — ✓ `db/email`
-- `updateEmailAttachment` — L7109 — ✓ `db/email`
-- `updateEmailCategory` — L7122 — ✓ `db/email`
-
-### DATA ROOM - PAGE-LEVEL TRACKING FUNCTIONS  L7135–L7275
-
-- `createDocumentPageView` — L7140 — ✓ `db/dataRoom`
-- `getDocumentPageViewById` — L7147 — ✓ `db/dataRoom`
-- `getDocumentPageViews` — L7157 — ✓ `db/dataRoom`
-- `getPageViewsByVisitor` — L7171 — ✓ `db/dataRoom`
-- `updateDocumentPageView` — L7180 — ✓ `db/dataRoom`
-- `getPageViewAnalytics` — L7186 — ✓ `db/dataRoom`
-
-### DATA ROOM - GOOGLE DRIVE SYNC FUNCTIONS  L7276–L7328
-
-- `createDriveSyncConfig` — L7280 — ✓ `db/dataRoom`
-- `getDriveSyncConfig` — L7287 — ✓ `db/dataRoom`
-- `updateDriveSyncConfig` — L7295 — ✓ `db/dataRoom`
-- `deleteDriveSyncConfig` — L7301 — ✓ `db/dataRoom`
-- `createDriveSyncLog` — L7307 — ✓ `db/dataRoom`
-- `getDriveSyncLogs` — L7314 — ✓ `db/dataRoom`
-- `updateDriveSyncLog` — L7323 — ✓ `db/dataRoom`
-
-### DATA ROOM - EMAIL ACCESS RULES FUNCTIONS  L7329–L7418
-
-- `createEmailAccessRule` — L7333 — ✓ `db/dataRoom`
-- `getEmailAccessRules` — L7340 — ✓ `db/dataRoom`
-- `getEmailAccessRuleById` — L7348 — ✗ legacy-only
-- `updateEmailAccessRule` — L7355 — ✓ `db/dataRoom`
-- `deleteEmailAccessRule` — L7361 — ✓ `db/dataRoom`
-- `checkEmailAccess` — L7367 — ✓ `db/dataRoom`
-
-### DATA ROOM - VISITOR SESSION FUNCTIONS  L7419–L7474
-
-- `createVisitorSession` — L7423 — ✓ `db/dataRoom`
-- `getVisitorSessions` — L7430 — ✓ `db/dataRoom`
-- `getDataRoomSessions` — L7438 — ✓ `db/dataRoom`
-- `updateVisitorSession` — L7447 — ✓ `db/dataRoom`
-- `getSessionByToken` — L7453 — ✓ `db/dataRoom`
-- `getActiveSession` — L7461 — ✓ `db/dataRoom`
-
-### DATA ROOM - DETAILED ANALYTICS FUNCTIONS  L7475–L7651
-
-- `getDetailedVisitorAnalytics` — L7479 — ✓ `db/dataRoom`
-- `getDataRoomEngagementReport` — L7554 — ✓ `db/dataRoom`
-
-### NDA E-SIGNATURES  L7652–L7843
-
-- `getNdaDocuments` — L7657 — ✓ `db/dataRoom`
-- `getActiveNdaDocument` — L7666 — ✓ `db/dataRoom`
-- `getNdaDocumentById` — L7681 — ✓ `db/dataRoom`
-- `createNdaDocument` — L7689 — ✓ `db/dataRoom`
-- `updateNdaDocument` — L7718 — ✓ `db/dataRoom`
-- `deleteNdaDocument` — L7732 — ✓ `db/dataRoom`
-- `getNdaSignatures` — L7740 — ✓ `db/dataRoom`
-- `getNdaSignatureById` — L7753 — ✓ `db/dataRoom`
-- `getVisitorNdaSignature` — L7761 — ✓ `db/dataRoom`
-- `createNdaSignature` — L7777 — ✓ `db/dataRoom`
-- `updateNdaSignature` — L7806 — ✓ `db/dataRoom`
-- `createNdaAuditLog` — L7820 — ✓ `db/dataRoom`
-- `getNdaAuditLogs` — L7834 — ✓ `db/dataRoom`
-
-### ENHANCED DATA ROOM ACCESS CONTROL  L7844–L7954
-
-- `getDataRoomVisitorById` — L7849 — ✓ `db/dataRoom`
-- `getDataRoomInvitationByEmail` — L7857 — ✓ `db/dataRoom`
-- `blockDataRoomVisitor` — L7869 — ✓ `db/dataRoom`
-- `unblockDataRoomVisitor` — L7880 — ✓ `db/dataRoom`
-- `revokeDataRoomVisitorAccess` — L7891 — ✓ `db/dataRoom`
-- `restoreDataRoomVisitorAccess` — L7902 — ✓ `db/dataRoom`
-- `updateDataRoomInvitationPermissions` — L7913 — ✓ `db/dataRoom`
-- `linkVisitorToNdaSignature` — L7928 — ✓ `db/dataRoom`
-- `getDataRoomVisitorByEmail` — L7937 — ✓ `db/dataRoom`
-- `isEmailInvitedToDataRoom` — L7949 — ✗ legacy-only
-
-### RECURRING INVOICES  L7955–L8078
-
-- `getRecurringInvoices` — L7959 — ✓ `db/finance`
-- `getRecurringInvoiceById` — L8004 — ✓ `db/finance`
-- `getRecurringInvoiceWithItems` — L8011 — ✓ `db/finance`
-- `createRecurringInvoice` — L8022 — ✓ `db/finance`
-- `updateRecurringInvoice` — L8029 — ✓ `db/finance`
-- `createRecurringInvoiceItem` — L8035 — ✓ `db/finance`
-- `deleteRecurringInvoiceItems` — L8042 — ✓ `db/finance`
-- `getRecurringInvoicesDueForGeneration` — L8048 — ✓ `db/finance`
-- `createRecurringInvoiceHistory` — L8062 — ✓ `db/finance`
-- `getRecurringInvoiceHistory` — L8069 — ✓ `db/finance`
-
-### SUPPLIER PORTAL  L8079–L8203
-
-- `createSupplierPortalSession` — L8083 — ✓ `db/procurement`
-- `getSupplierPortalSession` — L8096 — ✓ `db/procurement`
-- `updateSupplierPortalSession` — L8103 — ✓ `db/procurement`
-- `createSupplierDocument` — L8109 — ✓ `db/procurement`
-- `getSupplierDocuments` — L8126 — ✓ `db/procurement`
-- `updateSupplierDocument` — L8138 — ✓ `db/procurement`
-- `createSupplierFreightInfo` — L8150 — ✓ `db/procurement`
-- `getSupplierFreightInfo` — L8176 — ✓ `db/procurement`
-- `updateSupplierFreightInfo` — L8183 — ✓ `db/procurement`
-
-### AI AGENT SYSTEM  L8204–L8377
-
-- `createAiAgentTask` — L8208 — ✓ `db/ai`
-- `getAiAgentTasks` — L8215 — ✓ `db/ai`
-- `getAiAgentTaskById` — L8233 — ✓ `db/ai`
-- `updateAiAgentTask` — L8240 — ✓ `db/ai`
-- `bulkDeleteAiAgentTasks` — L8259 — ✗ legacy-only
-- `getPendingApprovalTasks` — L8273 — ✓ `db/ai`
-- `createAiAgentRule` — L8281 — ✓ `db/ai`
-- `getAiAgentRules` — L8288 — ✓ `db/ai`
-- `updateAiAgentRule` — L8299 — ✓ `db/ai`
-- `createAiAgentLog` — L8316 — ✓ `db/ai`
-- `getAiAgentLogs` — L8323 — ✓ `db/ai`
-- `createEmailTemplate` — L8335 — ✓ `db/email`
-- `getEmailTemplates` — L8342 — ✓ `db/email`
-- `getDefaultEmailTemplate` — L8353 — ✗ legacy-only
-- `updateEmailTemplate` — L8365 — ✓ `db/email`
-
-### VENDOR QUOTE MANAGEMENT (RFQ System)  L8378–L8531
-
-- `createVendorRfq` — L8383 — ✓ `db/procurement`
-- `getVendorRfqs` — L8390 — ✓ `db/procurement`
-- `getVendorRfqById` — L8402 — ✓ `db/procurement`
-- `updateVendorRfq` — L8409 — ✓ `db/procurement`
-- `createVendorQuote` — L8416 — ✓ `db/procurement`
-- `getVendorQuotes` — L8423 — ✓ `db/procurement`
-- `getVendorQuoteById` — L8435 — ✓ `db/procurement`
-- `updateVendorQuote` — L8442 — ✓ `db/procurement`
-- `getVendorQuotesWithVendorInfo` — L8448 — ✓ `db/procurement`
-- `createVendorRfqEmail` — L8459 — ✓ `db/procurement`
-- `getVendorRfqEmails` — L8466 — ✓ `db/procurement`
-- `updateVendorRfqEmail` — L8478 — ✓ `db/procurement`
-- `createVendorRfqInvitation` — L8485 — ✓ `db/procurement`
-- `getVendorRfqInvitations` — L8492 — ✓ `db/procurement`
-- `updateVendorRfqInvitation` — L8502 — ✓ `db/procurement`
-- `getBestVendorQuote` — L8509 — ✓ `db/procurement`
-- `generateVendorRfqNumber` — L8523 — ✓ `db/procurement`
-
-### DOCUMENT IMPORT HELPERS  L8532–L8679
-
-- `getVendorByName` — L8536 — ✓ `db/procurement`
-- `getPurchaseOrderByNumber` — L8545 — ✓ `db/procurement`
-- `updatePurchaseOrderFreight` — L8554 — ✓ `db/procurement`
-- `FreightHistoryData` — L8564 — ✓ `db/freight`
-- `createFreightHistory` — L8587 — ✓ `db/freight`
-- `DocumentImportLog` — L8622 — ✓ `db/freight`
-- `createDocumentImportLog` — L8635 — ✓ `db/freight`
-- `getDocumentImportLogs` — L8656 — ✓ `db/freight`
-
-### CRM MODULE - Contacts, Messaging & Tracking  L8680–L9647
-
-- `getCrmContacts` — L8686 — ✓ `db/crm`
-- `getCrmContactById` — L8745 — ✓ `db/crm`
-- `getCrmContactByEmail` — L8752 — ✓ `db/crm`
-- `createCrmContact` — L8759 — ✓ `db/crm`
-- `findCrmContactMatch` — L8792 — ✗ legacy-only
-- `findOrCreateCrmContact` — L8822 — ✗ legacy-only
-- `findDuplicateCrmContactGroups` — L8861 — ✗ legacy-only
-- `mergeCrmContacts` — L8893 — ✗ legacy-only
-- `updateCrmContact` — L8912 — ✓ `db/crm`
-- `deleteCrmContact` — L8918 — ✓ `db/crm`
-- `getCrmContactStats` — L8924 — ✓ `db/crm`
-- `getCrmTags` — L8947 — ✓ `db/crm`
-- `createCrmTag` — L8957 — ✓ `db/crm`
-- `deleteCrmTag` — L8964 — ✓ `db/crm`
-- `addTagToContact` — L8971 — ✓ `db/crm`
-- `removeTagFromContact` — L8977 — ✓ `db/crm`
-- `getContactTags` — L8985 — ✓ `db/crm`
-- `getWhatsappMessages` — L8998 — ✓ `db/crm`
-- `getWhatsappConversations` — L9034 — ✓ `db/crm`
-- `createWhatsappMessage` — L9055 — ✓ `db/crm`
-- `updateWhatsappMessageStatus` — L9062 — ✓ `db/crm`
-- `getCrmInteractions` — L9080 — ✓ `db/crm`
-- `createCrmInteraction` — L9108 — ✓ `db/crm`
-- `getContactTimeline` — L9125 — ✓ `db/crm`
-- `getCrmPipelines` — L9140 — ✓ `db/crm`
-- `getCrmPipelineById` — L9150 — ✓ `db/crm`
-- `createCrmPipeline` — L9157 — ✓ `db/crm`
-- `updateCrmPipeline` — L9164 — ✓ `db/crm`
-- `getCrmDeals` — L9172 — ✓ `db/crm`
-- `getCrmDealById` — L9212 — ✓ `db/crm`
-- `createCrmDeal` — L9219 — ✓ `db/crm`
-- `updateCrmDeal` — L9226 — ✓ `db/crm`
-- `deleteCrmDeal` — L9241 — ✓ `db/crm`
-- `findCrmDealByCompany` — L9250 — ✗ legacy-only
-- `hasPendingDealApprovalForCompany` — L9270 — ✗ legacy-only
-- `getCrmDealStats` — L9281 — ✓ `db/crm`
-- `getContactCaptures` — L9310 — ✓ `db/crm`
-- `getContactCaptureById` — L9342 — ✓ `db/crm`
-- `createContactCapture` — L9349 — ✓ `db/crm`
-- `updateContactCapture` — L9356 — ✓ `db/crm`
-- `processVCardCapture` — L9363 — ✓ `db/crm`
-- `processLinkedInCapture` — L9416 — ✓ `db/crm`
-- `getCrmEmailCampaigns` — L9479 — ✓ `db/crm`
-- `createCrmEmailCampaign` — L9505 — ✓ `db/crm`
-- `updateCrmEmailCampaign` — L9512 — ✓ `db/crm`
-- `getUnifiedMessagingHistory` — L9592 — ✓ `db/crm`
-
-### COPACKER INVENTORY AUTO-PURCHASE  L9648–L9819
-
-- `getInventoryByIdWithDetails` — L9653 — ✓ `db/operations`
-- `checkAndTriggerLowStockPurchaseOrder` — L9672 — ✓ `db/operations`
-
-### DUE DILIGENCE CHECKLIST FUNCTIONS  L9820–L10138
-
-- `createDueDiligenceTemplate` — L9825 — ✓ `db/dataRoom`
-- `getDueDiligenceTemplates` — L9832 — ✓ `db/dataRoom`
-- `getDueDiligenceTemplateById` — L9851 — ✓ `db/dataRoom`
-- `getTemplateWithItems` — L9858 — ✓ `db/dataRoom`
-- `createDueDiligenceCategory` — L9882 — ✓ `db/dataRoom`
-- `createDueDiligenceItem` — L9889 — ✓ `db/dataRoom`
-- `createDataRoomChecklist` — L9897 — ✓ `db/dataRoom`
-- `getDataRoomChecklists` — L9904 — ✓ `db/dataRoom`
-- `getDataRoomChecklistById` — L9912 — ✓ `db/dataRoom`
-- `updateDataRoomChecklist` — L9919 — ✓ `db/dataRoom`
-- `deleteDataRoomChecklist` — L9925 — ✓ `db/dataRoom`
-- `createDataRoomChecklistItem` — L9933 — ✓ `db/dataRoom`
-- `getChecklistItems` — L9940 — ✓ `db/dataRoom`
-- `getChecklistItemById` — L9948 — ✓ `db/dataRoom`
-- `updateChecklistItem` — L9955 — ✓ `db/dataRoom`
-- `deleteChecklistItem` — L9961 — ✓ `db/dataRoom`
-- `bulkCreateChecklistItems` — L9967 — ✓ `db/dataRoom`
-- `getChecklistWithItems` — L9976 — ✓ `db/dataRoom`
-- `autoMatchChecklistDocuments` — L10075 — ✓ `db/dataRoom`
-
-### EDI MODULE  L10139–L10460
-
-- `getEdiTradingPartners` — L10145 — ✓ `db/edi`
-- `getEdiTradingPartnerById` — L10160 — ✓ `db/edi`
-- `getEdiTradingPartnerByIsaId` — L10167 — ✓ `db/edi`
-- `createEdiTradingPartner` — L10174 — ✓ `db/edi`
-- `updateEdiTradingPartner` — L10181 — ✓ `db/edi`
-- `deleteEdiTradingPartner` — L10187 — ✓ `db/edi`
-- `getEdiDocumentMaps` — L10195 — ✓ `db/edi`
-- `getEdiDocumentMapById` — L10205 — ✓ `db/edi`
-- `getEdiDocumentMapForPartner` — L10212 — ✗ legacy-only
-- `createEdiDocumentMap` — L10226 — ✓ `db/edi`
-- `updateEdiDocumentMap` — L10233 — ✓ `db/edi`
-- `getEdiTransactions` — L10241 — ✓ `db/edi`
-- `getEdiTransactionById` — L10261 — ✓ `db/edi`
-- `getEdiTransactionWithItems` — L10268 — ✓ `db/edi`
-- `createEdiTransaction` — L10279 — ✓ `db/edi`
-- `updateEdiTransaction` — L10286 — ✓ `db/edi`
-- `getEdiTransactionItems` — L10294 — ✗ legacy-only
-- `createEdiTransactionItem` — L10300 — ✓ `db/edi`
-- `createEdiTransactionItems` — L10307 — ✗ legacy-only
-- `getEdiProductCrosswalks` — L10316 — ✓ `db/edi`
-- `getEdiProductCrosswalkByBuyerPart` — L10328 — ✓ `db/edi`
-- `getEdiProductCrosswalkByUpc` — L10341 — ✓ `db/edi`
-- `createEdiProductCrosswalk` — L10354 — ✓ `db/edi`
-- `updateEdiProductCrosswalk` — L10361 — ✓ `db/edi`
-- `deleteEdiProductCrosswalk` — L10367 — ✓ `db/edi`
-- `getEdiShipToLocations` — L10375 — ✓ `db/edi`
-- `getEdiShipToLocationByCode` — L10387 — ✗ legacy-only
-- `createEdiShipToLocation` — L10399 — ✓ `db/edi`
-- `updateEdiShipToLocation` — L10406 — ✓ `db/edi`
-- `getEdiComplianceScorecards` — L10414 — ✓ `db/edi`
-- `createEdiComplianceScorecard` — L10424 — ✓ `db/edi`
-- `updateEdiComplianceScorecard` — L10431 — ✗ legacy-only
-- `getEdiDashboardStats` — L10439 — ✓ `db/edi`
-
-### EDI CONTROL NUMBERS  L10461–L10496
-
-- `getNextControlNumber` — L10465 — ✓ `db/edi`
-
-### EDI SETTINGS  L10497–L10848
-
-- `getEdiSettings` — L10501 — ✓ `db/edi`
-- `upsertEdiSettings` — L10513 — ✓ `db/edi`
-- `recalculateChecklistProgress` — L10526 — ✓ `db/dataRoom`
-- `createChecklistFromTemplate` — L10546 — ✓ `db/dataRoom`
-- `createStandardChecklist` — L10758 — ✓ `db/dataRoom`
-- `getChecklistSummary` — L10811 — ✓ `db/dataRoom`
-
-### ORDER ITEMS  L10849–L10870
-
-- `deleteOrder` — L10853 — ✗ legacy-only
-- `deleteOrderItems` — L10859 — ✗ legacy-only
-- `getOrderItems` — L10865 — ✗ legacy-only
-
-### INVENTORY MANAGEMENT (enriched view)  L10871–L10903
-
-- `getInventoryManagementList` — L10875 — ✗ legacy-only
-- `updateInventoryManagement` — L10897 — ✗ legacy-only
-
-### FIREFLIES MEETINGS  L10904–L11038
-
-- `getFirefliesConfig` — L10908 — ✗ legacy-only
-- `upsertFirefliesConfig` — L10915 — ✗ legacy-only
-- `deleteFirefliesConfig` — L10931 — ✗ legacy-only
-- `getAllFirefliesConfigs` — L10937 — ✗ legacy-only
-- `getFirefliesMeetings` — L10943 — ✗ legacy-only
-- `getFirefliesMeetingById` — L10953 — ✗ legacy-only
-- `createFirefliesMeeting` — L10960 — ✗ legacy-only
-- `updateFirefliesMeeting` — L10967 — ✗ legacy-only
-- `getFirefliesMeetingByFirefliesId` — L10973 — ✗ legacy-only
-- `getFirefliesMeetingStats` — L10980 — ✗ legacy-only
-- `getInventoryCostingConfigs` — L11002 — ✓ `db/finance`
-- `getInventoryCostingConfigByProduct` — L11014 — ✓ `db/finance`
-- `createInventoryCostingConfig` — L11026 — ✓ `db/finance`
-- `updateInventoryCostingConfig` — L11033 — ✓ `db/finance`
-
-### INVENTORY COST LAYERS  L11039–L11098
-
-- `getInventoryCostLayers` — L11043 — ✓ `db/finance`
-- `getActiveCostLayers` — L11062 — ✓ `db/finance`
-- `getActiveCostLayersForUpdate` — L11079 — ✗ legacy-only
-
-### INVENTORY COSTING LAYER FUNCTIONS  L11099–L11231
-
-- `createInventoryCostLayer` — L11103 — ✓ `db/finance`
-- `updateInventoryCostLayer` — L11110 — ✓ `db/finance`
-- `getWeightedAverageCost` — L11116 — ✓ `db/finance`
-- `createCogsRecord` — L11145 — ✓ `db/finance`
-- `getCogsRecords` — L11152 — ✓ `db/finance`
-- `getCogsPeriodSummaries` — L11173 — ✓ `db/finance`
-- `getCogsPeriodSummary` — L11194 — ✗ legacy-only
-- `createCogsPeriodSummaryRecord` — L11218 — ✓ `db/finance`
-- `updateCogsPeriodSummaryRecord` — L11225 — ✓ `db/finance`
-
-### R&D TAX CREDIT OPERATIONS  L11232–L11411
-
-- `getRdTaxCreditStudies` — L11236 — ✗ legacy-only
-- `getRdTaxCreditStudyById` — L11249 — ✗ legacy-only
-- `getRdStudyWithDetails` — L11256 — ✗ legacy-only
-- `createRdTaxCreditStudy` — L11264 — ✗ legacy-only
-- `updateRdTaxCreditStudy` — L11271 — ✗ legacy-only
-- `deleteRdTaxCreditStudy` — L11278 — ✗ legacy-only
-- `getRdProjects` — L11287 — ✗ legacy-only
-- `getRdProjectById` — L11293 — ✗ legacy-only
-- `createRdProject` — L11300 — ✗ legacy-only
-- `updateRdProject` — L11307 — ✗ legacy-only
-- `deleteRdProject` — L11314 — ✗ legacy-only
-- `getRdExpensesByProject` — L11322 — ✗ legacy-only
-- `getRdExpensesByStudy` — L11328 — ✗ legacy-only
-- `createRdExpense` — L11334 — ✗ legacy-only
-- `updateRdExpense` — L11341 — ✗ legacy-only
-- `deleteRdExpense` — L11348 — ✗ legacy-only
-- `getCogsSummary` — L11355 — ✓ `db/finance`
-- `getCogsDashboardStats` — L11371 — ✓ `db/finance`
-- `dbTransaction` — L11406 — ✗ legacy-only
-
-### VENDOR NEGOTIATIONS  L11412–L11486
-
-- `getVendorNegotiations` — L11416 — ✓ `db/procurement`
-- `getVendorNegotiationById` — L11431 — ✓ `db/procurement`
-- `createVendorNegotiation` — L11438 — ✓ `db/procurement`
-- `updateVendorNegotiation` — L11445 — ✓ `db/procurement`
-- `getNegotiationRounds` — L11451 — ✓ `db/procurement`
-- `createNegotiationRound` — L11457 — ✓ `db/procurement`
-- `getNextRoundNumber` — L11464 — ✓ `db/procurement`
-- `getGoogleOAuthTokenByUserId` — L11482 — ✓ `db/auth`
-
-### TRANSACTIONAL EMAIL TEMPLATES  L11487–L11568
-
-- `getTransactionalEmailTemplates` — L11491 — ✓ `db/email`
-- `getTransactionalEmailTemplateById` — L11500 — ✓ `db/email`
-- `getTransactionalEmailTemplateByName` — L11507 — ✓ `db/email`
-- `createTransactionalEmailTemplate` — L11514 — ✓ `db/email`
-- `updateTransactionalEmailTemplate` — L11521 — ✓ `db/email`
-- `deleteTransactionalEmailTemplate` — L11527 — ✓ `db/email`
-- `getEmailMessages` — L11533 — ✓ `db/email`
-- `getQueuedEmailMessages` — L11547 — ✓ `db/email`
-- `getEmailMessageStats` — L11555 — ✓ `db/email`
-
-### EMAIL EVENTS  L11569–L11597
-
-- `createEmailEvent` — L11573 — ✓ `db/email`
-- `getEmailEventsByMessageId` — L11580 — ✓ `db/email`
-- `getEmailEventsByProviderMessageId` — L11586 — ✓ `db/email`
-- `getRecentEmailEvents` — L11592 — ✓ `db/email`
-
-### COGS / COSTING FUNCTIONS  L11598–L11671
-
-- `recordCOGSSale` — L11602 — ✓ `db/finance`
-- `getCOGSTransactions` — L11613 — ✓ `db/finance`
-- `getProductProfitability` — L11623 — ✓ `db/finance`
-- `getInventoryValuation` — L11630 — ✓ `db/finance`
-- `allocateFreightCosts` — L11639 — ✓ `db/finance`
-- `updateInventoryCostBasis` — L11647 — ✓ `db/finance`
-- `upsertQuickBooksAccountMapping` — L11661 — ✓ `db/finance`
-
-### OTHER MISSING FUNCTIONS  L11672–L11700
-
-- `getVendorNegotiationStats` — L11679 — ✓ `db/procurement`
-- `getVendorSpendingHistory` — L11695 — ✓ `db/procurement`
-
-### COPACKER PORTAL  L11701–L11849
-
-- `getCopackerInventoryUpdates` — L11705 — ✗ legacy-only
-- `getCopackerInventoryUpdateById` — L11714 — ✗ legacy-only
-- `createCopackerInventoryUpdate` — L11721 — ✗ legacy-only
-- `updateCopackerInventoryUpdate` — L11728 — ✗ legacy-only
-- `getCopackerInventoryUpdateItems` — L11734 — ✗ legacy-only
-- `createCopackerInventoryUpdateItem` — L11740 — ✗ legacy-only
-- `deleteCopackerInventoryUpdateItems` — L11747 — ✗ legacy-only
-- `getCopackerInvoices` — L11755 — ✗ legacy-only
-- `getCopackerInvoiceById` — L11769 — ✗ legacy-only
-- `createCopackerInvoice` — L11776 — ✗ legacy-only
-- `getCopackerInvoiceItems` — L11783 — ✗ legacy-only
-- `createCopackerInvoiceItem` — L11789 — ✗ legacy-only
-- `deleteCopackerInvoiceItems` — L11796 — ✗ legacy-only
-- `getCopackerShippingDocuments` — L11804 — ✗ legacy-only
-- `createCopackerShippingDocument` — L11818 — ✗ legacy-only
-- `getContractKeyDates` — L11828 — ✗ legacy-only
-- `getProjectMilestones` — L11834 — ✗ legacy-only
-- `getEdiPartners` — L11840 — ✗ legacy-only
-
-### GRANT & BID APPLICATION SUBMITTER  L11850–L12061
-
-- `getGrantBidTemplates` — L11855 — ✗ legacy-only
-- `getGrantBidTemplateById` — L11861 — ✗ legacy-only
-- `createGrantBidTemplate` — L11868 — ✗ legacy-only
-- `updateGrantBidTemplate` — L11875 — ✗ legacy-only
-- `deleteGrantBidTemplate` — L11881 — ✗ legacy-only
-- `getGrantBidApplications` — L11888 — ✗ legacy-only
-- `getGrantBidApplicationById` — L11901 — ✗ legacy-only
-- `createGrantBidApplication` — L11908 — ✗ legacy-only
-- `updateGrantBidApplication` — L11915 — ✗ legacy-only
-- `deleteGrantBidApplication` — L11921 — ✗ legacy-only
-- `getGrantBidDocuments` — L11928 — ✗ legacy-only
-- `createGrantBidDocument` — L11934 — ✗ legacy-only
-- `deleteGrantBidDocument` — L11941 — ✗ legacy-only
-- `getGrantBidFieldMappings` — L11948 — ✗ legacy-only
-- `createGrantBidFieldMapping` — L11954 — ✗ legacy-only
-- `deleteGrantBidFieldMappings` — L11961 — ✗ legacy-only
-- `getGrantBidSubmissionLogs` — L11968 — ✗ legacy-only
-- `createGrantBidSubmissionLog` — L11974 — ✗ legacy-only
-- `getCompanyProfile` — L11982 — ✗ legacy-only
-- `getEmployeeSummary` — L11993 — ✗ legacy-only
-- `getFinancialSummary` — L12008 — ✗ legacy-only
-- `getProjectSummary` — L12030 — ✗ legacy-only
-- `getGrantBidApplicationStats` — L12041 — ✗ legacy-only
-
-### GRANT & BID OPPORTUNITIES (DISCOVERY)  L12062–L12137
-
-- `getGrantBidOpportunities` — L12066 — ✗ legacy-only
-- `getGrantBidOpportunityById` — L12080 — ✗ legacy-only
-- `createGrantBidOpportunity` — L12087 — ✗ legacy-only
-- `createGrantBidOpportunities` — L12094 — ✗ legacy-only
-- `updateGrantBidOpportunity` — L12106 — ✗ legacy-only
-- `deleteGrantBidOpportunity` — L12112 — ✗ legacy-only
-- `getGrantBidOpportunityStats` — L12118 — ✗ legacy-only
-
-### GRANT & BID WEB FORM MAPPINGS  L12138–L12174
-
-- `getGrantBidWebFormMappings` — L12142 — ✗ legacy-only
-- `getGrantBidWebFormMappingById` — L12148 — ✗ legacy-only
-- `createGrantBidWebFormMapping` — L12155 — ✗ legacy-only
-- `updateGrantBidWebFormMapping` — L12162 — ✗ legacy-only
-- `deleteGrantBidWebFormMapping` — L12168 — ✗ legacy-only
-
-### QUICKBOOKS EXTENDED FUNCTIONS  L12175–L12290
-
-- `getQuickBooksAccountsByType` — L12179 — ✓ `db/finance`
-- `syncQuickBooksAccounts` — L12194 — ✓ `db/finance`
-- `syncQuickBooksItems` — L12212 — ✓ `db/finance`
-- `getQuickBooksAccountMappings` — L12230 — ✓ `db/finance`
-- `createEmailMessage` — L12239 — ✓ `db/email`
-- `getEmailMessageById` — L12246 — ✓ `db/email`
-- `getEmailMessageByIdempotencyKey` — L12253 — ✓ `db/email`
-- `getEmailMessageByProviderMessageId` — L12260 — ✓ `db/email`
-- `updateEmailMessage` — L12267 — ✓ `db/email`
-- `updateEmailMessageStatus` — L12273 — ✓ `db/email`
-- `incrementEmailMessageRetry` — L12283 — ✓ `db/email`
-
-### CRM INVESTORS & FUNDRAISING  L12291–L12360
-
-- `getInvestors` — L12295 — ✗ legacy-only
-- `createInvestor` — L12302 — ✗ legacy-only
-- `getFundraisingCampaigns` — L12309 — ✗ legacy-only
-- `createFundraisingCampaign` — L12322 — ✗ legacy-only
-- `updateFundraisingCampaign` — L12334 — ✗ legacy-only
-- `getInvestorInvestments` — L12341 — ✗ legacy-only
-- `getFundraisingReminders` — L12348 — ✗ legacy-only
-- `getBills` — L12357 — ✗ legacy-only
-
-### CAP TABLE & EQUITY MANAGEMENT  L12361–L12634
-
-- `getShareClasses` — L12367 — ✗ legacy-only
-- `createShareClass` — L12374 — ✗ legacy-only
-- `updateShareClass` — L12381 — ✗ legacy-only
-- `deleteShareClass` — L12387 — ✗ legacy-only
-- `getStakeholders` — L12395 — ✗ legacy-only
-- `getStakeholderById` — L12402 — ✗ legacy-only
-- `createStakeholder` — L12409 — ✗ legacy-only
-- `updateStakeholder` — L12416 — ✗ legacy-only
-- `getEquityGrants` — L12424 — ✗ legacy-only
-- `getEquityGrantsByStakeholder` — L12431 — ✗ legacy-only
-- `getStakeholderByUserId` — L12441 — ✗ legacy-only
-- `getStakeholderDocuments` — L12452 — ✗ legacy-only
-- `getStakeholderDocumentById` — L12460 — ✗ legacy-only
-- `createStakeholderDocument` — L12469 — ✗ legacy-only
-- `deleteStakeholderDocument` — L12476 — ✗ legacy-only
-- `getProRataIndicationsForCampaign` — L12484 — ✗ legacy-only
-- `getProRataIndication` — L12492 — ✗ legacy-only
-- `upsertProRataIndication` — L12504 — ✗ legacy-only
-- `createEquityGrant` — L12519 — ✗ legacy-only
-- `updateEquityGrant` — L12526 — ✗ legacy-only
-- `getValuations409a` — L12534 — ✗ legacy-only
-- `createValuation409a` — L12541 — ✗ legacy-only
-- `updateValuation409a` — L12548 — ✗ legacy-only
-- `getEquityTransactions` — L12556 — ✗ legacy-only
-- `createEquityTransaction` — L12567 — ✗ legacy-only
-- `getCapTableSummary` — L12576 — ✗ legacy-only
-
-### OFFER LETTERS  L12635–L12677
-
-- `getOfferLetters` — L12639 — ✗ legacy-only
-- `getOfferLetterById` — L12650 — ✗ legacy-only
-- `createOfferLetter` — L12657 — ✗ legacy-only
-- `updateOfferLetter` — L12664 — ✗ legacy-only
-- `deleteOfferLetter` — L12671 — ✗ legacy-only
-
-### EXERCISE REQUESTS  L12678–L12761
-
-- `getExerciseRequests` — L12682 — ✗ legacy-only
-- `getExerciseRequestById` — L12694 — ✗ legacy-only
-- `createExerciseRequest` — L12701 — ✗ legacy-only
-- `updateExerciseRequest` — L12708 — ✗ legacy-only
-- `approveExerciseRequest` — L12715 — ✗ legacy-only
-
-### BOARD RESOLUTIONS & SIGNATURES  L12762–L12816
-
-- `getBoardResolutions` — L12766 — ✓ `db/board`
-- `getBoardResolutionById` — L12778 — ✓ `db/board`
-- `createBoardResolution` — L12784 — ✓ `db/board`
-- `updateBoardResolution` — L12790 — ✓ `db/board`
-- `getBoardSignatures` — L12795 — ✓ `db/board`
-- `getBoardSignatureById` — L12800 — ✓ `db/board`
-- `createBoardSignature` — L12806 — ✓ `db/board`
-- `updateBoardSignature` — L12812 — ✓ `db/board`
-
-### INVESTOR UPDATES  L12817–L12849
-
-- `getInvestorUpdates` — L12821 — ✓ `db/board`
-- `getInvestorUpdateById` — L12833 — ✓ `db/board`
-- `createInvestorUpdate` — L12839 — ✓ `db/board`
-- `updateInvestorUpdate` — L12845 — ✓ `db/board`
-
-### TEAM INVITES (Email-based invite flow)  L12850–L12898
-
-- `getTeamInvites` — L12854 — ✗ legacy-only
-- `getTeamInviteByToken` — L12864 — ✗ legacy-only
-- `getTeamInviteById` — L12874 — ✗ legacy-only
-- `createTeamInvite` — L12884 — ✗ legacy-only
-- `updateTeamInvite` — L12892 — ✗ legacy-only
-
-### TIME TRACKING  L12899–L12978
-
-- `getTimeEntries` — L12903 — ✗ legacy-only
-- `getTimeEntryById` — L12916 — ✗ legacy-only
-- `createTimeEntry` — L12922 — ✗ legacy-only
-- `updateTimeEntry` — L12932 — ✗ legacy-only
-- `deleteTimeEntry` — L12946 — ✗ legacy-only
-- `getTimeInvoices` — L12951 — ✗ legacy-only
-- `getTimeInvoiceById` — L12962 — ✗ legacy-only
-- `createTimeInvoice` — L12968 — ✗ legacy-only
-- `updateTimeInvoice` — L12974 — ✗ legacy-only
-
-### BANK TRANSACTIONS (Mercury)  L12979–L13023
-
-- `getBankTransactions` — L12983 — ✗ legacy-only
-- `getBankTransactionByExternalId` — L13004 — ✗ legacy-only
-- `createBankTransaction` — L13011 — ✗ legacy-only
-- `updateBankTransaction` — L13018 — ✗ legacy-only
-
-### INVESTMENT COMMITMENTS (Investor Onboarding)  L13024–L13061
-
-- `getInvestmentCommitments` — L13028 — ✗ legacy-only
-- `getInvestmentCommitmentById` — L13039 — ✗ legacy-only
-- `createInvestmentCommitment` — L13046 — ✗ legacy-only
-- `updateInvestmentCommitment` — L13053 — ✗ legacy-only
-
-### QUICK NOTES  L13062–L13139
-
-- `createNote` — L13066 — ✗ legacy-only
-- `updateNote` — L13073 — ✗ legacy-only
-- `getNoteById` — L13079 — ✗ legacy-only
-- `listNotesForUser` — L13088 — ✗ legacy-only
-- `deleteNote` — L13097 — ✗ legacy-only
-- `getOrCreateNotesInboxProject` — L13111 — ✗ legacy-only
+- `getGoogleOAuthToken` — L2065 — ✓ `db/auth`
+- `upsertGoogleOAuthToken` — L2072 — ✓ `db/auth`
+- `deleteGoogleOAuthToken` — L2092 — ✓ `db/auth`
+- `getQuickBooksOAuthToken` — L2099 — ✓ `db/auth`
+- `upsertQuickBooksOAuthToken` — L2106 — ✓ `db/auth`
+- `deleteQuickBooksOAuthToken` — L2124 — ✓ `db/auth`
+
+### FREIGHT CARRIERS  L2130–L2175
+
+- `getFreightCarriers` — L2134 — ✓ `db/freight`
+- `getFreightCarrierById` — L2155 — ✓ `db/freight`
+- `createFreightCarrier` — L2162 — ✓ `db/freight`
+- `updateFreightCarrier` — L2169 — ✓ `db/freight`
+
+### FREIGHT RFQs  L2176–L2219
+
+- `getFreightRfqs` — L2180 — ✓ `db/freight`
+- `getFreightRfqById` — L2193 — ✓ `db/freight`
+- `createFreightRfq` — L2200 — ✓ `db/freight`
+- `updateFreightRfq` — L2213 — ✓ `db/freight`
+
+### FREIGHT QUOTES  L2220–L2257
+
+- `getFreightQuotes` — L2224 — ✓ `db/freight`
+- `getFreightQuoteById` — L2237 — ✓ `db/freight`
+- `createFreightQuote` — L2244 — ✓ `db/freight`
+- `updateFreightQuote` — L2251 — ✓ `db/freight`
+
+### STANDALONE FREIGHT QUOTES  L2258–L2298
+
+- `getFreightQuotesStandalone` — L2262 — ✗ legacy-only
+- `getFreightQuotesStandaloneByShipment` — L2277 — ✗ legacy-only
+- `createFreightQuoteStandalone` — L2285 — ✗ legacy-only
+- `updateFreightQuoteStandalone` — L2292 — ✗ legacy-only
+
+### FREIGHT EMAILS  L2299–L2340
+
+- `getFreightEmails` — L2303 — ✓ `db/freight`
+- `createFreightEmail` — L2327 — ✓ `db/freight`
+- `updateFreightEmail` — L2334 — ✓ `db/freight`
+
+### CUSTOMS CLEARANCES  L2341–L2392
+
+- `getCustomsClearances` — L2345 — ✓ `db/freight`
+- `getCustomsClearanceById` — L2366 — ✓ `db/freight`
+- `createCustomsClearance` — L2373 — ✓ `db/freight`
+- `updateCustomsClearance` — L2386 — ✓ `db/freight`
+
+### CUSTOMS DOCUMENTS  L2393–L2416
+
+- `getCustomsDocuments` — L2397 — ✓ `db/freight`
+- `createCustomsDocument` — L2403 — ✓ `db/freight`
+- `updateCustomsDocument` — L2410 — ✓ `db/freight`
+
+### FREIGHT BOOKINGS  L2417–L2465
+
+- `getFreightBookings` — L2421 — ✓ `db/freight`
+- `getFreightBookingById` — L2439 — ✓ `db/freight`
+- `createFreightBooking` — L2446 — ✓ `db/freight`
+- `updateFreightBooking` — L2459 — ✓ `db/freight`
+
+### FREIGHT ANALYTICS  L2466–L2513
+
+- `getFreightDashboardStats` — L2470 — ✓ `db/freight`
+
+### INVENTORY BY LOCATION  L2514–L2582
+
+- `getInventoryByLocation` — L2518 — ✓ `db/operations`
+- `getConsolidatedInventory` — L2528 — ✓ `db/operations`
+- `getInventoryByProduct` — L2543 — ✓ `db/operations`
+- `getInventoryByProductId` — L2550 — ✓ `db/operations`
+- `updateInventoryQuantity` — L2557 — ✓ `db/operations`
+
+### INVENTORY TRANSFERS  L2583–L2755
+
+- `getInventoryTransfers` — L2587 — ✓ `db/operations`
+- `getTransferById` — L2611 — ✓ `db/operations`
+- `getTransferItems` — L2618 — ✓ `db/operations`
+- `createTransfer` — L2624 — ✓ `db/operations`
+- `addTransferItem` — L2639 — ✓ `db/operations`
+- `createInventoryTransfer` — L2646 — ✓ `db/operations`
+- `createInventoryTransferItem` — L2647 — ✓ `db/operations`
+- `updateTransfer` — L2649 — ✓ `db/operations`
+- `updateTransferItem` — L2656 — ✓ `db/operations`
+- `deleteTransfer` — L2663 — ✗ legacy-only
+- `processTransferShipment` — L2672 — ✓ `db/operations`
+- `processTransferReceipt` — L2704 — ✓ `db/operations`
+- `getLocationInventorySummary` — L2732 — ✓ `db/operations`
+
+### TEAM & PERMISSION MANAGEMENT  L2756–L3140
+
+- `ROLE_PERMISSIONS` — L2761 — ✓ `db/auth`
+- `getTeamMembers` — L2799 — ✓ `db/auth`
+- `getTeamMemberById` — L2806 — ✓ `db/auth`
+- `updateTeamMember` — L2814 — ✓ `db/auth`
+- `getUserById` — L2824 — ✓ `db/auth`
+- `getUsersByRoles` — L2831 — ✓ `db/auth`
+- `getInvitationByIdWithDataRoom` — L2842 — ✓ `db/dataRoom`
+- `deactivateTeamMember` — L2861 — ✓ `db/auth`
+- `reactivateTeamMember` — L2871 — ✓ `db/auth`
+- `createTeamInvitation` — L2882 — ✓ `db/auth`
+- `getTeamInvitations` — L2897 — ✓ `db/auth`
+- `getTeamInvitationByCode` — L2904 — ✓ `db/auth`
+- `acceptTeamInvitation` — L2914 — ✓ `db/auth`
+- `revokeTeamInvitation` — L2967 — ✓ `db/auth`
+- `getUserPermissions` — L2976 — ✓ `db/auth`
+- `addUserPermission` — L2983 — ✓ `db/auth`
+- `removeUserPermission` — L3003 — ✓ `db/auth`
+- `setUserPermissions` — L3013 — ✓ `db/auth`
+- `userHasPermission` — L3033 — ✓ `db/auth`
+- `getUserEffectivePermissions` — L3076 — ✓ `db/auth`
+- `getInventoryByWarehouse` — L3096 — ✓ `db/operations`
+- `updateInventoryQuantityById` — L3110 — ✓ `db/operations`
+
+### BILL OF MATERIALS (BOM) FUNCTIONS  L3141–L3513
+
+- `getBillOfMaterials` — L3145 — ✓ `db/manufacturing`
+- `getBomById` — L3161 — ✓ `db/manufacturing`
+- `createBom` — L3169 — ✓ `db/manufacturing`
+- `updateBom` — L3177 — ✓ `db/manufacturing`
+- `deleteBom` — L3187 — ✓ `db/manufacturing`
+- `getBomComponents` — L3200 — ✓ `db/manufacturing`
+- `createBomComponent` — L3209 — ✓ `db/manufacturing`
+- `updateBomComponent` — L3217 — ✓ `db/manufacturing`
+- `deleteBomComponent` — L3227 — ✓ `db/manufacturing`
+- `getRawMaterials` — L3235 — ✓ `db/manufacturing`
+- `getRawMaterialById` — L3250 — ✓ `db/manufacturing`
+- `getRawMaterialByNameOrSku` — L3258 — ✓ `db/manufacturing`
+- `createPurchaseOrderRawMaterialLink` — L3271 — ✓ `db/manufacturing`
+- `createRawMaterial` — L3292 — ✓ `db/manufacturing`
+- `updateRawMaterial` — L3300 — ✓ `db/manufacturing`
+- `deleteRawMaterial` — L3310 — ✓ `db/manufacturing`
+- `getBomVersionHistory` — L3318 — ✓ `db/manufacturing`
+- `createBomVersionHistory` — L3327 — ✓ `db/manufacturing`
+- `calculateBomCosts` — L3336 — ✓ `db/manufacturing`
+- `syncRecipeToBom` — L3393 — ✗ legacy-only
+
+### WORK ORDERS  L3514–L3576
+
+- `getWorkOrders` — L3518 — ✓ `db/manufacturing`
+- `getWorkOrderById` — L3556 — ✓ `db/manufacturing`
+- `createWorkOrder` — L3563 — ✓ `db/manufacturing`
+- `updateWorkOrder` — L3571 — ✓ `db/manufacturing`
+
+### WORK ORDER MATERIALS  L3577–L3628
+
+- `getWorkOrderMaterials` — L3581 — ✓ `db/manufacturing`
+- `createWorkOrderMaterial` — L3587 — ✓ `db/manufacturing`
+- `updateWorkOrderMaterial` — L3594 — ✓ `db/manufacturing`
+- `generateWorkOrderMaterialsFromBom` — L3601 — ✓ `db/manufacturing`
+
+### RAW MATERIAL INVENTORY  L3629–L3676
+
+- `getRawMaterialInventory` — L3633 — ✓ `db/manufacturing`
+- `getRawMaterialInventoryByLocation` — L3646 — ✓ `db/manufacturing`
+- `upsertRawMaterialInventory` — L3658 — ✓ `db/manufacturing`
+
+### RAW MATERIAL TRANSACTIONS  L3677–L3696
+
+- `createRawMaterialTransaction` — L3681 — ✓ `db/manufacturing`
+- `getRawMaterialTransactions` — L3688 — ✓ `db/manufacturing`
+
+### PO RECEIVING  L3697–L3961
+
+- `createPoReceivingRecord` — L3701 — ✓ `db/manufacturing`
+- `getPoReceivingRecords` — L3708 — ✓ `db/manufacturing`
+- `createPoReceivingItem` — L3716 — ✓ `db/manufacturing`
+- `getPoReceivingItems` — L3723 — ✓ `db/manufacturing`
+- `receivePurchaseOrderItems` — L3731 — ✓ `db/manufacturing`
+- `consumeWorkOrderMaterials` — L3891 — ✓ `db/manufacturing`
+- `getPurchaseOrderItems` — L3948 — ✓ `db/procurement`
+- `updatePurchaseOrderItem` — L3954 — ✓ `db/procurement`
+
+### AI PRODUCTION FORECASTING  L3962–L4519
+
+- `getDemandForecasts` — L3991 — ✓ `db/manufacturing`
+- `getDemandForecastById` — L4004 — ✓ `db/manufacturing`
+- `createDemandForecast` — L4011 — ✓ `db/manufacturing`
+- `updateDemandForecast` — L4019 — ✓ `db/manufacturing`
+- `getProductionPlans` — L4026 — ✓ `db/manufacturing`
+- `getProductionPlanById` — L4039 — ✓ `db/manufacturing`
+- `createProductionPlan` — L4046 — ✓ `db/manufacturing`
+- `updateProductionPlan` — L4054 — ✓ `db/manufacturing`
+- `getMaterialRequirements` — L4061 — ✓ `db/manufacturing`
+- `createMaterialRequirement` — L4068 — ✓ `db/manufacturing`
+- `updateMaterialRequirement` — L4075 — ✓ `db/manufacturing`
+- `getSuggestedPurchaseOrders` — L4082 — ✓ `db/manufacturing`
+- `getSuggestedPurchaseOrderById` — L4095 — ✓ `db/manufacturing`
+- `createSuggestedPurchaseOrder` — L4102 — ✓ `db/manufacturing`
+- `updateSuggestedPurchaseOrder` — L4110 — ✓ `db/manufacturing`
+- `getSuggestedPoItems` — L4117 — ✓ `db/manufacturing`
+- `createSuggestedPoItem` — L4123 — ✓ `db/manufacturing`
+- `getForecastAccuracyHistory` — L4131 — ✓ `db/manufacturing`
+- `createForecastAccuracyRecord` — L4144 — ✓ `db/manufacturing`
+- `getHistoricalSalesData` — L4152 — ✓ `db/sales`
+- `getPendingOrdersForMaterial` — L4181 — ✓ `db/procurement`
+- `getPendingInventoryFromPOs` — L4254 — ✓ `db/procurement`
+- `getInboundShipmentsFromPOs` — L4382 — ✓ `db/procurement`
+- `convertSuggestedPoToActualPo` — L4414 — ✓ `db/manufacturing`
+- `getProductsWithBoms` — L4481 — ✓ `db/operations`
+- `getPreferredVendorForMaterial` — L4496 — ✓ `db/procurement`
+
+### LOT/BATCH TRACKING  L4520–L4796
+
+- `createInventoryLot` — L4524 — ✓ `db/operations`
+- `getInventoryLots` — L4532 — ✓ `db/operations`
+- `getInventoryLotById` — L4543 — ✓ `db/operations`
+- `updateInventoryLot` — L4550 — ✓ `db/operations`
+- `getInventoryBalances` — L4557 — ✓ `db/operations`
+- `upsertInventoryBalance` — L4570 — ✓ `db/operations`
+- `updateInventoryBalanceQuantity` — L4600 — ✓ `db/operations`
+- `createInventoryTransaction` — L4615 — ✓ `db/operations`
+- `getInventoryTransactionHistory` — L4623 — ✓ `db/operations`
+- `reserveInventory` — L4642 — ✓ `db/operations`
+- `releaseReservation` — L4692 — ✓ `db/operations`
+- `shipInventory` — L4753 — ✓ `db/operations`
+
+### WORK ORDER OUTPUTS  L4797–L4855
+
+- `createWorkOrderOutput` — L4801 — ✓ `db/operations`
+- `getWorkOrderOutputs` — L4848 — ✓ `db/operations`
+
+### ALERT SYSTEM  L4856–L4998
+
+- `createAlert` — L4860 — ✓ `db/system`
+- `getAlerts` — L4868 — ✓ `db/system`
+- `getAlertById` — L4882 — ✓ `db/system`
+- `updateAlert` — L4889 — ✓ `db/system`
+- `acknowledgeAlert` — L4895 — ✓ `db/system`
+- `resolveAlert` — L4905 — ✓ `db/system`
+- `generateLowStockAlerts` — L4917 — ✓ `db/system`
+- `createRecommendation` — L4959 — ✓ `db/system`
+- `getRecommendations` — L4966 — ✓ `db/system`
+- `approveRecommendation` — L4978 — ✓ `db/system`
+- `rejectRecommendation` — L4988 — ✓ `db/system`
+
+### SHOPIFY INTEGRATION  L4999–L5126
+
+- `getShopifyStores` — L5003 — ✓ `db/operations`
+- `getShopifyStoreById` — L5009 — ✓ `db/operations`
+- `getShopifyStoreByDomain` — L5016 — ✓ `db/operations`
+- `createShopifyStore` — L5023 — ✓ `db/operations`
+- `updateShopifyStore` — L5030 — ✓ `db/operations`
+- `upsertShopifyStore` — L5036 — ✓ `db/operations`
+- `createWebhookEvent` — L5049 — ✓ `db/operations`
+- `getWebhookEventByIdempotencyKey` — L5056 — ✓ `db/operations`
+- `updateWebhookEvent` — L5063 — ✓ `db/operations`
+- `getShopifySkuMappings` — L5070 — ✓ `db/operations`
+- `createShopifySkuMapping` — L5076 — ✓ `db/operations`
+- `getProductByShopifySku` — L5083 — ✓ `db/operations`
+- `getShopifyLocationMappings` — L5099 — ✓ `db/operations`
+- `createShopifyLocationMapping` — L5105 — ✓ `db/operations`
+- `getWarehouseByShopifyLocation` — L5112 — ✓ `db/operations`
+
+### SALES ORDERS & RESERVATIONS  L5127–L5204
+
+- `createSalesOrder` — L5131 — ✓ `db/sales`
+- `getSalesOrders` — L5139 — ✓ `db/sales`
+- `getSalesOrderById` — L5152 — ✓ `db/sales`
+- `getSalesOrderByShopifyId` — L5159 — ✓ `db/sales`
+- `updateSalesOrder` — L5166 — ✓ `db/sales`
+- `createSalesOrderLine` — L5172 — ✓ `db/sales`
+- `getSalesOrderLines` — L5179 — ✓ `db/sales`
+- `createInventoryReservation` — L5186 — ✓ `db/sales`
+- `getInventoryReservations` — L5193 — ✓ `db/sales`
+- `updateInventoryReservation` — L5199 — ✓ `db/sales`
+
+### INVENTORY ALLOCATION  L5205–L5254
+
+- `createInventoryAllocation` — L5209 — ✓ `db/sales`
+- `getInventoryAllocations` — L5216 — ✓ `db/sales`
+- `updateInventoryAllocation` — L5229 — ✓ `db/sales`
+- `createSalesEvent` — L5236 — ✓ `db/sales`
+- `getSalesEvents` — L5243 — ✓ `db/sales`
+
+### INVENTORY RECONCILIATION  L5255–L5432
+
+- `createReconciliationRun` — L5259 — ✓ `db/finance`
+- `getReconciliationRuns` — L5267 — ✓ `db/finance`
+- `getReconciliationRunById` — L5279 — ✓ `db/finance`
+- `updateReconciliationRun` — L5286 — ✓ `db/finance`
+- `createReconciliationLine` — L5292 — ✓ `db/finance`
+- `getReconciliationLines` — L5299 — ✓ `db/finance`
+- `runInventoryReconciliation` — L5308 — ✓ `db/operations`
+- `getAvailableInventoryByProduct` — L5409 — ✓ `db/operations`
+
+### SYNC LOGS  L5433–L5477
+
+- `createSyncLog` — L5437 — ✓ `db/system`
+- `getSyncHistory` — L5462 — ✓ `db/system`
+- `clearSyncHistory` — L5471 — ✓ `db/system`
+
+### NOTIFICATION FUNCTIONS  L5478–L5761
+
+- `NotificationType` — L5482 — ✓ `db/system`
+- `CreateNotificationInput` — L5490 — ✓ `db/system`
+- `createNotification` — L5502 — ✓ `db/system`
+- `createNotificationsForAllUsers` — L5522 — ✓ `db/system`
+- `getUserNotifications` — L5546 — ✓ `db/system`
+- `getUnreadNotificationCount` — L5567 — ✓ `db/system`
+- `markNotificationAsRead` — L5581 — ✓ `db/system`
+- `markAllNotificationsAsRead` — L5595 — ✓ `db/system`
+- `deleteNotification` — L5609 — ✓ `db/system`
+- `deleteOldNotifications` — L5622 — ✓ `db/system`
+- `getUserNotificationPreferences` — L5636 — ✓ `db/system`
+- `updateNotificationPreference` — L5645 — ✓ `db/system`
+- `shouldNotifyUser` — L5672 — ✓ `db/system`
+- `notifyUsersOfEvent` — L5690 — ✓ `db/system`
+
+### EMAIL SCANNING & DOCUMENT PARSING  L5762–L6412
+
+- `createInboundEmail` — L5766 — ✓ `db/email`
+- `getInboundEmails` — L5791 — ✓ `db/email`
+- `getInboundEmailById` — L5827 — ✓ `db/email`
+- `updateInboundEmailStatus` — L5835 — ✓ `db/email`
+- `deleteInboundEmail` — L5854 — ✓ `db/email`
+- `createEmailAttachment` — L5866 — ✓ `db/email`
+- `getEmailAttachments` — L5874 — ✓ `db/email`
+- `updateAttachmentProcessed` — L5881 — ✓ `db/email`
+- `getAutoReplyRules` — L5892 — ✓ `db/email`
+- `getAutoReplyRuleById` — L5911 — ✓ `db/email`
+- `createAutoReplyRule` — L5919 — ✓ `db/email`
+- `updateAutoReplyRule` — L5949 — ✓ `db/email`
+- `deleteAutoReplyRule` — L5978 — ✓ `db/email`
+- `incrementAutoReplyRuleTriggered` — L5985 — ✓ `db/email`
+- `getSentEmails` — L5996 — ✓ `db/email`
+- `getSentEmailById` — L6024 — ✓ `db/email`
+- `createSentEmail` — L6032 — ✓ `db/email`
+- `updateSentEmailStatus` — L6060 — ✓ `db/email`
+- `getEmailThread` — L6076 — ✓ `db/email`
+- `createParsedDocument` — L6091 — ✓ `db/email`
+- `getParsedDocuments` — L6099 — ✓ `db/email`
+- `getParsedDocumentById` — L6139 — ✓ `db/email`
+- `updateParsedDocument` — L6147 — ✓ `db/email`
+- `approveParsedDocument` — L6154 — ✓ `db/email`
+- `rejectParsedDocument` — L6166 — ✓ `db/email`
+- `createParsedDocumentLineItem` — L6179 — ✓ `db/email`
+- `getParsedDocumentLineItems` — L6187 — ✓ `db/email`
+- `linkParsedDocumentToVendor` — L6196 — ✓ `db/email`
+- `linkParsedDocumentToPO` — L6203 — ✓ `db/email`
+- `linkParsedDocumentToShipment` — L6210 — ✓ `db/email`
+- `setCreatedTransaction` — L6217 — ✓ `db/email`
+- `setCreatedVendor` — L6224 — ✓ `db/email`
+- `findVendorByEmailOrName` — L6232 — ✓ `db/procurement`
+- `findPurchaseOrderByNumber` — L6267 — ✓ `db/procurement`
+- `findShipmentByTracking` — L6278 — ✓ `db/procurement`
+- `getEmailScanningStats` — L6289 — ✓ `db/email`
+- `updateEmailCategorization` — L6325 — ✓ `db/email`
+- `getEmailCategoryStats` — L6350 — ✓ `db/email`
+- `findInboundEmailByMessageId` — L6377 — ✓ `db/email`
+- `getUncategorizedEmails` — L6389 — ✓ `db/email`
+
+### DATA ROOM MANAGEMENT  L6413–L6709
+
+- `createDataRoom` — L6418 — ✓ `db/dataRoom`
+- `getDataRooms` — L6425 — ✓ `db/dataRoom`
+- `getDataRoomById` — L6435 — ✓ `db/dataRoom`
+- `getDataRoomBySlug` — L6442 — ✓ `db/dataRoom`
+- `updateDataRoom` — L6449 — ✓ `db/dataRoom`
+- `deleteDataRoom` — L6455 — ✓ `db/dataRoom`
+- `createDataRoomFolder` — L6462 — ✓ `db/dataRoom`
+- `getDataRoomFolders` — L6469 — ✓ `db/dataRoom`
+- `getDataRoomFolderById` — L6488 — ✓ `db/dataRoom`
+- `updateDataRoomFolder` — L6495 — ✓ `db/dataRoom`
+- `deleteDataRoomFolder` — L6501 — ✓ `db/dataRoom`
+- `createDataRoomDocument` — L6508 — ✓ `db/dataRoom`
+- `getDataRoomDocuments` — L6515 — ✓ `db/dataRoom`
+- `getDataRoomDocumentById` — L6534 — ✓ `db/dataRoom`
+- `updateDataRoomDocument` — L6541 — ✓ `db/dataRoom`
+- `updateDataRoomDocumentBumpVersion` — L6551 — ✗ legacy-only
+- `deleteDataRoomDocument` — L6569 — ✓ `db/dataRoom`
+- `createDataRoomLink` — L6576 — ✓ `db/dataRoom`
+- `getDataRoomLinks` — L6583 — ✓ `db/dataRoom`
+- `getDataRoomLinkByCode` — L6591 — ✓ `db/dataRoom`
+- `updateDataRoomLink` — L6598 — ✓ `db/dataRoom`
+- `incrementLinkViewCount` — L6604 — ✓ `db/dataRoom`
+- `deleteDataRoomLink` — L6612 — ✓ `db/dataRoom`
+- `createDataRoomVisitor` — L6619 — ✓ `db/dataRoom`
+- `getDataRoomVisitors` — L6626 — ✓ `db/dataRoom`
+- `getVisitorByEmail` — L6634 — ✓ `db/dataRoom`
+- `updateDataRoomVisitor` — L6643 — ✓ `db/dataRoom`
+- `createDocumentView` — L6650 — ✓ `db/dataRoom`
+- `getDocumentViews` — L6657 — ✓ `db/dataRoom`
+- `getVisitorDocumentViews` — L6665 — ✓ `db/dataRoom`
+- `updateDocumentView` — L6673 — ✓ `db/dataRoom`
+- `createDataRoomInvitation` — L6680 — ✓ `db/dataRoom`
+- `getDataRoomInvitations` — L6687 — ✓ `db/dataRoom`
+- `getInvitationByCode` — L6695 — ✓ `db/dataRoom`
+- `updateDataRoomInvitation` — L6704 — ✓ `db/dataRoom`
+
+### IMAP CREDENTIALS MANAGEMENT  L6710–L6755
+
+- `createImapCredential` — L6714 — ✓ `db/email`
+- `getImapCredentials` — L6721 — ✓ `db/email`
+- `getImapCredentialById` — L6729 — ✓ `db/email`
+- `getActivePollingCredentials` — L6736 — ✗ legacy-only
+- `updateImapCredential` — L6743 — ✓ `db/email`
+- `deleteImapCredential` — L6749 — ✓ `db/email`
+
+### DATA ROOM ANALYTICS  L6756–L6842
+
+- `getDataRoomAnalytics` — L6760 — ✓ `db/dataRoom`
+- `getDocumentAnalytics` — L6800 — ✓ `db/dataRoom`
+- `getVisitorTimeline` — L6822 — ✓ `db/dataRoom`
+
+### EMAIL CREDENTIALS & SCHEDULED SCANNING  L6843–L7071
+
+- `getEmailCredentials` — L6847 — ✓ `db/email`
+- `getEmailCredentialById` — L6864 — ✓ `db/email`
+- `createEmailCredential` — L6872 — ✓ `db/email`
+- `updateEmailCredential` — L6898 — ✓ `db/email`
+- `deleteEmailCredential` — L6924 — ✓ `db/email`
+- `getScheduledScans` — L6935 — ✓ `db/email`
+- `createScheduledScan` — L6947 — ✓ `db/email`
+- `updateScheduledScan` — L6965 — ✓ `db/email`
+- `deleteScheduledScan` — L6982 — ✓ `db/email`
+- `getDueScheduledScans` — L6989 — ✗ legacy-only
+- `createScanLog` — L7007 — ✗ legacy-only
+- `updateScanLog` — L7018 — ✗ legacy-only
+- `getScanLogs` — L7033 — ✓ `db/email`
+- `updateEmailAttachment` — L7046 — ✓ `db/email`
+- `updateEmailCategory` — L7059 — ✓ `db/email`
+
+### DATA ROOM - PAGE-LEVEL TRACKING FUNCTIONS  L7072–L7212
+
+- `createDocumentPageView` — L7077 — ✓ `db/dataRoom`
+- `getDocumentPageViewById` — L7084 — ✓ `db/dataRoom`
+- `getDocumentPageViews` — L7094 — ✓ `db/dataRoom`
+- `getPageViewsByVisitor` — L7108 — ✓ `db/dataRoom`
+- `updateDocumentPageView` — L7117 — ✓ `db/dataRoom`
+- `getPageViewAnalytics` — L7123 — ✓ `db/dataRoom`
+
+### DATA ROOM - GOOGLE DRIVE SYNC FUNCTIONS  L7213–L7265
+
+- `createDriveSyncConfig` — L7217 — ✓ `db/dataRoom`
+- `getDriveSyncConfig` — L7224 — ✓ `db/dataRoom`
+- `updateDriveSyncConfig` — L7232 — ✓ `db/dataRoom`
+- `deleteDriveSyncConfig` — L7238 — ✓ `db/dataRoom`
+- `createDriveSyncLog` — L7244 — ✓ `db/dataRoom`
+- `getDriveSyncLogs` — L7251 — ✓ `db/dataRoom`
+- `updateDriveSyncLog` — L7260 — ✓ `db/dataRoom`
+
+### DATA ROOM - EMAIL ACCESS RULES FUNCTIONS  L7266–L7355
+
+- `createEmailAccessRule` — L7270 — ✓ `db/dataRoom`
+- `getEmailAccessRules` — L7277 — ✓ `db/dataRoom`
+- `getEmailAccessRuleById` — L7285 — ✗ legacy-only
+- `updateEmailAccessRule` — L7292 — ✓ `db/dataRoom`
+- `deleteEmailAccessRule` — L7298 — ✓ `db/dataRoom`
+- `checkEmailAccess` — L7304 — ✓ `db/dataRoom`
+
+### DATA ROOM - VISITOR SESSION FUNCTIONS  L7356–L7411
+
+- `createVisitorSession` — L7360 — ✓ `db/dataRoom`
+- `getVisitorSessions` — L7367 — ✓ `db/dataRoom`
+- `getDataRoomSessions` — L7375 — ✓ `db/dataRoom`
+- `updateVisitorSession` — L7384 — ✓ `db/dataRoom`
+- `getSessionByToken` — L7390 — ✓ `db/dataRoom`
+- `getActiveSession` — L7398 — ✓ `db/dataRoom`
+
+### DATA ROOM - DETAILED ANALYTICS FUNCTIONS  L7412–L7588
+
+- `getDetailedVisitorAnalytics` — L7416 — ✓ `db/dataRoom`
+- `getDataRoomEngagementReport` — L7491 — ✓ `db/dataRoom`
+
+### NDA E-SIGNATURES  L7589–L7780
+
+- `getNdaDocuments` — L7594 — ✓ `db/dataRoom`
+- `getActiveNdaDocument` — L7603 — ✓ `db/dataRoom`
+- `getNdaDocumentById` — L7618 — ✓ `db/dataRoom`
+- `createNdaDocument` — L7626 — ✓ `db/dataRoom`
+- `updateNdaDocument` — L7655 — ✓ `db/dataRoom`
+- `deleteNdaDocument` — L7669 — ✓ `db/dataRoom`
+- `getNdaSignatures` — L7677 — ✓ `db/dataRoom`
+- `getNdaSignatureById` — L7690 — ✓ `db/dataRoom`
+- `getVisitorNdaSignature` — L7698 — ✓ `db/dataRoom`
+- `createNdaSignature` — L7714 — ✓ `db/dataRoom`
+- `updateNdaSignature` — L7743 — ✓ `db/dataRoom`
+- `createNdaAuditLog` — L7757 — ✓ `db/dataRoom`
+- `getNdaAuditLogs` — L7771 — ✓ `db/dataRoom`
+
+### ENHANCED DATA ROOM ACCESS CONTROL  L7781–L7891
+
+- `getDataRoomVisitorById` — L7786 — ✓ `db/dataRoom`
+- `getDataRoomInvitationByEmail` — L7794 — ✓ `db/dataRoom`
+- `blockDataRoomVisitor` — L7806 — ✓ `db/dataRoom`
+- `unblockDataRoomVisitor` — L7817 — ✓ `db/dataRoom`
+- `revokeDataRoomVisitorAccess` — L7828 — ✓ `db/dataRoom`
+- `restoreDataRoomVisitorAccess` — L7839 — ✓ `db/dataRoom`
+- `updateDataRoomInvitationPermissions` — L7850 — ✓ `db/dataRoom`
+- `linkVisitorToNdaSignature` — L7865 — ✓ `db/dataRoom`
+- `getDataRoomVisitorByEmail` — L7874 — ✓ `db/dataRoom`
+- `isEmailInvitedToDataRoom` — L7886 — ✗ legacy-only
+
+### RECURRING INVOICES  L7892–L8015
+
+- `getRecurringInvoices` — L7896 — ✓ `db/finance`
+- `getRecurringInvoiceById` — L7941 — ✓ `db/finance`
+- `getRecurringInvoiceWithItems` — L7948 — ✓ `db/finance`
+- `createRecurringInvoice` — L7959 — ✓ `db/finance`
+- `updateRecurringInvoice` — L7966 — ✓ `db/finance`
+- `createRecurringInvoiceItem` — L7972 — ✓ `db/finance`
+- `deleteRecurringInvoiceItems` — L7979 — ✓ `db/finance`
+- `getRecurringInvoicesDueForGeneration` — L7985 — ✓ `db/finance`
+- `createRecurringInvoiceHistory` — L7999 — ✓ `db/finance`
+- `getRecurringInvoiceHistory` — L8006 — ✓ `db/finance`
+
+### SUPPLIER PORTAL  L8016–L8140
+
+- `createSupplierPortalSession` — L8020 — ✓ `db/procurement`
+- `getSupplierPortalSession` — L8033 — ✓ `db/procurement`
+- `updateSupplierPortalSession` — L8040 — ✓ `db/procurement`
+- `createSupplierDocument` — L8046 — ✓ `db/procurement`
+- `getSupplierDocuments` — L8063 — ✓ `db/procurement`
+- `updateSupplierDocument` — L8075 — ✓ `db/procurement`
+- `createSupplierFreightInfo` — L8087 — ✓ `db/procurement`
+- `getSupplierFreightInfo` — L8113 — ✓ `db/procurement`
+- `updateSupplierFreightInfo` — L8120 — ✓ `db/procurement`
+
+### AI AGENT SYSTEM  L8141–L8314
+
+- `createAiAgentTask` — L8145 — ✓ `db/ai`
+- `getAiAgentTasks` — L8152 — ✓ `db/ai`
+- `getAiAgentTaskById` — L8170 — ✓ `db/ai`
+- `updateAiAgentTask` — L8177 — ✓ `db/ai`
+- `bulkDeleteAiAgentTasks` — L8196 — ✗ legacy-only
+- `getPendingApprovalTasks` — L8210 — ✓ `db/ai`
+- `createAiAgentRule` — L8218 — ✓ `db/ai`
+- `getAiAgentRules` — L8225 — ✓ `db/ai`
+- `updateAiAgentRule` — L8236 — ✓ `db/ai`
+- `createAiAgentLog` — L8253 — ✓ `db/ai`
+- `getAiAgentLogs` — L8260 — ✓ `db/ai`
+- `createEmailTemplate` — L8272 — ✓ `db/email`
+- `getEmailTemplates` — L8279 — ✓ `db/email`
+- `getDefaultEmailTemplate` — L8290 — ✗ legacy-only
+- `updateEmailTemplate` — L8302 — ✓ `db/email`
+
+### VENDOR QUOTE MANAGEMENT (RFQ System)  L8315–L8468
+
+- `createVendorRfq` — L8320 — ✓ `db/procurement`
+- `getVendorRfqs` — L8327 — ✓ `db/procurement`
+- `getVendorRfqById` — L8339 — ✓ `db/procurement`
+- `updateVendorRfq` — L8346 — ✓ `db/procurement`
+- `createVendorQuote` — L8353 — ✓ `db/procurement`
+- `getVendorQuotes` — L8360 — ✓ `db/procurement`
+- `getVendorQuoteById` — L8372 — ✓ `db/procurement`
+- `updateVendorQuote` — L8379 — ✓ `db/procurement`
+- `getVendorQuotesWithVendorInfo` — L8385 — ✓ `db/procurement`
+- `createVendorRfqEmail` — L8396 — ✓ `db/procurement`
+- `getVendorRfqEmails` — L8403 — ✓ `db/procurement`
+- `updateVendorRfqEmail` — L8415 — ✓ `db/procurement`
+- `createVendorRfqInvitation` — L8422 — ✓ `db/procurement`
+- `getVendorRfqInvitations` — L8429 — ✓ `db/procurement`
+- `updateVendorRfqInvitation` — L8439 — ✓ `db/procurement`
+- `getBestVendorQuote` — L8446 — ✓ `db/procurement`
+- `generateVendorRfqNumber` — L8460 — ✓ `db/procurement`
+
+### DOCUMENT IMPORT HELPERS  L8469–L8616
+
+- `getVendorByName` — L8473 — ✓ `db/procurement`
+- `getPurchaseOrderByNumber` — L8482 — ✓ `db/procurement`
+- `updatePurchaseOrderFreight` — L8491 — ✓ `db/procurement`
+- `FreightHistoryData` — L8501 — ✓ `db/freight`
+- `createFreightHistory` — L8524 — ✓ `db/freight`
+- `DocumentImportLog` — L8559 — ✓ `db/freight`
+- `createDocumentImportLog` — L8572 — ✓ `db/freight`
+- `getDocumentImportLogs` — L8593 — ✓ `db/freight`
+
+### CRM MODULE - Contacts, Messaging & Tracking  L8617–L9584
+
+- `getCrmContacts` — L8623 — ✓ `db/crm`
+- `getCrmContactById` — L8682 — ✓ `db/crm`
+- `getCrmContactByEmail` — L8689 — ✓ `db/crm`
+- `createCrmContact` — L8696 — ✓ `db/crm`
+- `findCrmContactMatch` — L8729 — ✗ legacy-only
+- `findOrCreateCrmContact` — L8759 — ✗ legacy-only
+- `findDuplicateCrmContactGroups` — L8798 — ✗ legacy-only
+- `mergeCrmContacts` — L8830 — ✗ legacy-only
+- `updateCrmContact` — L8849 — ✓ `db/crm`
+- `deleteCrmContact` — L8855 — ✓ `db/crm`
+- `getCrmContactStats` — L8861 — ✓ `db/crm`
+- `getCrmTags` — L8884 — ✓ `db/crm`
+- `createCrmTag` — L8894 — ✓ `db/crm`
+- `deleteCrmTag` — L8901 — ✓ `db/crm`
+- `addTagToContact` — L8908 — ✓ `db/crm`
+- `removeTagFromContact` — L8914 — ✓ `db/crm`
+- `getContactTags` — L8922 — ✓ `db/crm`
+- `getWhatsappMessages` — L8935 — ✓ `db/crm`
+- `getWhatsappConversations` — L8971 — ✓ `db/crm`
+- `createWhatsappMessage` — L8992 — ✓ `db/crm`
+- `updateWhatsappMessageStatus` — L8999 — ✓ `db/crm`
+- `getCrmInteractions` — L9017 — ✓ `db/crm`
+- `createCrmInteraction` — L9045 — ✓ `db/crm`
+- `getContactTimeline` — L9062 — ✓ `db/crm`
+- `getCrmPipelines` — L9077 — ✓ `db/crm`
+- `getCrmPipelineById` — L9087 — ✓ `db/crm`
+- `createCrmPipeline` — L9094 — ✓ `db/crm`
+- `updateCrmPipeline` — L9101 — ✓ `db/crm`
+- `getCrmDeals` — L9109 — ✓ `db/crm`
+- `getCrmDealById` — L9149 — ✓ `db/crm`
+- `createCrmDeal` — L9156 — ✓ `db/crm`
+- `updateCrmDeal` — L9163 — ✓ `db/crm`
+- `deleteCrmDeal` — L9178 — ✓ `db/crm`
+- `findCrmDealByCompany` — L9187 — ✗ legacy-only
+- `hasPendingDealApprovalForCompany` — L9207 — ✗ legacy-only
+- `getCrmDealStats` — L9218 — ✓ `db/crm`
+- `getContactCaptures` — L9247 — ✓ `db/crm`
+- `getContactCaptureById` — L9279 — ✓ `db/crm`
+- `createContactCapture` — L9286 — ✓ `db/crm`
+- `updateContactCapture` — L9293 — ✓ `db/crm`
+- `processVCardCapture` — L9300 — ✓ `db/crm`
+- `processLinkedInCapture` — L9353 — ✓ `db/crm`
+- `getCrmEmailCampaigns` — L9416 — ✓ `db/crm`
+- `createCrmEmailCampaign` — L9442 — ✓ `db/crm`
+- `updateCrmEmailCampaign` — L9449 — ✓ `db/crm`
+- `getUnifiedMessagingHistory` — L9529 — ✓ `db/crm`
+
+### COPACKER INVENTORY AUTO-PURCHASE  L9585–L9756
+
+- `getInventoryByIdWithDetails` — L9590 — ✓ `db/operations`
+- `checkAndTriggerLowStockPurchaseOrder` — L9609 — ✓ `db/operations`
+
+### DUE DILIGENCE CHECKLIST FUNCTIONS  L9757–L10075
+
+- `createDueDiligenceTemplate` — L9762 — ✓ `db/dataRoom`
+- `getDueDiligenceTemplates` — L9769 — ✓ `db/dataRoom`
+- `getDueDiligenceTemplateById` — L9788 — ✓ `db/dataRoom`
+- `getTemplateWithItems` — L9795 — ✓ `db/dataRoom`
+- `createDueDiligenceCategory` — L9819 — ✓ `db/dataRoom`
+- `createDueDiligenceItem` — L9826 — ✓ `db/dataRoom`
+- `createDataRoomChecklist` — L9834 — ✓ `db/dataRoom`
+- `getDataRoomChecklists` — L9841 — ✓ `db/dataRoom`
+- `getDataRoomChecklistById` — L9849 — ✓ `db/dataRoom`
+- `updateDataRoomChecklist` — L9856 — ✓ `db/dataRoom`
+- `deleteDataRoomChecklist` — L9862 — ✓ `db/dataRoom`
+- `createDataRoomChecklistItem` — L9870 — ✓ `db/dataRoom`
+- `getChecklistItems` — L9877 — ✓ `db/dataRoom`
+- `getChecklistItemById` — L9885 — ✓ `db/dataRoom`
+- `updateChecklistItem` — L9892 — ✓ `db/dataRoom`
+- `deleteChecklistItem` — L9898 — ✓ `db/dataRoom`
+- `bulkCreateChecklistItems` — L9904 — ✓ `db/dataRoom`
+- `getChecklistWithItems` — L9913 — ✓ `db/dataRoom`
+- `autoMatchChecklistDocuments` — L10012 — ✓ `db/dataRoom`
+
+### EDI MODULE  L10076–L10397
+
+- `getEdiTradingPartners` — L10082 — ✓ `db/edi`
+- `getEdiTradingPartnerById` — L10097 — ✓ `db/edi`
+- `getEdiTradingPartnerByIsaId` — L10104 — ✓ `db/edi`
+- `createEdiTradingPartner` — L10111 — ✓ `db/edi`
+- `updateEdiTradingPartner` — L10118 — ✓ `db/edi`
+- `deleteEdiTradingPartner` — L10124 — ✓ `db/edi`
+- `getEdiDocumentMaps` — L10132 — ✓ `db/edi`
+- `getEdiDocumentMapById` — L10142 — ✓ `db/edi`
+- `getEdiDocumentMapForPartner` — L10149 — ✗ legacy-only
+- `createEdiDocumentMap` — L10163 — ✓ `db/edi`
+- `updateEdiDocumentMap` — L10170 — ✓ `db/edi`
+- `getEdiTransactions` — L10178 — ✓ `db/edi`
+- `getEdiTransactionById` — L10198 — ✓ `db/edi`
+- `getEdiTransactionWithItems` — L10205 — ✓ `db/edi`
+- `createEdiTransaction` — L10216 — ✓ `db/edi`
+- `updateEdiTransaction` — L10223 — ✓ `db/edi`
+- `getEdiTransactionItems` — L10231 — ✗ legacy-only
+- `createEdiTransactionItem` — L10237 — ✓ `db/edi`
+- `createEdiTransactionItems` — L10244 — ✗ legacy-only
+- `getEdiProductCrosswalks` — L10253 — ✓ `db/edi`
+- `getEdiProductCrosswalkByBuyerPart` — L10265 — ✓ `db/edi`
+- `getEdiProductCrosswalkByUpc` — L10278 — ✓ `db/edi`
+- `createEdiProductCrosswalk` — L10291 — ✓ `db/edi`
+- `updateEdiProductCrosswalk` — L10298 — ✓ `db/edi`
+- `deleteEdiProductCrosswalk` — L10304 — ✓ `db/edi`
+- `getEdiShipToLocations` — L10312 — ✓ `db/edi`
+- `getEdiShipToLocationByCode` — L10324 — ✗ legacy-only
+- `createEdiShipToLocation` — L10336 — ✓ `db/edi`
+- `updateEdiShipToLocation` — L10343 — ✓ `db/edi`
+- `getEdiComplianceScorecards` — L10351 — ✓ `db/edi`
+- `createEdiComplianceScorecard` — L10361 — ✓ `db/edi`
+- `updateEdiComplianceScorecard` — L10368 — ✗ legacy-only
+- `getEdiDashboardStats` — L10376 — ✓ `db/edi`
+
+### EDI CONTROL NUMBERS  L10398–L10433
+
+- `getNextControlNumber` — L10402 — ✓ `db/edi`
+
+### EDI SETTINGS  L10434–L10785
+
+- `getEdiSettings` — L10438 — ✓ `db/edi`
+- `upsertEdiSettings` — L10450 — ✓ `db/edi`
+- `recalculateChecklistProgress` — L10463 — ✓ `db/dataRoom`
+- `createChecklistFromTemplate` — L10483 — ✓ `db/dataRoom`
+- `createStandardChecklist` — L10695 — ✓ `db/dataRoom`
+- `getChecklistSummary` — L10748 — ✓ `db/dataRoom`
+
+### ORDER ITEMS  L10786–L10807
+
+- `deleteOrder` — L10790 — ✗ legacy-only
+- `deleteOrderItems` — L10796 — ✗ legacy-only
+- `getOrderItems` — L10802 — ✗ legacy-only
+
+### INVENTORY MANAGEMENT (enriched view)  L10808–L10840
+
+- `getInventoryManagementList` — L10812 — ✗ legacy-only
+- `updateInventoryManagement` — L10834 — ✗ legacy-only
+
+### FIREFLIES MEETINGS  L10841–L10975
+
+- `getFirefliesConfig` — L10845 — ✗ legacy-only
+- `upsertFirefliesConfig` — L10852 — ✗ legacy-only
+- `deleteFirefliesConfig` — L10868 — ✗ legacy-only
+- `getAllFirefliesConfigs` — L10874 — ✗ legacy-only
+- `getFirefliesMeetings` — L10880 — ✗ legacy-only
+- `getFirefliesMeetingById` — L10890 — ✗ legacy-only
+- `createFirefliesMeeting` — L10897 — ✗ legacy-only
+- `updateFirefliesMeeting` — L10904 — ✗ legacy-only
+- `getFirefliesMeetingByFirefliesId` — L10910 — ✗ legacy-only
+- `getFirefliesMeetingStats` — L10917 — ✗ legacy-only
+- `getInventoryCostingConfigs` — L10939 — ✓ `db/finance`
+- `getInventoryCostingConfigByProduct` — L10951 — ✓ `db/finance`
+- `createInventoryCostingConfig` — L10963 — ✓ `db/finance`
+- `updateInventoryCostingConfig` — L10970 — ✓ `db/finance`
+
+### INVENTORY COST LAYERS  L10976–L11035
+
+- `getInventoryCostLayers` — L10980 — ✓ `db/finance`
+- `getActiveCostLayers` — L10999 — ✓ `db/finance`
+- `getActiveCostLayersForUpdate` — L11016 — ✗ legacy-only
+
+### INVENTORY COSTING LAYER FUNCTIONS  L11036–L11168
+
+- `createInventoryCostLayer` — L11040 — ✓ `db/finance`
+- `updateInventoryCostLayer` — L11047 — ✓ `db/finance`
+- `getWeightedAverageCost` — L11053 — ✓ `db/finance`
+- `createCogsRecord` — L11082 — ✓ `db/finance`
+- `getCogsRecords` — L11089 — ✓ `db/finance`
+- `getCogsPeriodSummaries` — L11110 — ✓ `db/finance`
+- `getCogsPeriodSummary` — L11131 — ✗ legacy-only
+- `createCogsPeriodSummaryRecord` — L11155 — ✓ `db/finance`
+- `updateCogsPeriodSummaryRecord` — L11162 — ✓ `db/finance`
+
+### R&D TAX CREDIT OPERATIONS  L11169–L11348
+
+- `getRdTaxCreditStudies` — L11173 — ✗ legacy-only
+- `getRdTaxCreditStudyById` — L11186 — ✗ legacy-only
+- `getRdStudyWithDetails` — L11193 — ✗ legacy-only
+- `createRdTaxCreditStudy` — L11201 — ✗ legacy-only
+- `updateRdTaxCreditStudy` — L11208 — ✗ legacy-only
+- `deleteRdTaxCreditStudy` — L11215 — ✗ legacy-only
+- `getRdProjects` — L11224 — ✗ legacy-only
+- `getRdProjectById` — L11230 — ✗ legacy-only
+- `createRdProject` — L11237 — ✗ legacy-only
+- `updateRdProject` — L11244 — ✗ legacy-only
+- `deleteRdProject` — L11251 — ✗ legacy-only
+- `getRdExpensesByProject` — L11259 — ✗ legacy-only
+- `getRdExpensesByStudy` — L11265 — ✗ legacy-only
+- `createRdExpense` — L11271 — ✗ legacy-only
+- `updateRdExpense` — L11278 — ✗ legacy-only
+- `deleteRdExpense` — L11285 — ✗ legacy-only
+- `getCogsSummary` — L11292 — ✓ `db/finance`
+- `getCogsDashboardStats` — L11308 — ✓ `db/finance`
+- `dbTransaction` — L11343 — ✗ legacy-only
+
+### VENDOR NEGOTIATIONS  L11349–L11423
+
+- `getVendorNegotiations` — L11353 — ✓ `db/procurement`
+- `getVendorNegotiationById` — L11368 — ✓ `db/procurement`
+- `createVendorNegotiation` — L11375 — ✓ `db/procurement`
+- `updateVendorNegotiation` — L11382 — ✓ `db/procurement`
+- `getNegotiationRounds` — L11388 — ✓ `db/procurement`
+- `createNegotiationRound` — L11394 — ✓ `db/procurement`
+- `getNextRoundNumber` — L11401 — ✓ `db/procurement`
+- `getGoogleOAuthTokenByUserId` — L11419 — ✓ `db/auth`
+
+### TRANSACTIONAL EMAIL TEMPLATES  L11424–L11505
+
+- `getTransactionalEmailTemplates` — L11428 — ✓ `db/email`
+- `getTransactionalEmailTemplateById` — L11437 — ✓ `db/email`
+- `getTransactionalEmailTemplateByName` — L11444 — ✓ `db/email`
+- `createTransactionalEmailTemplate` — L11451 — ✓ `db/email`
+- `updateTransactionalEmailTemplate` — L11458 — ✓ `db/email`
+- `deleteTransactionalEmailTemplate` — L11464 — ✓ `db/email`
+- `getEmailMessages` — L11470 — ✓ `db/email`
+- `getQueuedEmailMessages` — L11484 — ✓ `db/email`
+- `getEmailMessageStats` — L11492 — ✓ `db/email`
+
+### EMAIL EVENTS  L11506–L11534
+
+- `createEmailEvent` — L11510 — ✓ `db/email`
+- `getEmailEventsByMessageId` — L11517 — ✓ `db/email`
+- `getEmailEventsByProviderMessageId` — L11523 — ✓ `db/email`
+- `getRecentEmailEvents` — L11529 — ✓ `db/email`
+
+### COGS / COSTING FUNCTIONS  L11535–L11608
+
+- `recordCOGSSale` — L11539 — ✓ `db/finance`
+- `getCOGSTransactions` — L11550 — ✓ `db/finance`
+- `getProductProfitability` — L11560 — ✓ `db/finance`
+- `getInventoryValuation` — L11567 — ✓ `db/finance`
+- `allocateFreightCosts` — L11576 — ✓ `db/finance`
+- `updateInventoryCostBasis` — L11584 — ✓ `db/finance`
+- `upsertQuickBooksAccountMapping` — L11598 — ✓ `db/finance`
+
+### OTHER MISSING FUNCTIONS  L11609–L11637
+
+- `getVendorNegotiationStats` — L11616 — ✓ `db/procurement`
+- `getVendorSpendingHistory` — L11632 — ✓ `db/procurement`
+
+### COPACKER PORTAL  L11638–L11786
+
+- `getCopackerInventoryUpdates` — L11642 — ✗ legacy-only
+- `getCopackerInventoryUpdateById` — L11651 — ✗ legacy-only
+- `createCopackerInventoryUpdate` — L11658 — ✗ legacy-only
+- `updateCopackerInventoryUpdate` — L11665 — ✗ legacy-only
+- `getCopackerInventoryUpdateItems` — L11671 — ✗ legacy-only
+- `createCopackerInventoryUpdateItem` — L11677 — ✗ legacy-only
+- `deleteCopackerInventoryUpdateItems` — L11684 — ✗ legacy-only
+- `getCopackerInvoices` — L11692 — ✗ legacy-only
+- `getCopackerInvoiceById` — L11706 — ✗ legacy-only
+- `createCopackerInvoice` — L11713 — ✗ legacy-only
+- `getCopackerInvoiceItems` — L11720 — ✗ legacy-only
+- `createCopackerInvoiceItem` — L11726 — ✗ legacy-only
+- `deleteCopackerInvoiceItems` — L11733 — ✗ legacy-only
+- `getCopackerShippingDocuments` — L11741 — ✗ legacy-only
+- `createCopackerShippingDocument` — L11755 — ✗ legacy-only
+- `getContractKeyDates` — L11765 — ✗ legacy-only
+- `getProjectMilestones` — L11771 — ✗ legacy-only
+- `getEdiPartners` — L11777 — ✗ legacy-only
+
+### GRANT & BID APPLICATION SUBMITTER  L11787–L11998
+
+- `getGrantBidTemplates` — L11792 — ✗ legacy-only
+- `getGrantBidTemplateById` — L11798 — ✗ legacy-only
+- `createGrantBidTemplate` — L11805 — ✗ legacy-only
+- `updateGrantBidTemplate` — L11812 — ✗ legacy-only
+- `deleteGrantBidTemplate` — L11818 — ✗ legacy-only
+- `getGrantBidApplications` — L11825 — ✗ legacy-only
+- `getGrantBidApplicationById` — L11838 — ✗ legacy-only
+- `createGrantBidApplication` — L11845 — ✗ legacy-only
+- `updateGrantBidApplication` — L11852 — ✗ legacy-only
+- `deleteGrantBidApplication` — L11858 — ✗ legacy-only
+- `getGrantBidDocuments` — L11865 — ✗ legacy-only
+- `createGrantBidDocument` — L11871 — ✗ legacy-only
+- `deleteGrantBidDocument` — L11878 — ✗ legacy-only
+- `getGrantBidFieldMappings` — L11885 — ✗ legacy-only
+- `createGrantBidFieldMapping` — L11891 — ✗ legacy-only
+- `deleteGrantBidFieldMappings` — L11898 — ✗ legacy-only
+- `getGrantBidSubmissionLogs` — L11905 — ✗ legacy-only
+- `createGrantBidSubmissionLog` — L11911 — ✗ legacy-only
+- `getCompanyProfile` — L11919 — ✗ legacy-only
+- `getEmployeeSummary` — L11930 — ✗ legacy-only
+- `getFinancialSummary` — L11945 — ✗ legacy-only
+- `getProjectSummary` — L11967 — ✗ legacy-only
+- `getGrantBidApplicationStats` — L11978 — ✗ legacy-only
+
+### GRANT & BID OPPORTUNITIES (DISCOVERY)  L11999–L12074
+
+- `getGrantBidOpportunities` — L12003 — ✗ legacy-only
+- `getGrantBidOpportunityById` — L12017 — ✗ legacy-only
+- `createGrantBidOpportunity` — L12024 — ✗ legacy-only
+- `createGrantBidOpportunities` — L12031 — ✗ legacy-only
+- `updateGrantBidOpportunity` — L12043 — ✗ legacy-only
+- `deleteGrantBidOpportunity` — L12049 — ✗ legacy-only
+- `getGrantBidOpportunityStats` — L12055 — ✗ legacy-only
+
+### GRANT & BID WEB FORM MAPPINGS  L12075–L12111
+
+- `getGrantBidWebFormMappings` — L12079 — ✗ legacy-only
+- `getGrantBidWebFormMappingById` — L12085 — ✗ legacy-only
+- `createGrantBidWebFormMapping` — L12092 — ✗ legacy-only
+- `updateGrantBidWebFormMapping` — L12099 — ✗ legacy-only
+- `deleteGrantBidWebFormMapping` — L12105 — ✗ legacy-only
+
+### QUICKBOOKS EXTENDED FUNCTIONS  L12112–L12227
+
+- `getQuickBooksAccountsByType` — L12116 — ✓ `db/finance`
+- `syncQuickBooksAccounts` — L12131 — ✓ `db/finance`
+- `syncQuickBooksItems` — L12149 — ✓ `db/finance`
+- `getQuickBooksAccountMappings` — L12167 — ✓ `db/finance`
+- `createEmailMessage` — L12176 — ✓ `db/email`
+- `getEmailMessageById` — L12183 — ✓ `db/email`
+- `getEmailMessageByIdempotencyKey` — L12190 — ✓ `db/email`
+- `getEmailMessageByProviderMessageId` — L12197 — ✓ `db/email`
+- `updateEmailMessage` — L12204 — ✓ `db/email`
+- `updateEmailMessageStatus` — L12210 — ✓ `db/email`
+- `incrementEmailMessageRetry` — L12220 — ✓ `db/email`
+
+### CRM INVESTORS & FUNDRAISING  L12228–L12297
+
+- `getInvestors` — L12232 — ✗ legacy-only
+- `createInvestor` — L12239 — ✗ legacy-only
+- `getFundraisingCampaigns` — L12246 — ✗ legacy-only
+- `createFundraisingCampaign` — L12259 — ✗ legacy-only
+- `updateFundraisingCampaign` — L12271 — ✗ legacy-only
+- `getInvestorInvestments` — L12278 — ✗ legacy-only
+- `getFundraisingReminders` — L12285 — ✗ legacy-only
+- `getBills` — L12294 — ✗ legacy-only
+
+### CAP TABLE & EQUITY MANAGEMENT  L12298–L12571
+
+- `getShareClasses` — L12304 — ✗ legacy-only
+- `createShareClass` — L12311 — ✗ legacy-only
+- `updateShareClass` — L12318 — ✗ legacy-only
+- `deleteShareClass` — L12324 — ✗ legacy-only
+- `getStakeholders` — L12332 — ✗ legacy-only
+- `getStakeholderById` — L12339 — ✗ legacy-only
+- `createStakeholder` — L12346 — ✗ legacy-only
+- `updateStakeholder` — L12353 — ✗ legacy-only
+- `getEquityGrants` — L12361 — ✗ legacy-only
+- `getEquityGrantsByStakeholder` — L12368 — ✗ legacy-only
+- `getStakeholderByUserId` — L12378 — ✗ legacy-only
+- `getStakeholderDocuments` — L12389 — ✗ legacy-only
+- `getStakeholderDocumentById` — L12397 — ✗ legacy-only
+- `createStakeholderDocument` — L12406 — ✗ legacy-only
+- `deleteStakeholderDocument` — L12413 — ✗ legacy-only
+- `getProRataIndicationsForCampaign` — L12421 — ✗ legacy-only
+- `getProRataIndication` — L12429 — ✗ legacy-only
+- `upsertProRataIndication` — L12441 — ✗ legacy-only
+- `createEquityGrant` — L12456 — ✗ legacy-only
+- `updateEquityGrant` — L12463 — ✗ legacy-only
+- `getValuations409a` — L12471 — ✗ legacy-only
+- `createValuation409a` — L12478 — ✗ legacy-only
+- `updateValuation409a` — L12485 — ✗ legacy-only
+- `getEquityTransactions` — L12493 — ✗ legacy-only
+- `createEquityTransaction` — L12504 — ✗ legacy-only
+- `getCapTableSummary` — L12513 — ✗ legacy-only
+
+### OFFER LETTERS  L12572–L12614
+
+- `getOfferLetters` — L12576 — ✗ legacy-only
+- `getOfferLetterById` — L12587 — ✗ legacy-only
+- `createOfferLetter` — L12594 — ✗ legacy-only
+- `updateOfferLetter` — L12601 — ✗ legacy-only
+- `deleteOfferLetter` — L12608 — ✗ legacy-only
+
+### EXERCISE REQUESTS  L12615–L12698
+
+- `getExerciseRequests` — L12619 — ✗ legacy-only
+- `getExerciseRequestById` — L12631 — ✗ legacy-only
+- `createExerciseRequest` — L12638 — ✗ legacy-only
+- `updateExerciseRequest` — L12645 — ✗ legacy-only
+- `approveExerciseRequest` — L12652 — ✗ legacy-only
+
+### BOARD RESOLUTIONS & SIGNATURES  L12699–L12753
+
+- `getBoardResolutions` — L12703 — ✓ `db/board`
+- `getBoardResolutionById` — L12715 — ✓ `db/board`
+- `createBoardResolution` — L12721 — ✓ `db/board`
+- `updateBoardResolution` — L12727 — ✓ `db/board`
+- `getBoardSignatures` — L12732 — ✓ `db/board`
+- `getBoardSignatureById` — L12737 — ✓ `db/board`
+- `createBoardSignature` — L12743 — ✓ `db/board`
+- `updateBoardSignature` — L12749 — ✓ `db/board`
+
+### INVESTOR UPDATES  L12754–L12786
+
+- `getInvestorUpdates` — L12758 — ✓ `db/board`
+- `getInvestorUpdateById` — L12770 — ✓ `db/board`
+- `createInvestorUpdate` — L12776 — ✓ `db/board`
+- `updateInvestorUpdate` — L12782 — ✓ `db/board`
+
+### TEAM INVITES (Email-based invite flow)  L12787–L12835
+
+- `getTeamInvites` — L12791 — ✗ legacy-only
+- `getTeamInviteByToken` — L12801 — ✗ legacy-only
+- `getTeamInviteById` — L12811 — ✗ legacy-only
+- `createTeamInvite` — L12821 — ✗ legacy-only
+- `updateTeamInvite` — L12829 — ✗ legacy-only
+
+### TIME TRACKING  L12836–L12915
+
+- `getTimeEntries` — L12840 — ✗ legacy-only
+- `getTimeEntryById` — L12853 — ✗ legacy-only
+- `createTimeEntry` — L12859 — ✗ legacy-only
+- `updateTimeEntry` — L12869 — ✗ legacy-only
+- `deleteTimeEntry` — L12883 — ✗ legacy-only
+- `getTimeInvoices` — L12888 — ✗ legacy-only
+- `getTimeInvoiceById` — L12899 — ✗ legacy-only
+- `createTimeInvoice` — L12905 — ✗ legacy-only
+- `updateTimeInvoice` — L12911 — ✗ legacy-only
+
+### BANK TRANSACTIONS (Mercury)  L12916–L12960
+
+- `getBankTransactions` — L12920 — ✗ legacy-only
+- `getBankTransactionByExternalId` — L12941 — ✗ legacy-only
+- `createBankTransaction` — L12948 — ✗ legacy-only
+- `updateBankTransaction` — L12955 — ✗ legacy-only
+
+### INVESTMENT COMMITMENTS (Investor Onboarding)  L12961–L12998
+
+- `getInvestmentCommitments` — L12965 — ✗ legacy-only
+- `getInvestmentCommitmentById` — L12976 — ✗ legacy-only
+- `createInvestmentCommitment` — L12983 — ✗ legacy-only
+- `updateInvestmentCommitment` — L12990 — ✗ legacy-only
+
+### QUICK NOTES  L12999–L13076
+
+- `createNote` — L13003 — ✗ legacy-only
+- `updateNote` — L13010 — ✗ legacy-only
+- `getNoteById` — L13016 — ✗ legacy-only
+- `listNotesForUser` — L13025 — ✗ legacy-only
+- `deleteNote` — L13034 — ✗ legacy-only
+- `getOrCreateNotesInboxProject` — L13048 — ✗ legacy-only
