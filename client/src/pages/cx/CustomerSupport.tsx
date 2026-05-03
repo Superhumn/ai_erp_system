@@ -88,6 +88,12 @@ function timeAgo(dateStr: string): string {
 }
 
 export default function CustomerSupport() {
+  // Read query params for order-linked ticket creation
+  const urlParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+  const orderNumber = urlParams?.get("order") || "";
+  const orderCustomer = urlParams?.get("customer") || "";
+  const orderEmail = urlParams?.get("email") || "";
+
   const [tickets, setTickets] = useState<Ticket[]>(SEED_TICKETS);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -95,8 +101,15 @@ export default function CustomerSupport() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [replyText, setReplyText] = useState<Record<number, string>>({});
   const [aiLoading, setAiLoading] = useState<number | null>(null);
-  const [showNew, setShowNew] = useState(false);
-  const [newForm, setNewForm] = useState({ subject: "", customer: "", email: "", priority: "medium" as Priority, channel: "email" as Channel, description: "" });
+  const [showNew, setShowNew] = useState(!!orderNumber);
+  const [newForm, setNewForm] = useState({
+    subject: orderNumber ? `Issue with Order ${orderNumber}` : "",
+    customer: orderCustomer,
+    email: orderEmail,
+    priority: "medium" as Priority,
+    channel: "email" as Channel,
+    description: orderNumber ? `Customer inquiry regarding order ${orderNumber}.` : "",
+  });
 
   const aiMutation = trpc.ai.query.useMutation({
     onSuccess: (data: any, variables: any) => {
@@ -118,12 +131,37 @@ export default function CustomerSupport() {
     });
   };
 
+  // Send reply via Gmail
+  const sendGmailReply = trpc.gmail.sendEmail.useMutation({
+    onSuccess: () => toast.success("Reply sent via Gmail"),
+    onError: (err) => toast.error("Gmail send failed: " + err.message + ". Reply copied to clipboard instead."),
+  });
+
   const handleReply = (ticketId: number) => {
     const text = replyText[ticketId]?.trim();
     if (!text) return;
+    const ticket = tickets.find(t => t.id === ticketId);
+    if (!ticket) return;
+
+    // Try sending via Gmail
+    if (ticket.email) {
+      sendGmailReply.mutate({
+        to: ticket.email,
+        subject: `Re: ${ticket.subject}`,
+        body: text,
+      }, {
+        onError: () => {
+          // Fallback: copy to clipboard
+          navigator.clipboard.writeText(text);
+        },
+      });
+    } else {
+      navigator.clipboard.writeText(text);
+      toast.success("Reply copied to clipboard");
+    }
+
     setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status: "in_progress" as Status, updated: new Date().toISOString() } : t));
     setReplyText(prev => ({ ...prev, [ticketId]: "" }));
-    toast.success("Reply sent");
   };
 
   const handleStatusChange = (ticketId: number, status: Status) => {
