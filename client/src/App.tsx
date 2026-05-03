@@ -7,6 +7,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import { AIAgentProvider } from "./contexts/AIAgentContext";
 import DashboardLayout from "./components/DashboardLayout";
 import { ModuleErrorBoundary } from "./components/ModuleErrorBoundary";
+import OfflineIndicator from "@/components/OfflineIndicator";
 
 // Eagerly loaded pages (high-traffic, first paint)
 import Home from "./pages/Home";
@@ -380,6 +381,7 @@ function App() {
         <AIAgentProvider>
           <TooltipProvider>
             <Toaster />
+            <OfflineIndicator />
             <Suspense fallback={<PageLoader />}>
               <Switch>
                 {/* Public routes (outside dashboard) */}
