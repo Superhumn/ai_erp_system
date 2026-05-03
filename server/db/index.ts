@@ -17,3 +17,4 @@ export * from "./system";
 export * from "./edi";
 export * from "./board";
 export * from "./code";
+export * from "./marketingDb";
