@@ -22,8 +22,8 @@ import { toast } from "sonner";
 import {
   Zap, Loader2, Sparkles, Search, RefreshCw,
   Mail, Linkedin, Phone, Target, TrendingUp,
-  ChevronDown, ChevronUp, Plus, Play, Pause,
-  BarChart3, Users, ArrowRight,
+  ChevronDown, ChevronUp, Play, Pause,
+  ArrowRight,
 } from "lucide-react";
 
 // ── Types ──
