@@ -1,0 +1,23 @@
+drizzle/0043_drop_shadow_tables.sql
+  b3a966000a62bead 1-26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "4776068cf9e9adf2a3b577ec7d1176906f46cb4c",
+  "prompts": {
+    "b3a966000a62bead": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dcf5acd6-8d04-431e-964a-1082535655f8",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Jade Cheng",
+      "messages": [],
+      "total_additions": 26,
+      "total_deletions": 0,
+      "accepted_lines": 7170,
+      "overriden_lines": 0
+    }
+  }
+}
