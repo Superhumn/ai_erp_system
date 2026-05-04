@@ -1,0 +1,36 @@
+drizzle/0042_shopify_oauth_tokens.sql
+  b3a966000a62bead 1-42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "e5bbc584f92260ae35727629cab6d0673ab0130f",
+  "prompts": {
+    "a4537c253fc65a92": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "24d42b8f-d7fb-43ad-afe5-e3bce469a227",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Jade Cheng",
+      "messages": [],
+      "total_additions": 10185,
+      "total_deletions": 0,
+      "accepted_lines": 10185,
+      "overriden_lines": 0
+    },
+    "b3a966000a62bead": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dcf5acd6-8d04-431e-964a-1082535655f8",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Jade Cheng",
+      "messages": [],
+      "total_additions": 13864,
+      "total_deletions": 13822,
+      "accepted_lines": 7186,
+      "overriden_lines": 0
+    }
+  }
+}
