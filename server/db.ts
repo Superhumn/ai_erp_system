@@ -12259,13 +12259,34 @@ export async function getFundraisingCampaigns(companyId?: number) {
 export async function createFundraisingCampaign(data: InsertFundraisingCampaign) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const now = new Date();
-  const result = await db.insert(fundraisingCampaigns).values({
-    ...data,
-    createdAt: data.createdAt ?? now,
-    updatedAt: data.updatedAt ?? now,
-  });
-  return { id: result[0].insertId };
+  // Build INSERT with only the keys actually provided so we don't depend on
+  // every schema-defined column existing in the live table (e.g. companyId
+  // may be missing on DBs where migration 0041 hasn't applied).
+  const insertOnce = async (entries: [string, unknown][]) => {
+    const colList = sql.join(entries.map(([k]) => sql.identifier(k)), sql.raw(", "));
+    const valList = sql.join(entries.map(([, v]) => sql`${v}`), sql.raw(", "));
+    return db.execute(sql`INSERT INTO ${fundraisingCampaigns} (${colList}) VALUES (${valList})`);
+  };
+  const entries = Object.entries(data as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined);
+  if (entries.length === 0) {
+    throw new Error("createFundraisingCampaign: no fields provided");
+  }
+  let result;
+  try {
+    result = await insertOnce(entries);
+  } catch (err: any) {
+    // If the live table is missing companyId (migration 0041 didn't apply),
+    // retry without it so the round still saves. Other errors bubble up.
+    const msg = String(err?.sqlMessage ?? err?.message ?? "");
+    if (err?.code === "ER_BAD_FIELD_ERROR" && /companyId/i.test(msg)) {
+      result = await insertOnce(entries.filter(([k]) => k !== "companyId"));
+    } else {
+      throw err;
+    }
+  }
+  const header: any = Array.isArray(result) ? result[0] : result;
+  return { id: header?.insertId };
 }
 
 export async function updateFundraisingCampaign(id: number, data: Partial<InsertFundraisingCampaign>) {
