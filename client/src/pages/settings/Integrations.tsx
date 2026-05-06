@@ -180,6 +180,7 @@ export default function IntegrationsPage() {
         'invalid_state': 'Invalid OAuth state — please try connecting again',
         'token_exchange_failed': 'Failed to exchange authorization code for access token',
         'oauth_failed': 'OAuth authentication failed',
+        'intuit_error': 'QuickBooks authorization failed',
       };
       const detail = params.get('detail');
       const base = errorMessages[quickbooksError] || 'Failed to connect QuickBooks';
@@ -929,6 +930,13 @@ export default function IntegrationsPage() {
                         <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_REDIRECT_URI</code> - OAuth callback URL (optional)</li>
                         <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_ENVIRONMENT</code> - sandbox or production (optional, defaults to production)</li>
                       </ul>
+                      <div className="mb-4 p-3 bg-yellow-500/5 border border-yellow-500/20 rounded-md text-sm">
+                        <p className="font-medium text-yellow-700 dark:text-yellow-400 mb-1">⚠ Use Production credentials</p>
+                        <p className="text-muted-foreground">
+                          In the Intuit Developer Portal, make sure your app has been promoted to <strong>Production</strong> and that you are using the <strong>production</strong> Client ID and Secret.
+                          Development (sandbox) credentials only work with Intuit sandbox companies — real QuickBooks users will see a "no sandbox companies found" error.
+                        </p>
+                      </div>
                       {quickbooksAuthUrl?.redirectUri && (
                         <div className="mb-4 p-3 bg-amber-500/5 border border-amber-500/20 rounded-md">
                           <p className="text-sm font-medium mb-1">Register this Redirect URI in Intuit</p>

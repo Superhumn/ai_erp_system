@@ -1159,7 +1159,12 @@ async function startServer() {
   });
 
   app.get('/api/oauth/quickbooks/callback', oauthCallbackLimiter, async (req, res) => {
-    const { code, state, realmId } = req.query;
+    const { code, state, realmId, error: intuitErrorCode, error_description } = req.query;
+    // Intuit redirects back with ?error=... when authorization fails (e.g. user denied, no sandbox company)
+    if (intuitErrorCode) {
+      const detail = encodeURIComponent(String(error_description || intuitErrorCode));
+      return res.redirect(`/settings/integrations?quickbooks_error=intuit_error&detail=${detail}`);
+    }
     if (!code || !state || !realmId) return res.redirect('/settings/integrations?quickbooks_error=missing_params');
     try {
       const { sdk } = await import('./sdk');
