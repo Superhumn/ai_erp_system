@@ -18518,6 +18518,23 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         if (!projectId && input.projectId) {
           projectId = input.projectId;
         }
+        // When tasks are requested but no project was chosen or created, fall back
+        // to any existing project. If none exist at all, auto-create a default so
+        // action items are not silently rejected by pickProject().
+        if (input.createTasks && !projectId) {
+          const existingProjects = await db.getProjects();
+          if (existingProjects.length > 0) {
+            projectId = existingProjects[0].id;
+          } else {
+            const fallback = await db.createProject({
+              projectNumber: `MTGS-${Date.now()}`,
+              name: 'Meeting Action Items',
+              status: 'active',
+              createdBy: ctx.user.id,
+            } as any);
+            projectId = fallback.id;
+          }
+        }
 
         // Queue tasks from action items for approval. Older meetings may have
         // an empty `actionItems` column (the previous parser didn't handle
@@ -18562,6 +18579,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
               userId: ctx.user.id,
               meetingId: meeting.id,
               meetingTitle: meeting.title || 'Untitled meeting',
+              firefliesId: meeting.firefliesId,
               actionItems: selectedItems,
               participants: parsedParticipants,
               preferredProjectId: projectId,
@@ -18661,6 +18679,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             userId: ctx.user.id,
             meetingId: meeting.id,
             meetingTitle: meeting.title || 'Untitled meeting',
+            firefliesId: meeting.firefliesId,
             actionItems: items as Array<{ text: string; assignee?: string; dueDate?: string }>,
             participants: parsedParticipants,
             preferredProjectId: projectId,
