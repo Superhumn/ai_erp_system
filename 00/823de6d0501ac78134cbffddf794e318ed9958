@@ -1,0 +1,24 @@
+client/src/pages/sales/SalesAutomation.tsx
+  b3a966000a62bead 167,336
+client/src/pages/cx/CustomerSupport.tsx
+  b3a966000a62bead 129
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "00823de6d0501ac78134cbffddf794e318ed9958",
+  "prompts": {
+    "b3a966000a62bead": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dcf5acd6-8d04-431e-964a-1082535655f8",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>",
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
