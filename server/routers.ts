@@ -5837,7 +5837,7 @@ const assistantMessage = typeof rawContent === 'string' ? rawContent : 'I apolog
         return { message: assistantMessage };
       }),
     query: protectedProcedure
-      .input(z.object({ question: z.string().min(1) }))
+      .input(z.object({ question: z.string().min(1), context: z.record(z.string(), z.unknown()).optional() }))
       .mutation(async ({ input, ctx }) => {
         // Get all relevant data for context
         const [metrics, recentInvoices, recentOrders, recentPOs] = await Promise.all([
