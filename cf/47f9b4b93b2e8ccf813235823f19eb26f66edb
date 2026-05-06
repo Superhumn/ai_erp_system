@@ -1,0 +1,26 @@
+server/_core/dataRoomVisitorSession.ts
+  504b4f275a487ecd 1-72
+server/routers.ts
+  504b4f275a487ecd 13751-13771
+server/_core/index.ts
+  504b4f275a487ecd 1012-1042
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "cf47f9b4b93b2e8ccf813235823f19eb26f66edb",
+  "prompts": {
+    "504b4f275a487ecd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "07176de8-4fe6-46c0-a2e5-4a02235d6406",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>",
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 124,
+      "overriden_lines": 0
+    }
+  }
+}
