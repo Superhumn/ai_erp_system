@@ -126,7 +126,7 @@ export default function CustomerSupport() {
   const handleAiSuggest = (ticket: Ticket) => {
     setAiLoading(ticket.id);
     aiMutation.mutate({
-      prompt: `You are a customer support agent. Draft a professional, empathetic reply for this ticket:\n\nSubject: ${ticket.subject}\nCustomer: ${ticket.customer}\nPriority: ${ticket.priority}\nDescription: ${ticket.description}\n\nKeep the reply concise (3-5 sentences). Be solution-oriented.`,
+      question: `You are a customer support agent. Draft a professional, empathetic reply for this ticket:\n\nSubject: ${ticket.subject}\nCustomer: ${ticket.customer}\nPriority: ${ticket.priority}\nDescription: ${ticket.description}\n\nKeep the reply concise (3-5 sentences). Be solution-oriented.`,
       context: { ticketId: ticket.id },
     });
   };
