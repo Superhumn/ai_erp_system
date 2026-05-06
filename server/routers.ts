@@ -13868,6 +13868,27 @@ Ask if they received the original request and if they can provide a quote.`;
             });
           }
 
+          // Issue a signed visitor session cookie. The Drive proxy uses this
+          // to enforce NDA / approval / allowDownload server-side; without it
+          // the public file list is reachable but the bytes are not.
+          if (visitor) {
+            const { setVisitorSessionCookie } = await import('./_core/dataRoomVisitorSession');
+            const ttlMs = link.expiresAt
+              ? Math.max(60_000, new Date(link.expiresAt).getTime() - Date.now())
+              : 24 * 60 * 60 * 1000;
+            await setVisitorSessionCookie(
+              ctx.req,
+              ctx.res,
+              {
+                visitorId: visitor.id,
+                linkId: link.id,
+                linkCode: input.linkCode,
+                dataRoomId: link.dataRoomId,
+              },
+              ttlMs,
+            );
+          }
+
           return {
             dataRoomId: link.dataRoomId,
             visitorId: visitor?.id || null,

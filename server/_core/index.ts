@@ -1018,6 +1018,37 @@ async function startServer() {
         if (!link || !link.isActive) return res.status(403).send('Share link is not active');
         if (link.expiresAt && new Date(link.expiresAt) < new Date()) return res.status(403).send('Share link has expired');
         if (link.dataRoomId !== doc.dataRoomId) return res.status(403).send('Document not in this data room');
+        if (dataRoom.expiresAt && new Date(dataRoom.expiresAt) < new Date()) return res.status(403).send('Data room has expired');
+
+        // Require a signed visitor session cookie issued by accessByLink.
+        // Without this, anyone with the share link could pull file bytes
+        // straight from /api/drive/proxy without entering an email or
+        // signing the NDA — the gate is otherwise client-side only.
+        const { readVisitorSessionCookie, verifyVisitorSession } = await import('./dataRoomVisitorSession');
+        const session = await verifyVisitorSession(readVisitorSessionCookie(req));
+        if (!session) return res.status(401).send('Visitor session required');
+        if (session.linkCode !== linkCode) return res.status(403).send('Visitor session does not match this link');
+        if (session.dataRoomId !== doc.dataRoomId) return res.status(403).send('Visitor session does not match this data room');
+
+        const visitor = await db.getDataRoomVisitorById(session.visitorId);
+        if (!visitor) return res.status(403).send('Visitor not found');
+        if (visitor.accessStatus !== 'active') return res.status(403).send(`Visitor access ${visitor.accessStatus}`);
+        if (dataRoom.requiresNda && !visitor.ndaAcceptedAt) return res.status(403).send('NDA signature required');
+
+        // Layered allowDownload: room AND link. When false, only allow
+        // iframe loads (where the bytes feed the in-browser preview);
+        // direct fetches/curl that would let the visitor save the file
+        // get blocked. This is mitigation, not prevention — anything a
+        // browser can render can ultimately be captured — but it stops
+        // casual scraping and respects the configured policy.
+        const effectiveAllowDownload =
+          (dataRoom.allowDownload !== false) && (link.allowDownload !== false);
+        if (!effectiveAllowDownload) {
+          const fetchDest = req.headers['sec-fetch-dest'];
+          const isIframe = fetchDest === 'iframe' || fetchDest === 'embed' || fetchDest === 'object';
+          if (!isIframe) return res.status(403).send('Download not permitted for this data room');
+        }
+
         ownerUserId = dataRoom.ownerId;
       } else {
         const { sdk } = await import('./sdk');
