@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
-import sanitizeHtml from "sanitize-html";
+
 import {
   Mail,
   FileText,
@@ -97,15 +97,60 @@ function groupEmailsByDate(emails: any[]) {
   return { pinned, today, yesterday, thisWeek, older };
 }
 
-function renderSanitizedBody(raw: string): string {
-  if (!raw) return "(No content)";
-  if (raw.includes("<") && raw.includes(">")) {
-    return sanitizeHtml(raw, { allowedTags: [], allowedAttributes: {} })
-      .replace(/&nbsp;/g, " ")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
-  }
-  return raw;
+function HtmlEmailBody({ html }: { html: string }) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  const resizeIframe = useCallback(() => {
+    try {
+      const iframe = iframeRef.current;
+      if (!iframe?.contentDocument?.documentElement) return;
+      const height = iframe.contentDocument.documentElement.scrollHeight;
+      if (height > 0) iframe.style.height = `${height}px`;
+    } catch {
+      // Sandbox or cross-origin access blocked; iframe retains its min-height
+    }
+  }, []);
+
+  const wrappedHtml = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<base target="_blank">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 8px 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #1a1a1a; word-wrap: break-word; overflow-wrap: break-word; }
+  img { max-width: 100%; height: auto; display: inline-block; }
+  a { color: #1a73e8; text-decoration: underline; }
+  pre, code { white-space: pre-wrap; word-break: break-all; font-family: monospace; }
+  table { max-width: 100% !important; border-collapse: collapse; }
+  td, th { word-wrap: break-word; max-width: 600px; }
+  blockquote { border-left: 3px solid #d0d0d0; margin: 8px 0; padding-left: 12px; color: #666; }
+  hr { border: none; border-top: 1px solid #e0e0e0; }
+  p { margin: 0 0 8px 0; }
+</style>
+</head>
+<body>${html}</body>
+</html>`;
+
+  return (
+    <iframe
+      ref={iframeRef}
+      srcDoc={wrappedHtml}
+      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+      onLoad={resizeIframe}
+      className="w-full border-0 min-h-[120px]"
+      title="Email content"
+      scrolling="no"
+    />
+  );
+}
+
+function EmailBody({ body }: { body: string }) {
+  if (!body) return <p className="text-sm text-muted-foreground">(No content)</p>;
+  const isHtml = /<[a-z][^>]*>/i.test(body);
+  if (isHtml) return <HtmlEmailBody html={body} />;
+  return <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground/90">{body}</div>;
 }
 
 type Tab = "important" | "sales" | "hiring" | "raise" | "other";
@@ -414,8 +459,7 @@ export default function EmailInbox() {
       );
     }
     const detail = emailDetail?.id === selectedEmail.id ? emailDetail : null;
-    const bodyRaw = (detail as any)?.bodyHtml || (detail as any)?.bodyText || selectedEmail.bodyText || selectedEmail.bodyHtml || "";
-    const bodyClean = renderSanitizedBody(bodyRaw);
+    const bodyRaw = (detail as any)?.bodyHtml || (detail as any)?.bodyText || selectedEmail.bodyHtml || selectedEmail.bodyText || "";
     return (
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
         <div className="border-b px-4 py-2.5 flex items-center gap-2 bg-background shrink-0">
@@ -444,7 +488,7 @@ export default function EmailInbox() {
               {(detail as any).documents.map((doc: any) => <Badge key={doc.id} variant="secondary" className="text-xs gap-1"><FileText className="h-3 w-3" />{doc.documentType?.replace(/_/g, " ")}{doc.totalAmount && ` — $${Number(doc.totalAmount).toFixed(2)}`}</Badge>)}
             </div>
           )}
-          <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground/90">{bodyClean}</div>
+          <EmailBody body={bodyRaw} />
           <div className="border rounded-xl p-3 space-y-2 bg-background">
             <div className="flex items-center gap-2 text-sm">
               <Reply className="h-4 w-4 text-muted-foreground shrink-0" />
