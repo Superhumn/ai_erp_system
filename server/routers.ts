@@ -12256,33 +12256,12 @@ Ask if they received the original request and if they can provide a quote.`;
         return db.getEmailScanningStats();
       }),
 
-    // Archive email
+    // Archive email (local-only — does not touch Gmail/IMAP read state)
     archiveEmail: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input, ctx }) => {
         if (!['admin', 'ops'].includes(ctx.user.role)) {
           throw new TRPCError({ code: 'FORBIDDEN' });
-        }
-        const email = await db.getInboundEmailById(input.id);
-        // Archive in Gmail — mark as read and move out of inbox
-        if (email?.messageId) {
-          try {
-            const { getImapConfig } = await import("./_core/emailInboxScanner");
-            const { ImapFlow } = await import("imapflow");
-            const config = getImapConfig();
-            if (config) {
-              const client = new ImapFlow({ host: config.host, port: config.port, secure: config.secure, auth: config.auth, logger: false });
-              await client.connect();
-              await client.mailboxOpen("INBOX");
-              const uids = await client.search({ header: { "message-id": email.messageId } }, { uid: true });
-              if (uids && uids.length > 0) {
-                await client.messageFlagsAdd(uids, ["\\Seen"], { uid: true });
-              }
-              await client.logout();
-            }
-          } catch (e) {
-            console.warn(`[Email] Failed to archive in Gmail:`, e instanceof Error ? e.message : e);
-          }
         }
         await db.updateInboundEmailStatus(input.id, "archived");
         return { success: true };
