@@ -1,0 +1,46 @@
+drizzle/0043_task_ai_assignment.sql
+  s_d1d7873108fc66::t_bb51962e323c2b 1-149
+drizzle/0034_task_source_external_id.sql
+  s_d1d7873108fc66::t_88e3d88193c724 1,4-9,11-22,24-36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "4b226a424a06043a22c992d2878f399a3a9afb26",
+  "prompts": {
+    "504b4f275a487ecd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "07176de8-4fe6-46c0-a2e5-4a02235d6406",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>",
+      "total_additions": 124,
+      "total_deletions": 0,
+      "accepted_lines": 124,
+      "overriden_lines": 0
+    },
+    "b3a966000a62bead": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dcf5acd6-8d04-431e-964a-1082535655f8",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>",
+      "total_additions": 3,
+      "total_deletions": 6,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  },
+  "sessions": {
+    "s_d1d7873108fc66": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "90600cd2-8a52-47b6-a332-35d11f3ad3f5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    }
+  }
+}
