@@ -3,7 +3,7 @@
  *
  * Frontend implementation guide:
  * 1. Capture audio using MediaRecorder API
- * 2. Upload audio to storage (e.g., S3) to get URL
+ * 2. Upload audio to storage (e.g., R2) to get URL
  * 3. Call transcription with the URL
  * 
  * Example usage:
@@ -28,7 +28,7 @@
 import { ENV } from "./env";
 
 export type TranscribeOptions = {
-  audioUrl: string; // URL to the audio file (e.g., S3 URL)
+  audioUrl: string; // URL to the audio file (e.g., R2 storage URL)
   language?: string; // Optional: specify language code (e.g., "en", "es", "zh")
   prompt?: string; // Optional: custom prompt for the transcription
 };
@@ -75,18 +75,18 @@ export async function transcribeAudio(
 ): Promise<TranscriptionResponse | TranscriptionError> {
   try {
     // Step 1: Validate environment configuration
-    if (!ENV.forgeApiUrl) {
+    if (!ENV.apiProxyUrl) {
       return {
         error: "Voice transcription service is not configured",
         code: "SERVICE_ERROR",
-        details: "BUILT_IN_FORGE_API_URL is not set"
+        details: "API_PROXY_URL is not set"
       };
     }
-    if (!ENV.forgeApiKey) {
+    if (!ENV.apiProxyKey) {
       return {
         error: "Voice transcription service authentication is missing",
         code: "SERVICE_ERROR",
-        details: "BUILT_IN_FORGE_API_KEY is not set"
+        details: "API_PROXY_KEY is not set"
       };
     }
 
@@ -143,9 +143,9 @@ export async function transcribeAudio(
     formData.append("prompt", prompt);
 
     // Step 4: Call the transcription service
-    const baseUrl = ENV.forgeApiUrl.endsWith("/")
-      ? ENV.forgeApiUrl
-      : `${ENV.forgeApiUrl}/`;
+    const baseUrl = ENV.apiProxyUrl.endsWith("/")
+      ? ENV.apiProxyUrl
+      : `${ENV.apiProxyUrl}/`;
     
     const fullUrl = new URL(
       "v1/audio/transcriptions",
@@ -155,7 +155,7 @@ export async function transcribeAudio(
     const response = await fetch(fullUrl, {
       method: "POST",
       headers: {
-        authorization: `Bearer ${ENV.forgeApiKey}`,
+        authorization: `Bearer ${ENV.apiProxyKey}`,
         "Accept-Encoding": "identity",
       },
       body: formData,

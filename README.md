@@ -856,8 +856,8 @@ While the system works completely standalone with email/password authentication,
 | `SHOPIFY_CLIENT_ID` | No | Shopify OAuth app client ID |
 | `SHOPIFY_CLIENT_SECRET` | No | Shopify OAuth app client secret |
 | `SHOPIFY_REDIRECT_URI` | No | Shopify OAuth redirect URI |
-| `BUILT_IN_FORGE_API_URL` | No | AI/LLM provider API URL |
-| `BUILT_IN_FORGE_API_KEY` | No | AI/LLM provider API key |
+| `API_PROXY_URL` | No | API proxy URL (image generation, voice, maps) |
+| `API_PROXY_KEY` | No | API proxy authentication key |
 | `AIRTABLE_PERSONAL_ACCESS_TOKEN` | No | Airtable PAT for data import |
 | `SENDGRID_WEBHOOK_SECRET` | No | SendGrid webhook signature verification |
 

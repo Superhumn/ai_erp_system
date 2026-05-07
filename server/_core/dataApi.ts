@@ -17,15 +17,15 @@ export async function callDataApi(
   apiId: string,
   options: DataApiCallOptions = {}
 ): Promise<unknown> {
-  if (!ENV.forgeApiUrl) {
-    throw new Error("BUILT_IN_FORGE_API_URL is not configured");
+  if (!ENV.apiProxyUrl) {
+    throw new Error("API_PROXY_URL is not configured");
   }
-  if (!ENV.forgeApiKey) {
-    throw new Error("BUILT_IN_FORGE_API_KEY is not configured");
+  if (!ENV.apiProxyKey) {
+    throw new Error("API_PROXY_KEY is not configured");
   }
 
   // Build the full URL by appending the service path to the base URL
-  const baseUrl = ENV.forgeApiUrl.endsWith("/") ? ENV.forgeApiUrl : `${ENV.forgeApiUrl}/`;
+  const baseUrl = ENV.apiProxyUrl.endsWith("/") ? ENV.apiProxyUrl : `${ENV.apiProxyUrl}/`;
   const fullUrl = new URL("webdevtoken.v1.WebDevService/CallApi", baseUrl).toString();
 
   const response = await fetch(fullUrl, {
@@ -34,7 +34,7 @@ export async function callDataApi(
       accept: "application/json",
       "content-type": "application/json",
       "connect-protocol-version": "1",
-      authorization: `Bearer ${ENV.forgeApiKey}`,
+      authorization: `Bearer ${ENV.apiProxyKey}`,
     },
     body: JSON.stringify({
       apiId,
