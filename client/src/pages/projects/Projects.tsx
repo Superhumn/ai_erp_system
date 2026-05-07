@@ -776,9 +776,9 @@ export default function Projects() {
           <p className="text-sm text-muted-foreground">Loading projects...</p>
         </div>
       ) : view === "list" ? (
-        <div className="space-y-1.5">
+        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {groupedByProject.length === 0 && (
-            <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed py-24 text-center">
+            <div className="col-span-full flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed py-24 text-center">
               <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
                 <FolderKanban className="h-7 w-7 text-muted-foreground" />
               </div>
@@ -799,6 +799,7 @@ export default function Projects() {
                 key={projectId}
                 className={cn(
                   "animate-fade-in-up overflow-hidden rounded-lg border bg-background",
+                  !collapsed && "col-span-full",
                   `stagger-${Math.min(projectIndex + 1, 5)}`
                 )}
               >
