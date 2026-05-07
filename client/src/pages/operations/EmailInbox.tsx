@@ -113,18 +113,10 @@ function HtmlEmailBody({ html }: { html: string }) {
     const observer = new MutationObserver(updateMode);
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
 
-    if (typeof mediaQuery.addEventListener === "function") {
-      mediaQuery.addEventListener("change", updateMode);
-      return () => {
-        observer.disconnect();
-        mediaQuery.removeEventListener("change", updateMode);
-      };
-    }
-
-    mediaQuery.addListener(updateMode);
+    mediaQuery.addEventListener("change", updateMode);
     return () => {
       observer.disconnect();
-      mediaQuery.removeListener(updateMode);
+      mediaQuery.removeEventListener("change", updateMode);
     };
   }, []);
 
@@ -164,6 +156,10 @@ function HtmlEmailBody({ html }: { html: string }) {
 </html>`,
     [html, isDarkMode]
   );
+
+  useEffect(() => {
+    resizeIframe();
+  }, [resizeIframe, wrappedHtml]);
 
   return (
     <iframe
