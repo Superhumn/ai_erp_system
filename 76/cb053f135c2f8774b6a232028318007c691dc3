@@ -1,0 +1,20 @@
+client/src/pages/projects/Projects.tsx
+  s_d1d7873108fc66::t_5d3c29bc682a29 807,809-810,826-839,841,848
+  s_d1d7873108fc66::t_6ed86f8230227e 779,801
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "76cb053f135c2f8774b6a232028318007c691dc3",
+  "prompts": {},
+  "sessions": {
+    "s_d1d7873108fc66": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "90600cd2-8a52-47b6-a332-35d11f3ad3f5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    }
+  }
+}
