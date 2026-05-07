@@ -225,7 +225,67 @@ export async function listDriveFiles(
 }
 
 /**
- * Recursively sync a Google Drive folder structure
+ * List all items (folders AND files) in a Google Drive folder in a single API call.
+ * Splits items client-side by mimeType, which avoids relying on the `!=` operator
+ * in Drive query strings (known to be unreliable for some account types / Shared Drives).
+ */
+async function listDriveItems(
+  accessToken: string,
+  parentFolderId: string
+): Promise<{ folders: DriveFolder[]; files: DriveFile[]; error?: string }> {
+  try {
+    const query = `'${parentFolderId}' in parents and trashed=false`;
+
+    const folders: DriveFolder[] = [];
+    const files: DriveFile[] = [];
+    let pageToken: string | undefined;
+    do {
+      const params = new URLSearchParams({
+        q: query,
+        fields: "nextPageToken,files(id,name,mimeType,size,webViewLink,thumbnailLink,iconLink,createdTime,modifiedTime,parents)",
+        orderBy: "name",
+        pageSize: "1000",
+        supportsAllDrives: "true",
+        includeItemsFromAllDrives: "true",
+      });
+      if (pageToken) params.set("pageToken", pageToken);
+
+      const response = await driveFetch(`${GOOGLE_DRIVE_API}/files?${params.toString()}`, accessToken);
+
+      if (!response.ok) {
+        const error = await response.text();
+        console.error("[GoogleDrive] Failed to list folder contents:", error);
+        const hint = response.status === 403 || response.status === 404 ? permissionHint() : "";
+        return { folders: [], files: [], error: `Failed to list folder contents: ${response.status}.${hint}` };
+      }
+
+      const data = await response.json();
+      if (Array.isArray(data.files)) {
+        for (const item of data.files) {
+          if (item.mimeType === FOLDER_MIME_TYPE) {
+            folders.push(item as DriveFolder);
+          } else {
+            files.push(item as DriveFile);
+          }
+        }
+      }
+      pageToken = data.nextPageToken;
+    } while (pageToken);
+
+    return { folders, files };
+  } catch (error: any) {
+    console.error("[GoogleDrive] Error listing folder contents:", error);
+    return { folders: [], files: [], error: error.message };
+  }
+}
+
+/**
+ * Recursively sync a Google Drive folder structure.
+ *
+ * Uses a single `listDriveItems` call per folder (no mimeType filter in the
+ * query) and splits results client-side. This avoids the `mimeType!=` operator
+ * which is unreliable for certain Google Drive account types and Shared Drives,
+ * and also cuts the number of API round-trips in half.
  */
 export async function syncDriveFolder(
   accessToken: string,
@@ -238,29 +298,21 @@ export async function syncDriveFolder(
   async function syncRecursive(currentFolderId: string, depth: number) {
     if (depth > maxDepth) return;
 
-    // List subfolders — a failure here must not prevent listing files in the
-    // current folder, because the folder itself was already recorded by the
-    // parent call and its files should still be imported.
-    const { folders, error: folderError } = await listDriveFolders(accessToken, currentFolderId);
-    if (folderError) {
-      console.error(`[GoogleDrive] Error listing subfolders in ${currentFolderId}:`, folderError);
-    } else {
-      allFolders.push(...folders);
+    // Single call returns both folders and files; split is done client-side.
+    const { folders, files, error } = await listDriveItems(accessToken, currentFolderId);
+    if (error) {
+      console.error(`[GoogleDrive] Error listing contents of ${currentFolderId}:`, error);
+      // Even if listing failed, do not abort the whole sync — other folders
+      // that were already discovered may still be processed by the caller.
+      return;
     }
 
-    // Always fetch files regardless of whether subfolder listing succeeded.
-    const { files, error: fileError } = await listDriveFiles(accessToken, currentFolderId);
-    if (fileError) {
-      console.error(`[GoogleDrive] Error getting files in ${currentFolderId}:`, fileError);
-    } else {
-      allFiles.push(...files);
-    }
+    allFolders.push(...folders);
+    allFiles.push(...files);
 
-    // Only recurse into subfolders when we actually know what they are.
-    if (!folderError) {
-      for (const folder of folders) {
-        await syncRecursive(folder.id, depth + 1);
-      }
+    // Recurse into sub-folders found in this directory.
+    for (const folder of folders) {
+      await syncRecursive(folder.id, depth + 1);
     }
   }
   
