@@ -229,6 +229,9 @@ export default function Projects() {
   const inlineRef = useRef<HTMLInputElement>(null);
 
   const [deleteProjectId, setDeleteProjectId] = useState<number | null>(null);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
+  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<number>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setStatsVisible(true), 100);
@@ -276,6 +279,35 @@ export default function Projects() {
     },
     onError: (e: any) => toast.error(e.message),
   });
+
+  const deleteProjectsMany = (trpc.projects as any).deleteMany.useMutation({
+    onError: (e: any) => toast.error(e.message),
+  });
+  const deleteTasksMany = (trpc.projects as any).deleteTasks.useMutation({
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  async function runBulkDelete() {
+    const projectIds = Array.from(selectedProjectIds);
+    // Skip tasks whose project is being deleted — the project delete cascades.
+    const taskIds = Array.from(selectedTaskIds).filter((tid) => {
+      const t = taskList.find((x) => x.id === tid);
+      return t && !selectedProjectIds.has(t.projectId);
+    });
+    try {
+      if (projectIds.length > 0) await deleteProjectsMany.mutateAsync({ ids: projectIds });
+      if (taskIds.length > 0) await deleteTasksMany.mutateAsync({ ids: taskIds });
+      const total = projectIds.length + taskIds.length;
+      toast.success(`Deleted ${total} item${total === 1 ? "" : "s"}`);
+      setSelectedProjectIds(new Set());
+      setSelectedTaskIds(new Set());
+      setBulkDeleteOpen(false);
+      utils.projects.list.invalidate();
+      (utils.projects as any).listAllTasks.invalidate();
+    } catch {
+      // mutation onError already toasted
+    }
+  }
 
   const projectList = useMemo(() => (projects as unknown as Project[]) || [], [projects]);
   const taskList = useMemo(() => (allTasks as unknown as Task[]) || [], [allTasks]);
@@ -412,6 +444,25 @@ export default function Projects() {
       return next;
     });
   }
+
+  function toggleTaskSelection(taskId: number) {
+    setSelectedTaskIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(taskId)) next.delete(taskId); else next.add(taskId);
+      return next;
+    });
+  }
+
+  function toggleProjectSelection(projectId: number) {
+    setSelectedProjectIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) next.delete(projectId); else next.add(projectId);
+      return next;
+    });
+  }
+
+  const selectionCount = selectedTaskIds.size + selectedProjectIds.size;
+  const hasSelection = selectionCount > 0;
 
   const hasActiveFilters = statusFilter !== "all" || priorityFilter !== "all" || projectFilter !== "all";
 
@@ -757,6 +808,21 @@ export default function Projects() {
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex min-w-0 items-center gap-3">
+                      <div
+                        onClick={(e) => { e.stopPropagation(); toggleProjectSelection(projectId); }}
+                        className={cn(
+                          "shrink-0 transition-opacity",
+                          selectedProjectIds.has(projectId) || hasSelection
+                            ? "opacity-100"
+                            : "opacity-0 group-hover:opacity-100"
+                        )}
+                      >
+                        <Checkbox
+                          checked={selectedProjectIds.has(projectId)}
+                          onCheckedChange={() => toggleProjectSelection(projectId)}
+                          aria-label="Select project"
+                        />
+                      </div>
                       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                         <FolderKanban className="h-4 w-4" />
                       </div>
@@ -826,6 +892,22 @@ export default function Projects() {
                             onClick={() => toggleExpanded(task.id)}
                             className="flex cursor-pointer items-start gap-3 px-5 py-3"
                           >
+                            <div
+                              onClick={(e) => { e.stopPropagation(); toggleTaskSelection(task.id); }}
+                              className={cn(
+                                "mt-0.5 shrink-0 transition-opacity",
+                                selectedTaskIds.has(task.id) || hasSelection
+                                  ? "opacity-100"
+                                  : "opacity-0 group-hover:opacity-100"
+                              )}
+                            >
+                              <Checkbox
+                                checked={selectedTaskIds.has(task.id)}
+                                onCheckedChange={() => toggleTaskSelection(task.id)}
+                                aria-label="Select task"
+                              />
+                            </div>
+
                             <div className={cn("mt-1 h-4 w-0.5 shrink-0 rounded-full", pCfg.dot)} />
 
                             <div onClick={(e) => e.stopPropagation()} className="mt-0.5 shrink-0">
@@ -1038,6 +1120,67 @@ export default function Projects() {
           })}
         </div>
       )}
+
+      {/* Bulk-delete floating action bar */}
+      {hasSelection && (
+        <div className="fixed bottom-4 left-1/2 z-40 -translate-x-1/2 animate-fade-in-up">
+          <div className="flex items-center gap-2 rounded-full border bg-background/95 px-3 py-1.5 text-sm shadow-lg backdrop-blur">
+            <span className="font-medium">
+              {selectionCount} selected
+              {selectedProjectIds.size > 0 && selectedTaskIds.size > 0 && (
+                <span className="ml-1 text-muted-foreground">
+                  ({selectedProjectIds.size} project{selectedProjectIds.size === 1 ? "" : "s"}, {selectedTaskIds.size} task{selectedTaskIds.size === 1 ? "" : "s"})
+                </span>
+              )}
+            </span>
+            <Button size="sm" variant="destructive" className="h-7" onClick={() => setBulkDeleteOpen(true)}>
+              <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7"
+              onClick={() => { setSelectedProjectIds(new Set()); setSelectedTaskIds(new Set()); }}
+            >
+              Clear
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk-delete confirmation dialog */}
+      <Dialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete {selectionCount} item{selectionCount === 1 ? "" : "s"}?</DialogTitle>
+            <DialogDescription>
+              {selectedProjectIds.size > 0 && (
+                <>
+                  Deleting {selectedProjectIds.size} project{selectedProjectIds.size === 1 ? "" : "s"} also removes their tasks and milestones.
+                  {selectedTaskIds.size > 0 && " "}
+                </>
+              )}
+              {selectedTaskIds.size > 0 && (
+                <>Deleting {selectedTaskIds.size} task{selectedTaskIds.size === 1 ? "" : "s"}.</>
+              )}
+              {" "}This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setBulkDeleteOpen(false)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={deleteProjectsMany.isPending || deleteTasksMany.isPending}
+              onClick={runBulkDelete}
+            >
+              {(deleteProjectsMany.isPending || deleteTasksMany.isPending) && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete project confirmation dialog */}
       <Dialog open={deleteProjectId !== null} onOpenChange={(open) => { if (!open) setDeleteProjectId(null); }}>

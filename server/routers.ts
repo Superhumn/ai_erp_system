@@ -3005,6 +3005,31 @@ ONLY return the JSON array, no other text.`;
         await createAuditLog(ctx.user.id, 'delete', 'project', input.id);
         return { success: true };
       }),
+    deleteMany: protectedProcedure
+      .input(z.object({ ids: z.array(z.number()).min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteProjects(input.ids);
+        for (const id of input.ids) {
+          await createAuditLog(ctx.user.id, 'delete', 'project', id);
+        }
+        return { success: true, count: input.ids.length };
+      }),
+    deleteTask: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteProjectTask(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'projectTask', input.id);
+        return { success: true };
+      }),
+    deleteTasks: protectedProcedure
+      .input(z.object({ ids: z.array(z.number()).min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteProjectTasks(input.ids);
+        for (const id of input.ids) {
+          await createAuditLog(ctx.user.id, 'delete', 'projectTask', id);
+        }
+        return { success: true, count: input.ids.length };
+      }),
     tasks: protectedProcedure
       .input(z.object({ projectId: z.number() }))
       .query(({ input }) => input.projectId === 0 ? db.getAllProjectTasks() : db.getProjectTasks(input.projectId)),
