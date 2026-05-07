@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -99,6 +99,34 @@ function groupEmailsByDate(emails: any[]) {
 
 function HtmlEmailBody({ html }: { html: string }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [isDarkMode, setIsDarkMode] = useState(false);
+
+  useEffect(() => {
+    const getIsDarkMode = () =>
+      document.documentElement.classList.contains("dark") ||
+      window.matchMedia("(prefers-color-scheme: dark)").matches;
+
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const updateMode = () => setIsDarkMode(getIsDarkMode());
+    updateMode();
+
+    const observer = new MutationObserver(updateMode);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", updateMode);
+      return () => {
+        observer.disconnect();
+        mediaQuery.removeEventListener("change", updateMode);
+      };
+    }
+
+    mediaQuery.addListener(updateMode);
+    return () => {
+      observer.disconnect();
+      mediaQuery.removeListener(updateMode);
+    };
+  }, []);
 
   const resizeIframe = useCallback(() => {
     try {
@@ -111,27 +139,31 @@ function HtmlEmailBody({ html }: { html: string }) {
     }
   }, []);
 
-  const wrappedHtml = `<!DOCTYPE html>
+  const wrappedHtml = useMemo(
+    () => `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <base target="_blank">
 <style>
+  :root { color-scheme: ${isDarkMode ? "dark" : "light"}; }
   * { box-sizing: border-box; }
-  body { margin: 0; padding: 8px 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #1a1a1a; word-wrap: break-word; overflow-wrap: break-word; }
+  body { margin: 0; padding: 8px 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; font-size: 14px; line-height: 1.6; color: ${isDarkMode ? "#e5e7eb" : "#1a1a1a"}; background: ${isDarkMode ? "#111827" : "#ffffff"}; word-wrap: break-word; overflow-wrap: break-word; }
   img { max-width: 100%; height: auto; display: inline-block; }
-  a { color: #1a73e8; text-decoration: underline; }
+  a { color: ${isDarkMode ? "#93c5fd" : "#1a73e8"}; text-decoration: underline; }
   pre, code { white-space: pre-wrap; word-break: break-all; font-family: monospace; }
   table { max-width: 100% !important; border-collapse: collapse; }
   td, th { word-wrap: break-word; max-width: 600px; }
-  blockquote { border-left: 3px solid #d0d0d0; margin: 8px 0; padding-left: 12px; color: #666; }
-  hr { border: none; border-top: 1px solid #e0e0e0; }
+  blockquote { border-left: 3px solid ${isDarkMode ? "#4b5563" : "#d0d0d0"}; margin: 8px 0; padding-left: 12px; color: ${isDarkMode ? "#9ca3af" : "#666"}; }
+  hr { border: none; border-top: 1px solid ${isDarkMode ? "#374151" : "#e0e0e0"}; }
   p { margin: 0 0 8px 0; }
 </style>
 </head>
 <body>${html}</body>
 </html>`;
+    [html, isDarkMode]
+  );
 
   return (
     <iframe
@@ -141,7 +173,6 @@ function HtmlEmailBody({ html }: { html: string }) {
       onLoad={resizeIframe}
       className="w-full border-0 min-h-[120px]"
       title="Email content"
-      scrolling="no"
     />
   );
 }
