@@ -1,0 +1,28 @@
+server/routers.ts
+  s_d1d7873108fc66::t_7c1d2f05f24bbd 3008-3032
+client/src/pages/projects/Projects.tsx
+  s_d1d7873108fc66::t_b1e060d146ed75 283-311
+  s_d1d7873108fc66::t_0e04365d53c455 232-234
+  s_d1d7873108fc66::t_c168e6ac15eddd 448-466
+  s_d1d7873108fc66::t_a558b6febf4949 1124-1184
+  s_d1d7873108fc66::t_033645e5b5e889 811-825
+  s_d1d7873108fc66::t_3709cf9f6fd9d7 895-910
+server/db.ts
+  s_d1d7873108fc66::t_0458c0cd7a1ee3 1797-1820
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "5c1e8353788ac20f87fe07d8a3f930e0a2f68048",
+  "prompts": {},
+  "sessions": {
+    "s_d1d7873108fc66": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "90600cd2-8a52-47b6-a332-35d11f3ad3f5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    }
+  }
+}
