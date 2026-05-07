@@ -72,17 +72,11 @@ export const ENV = {
     twilioAuthToken: process.env.TWILIO_AUTH_TOKEN ?? "",
     twilioPhoneNumber: process.env.TWILIO_PHONE_NUMBER ?? "",
 
-    // Forge API (image generation, voice, maps, notifications)
-    forgeApiUrl: process.env.FORGE_API_URL ?? "",
-    forgeApiKey: process.env.FORGE_API_KEY ?? "",
+    // API Proxy (image generation, voice, maps, notifications, data API)
+    apiProxyUrl: process.env.API_PROXY_URL ?? "",
+    apiProxyKey: process.env.API_PROXY_KEY ?? "",
 
-    // AWS S3 (file storage fallback when Forge API is not configured)
-    awsAccessKeyId: process.env.AWS_ACCESS_KEY_ID ?? "",
-    awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? "",
-    awsRegion: process.env.AWS_REGION ?? "us-east-1",
-    awsS3Bucket: process.env.AWS_S3_BUCKET ?? "",
-
-    // Cloudflare R2 (S3-compatible storage; takes priority over S3 and Forge when configured)
+    // Cloudflare R2 (S3-compatible storage)
     r2AccountId: process.env.R2_ACCOUNT_ID ?? "",
     r2AccessKeyId: process.env.R2_ACCESS_KEY_ID ?? "",
     r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY ?? "",

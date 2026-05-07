@@ -104,9 +104,8 @@ These integrations are fully implemented but **disabled by default** because the
 | 12 | **IMAP Inbox** | `IMAP_HOST`, `IMAP_USER`, `IMAP_PASSWORD` | Returns "IMAP not configured" error |
 | 13 | **Fireflies.ai** | Per-user API key via settings | Throws TRPCError: "Fireflies not configured" |
 | 14 | **Airtable** | `AIRTABLE_PERSONAL_ACCESS_TOKEN` | Throws: "Airtable Personal Access Token not configured" |
-| 15 | **Forge API** (Image Gen, Voice Transcription, Maps, Storage) | `FORGE_API_URL`, `FORGE_API_KEY` | Throws: "BUILT_IN_FORGE_API_URL is not configured" |
+| 15 | **API Proxy** (Image Gen, Voice Transcription, Maps) | `API_PROXY_URL`, `API_PROXY_KEY` | Throws: "API_PROXY_URL is not configured" |
 | 16 | **Sentry Error Tracking** | `SENTRY_DSN` + `@sentry/node` package | Silently falls back to stdout logging |
-| 17 | **AWS S3 Storage** | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_S3_BUCKET` | Storage uses Forge proxy instead; S3 vars listed in `.env.example` but unused |
 
 ---
 

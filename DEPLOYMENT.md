@@ -123,7 +123,7 @@ pnpm run dev
 
 Visit `http://localhost:3000` and sign up. First user gets admin role.
 
-## AWS / DigitalOcean / Manual Hosting
+## Manual Hosting
 
 ```bash
 git clone <your-repo>
