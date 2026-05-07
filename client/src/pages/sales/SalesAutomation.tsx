@@ -164,7 +164,7 @@ function LeadScoring() {
   const scoreContact = (contact: ScoredContact) => {
     setScoringId(contact.id);
     aiMutation.mutate({
-      prompt: `Score this sales lead from 0 to 100 based on likely purchase intent and fit. Reply with ONLY a number like "Score: 75/100" then a one-line reason.\n\nName: ${contact.name}\nCompany: ${contact.company}\nEmail: ${contact.email}`,
+      question: `Score this sales lead from 0 to 100 based on likely purchase intent and fit. Reply with ONLY a number like "Score: 75/100" then a one-line reason.\n\nName: ${contact.name}\nCompany: ${contact.company}\nEmail: ${contact.email}`,
       context: { contactId: contact.id },
     });
   };
@@ -334,7 +334,7 @@ function OutreachSequences() {
   const generateSequence = () => {
     setGenerating(true);
     aiMutation.mutate({
-      prompt: `Create a 5-step multi-channel outreach sequence for ${genTier} sales leads (food/CPG industry). For each step, specify:\n- Day number (1, 3, 5, 8, 12)\n- Channel (email, linkedin, or call)\n- Subject line\n- Brief message body (2-3 sentences)\n\nFormat each as "Step N (Day X, Channel): Subject" followed by the body.`,
+      question: `Create a 5-step multi-channel outreach sequence for ${genTier} sales leads (food/CPG industry). For each step, specify:\n- Day number (1, 3, 5, 8, 12)\n- Channel (email, linkedin, or call)\n- Subject line\n- Brief message body (2-3 sentences)\n\nFormat each as "Step N (Day X, Channel): Subject" followed by the body.`,
       context: { type: "sequence-gen", tier: genTier },
     });
   };
