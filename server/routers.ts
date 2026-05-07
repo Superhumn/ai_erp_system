@@ -18448,6 +18448,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         createProject: z.boolean().optional(),
         projectName: z.string().optional(),
         projectId: z.number().optional(),
+        productId: z.number().optional(),
         assigneeId: z.number().optional(),
         existingContactIds: z.array(z.number()).optional(),
         selectedActionItemIndices: z.array(z.number()).optional(),
@@ -18517,6 +18518,27 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         }
         if (!projectId && input.projectId) {
           projectId = input.projectId;
+        }
+        // Optional product routing: create/reuse a deterministic product project
+        // so users can choose which product the meeting tasks should be added to.
+        if (!projectId && input.productId) {
+          const product = await db.getProductById(input.productId);
+          if (product) {
+            const productProjectName = `Product: ${product.name}`;
+            const existingProjects = await db.getProjects();
+            const existingProductProject = existingProjects.find((p: any) => p.name === productProjectName);
+            if (existingProductProject) {
+              projectId = existingProductProject.id;
+            } else {
+              const productProject = await db.createProject({
+                projectNumber: `PRD-${Date.now()}`,
+                name: productProjectName,
+                status: 'active',
+                createdBy: ctx.user.id,
+              } as any);
+              projectId = productProject.id;
+            }
+          }
         }
         // When tasks are requested but no project was chosen or created, fall back
         // to any existing project. If none exist at all, auto-create a default so

@@ -44,6 +44,7 @@ export default function Meetings() {
   const [processProjectName, setProcessProjectName] = useState("");
   const [processExistingProjectId, setProcessExistingProjectId] = useState<number | undefined>(undefined);
   const [predictedProjectId, setPredictedProjectId] = useState<number | undefined>(undefined);
+  const [processProductId, setProcessProductId] = useState<number | undefined>(undefined);
   const [processAssigneeId, setProcessAssigneeId] = useState<number | undefined>(undefined);
   const [existingContactIds, setExistingContactIds] = useState<number[]>([]);
   const [contactSearch, setContactSearch] = useState("");
@@ -51,6 +52,8 @@ export default function Meetings() {
 
   const { data: projectsRaw } = trpc.projects.list.useQuery();
   const availableProjects = (projectsRaw as Array<{ id: number; name: string }> | undefined) || [];
+  const { data: productsRaw } = trpc.products.list.useQuery();
+  const availableProducts = (productsRaw as Array<{ id: number; name: string; sku?: string }> | undefined) || [];
 
   const { data: routingOptions } = trpc.fireflies.taskRoutingOptions.useQuery();
   const availableAssignees = (routingOptions?.assignees as Array<{ id: number; name: string; email: string }> | undefined) || [];
@@ -297,6 +300,7 @@ export default function Meetings() {
   const openProcessDialog = (meeting: any) => {
     setSelectedMeetingId(meeting.id);
     setProcessProjectName("");
+    setProcessProductId(undefined);
     setProcessAssigneeId(undefined);
     setExistingContactIds([]);
     setContactSearch("");
@@ -323,6 +327,7 @@ export default function Meetings() {
       createProject: projectMode === "new",
       projectName: projectMode === "new" ? (processProjectName || undefined) : undefined,
       projectId: projectMode === "existing" ? processExistingProjectId : undefined,
+      productId: processProductId,
       assigneeId: processAssigneeId,
       existingContactIds: existingContactIds.length ? existingContactIds : undefined,
       selectedActionItemIndices: processCreateTasks ? Array.from(selectedTaskIndices) : [],
@@ -1006,6 +1011,27 @@ export default function Meetings() {
                     onChange={(e) => setProcessProjectName(e.target.value)}
                     className="mt-1"
                   />
+                </div>
+              )}
+              {processCreateTasks && (
+                <div className="pl-7 space-y-1">
+                  <Label className="text-xs">Product (optional)</Label>
+                  <Select
+                    value={processProductId !== undefined ? String(processProductId) : "none"}
+                    onValueChange={(v) => setProcessProductId(v === "none" ? undefined : Number(v))}
+                  >
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="Choose a product…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">None</SelectItem>
+                      {availableProducts.map((p) => (
+                        <SelectItem key={p.id} value={String(p.id)}>
+                          {p.name}{p.sku ? ` (${p.sku})` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               )}
             </div>
