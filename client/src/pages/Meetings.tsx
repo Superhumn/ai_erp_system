@@ -40,11 +40,8 @@ export default function Meetings() {
   const [selectedMeetingId, setSelectedMeetingId] = useState<number | null>(null);
   const [processCreateContacts, setProcessCreateContacts] = useState(true);
   const [processCreateTasks, setProcessCreateTasks] = useState(true);
-  const [projectMode, setProjectMode] = useState<"none" | "new" | "existing">("none");
-  const [processProjectName, setProcessProjectName] = useState("");
-  const [processExistingProjectId, setProcessExistingProjectId] = useState<number | undefined>(undefined);
+  const [processProjectId, setProcessProjectId] = useState<number | undefined>(undefined);
   const [predictedProjectId, setPredictedProjectId] = useState<number | undefined>(undefined);
-  const [processProductId, setProcessProductId] = useState<number | undefined>(undefined);
   const [processAssigneeId, setProcessAssigneeId] = useState<number | undefined>(undefined);
   const [existingContactIds, setExistingContactIds] = useState<number[]>([]);
   const [contactSearch, setContactSearch] = useState("");
@@ -52,8 +49,6 @@ export default function Meetings() {
 
   const { data: projectsRaw } = trpc.projects.list.useQuery();
   const availableProjects = (projectsRaw as Array<{ id: number; name: string }> | undefined) || [];
-  const { data: productsRaw } = trpc.products.list.useQuery();
-  const availableProducts = (productsRaw as Array<{ id: number; name: string; sku?: string }> | undefined) || [];
 
   const { data: routingOptions } = trpc.fireflies.taskRoutingOptions.useQuery();
   const availableAssignees = (routingOptions?.assignees as Array<{ id: number; name: string; email: string }> | undefined) || [];
@@ -299,8 +294,6 @@ export default function Meetings() {
 
   const openProcessDialog = (meeting: any) => {
     setSelectedMeetingId(meeting.id);
-    setProcessProjectName("");
-    setProcessProductId(undefined);
     setProcessAssigneeId(undefined);
     setExistingContactIds([]);
     setContactSearch("");
@@ -308,13 +301,7 @@ export default function Meetings() {
     setSelectedTaskIndices(new Set(Array.from({ length: itemCount }, (_, i) => i)));
     const predicted = predictProject(meeting.title || "");
     setPredictedProjectId(predicted);
-    if (predicted !== undefined) {
-      setProjectMode("existing");
-      setProcessExistingProjectId(predicted);
-    } else {
-      setProjectMode("none");
-      setProcessExistingProjectId(undefined);
-    }
+    setProcessProjectId(predicted);
     setShowProcessDialog(true);
   };
 
@@ -324,10 +311,8 @@ export default function Meetings() {
       meetingId: selectedMeetingId,
       createContacts: processCreateContacts,
       createTasks: processCreateTasks,
-      createProject: projectMode === "new",
-      projectName: projectMode === "new" ? (processProjectName || undefined) : undefined,
-      projectId: projectMode === "existing" ? processExistingProjectId : undefined,
-      productId: processProductId,
+      createProject: false,
+      projectId: processProjectId,
       assigneeId: processAssigneeId,
       existingContactIds: existingContactIds.length ? existingContactIds : undefined,
       selectedActionItemIndices: processCreateTasks ? Array.from(selectedTaskIndices) : [],
@@ -963,77 +948,27 @@ export default function Meetings() {
                   <div className="text-xs text-muted-foreground">Group tasks under a project</div>
                 </div>
               </div>
-              <div className="flex gap-2 pl-7">
-                {(["none", "existing", "new"] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => setProjectMode(mode)}
-                    className={`rounded-full px-3 py-1 text-xs font-medium border transition-colors ${
-                      projectMode === mode
-                        ? "bg-indigo-600 text-white border-indigo-600"
-                        : "bg-background text-muted-foreground border-border hover:border-indigo-400"
-                    }`}
-                  >
-                    {mode === "none" ? "None" : mode === "existing" ? "Existing" : "New"}
-                  </button>
-                ))}
+              <div className="pl-7 space-y-1">
+                <Select
+                  value={processProjectId !== undefined ? String(processProjectId) : "none"}
+                  onValueChange={(v) => setProcessProjectId(v === "none" ? undefined : Number(v))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="No project" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No project</SelectItem>
+                    {availableProjects.map((p) => (
+                      <SelectItem key={p.id} value={String(p.id)}>
+                        {p.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {predictedProjectId !== undefined && processProjectId === predictedProjectId && (
+                  <p className="text-[11px] text-indigo-600">✦ Auto-predicted from meeting title</p>
+                )}
               </div>
-              {projectMode === "existing" && (
-                <div className="pl-7 space-y-1">
-                  <Label className="text-xs">Select Project</Label>
-                  <Select
-                    value={processExistingProjectId !== undefined ? String(processExistingProjectId) : ""}
-                    onValueChange={(v) => setProcessExistingProjectId(Number(v))}
-                  >
-                    <SelectTrigger className="mt-1">
-                      <SelectValue placeholder="Choose a project…" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {availableProjects.map((p) => (
-                        <SelectItem key={p.id} value={String(p.id)}>
-                          {p.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {predictedProjectId !== undefined && processExistingProjectId === predictedProjectId && (
-                    <p className="text-[11px] text-indigo-600">✦ Auto-predicted from meeting title</p>
-                  )}
-                </div>
-              )}
-              {projectMode === "new" && (
-                <div className="pl-7 space-y-1">
-                  <Label className="text-xs">Project Name (optional)</Label>
-                  <Input
-                    placeholder="Auto-generated from meeting title"
-                    value={processProjectName}
-                    onChange={(e) => setProcessProjectName(e.target.value)}
-                    className="mt-1"
-                  />
-                </div>
-              )}
-              {processCreateTasks && (
-                <div className="pl-7 space-y-1">
-                  <Label className="text-xs">Product (optional)</Label>
-                  <Select
-                    value={processProductId !== undefined ? String(processProductId) : "none"}
-                    onValueChange={(v) => setProcessProductId(v === "none" ? undefined : Number(v))}
-                  >
-                    <SelectTrigger className="mt-1">
-                      <SelectValue placeholder="Choose a product…" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">None</SelectItem>
-                      {availableProducts.map((p) => (
-                        <SelectItem key={p.id} value={String(p.id)}>
-                          {p.name}{p.sku ? ` (${p.sku})` : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
             </div>
           </div>
           <DialogFooter>
