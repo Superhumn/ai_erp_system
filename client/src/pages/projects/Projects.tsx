@@ -776,7 +776,7 @@ export default function Projects() {
           <p className="text-sm text-muted-foreground">Loading projects...</p>
         </div>
       ) : view === "list" ? (
-        <div className="space-y-4">
+        <div className="space-y-1.5">
           {groupedByProject.length === 0 && (
             <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed py-24 text-center">
               <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
@@ -798,16 +798,16 @@ export default function Projects() {
               <div
                 key={projectId}
                 className={cn(
-                  "animate-fade-in-up overflow-hidden rounded-2xl border bg-background shadow-sm",
+                  "animate-fade-in-up overflow-hidden rounded-lg border bg-background",
                   `stagger-${Math.min(projectIndex + 1, 5)}`
                 )}
               >
                 <button
                   onClick={() => toggleProject(projectId)}
-                  className="group w-full px-5 py-4 text-left transition-colors hover:bg-muted/20"
+                  className="group w-full px-3 py-1.5 text-left transition-colors hover:bg-muted/20"
                 >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
                       <div
                         onClick={(e) => { e.stopPropagation(); toggleProjectSelection(projectId); }}
                         className={cn(
@@ -823,42 +823,30 @@ export default function Projects() {
                           aria-label="Select project"
                         />
                       </div>
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                        <FolderKanban className="h-4 w-4" />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="truncate font-semibold">{project?.name || `Project #${projectId}`}</span>
-                          {priorityCfg && (
-                            <span className={cn("flex items-center gap-1 text-[11px] font-medium", priorityCfg.color)}>
-                              <priorityCfg.Icon className="h-3 w-3" />
-                              {priorityCfg.label}
-                            </span>
-                          )}
-                        </div>
-                        <div className="mt-0.5 hidden items-center gap-2 sm:flex">
-                          <Progress value={projectProgress} className="h-1 w-24" />
-                          <span className="text-[11px] text-muted-foreground">
-                            {projectProgress}% · {tasks.length} task{tasks.length !== 1 ? "s" : ""}
-                          </span>
-                        </div>
-                      </div>
+                      {collapsed ? (
+                        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      ) : (
+                        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      )}
+                      <FolderKanban className="h-3.5 w-3.5 shrink-0 text-primary" />
+                      <span className="truncate text-sm font-medium">{project?.name || `Project #${projectId}`}</span>
+                      {priorityCfg && (
+                        <priorityCfg.Icon className={cn("h-3 w-3 shrink-0", priorityCfg.color)} />
+                      )}
+                      <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
+                        {projectProgress}% · {tasks.length}
+                      </span>
+                      <Progress value={projectProgress} className="hidden h-1 w-16 shrink-0 sm:block" />
                     </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <Badge variant="secondary" className="text-[11px]">{tasks.length}</Badge>
+                    <div className="flex shrink-0 items-center gap-1">
                       <button
                         type="button"
                         aria-label="Delete project"
                         onClick={(e) => { e.stopPropagation(); setDeleteProjectId(projectId); }}
                         className="rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <Trash2 className="h-3.5 w-3.5" />
                       </button>
-                      {collapsed ? (
-                        <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-                      ) : (
-                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                      )}
                     </div>
                   </div>
                 </button>
