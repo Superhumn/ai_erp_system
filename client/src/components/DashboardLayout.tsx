@@ -349,7 +349,7 @@ function DashboardLayoutContent({
           disableTransition={isResizing}
         >
           {/* Header: logo + wordmark */}
-          <SidebarHeader className="h-9 justify-center border-b border-sidebar-border p-0 gap-0">
+          <SidebarHeader className="min-h-9 justify-center border-b border-sidebar-border p-0 gap-0 pt-[env(safe-area-inset-top)]">
             <div className="flex items-center gap-1.5 px-1.5 transition-all w-full">
               <button
                 onClick={toggleSidebar}
@@ -474,7 +474,7 @@ function DashboardLayoutContent({
 
       <SidebarInset className="flex flex-col bg-background">
         {/* Top bar: AI search + agent status + notifications */}
-        <header className="flex h-10 items-center justify-between gap-3 border-b border-border bg-card/80 backdrop-blur-sm px-4 sticky top-0 z-40">
+        <header className="flex min-h-10 items-center justify-between gap-3 border-b border-border bg-card/80 backdrop-blur-sm px-4 pt-[env(safe-area-inset-top)] sticky top-0 z-40">
           <div className="flex items-center gap-2 shrink-0">
             {isMobile && <SidebarTrigger className="h-8 w-8 rounded-md" />}
           </div>
