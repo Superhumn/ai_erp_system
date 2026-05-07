@@ -161,7 +161,7 @@ function HtmlEmailBody({ html }: { html: string }) {
 </style>
 </head>
 <body>${html}</body>
-</html>`;
+</html>`,
     [html, isDarkMode]
   );
 
