@@ -1,0 +1,21 @@
+ROUTERS_INDEX.md
+  s_5c072831ea6c0a::t_2e3d44bb9bc293 5,43-120,129-164,197-238
+DB_INDEX.md
+  s_5c072831ea6c0a::t_2e3d44bb9bc293 5,38-124,348,356-364,366,368-376,378,380-381,383,385-387,389,391-396,398,400,402,404,406,408-1422
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "605b980ee2c3a4495936e51724d52ed1760feaf4",
+  "prompts": {},
+  "sessions": {
+    "s_5c072831ea6c0a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bfa8a21-e8db-4a9b-9b0a-95a56060a73d",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    }
+  }
+}
