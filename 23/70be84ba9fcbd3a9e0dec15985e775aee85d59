@@ -1,0 +1,28 @@
+server/routers.ts
+  s_b3a966000a62be::t_ebb9648cb6fc29 13896-13901,13910
+server/_core/dataRoomVisitorSession.ts
+  s_b3a966000a62be::t_03fe8f5659b9f4 43,50-55
+  s_b3a966000a62be::t_d2d2c5c0437919 11-14
+drizzle/0043_task_ai_assignment.sql
+  s_b3a966000a62be::t_a472bb59f681bf 145-156
+drizzle/0034_task_source_external_id.sql
+  s_b3a966000a62be::t_945d818b709008 24-26
+server/_core/index.ts
+  s_b3a966000a62be::t_00d70fc76202ca 1033-1044
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "2370be84ba9fcbd3a9e0dec15985e775aee85d59",
+  "prompts": {},
+  "sessions": {
+    "s_b3a966000a62be": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dcf5acd6-8d04-431e-964a-1082535655f8",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    }
+  }
+}
