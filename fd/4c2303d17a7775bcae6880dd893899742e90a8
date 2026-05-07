@@ -1,0 +1,21 @@
+DB_INDEX.md
+  s_861ca9056e7501::t_fdf931006892f2 5,15-124,144,151-334,336-339,341,343-346,348,350-361,363,365-373,375,377-378,380,382-384,386,388-393,395,397,399-1419
+ROUTERS_INDEX.md
+  s_861ca9056e7501::t_fdf931006892f2 5,13-120,122,126-164,170-238
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "fd4c2303d17a7775bcae6880dd893899742e90a8",
+  "prompts": {},
+  "sessions": {
+    "s_861ca9056e7501": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "37891a80-197d-4002-8494-75fe13fd8843",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    }
+  }
+}
