@@ -1,0 +1,19 @@
+client/src/pages/DataRoomPublic.tsx
+  s_504b4f275a487e::t_6dfbe17f53c357 252-275
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "c404df3898b45e969906db0f7b8219ca6025934a",
+  "prompts": {},
+  "sessions": {
+    "s_504b4f275a487e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "07176de8-4fe6-46c0-a2e5-4a02235d6406",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    }
+  }
+}
