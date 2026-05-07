@@ -142,6 +142,18 @@ BEGIN
   ) THEN
     CREATE INDEX `project_tasks_source_idx` ON `project_tasks` (`sourceType`, `sourceRefType`, `sourceRefId`);
   END IF;
+
+  -- Composite index on (sourceType, sourceExternalId) — sourceExternalId is
+  -- added by 0034, sourceType by this migration, so the index has to live
+  -- here to be safe on fresh-DB replay.
+  IF NOT EXISTS (
+    SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'project_tasks'
+      AND INDEX_NAME = 'project_tasks_sourceExternalId_idx'
+  ) THEN
+    CREATE INDEX `project_tasks_sourceExternalId_idx` ON `project_tasks` (`sourceType`, `sourceExternalId`);
+  END IF;
 END;
 --> statement-breakpoint
 CALL `_add_task_ai_assignment`();

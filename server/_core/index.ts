@@ -1030,10 +1030,18 @@ async function startServer() {
         if (session.linkCode !== linkCode) return res.status(403).send('Visitor session does not match this link');
         if (session.dataRoomId !== doc.dataRoomId) return res.status(403).send('Visitor session does not match this data room');
 
-        const visitor = await db.getDataRoomVisitorById(session.visitorId);
-        if (!visitor) return res.status(403).send('Visitor not found');
-        if (visitor.accessStatus !== 'active') return res.status(403).send(`Visitor access ${visitor.accessStatus}`);
-        if (dataRoom.requiresNda && !visitor.ndaAcceptedAt) return res.status(403).send('NDA signature required');
+        // Anonymous sessions (no visitorId) are valid for links that don't
+        // gate on email/name/company. Skip visitor-level checks in that case;
+        // if the room needs an NDA but no visitor exists, deny — there's no
+        // record we could have accepted on.
+        if (session.visitorId !== undefined) {
+          const visitor = await db.getDataRoomVisitorById(session.visitorId);
+          if (!visitor) return res.status(403).send('Visitor not found');
+          if (visitor.accessStatus !== 'active') return res.status(403).send(`Visitor access ${visitor.accessStatus}`);
+          if (dataRoom.requiresNda && !visitor.ndaAcceptedAt) return res.status(403).send('NDA signature required');
+        } else if (dataRoom.requiresNda) {
+          return res.status(403).send('NDA signature required');
+        }
 
         // Layered allowDownload: room AND link. When false, only allow
         // iframe loads (where the bytes feed the in-browser preview);

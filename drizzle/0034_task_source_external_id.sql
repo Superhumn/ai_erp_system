@@ -21,14 +21,9 @@ BEGIN
     ALTER TABLE `project_tasks` ADD COLUMN `sourceExternalId` varchar(255) NULL;
   END IF;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS
-    WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME = 'project_tasks'
-      AND INDEX_NAME = 'project_tasks_sourceExternalId_idx'
-  ) THEN
-    CREATE INDEX `project_tasks_sourceExternalId_idx` ON `project_tasks` (`sourceType`, `sourceExternalId`);
-  END IF;
+  -- The composite (sourceType, sourceExternalId) index is created in 0043
+  -- once sourceType exists. Putting it here would fail on a fresh-DB replay
+  -- because 0034 runs before 0043.
 END;
 --> statement-breakpoint
 CALL `_add_task_source_external_id`();

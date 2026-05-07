@@ -13893,10 +13893,12 @@ Ask if they received the original request and if they can provide a quote.`;
             });
           }
 
-          // Issue a signed visitor session cookie. The Drive proxy uses this
-          // to enforce NDA / approval / allowDownload server-side; without it
-          // the public file list is reachable but the bytes are not.
-          if (visitor) {
+          // Issue a signed visitor session cookie on every successful access,
+          // including anonymous (no-email) flows — without it the public file
+          // list is reachable but the proxy 401s on the actual bytes. visitorId
+          // is omitted when no visitor row exists; the proxy falls back to
+          // link/room-level checks in that case.
+          {
             const { setVisitorSessionCookie } = await import('./_core/dataRoomVisitorSession');
             const ttlMs = link.expiresAt
               ? Math.max(60_000, new Date(link.expiresAt).getTime() - Date.now())
@@ -13905,7 +13907,7 @@ Ask if they received the original request and if they can provide a quote.`;
               ctx.req,
               ctx.res,
               {
-                visitorId: visitor.id,
+                visitorId: visitor?.id,
                 linkId: link.id,
                 linkCode: input.linkCode,
                 dataRoomId: link.dataRoomId,

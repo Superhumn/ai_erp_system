@@ -8,7 +8,10 @@ export const VISITOR_COOKIE_NAME = "dr_visitor";
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
 
 export type VisitorSessionPayload = {
-  visitorId: number;
+  // Optional: links that don't gate on email/name/company never create a
+  // visitor row, but the session cookie is still issued so the Drive proxy
+  // can verify the request came through accessByLink.
+  visitorId?: number;
   linkId: number;
   linkCode: string;
   dataRoomId: number;
@@ -37,14 +40,19 @@ export async function verifyVisitorSession(
     const { payload } = await jwtVerify(token, getSecret(), { algorithms: ["HS256"] });
     const { visitorId, linkId, linkCode, dataRoomId } = payload as Record<string, unknown>;
     if (
-      typeof visitorId !== "number" ||
+      (visitorId !== undefined && typeof visitorId !== "number") ||
       typeof linkId !== "number" ||
       typeof linkCode !== "string" ||
       typeof dataRoomId !== "number"
     ) {
       return null;
     }
-    return { visitorId, linkId, linkCode, dataRoomId };
+    return {
+      visitorId: typeof visitorId === "number" ? visitorId : undefined,
+      linkId,
+      linkCode,
+      dataRoomId,
+    };
   } catch {
     return null;
   }
