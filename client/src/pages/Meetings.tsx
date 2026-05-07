@@ -40,7 +40,8 @@ export default function Meetings() {
   const [selectedMeetingId, setSelectedMeetingId] = useState<number | null>(null);
   const [processCreateContacts, setProcessCreateContacts] = useState(true);
   const [processCreateTasks, setProcessCreateTasks] = useState(true);
-  const [processProjectId, setProcessProjectId] = useState<number | undefined>(undefined);
+  const [processProjectId, setProcessProjectId] = useState<number | "new" | undefined>(undefined);
+  const [processNewProjectName, setProcessNewProjectName] = useState("");
   const [predictedProjectId, setPredictedProjectId] = useState<number | undefined>(undefined);
   const [processAssigneeId, setProcessAssigneeId] = useState<number | undefined>(undefined);
   const [existingContactIds, setExistingContactIds] = useState<number[]>([]);
@@ -294,6 +295,7 @@ export default function Meetings() {
 
   const openProcessDialog = (meeting: any) => {
     setSelectedMeetingId(meeting.id);
+    setProcessNewProjectName("");
     setProcessAssigneeId(undefined);
     setExistingContactIds([]);
     setContactSearch("");
@@ -311,8 +313,9 @@ export default function Meetings() {
       meetingId: selectedMeetingId,
       createContacts: processCreateContacts,
       createTasks: processCreateTasks,
-      createProject: false,
-      projectId: processProjectId,
+      createProject: processProjectId === "new",
+      projectName: processProjectId === "new" ? (processNewProjectName || undefined) : undefined,
+      projectId: typeof processProjectId === "number" ? processProjectId : undefined,
       assigneeId: processAssigneeId,
       existingContactIds: existingContactIds.length ? existingContactIds : undefined,
       selectedActionItemIndices: processCreateTasks ? Array.from(selectedTaskIndices) : [],
@@ -916,27 +919,6 @@ export default function Meetings() {
                       </ul>
                     </div>
                   )}
-                  {processCreateTasks && dialogTasks.length > 0 && availableAssignees.length > 0 && (
-                    <div className="pl-7 space-y-1">
-                      <Label className="text-xs">Default Assignee (optional)</Label>
-                      <Select
-                        value={processAssigneeId !== undefined ? String(processAssigneeId) : "auto"}
-                        onValueChange={(v) => setProcessAssigneeId(v === "auto" ? undefined : Number(v))}
-                      >
-                        <SelectTrigger className="mt-1">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="auto">Auto-detect from action items</SelectItem>
-                          {availableAssignees.map((a) => (
-                            <SelectItem key={a.id} value={String(a.id)}>
-                              {a.name || a.email}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
                 </div>
               );
             })()}
@@ -948,16 +930,21 @@ export default function Meetings() {
                   <div className="text-xs text-muted-foreground">Group tasks under a project</div>
                 </div>
               </div>
-              <div className="pl-7 space-y-1">
+              <div className="pl-7 space-y-2">
                 <Select
                   value={processProjectId !== undefined ? String(processProjectId) : "none"}
-                  onValueChange={(v) => setProcessProjectId(v === "none" ? undefined : Number(v))}
+                  onValueChange={(v) => {
+                    if (v === "none") setProcessProjectId(undefined);
+                    else if (v === "new") setProcessProjectId("new");
+                    else setProcessProjectId(Number(v));
+                  }}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="No project" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">No project</SelectItem>
+                    <SelectItem value="new">+ Create new project…</SelectItem>
                     {availableProjects.map((p) => (
                       <SelectItem key={p.id} value={String(p.id)}>
                         {p.name}
@@ -965,11 +952,47 @@ export default function Meetings() {
                     ))}
                   </SelectContent>
                 </Select>
-                {predictedProjectId !== undefined && processProjectId === predictedProjectId && (
+                {processProjectId === "new" && (
+                  <Input
+                    placeholder="Project name (auto-generated if blank)"
+                    value={processNewProjectName}
+                    onChange={(e) => setProcessNewProjectName(e.target.value)}
+                  />
+                )}
+                {typeof predictedProjectId === "number" && processProjectId === predictedProjectId && (
                   <p className="text-[11px] text-indigo-600">✦ Auto-predicted from meeting title</p>
                 )}
               </div>
             </div>
+            {processCreateTasks && (
+              <div className="space-y-3 rounded-lg border p-3">
+                <div className="flex items-center gap-2">
+                  <Users className="h-5 w-5 text-indigo-600 shrink-0" />
+                  <div className="flex-1">
+                    <div className="text-sm font-medium">Assign to</div>
+                    <div className="text-xs text-muted-foreground">Default assignee for all tasks</div>
+                  </div>
+                </div>
+                <div className="pl-7">
+                  <Select
+                    value={processAssigneeId !== undefined ? String(processAssigneeId) : "auto"}
+                    onValueChange={(v) => setProcessAssigneeId(v === "auto" ? undefined : Number(v))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">Auto-detect from action items</SelectItem>
+                      {availableAssignees.map((a) => (
+                        <SelectItem key={a.id} value={String(a.id)}>
+                          {a.name || a.email}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowProcessDialog(false)}>Cancel</Button>
