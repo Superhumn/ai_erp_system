@@ -92,6 +92,10 @@ const API_PROXY_BASE_URL =
 const MAPS_PROXY_URL = API_PROXY_BASE_URL ? `${API_PROXY_BASE_URL}/v1/maps/proxy` : "";
 
 function loadMapScript() {
+  if (!MAPS_PROXY_URL || !API_KEY) {
+    console.error("Map proxy is not configured: set VITE_API_PROXY_URL and VITE_API_PROXY_KEY");
+    return Promise.resolve(null);
+  }
   return new Promise(resolve => {
     const script = document.createElement("script");
     script.src = `${MAPS_PROXY_URL}/maps/api/js?key=${API_KEY}&v=weekly&libraries=marker,places,geocoding,geometry`;
