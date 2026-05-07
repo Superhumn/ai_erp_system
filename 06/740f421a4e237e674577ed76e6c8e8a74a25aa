@@ -1,0 +1,19 @@
+server/storage.ts
+  s_5c072831ea6c0a::t_54aae29beb15be 69,84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "06740f421a4e237e674577ed76e6c8e8a74a25aa",
+  "prompts": {},
+  "sessions": {
+    "s_5c072831ea6c0a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bfa8a21-e8db-4a9b-9b0a-95a56060a73d",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    }
+  }
+}
