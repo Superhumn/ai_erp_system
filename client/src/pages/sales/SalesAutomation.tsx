@@ -25,7 +25,7 @@ import {
   ArrowRight,
 } from "lucide-react";
 
-// ── Types ──
+// ââ Types ââ
 
 type Tier = "hot" | "warm" | "cool" | "cold";
 type SequenceStatus = "draft" | "active" | "paused" | "completed";
@@ -57,7 +57,7 @@ interface Sequence {
   created: string;
 }
 
-// ── Helpers ──
+// ââ Helpers ââ
 
 function scoreTier(score: number): Tier {
   if (score >= 80) return "hot";
@@ -84,7 +84,7 @@ const channelIcons: Record<StepChannel, typeof Mail> = { email: Mail, linkedin: 
 
 const STORAGE_KEY = "sales-ai-scores";
 
-// ── Seed contacts ──
+// ââ Seed contacts ââ
 
 const SEED_CONTACTS: ScoredContact[] = [
   { id: 1, name: "Sarah Chen", company: "Acme Foods", email: "sarah@acmefoods.com", score: null, tier: null, lastScored: null },
@@ -132,7 +132,7 @@ export default function SalesAutomation() {
   );
 }
 
-// ── Tab 1: Lead Scoring ──
+// ââ Tab 1: Lead Scoring ââ
 
 function LeadScoring() {
   const [contacts, setContacts] = useState<ScoredContact[]>(loadScores);
@@ -144,12 +144,12 @@ function LeadScoring() {
   useEffect(() => { saveScores(contacts); }, [contacts]);
 
   const aiMutation = trpc.ai.query.useMutation({
-    onSuccess: (data: any, variables: any) => {
+    onSuccess: (data: any) => {
       const text = data.response || data.answer || "";
       const scoreMatch = text.match(/(\d+)\s*\/\s*100|score[:\s]+(\d+)/i);
       const score = scoreMatch ? parseInt(scoreMatch[1] || scoreMatch[2]) : Math.floor(Math.random() * 60 + 30);
       const clamped = Math.min(100, Math.max(0, score));
-      const contactId = variables?.context?.contactId;
+      const contactId = scoringId;
       if (contactId) {
         setContacts(prev => {
           const next = prev.map(c => c.id === contactId ? { ...c, score: clamped, tier: scoreTier(clamped), lastScored: new Date().toISOString() } : c);
@@ -165,7 +165,6 @@ function LeadScoring() {
     setScoringId(contact.id);
     aiMutation.mutate({
       question: `Score this sales lead from 0 to 100 based on likely purchase intent and fit. Reply with ONLY a number like "Score: 75/100" then a one-line reason.\n\nName: ${contact.name}\nCompany: ${contact.company}\nEmail: ${contact.email}`,
-      context: { contactId: contact.id },
     });
   };
 
@@ -264,7 +263,7 @@ function LeadScoring() {
   );
 }
 
-// ── Tab 2: Outreach Sequences ──
+// ââ Tab 2: Outreach Sequences ââ
 
 function OutreachSequences() {
   const [sequences, setSequences] = useState<Sequence[]>([]);
