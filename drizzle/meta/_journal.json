@@ -295,6 +295,20 @@
                         "when": 1777651700000,
                         "tag": "0041_fix_fundraising_campaigns_schema",
                         "breakpoints": true
+                },
+                {
+                        "idx": 42,
+                        "version": "5",
+                        "when": 1777894136735,
+                        "tag": "0042_shopify_oauth_tokens",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 43,
+                        "version": "5",
+                        "when": 1778889600000,
+                        "tag": "0043_task_ai_assignment",
+                        "breakpoints": true
                 }
         ]
 }

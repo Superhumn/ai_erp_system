@@ -1794,6 +1794,30 @@ export async function deleteProject(id: number) {
   });
 }
 
+export async function deleteProjects(ids: number[]) {
+  if (ids.length === 0) return;
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async (tx) => {
+    await tx.delete(projectTasks).where(inArray(projectTasks.projectId, ids));
+    await tx.delete(projectMilestones).where(inArray(projectMilestones.projectId, ids));
+    await tx.delete(projects).where(inArray(projects.id, ids));
+  });
+}
+
+export async function deleteProjectTask(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(projectTasks).where(eq(projectTasks.id, id));
+}
+
+export async function deleteProjectTasks(ids: number[]) {
+  if (ids.length === 0) return;
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(projectTasks).where(inArray(projectTasks.id, ids));
+}
+
 export async function createProjectMilestone(data: typeof projectMilestones.$inferInsert) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
