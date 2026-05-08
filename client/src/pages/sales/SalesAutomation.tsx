@@ -25,7 +25,7 @@ import {
   ArrowRight,
 } from "lucide-react";
 
-// ââ Types ââ
+// ── Types ──
 
 type Tier = "hot" | "warm" | "cool" | "cold";
 type SequenceStatus = "draft" | "active" | "paused" | "completed";
@@ -57,7 +57,7 @@ interface Sequence {
   created: string;
 }
 
-// ââ Helpers ââ
+// ── Helpers ──
 
 function scoreTier(score: number): Tier {
   if (score >= 80) return "hot";
@@ -84,7 +84,7 @@ const channelIcons: Record<StepChannel, typeof Mail> = { email: Mail, linkedin: 
 
 const STORAGE_KEY = "sales-ai-scores";
 
-// ââ Seed contacts ââ
+// ── Seed contacts ──
 
 const SEED_CONTACTS: ScoredContact[] = [
   { id: 1, name: "Sarah Chen", company: "Acme Foods", email: "sarah@acmefoods.com", score: null, tier: null, lastScored: null },
@@ -132,7 +132,7 @@ export default function SalesAutomation() {
   );
 }
 
-// ââ Tab 1: Lead Scoring ââ
+// ── Tab 1: Lead Scoring ──
 
 function LeadScoring() {
   const [contacts, setContacts] = useState<ScoredContact[]>(loadScores);
@@ -263,7 +263,7 @@ function LeadScoring() {
   );
 }
 
-// ââ Tab 2: Outreach Sequences ââ
+// ── Tab 2: Outreach Sequences ──
 
 function OutreachSequences() {
   const [sequences, setSequences] = useState<Sequence[]>([]);
