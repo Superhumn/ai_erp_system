@@ -3005,6 +3005,31 @@ ONLY return the JSON array, no other text.`;
         await createAuditLog(ctx.user.id, 'delete', 'project', input.id);
         return { success: true };
       }),
+    deleteMany: protectedProcedure
+      .input(z.object({ ids: z.array(z.number()).min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteProjects(input.ids);
+        for (const id of input.ids) {
+          await createAuditLog(ctx.user.id, 'delete', 'project', id);
+        }
+        return { success: true, count: input.ids.length };
+      }),
+    deleteTask: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteProjectTask(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'projectTask', input.id);
+        return { success: true };
+      }),
+    deleteTasks: protectedProcedure
+      .input(z.object({ ids: z.array(z.number()).min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteProjectTasks(input.ids);
+        for (const id of input.ids) {
+          await createAuditLog(ctx.user.id, 'delete', 'projectTask', id);
+        }
+        return { success: true, count: input.ids.length };
+      }),
     tasks: protectedProcedure
       .input(z.object({ projectId: z.number() }))
       .query(({ input }) => input.projectId === 0 ? db.getAllProjectTasks() : db.getProjectTasks(input.projectId)),
@@ -13866,6 +13891,29 @@ Ask if they received the original request and if they can provide a quote.`;
               lastViewedAt: new Date(),
               totalViews: (visitor.totalViews || 0) + 1,
             });
+          }
+
+          // Issue a signed visitor session cookie on every successful access,
+          // including anonymous (no-email) flows — without it the public file
+          // list is reachable but the proxy 401s on the actual bytes. visitorId
+          // is omitted when no visitor row exists; the proxy falls back to
+          // link/room-level checks in that case.
+          {
+            const { setVisitorSessionCookie } = await import('./_core/dataRoomVisitorSession');
+            const ttlMs = link.expiresAt
+              ? Math.max(60_000, new Date(link.expiresAt).getTime() - Date.now())
+              : 24 * 60 * 60 * 1000;
+            await setVisitorSessionCookie(
+              ctx.req,
+              ctx.res,
+              {
+                visitorId: visitor?.id,
+                linkId: link.id,
+                linkCode: input.linkCode,
+                dataRoomId: link.dataRoomId,
+              },
+              ttlMs,
+            );
           }
 
           return {

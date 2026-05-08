@@ -66,7 +66,7 @@ async function r2Put(
   const url = await getSignedUrl(
     r2,
     new GetObjectCommand({ Bucket: ENV.r2Bucket, Key: key }),
-    { expiresIn: S3_PRESIGNED_URL_EXPIRES }
+    { expiresIn: R2_PRESIGNED_URL_EXPIRES }
   );
   return { key, url };
 }
@@ -81,7 +81,7 @@ async function r2Get(relKey: string): Promise<{ key: string; url: string }> {
   const url = await getSignedUrl(
     r2,
     new GetObjectCommand({ Bucket: ENV.r2Bucket, Key: key }),
-    { expiresIn: S3_PRESIGNED_URL_EXPIRES }
+    { expiresIn: R2_PRESIGNED_URL_EXPIRES }
   );
   return { key, url };
 }
