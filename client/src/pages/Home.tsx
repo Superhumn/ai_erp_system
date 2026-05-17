@@ -29,6 +29,37 @@ import { formatDistanceToNow } from "date-fns";
 // KPI Card
 // ---------------------------------------------------------------------------
 type KPIVariant = "green" | "amber" | "blue" | "default";
+type ParsedImportantTaskData = {
+  name?: string;
+  subject?: string;
+  title?: string;
+};
+type AITaskRow = {
+  id: number;
+  taskType: string;
+  status: string;
+  priority: string;
+  taskData: string | null;
+  aiReasoning: string | null;
+  createdAt: string | Date | null;
+};
+
+const priorityBadgeStyles: Record<string, string> = {
+  urgent: "bg-red-100 text-red-700",
+  high: "bg-amber-100 text-amber-700",
+  medium: "bg-blue-100 text-blue-700",
+  low: "bg-gray-100 text-gray-700",
+};
+
+const statusBadgeStyles: Record<string, string> = {
+  pending_approval: "bg-yellow-100 text-yellow-700",
+  approved: "bg-green-100 text-green-700",
+  in_progress: "bg-blue-100 text-blue-700",
+  completed: "bg-green-100 text-green-700",
+  rejected: "bg-red-100 text-red-700",
+  failed: "bg-red-100 text-red-700",
+  cancelled: "bg-gray-100 text-gray-700",
+};
 
 function KPICard({
   label,
@@ -250,7 +281,7 @@ export default function Home() {
   const recentActivity = (auditEntries as any[])?.slice(0, 10) ?? [];
 
   const importantTasks = useMemo(() => {
-    return ((aiTasks as any[]) ?? [])
+    return ((aiTasks as AITaskRow[] | undefined) ?? [])
       .filter(
         (task) =>
           ["high", "urgent"].includes(task.priority) &&
@@ -258,9 +289,9 @@ export default function Home() {
       )
       .slice(0, 5)
       .map((task) => {
-        let taskData: Record<string, any> = {};
+        let taskData: ParsedImportantTaskData = {};
         try {
-          taskData = JSON.parse(task.taskData || "{}");
+          taskData = JSON.parse(task.taskData || "{}") as ParsedImportantTaskData;
         } catch {
           taskData = {};
         }
@@ -335,10 +366,14 @@ export default function Home() {
                         </p>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
-                        <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] bg-amber-100 text-amber-700 capitalize">
+                        <span
+                          className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] capitalize ${priorityBadgeStyles[task.priority] || "bg-gray-100 text-gray-700"}`}
+                        >
                           {task.priority}
                         </span>
-                        <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 capitalize">
+                        <span
+                          className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] capitalize ${statusBadgeStyles[task.status] || "bg-gray-100 text-gray-700"}`}
+                        >
                           {task.status.replaceAll("_", " ")}
                         </span>
                         {task.priority === "urgent" && (
