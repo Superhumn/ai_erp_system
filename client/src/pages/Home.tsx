@@ -19,6 +19,7 @@ import {
   ArrowDownRight,
   Activity,
   Target,
+  AlertTriangle,
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { isThisMonth } from "date-fns";
@@ -129,6 +130,7 @@ export default function Home() {
   const { data: auditEntries } = trpc.auditLogs.list.useQuery(undefined, {
     retry: false,
   });
+  const { data: aiTasks, isLoading: aiTasksLoading } = trpc.aiAgent.tasks.list.useQuery();
 
   // KPI Goals
   const { data: kpiGoals } = trpc.kpiGoals.list.useQuery(undefined, {
@@ -247,11 +249,109 @@ export default function Home() {
   // Recent activity (last 10 audit entries)
   const recentActivity = (auditEntries as any[])?.slice(0, 10) ?? [];
 
+  const importantTasks = useMemo(() => {
+    return ((aiTasks as any[]) ?? [])
+      .filter(
+        (task) =>
+          ["high", "urgent"].includes(task.priority) &&
+          ["pending_approval", "approved", "in_progress"].includes(task.status),
+      )
+      .slice(0, 5)
+      .map((task) => {
+        let taskData: Record<string, any> = {};
+        try {
+          taskData = JSON.parse(task.taskData || "{}");
+        } catch {
+          taskData = {};
+        }
+        return {
+          id: task.id,
+          title:
+            taskData.name ||
+            taskData.subject ||
+            taskData.title ||
+            task.aiReasoning ||
+            task.taskType,
+          taskType: task.taskType,
+          status: task.status,
+          priority: task.priority,
+          createdAt: task.createdAt,
+        };
+      });
+  }, [aiTasks]);
+
   return (
     <div className="space-y-2 animate-fade-in">
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-sm font-bold tracking-[-0.02em]">Dashboard</h1>
+      </div>
+
+      {/* Important Tasks */}
+      <div>
+        <div className="flex items-center justify-between mb-1.5">
+          <h2 className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+            Important Tasks
+          </h2>
+          <button
+            type="button"
+            className="text-[11px] text-primary hover:underline"
+            onClick={() => setLocation("/ai/approvals")}
+          >
+            View all
+          </button>
+        </div>
+        <Card>
+          <CardContent className="pt-3 pb-2.5 px-3">
+            {aiTasksLoading ? (
+              <div className="space-y-2">
+                <Skeleton className="h-12 w-full" />
+                <Skeleton className="h-12 w-full" />
+                <Skeleton className="h-12 w-full" />
+              </div>
+            ) : importantTasks.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-2 text-center">
+                No high-priority tasks right now
+              </p>
+            ) : (
+              <div className="divide-y divide-border/50">
+                {importantTasks.map((task) => (
+                  <button
+                    key={task.id}
+                    type="button"
+                    onClick={() => setLocation("/ai/approvals")}
+                    className="w-full text-left py-2 first:pt-0 last:pb-0 hover:bg-muted/40 rounded-sm px-1 -mx-1"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-[13px] font-medium truncate">{task.title}</p>
+                        <p className="text-[11px] text-muted-foreground capitalize">
+                          {task.taskType.replaceAll("_", " ")} ·{" "}
+                          {task.createdAt
+                            ? formatDistanceToNow(new Date(task.createdAt), {
+                                addSuffix: true,
+                              })
+                            : ""}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] bg-amber-100 text-amber-700 capitalize">
+                          {task.priority}
+                        </span>
+                        <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 capitalize">
+                          {task.status.replaceAll("_", " ")}
+                        </span>
+                        {task.priority === "urgent" && (
+                          <AlertTriangle className="h-3.5 w-3.5 text-red-500" />
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
       {/* Row 1 — Financial Health */}
