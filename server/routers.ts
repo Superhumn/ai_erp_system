@@ -8761,7 +8761,7 @@ Provide a brief status summary, any missing documents, and next steps.`;
         const buffer = Buffer.from(input.fileData, 'base64');
         const fileKey = `copacker-invoices/${ctx.user.id}/${nanoid()}-${input.fileName}`;
 
-          let fileUrl = "";
+          let fileUrl = '';
           try {
             const uploaded = await storagePut(fileKey, buffer, input.mimeType);
             fileUrl = uploaded.url;
