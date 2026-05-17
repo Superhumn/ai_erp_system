@@ -8761,14 +8761,8 @@ Provide a brief status summary, any missing documents, and next steps.`;
         const buffer = Buffer.from(input.fileData, 'base64');
         const fileKey = `copacker-invoices/${ctx.user.id}/${nanoid()}-${input.fileName}`;
 
-        let fileUrl = '';
-        try {
           const uploaded = await storagePut(fileKey, buffer, input.mimeType);
-          fileUrl = uploaded.url;
-        } catch {
-          // Storage not configured, skip file storage
-          fileUrl = `local:${fileKey}`;
-        }
+          const fileUrl = uploaded.url;
 
         // 2. Parse the document using AI
         let parsedData: Record<string, any> = {};
@@ -13129,7 +13123,7 @@ Ask if they received the original request and if they can provide a quote.`;
           base64Content: z.string(),
         }))
         .mutation(async ({ input, ctx }) => {
-          // Upload to S3
+          // Upload to Cloudflare R2 object storage
           const buffer = Buffer.from(input.base64Content, 'base64');
           const key = `dataroom/${input.dataRoomId}/${nanoid()}-${input.name.replace(/[/\\]/g, '_')}`;
           const { url } = await storagePut(key, buffer, input.mimeType);
@@ -13223,7 +13217,7 @@ Ask if they received the original request and if they can provide a quote.`;
         }),
 
       // Replace a document's contents with a new uploaded file. Bumps version
-      // and stores the new bytes in S3. If the document was previously linked
+      // and stores the new bytes in Cloudflare R2. If the document was previously linked
       // to Google Drive, the Drive link is detached because the uploaded file
       // is now the source of truth.
       uploadNewVersion: protectedProcedure
