@@ -8761,8 +8761,17 @@ Provide a brief status summary, any missing documents, and next steps.`;
         const buffer = Buffer.from(input.fileData, 'base64');
         const fileKey = `copacker-invoices/${ctx.user.id}/${nanoid()}-${input.fileName}`;
 
-          const uploaded = await storagePut(fileKey, buffer, input.mimeType);
-          const fileUrl = uploaded.url;
+          let fileUrl = "";
+          try {
+            const uploaded = await storagePut(fileKey, buffer, input.mimeType);
+            fileUrl = uploaded.url;
+          } catch (error) {
+            console.error("[copacker.uploadInvoice] failed to store invoice in Cloudflare R2", error);
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "Unable to upload invoice file to cloud storage. Please verify storage configuration and try again.",
+            });
+          }
 
         // 2. Parse the document using AI
         let parsedData: Record<string, any> = {};
