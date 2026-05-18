@@ -22978,10 +22978,11 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
             ? await db.getPmMarketByCode(input.code)
             : undefined;
         if (!market) throw new TRPCError({ code: "NOT_FOUND", message: "Market not found" });
-        const [programs, projects] = await Promise.all([
+        const [programs, rawProjects] = await Promise.all([
           db.getPmPrograms(market.id),
           db.getPmProjects({ marketId: market.id }),
         ]);
+        const projects = await db.attachPmTaskCounts(rawProjects);
         return { market, programs, projects };
       }),
 
@@ -22996,11 +22997,15 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
           fn = await db.getPmFunctionByCode(input.code);
         }
         if (!fn) throw new TRPCError({ code: "NOT_FOUND", message: "Function not found" });
-        const projects = await db.getPmProjects({ functionId: fn.id });
+        const rawProjects = await db.getPmProjects({ functionId: fn.id });
+        const projects = await db.attachPmTaskCounts(rawProjects);
         return { function: fn, projects };
       }),
 
-    cockpit: protectedProcedure.query(() => db.getPmBlockedProjects()),
+    cockpit: protectedProcedure.query(async () => {
+      const raw = await db.getPmBlockedProjects();
+      return db.attachPmTaskCounts(raw);
+    }),
 
     cashForecast: protectedProcedure.query(() => db.getPmCashForecast()),
 
@@ -23143,7 +23148,10 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
           ownerUserId: z.number().optional(),
           programId: z.number().optional(),
         }).optional())
-        .query(({ input }) => db.getPmProjects(input ?? {})),
+        .query(async ({ input }) => {
+          const raw = await db.getPmProjects(input ?? {});
+          return db.attachPmTaskCounts(raw);
+        }),
       get: protectedProcedure
         .input(z.object({ id: z.number() }))
         .query(async ({ input }) => {

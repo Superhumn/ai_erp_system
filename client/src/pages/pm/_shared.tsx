@@ -102,6 +102,15 @@ export function fmtDate(date: string | Date | null | undefined): string {
   return new Date(date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+export function ProgressBar({ value, max, className }: { value: number; max: number; className?: string }) {
+  const pct = max === 0 ? 0 : Math.min(100, Math.round((value / max) * 100));
+  return (
+    <div className={cn("h-1 bg-muted rounded-sm overflow-hidden", className)}>
+      <div className="h-full bg-success" style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
 export function fmtMoney(amount: string | number | null | undefined): string {
   if (amount == null) return "—";
   const n = typeof amount === "string" ? Number(amount) : amount;

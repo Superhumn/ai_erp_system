@@ -13525,6 +13525,39 @@ export async function getPmDownstreamProjects(predecessorId: number) {
 
 // ---- pm_tasks ----
 
+export async function getPmTaskCountsByProjectIds(projectIds: number[]) {
+  const empty = new Map<number, { done: number; total: number }>();
+  if (projectIds.length === 0) return empty;
+  const db = await getDb();
+  if (!db) return empty;
+  const rows = await db
+    .select({
+      projectId: pmTasks.projectId,
+      status: pmTasks.status,
+      cnt: count(),
+    })
+    .from(pmTasks)
+    .where(inArray(pmTasks.projectId, projectIds))
+    .groupBy(pmTasks.projectId, pmTasks.status);
+  const map = new Map<number, { done: number; total: number }>();
+  for (const r of rows) {
+    if (!map.has(r.projectId)) map.set(r.projectId, { done: 0, total: 0 });
+    const entry = map.get(r.projectId)!;
+    entry.total += Number(r.cnt);
+    if (r.status === "done") entry.done += Number(r.cnt);
+  }
+  // Ensure every requested id has an entry so the client can render 0/0.
+  for (const id of projectIds) if (!map.has(id)) map.set(id, { done: 0, total: 0 });
+  return map;
+}
+
+export async function attachPmTaskCounts<T extends { id: number }>(
+  projects: T[],
+): Promise<Array<T & { taskCounts: { done: number; total: number } }>> {
+  const counts = await getPmTaskCountsByProjectIds(projects.map(p => p.id));
+  return projects.map(p => ({ ...p, taskCounts: counts.get(p.id) ?? { done: 0, total: 0 } }));
+}
+
 export async function getPmTasks(projectId: number) {
   const db = await getDb();
   if (!db) return [];
@@ -13743,11 +13776,13 @@ export async function getPmOwnerCapacity() {
 // Matrix view: returns markets, functions, and projects bucketed into
 // (marketId, functionId) cells. Filterable by tier and status.
 export async function getPmMatrix(filters: { tier?: number; status?: PmProjectFilters["status"] } = {}) {
-  const [markets, functions, projects] = await Promise.all([
+  const [markets, functions, rawProjects] = await Promise.all([
     getPmMarkets(),
     getPmFunctions(),
     getPmProjects({ tier: filters.tier, status: filters.status }),
   ]);
+
+  const projects = await attachPmTaskCounts(rawProjects);
 
   const cellMap = new Map<string, typeof projects>();
   for (const p of projects) {

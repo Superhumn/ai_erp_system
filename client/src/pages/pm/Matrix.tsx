@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2 } from "lucide-react";
-import { PmHeader, PmTabs, StatusBadge, PriorityBadge, type PmStatus } from "./_shared";
+import { PmHeader, PmTabs, PriorityBadge, ProgressBar, STATUS_COLOR, type PmStatus } from "./_shared";
 
 export default function PmMatrix() {
   const [tier, setTier] = useState<string>("all");
@@ -65,25 +65,25 @@ export default function PmMatrix() {
           <div className="flex items-center justify-center h-64"><Loader2 className="animate-spin" /></div>
         ) : (
           <Card className="overflow-x-auto p-0">
-            <table className="w-full border-collapse">
+            <table className="w-full border-collapse text-[11px]">
               <thead>
                 <tr className="border-b bg-muted/40">
-                  <th className="text-left text-xs font-semibold uppercase tracking-wide p-3 sticky left-0 bg-muted/40 z-10">Market</th>
+                  <th className="text-left text-[10px] font-semibold uppercase tracking-wide p-1.5 sticky left-0 bg-muted/40 z-10">Market</th>
                   {data.functions.map(f => (
-                    <th key={f.id} className="text-left text-xs font-semibold uppercase tracking-wide p-3">
+                    <th key={f.id} className="text-left text-[10px] font-semibold uppercase tracking-wide p-1.5">
                       <Link href={`/pm/function/${f.code}`} className="hover:underline">{f.name}</Link>
                     </th>
                   ))}
-                  <th className="text-right text-xs font-semibold uppercase tracking-wide p-3">Total</th>
+                  <th className="text-right text-[10px] font-semibold uppercase tracking-wide p-1.5">Total</th>
                 </tr>
               </thead>
               <tbody>
                 {data.markets.map(m => (
                   <tr key={m.id} className="border-b align-top">
-                    <td className="p-3 sticky left-0 bg-background z-10 border-r">
-                      <Link href={`/pm/market/${m.code}`} className="block">
-                        <div className="text-sm font-semibold">{m.name}</div>
-                        <div className="text-[10px] text-muted-foreground uppercase">
+                    <td className="p-1.5 sticky left-0 bg-background z-10 border-r">
+                      <Link href={`/pm/market/${m.code}`} className="block leading-tight">
+                        <div className="text-xs font-semibold">{m.name}</div>
+                        <div className="text-[9px] text-muted-foreground uppercase">
                           T{m.tier} · {m.status} · {m.entityType}
                         </div>
                       </Link>
@@ -92,19 +92,25 @@ export default function PmMatrix() {
                       const cell = data.cells.find(c => c.marketId === m.id && c.functionId === f.id);
                       const projects = cell?.projects ?? [];
                       return (
-                        <td key={f.id} className="p-2 min-w-[200px]">
+                        <td key={f.id} className="p-1 min-w-[180px] align-top">
                           {projects.length === 0 ? (
-                            <span className="text-xs text-muted-foreground/50">—</span>
+                            <span className="text-xs text-muted-foreground/40">—</span>
                           ) : (
-                            <div className="space-y-1">
-                              {projects.map(p => (
+                            <div className="space-y-0.5">
+                              {projects.map((p: any) => (
                                 <Link key={p.id} href={`/pm/project/${p.id}`}>
-                                  <div className="border rounded p-2 hover:bg-muted/50 cursor-pointer text-xs space-y-1">
-                                    <div className="flex items-center gap-1 justify-between">
-                                      <PriorityBadge priority={p.priority as any} />
-                                      <StatusBadge status={p.status as any} />
-                                    </div>
-                                    <div className="font-medium leading-tight">{p.name}</div>
+                                  <div className="border rounded px-1.5 py-1 hover:bg-muted/50 cursor-pointer flex items-center gap-1.5 leading-tight">
+                                    <PriorityBadge priority={p.priority as any} />
+                                    <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${STATUS_COLOR[p.status as PmStatus].split(" ")[0]}`} />
+                                    <span className="flex-1 truncate font-medium">{p.name}</span>
+                                    <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
+                                      {p.taskCounts?.done ?? 0}/{p.taskCounts?.total ?? 0}
+                                    </span>
+                                    <ProgressBar
+                                      className="w-8 shrink-0"
+                                      value={p.taskCounts?.done ?? 0}
+                                      max={p.taskCounts?.total ?? 0}
+                                    />
                                   </div>
                                 </Link>
                               ))}
@@ -113,7 +119,7 @@ export default function PmMatrix() {
                         </td>
                       );
                     })}
-                    <td className="p-3 text-right text-sm font-mono text-muted-foreground">
+                    <td className="p-1.5 text-right text-xs font-mono text-muted-foreground">
                       {marketTotals.get(m.id) ?? 0}
                     </td>
                   </tr>

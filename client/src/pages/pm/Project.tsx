@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, Plus, Trash2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
-import { PmHeader, PmTabs, PriorityBadge, PM_STATUSES, STATUS_LABEL, fmtDate, fmtMoney, daysSince, type PmStatus } from "./_shared";
+import { PmHeader, PmTabs, PriorityBadge, ProgressBar, PM_STATUSES, STATUS_LABEL, fmtDate, fmtMoney, daysSince, type PmStatus } from "./_shared";
 
 export default function PmProject() {
   const params = useParams<{ id: string }>();
@@ -45,6 +45,9 @@ export default function PmProject() {
   const { project, tasks, milestones, dependencies } = data;
   const market = markets?.find(m => m.id === project.marketId);
   const fn = functions?.find(f => f.id === project.functionId);
+  const taskDone = tasks.filter(t => t.status === "done").length;
+  const taskTotal = tasks.length;
+  const taskPct = taskTotal === 0 ? 0 : Math.round((taskDone / taskTotal) * 100);
 
   return (
     <div>
@@ -85,8 +88,10 @@ export default function PmProject() {
           </Card>
 
           <Card className="p-0">
-            <div className="px-4 py-3 border-b flex items-center justify-between">
-              <div className="text-sm font-semibold">Tasks ({tasks.length})</div>
+            <div className="px-4 py-2 border-b flex items-center gap-3">
+              <div className="text-sm font-semibold">Tasks</div>
+              <div className="text-xs text-muted-foreground tabular-nums">{taskDone} of {taskTotal} done · {taskPct}%</div>
+              <ProgressBar className="flex-1 max-w-48" value={taskDone} max={taskTotal} />
             </div>
             <div className="p-3 border-b flex gap-2">
               <Input

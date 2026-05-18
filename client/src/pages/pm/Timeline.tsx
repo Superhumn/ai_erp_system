@@ -17,6 +17,7 @@ type Bar = {
   status: PmStatus;
   groupKey: string;
   groupLabel: string;
+  donePct: number;
 };
 
 export default function PmTimeline() {
@@ -33,7 +34,7 @@ export default function PmTimeline() {
     const today = new Date();
     return projectsData
       .filter(p => p.startDate || p.targetEndDate)
-      .map(p => {
+      .map((p: any) => {
         const start = p.startDate ? new Date(p.startDate) : today;
         const end = p.actualEndDate ? new Date(p.actualEndDate)
           : p.targetEndDate ? new Date(p.targetEndDate)
@@ -44,7 +45,10 @@ export default function PmTimeline() {
         const groupLabel = groupBy === "market"
           ? (market?.name ?? `#${p.marketId}`)
           : (fn?.name ?? `#${p.functionId}`);
-        return { id: p.id, name: p.name, start, end, status: p.status as PmStatus, groupKey, groupLabel };
+        const total = p.taskCounts?.total ?? 0;
+        const done = p.taskCounts?.done ?? 0;
+        const donePct = p.status === "complete" ? 100 : total === 0 ? 0 : Math.round((done / total) * 100);
+        return { id: p.id, name: p.name, start, end, status: p.status as PmStatus, groupKey, groupLabel, donePct };
       });
   }, [projectsData, markets, functions, groupBy]);
 
@@ -97,23 +101,29 @@ export default function PmTimeline() {
               <span>{fmtDate(axisStart)}</span>
               <span>{fmtDate(axisEnd)}</span>
             </div>
-            <div className="space-y-4">
+            <div className="space-y-3">
               {groups.map(g => (
                 <div key={g.label}>
-                  <div className="text-sm font-semibold mb-1.5">{g.label}</div>
-                  <div className="space-y-1">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">{g.label}</div>
+                  <div className="space-y-0.5">
                     {g.bars.map(b => {
                       const left = ((b.start.getTime() - axisStart.getTime()) / totalMs) * 100;
                       const width = Math.max(2, ((b.end.getTime() - b.start.getTime()) / totalMs) * 100);
                       return (
                         <Link key={b.id} href={`/pm/project/${b.id}`}>
-                          <div className="relative h-7 bg-muted/30 rounded hover:bg-muted/50 cursor-pointer">
+                          <div className="relative h-5 bg-muted/20 rounded hover:bg-muted/40 cursor-pointer">
                             <div
-                              className={`absolute top-0 bottom-0 rounded ${STATUS_COLOR[b.status]} flex items-center px-2 text-xs font-medium overflow-hidden whitespace-nowrap`}
+                              className={`absolute top-0 bottom-0 rounded ${STATUS_COLOR[b.status]} overflow-hidden whitespace-nowrap`}
                               style={{ left: `${left}%`, width: `${width}%` }}
-                              title={`${b.name} (${fmtDate(b.start)} → ${fmtDate(b.end)})`}
+                              title={`${b.name} (${fmtDate(b.start)} → ${fmtDate(b.end)}) — ${b.donePct}% done`}
                             >
-                              {b.name}
+                              <div
+                                className="absolute inset-y-0 left-0 bg-success/40"
+                                style={{ width: `${b.donePct}%` }}
+                              />
+                              <div className="relative h-full flex items-center px-1.5 text-[11px] font-medium leading-none">
+                                {b.name}
+                              </div>
                             </div>
                           </div>
                         </Link>
