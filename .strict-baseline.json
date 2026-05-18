@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "generatedAt": "2026-05-07",
-  "totalErrors": 139,
+  "generatedAt": "2026-05-18",
+  "totalErrors": 137,
   "files": {
     "client/src/components/FloatingAIAssistant.tsx": 2,
     "client/src/pages/autonomous/Approvals.tsx": 1,
@@ -33,7 +33,6 @@
     "server/db/dataRoom.ts": 9,
     "server/emailQueueWorker.ts": 2,
     "server/routers.ts": 5,
-    "server/storage.ts": 2,
     "server/workflowProcessors.ts": 2
   }
 }
