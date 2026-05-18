@@ -201,6 +201,8 @@ export default function Projects() {
   const [priorityFilter, setPriorityFilter] = useState("all");
   const [projectFilter, setProjectFilter] = useState("all");
   const [expandedTasks, setExpandedTasks] = useState<Set<number>>(new Set());
+  const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
+  const [editingTaskName, setEditingTaskName] = useState("");
   const [collapsedProjects, setCollapsedProjects] = useState<Set<number>>(new Set());
   const [showFilters, setShowFilters] = useState(false);
   const [statsVisible, setStatsVisible] = useState(false);
@@ -423,6 +425,26 @@ export default function Projects() {
 
   function handleStatusUpdate(taskId: number, status: Task["status"]) {
     updateTask.mutate({ id: taskId, status, completedDate: status === "completed" ? new Date() : undefined });
+  }
+
+  function startEditingTask(task: Task) {
+    setEditingTaskId(task.id);
+    setEditingTaskName(task.name);
+  }
+
+  function cancelEditingTask() {
+    setEditingTaskId(null);
+    setEditingTaskName("");
+  }
+
+  function commitEditingTask(task: Task) {
+    const next = editingTaskName.trim();
+    if (!next || next === task.name) {
+      cancelEditingTask();
+      return;
+    }
+    updateTask.mutate({ id: task.id, name: next });
+    cancelEditingTask();
   }
 
   function toggleTaskComplete(task: Task) {
@@ -908,9 +930,32 @@ export default function Projects() {
                             </div>
 
                             <div className="flex-1 min-w-0">
-                              <p className={cn("text-sm font-medium leading-snug transition-colors duration-200", isDone && "line-through text-muted-foreground")}>
-                                {task.name}
-                              </p>
+                              {editingTaskId === task.id ? (
+                                <Input
+                                  value={editingTaskName}
+                                  onChange={(e) => setEditingTaskName(e.target.value)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onBlur={() => commitEditingTask(task)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") { e.preventDefault(); commitEditingTask(task); }
+                                    if (e.key === "Escape") { e.preventDefault(); cancelEditingTask(); }
+                                  }}
+                                  autoFocus
+                                  className="h-7 text-sm font-medium"
+                                  aria-label="Edit task name"
+                                />
+                              ) : (
+                                <p
+                                  onClick={(e) => { e.stopPropagation(); startEditingTask(task); }}
+                                  className={cn(
+                                    "text-sm font-medium leading-snug transition-colors duration-200 cursor-text rounded px-1 -mx-1 hover:bg-muted",
+                                    isDone && "line-through text-muted-foreground"
+                                  )}
+                                  title="Click to edit"
+                                >
+                                  {task.name}
+                                </p>
+                              )}
                               <div className="mt-1 flex flex-wrap items-center gap-1.5">
                                 <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
                                   <span className={cn("h-1.5 w-1.5 rounded-full", sCfg.dot, sCfg.pulse && "animate-pulse")} />
@@ -1058,7 +1103,29 @@ export default function Projects() {
                       >
                         <CardContent className="space-y-2 p-3">
                           <div className="flex items-start justify-between gap-2">
-                            <p className="text-sm font-medium leading-snug">{task.name}</p>
+                            {editingTaskId === task.id ? (
+                              <Input
+                                value={editingTaskName}
+                                onChange={(e) => setEditingTaskName(e.target.value)}
+                                onClick={(e) => e.stopPropagation()}
+                                onBlur={() => commitEditingTask(task)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") { e.preventDefault(); commitEditingTask(task); }
+                                  if (e.key === "Escape") { e.preventDefault(); cancelEditingTask(); }
+                                }}
+                                autoFocus
+                                className="h-7 flex-1 text-sm font-medium"
+                                aria-label="Edit task name"
+                              />
+                            ) : (
+                              <p
+                                onClick={(e) => { e.stopPropagation(); startEditingTask(task); }}
+                                className="text-sm font-medium leading-snug cursor-text rounded px-1 -mx-1 hover:bg-muted"
+                                title="Click to edit"
+                              >
+                                {task.name}
+                              </p>
+                            )}
                             <pCfg.Icon className={cn("h-3.5 w-3.5 shrink-0", pCfg.color)} />
                           </div>
                           <p className="text-[11px] text-muted-foreground">{projectName}</p>
