@@ -14,9 +14,10 @@
 
 import { eq } from "drizzle-orm";
 import * as db from "./db";
+import { ENV } from "./_core/env";
 import { pmProjects } from "../drizzle/schema";
 
-const GOOGLE_CHAT_OPS_WEBHOOK = process.env.GOOGLE_CHAT_OPS_WEBHOOK;
+const GOOGLE_CHAT_OPS_WEBHOOK = ENV.googleChatOpsWebhook;
 
 async function postToGoogleChat(text: string): Promise<{ posted: boolean; error?: string }> {
   if (!GOOGLE_CHAT_OPS_WEBHOOK) {

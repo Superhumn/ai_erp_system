@@ -13440,23 +13440,21 @@ export async function getPmProjects(filters: PmProjectFilters = {}) {
   if (!db) return [];
 
   const conds = [] as any[];
+  if (filters.tier !== undefined) {
+    const tierMarkets = await db.select({ id: pmMarkets.id }).from(pmMarkets).where(eq(pmMarkets.tier, filters.tier));
+    const tierMarketIds = tierMarkets.map(m => m.id);
+    if (tierMarketIds.length === 0) return [];
+    conds.push(inArray(pmProjects.marketId, tierMarketIds));
+  }
   if (filters.marketId) conds.push(eq(pmProjects.marketId, filters.marketId));
   if (filters.functionId) conds.push(eq(pmProjects.functionId, filters.functionId));
   if (filters.status) conds.push(eq(pmProjects.status, filters.status));
   if (filters.ownerUserId) conds.push(eq(pmProjects.ownerUserId, filters.ownerUserId));
   if (filters.programId) conds.push(eq(pmProjects.programId, filters.programId));
 
-  // Tier filter requires joining markets — handle as post-filter for simplicity.
-  const rows = conds.length
+  return conds.length
     ? await db.select().from(pmProjects).where(and(...conds)).orderBy(desc(pmProjects.updatedAt))
     : await db.select().from(pmProjects).orderBy(desc(pmProjects.updatedAt));
-
-  if (filters.tier !== undefined) {
-    const markets = await getPmMarkets();
-    const tierMarketIds = new Set(markets.filter(m => m.tier === filters.tier).map(m => m.id));
-    return rows.filter(r => tierMarketIds.has(r.marketId));
-  }
-  return rows;
 }
 
 export async function getPmProjectById(id: number) {
@@ -13672,16 +13670,22 @@ export async function pushPmCashEventToFinancialModel(projectId: number): Promis
     return { inserted: false, reason: `project status is ${project.status}, not complete` };
   }
 
-  const metricName = `PM: ${project.name}`;
+  const metricName = `PM Project #${project.id}: ${project.name}`;
+  const stableNoteKey = `pm_project_id=${project.id}`;
+  const legacyNote = `Auto-pushed from pm_projects.id=${project.id}`;
   const date = new Date(project.cashEventDate);
   const year = date.getUTCFullYear();
   const month = date.getUTCMonth() + 1;
 
   const existing = await db.select().from(financialModel)
     .where(and(
-      eq(financialModel.metricName, metricName),
       eq(financialModel.year, year),
       eq(financialModel.month, month),
+      or(
+        eq(financialModel.notes, stableNoteKey),
+        eq(financialModel.notes, legacyNote),
+        eq(financialModel.metricName, metricName),
+      ),
     ))
     .limit(1);
   if (existing.length > 0) {
@@ -13697,7 +13701,7 @@ export async function pushPmCashEventToFinancialModel(projectId: number): Promis
     projectedValue: project.cashEventAmount,
     actualValue: project.cashEventAmount,
     unit: "USD",
-    notes: `Auto-pushed from pm_projects.id=${project.id}`,
+    notes: stableNoteKey,
   });
   return { inserted: true };
 }

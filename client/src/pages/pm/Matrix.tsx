@@ -25,6 +25,11 @@ export default function PmMatrix() {
     return totals;
   }, [data]);
 
+  const cellsByKey = useMemo(() => {
+    if (!data) return new Map<string, (typeof data.cells)[number]>();
+    return new Map(data.cells.map(cell => [`${cell.marketId}:${cell.functionId}`, cell]));
+  }, [data]);
+
   return (
     <div>
       <PmHeader
@@ -89,7 +94,7 @@ export default function PmMatrix() {
                       </Link>
                     </td>
                     {data.functions.map(f => {
-                      const cell = data.cells.find(c => c.marketId === m.id && c.functionId === f.id);
+                      const cell = cellsByKey.get(`${m.id}:${f.id}`);
                       const projects = cell?.projects ?? [];
                       return (
                         <td key={f.id} className="p-1 min-w-[180px] align-top">

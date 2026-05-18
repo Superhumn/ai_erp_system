@@ -22970,7 +22970,13 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
       .query(({ input }) => db.getPmMatrix(input ?? {})),
 
     byMarket: protectedProcedure
-      .input(z.object({ id: z.number().optional(), code: z.string().optional() }))
+      .input(
+        z
+          .object({ id: z.number().optional(), code: z.string().min(1).optional() })
+          .refine(({ id, code }) => (id === undefined) !== (code === undefined), {
+            message: "Provide exactly one of id or code",
+          }),
+      )
       .query(async ({ input }) => {
         const market = input.id
           ? await db.getPmMarketById(input.id)
@@ -22987,7 +22993,13 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
       }),
 
     byFunction: protectedProcedure
-      .input(z.object({ id: z.number().optional(), code: z.string().optional() }))
+      .input(
+        z
+          .object({ id: z.number().optional(), code: z.string().min(1).optional() })
+          .refine(({ id, code }) => (id === undefined) !== (code === undefined), {
+            message: "Provide exactly one of id or code",
+          }),
+      )
       .query(async ({ input }) => {
         let fn: { id: number; code: string; name: string } | undefined;
         if (input.id) {
@@ -23085,6 +23097,7 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input, ctx }) => {
           await db.deletePmFunction(input.id);
+          await createAuditLog(ctx.user.id, "delete", "pmFunction", input.id);
           return { success: true };
         }),
     }),
@@ -23222,12 +23235,20 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
 
           // Trigger workflows on status transitions.
           if (data.status === "complete" && before?.status !== "complete") {
-            const { onPmProjectCompleted } = await import("./pmWorkflows");
-            await onPmProjectCompleted(id);
+            try {
+              const { onPmProjectCompleted } = await import("./pmWorkflows");
+              await onPmProjectCompleted(id);
+            } catch (error) {
+              console.error("[pm.projects.update] project completion workflow failed", { projectId: id, error });
+            }
           }
           if (data.status === "blocked" && before?.status !== "blocked") {
-            const { onPmProjectBlocked } = await import("./pmWorkflows");
-            await onPmProjectBlocked(id);
+            try {
+              const { onPmProjectBlocked } = await import("./pmWorkflows");
+              await onPmProjectBlocked(id);
+            } catch (error) {
+              console.error("[pm.projects.update] dependency cascade workflow failed", { projectId: id, error });
+            }
           }
 
           return { success: true };
@@ -23339,21 +23360,21 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
 
     // ---- Workflow triggers (manual runs for testing or cron-from-outside) ----
     workflows: router({
-      blockerAlert: protectedProcedure.mutation(async () => {
+      blockerAlert: opsProcedure.mutation(async () => {
         const { runBlockerAlertWorkflow } = await import("./pmWorkflows");
         return runBlockerAlertWorkflow();
       }),
-      milestoneDue: protectedProcedure.mutation(async () => {
+      milestoneDue: opsProcedure.mutation(async () => {
         const { runMilestoneDueWorkflow } = await import("./pmWorkflows");
         return runMilestoneDueWorkflow();
       }),
-      cashForecastSync: protectedProcedure
+      cashForecastSync: opsProcedure
         .input(z.object({ projectId: z.number() }))
         .mutation(async ({ input }) => {
           const { runCashForecastSyncWorkflow } = await import("./pmWorkflows");
           return runCashForecastSyncWorkflow(input.projectId);
         }),
-      weeklyDigest: protectedProcedure.mutation(async () => {
+      weeklyDigest: opsProcedure.mutation(async () => {
         const { runWeeklyDigestWorkflow } = await import("./pmWorkflows");
         return runWeeklyDigestWorkflow();
       }),

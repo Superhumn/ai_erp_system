@@ -17,12 +17,6 @@ export default function PmMarket() {
     );
   }
 
-  const projectsByFunction = new Map<number, typeof data.projects>();
-  for (const p of data.projects) {
-    if (!projectsByFunction.has(p.functionId)) projectsByFunction.set(p.functionId, []);
-    projectsByFunction.get(p.functionId)!.push(p);
-  }
-
   return (
     <div>
       <PmHeader
