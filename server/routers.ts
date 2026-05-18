@@ -8761,17 +8761,17 @@ Provide a brief status summary, any missing documents, and next steps.`;
         const buffer = Buffer.from(input.fileData, 'base64');
         const fileKey = `copacker-invoices/${ctx.user.id}/${nanoid()}-${input.fileName}`;
 
-          let fileUrl = '';
-          try {
-            const uploaded = await storagePut(fileKey, buffer, input.mimeType);
-            fileUrl = uploaded.url;
-          } catch (error) {
-            console.error("[copacker.uploadInvoice] failed to store invoice in Cloudflare R2", error);
-            throw new TRPCError({
-              code: "INTERNAL_SERVER_ERROR",
-              message: "Unable to upload invoice file to cloud storage. Please verify storage configuration and try again.",
-            });
-          }
+        let fileUrl = '';
+        try {
+          const uploaded = await storagePut(fileKey, buffer, input.mimeType);
+          fileUrl = uploaded.url;
+        } catch (error) {
+          console.error('[copacker.uploadInvoice] failed to store invoice in Cloudflare R2', error);
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'Unable to upload invoice file to cloud storage. Please verify storage configuration and try again.',
+          });
+        }
 
         // 2. Parse the document using AI
         let parsedData: Record<string, any> = {};
@@ -15900,7 +15900,7 @@ Ask if they received the original request and if they can provide a quote.`;
         if (!session || session.status !== 'active') {
           throw new TRPCError({ code: 'FORBIDDEN', message: 'Invalid or expired session' });
         }
-        // Upload to S3
+        // Upload to Cloudflare R2 object storage
         const buffer = Buffer.from(input.fileData, 'base64');
         const fileKey = `supplier-docs/${session.purchaseOrderId}/${input.documentType}/${Date.now()}-${input.fileName}`;
         const { url } = await storagePut(fileKey, buffer, input.mimeType || 'application/octet-stream');
@@ -15981,7 +15981,7 @@ Ask if they received the original request and if they can provide a quote.`;
         mimeType: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
-        // Upload to S3 first
+        // Upload to Cloudflare R2 object storage first
         const buffer = Buffer.from(input.fileData, 'base64');
         const fileKey = `document-imports/${Date.now()}-${input.fileName}`;
         const { url } = await storagePut(fileKey, buffer, input.mimeType || 'application/octet-stream');
@@ -16356,7 +16356,7 @@ Ask if they received the original request and if they can provide a quote.`;
         
         const buffer = Buffer.from(await response.arrayBuffer());
         
-        // Upload to S3
+        // Upload to Cloudflare R2 object storage
         const fileKey = `document-imports/gdrive-${Date.now()}-${input.fileName}`;
         const { url } = await storagePut(fileKey, buffer, input.mimeType);
         
@@ -16438,7 +16438,7 @@ Ask if they received the original request and if they can provide a quote.`;
             
             const buffer = Buffer.from(await response.arrayBuffer());
             
-            // Upload to S3
+            // Upload to Cloudflare R2 object storage
             const fileKey = `document-imports/gdrive-${Date.now()}-${file.fileName}`;
             const { url } = await storagePut(fileKey, buffer, file.mimeType);
             

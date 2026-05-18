@@ -261,7 +261,7 @@ export const dataRoomRouter = router({
           base64Content: z.string(),
         }))
         .mutation(async ({ input, ctx }) => {
-          // Upload to S3
+          // Upload to Cloudflare R2 object storage
           const buffer = Buffer.from(input.base64Content, 'base64');
           const key = `dataroom/${input.dataRoomId}/${nanoid()}-${input.name}`;
           const { url } = await storagePut(key, buffer, input.mimeType);
