@@ -3032,6 +3032,18 @@ ONLY return the JSON array, no other text.`;
         }
         return { success: true, count: input.ids.length };
       }),
+    assignTasks: protectedProcedure
+      .input(z.object({
+        ids: z.array(z.number()).min(1),
+        assigneeId: z.number().nullable(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        for (const id of input.ids) {
+          await db.updateProjectTask(id, { assigneeId: input.assigneeId });
+          await createAuditLog(ctx.user.id, 'update', 'projectTask', id);
+        }
+        return { success: true, count: input.ids.length };
+      }),
     tasks: protectedProcedure
       .input(z.object({ projectId: z.number() }))
       .query(({ input }) => input.projectId === 0 ? db.getAllProjectTasks() : db.getProjectTasks(input.projectId)),
