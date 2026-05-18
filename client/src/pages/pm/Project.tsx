@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, Plus, Trash2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
-import { PmHeader, PmTabs, StatusBadge, PriorityBadge, PM_STATUSES, STATUS_LABEL, fmtDate, fmtMoney, daysSince, type PmStatus } from "./_shared";
+import { PmHeader, PmTabs, PriorityBadge, PM_STATUSES, STATUS_LABEL, fmtDate, fmtMoney, daysSince, type PmStatus } from "./_shared";
 
 export default function PmProject() {
   const params = useParams<{ id: string }>();

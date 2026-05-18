@@ -12,9 +12,9 @@
 // 4. dependencyCascade  — Triggered on pm_project status → blocked
 // 5. weeklyDigest       — Fri 16:00 — generate matrix snapshot, save to Drive
 
-import { eq, and, lte, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import * as db from "./db";
-import { pmProjects, pmMilestones, users } from "../drizzle/schema";
+import { pmProjects } from "../drizzle/schema";
 
 const GOOGLE_CHAT_OPS_WEBHOOK = process.env.GOOGLE_CHAT_OPS_WEBHOOK;
 
