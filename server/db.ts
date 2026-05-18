@@ -1736,15 +1736,16 @@ export async function deleteDocument(id: number) {
 // PROJECTS
 // ============================================
 
-export async function getProjects(filters?: { companyId?: number; status?: string; ownerId?: number }) {
+export async function getProjects(filters?: { companyId?: number; status?: string; ownerId?: number; showArchived?: boolean }) {
   const db = await getDb();
   if (!db) return [];
-  
+
   const conditions = [];
   if (filters?.companyId) conditions.push(eq(projects.companyId, filters.companyId));
   if (filters?.status) conditions.push(eq(projects.status, filters.status as any));
   if (filters?.ownerId) conditions.push(eq(projects.ownerId, filters.ownerId));
-  
+  if (!filters?.showArchived) conditions.push(isNull(projects.archivedAt));
+
   if (conditions.length > 0) {
     return db.select().from(projects).where(and(...conditions)).orderBy(desc(projects.createdAt));
   }
