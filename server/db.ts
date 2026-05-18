@@ -177,6 +177,14 @@ import {
   socialPlatformCredentials, InsertSocialPlatformCredential,
   // Quick Notes
   notes, InsertNote,
+  // PM module — Market × Function matrix
+  pmMarkets, InsertPmMarket,
+  pmFunctions, InsertPmFunction,
+  pmPrograms, InsertPmProgram,
+  pmProjects, InsertPmProject,
+  pmTasks, InsertPmTask,
+  pmDependencies, InsertPmDependency,
+  pmMilestones, InsertPmMilestone,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -13295,4 +13303,466 @@ export async function getOrCreateNotesInboxProject(userId: number): Promise<numb
   // Remove from cache after resolution so errors don't stay cached forever
   promise.catch(() => _notesInboxCache.delete(userId));
   return promise;
+}
+
+// ============================================
+// PROJECT MANAGEMENT MODULE
+// Market × Function matrix tracking for international expansion.
+// Tables: pm_markets, pm_functions, pm_programs, pm_projects,
+//         pm_tasks, pm_dependencies, pm_milestones.
+// ============================================
+
+// ---- pm_markets ----
+
+export async function getPmMarkets() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(pmMarkets).orderBy(asc(pmMarkets.tier), asc(pmMarkets.name));
+}
+
+export async function getPmMarketById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select().from(pmMarkets).where(eq(pmMarkets.id, id)).limit(1);
+  return rows[0];
+}
+
+export async function getPmMarketByCode(code: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select().from(pmMarkets).where(eq(pmMarkets.code, code)).limit(1);
+  return rows[0];
+}
+
+export async function createPmMarket(input: InsertPmMarket) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  const result = await db.insert(pmMarkets).values(input);
+  return { id: result[0].insertId, ...input };
+}
+
+export async function updatePmMarket(id: number, input: Partial<InsertPmMarket>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(pmMarkets).set(input).where(eq(pmMarkets.id, id));
+}
+
+export async function deletePmMarket(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(pmMarkets).where(eq(pmMarkets.id, id));
+}
+
+// ---- pm_functions ----
+
+export async function getPmFunctions() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(pmFunctions).orderBy(asc(pmFunctions.sortOrder), asc(pmFunctions.name));
+}
+
+export async function getPmFunctionByCode(code: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select().from(pmFunctions).where(eq(pmFunctions.code, code)).limit(1);
+  return rows[0];
+}
+
+export async function createPmFunction(input: InsertPmFunction) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  const result = await db.insert(pmFunctions).values(input);
+  return { id: result[0].insertId, ...input };
+}
+
+export async function updatePmFunction(id: number, input: Partial<InsertPmFunction>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(pmFunctions).set(input).where(eq(pmFunctions.id, id));
+}
+
+export async function deletePmFunction(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(pmFunctions).where(eq(pmFunctions.id, id));
+}
+
+// ---- pm_programs ----
+
+export async function getPmPrograms(marketId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const q = db.select().from(pmPrograms);
+  return marketId
+    ? q.where(eq(pmPrograms.marketId, marketId)).orderBy(asc(pmPrograms.name))
+    : q.orderBy(asc(pmPrograms.name));
+}
+
+export async function getPmProgramById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select().from(pmPrograms).where(eq(pmPrograms.id, id)).limit(1);
+  return rows[0];
+}
+
+export async function createPmProgram(input: InsertPmProgram) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  const result = await db.insert(pmPrograms).values(input);
+  return { id: result[0].insertId, ...input };
+}
+
+export async function updatePmProgram(id: number, input: Partial<InsertPmProgram>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(pmPrograms).set(input).where(eq(pmPrograms.id, id));
+}
+
+export async function deletePmProgram(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(pmPrograms).where(eq(pmPrograms.id, id));
+}
+
+// ---- pm_projects ----
+
+export type PmProjectFilters = {
+  marketId?: number;
+  functionId?: number;
+  tier?: number;
+  status?: "not_started" | "in_progress" | "blocked" | "complete" | "cancelled";
+  ownerUserId?: number;
+  programId?: number;
+};
+
+export async function getPmProjects(filters: PmProjectFilters = {}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conds = [] as any[];
+  if (filters.marketId) conds.push(eq(pmProjects.marketId, filters.marketId));
+  if (filters.functionId) conds.push(eq(pmProjects.functionId, filters.functionId));
+  if (filters.status) conds.push(eq(pmProjects.status, filters.status));
+  if (filters.ownerUserId) conds.push(eq(pmProjects.ownerUserId, filters.ownerUserId));
+  if (filters.programId) conds.push(eq(pmProjects.programId, filters.programId));
+
+  // Tier filter requires joining markets — handle as post-filter for simplicity.
+  const rows = conds.length
+    ? await db.select().from(pmProjects).where(and(...conds)).orderBy(desc(pmProjects.updatedAt))
+    : await db.select().from(pmProjects).orderBy(desc(pmProjects.updatedAt));
+
+  if (filters.tier !== undefined) {
+    const markets = await getPmMarkets();
+    const tierMarketIds = new Set(markets.filter(m => m.tier === filters.tier).map(m => m.id));
+    return rows.filter(r => tierMarketIds.has(r.marketId));
+  }
+  return rows;
+}
+
+export async function getPmProjectById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select().from(pmProjects).where(eq(pmProjects.id, id)).limit(1);
+  return rows[0];
+}
+
+export async function createPmProject(input: InsertPmProject) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  const result = await db.insert(pmProjects).values(input);
+  return { id: result[0].insertId, ...input };
+}
+
+export async function updatePmProject(id: number, input: Partial<InsertPmProject>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(pmProjects).set(input).where(eq(pmProjects.id, id));
+}
+
+export async function deletePmProject(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  // Remove children first to satisfy FKs.
+  await db.delete(pmTasks).where(eq(pmTasks.projectId, id));
+  await db.delete(pmMilestones).where(eq(pmMilestones.projectId, id));
+  await db.delete(pmDependencies).where(
+    or(eq(pmDependencies.predecessorProjectId, id), eq(pmDependencies.successorProjectId, id))
+  );
+  await db.delete(pmProjects).where(eq(pmProjects.id, id));
+}
+
+export async function getPmBlockedProjects() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(pmProjects)
+    .where(eq(pmProjects.status, "blocked"))
+    .orderBy(asc(pmProjects.blockedSince));
+}
+
+export async function getPmProjectsWithCashEvents() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(pmProjects)
+    .where(and(
+      sql`${pmProjects.cashEventAmount} IS NOT NULL`,
+      sql`${pmProjects.cashEventDate} IS NOT NULL`,
+    ))
+    .orderBy(asc(pmProjects.cashEventDate));
+}
+
+export async function getPmDownstreamProjects(predecessorId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const deps = await db.select().from(pmDependencies)
+    .where(and(
+      eq(pmDependencies.predecessorProjectId, predecessorId),
+      eq(pmDependencies.dependencyType, "blocks"),
+    ));
+  if (deps.length === 0) return [];
+  const ids = deps.map(d => d.successorProjectId);
+  return db.select().from(pmProjects).where(inArray(pmProjects.id, ids));
+}
+
+// ---- pm_tasks ----
+
+export async function getPmTasks(projectId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(pmTasks)
+    .where(eq(pmTasks.projectId, projectId))
+    .orderBy(asc(pmTasks.orderIndex), asc(pmTasks.createdAt));
+}
+
+export async function createPmTask(input: InsertPmTask) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  const result = await db.insert(pmTasks).values(input);
+  return { id: result[0].insertId, ...input };
+}
+
+export async function updatePmTask(id: number, input: Partial<InsertPmTask>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(pmTasks).set(input).where(eq(pmTasks.id, id));
+}
+
+export async function deletePmTask(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(pmTasks).where(eq(pmTasks.id, id));
+}
+
+// ---- pm_dependencies ----
+
+export async function getPmDependenciesForProject(projectId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(pmDependencies)
+    .where(or(
+      eq(pmDependencies.predecessorProjectId, projectId),
+      eq(pmDependencies.successorProjectId, projectId),
+    ));
+}
+
+export async function createPmDependency(input: InsertPmDependency) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  const result = await db.insert(pmDependencies).values(input);
+  return { id: result[0].insertId, ...input };
+}
+
+export async function deletePmDependency(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(pmDependencies).where(eq(pmDependencies.id, id));
+}
+
+// ---- pm_milestones ----
+
+export async function getPmMilestones(projectId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const q = db.select().from(pmMilestones);
+  return projectId
+    ? q.where(eq(pmMilestones.projectId, projectId)).orderBy(asc(pmMilestones.targetDate))
+    : q.orderBy(asc(pmMilestones.targetDate));
+}
+
+export async function getPmMilestonesDueSoon(daysAhead: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const end = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000);
+  return db.select().from(pmMilestones)
+    .where(and(
+      isNull(pmMilestones.actualDate),
+      lte(pmMilestones.targetDate, end),
+      gte(pmMilestones.targetDate, new Date()),
+    ))
+    .orderBy(asc(pmMilestones.targetDate));
+}
+
+export async function createPmMilestone(input: InsertPmMilestone) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  const result = await db.insert(pmMilestones).values(input);
+  return { id: result[0].insertId, ...input };
+}
+
+export async function updatePmMilestone(id: number, input: Partial<InsertPmMilestone>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(pmMilestones).set(input).where(eq(pmMilestones.id, id));
+}
+
+export async function deletePmMilestone(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(pmMilestones).where(eq(pmMilestones.id, id));
+}
+
+// ---- Cash event sync to financial_model ----
+
+// When a pm_project with cash_event_* fields transitions to "complete",
+// push a corresponding row into financial_model. Idempotent: keyed off
+// the project's name + cashEventDate so re-running the workflow on the
+// same project is a no-op.
+export async function pushPmCashEventToFinancialModel(projectId: number): Promise<{ inserted: boolean; reason?: string }> {
+  const db = await getDb();
+  if (!db) return { inserted: false, reason: "database unavailable" };
+
+  const project = await getPmProjectById(projectId);
+  if (!project) return { inserted: false, reason: "project not found" };
+  if (!project.cashEventAmount || !project.cashEventDate || !project.cashEventType) {
+    return { inserted: false, reason: "project has no cash event" };
+  }
+  if (project.status !== "complete") {
+    return { inserted: false, reason: `project status is ${project.status}, not complete` };
+  }
+
+  const metricName = `PM: ${project.name}`;
+  const date = new Date(project.cashEventDate);
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth() + 1;
+
+  const existing = await db.select().from(financialModel)
+    .where(and(
+      eq(financialModel.metricName, metricName),
+      eq(financialModel.year, year),
+      eq(financialModel.month, month),
+    ))
+    .limit(1);
+  if (existing.length > 0) {
+    return { inserted: false, reason: "already pushed" };
+  }
+
+  await db.insert(financialModel).values({
+    sheetName: "PM Cash Events",
+    category: project.cashEventType,
+    metricName,
+    year,
+    month,
+    projectedValue: project.cashEventAmount,
+    actualValue: project.cashEventAmount,
+    unit: "USD",
+    notes: `Auto-pushed from pm_projects.id=${project.id}`,
+  });
+  return { inserted: true };
+}
+
+// Cash forecast: pm_projects with cash events, grouped by month, joined to
+// matching financial_model rows for the same metricName + year + month.
+export async function getPmCashForecast() {
+  const projects = await getPmProjectsWithCashEvents();
+  const db = await getDb();
+  if (!db) return { byMonth: [] as Array<{ key: string; year: number; month: number; total: number; projects: typeof projects }>, rows: projects, financialModelRows: [] as Array<typeof financialModel.$inferSelect> };
+
+  // Group by YYYY-MM key.
+  const grouped = new Map<string, { year: number; month: number; total: number; projects: typeof projects }>();
+  for (const p of projects) {
+    if (!p.cashEventDate) continue;
+    const d = new Date(p.cashEventDate);
+    const year = d.getUTCFullYear();
+    const month = d.getUTCMonth() + 1;
+    const key = `${year}-${String(month).padStart(2, "0")}`;
+    if (!grouped.has(key)) grouped.set(key, { year, month, total: 0, projects: [] });
+    const g = grouped.get(key)!;
+    g.total += Number(p.cashEventAmount ?? 0);
+    g.projects.push(p);
+  }
+
+  const byMonth = Array.from(grouped.entries()).map(([key, v]) => ({ key, ...v }))
+    .sort((a, b) => a.key.localeCompare(b.key));
+
+  // Pull matching financial_model entries (same metricName prefix).
+  const fmRows = await db.select().from(financialModel)
+    .where(like(financialModel.metricName, "PM: %"))
+    .orderBy(asc(financialModel.year), asc(financialModel.month));
+
+  return { byMonth, rows: projects, financialModelRows: fmRows };
+}
+
+// Owner capacity heatmap: group projects by owner, count by status.
+export async function getPmOwnerCapacity() {
+  const db = await getDb();
+  if (!db) return [];
+
+  const rows = await db
+    .select({
+      ownerUserId: pmProjects.ownerUserId,
+      status: pmProjects.status,
+      cnt: count(),
+    })
+    .from(pmProjects)
+    .where(sql`${pmProjects.ownerUserId} IS NOT NULL`)
+    .groupBy(pmProjects.ownerUserId, pmProjects.status);
+
+  const byOwner = new Map<number, { ownerUserId: number; total: number; byStatus: Record<string, number> }>();
+  for (const r of rows) {
+    if (r.ownerUserId == null) continue;
+    if (!byOwner.has(r.ownerUserId)) {
+      byOwner.set(r.ownerUserId, { ownerUserId: r.ownerUserId, total: 0, byStatus: {} });
+    }
+    const entry = byOwner.get(r.ownerUserId)!;
+    entry.byStatus[r.status] = Number(r.cnt);
+    entry.total += Number(r.cnt);
+  }
+
+  // Attach user names.
+  const userIds = Array.from(byOwner.keys());
+  if (userIds.length === 0) return [];
+  const userRows = await db.select({ id: users.id, name: users.name, email: users.email })
+    .from(users).where(inArray(users.id, userIds));
+  const userMap = new Map(userRows.map(u => [u.id, u]));
+
+  return Array.from(byOwner.values()).map(o => ({
+    ...o,
+    user: userMap.get(o.ownerUserId) ?? null,
+  })).sort((a, b) => b.total - a.total);
+}
+
+// Matrix view: returns markets, functions, and projects bucketed into
+// (marketId, functionId) cells. Filterable by tier and status.
+export async function getPmMatrix(filters: { tier?: number; status?: PmProjectFilters["status"] } = {}) {
+  const [markets, functions, projects] = await Promise.all([
+    getPmMarkets(),
+    getPmFunctions(),
+    getPmProjects({ tier: filters.tier, status: filters.status }),
+  ]);
+
+  const cellMap = new Map<string, typeof projects>();
+  for (const p of projects) {
+    const key = `${p.marketId}:${p.functionId}`;
+    if (!cellMap.has(key)) cellMap.set(key, [] as any);
+    (cellMap.get(key) as any[]).push(p);
+  }
+
+  const cells = markets.flatMap(m =>
+    functions.map(f => ({
+      marketId: m.id,
+      functionId: f.id,
+      projects: cellMap.get(`${m.id}:${f.id}`) ?? [],
+    }))
+  );
+
+  return { markets, functions, cells };
 }
