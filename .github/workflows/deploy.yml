@@ -30,9 +30,15 @@ jobs:
         run: npm install -g @railway/cli
 
       - name: Deploy to Staging
-        run: railway up --service ${{ vars.RAILWAY_SERVICE_ID }}
+        run: |
+          if [ -n "$RAILWAY_SERVICE_ID" ]; then
+            railway up --service "$RAILWAY_SERVICE_ID"
+          else
+            railway up
+          fi
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
 
   deploy-production:
     name: Deploy to Production
@@ -47,6 +53,12 @@ jobs:
         run: npm install -g @railway/cli
 
       - name: Deploy to Production
-        run: railway up --service ${{ vars.RAILWAY_SERVICE_ID }}
+        run: |
+          if [ -n "$RAILWAY_SERVICE_ID" ]; then
+            railway up --service "$RAILWAY_SERVICE_ID"
+          else
+            railway up
+          fi
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
