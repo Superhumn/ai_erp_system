@@ -182,7 +182,7 @@ function parseDb() {
 
 function extractedDbExports() {
   const dbDir = join(ROOT, 'server/db');
-  const files = readdirSync(dbDir).filter((f) => f.endsWith('.ts') && f !== 'index.ts');
+  const files = readdirSync(dbDir).filter((f) => f.endsWith('.ts') && f !== 'index.ts').sort();
   const byName = new Map(); // export name -> file stem
   const exportRe = /^export\s+(?:async\s+)?(?:function|const|let|var|type|interface)\s+(\w+)/gm;
   for (const f of files) {
