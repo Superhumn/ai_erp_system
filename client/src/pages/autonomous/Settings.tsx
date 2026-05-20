@@ -60,6 +60,16 @@ export default function AutonomousSettings() {
     triggerType: "manual" as "scheduled" | "event" | "threshold" | "manual" | "continuous",
     description: "",
   });
+  const [editingWorkflowId, setEditingWorkflowId] = useState<number | null>(null);
+  const [editWorkflow, setEditWorkflow] = useState({
+    name: "",
+    description: "",
+    triggerType: "manual" as "scheduled" | "event" | "threshold" | "manual" | "continuous",
+    cronSchedule: "",
+    requiresApproval: false,
+    autoApproveThreshold: "",
+    escalationMinutes: "",
+  });
 
   // Fetch workflows
   const workflowsQuery = trpc.autonomousWorkflows.workflows.list.useQuery();
@@ -96,6 +106,28 @@ export default function AutonomousSettings() {
     },
     onError: (err) => toast.error(err.message),
   });
+
+  const updateWorkflowMutation = trpc.autonomousWorkflows.workflows.update.useMutation({
+    onSuccess: () => {
+      workflowsQuery.refetch();
+      setEditingWorkflowId(null);
+      toast.success("Workflow updated");
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const openEditWorkflow = (workflow: any) => {
+    setEditingWorkflowId(workflow.id);
+    setEditWorkflow({
+      name: workflow.name || "",
+      description: workflow.description || "",
+      triggerType: (workflow.triggerType || "manual") as any,
+      cronSchedule: workflow.cronSchedule || "",
+      requiresApproval: !!workflow.requiresApproval,
+      autoApproveThreshold: workflow.autoApproveThreshold != null ? String(workflow.autoApproveThreshold) : "",
+      escalationMinutes: workflow.escalationMinutes != null ? String(workflow.escalationMinutes) : "",
+    });
+  };
 
   const workflows = workflowsQuery.data ?? [];
   const thresholds = thresholdsQuery.data ?? [];
@@ -394,10 +426,15 @@ export default function AutonomousSettings() {
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-1">
-                            <Button variant="ghost" size="icon">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Edit workflow"
+                              onClick={() => openEditWorkflow(workflow)}
+                            >
                               <Edit className="h-4 w-4" />
                             </Button>
-                            <Button variant="ghost" size="icon">
+                            <Button variant="ghost" size="icon" aria-label="Run workflow">
                               <Play className="h-4 w-4" />
                             </Button>
                           </div>
@@ -683,6 +720,130 @@ export default function AutonomousSettings() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Edit workflow dialog */}
+      <Dialog open={editingWorkflowId !== null} onOpenChange={(open) => { if (!open) setEditingWorkflowId(null); }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Edit Workflow</DialogTitle>
+            <DialogDescription>
+              Update trigger schedule, approval rules, and escalation behavior.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="editName" className="text-right">Name</Label>
+              <Input
+                id="editName"
+                className="col-span-3"
+                value={editWorkflow.name}
+                onChange={(e) => setEditWorkflow({ ...editWorkflow, name: e.target.value })}
+              />
+            </div>
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="editTrigger" className="text-right">Trigger</Label>
+              <Select
+                value={editWorkflow.triggerType}
+                onValueChange={(v: "scheduled" | "event" | "threshold" | "manual" | "continuous") =>
+                  setEditWorkflow({ ...editWorkflow, triggerType: v })
+                }
+              >
+                <SelectTrigger className="col-span-3">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="scheduled">Scheduled (Cron)</SelectItem>
+                  <SelectItem value="event">Event-Driven</SelectItem>
+                  <SelectItem value="threshold">Threshold-Based</SelectItem>
+                  <SelectItem value="manual">Manual Only</SelectItem>
+                  <SelectItem value="continuous">Continuous</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {editWorkflow.triggerType === "scheduled" && (
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="editCron" className="text-right">Cron</Label>
+                <Input
+                  id="editCron"
+                  className="col-span-3 font-mono"
+                  placeholder="0 8 * * *"
+                  value={editWorkflow.cronSchedule}
+                  onChange={(e) => setEditWorkflow({ ...editWorkflow, cronSchedule: e.target.value })}
+                />
+              </div>
+            )}
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="editDescription" className="text-right">Description</Label>
+              <Textarea
+                id="editDescription"
+                className="col-span-3"
+                value={editWorkflow.description}
+                onChange={(e) => setEditWorkflow({ ...editWorkflow, description: e.target.value })}
+              />
+            </div>
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="editApproval" className="text-right">Requires Approval</Label>
+              <div className="col-span-3 flex items-center gap-2">
+                <Switch
+                  id="editApproval"
+                  checked={editWorkflow.requiresApproval}
+                  onCheckedChange={(v) => setEditWorkflow({ ...editWorkflow, requiresApproval: v })}
+                />
+                <span className="text-sm text-muted-foreground">
+                  {editWorkflow.requiresApproval ? "Human review before each action" : "Auto-approve below threshold"}
+                </span>
+              </div>
+            </div>
+            {!editWorkflow.requiresApproval && (
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="editThreshold" className="text-right">Auto-approve under</Label>
+                <Input
+                  id="editThreshold"
+                  type="number"
+                  className="col-span-3"
+                  placeholder="$ amount"
+                  value={editWorkflow.autoApproveThreshold}
+                  onChange={(e) => setEditWorkflow({ ...editWorkflow, autoApproveThreshold: e.target.value })}
+                />
+              </div>
+            )}
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="editEscalation" className="text-right">Escalate after (min)</Label>
+              <Input
+                id="editEscalation"
+                type="number"
+                className="col-span-3"
+                placeholder="e.g. 60"
+                value={editWorkflow.escalationMinutes}
+                onChange={(e) => setEditWorkflow({ ...editWorkflow, escalationMinutes: e.target.value })}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingWorkflowId(null)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={!editWorkflow.name || updateWorkflowMutation.isPending}
+              onClick={() => {
+                if (editingWorkflowId === null) return;
+                updateWorkflowMutation.mutate({
+                  id: editingWorkflowId,
+                  name: editWorkflow.name,
+                  description: editWorkflow.description || undefined,
+                  triggerType: editWorkflow.triggerType,
+                  cronSchedule: editWorkflow.cronSchedule || undefined,
+                  requiresApproval: editWorkflow.requiresApproval,
+                  autoApproveThreshold: editWorkflow.autoApproveThreshold || undefined,
+                  escalationMinutes: editWorkflow.escalationMinutes ? parseInt(editWorkflow.escalationMinutes) : undefined,
+                });
+              }}
+            >
+              {updateWorkflowMutation.isPending ? "Saving…" : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
