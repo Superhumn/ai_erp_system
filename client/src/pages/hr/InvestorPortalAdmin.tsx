@@ -163,8 +163,47 @@ function ActivatedInvestorRow({ stakeholder }: { stakeholder: StakeholderRow }) 
         <div className="border-t p-3 space-y-4 bg-muted/20">
           <TierEditor stakeholder={stakeholder} />
           <DocumentManager stakeholderId={stakeholder.id} />
+          <DeleteStakeholderRow stakeholder={stakeholder} />
         </div>
       )}
+    </div>
+  );
+}
+
+function DeleteStakeholderRow({ stakeholder }: { stakeholder: StakeholderRow }) {
+  const utils = trpc.useUtils();
+  const deleteMutation = trpc.capTable.stakeholders.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Stakeholder removed");
+      utils.capTable.stakeholders.list.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+  return (
+    <div className="pt-3 border-t border-destructive/20">
+      <Label className="text-xs uppercase tracking-wider text-destructive mb-1">
+        Danger zone
+      </Label>
+      <div className="flex items-center justify-between mt-1">
+        <p className="text-xs text-muted-foreground">
+          Removes this stakeholder from the cap table. Equity grants attached to them must be
+          cancelled or transferred first; the server will reject the call otherwise.
+        </p>
+        <Button
+          size="sm"
+          variant="outline"
+          className="text-destructive hover:bg-destructive hover:text-destructive-foreground shrink-0"
+          disabled={deleteMutation.isPending}
+          onClick={() => {
+            if (confirm(`Permanently remove "${stakeholder.name}" from the cap table?`)) {
+              deleteMutation.mutate({ id: stakeholder.id });
+            }
+          }}
+        >
+          {deleteMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+          Delete stakeholder
+        </Button>
+      </div>
     </div>
   );
 }
