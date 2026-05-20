@@ -30,7 +30,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { UserCircle, Plus, Search, Loader2, Award, Layers, Upload, Trash2 } from "lucide-react";
+import { UserCircle, Plus, Search, Loader2, Award, Layers, Upload, Trash2, FileBarChart, TrendingUp, ArrowLeftRight } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -240,6 +247,26 @@ export default function PeopleAndEquity() {
   const [isPersonOpen, setIsPersonOpen] = useState(false);
   const [isGrantOpen, setIsGrantOpen] = useState(false);
   const [isShareClassOpen, setIsShareClassOpen] = useState(false);
+  const [isValuationOpen, setIsValuationOpen] = useState(false);
+  const [isTransactionOpen, setIsTransactionOpen] = useState(false);
+  const [valuationForm, setValuationForm] = useState({
+    valuationDate: "",
+    fairMarketValue: "",
+    provider: "",
+    methodology: "",
+    status: "draft" as "draft" | "pending" | "approved" | "expired",
+    expirationDate: "",
+    notes: "",
+  });
+  const [transactionForm, setTransactionForm] = useState({
+    grantId: 0,
+    stakeholderId: 0,
+    type: "vest" as "grant" | "vest" | "exercise" | "cancel" | "expire" | "convert" | "transfer" | "repurchase" | "forfeit",
+    shares: "",
+    pricePerShare: "",
+    transactionDate: "",
+    notes: "",
+  });
   const [selectedPerson, setSelectedPerson] = useState<UnifiedRow | null>(null);
   const [employeeToDelete, setEmployeeToDelete] = useState<{ id: number; name: string } | null>(null);
   const [scForm, setScForm] = useState({ name: "", type: "common", authorizedShares: "", pricePerShare: "", parValue: "0.0001", liquidationPreference: "1", votingRights: true, isParticipating: false });
@@ -289,6 +316,30 @@ export default function PeopleAndEquity() {
   });
   const createShareClass = trpc.capTable.shareClasses.create.useMutation({
     onSuccess: () => { utils.capTable.shareClasses.list.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const createValuation = trpc.capTable.valuations.create.useMutation({
+    onSuccess: () => {
+      toast.success("409A valuation recorded");
+      setIsValuationOpen(false);
+      setValuationForm({ valuationDate: "", fairMarketValue: "", provider: "", methodology: "", status: "draft", expirationDate: "", notes: "" });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const createTransaction = trpc.capTable.transactions.create.useMutation({
+    onSuccess: () => {
+      toast.success("Equity transaction recorded");
+      setIsTransactionOpen(false);
+      setTransactionForm({ grantId: 0, stakeholderId: 0, type: "vest", shares: "", pricePerShare: "", transactionDate: "", notes: "" });
+      utils.capTable.grants.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const generateCapTableReport = trpc.capTable.generateReport.useMutation({
+    onSuccess: (result: any) => {
+      toast.success("Cap table report generated");
+      if (result?.url) window.open(result.url, "_blank");
+    },
     onError: (e) => toast.error(e.message),
   });
   const createGrant = trpc.capTable.grants.create.useMutation({
@@ -642,6 +693,34 @@ export default function PeopleAndEquity() {
               </form>
             </DialogContent>
           </Dialog>
+
+          {/* Cap Table Tools: 409A valuations, equity transactions, report */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm">
+                <Layers className="h-4 w-4 mr-2" />
+                Cap Table
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setIsValuationOpen(true)}>
+                <TrendingUp className="h-4 w-4 mr-2" />
+                Record 409A Valuation
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setIsTransactionOpen(true)}>
+                <ArrowLeftRight className="h-4 w-4 mr-2" />
+                Record Equity Transaction
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => generateCapTableReport.mutate({ reportType: "cap_table" })}
+                disabled={generateCapTableReport.isPending}
+              >
+                <FileBarChart className="h-4 w-4 mr-2" />
+                {generateCapTableReport.isPending ? "Generating…" : "Generate Cap Table Report"}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           {/* Share Classes and Grant moved to Investors page */}
           <Dialog open={isShareClassOpen} onOpenChange={setIsShareClassOpen}>
@@ -1097,6 +1176,251 @@ export default function PeopleAndEquity() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Record 409A valuation */}
+      <Dialog open={isValuationOpen} onOpenChange={setIsValuationOpen}>
+        <DialogContent>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!valuationForm.valuationDate || !valuationForm.fairMarketValue) {
+                toast.error("Date and FMV are required");
+                return;
+              }
+              createValuation.mutate({
+                valuationDate: valuationForm.valuationDate,
+                fairMarketValue: valuationForm.fairMarketValue,
+                provider: valuationForm.provider || undefined,
+                methodology: valuationForm.methodology || undefined,
+                status: valuationForm.status,
+                expirationDate: valuationForm.expirationDate || undefined,
+                notes: valuationForm.notes || undefined,
+              });
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>Record 409A Valuation</DialogTitle>
+              <DialogDescription>
+                Captures fair market value per share. Used for option strike-price compliance.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="valDate">Valuation Date *</Label>
+                  <Input
+                    id="valDate"
+                    type="date"
+                    value={valuationForm.valuationDate}
+                    onChange={(e) => setValuationForm({ ...valuationForm, valuationDate: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="fmv">Fair Market Value per Share *</Label>
+                  <Input
+                    id="fmv"
+                    type="number"
+                    step="0.0001"
+                    value={valuationForm.fairMarketValue}
+                    onChange={(e) => setValuationForm({ ...valuationForm, fairMarketValue: e.target.value })}
+                    placeholder="0.00"
+                    required
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="provider">Provider</Label>
+                  <Input
+                    id="provider"
+                    value={valuationForm.provider}
+                    onChange={(e) => setValuationForm({ ...valuationForm, provider: e.target.value })}
+                    placeholder="e.g. Carta, Aranca"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="methodology">Methodology</Label>
+                  <Input
+                    id="methodology"
+                    value={valuationForm.methodology}
+                    onChange={(e) => setValuationForm({ ...valuationForm, methodology: e.target.value })}
+                    placeholder="OPM Backsolve, Income Approach…"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="valStatus">Status</Label>
+                  <Select value={valuationForm.status} onValueChange={(v) => setValuationForm({ ...valuationForm, status: v as any })}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="draft">Draft</SelectItem>
+                      <SelectItem value="pending">Pending</SelectItem>
+                      <SelectItem value="approved">Approved</SelectItem>
+                      <SelectItem value="expired">Expired</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="expDate">Expiration Date</Label>
+                  <Input
+                    id="expDate"
+                    type="date"
+                    value={valuationForm.expirationDate}
+                    onChange={(e) => setValuationForm({ ...valuationForm, expirationDate: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="valNotes">Notes</Label>
+                <Textarea
+                  id="valNotes"
+                  value={valuationForm.notes}
+                  onChange={(e) => setValuationForm({ ...valuationForm, notes: e.target.value })}
+                  rows={2}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setIsValuationOpen(false)}>Cancel</Button>
+              <Button type="submit" disabled={createValuation.isPending}>
+                {createValuation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Record Valuation
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Record equity transaction */}
+      <Dialog open={isTransactionOpen} onOpenChange={setIsTransactionOpen}>
+        <DialogContent>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!transactionForm.grantId || !transactionForm.stakeholderId || !transactionForm.shares || !transactionForm.transactionDate) {
+                toast.error("Grant, stakeholder, shares, and date are required");
+                return;
+              }
+              createTransaction.mutate({
+                grantId: transactionForm.grantId,
+                stakeholderId: transactionForm.stakeholderId,
+                type: transactionForm.type,
+                shares: transactionForm.shares,
+                pricePerShare: transactionForm.pricePerShare || undefined,
+                transactionDate: transactionForm.transactionDate,
+                notes: transactionForm.notes || undefined,
+              });
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>Record Equity Transaction</DialogTitle>
+              <DialogDescription>
+                Vesting events, exercises, transfers, cancellations, and other share movements.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="txGrant">Grant *</Label>
+                  <Select
+                    value={transactionForm.grantId ? String(transactionForm.grantId) : ""}
+                    onValueChange={(v) => {
+                      const g = (grants || []).find((x: any) => String(x.id) === v);
+                      setTransactionForm({
+                        ...transactionForm,
+                        grantId: parseInt(v),
+                        stakeholderId: g?.stakeholderId || transactionForm.stakeholderId,
+                      });
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select grant" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(grants || []).map((g: any) => (
+                        <SelectItem key={g.id} value={String(g.id)}>
+                          #{g.id} — {g.grantType} · {g.shares} shares
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="txType">Type *</Label>
+                  <Select value={transactionForm.type} onValueChange={(v) => setTransactionForm({ ...transactionForm, type: v as any })}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="vest">Vest</SelectItem>
+                      <SelectItem value="exercise">Exercise</SelectItem>
+                      <SelectItem value="grant">Grant</SelectItem>
+                      <SelectItem value="cancel">Cancel</SelectItem>
+                      <SelectItem value="expire">Expire</SelectItem>
+                      <SelectItem value="convert">Convert</SelectItem>
+                      <SelectItem value="transfer">Transfer</SelectItem>
+                      <SelectItem value="repurchase">Repurchase</SelectItem>
+                      <SelectItem value="forfeit">Forfeit</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="txShares">Shares *</Label>
+                  <Input
+                    id="txShares"
+                    type="number"
+                    value={transactionForm.shares}
+                    onChange={(e) => setTransactionForm({ ...transactionForm, shares: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="txPrice">Price per Share</Label>
+                  <Input
+                    id="txPrice"
+                    type="number"
+                    step="0.0001"
+                    value={transactionForm.pricePerShare}
+                    onChange={(e) => setTransactionForm({ ...transactionForm, pricePerShare: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="txDate">Date *</Label>
+                  <Input
+                    id="txDate"
+                    type="date"
+                    value={transactionForm.transactionDate}
+                    onChange={(e) => setTransactionForm({ ...transactionForm, transactionDate: e.target.value })}
+                    required
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="txNotes">Notes</Label>
+                <Textarea
+                  id="txNotes"
+                  value={transactionForm.notes}
+                  onChange={(e) => setTransactionForm({ ...transactionForm, notes: e.target.value })}
+                  rows={2}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setIsTransactionOpen(false)}>Cancel</Button>
+              <Button type="submit" disabled={createTransaction.isPending}>
+                {createTransaction.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Record Transaction
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
