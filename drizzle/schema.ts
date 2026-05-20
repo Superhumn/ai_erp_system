@@ -883,6 +883,7 @@ export const projects = mysqlTable("projects", {
   currency: varchar("currency", { length: 3 }).default("USD"),
   progress: int("progress").default(0),
   notes: text("notes"),
+  archivedAt: timestamp("archivedAt"),
   createdBy: int("createdBy"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

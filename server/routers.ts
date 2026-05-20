@@ -2889,6 +2889,7 @@ ONLY return the JSON array, no other text.`;
         companyId: z.number().optional(),
         status: z.string().optional(),
         ownerId: z.number().optional(),
+        showArchived: z.boolean().optional(),
       }).optional())
       .query(({ input }) => db.getProjects(input)),
     get: protectedProcedure
@@ -2929,6 +2930,7 @@ ONLY return the JSON array, no other text.`;
         actualCost: z.string().optional(),
         progress: z.number().optional(),
         notes: z.string().optional(),
+        archivedAt: z.date().nullable().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
