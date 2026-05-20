@@ -30,7 +30,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { FileText, Plus, Search, Loader2, Calendar } from "lucide-react";
+import { FileText, Plus, Search, Loader2, Calendar, CheckCircle2, CalendarPlus } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
@@ -42,6 +42,13 @@ export default function Contracts() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
   const [selectedContract, setSelectedContract] = useState<any | null>(null);
+  const [isKeyDateOpen, setIsKeyDateOpen] = useState(false);
+  const [keyDateForm, setKeyDateForm] = useState({
+    dateType: "renewal",
+    date: "",
+    description: "",
+    reminderDays: "",
+  });
   const [formData, setFormData] = useState({
     title: "",
     type: "customer" as "customer" | "vendor" | "employment" | "nda" | "partnership" | "other",
@@ -67,6 +74,38 @@ export default function Contracts() {
     onError: (error) => {
       toast.error(error.message);
     },
+  });
+
+  const updateContract = trpc.contracts.update.useMutation({
+    onSuccess: (_, vars) => {
+      toast.success("Contract updated");
+      utils.contracts.list.invalidate();
+      // Keep the open detail sheet in sync with whatever we just changed.
+      setSelectedContract((prev: any) =>
+        prev && prev.id === (vars as any).id ? { ...prev, ...(vars as any) } : prev,
+      );
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const approveContract = trpc.contracts.approve.useMutation({
+    onSuccess: () => {
+      toast.success("Contract approved");
+      utils.contracts.list.invalidate();
+      setSelectedContract((prev: any) =>
+        prev ? { ...prev, status: "active" } : prev,
+      );
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const addKeyDate = trpc.contracts.addKeyDate.useMutation({
+    onSuccess: () => {
+      toast.success("Key date added");
+      setIsKeyDateOpen(false);
+      setKeyDateForm({ dateType: "renewal", date: "", description: "", reminderDays: "" });
+    },
+    onError: (error) => toast.error(error.message),
   });
 
   const filteredContracts = contracts?.filter((contract) => {
@@ -301,8 +340,30 @@ export default function Contracts() {
                     <TableCell className="text-right font-mono">
                       {contract.value ? formatCurrency(contract.value) : "-"}
                     </TableCell>
-                    <TableCell>
-                      <Badge className={getStatusColor(contract.status)}>{contract.status.replace("_", " ")}</Badge>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <Select
+                        value={contract.status}
+                        onValueChange={(value) => {
+                          if (value === contract.status) return;
+                          updateContract.mutate({ id: contract.id, status: value as any });
+                        }}
+                        disabled={updateContract.isPending}
+                      >
+                        <SelectTrigger
+                          className={`h-7 w-36 border-0 px-2 ${getStatusColor(contract.status) || ""}`}
+                        >
+                          <SelectValue>{contract.status.replace("_", " ")}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="draft">draft</SelectItem>
+                          <SelectItem value="pending_review">pending review</SelectItem>
+                          <SelectItem value="pending_signature">pending signature</SelectItem>
+                          <SelectItem value="active">active</SelectItem>
+                          <SelectItem value="expired">expired</SelectItem>
+                          <SelectItem value="terminated">terminated</SelectItem>
+                          <SelectItem value="renewed">renewed</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -353,9 +414,124 @@ export default function Contracts() {
                 <p className="text-sm whitespace-pre-wrap">{selectedContract.description}</p>
               </div>
             )}
+
+            <div className="flex flex-wrap gap-2 pt-2 border-t">
+              {(selectedContract.status === "draft" ||
+                selectedContract.status === "pending_review" ||
+                selectedContract.status === "pending_signature") && (
+                <Button
+                  size="sm"
+                  onClick={() => approveContract.mutate({ id: selectedContract.id })}
+                  disabled={approveContract.isPending}
+                >
+                  {approveContract.isPending ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                  )}
+                  Approve (activate)
+                </Button>
+              )}
+              <Button size="sm" variant="outline" onClick={() => setIsKeyDateOpen(true)}>
+                <CalendarPlus className="h-4 w-4 mr-2" />
+                Add Key Date
+              </Button>
+            </div>
           </div>
         )}
       </DetailSheet>
+
+      {/* Add key date dialog */}
+      <Dialog open={isKeyDateOpen} onOpenChange={setIsKeyDateOpen}>
+        <DialogContent>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!selectedContract || !keyDateForm.date) return;
+              addKeyDate.mutate({
+                contractId: selectedContract.id,
+                dateType: keyDateForm.dateType,
+                date: new Date(keyDateForm.date),
+                description: keyDateForm.description || undefined,
+                reminderDays: keyDateForm.reminderDays
+                  ? parseInt(keyDateForm.reminderDays)
+                  : undefined,
+              });
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>Add key date</DialogTitle>
+              <DialogDescription>
+                Tracks renewal, termination, milestone, or other contract dates with optional
+                reminder.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="kdType">Date type</Label>
+                  <Select
+                    value={keyDateForm.dateType}
+                    onValueChange={(v) => setKeyDateForm({ ...keyDateForm, dateType: v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="renewal">Renewal</SelectItem>
+                      <SelectItem value="termination">Termination</SelectItem>
+                      <SelectItem value="milestone">Milestone</SelectItem>
+                      <SelectItem value="review">Review</SelectItem>
+                      <SelectItem value="payment">Payment</SelectItem>
+                      <SelectItem value="custom">Custom</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="kdDate">Date *</Label>
+                  <Input
+                    id="kdDate"
+                    type="date"
+                    value={keyDateForm.date}
+                    onChange={(e) => setKeyDateForm({ ...keyDateForm, date: e.target.value })}
+                    required
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="kdReminderDays">Reminder (days before)</Label>
+                <Input
+                  id="kdReminderDays"
+                  type="number"
+                  placeholder="e.g. 30"
+                  value={keyDateForm.reminderDays}
+                  onChange={(e) => setKeyDateForm({ ...keyDateForm, reminderDays: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="kdDescription">Description</Label>
+                <Textarea
+                  id="kdDescription"
+                  rows={2}
+                  value={keyDateForm.description}
+                  onChange={(e) =>
+                    setKeyDateForm({ ...keyDateForm, description: e.target.value })
+                  }
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setIsKeyDateOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={!keyDateForm.date || addKeyDate.isPending}>
+                {addKeyDate.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Add key date
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
