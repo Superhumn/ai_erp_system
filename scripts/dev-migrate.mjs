@@ -66,6 +66,7 @@ console.log(`\nDone. ok=${ok} skipped=${skipped} failed=${failed.length}`);
 if (failed.length) {
   console.log("Failures:");
   for (const f of failed) console.log(`  ${f.file}: ${f.err.slice(0, 200)}`);
+  process.exitCode = 1;
 }
 await conn.end();
 if (failed.length) process.exit(1);
