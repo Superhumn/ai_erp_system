@@ -3038,10 +3038,12 @@ ONLY return the JSON array, no other text.`;
         assigneeId: z.number().nullable(),
       }))
       .mutation(async ({ input, ctx }) => {
-        for (const id of input.ids) {
-          await db.updateProjectTask(id, { assigneeId: input.assigneeId });
-          await createAuditLog(ctx.user.id, 'update', 'projectTask', id);
-        }
+        await Promise.all(
+          input.ids.map((id) => db.updateProjectTask(id, { assigneeId: input.assigneeId }))
+        );
+        await Promise.all(
+          input.ids.map((id) => createAuditLog(ctx.user.id, 'update', 'projectTask', id))
+        );
         return { success: true, count: input.ids.length };
       }),
     tasks: protectedProcedure
