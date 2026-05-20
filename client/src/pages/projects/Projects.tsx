@@ -296,6 +296,15 @@ export default function Projects() {
   const deleteProjectsMany = (trpc.projects as any).deleteMany.useMutation({
     onError: (e: any) => toast.error(e.message),
   });
+  const deleteSingleTask = (trpc.projects as any).deleteTask.useMutation({
+    onSuccess: () => {
+      toast.success("Task deleted");
+      (utils.projects as any).listAllTasks.invalidate();
+      utils.projects.list.invalidate();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
   const deleteTasksMany = (trpc.projects as any).deleteTasks.useMutation({
     onError: (e: any) => toast.error(e.message),
   });
@@ -1081,7 +1090,7 @@ export default function Projects() {
                                   {task.estimatedHours && <span>Est: {task.estimatedHours}h</span>}
                                   {task.actualHours && <span>Actual: {task.actualHours}h</span>}
                                 </div>
-                                <div onClick={(e) => e.stopPropagation()}>
+                                <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-1">
                                   <Select value={task.status} onValueChange={(next) => handleStatusUpdate(task.id, next as Task["status"])}>
                                     <SelectTrigger className="h-8 w-[160px] text-xs"><SelectValue /></SelectTrigger>
                                     <SelectContent>
@@ -1095,6 +1104,19 @@ export default function Projects() {
                                       ))}
                                     </SelectContent>
                                   </Select>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                    aria-label="Delete task"
+                                    onClick={() => {
+                                      if (confirm(`Delete task "${task.name}"?`)) {
+                                        deleteSingleTask.mutate({ id: task.id });
+                                      }
+                                    }}
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
                                 </div>
                               </div>
                             </div>
@@ -1237,9 +1259,9 @@ export default function Projects() {
                             )}
                           </div>
 
-                          <div onClick={(e) => e.stopPropagation()}>
+                          <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-1">
                             <Select value={task.status} onValueChange={(next) => handleStatusUpdate(task.id, next as Task["status"])}>
-                              <SelectTrigger className="h-7 text-[11px]"><SelectValue /></SelectTrigger>
+                              <SelectTrigger className="h-7 flex-1 text-[11px]"><SelectValue /></SelectTrigger>
                               <SelectContent>
                                 {Object.entries(STATUS_META).map(([value, meta]) => (
                                   <SelectItem key={value} value={value}>
@@ -1251,6 +1273,19 @@ export default function Projects() {
                                 ))}
                               </SelectContent>
                             </Select>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                              aria-label="Delete task"
+                              onClick={() => {
+                                if (confirm(`Delete task "${task.name}"?`)) {
+                                  deleteSingleTask.mutate({ id: task.id });
+                                }
+                              }}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
                           </div>
                         </CardContent>
                       </Card>

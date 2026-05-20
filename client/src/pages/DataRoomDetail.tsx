@@ -3448,6 +3448,15 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
     onError: (error) => toast.error(error.message),
   });
 
+  const deleteChecklistMutation = trpc.dataRoom.dueDiligence.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Checklist removed");
+      refetchSummary();
+      refetchChecklist();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   const deleteItemMutation = trpc.dataRoom.dueDiligence.deleteItem.useMutation({
     onSuccess: () => {
       toast.success("Item removed");
@@ -3626,6 +3635,25 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
               <Button variant="outline" size="sm" onClick={() => setAddItemOpen(true)}>
                 <Plus className="h-4 w-4 mr-1" />
                 Add Item
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground hover:text-destructive"
+                disabled={deleteChecklistMutation.isPending}
+                onClick={() => {
+                  if (
+                    summary?.checklist?.id &&
+                    confirm(
+                      `Remove "${summary.checklist.name}"? All items and document links are deleted. You can recreate from a template afterwards.`,
+                    )
+                  ) {
+                    deleteChecklistMutation.mutate({ id: summary.checklist.id });
+                  }
+                }}
+              >
+                <Trash2 className="h-4 w-4 mr-1" />
+                {deleteChecklistMutation.isPending ? "Deleting…" : "Delete"}
               </Button>
             </div>
           </div>
