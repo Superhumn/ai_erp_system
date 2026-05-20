@@ -144,12 +144,12 @@ function LeadScoring() {
   useEffect(() => { saveScores(contacts); }, [contacts]);
 
   const aiMutation = trpc.ai.query.useMutation({
-    onSuccess: (data: any, variables: any) => {
+    onSuccess: (data: any) => {
       const text = data.response || data.answer || "";
       const scoreMatch = text.match(/(\d+)\s*\/\s*100|score[:\s]+(\d+)/i);
       const score = scoreMatch ? parseInt(scoreMatch[1] || scoreMatch[2]) : Math.floor(Math.random() * 60 + 30);
       const clamped = Math.min(100, Math.max(0, score));
-      const contactId = variables?.context?.contactId;
+      const contactId = scoringId;
       if (contactId) {
         setContacts(prev => {
           const next = prev.map(c => c.id === contactId ? { ...c, score: clamped, tier: scoreTier(clamped), lastScored: new Date().toISOString() } : c);
@@ -165,7 +165,6 @@ function LeadScoring() {
     setScoringId(contact.id);
     aiMutation.mutate({
       question: `Score this sales lead from 0 to 100 based on likely purchase intent and fit. Reply with ONLY a number like "Score: 75/100" then a one-line reason.\n\nName: ${contact.name}\nCompany: ${contact.company}\nEmail: ${contact.email}`,
-      context: { contactId: contact.id },
     });
   };
 

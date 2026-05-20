@@ -249,6 +249,30 @@ export default function DataRoomPublic() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkCode]);
 
+  // Print blocker. Browsers don't let JS cancel a native print dialog, so we
+  // blank the page via @media print + warn the user via beforeprint. This is
+  // mitigation, not prevention — a screenshot still works — but it respects
+  // the room's allowPrint policy and is consistent with the server-side
+  // download gate.
+  useEffect(() => {
+    if (!accessGranted || permissions.allowPrint) return;
+
+    const styleEl = document.createElement("style");
+    styleEl.setAttribute("data-dr-no-print", "true");
+    styleEl.textContent = `@media print { body { display: none !important; } }`;
+    document.head.appendChild(styleEl);
+
+    const onBeforePrint = () => {
+      window.alert("Printing is disabled for this data room.");
+    };
+    window.addEventListener("beforeprint", onBeforePrint);
+
+    return () => {
+      styleEl.remove();
+      window.removeEventListener("beforeprint", onBeforePrint);
+    };
+  }, [accessGranted, permissions.allowPrint]);
+
   const handleAccessSubmit = () => {
     accessMutation.mutate({
       linkCode,

@@ -1736,15 +1736,16 @@ export async function deleteDocument(id: number) {
 // PROJECTS
 // ============================================
 
-export async function getProjects(filters?: { companyId?: number; status?: string; ownerId?: number }) {
+export async function getProjects(filters?: { companyId?: number; status?: string; ownerId?: number; showArchived?: boolean }) {
   const db = await getDb();
   if (!db) return [];
-  
+
   const conditions = [];
   if (filters?.companyId) conditions.push(eq(projects.companyId, filters.companyId));
   if (filters?.status) conditions.push(eq(projects.status, filters.status as any));
   if (filters?.ownerId) conditions.push(eq(projects.ownerId, filters.ownerId));
-  
+  if (!filters?.showArchived) conditions.push(isNull(projects.archivedAt));
+
   if (conditions.length > 0) {
     return db.select().from(projects).where(and(...conditions)).orderBy(desc(projects.createdAt));
   }
@@ -1792,6 +1793,30 @@ export async function deleteProject(id: number) {
     await tx.delete(projectMilestones).where(eq(projectMilestones.projectId, id));
     await tx.delete(projects).where(eq(projects.id, id));
   });
+}
+
+export async function deleteProjects(ids: number[]) {
+  if (ids.length === 0) return;
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async (tx) => {
+    await tx.delete(projectTasks).where(inArray(projectTasks.projectId, ids));
+    await tx.delete(projectMilestones).where(inArray(projectMilestones.projectId, ids));
+    await tx.delete(projects).where(inArray(projects.id, ids));
+  });
+}
+
+export async function deleteProjectTask(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(projectTasks).where(eq(projectTasks.id, id));
+}
+
+export async function deleteProjectTasks(ids: number[]) {
+  if (ids.length === 0) return;
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(projectTasks).where(inArray(projectTasks.id, ids));
 }
 
 export async function createProjectMilestone(data: typeof projectMilestones.$inferInsert) {

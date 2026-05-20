@@ -12,6 +12,7 @@ export const projectsRouter = router({
         companyId: z.number().optional(),
         status: z.string().optional(),
         ownerId: z.number().optional(),
+        showArchived: z.boolean().optional(),
       }).optional())
       .query(({ input }) => db.getProjects(input)),
     get: protectedProcedure
@@ -52,6 +53,7 @@ export const projectsRouter = router({
         actualCost: z.string().optional(),
         progress: z.number().optional(),
         notes: z.string().optional(),
+        archivedAt: z.date().nullable().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;

@@ -47,6 +47,8 @@ import {
   X,
   Circle,
   Trash2,
+  Archive,
+  ArchiveRestore,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -62,6 +64,7 @@ type Project = {
   budget: string | null;
   progress: number | null;
   description: string | null;
+  archivedAt: Date | string | null;
   createdAt: Date;
 };
 
@@ -201,6 +204,11 @@ export default function Projects() {
   const [priorityFilter, setPriorityFilter] = useState("all");
   const [projectFilter, setProjectFilter] = useState("all");
   const [expandedTasks, setExpandedTasks] = useState<Set<number>>(new Set());
+  const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
+  const [editingTaskName, setEditingTaskName] = useState("");
+  const [editingProjectId, setEditingProjectId] = useState<number | null>(null);
+  const [editingProjectName, setEditingProjectName] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
   const [collapsedProjects, setCollapsedProjects] = useState<Set<number>>(new Set());
   const [showFilters, setShowFilters] = useState(false);
   const [statsVisible, setStatsVisible] = useState(false);
@@ -229,6 +237,9 @@ export default function Projects() {
   const inlineRef = useRef<HTMLInputElement>(null);
 
   const [deleteProjectId, setDeleteProjectId] = useState<number | null>(null);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
+  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<number>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setStatsVisible(true), 100);
@@ -236,7 +247,7 @@ export default function Projects() {
   }, []);
 
   const utils = trpc.useUtils();
-  const { data: projects, isLoading: projectsLoading } = trpc.projects.list.useQuery();
+  const { data: projects, isLoading: projectsLoading } = trpc.projects.list.useQuery({ showArchived });
   const { data: allTasks, isLoading: tasksLoading } = trpc.projects.listAllTasks.useQuery();
   const { data: users } = trpc.users.list.useQuery();
 
@@ -267,6 +278,11 @@ export default function Projects() {
     onError: (e) => toast.error(e.message),
   });
 
+  const updateProject = trpc.projects.update.useMutation({
+    onSuccess: () => utils.projects.list.invalidate(),
+    onError: (e) => toast.error(e.message),
+  });
+
   const deleteProject = trpc.projects.delete.useMutation({
     onSuccess: () => {
       toast.success("Project deleted");
@@ -276,6 +292,35 @@ export default function Projects() {
     },
     onError: (e: any) => toast.error(e.message),
   });
+
+  const deleteProjectsMany = (trpc.projects as any).deleteMany.useMutation({
+    onError: (e: any) => toast.error(e.message),
+  });
+  const deleteTasksMany = (trpc.projects as any).deleteTasks.useMutation({
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  async function runBulkDelete() {
+    const projectIds = Array.from(selectedProjectIds);
+    // Skip tasks whose project is being deleted — the project delete cascades.
+    const taskIds = Array.from(selectedTaskIds).filter((tid) => {
+      const t = taskList.find((x) => x.id === tid);
+      return t && !selectedProjectIds.has(t.projectId);
+    });
+    try {
+      if (projectIds.length > 0) await deleteProjectsMany.mutateAsync({ ids: projectIds });
+      if (taskIds.length > 0) await deleteTasksMany.mutateAsync({ ids: taskIds });
+      const total = projectIds.length + taskIds.length;
+      toast.success(`Deleted ${total} item${total === 1 ? "" : "s"}`);
+      setSelectedProjectIds(new Set());
+      setSelectedTaskIds(new Set());
+      setBulkDeleteOpen(false);
+      utils.projects.list.invalidate();
+      (utils.projects as any).listAllTasks.invalidate();
+    } catch {
+      // mutation onError already toasted
+    }
+  }
 
   const projectList = useMemo(() => (projects as unknown as Project[]) || [], [projects]);
   const taskList = useMemo(() => (allTasks as unknown as Task[]) || [], [allTasks]);
@@ -393,6 +438,59 @@ export default function Projects() {
     updateTask.mutate({ id: taskId, status, completedDate: status === "completed" ? new Date() : undefined });
   }
 
+  function startEditingTask(task: Task) {
+    setEditingTaskId(task.id);
+    setEditingTaskName(task.name);
+  }
+
+  function cancelEditingTask() {
+    setEditingTaskId(null);
+    setEditingTaskName("");
+  }
+
+  function commitEditingTask(task: Task) {
+    const next = editingTaskName.trim();
+    if (!next || next === task.name) {
+      cancelEditingTask();
+      return;
+    }
+    updateTask.mutate({ id: task.id, name: next });
+    cancelEditingTask();
+  }
+
+  function startEditingProject(project: Project) {
+    setEditingProjectId(project.id);
+    setEditingProjectName(project.name);
+  }
+
+  function cancelEditingProject() {
+    setEditingProjectId(null);
+    setEditingProjectName("");
+  }
+
+  function commitEditingProject(project: Project) {
+    const next = editingProjectName.trim();
+    if (!next || next === project.name) {
+      cancelEditingProject();
+      return;
+    }
+    updateProject.mutate({ id: project.id, name: next });
+    cancelEditingProject();
+  }
+
+  function toggleArchiveProject(project: Project) {
+    const archived = !!project.archivedAt;
+    updateProject.mutate(
+      { id: project.id, archivedAt: archived ? null : new Date() },
+      {
+        onSuccess: () => {
+          toast.success(archived ? "Project unarchived" : "Project archived");
+          utils.projects.list.invalidate();
+        },
+      },
+    );
+  }
+
   function toggleTaskComplete(task: Task) {
     handleStatusUpdate(task.id, task.status === "completed" ? "todo" : "completed");
   }
@@ -412,6 +510,25 @@ export default function Projects() {
       return next;
     });
   }
+
+  function toggleTaskSelection(taskId: number) {
+    setSelectedTaskIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(taskId)) next.delete(taskId); else next.add(taskId);
+      return next;
+    });
+  }
+
+  function toggleProjectSelection(projectId: number) {
+    setSelectedProjectIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) next.delete(projectId); else next.add(projectId);
+      return next;
+    });
+  }
+
+  const selectionCount = selectedTaskIds.size + selectedProjectIds.size;
+  const hasSelection = selectionCount > 0;
 
   const hasActiveFilters = statusFilter !== "all" || priorityFilter !== "all" || projectFilter !== "all";
 
@@ -704,6 +821,16 @@ export default function Projects() {
               {Object.entries(PRIORITY_CONFIG).map(([k, p]) => <SelectItem key={k} value={k}>{p.label}</SelectItem>)}
             </SelectContent>
           </Select>
+          <Button
+            variant={showArchived ? "secondary" : "ghost"}
+            size="sm"
+            className="h-8 text-xs"
+            onClick={() => setShowArchived((v) => !v)}
+            aria-pressed={showArchived}
+          >
+            <Archive className="mr-1 h-3 w-3" />
+            {showArchived ? "Hide archived" : "Show archived"}
+          </Button>
           {hasActiveFilters && (
             <Button
               variant="ghost"
@@ -725,9 +852,9 @@ export default function Projects() {
           <p className="text-sm text-muted-foreground">Loading projects...</p>
         </div>
       ) : view === "list" ? (
-        <div className="space-y-4">
+        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {groupedByProject.length === 0 && (
-            <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed py-24 text-center">
+            <div className="col-span-full flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed py-24 text-center">
               <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
                 <FolderKanban className="h-7 w-7 text-muted-foreground" />
               </div>
@@ -747,55 +874,91 @@ export default function Projects() {
               <div
                 key={projectId}
                 className={cn(
-                  "animate-fade-in-up overflow-hidden rounded-2xl border bg-background shadow-sm",
+                  "animate-fade-in-up overflow-hidden rounded-lg border bg-background",
+                  !collapsed && "col-span-full",
                   `stagger-${Math.min(projectIndex + 1, 5)}`
                 )}
               >
-                <button
+                <div
                   onClick={() => toggleProject(projectId)}
-                  className="group w-full px-5 py-4 text-left transition-colors hover:bg-muted/20"
+                  className="group w-full cursor-pointer px-3 py-1.5 text-left transition-colors hover:bg-muted/20"
                 >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                        <FolderKanban className="h-4 w-4" />
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <div
+                        onClick={(e) => { e.stopPropagation(); toggleProjectSelection(projectId); }}
+                        className="shrink-0 opacity-60 transition-opacity hover:opacity-100 group-hover:opacity-100"
+                      >
+                        <Checkbox
+                          checked={selectedProjectIds.has(projectId)}
+                          onCheckedChange={() => toggleProjectSelection(projectId)}
+                          aria-label="Select project"
+                        />
                       </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="truncate font-semibold">{project?.name || `Project #${projectId}`}</span>
-                          {priorityCfg && (
-                            <span className={cn("flex items-center gap-1 text-[11px] font-medium", priorityCfg.color)}>
-                              <priorityCfg.Icon className="h-3 w-3" />
-                              {priorityCfg.label}
-                            </span>
-                          )}
-                        </div>
-                        <div className="mt-0.5 hidden items-center gap-2 sm:flex">
-                          <Progress value={projectProgress} className="h-1 w-24" />
-                          <span className="text-[11px] text-muted-foreground">
-                            {projectProgress}% · {tasks.length} task{tasks.length !== 1 ? "s" : ""}
-                          </span>
-                        </div>
-                      </div>
+                      {collapsed ? (
+                        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      ) : (
+                        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      )}
+                      <FolderKanban className="h-3.5 w-3.5 shrink-0 text-primary" />
+                      {editingProjectId === projectId && project ? (
+                        <Input
+                          value={editingProjectName}
+                          onChange={(e) => setEditingProjectName(e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                          onBlur={() => commitEditingProject(project)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") { e.preventDefault(); commitEditingProject(project); }
+                            if (e.key === "Escape") { e.preventDefault(); cancelEditingProject(); }
+                          }}
+                          autoFocus
+                          className="h-7 max-w-[260px] text-sm font-medium"
+                          aria-label="Edit project name"
+                        />
+                      ) : (
+                        <span
+                          onClick={(e) => { e.stopPropagation(); if (project) startEditingProject(project); }}
+                          className="cursor-text truncate rounded px-1 -mx-1 text-sm font-medium hover:bg-muted"
+                          title="Click to edit"
+                        >
+                          {project?.name || `Project #${projectId}`}
+                        </span>
+                      )}
+                      {project?.archivedAt && (
+                        <Badge variant="secondary" className="h-4 shrink-0 px-1.5 text-[10px]">Archived</Badge>
+                      )}
+                      {priorityCfg && (
+                        <priorityCfg.Icon className={cn("h-3 w-3 shrink-0", priorityCfg.color)} />
+                      )}
+                      <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
+                        {projectProgress}% · {tasks.length}
+                      </span>
+                      <Progress value={projectProgress} className="hidden h-1 w-16 shrink-0 sm:block" />
                     </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <Badge variant="secondary" className="text-[11px]">{tasks.length}</Badge>
+                    <div className="flex shrink-0 items-center gap-1 opacity-60 transition-opacity group-hover:opacity-100">
+                      {project && (
+                        <button
+                          type="button"
+                          aria-label={project.archivedAt ? "Unarchive project" : "Archive project"}
+                          onClick={(e) => { e.stopPropagation(); toggleArchiveProject(project); }}
+                          className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
+                          title={project.archivedAt ? "Unarchive" : "Archive"}
+                        >
+                          {project.archivedAt ? <ArchiveRestore className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
+                        </button>
+                      )}
                       <button
                         type="button"
                         aria-label="Delete project"
                         onClick={(e) => { e.stopPropagation(); setDeleteProjectId(projectId); }}
-                        className="rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+                        className="rounded p-1 text-muted-foreground transition-colors hover:text-destructive"
+                        title="Delete"
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <Trash2 className="h-3.5 w-3.5" />
                       </button>
-                      {collapsed ? (
-                        <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-                      ) : (
-                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                      )}
                     </div>
                   </div>
-                </button>
+                </div>
 
                 <div className={cn("overflow-hidden transition-all duration-300", collapsed ? "max-h-0" : "max-h-[9999px]")}>
                   <div className="border-t">
@@ -826,6 +989,22 @@ export default function Projects() {
                             onClick={() => toggleExpanded(task.id)}
                             className="flex cursor-pointer items-start gap-3 px-5 py-3"
                           >
+                            <div
+                              onClick={(e) => { e.stopPropagation(); toggleTaskSelection(task.id); }}
+                              className={cn(
+                                "mt-0.5 shrink-0 transition-opacity",
+                                selectedTaskIds.has(task.id) || hasSelection
+                                  ? "opacity-100"
+                                  : "opacity-0 group-hover:opacity-100"
+                              )}
+                            >
+                              <Checkbox
+                                checked={selectedTaskIds.has(task.id)}
+                                onCheckedChange={() => toggleTaskSelection(task.id)}
+                                aria-label="Select task"
+                              />
+                            </div>
+
                             <div className={cn("mt-1 h-4 w-0.5 shrink-0 rounded-full", pCfg.dot)} />
 
                             <div onClick={(e) => e.stopPropagation()} className="mt-0.5 shrink-0">
@@ -837,9 +1016,32 @@ export default function Projects() {
                             </div>
 
                             <div className="flex-1 min-w-0">
-                              <p className={cn("text-sm font-medium leading-snug transition-colors duration-200", isDone && "line-through text-muted-foreground")}>
-                                {task.name}
-                              </p>
+                              {editingTaskId === task.id ? (
+                                <Input
+                                  value={editingTaskName}
+                                  onChange={(e) => setEditingTaskName(e.target.value)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onBlur={() => commitEditingTask(task)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") { e.preventDefault(); commitEditingTask(task); }
+                                    if (e.key === "Escape") { e.preventDefault(); cancelEditingTask(); }
+                                  }}
+                                  autoFocus
+                                  className="h-7 text-sm font-medium"
+                                  aria-label="Edit task name"
+                                />
+                              ) : (
+                                <p
+                                  onClick={(e) => { e.stopPropagation(); startEditingTask(task); }}
+                                  className={cn(
+                                    "text-sm font-medium leading-snug transition-colors duration-200 cursor-text rounded px-1 -mx-1 hover:bg-muted",
+                                    isDone && "line-through text-muted-foreground"
+                                  )}
+                                  title="Click to edit"
+                                >
+                                  {task.name}
+                                </p>
+                              )}
                               <div className="mt-1 flex flex-wrap items-center gap-1.5">
                                 <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
                                   <span className={cn("h-1.5 w-1.5 rounded-full", sCfg.dot, sCfg.pulse && "animate-pulse")} />
@@ -987,7 +1189,29 @@ export default function Projects() {
                       >
                         <CardContent className="space-y-2 p-3">
                           <div className="flex items-start justify-between gap-2">
-                            <p className="text-sm font-medium leading-snug">{task.name}</p>
+                            {editingTaskId === task.id ? (
+                              <Input
+                                value={editingTaskName}
+                                onChange={(e) => setEditingTaskName(e.target.value)}
+                                onClick={(e) => e.stopPropagation()}
+                                onBlur={() => commitEditingTask(task)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") { e.preventDefault(); commitEditingTask(task); }
+                                  if (e.key === "Escape") { e.preventDefault(); cancelEditingTask(); }
+                                }}
+                                autoFocus
+                                className="h-7 flex-1 text-sm font-medium"
+                                aria-label="Edit task name"
+                              />
+                            ) : (
+                              <p
+                                onClick={(e) => { e.stopPropagation(); startEditingTask(task); }}
+                                className="text-sm font-medium leading-snug cursor-text rounded px-1 -mx-1 hover:bg-muted"
+                                title="Click to edit"
+                              >
+                                {task.name}
+                              </p>
+                            )}
                             <pCfg.Icon className={cn("h-3.5 w-3.5 shrink-0", pCfg.color)} />
                           </div>
                           <p className="text-[11px] text-muted-foreground">{projectName}</p>
@@ -1038,6 +1262,67 @@ export default function Projects() {
           })}
         </div>
       )}
+
+      {/* Bulk-delete floating action bar */}
+      {hasSelection && (
+        <div className="fixed bottom-4 left-1/2 z-40 -translate-x-1/2 animate-fade-in-up">
+          <div className="flex items-center gap-2 rounded-full border bg-background/95 px-3 py-1.5 text-sm shadow-lg backdrop-blur">
+            <span className="font-medium">
+              {selectionCount} selected
+              {selectedProjectIds.size > 0 && selectedTaskIds.size > 0 && (
+                <span className="ml-1 text-muted-foreground">
+                  ({selectedProjectIds.size} project{selectedProjectIds.size === 1 ? "" : "s"}, {selectedTaskIds.size} task{selectedTaskIds.size === 1 ? "" : "s"})
+                </span>
+              )}
+            </span>
+            <Button size="sm" variant="destructive" className="h-7" onClick={() => setBulkDeleteOpen(true)}>
+              <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7"
+              onClick={() => { setSelectedProjectIds(new Set()); setSelectedTaskIds(new Set()); }}
+            >
+              Clear
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk-delete confirmation dialog */}
+      <Dialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete {selectionCount} item{selectionCount === 1 ? "" : "s"}?</DialogTitle>
+            <DialogDescription>
+              {selectedProjectIds.size > 0 && (
+                <>
+                  Deleting {selectedProjectIds.size} project{selectedProjectIds.size === 1 ? "" : "s"} also removes their tasks and milestones.
+                  {selectedTaskIds.size > 0 && " "}
+                </>
+              )}
+              {selectedTaskIds.size > 0 && (
+                <>Deleting {selectedTaskIds.size} task{selectedTaskIds.size === 1 ? "" : "s"}.</>
+              )}
+              {" "}This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setBulkDeleteOpen(false)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={deleteProjectsMany.isPending || deleteTasksMany.isPending}
+              onClick={runBulkDelete}
+            >
+              {(deleteProjectsMany.isPending || deleteTasksMany.isPending) && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete project confirmation dialog */}
       <Dialog open={deleteProjectId !== null} onOpenChange={(open) => { if (!open) setDeleteProjectId(null); }}>
