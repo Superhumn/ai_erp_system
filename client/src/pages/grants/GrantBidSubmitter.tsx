@@ -17,6 +17,16 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -89,6 +99,7 @@ export default function GrantBidSubmitter() {
   const [filterType, setFilterType] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [mainTab, setMainTab] = useState<string>("applications");
+  const [deletingAppId, setDeletingAppId] = useState<number | null>(null);
 
   // Queries
   const { data: applications, refetch: refetchApps, isLoading } = trpc.grantBid.applications.list.useQuery(
@@ -97,6 +108,15 @@ export default function GrantBidSubmitter() {
       : undefined
   );
   const { data: stats } = trpc.grantBid.stats.useQuery();
+
+  const deleteAppMutation = trpc.grantBid.applications.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Application deleted");
+      setDeletingAppId(null);
+      refetchApps();
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   const filteredApps = (applications || []).filter((app: any) =>
     !search || app.title.toLowerCase().includes(search.toLowerCase()) ||
@@ -212,6 +232,7 @@ export default function GrantBidSubmitter() {
                       <TableHead>Deadline</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Updated</TableHead>
+                      <TableHead className="w-12"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -247,6 +268,16 @@ export default function GrantBidSubmitter() {
                           <TableCell className="text-sm text-muted-foreground">
                             {format(new Date(app.updatedAt), "MMM d, yyyy")}
                           </TableCell>
+                          <TableCell onClick={(e) => e.stopPropagation()}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Delete application"
+                              onClick={() => setDeletingAppId(app.id)}
+                            >
+                              <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                            </Button>
+                          </TableCell>
                         </TableRow>
                       );
                     })}
@@ -257,6 +288,32 @@ export default function GrantBidSubmitter() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <AlertDialog open={deletingAppId !== null} onOpenChange={(open) => { if (!open) setDeletingAppId(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete application?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Permanently removes the application and any narrative drafts attached to it.
+              Generated documents stay in your Documents library. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteAppMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteAppMutation.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (deletingAppId !== null) deleteAppMutation.mutate({ id: deletingAppId });
+              }}
+            >
+              {deleteAppMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Delete application
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -831,6 +888,11 @@ function OpportunityDiscovery({ onStartApplication }: { onStartApplication: (app
     onSuccess: () => { toast.success("Opportunity dismissed"); refetchOpps(); },
   });
 
+  const deleteOpportunityMutation = trpc.grantBid.opportunities.delete.useMutation({
+    onSuccess: () => { toast.success("Opportunity deleted"); refetchOpps(); },
+    onError: (err) => toast.error(err.message),
+  });
+
   const startAppMutation = trpc.grantBid.opportunities.startApplication.useMutation({
     onSuccess: (result) => {
       toast.success("Application created from opportunity");
@@ -1087,6 +1149,21 @@ function OpportunityDiscovery({ onStartApplication }: { onStartApplication: (app
                     )}
                     {opp.status === 'applying' && (
                       <Badge variant="secondary" className="bg-indigo-100 text-indigo-700">Application in progress</Badge>
+                    )}
+                    {(opp.status === 'dismissed' || opp.status === 'expired' || opp.status === 'not_eligible') && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-muted-foreground hover:text-destructive"
+                        onClick={() => {
+                          if (confirm(`Permanently delete "${opp.title}"?`)) {
+                            deleteOpportunityMutation.mutate({ id: opp.id });
+                          }
+                        }}
+                        disabled={deleteOpportunityMutation.isPending}
+                      >
+                        <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete permanently
+                      </Button>
                     )}
                     {opp.sourceUrl && (
                       <Button size="sm" variant="ghost" className="ml-auto" asChild>

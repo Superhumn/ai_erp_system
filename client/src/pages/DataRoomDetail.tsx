@@ -77,6 +77,12 @@ export default function DataRoomDetail() {
     expiresAt: "",
     maxViews: "",
   });
+  const [editingInvite, setEditingInvite] = useState<any | null>(null);
+  const [editInviteForm, setEditInviteForm] = useState({
+    role: "viewer" as "viewer" | "editor" | "admin",
+    allowDownload: true,
+    allowPrint: true,
+  });
   const [newLink, setNewLink] = useState({
     name: "",
     password: "",
@@ -236,6 +242,31 @@ export default function DataRoomDetail() {
       toast.success("Share link updated");
       setEditingLink(null);
       refetchLinks();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const { data: invitations, refetch: refetchInvitations } =
+    (trpc.dataRoom.invitations as any).list.useQuery({ dataRoomId: roomId });
+
+  const resendInviteMutation = trpc.dataRoom.invitations.resend.useMutation({
+    onSuccess: () => toast.success("Invitation re-sent"),
+    onError: (error) => toast.error(error.message),
+  });
+
+  const revokeInviteMutation = trpc.dataRoom.invitations.revoke.useMutation({
+    onSuccess: () => {
+      toast.success("Invitation revoked");
+      refetchInvitations();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const updateInvitePermissionsMutation = trpc.dataRoom.invitations.updatePermissions.useMutation({
+    onSuccess: () => {
+      toast.success("Permissions updated");
+      setEditingInvite(null);
+      refetchInvitations();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -1356,6 +1387,103 @@ export default function DataRoomDetail() {
                 )}
               </CardContent>
             </Card>
+
+            {/* Pending invitations */}
+            <Card className="mt-4">
+              <CardHeader>
+                <CardTitle>Pending invitations</CardTitle>
+                <CardDescription>
+                  Emailed invitations that haven't been accepted yet. Resend reminder emails or
+                  revoke access.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {!invitations || invitations.length === 0 ? (
+                  <div className="text-sm text-muted-foreground py-4 text-center">
+                    No outstanding invitations.
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Recipient</TableHead>
+                        <TableHead>Role</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Sent</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {(invitations as any[]).map((inv: any) => (
+                        <TableRow key={inv.id}>
+                          <TableCell>
+                            <div className="font-medium">{inv.email}</div>
+                            {inv.name && (
+                              <div className="text-xs text-muted-foreground">{inv.name}</div>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="capitalize">{inv.role}</Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={inv.status === "pending" ? "secondary" : "outline"}
+                              className="capitalize"
+                            >
+                              {inv.status || "pending"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {inv.createdAt ? new Date(inv.createdAt).toLocaleDateString() : "-"}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={inv.status !== "pending" || resendInviteMutation.isPending}
+                                onClick={() => resendInviteMutation.mutate({ id: inv.id })}
+                              >
+                                <Send className="h-3.5 w-3.5 mr-1" />
+                                Resend
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label="Edit invitation permissions"
+                                onClick={() => {
+                                  setEditingInvite(inv);
+                                  setEditInviteForm({
+                                    role: (inv.role || "viewer") as any,
+                                    allowDownload: inv.allowDownload ?? true,
+                                    allowPrint: inv.allowPrint ?? true,
+                                  });
+                                }}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label="Revoke invitation"
+                                disabled={inv.status !== "pending" || revokeInviteMutation.isPending}
+                                onClick={() => {
+                                  if (confirm(`Revoke invitation to ${inv.email}?`)) {
+                                    revokeInviteMutation.mutate({ id: inv.id });
+                                  }
+                                }}
+                              >
+                                <XCircle className="h-3.5 w-3.5 text-destructive" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
 
           {/* Analytics Tab */}
@@ -2050,6 +2178,76 @@ export default function DataRoomDetail() {
               }}
             >
               {updateLinkMutation.isPending ? "Saving…" : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit invitation permissions */}
+      <Dialog
+        open={editingInvite !== null}
+        onOpenChange={(open) => { if (!open) setEditingInvite(null); }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit invitation permissions</DialogTitle>
+            <DialogDescription>
+              {editingInvite?.email}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="editInviteRole">Role</Label>
+              <Select
+                value={editInviteForm.role}
+                onValueChange={(v: any) => setEditInviteForm({ ...editInviteForm, role: v })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="viewer">Viewer — read-only</SelectItem>
+                  <SelectItem value="editor">Editor — can comment + tag</SelectItem>
+                  <SelectItem value="admin">Admin — full access</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <Label htmlFor="editInviteDownload" className="text-sm font-medium">
+                Allow download
+              </Label>
+              <Switch
+                id="editInviteDownload"
+                checked={editInviteForm.allowDownload}
+                onCheckedChange={(v) => setEditInviteForm({ ...editInviteForm, allowDownload: v })}
+              />
+            </div>
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <Label htmlFor="editInvitePrint" className="text-sm font-medium">
+                Allow print
+              </Label>
+              <Switch
+                id="editInvitePrint"
+                checked={editInviteForm.allowPrint}
+                onCheckedChange={(v) => setEditInviteForm({ ...editInviteForm, allowPrint: v })}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingInvite(null)}>Cancel</Button>
+            <Button
+              disabled={updateInvitePermissionsMutation.isPending}
+              onClick={() => {
+                if (!editingInvite) return;
+                updateInvitePermissionsMutation.mutate({
+                  id: editingInvite.id,
+                  role: editInviteForm.role,
+                  allowDownload: editInviteForm.allowDownload,
+                  allowPrint: editInviteForm.allowPrint,
+                });
+              }}
+            >
+              {updateInvitePermissionsMutation.isPending ? "Saving…" : "Save Changes"}
             </Button>
           </DialogFooter>
         </DialogContent>
