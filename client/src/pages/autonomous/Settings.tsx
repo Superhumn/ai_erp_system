@@ -61,6 +61,22 @@ export default function AutonomousSettings() {
     description: "",
   });
   const [editingWorkflowId, setEditingWorkflowId] = useState<number | null>(null);
+  const [editingThresholdId, setEditingThresholdId] = useState<number | null>(null);
+  const [editThreshold, setEditThreshold] = useState({
+    autoApproveMaxAmount: "",
+    level1MaxAmount: "",
+    level2MaxAmount: "",
+    level3MaxAmount: "",
+  });
+  const [isAddExceptionRuleOpen, setIsAddExceptionRuleOpen] = useState(false);
+  const [newExceptionRule, setNewExceptionRule] = useState({
+    name: "",
+    description: "",
+    exceptionType: "",
+    resolutionStrategy: "human_review",
+    priority: "5",
+    resolveWithinMinutes: "60",
+  });
   const [editWorkflow, setEditWorkflow] = useState({
     name: "",
     description: "",
@@ -112,6 +128,32 @@ export default function AutonomousSettings() {
       workflowsQuery.refetch();
       setEditingWorkflowId(null);
       toast.success("Workflow updated");
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const updateThresholdMutation = trpc.autonomousWorkflows.config.updateThreshold.useMutation({
+    onSuccess: () => {
+      thresholdsQuery.refetch();
+      setEditingThresholdId(null);
+      toast.success("Threshold updated");
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const createExceptionRuleMutation = trpc.autonomousWorkflows.config.createExceptionRule.useMutation({
+    onSuccess: () => {
+      exceptionRulesQuery.refetch();
+      setIsAddExceptionRuleOpen(false);
+      setNewExceptionRule({
+        name: "",
+        description: "",
+        exceptionType: "",
+        resolutionStrategy: "human_review",
+        priority: "5",
+        resolveWithinMinutes: "60",
+      });
+      toast.success("Exception rule created");
     },
     onError: (err) => toast.error(err.message),
   });
@@ -486,7 +528,27 @@ export default function AutonomousSettings() {
                   </TableHeader>
                   <TableBody>
                     {thresholds.map((threshold: any) => (
-                      <TableRow key={threshold.id}>
+                      <TableRow
+                        key={threshold.id}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => {
+                          setEditingThresholdId(threshold.id);
+                          setEditThreshold({
+                            autoApproveMaxAmount: threshold.autoApproveMaxAmount != null
+                              ? String(threshold.autoApproveMaxAmount)
+                              : "",
+                            level1MaxAmount: threshold.level1MaxAmount != null
+                              ? String(threshold.level1MaxAmount)
+                              : "",
+                            level2MaxAmount: threshold.level2MaxAmount != null
+                              ? String(threshold.level2MaxAmount)
+                              : "",
+                            level3MaxAmount: threshold.level3MaxAmount != null
+                              ? String(threshold.level3MaxAmount)
+                              : "",
+                          });
+                        }}
+                      >
                         <TableCell className="font-medium">{threshold.name}</TableCell>
                         <TableCell>
                           <Badge variant="outline">{threshold.entityType}</Badge>
@@ -576,7 +638,7 @@ export default function AutonomousSettings() {
                     Configure how the system handles supply chain exceptions
                   </CardDescription>
                 </div>
-                <Button>
+                <Button onClick={() => setIsAddExceptionRuleOpen(true)}>
                   <Plus className="h-4 w-4 mr-2" />
                   Add Rule
                 </Button>
@@ -840,6 +902,181 @@ export default function AutonomousSettings() {
               }}
             >
               {updateWorkflowMutation.isPending ? "Saving…" : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit threshold dialog */}
+      <Dialog open={editingThresholdId !== null} onOpenChange={(open) => { if (!open) setEditingThresholdId(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit approval threshold</DialogTitle>
+            <DialogDescription>
+              Amounts are in dollars. Leave a level blank to skip it; requests above the highest
+              configured level escalate to executives.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="thrAuto">Auto-approve up to</Label>
+              <Input
+                id="thrAuto"
+                type="number"
+                value={editThreshold.autoApproveMaxAmount}
+                onChange={(e) => setEditThreshold({ ...editThreshold, autoApproveMaxAmount: e.target.value })}
+                placeholder="$"
+              />
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="thrL1" className="text-xs">Level 1 max</Label>
+                <Input
+                  id="thrL1"
+                  type="number"
+                  value={editThreshold.level1MaxAmount}
+                  onChange={(e) => setEditThreshold({ ...editThreshold, level1MaxAmount: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="thrL2" className="text-xs">Level 2 max</Label>
+                <Input
+                  id="thrL2"
+                  type="number"
+                  value={editThreshold.level2MaxAmount}
+                  onChange={(e) => setEditThreshold({ ...editThreshold, level2MaxAmount: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="thrL3" className="text-xs">Level 3 max</Label>
+                <Input
+                  id="thrL3"
+                  type="number"
+                  value={editThreshold.level3MaxAmount}
+                  onChange={(e) => setEditThreshold({ ...editThreshold, level3MaxAmount: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingThresholdId(null)}>Cancel</Button>
+            <Button
+              disabled={updateThresholdMutation.isPending}
+              onClick={() => {
+                if (editingThresholdId === null) return;
+                updateThresholdMutation.mutate({
+                  id: editingThresholdId,
+                  autoApproveMaxAmount: editThreshold.autoApproveMaxAmount || undefined,
+                  level1MaxAmount: editThreshold.level1MaxAmount || undefined,
+                  level2MaxAmount: editThreshold.level2MaxAmount || undefined,
+                  level3MaxAmount: editThreshold.level3MaxAmount || undefined,
+                });
+              }}
+            >
+              {updateThresholdMutation.isPending ? "Saving…" : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add exception rule dialog */}
+      <Dialog open={isAddExceptionRuleOpen} onOpenChange={setIsAddExceptionRuleOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Add exception rule</DialogTitle>
+            <DialogDescription>
+              When the autonomous orchestrator encounters this exception type, follow this rule
+              instead of escalating.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="exrName">Name *</Label>
+              <Input
+                id="exrName"
+                value={newExceptionRule.name}
+                onChange={(e) => setNewExceptionRule({ ...newExceptionRule, name: e.target.value })}
+                placeholder="e.g. Auto-approve PO variance under 5%"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="exrType">Exception type *</Label>
+              <Input
+                id="exrType"
+                value={newExceptionRule.exceptionType}
+                onChange={(e) => setNewExceptionRule({ ...newExceptionRule, exceptionType: e.target.value })}
+                placeholder="e.g. po_variance, inventory_shortage"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="exrStrategy">Resolution strategy</Label>
+              <Select
+                value={newExceptionRule.resolutionStrategy}
+                onValueChange={(v) => setNewExceptionRule({ ...newExceptionRule, resolutionStrategy: v })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto_resolve">Auto resolve</SelectItem>
+                  <SelectItem value="ai_decide">Let AI decide</SelectItem>
+                  <SelectItem value="human_review">Human review</SelectItem>
+                  <SelectItem value="escalate">Escalate</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="exrPriority">Priority (1 = highest)</Label>
+                <Input
+                  id="exrPriority"
+                  type="number"
+                  value={newExceptionRule.priority}
+                  onChange={(e) => setNewExceptionRule({ ...newExceptionRule, priority: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="exrTimeout">Resolve within (min)</Label>
+                <Input
+                  id="exrTimeout"
+                  type="number"
+                  value={newExceptionRule.resolveWithinMinutes}
+                  onChange={(e) => setNewExceptionRule({ ...newExceptionRule, resolveWithinMinutes: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="exrDescription">Description</Label>
+              <Textarea
+                id="exrDescription"
+                rows={2}
+                value={newExceptionRule.description}
+                onChange={(e) => setNewExceptionRule({ ...newExceptionRule, description: e.target.value })}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAddExceptionRuleOpen(false)}>Cancel</Button>
+            <Button
+              disabled={
+                !newExceptionRule.name.trim() ||
+                !newExceptionRule.exceptionType.trim() ||
+                createExceptionRuleMutation.isPending
+              }
+              onClick={() => {
+                createExceptionRuleMutation.mutate({
+                  name: newExceptionRule.name.trim(),
+                  description: newExceptionRule.description || undefined,
+                  exceptionType: newExceptionRule.exceptionType.trim(),
+                  resolutionStrategy: newExceptionRule.resolutionStrategy,
+                  priority: parseInt(newExceptionRule.priority) || 5,
+                  resolveWithinMinutes: newExceptionRule.resolveWithinMinutes
+                    ? parseInt(newExceptionRule.resolveWithinMinutes)
+                    : undefined,
+                });
+              }}
+            >
+              {createExceptionRuleMutation.isPending ? "Adding…" : "Add rule"}
             </Button>
           </DialogFooter>
         </DialogContent>

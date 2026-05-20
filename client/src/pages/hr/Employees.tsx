@@ -342,6 +342,18 @@ export default function PeopleAndEquity() {
     },
     onError: (e) => toast.error(e.message),
   });
+  const deletePlaceholderStakeholders = trpc.capTable.stakeholders.deletePlaceholders.useMutation({
+    onSuccess: (result: any) => {
+      const n = result?.deleted ?? 0;
+      toast.success(
+        n > 0
+          ? `Removed ${n} placeholder stakeholder${n === 1 ? "" : "s"}`
+          : "No placeholder stakeholders found",
+      );
+      utils.capTable.stakeholders.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
   const createGrant = trpc.capTable.grants.create.useMutation({
     onSuccess: () => {
       toast.success("Grant created");
@@ -718,6 +730,19 @@ export default function PeopleAndEquity() {
               >
                 <FileBarChart className="h-4 w-4 mr-2" />
                 {generateCapTableReport.isPending ? "Generating…" : "Generate Cap Table Report"}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                disabled={deletePlaceholderStakeholders.isPending}
+                onClick={() => {
+                  if (confirm("Remove placeholder stakeholders (Investor 1, Stakeholder 2, etc.)? This is for cleaning test data.")) {
+                    deletePlaceholderStakeholders.mutate();
+                  }
+                }}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                {deletePlaceholderStakeholders.isPending ? "Cleaning…" : "Clean up placeholders"}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
