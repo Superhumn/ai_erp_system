@@ -30,7 +30,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { UserCircle, Plus, Search, Loader2, Award, Layers, Upload, Trash2, FileBarChart, TrendingUp, ArrowLeftRight } from "lucide-react";
+import { UserCircle, Plus, Search, Loader2, Award, Layers, Upload, Trash2, FileBarChart, TrendingUp, ArrowLeftRight, Pencil } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -270,6 +270,14 @@ export default function PeopleAndEquity() {
   const [selectedPerson, setSelectedPerson] = useState<UnifiedRow | null>(null);
   const [employeeToDelete, setEmployeeToDelete] = useState<{ id: number; name: string } | null>(null);
   const [scForm, setScForm] = useState({ name: "", type: "common", authorizedShares: "", pricePerShare: "", parValue: "0.0001", liquidationPreference: "1", votingRights: true, isParticipating: false });
+  const [editingShareClass, setEditingShareClass] = useState<any | null>(null);
+  const [editScForm, setEditScForm] = useState({
+    name: "",
+    authorizedShares: "",
+    pricePerShare: "",
+    parValue: "",
+    votingRights: true,
+  });
 
   // ── form state: add person ──
   const [personForm, setPersonForm] = useState({
@@ -316,6 +324,21 @@ export default function PeopleAndEquity() {
   });
   const createShareClass = trpc.capTable.shareClasses.create.useMutation({
     onSuccess: () => { utils.capTable.shareClasses.list.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const updateShareClass = trpc.capTable.shareClasses.update.useMutation({
+    onSuccess: () => {
+      toast.success("Share class updated");
+      setEditingShareClass(null);
+      utils.capTable.shareClasses.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const deleteShareClass = trpc.capTable.shareClasses.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Share class deleted");
+      utils.capTable.shareClasses.list.invalidate();
+    },
     onError: (e) => toast.error(e.message),
   });
   const createValuation = trpc.capTable.valuations.create.useMutation({
@@ -773,6 +796,7 @@ export default function PeopleAndEquity() {
                           <TableHead className="text-right">Price/Share</TableHead>
                           <TableHead className="text-right">Par Value</TableHead>
                           <TableHead>Voting</TableHead>
+                          <TableHead className="w-20"></TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -784,6 +808,46 @@ export default function PeopleAndEquity() {
                             <TableCell className="text-right font-mono">${Number(sc.pricePerShare || 0).toFixed(4)}</TableCell>
                             <TableCell className="text-right font-mono">${Number(sc.parValue || 0).toFixed(4)}</TableCell>
                             <TableCell>{sc.votingRights ? "Yes" : "No"}</TableCell>
+                            <TableCell>
+                              <div className="flex items-center justify-end gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7"
+                                  aria-label="Edit share class"
+                                  onClick={() => {
+                                    setEditingShareClass(sc);
+                                    setEditScForm({
+                                      name: sc.name || "",
+                                      authorizedShares: sc.authorizedShares != null ? String(sc.authorizedShares) : "",
+                                      pricePerShare: sc.pricePerShare != null ? String(sc.pricePerShare) : "",
+                                      parValue: sc.parValue != null ? String(sc.parValue) : "",
+                                      votingRights: !!sc.votingRights,
+                                    });
+                                  }}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                  aria-label="Delete share class"
+                                  disabled={deleteShareClass.isPending}
+                                  onClick={() => {
+                                    if (
+                                      confirm(
+                                        `Delete share class "${sc.name}"? Grants attached to this class will block deletion server-side.`,
+                                      )
+                                    ) {
+                                      deleteShareClass.mutate({ id: sc.id });
+                                    }
+                                  }}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -1441,6 +1505,100 @@ export default function PeopleAndEquity() {
               <Button type="submit" disabled={createTransaction.isPending}>
                 {createTransaction.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 Record Transaction
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit share class */}
+      <Dialog
+        open={editingShareClass !== null}
+        onOpenChange={(open) => { if (!open) setEditingShareClass(null); }}
+      >
+        <DialogContent>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!editingShareClass || !editScForm.name.trim()) return;
+              updateShareClass.mutate({
+                id: editingShareClass.id,
+                name: editScForm.name.trim(),
+                authorizedShares: editScForm.authorizedShares || undefined,
+                pricePerShare: editScForm.pricePerShare || undefined,
+                parValue: editScForm.parValue || undefined,
+                votingRights: editScForm.votingRights,
+              });
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>Edit share class</DialogTitle>
+              <DialogDescription>
+                Type can't be changed once a share class has been created — create a new class
+                and migrate grants if you need a different type.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="editScName">Name *</Label>
+                <Input
+                  id="editScName"
+                  value={editScForm.name}
+                  onChange={(e) => setEditScForm({ ...editScForm, name: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="editScAuth" className="text-xs">Authorized shares</Label>
+                  <Input
+                    id="editScAuth"
+                    type="number"
+                    value={editScForm.authorizedShares}
+                    onChange={(e) => setEditScForm({ ...editScForm, authorizedShares: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="editScPrice" className="text-xs">Price / share</Label>
+                  <Input
+                    id="editScPrice"
+                    type="number"
+                    step="0.0001"
+                    value={editScForm.pricePerShare}
+                    onChange={(e) => setEditScForm({ ...editScForm, pricePerShare: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="editScPar" className="text-xs">Par value</Label>
+                  <Input
+                    id="editScPar"
+                    type="number"
+                    step="0.0001"
+                    value={editScForm.parValue}
+                    onChange={(e) => setEditScForm({ ...editScForm, parValue: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="flex items-center justify-between rounded-md border p-3">
+                <Label htmlFor="editScVoting" className="text-sm font-medium">
+                  Voting rights
+                </Label>
+                <input
+                  id="editScVoting"
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={editScForm.votingRights}
+                  onChange={(e) => setEditScForm({ ...editScForm, votingRights: e.target.checked })}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setEditingShareClass(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={!editScForm.name.trim() || updateShareClass.isPending}>
+                {updateShareClass.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Save changes
               </Button>
             </DialogFooter>
           </form>
