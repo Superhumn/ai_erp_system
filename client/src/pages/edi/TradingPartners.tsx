@@ -17,6 +17,16 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Building2,
   Plus,
   Loader2,
@@ -31,6 +41,7 @@ import {
   RefreshCw,
   CheckCircle2,
   XCircle,
+  Trash2,
 } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
@@ -40,6 +51,13 @@ export default function TradingPartners() {
   const [filterType, setFilterType] = useState<string>("");
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [selectedPartnerId, setSelectedPartnerId] = useState<number | null>(null);
+  const [partnerToDelete, setPartnerToDelete] = useState<any | null>(null);
+  const [showAddCrosswalk, setShowAddCrosswalk] = useState(false);
+  const [showAddLocation, setShowAddLocation] = useState(false);
+  const [crosswalkToDelete, setCrosswalkToDelete] = useState<any | null>(null);
+
+  const utils = trpc.useUtils();
+  const { data: products } = trpc.products.list.useQuery();
 
   const { data: partners, isLoading, refetch } = trpc.edi.partners.list.useQuery({
     status: filterStatus || undefined,
@@ -86,6 +104,73 @@ export default function TradingPartners() {
       toast.error(error.message);
     },
   });
+
+  const deletePartner = trpc.edi.partners.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Trading partner deleted");
+      setPartnerToDelete(null);
+      setSelectedPartnerId(null);
+      refetch();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const createCrosswalk = trpc.edi.crosswalks.create.useMutation({
+    onSuccess: () => {
+      toast.success("Product crosswalk added");
+      setShowAddCrosswalk(false);
+      utils.edi.crosswalks.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const deleteCrosswalk = trpc.edi.crosswalks.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Crosswalk deleted");
+      setCrosswalkToDelete(null);
+      utils.edi.crosswalks.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const createLocation = trpc.edi.shipToLocations.create.useMutation({
+    onSuccess: () => {
+      toast.success("Ship-to location added");
+      setShowAddLocation(false);
+      utils.edi.shipToLocations.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const handleCreateCrosswalk = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!selectedPartnerId) return;
+    const fd = new FormData(e.currentTarget);
+    createCrosswalk.mutate({
+      tradingPartnerId: selectedPartnerId,
+      productId: parseInt(fd.get("productId") as string),
+      buyerPartNumber: (fd.get("buyerPartNumber") as string) || undefined,
+      vendorPartNumber: (fd.get("vendorPartNumber") as string) || undefined,
+      upc: (fd.get("upc") as string) || undefined,
+      unitOfMeasure: (fd.get("unitOfMeasure") as string) || undefined,
+      packSize: fd.get("packSize") ? parseInt(fd.get("packSize") as string) : undefined,
+    });
+  };
+
+  const handleCreateLocation = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!selectedPartnerId) return;
+    const fd = new FormData(e.currentTarget);
+    createLocation.mutate({
+      tradingPartnerId: selectedPartnerId,
+      locationCode: fd.get("locationCode") as string,
+      name: fd.get("name") as string,
+      locationType: (fd.get("locationType") as any) || undefined,
+      city: (fd.get("city") as string) || undefined,
+      state: (fd.get("state") as string) || undefined,
+      gln: (fd.get("gln") as string) || undefined,
+    });
+  };
 
   const testConnection = trpc.edi.transport.testConnection.useMutation({
     onSuccess: (result) => {
@@ -169,6 +254,17 @@ export default function TradingPartners() {
           >
             {sp.status}
           </Badge>
+          <div className="ml-auto">
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-destructive hover:text-destructive"
+              onClick={() => setPartnerToDelete(sp)}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete Partner
+            </Button>
+          </div>
         </div>
 
         <Tabs defaultValue="overview">
@@ -357,11 +453,79 @@ export default function TradingPartners() {
           <TabsContent value="crosswalks">
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Package className="h-4 w-4" />
-                  Product Crosswalks
-                </CardTitle>
-                <CardDescription>Maps partner product IDs (buyer part numbers, UPCs) to your internal products</CardDescription>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <Package className="h-4 w-4" />
+                      Product Crosswalks
+                    </CardTitle>
+                    <CardDescription>Maps partner product IDs (buyer part numbers, UPCs) to your internal products</CardDescription>
+                  </div>
+                  <Dialog open={showAddCrosswalk} onOpenChange={setShowAddCrosswalk}>
+                    <DialogTrigger asChild>
+                      <Button size="sm">
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add Crosswalk
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Add Product Crosswalk</DialogTitle>
+                        <DialogDescription>
+                          Map one of {sp.name}'s identifiers to an internal product
+                        </DialogDescription>
+                      </DialogHeader>
+                      <form onSubmit={handleCreateCrosswalk} className="space-y-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="productId">Internal Product</Label>
+                          <Select name="productId" required>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select internal product" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {products?.map((p: any) => (
+                                <SelectItem key={p.id} value={p.id.toString()}>
+                                  {p.name} {p.sku ? `(${p.sku})` : ""}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-2">
+                            <Label htmlFor="buyerPartNumber">Buyer Part #</Label>
+                            <Input id="buyerPartNumber" name="buyerPartNumber" placeholder="Their part number" />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="vendorPartNumber">Vendor Part #</Label>
+                            <Input id="vendorPartNumber" name="vendorPartNumber" placeholder="Your part number" />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-3">
+                          <div className="space-y-2 col-span-1">
+                            <Label htmlFor="upc">UPC</Label>
+                            <Input id="upc" name="upc" placeholder="UPC code" />
+                          </div>
+                          <div className="space-y-2 col-span-1">
+                            <Label htmlFor="unitOfMeasure">UOM</Label>
+                            <Input id="unitOfMeasure" name="unitOfMeasure" placeholder="EA" />
+                          </div>
+                          <div className="space-y-2 col-span-1">
+                            <Label htmlFor="packSize">Pack Size</Label>
+                            <Input id="packSize" name="packSize" type="number" placeholder="12" />
+                          </div>
+                        </div>
+                        <div className="flex justify-end gap-2">
+                          <Button type="button" variant="outline" onClick={() => setShowAddCrosswalk(false)}>Cancel</Button>
+                          <Button type="submit" disabled={createCrosswalk.isPending}>
+                            {createCrosswalk.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                            Add Crosswalk
+                          </Button>
+                        </div>
+                      </form>
+                    </DialogContent>
+                  </Dialog>
+                </div>
               </CardHeader>
               <CardContent>
                 {partnerCrosswalks && partnerCrosswalks.length > 0 ? (
@@ -374,6 +538,7 @@ export default function TradingPartners() {
                         <th className="pb-1 text-sm font-medium text-muted-foreground">Internal Product ID</th>
                         <th className="pb-1 text-sm font-medium text-muted-foreground">UOM</th>
                         <th className="pb-1 text-sm font-medium text-muted-foreground">Pack Size</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground"></th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -385,6 +550,16 @@ export default function TradingPartners() {
                           <td className="py-0.5 text-sm">{cw.productId}</td>
                           <td className="py-0.5 text-sm">{cw.unitOfMeasure}</td>
                           <td className="py-0.5 text-sm">{cw.packSize || "-"}</td>
+                          <td className="py-0.5 text-right">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-destructive hover:text-destructive"
+                              onClick={() => setCrosswalkToDelete(cw)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -399,11 +574,78 @@ export default function TradingPartners() {
           <TabsContent value="locations">
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <MapPin className="h-4 w-4" />
-                  Ship-To Locations
-                </CardTitle>
-                <CardDescription>Retailer store and distribution center addresses</CardDescription>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <MapPin className="h-4 w-4" />
+                      Ship-To Locations
+                    </CardTitle>
+                    <CardDescription>Retailer store and distribution center addresses</CardDescription>
+                  </div>
+                  <Dialog open={showAddLocation} onOpenChange={setShowAddLocation}>
+                    <DialogTrigger asChild>
+                      <Button size="sm">
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add Location
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Add Ship-To Location</DialogTitle>
+                        <DialogDescription>
+                          A store, DC, or warehouse address {sp.name} ships orders to
+                        </DialogDescription>
+                      </DialogHeader>
+                      <form onSubmit={handleCreateLocation} className="space-y-4">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-2">
+                            <Label htmlFor="locationCode">Location Code</Label>
+                            <Input id="locationCode" name="locationCode" placeholder="e.g. 1234" required />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="locationType">Type</Label>
+                            <Select name="locationType" defaultValue="store">
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="store">Store</SelectItem>
+                                <SelectItem value="distribution_center">Distribution Center</SelectItem>
+                                <SelectItem value="warehouse">Warehouse</SelectItem>
+                                <SelectItem value="cross_dock">Cross Dock</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="name">Name</Label>
+                          <Input id="name" name="name" placeholder="Location name" required />
+                        </div>
+                        <div className="grid grid-cols-3 gap-3">
+                          <div className="space-y-2">
+                            <Label htmlFor="city">City</Label>
+                            <Input id="city" name="city" placeholder="City" />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="state">State</Label>
+                            <Input id="state" name="state" placeholder="State" maxLength={2} />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="gln">GLN</Label>
+                            <Input id="gln" name="gln" placeholder="GLN" />
+                          </div>
+                        </div>
+                        <div className="flex justify-end gap-2">
+                          <Button type="button" variant="outline" onClick={() => setShowAddLocation(false)}>Cancel</Button>
+                          <Button type="submit" disabled={createLocation.isPending}>
+                            {createLocation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                            Add Location
+                          </Button>
+                        </div>
+                      </form>
+                    </DialogContent>
+                  </Dialog>
+                </div>
               </CardHeader>
               <CardContent>
                 {partnerLocations && partnerLocations.length > 0 ? (
@@ -488,6 +730,63 @@ export default function TradingPartners() {
             </Card>
           </TabsContent>
         </Tabs>
+
+        <AlertDialog open={!!partnerToDelete} onOpenChange={(open) => !open && setPartnerToDelete(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete trading partner?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This permanently removes <span className="font-medium">{partnerToDelete?.name}</span>{" "}
+                and disables EDI exchange with them. Past transactions are preserved. This action
+                cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deletePartner.isPending}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                disabled={deletePartner.isPending}
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (partnerToDelete) deletePartner.mutate({ id: partnerToDelete.id });
+                }}
+              >
+                {deletePartner.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Delete partner
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <AlertDialog open={!!crosswalkToDelete} onOpenChange={(open) => !open && setCrosswalkToDelete(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete crosswalk?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Removes the mapping for{" "}
+                <span className="font-mono">
+                  {crosswalkToDelete?.buyerPartNumber || crosswalkToDelete?.upc || `product ${crosswalkToDelete?.productId}`}
+                </span>
+                .
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleteCrosswalk.isPending}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                disabled={deleteCrosswalk.isPending}
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (crosswalkToDelete) deleteCrosswalk.mutate({ id: crosswalkToDelete.id });
+                }}
+              >
+                {deleteCrosswalk.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
       </div>
     );
   }
