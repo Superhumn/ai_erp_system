@@ -11,6 +11,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -42,6 +43,7 @@ import {
   CheckCircle2,
   XCircle,
   Trash2,
+  Pencil,
 } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
@@ -55,6 +57,23 @@ export default function TradingPartners() {
   const [showAddCrosswalk, setShowAddCrosswalk] = useState(false);
   const [showAddLocation, setShowAddLocation] = useState(false);
   const [crosswalkToDelete, setCrosswalkToDelete] = useState<any | null>(null);
+  const [editingCrosswalk, setEditingCrosswalk] = useState<any | null>(null);
+  const [editCrosswalkForm, setEditCrosswalkForm] = useState({
+    buyerPartNumber: "",
+    vendorPartNumber: "",
+    upc: "",
+    unitOfMeasure: "EA",
+    packSize: "",
+  });
+  const [editingLocation, setEditingLocation] = useState<any | null>(null);
+  const [editLocationForm, setEditLocationForm] = useState({
+    locationCode: "",
+    locationType: "store" as "store" | "distribution_center" | "warehouse" | "cross_dock",
+    name: "",
+    city: "",
+    state: "",
+    gln: "",
+  });
 
   const utils = trpc.useUtils();
   const { data: products } = trpc.products.list.useQuery();
@@ -122,6 +141,24 @@ export default function TradingPartners() {
       utils.edi.crosswalks.list.invalidate();
     },
     onError: (error) => toast.error(error.message),
+  });
+
+  const updateCrosswalk = trpc.edi.crosswalks.update.useMutation({
+    onSuccess: () => {
+      toast.success("Crosswalk updated");
+      setEditingCrosswalk(null);
+      utils.edi.crosswalks.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const updateLocation = trpc.edi.shipToLocations.update.useMutation({
+    onSuccess: () => {
+      toast.success("Ship-to location updated");
+      setEditingLocation(null);
+      utils.edi.shipToLocations.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
   });
 
   const deleteCrosswalk = trpc.edi.crosswalks.delete.useMutation({
@@ -551,14 +588,33 @@ export default function TradingPartners() {
                           <td className="py-0.5 text-sm">{cw.unitOfMeasure}</td>
                           <td className="py-0.5 text-sm">{cw.packSize || "-"}</td>
                           <td className="py-0.5 text-right">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-destructive hover:text-destructive"
-                              onClick={() => setCrosswalkToDelete(cw)}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
+                            <div className="flex items-center justify-end">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                aria-label="Edit crosswalk"
+                                onClick={() => {
+                                  setEditingCrosswalk(cw);
+                                  setEditCrosswalkForm({
+                                    buyerPartNumber: cw.buyerPartNumber || "",
+                                    vendorPartNumber: cw.vendorPartNumber || "",
+                                    upc: cw.upc || "",
+                                    unitOfMeasure: cw.unitOfMeasure || "EA",
+                                    packSize: cw.packSize != null ? String(cw.packSize) : "",
+                                  });
+                                }}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive hover:text-destructive"
+                                onClick={() => setCrosswalkToDelete(cw)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -658,6 +714,7 @@ export default function TradingPartners() {
                         <th className="pb-1 text-sm font-medium text-muted-foreground">City</th>
                         <th className="pb-1 text-sm font-medium text-muted-foreground">State</th>
                         <th className="pb-1 text-sm font-medium text-muted-foreground">GLN</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground w-8"></th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -673,6 +730,26 @@ export default function TradingPartners() {
                           <td className="py-0.5 text-sm">{loc.city || "-"}</td>
                           <td className="py-0.5 text-sm">{loc.state || "-"}</td>
                           <td className="py-0.5 text-sm font-mono">{loc.gln || "-"}</td>
+                          <td className="py-0.5 text-right">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              aria-label="Edit ship-to location"
+                              onClick={() => {
+                                setEditingLocation(loc);
+                                setEditLocationForm({
+                                  locationCode: loc.locationCode || "",
+                                  locationType: (loc.locationType || "store") as any,
+                                  name: loc.name || "",
+                                  city: loc.city || "",
+                                  state: loc.state || "",
+                                  gln: loc.gln || "",
+                                });
+                              }}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -993,6 +1070,195 @@ export default function TradingPartners() {
           )}
         </CardContent>
       </Card>
+
+      {/* Edit crosswalk dialog */}
+      <Dialog
+        open={editingCrosswalk !== null}
+        onOpenChange={(open) => { if (!open) setEditingCrosswalk(null); }}
+      >
+        <DialogContent>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!editingCrosswalk) return;
+              updateCrosswalk.mutate({
+                id: editingCrosswalk.id,
+                buyerPartNumber: editCrosswalkForm.buyerPartNumber || undefined,
+                vendorPartNumber: editCrosswalkForm.vendorPartNumber || undefined,
+                upc: editCrosswalkForm.upc || undefined,
+                unitOfMeasure: editCrosswalkForm.unitOfMeasure || undefined,
+                packSize: editCrosswalkForm.packSize ? parseInt(editCrosswalkForm.packSize) : undefined,
+              });
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>Edit product crosswalk</DialogTitle>
+              <DialogDescription>
+                Updates the mapping between this partner's part numbers and your product
+                identifiers.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="ecwBuyer">Buyer part #</Label>
+                  <Input
+                    id="ecwBuyer"
+                    value={editCrosswalkForm.buyerPartNumber}
+                    onChange={(e) => setEditCrosswalkForm({ ...editCrosswalkForm, buyerPartNumber: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="ecwVendor">Vendor part #</Label>
+                  <Input
+                    id="ecwVendor"
+                    value={editCrosswalkForm.vendorPartNumber}
+                    onChange={(e) => setEditCrosswalkForm({ ...editCrosswalkForm, vendorPartNumber: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-2 col-span-2">
+                  <Label htmlFor="ecwUpc">UPC</Label>
+                  <Input
+                    id="ecwUpc"
+                    value={editCrosswalkForm.upc}
+                    onChange={(e) => setEditCrosswalkForm({ ...editCrosswalkForm, upc: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="ecwUom">UoM</Label>
+                  <Input
+                    id="ecwUom"
+                    value={editCrosswalkForm.unitOfMeasure}
+                    onChange={(e) => setEditCrosswalkForm({ ...editCrosswalkForm, unitOfMeasure: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ecwPackSize">Pack size</Label>
+                <Input
+                  id="ecwPackSize"
+                  type="number"
+                  value={editCrosswalkForm.packSize}
+                  onChange={(e) => setEditCrosswalkForm({ ...editCrosswalkForm, packSize: e.target.value })}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setEditingCrosswalk(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={updateCrosswalk.isPending}>
+                {updateCrosswalk.isPending ? "Saving…" : "Save changes"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit ship-to location dialog */}
+      <Dialog
+        open={editingLocation !== null}
+        onOpenChange={(open) => { if (!open) setEditingLocation(null); }}
+      >
+        <DialogContent>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!editingLocation) return;
+              updateLocation.mutate({
+                id: editingLocation.id,
+                locationCode: editLocationForm.locationCode || undefined,
+                locationType: editLocationForm.locationType,
+                name: editLocationForm.name || undefined,
+                city: editLocationForm.city || undefined,
+                state: editLocationForm.state || undefined,
+                gln: editLocationForm.gln || undefined,
+              });
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>Edit ship-to location</DialogTitle>
+              <DialogDescription>
+                Updates a destination this trading partner ships to.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="elocCode">Code</Label>
+                  <Input
+                    id="elocCode"
+                    value={editLocationForm.locationCode}
+                    onChange={(e) => setEditLocationForm({ ...editLocationForm, locationCode: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="elocType">Type</Label>
+                  <Select
+                    value={editLocationForm.locationType}
+                    onValueChange={(v) => setEditLocationForm({ ...editLocationForm, locationType: v as any })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="store">Store</SelectItem>
+                      <SelectItem value="distribution_center">Distribution Center</SelectItem>
+                      <SelectItem value="warehouse">Warehouse</SelectItem>
+                      <SelectItem value="cross_dock">Cross-Dock</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="elocName">Name</Label>
+                <Input
+                  id="elocName"
+                  value={editLocationForm.name}
+                  onChange={(e) => setEditLocationForm({ ...editLocationForm, name: e.target.value })}
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="elocCity">City</Label>
+                  <Input
+                    id="elocCity"
+                    value={editLocationForm.city}
+                    onChange={(e) => setEditLocationForm({ ...editLocationForm, city: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="elocState">State</Label>
+                  <Input
+                    id="elocState"
+                    maxLength={2}
+                    value={editLocationForm.state}
+                    onChange={(e) => setEditLocationForm({ ...editLocationForm, state: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="elocGln">GLN</Label>
+                  <Input
+                    id="elocGln"
+                    value={editLocationForm.gln}
+                    onChange={(e) => setEditLocationForm({ ...editLocationForm, gln: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setEditingLocation(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={updateLocation.isPending}>
+                {updateLocation.isPending ? "Saving…" : "Save changes"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
