@@ -9,6 +9,26 @@ if (!url) {
   process.exit(1);
 }
 
+// Dev-only safety guards: this script is built for local bootstrap, not
+// production. Refuse to run against a production environment or a non-local
+// host unless explicitly forced with --force.
+const force = process.argv.includes("--force");
+if (!force) {
+  if (process.env.NODE_ENV === "production") {
+    console.error("Refusing to run with NODE_ENV=production. Pass --force to override.");
+    process.exit(1);
+  }
+  const host = (() => {
+    try { return new URL(url.replace(/^mysql:/, "http:")).hostname; }
+    catch { return ""; }
+  })();
+  const localHosts = new Set(["localhost", "127.0.0.1", "::1", ""]);
+  if (!localHosts.has(host)) {
+    console.error(`Refusing to run against non-local host '${host}'. Pass --force to override.`);
+    process.exit(1);
+  }
+}
+
 const conn = await mysql.createConnection({ uri: url, multipleStatements: true });
 
 await conn.query(`CREATE TABLE IF NOT EXISTS __dev_migrations (
@@ -48,3 +68,4 @@ if (failed.length) {
   for (const f of failed) console.log(`  ${f.file}: ${f.err.slice(0, 200)}`);
 }
 await conn.end();
+if (failed.length) process.exit(1);
