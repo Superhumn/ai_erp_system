@@ -70,6 +70,8 @@ export default function DataRoomDetail() {
   const [newFolderName, setNewFolderName] = useState("");
   const [renamingFolder, setRenamingFolder] = useState<{ id: number; name: string } | null>(null);
   const [renameFolderValue, setRenameFolderValue] = useState("");
+  const [renamingDoc, setRenamingDoc] = useState<{ id: number; name: string } | null>(null);
+  const [renameDocValue, setRenameDocValue] = useState("");
   const [editingLink, setEditingLink] = useState<any | null>(null);
   const [editLinkForm, setEditLinkForm] = useState({
     name: "",
@@ -233,6 +235,15 @@ export default function DataRoomDetail() {
       toast.success("Folder renamed");
       setRenamingFolder(null);
       refetchFolders();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const updateDocMutation = trpc.dataRoom.documents.update.useMutation({
+    onSuccess: () => {
+      toast.success("Document renamed");
+      setRenamingDoc(null);
+      refetchDocuments();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -832,6 +843,15 @@ export default function DataRoomDetail() {
                                   Download
                                 </DropdownMenuItem>
                               )}
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  setRenamingDoc({ id: doc.id, name: doc.name });
+                                  setRenameDocValue(doc.name);
+                                }}
+                              >
+                                <Pencil className="h-4 w-4 mr-2" />
+                                Rename
+                              </DropdownMenuItem>
                               <DropdownMenuItem
                                 className="text-destructive focus:text-destructive"
                                 onClick={() => {
@@ -2061,6 +2081,47 @@ export default function DataRoomDetail() {
         </Dialog>
 
 
+
+      {/* Rename document dialog */}
+      <Dialog
+        open={renamingDoc !== null}
+        onOpenChange={(open) => { if (!open) setRenamingDoc(null); }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Rename document</DialogTitle>
+            <DialogDescription>
+              Changes the display name. The underlying file (and any Drive link) is not modified.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <Label htmlFor="renameDocInput">New name</Label>
+            <Input
+              id="renameDocInput"
+              autoFocus
+              value={renameDocValue}
+              onChange={(e) => setRenameDocValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && renameDocValue.trim() && renamingDoc) {
+                  updateDocMutation.mutate({ id: renamingDoc.id, name: renameDocValue.trim() });
+                }
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenamingDoc(null)}>Cancel</Button>
+            <Button
+              disabled={!renameDocValue.trim() || updateDocMutation.isPending}
+              onClick={() => {
+                if (!renamingDoc) return;
+                updateDocMutation.mutate({ id: renamingDoc.id, name: renameDocValue.trim() });
+              }}
+            >
+              {updateDocMutation.isPending ? "Saving…" : "Rename"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Rename folder dialog */}
       <Dialog

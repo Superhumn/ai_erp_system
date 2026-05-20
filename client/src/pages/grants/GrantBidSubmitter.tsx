@@ -158,12 +158,15 @@ export default function GrantBidSubmitter() {
 
       {/* Main Tabs: Discover vs Applications */}
       <Tabs value={mainTab} onValueChange={setMainTab}>
-        <TabsList className="grid w-full max-w-md grid-cols-2">
+        <TabsList className="grid w-full max-w-lg grid-cols-3">
           <TabsTrigger value="discover" className="flex items-center gap-2">
             <Search className="h-4 w-4" /> Discover Opportunities
           </TabsTrigger>
           <TabsTrigger value="applications" className="flex items-center gap-2">
             <FileText className="h-4 w-4" /> My Applications
+          </TabsTrigger>
+          <TabsTrigger value="templates" className="flex items-center gap-2">
+            <FileText className="h-4 w-4" /> Templates
           </TabsTrigger>
         </TabsList>
 
@@ -287,6 +290,10 @@ export default function GrantBidSubmitter() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        <TabsContent value="templates" className="space-y-2">
+          <NarrativeTemplates />
+        </TabsContent>
       </Tabs>
 
       <AlertDialog open={deletingAppId !== null} onOpenChange={(open) => { if (!open) setDeletingAppId(null); }}>
@@ -315,6 +322,310 @@ export default function GrantBidSubmitter() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
+// Narrative Templates — manage reusable proposal templates that
+// the AI narrative generator uses as a starting outline. Each
+// template has a type, optional description, and JSON sections.
+// ──────────────────────────────────────────────────────────────
+const TEMPLATE_TYPES = [
+  { value: "grant", label: "Grant" },
+  { value: "procurement_bid", label: "Procurement Bid" },
+  { value: "rfp_response", label: "RFP Response" },
+  { value: "subsidy", label: "Subsidy" },
+  { value: "tax_incentive", label: "Tax Incentive" },
+] as const;
+
+type TemplateType = (typeof TEMPLATE_TYPES)[number]["value"];
+
+function NarrativeTemplates() {
+  const utils = trpc.useUtils();
+  const { data: templates, isLoading } = trpc.grantBid.templates.list.useQuery();
+  const [editing, setEditing] = useState<any | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [form, setForm] = useState({
+    name: "",
+    type: "grant" as TemplateType,
+    description: "",
+    sections: "",
+  });
+
+  const createTemplate = trpc.grantBid.templates.create.useMutation({
+    onSuccess: () => {
+      toast.success("Template created");
+      setCreating(false);
+      setForm({ name: "", type: "grant", description: "", sections: "" });
+      utils.grantBid.templates.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const updateTemplate = trpc.grantBid.templates.update.useMutation({
+    onSuccess: () => {
+      toast.success("Template updated");
+      setEditing(null);
+      utils.grantBid.templates.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const deleteTemplate = trpc.grantBid.templates.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Template deleted");
+      setDeletingId(null);
+      utils.grantBid.templates.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const openCreate = () => {
+    setForm({ name: "", type: "grant", description: "", sections: "" });
+    setCreating(true);
+  };
+
+  const openEdit = (t: any) => {
+    setForm({
+      name: t.name || "",
+      type: (t.type as TemplateType) || "grant",
+      description: t.description || "",
+      sections: t.sections || "",
+    });
+    setEditing(t);
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-base font-medium">Narrative templates</div>
+            <p className="text-sm text-muted-foreground">
+              Reusable proposal templates. The AI narrative generator uses these as the starting
+              outline for new applications of the matching type.
+            </p>
+          </div>
+          <Button onClick={openCreate}>
+            <Plus className="h-4 w-4 mr-2" />
+            New template
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="py-8 text-center text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin mx-auto" />
+          </div>
+        ) : !templates || templates.length === 0 ? (
+          <div className="py-8 text-center text-muted-foreground">
+            <p className="text-sm">No templates yet.</p>
+            <p className="text-xs">
+              New applications will fall back to the built-in default sections for their type.
+            </p>
+          </div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Description</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="w-24"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(templates as any[]).map((t: any) => (
+                <TableRow key={t.id}>
+                  <TableCell className="font-medium">{t.name}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline">
+                      {TEMPLATE_TYPES.find((tp) => tp.value === t.type)?.label || t.type}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground max-w-md truncate">
+                    {t.description || "—"}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={t.isActive === false ? "secondary" : "outline"}>
+                      {t.isActive === false ? "Inactive" : "Active"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label="Edit template"
+                        onClick={() => openEdit(t)}
+                      >
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label="Delete template"
+                        onClick={() => setDeletingId(t.id)}
+                      >
+                        <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+
+      {/* Create / edit dialog */}
+      <Dialog
+        open={creating || editing !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCreating(false);
+            setEditing(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-xl">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!form.name.trim()) return;
+              if (editing) {
+                updateTemplate.mutate({
+                  id: editing.id,
+                  name: form.name.trim(),
+                  description: form.description || undefined,
+                  sections: form.sections || undefined,
+                });
+              } else {
+                createTemplate.mutate({
+                  name: form.name.trim(),
+                  type: form.type,
+                  description: form.description || undefined,
+                  sections: form.sections || undefined,
+                });
+              }
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>{editing ? "Edit template" : "New template"}</DialogTitle>
+              <DialogDescription>
+                Sections are a JSON array — leave blank to use the server's built-in defaults for
+                this type.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="tplName">Name *</Label>
+                  <Input
+                    id="tplName"
+                    value={form.name}
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="tplType">Type</Label>
+                  <Select
+                    value={form.type}
+                    onValueChange={(v) => setForm({ ...form, type: v as TemplateType })}
+                    disabled={!!editing}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TEMPLATE_TYPES.map((tp) => (
+                        <SelectItem key={tp.value} value={tp.value}>
+                          {tp.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="tplDescription">Description</Label>
+                <Textarea
+                  id="tplDescription"
+                  rows={2}
+                  value={form.description}
+                  onChange={(e) => setForm({ ...form, description: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="tplSections">Sections (JSON)</Label>
+                <Textarea
+                  id="tplSections"
+                  rows={6}
+                  value={form.sections}
+                  onChange={(e) => setForm({ ...form, sections: e.target.value })}
+                  className="font-mono text-xs"
+                  placeholder='[{"key": "summary", "title": "Project Summary", "prompt": "..."}]'
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setCreating(false);
+                  setEditing(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={!form.name.trim() || createTemplate.isPending || updateTemplate.isPending}
+              >
+                {(createTemplate.isPending || updateTemplate.isPending) && (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                )}
+                {editing ? "Save changes" : "Create template"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete confirm */}
+      <AlertDialog
+        open={deletingId !== null}
+        onOpenChange={(open) => { if (!open) setDeletingId(null); }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete template?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Applications already generated from this template are not affected. Future
+              generations of this type will fall back to the built-in defaults.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteTemplate.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteTemplate.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (deletingId !== null) deleteTemplate.mutate({ id: deletingId });
+              }}
+            >
+              {deleteTemplate.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Delete template
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Card>
   );
 }
 
