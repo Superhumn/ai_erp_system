@@ -12,6 +12,7 @@ import { ArrowLeft, Package, Tag, DollarSign, Barcode, Layers } from "lucide-rea
 import { Link, useParams } from "wouter";
 import { formatCurrency } from "@/lib/format";
 import { toast } from "sonner";
+import { PriceTiersCard, RegionalSkusCard } from "./ProductPriceBook";
 
 export default function ProductDetail() {
   const params = useParams<{ id: string }>();
@@ -294,6 +295,12 @@ export default function ProductDetail() {
           </CardContent>
         </Card>
       )}
+
+      {/* Regional SKUs */}
+      <RegionalSkusCard productId={productId} />
+
+      {/* Price Tiers (foodservice / wholesale / MSRP per region) */}
+      <PriceTiersCard productId={productId} defaultCurrency={product.currency || "USD"} />
 
       {/* Inventory by Location */}
       {inventory && inventory.length > 0 && (
