@@ -414,7 +414,22 @@ export const appRouter = router({
         await createAuditLog(ctx.user.id, 'update', 'company', id);
         return { success: true };
       }),
-    structure: protectedProcedure.query(() => db.getCompanyStructure()),
+    // Lightweight: entity metadata + active-employee headcounts only.
+    // Safe for any authenticated role (incl. investor/vendor/contractor)
+    // because it doesn't expose individual employee identities.
+    structure: protectedProcedure.query(() => db.getCompanyStructureSummary()),
+    // Full roster (names, emails, titles). Gated to internal roles —
+    // external roles (investor/vendor/contractor/copacker) get FORBIDDEN.
+    structureWithRoster: protectedProcedure.query(({ ctx }) => {
+      const external = new Set(["investor", "vendor", "contractor", "copacker"]);
+      if (external.has(ctx.user.role)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "The employee directory is only available to internal team members.",
+        });
+      }
+      return db.getCompanyStructure();
+    }),
   }),
 
   // ============================================

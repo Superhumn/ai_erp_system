@@ -472,6 +472,27 @@ export async function updateCompany(id: number, data: Partial<InsertCompany>) {
   await db.update(companies).set(data).where(eq(companies.id, id));
 }
 
+export async function getCompanyStructureSummary() {
+  const db = await getDb();
+  if (!db) return { entities: [], unassignedCount: 0 };
+  const allCompanies = await db.select().from(companies).orderBy(asc(companies.type), asc(companies.name));
+  const counts = await db
+    .select({ companyId: employees.companyId, count: sql<number>`count(*)`.mapWith(Number) })
+    .from(employees)
+    .where(eq(employees.status, "active"))
+    .groupBy(employees.companyId);
+  const byCompany = new Map<number, number>();
+  let unassignedCount = 0;
+  for (const row of counts) {
+    if (row.companyId == null) unassignedCount = row.count;
+    else byCompany.set(row.companyId, row.count);
+  }
+  return {
+    entities: allCompanies.map((c) => ({ ...c, headcount: byCompany.get(c.id) ?? 0 })),
+    unassignedCount,
+  };
+}
+
 export async function getCompanyStructure() {
   const db = await getDb();
   if (!db) return { entities: [], unassigned: [] };
@@ -490,7 +511,7 @@ export async function getCompanyStructure() {
       managerId: employees.managerId,
     })
     .from(employees)
-    .where(ne(employees.status, "terminated"))
+    .where(eq(employees.status, "active"))
     .orderBy(asc(employees.lastName));
   const byCompany = new Map<number, typeof roster>();
   const unassigned: typeof roster = [];

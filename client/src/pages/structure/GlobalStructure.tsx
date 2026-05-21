@@ -1,8 +1,12 @@
-import { Building2, Users, Mail, Loader2 } from "lucide-react";
+import { Building2, Users, Mail, Loader2, Shield } from "lucide-react";
+import { Redirect } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/_core/hooks/useAuth";
+
+const EXTERNAL_ROLES = new Set(["investor", "vendor", "contractor", "copacker"]);
 
 type Employee = {
   id: number;
@@ -144,13 +148,35 @@ function EntityCard({ entity, depth = 0 }: { entity: Entity; depth?: number }) {
 }
 
 export default function GlobalStructure() {
-  const { data, isLoading } = trpc.companies.structure.useQuery();
+  const { user, loading: authLoading } = useAuth();
+  const isExternal = user ? EXTERNAL_ROLES.has(user.role) : false;
+  const { data, isLoading, error } = trpc.companies.structureWithRoster.useQuery(undefined, {
+    enabled: !authLoading && !isExternal,
+  });
 
+  if (authLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+  if (isExternal) return <Redirect to="/" />;
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
       </div>
+    );
+  }
+  if (error) {
+    return (
+      <Card>
+        <CardContent className="py-8 text-center">
+          <Shield className="mx-auto h-6 w-6 text-muted-foreground mb-2" />
+          <p className="text-sm text-muted-foreground">{error.message}</p>
+        </CardContent>
+      </Card>
     );
   }
 

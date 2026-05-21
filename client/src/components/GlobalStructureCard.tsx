@@ -24,13 +24,22 @@ function buildTree(entities: Entity[]) {
 }
 
 export function GlobalStructureCard() {
-  const { data, isLoading } = trpc.companies.structure.useQuery();
+  const { data, isLoading, error } = trpc.companies.structure.useQuery();
 
   if (isLoading) {
     return (
       <Card>
         <CardContent className="flex items-center justify-center py-8">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </CardContent>
+      </Card>
+    );
+  }
+  if (error) {
+    return (
+      <Card>
+        <CardContent className="py-6 text-sm text-muted-foreground">
+          Couldn't load company structure: {error.message}
         </CardContent>
       </Card>
     );
