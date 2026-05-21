@@ -2,6 +2,7 @@ import { Building2, Users, Mail, Loader2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { trpc } from "@/lib/trpc";
+import { cn } from "@/lib/utils";
 
 type Employee = {
   id: number;
@@ -26,9 +27,67 @@ type Entity = {
   employees: Employee[];
 };
 
+function OrgChartNode({ entity }: { entity: Entity }) {
+  return (
+    <a
+      href={`#entity-${entity.id}`}
+      className="inline-flex min-w-[10rem] flex-col items-center gap-1 rounded-lg border bg-card px-3 py-2 text-center shadow-sm transition-colors hover:border-primary hover:bg-accent"
+    >
+      <div className="flex items-center gap-1.5">
+        <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
+        <span className="font-medium text-sm leading-tight">{entity.name}</span>
+      </div>
+      <div className="flex items-center gap-1">
+        {entity.country && (
+          <Badge variant="outline" className="text-[10px] px-1 py-0">{entity.country}</Badge>
+        )}
+        <span className="flex items-center gap-0.5 text-xs text-muted-foreground">
+          <Users className="h-3 w-3" />
+          {entity.headcount}
+        </span>
+      </div>
+    </a>
+  );
+}
+
+function OrgChart({ parent, children }: { parent: Entity; children: Entity[] }) {
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Org chart</CardTitle>
+      </CardHeader>
+      <CardContent className="overflow-x-auto pb-6">
+        <div className="flex flex-col items-center min-w-fit">
+          <OrgChartNode entity={parent} />
+          {children.length > 0 && <div className="h-6 w-px bg-border" />}
+          {children.length === 1 && <OrgChartNode entity={children[0]} />}
+          {children.length > 1 && (
+            <div className="flex items-start">
+              {children.map((c, i) => (
+                <div key={c.id} className="relative flex flex-col items-center px-4">
+                  <div
+                    className={cn(
+                      "absolute top-0 h-px bg-border",
+                      i === 0 && "left-1/2 right-0",
+                      i === children.length - 1 && "left-0 right-1/2",
+                      i !== 0 && i !== children.length - 1 && "left-0 right-0",
+                    )}
+                  />
+                  <div className="h-6 w-px bg-border" />
+                  <OrgChartNode entity={c} />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function EntityCard({ entity, depth = 0 }: { entity: Entity; depth?: number }) {
   return (
-    <Card className={depth > 0 ? "ml-6" : undefined}>
+    <Card id={`entity-${entity.id}`} className={depth > 0 ? "ml-6 scroll-mt-4" : "scroll-mt-4"}>
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-2">
           <div className="space-y-1">
@@ -122,6 +181,9 @@ export default function GlobalStructure() {
           </CardContent>
         </Card>
       )}
+      {parents.map((p) => (
+        <OrgChart key={`chart-${p.id}`} parent={p} children={childrenByParent.get(p.id) ?? []} />
+      ))}
       {parents.map((p) => (
         <div key={p.id} className="space-y-3">
           <EntityCard entity={p} />
