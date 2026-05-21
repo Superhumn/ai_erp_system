@@ -97,7 +97,7 @@ jobs:
             a PR linking the issue. Keep changes minimal.
             Auto-merge enabled: ${{ needs.preflight.outputs.use_auto_merge }}.
             If true, run: gh pr merge <pr-number> --squash --auto --delete-branch
-          claude_args: --model claude-haiku-4-5
+          claude_args: --model claude-sonnet-4-6
 
   respond-to-mention:
     needs: preflight
