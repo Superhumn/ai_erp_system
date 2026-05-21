@@ -7088,3 +7088,335 @@ export const pmMilestones = mysqlTable("pm_milestones", {
 
 export type PmMilestone = typeof pmMilestones.$inferSelect;
 export type InsertPmMilestone = typeof pmMilestones.$inferInsert;
+
+// ============================================
+// MULTI-TIER PRICE BOOK & REGIONAL SKUS
+// ============================================
+
+// Per-region, per-channel price book entries (e.g. SA Foodservice base, SA Retail wholesale, SA Retail MSRP).
+// A product can have many price tiers across regions, channels, and effective windows.
+export const productPriceTiers = mysqlTable("product_price_tiers", {
+  id: int("id").autoincrement().primaryKey(),
+  productId: int("productId").notNull().references(() => products.id),
+  region: varchar("region", { length: 8 }).notNull(), // ISO-3166-1 alpha-2 ("SA","IN","US","ZA","EU") or "GLOBAL"
+  channel: mysqlEnum("channel", [
+    "foodservice", "wholesale", "retail_msrp", "retail_dtc", "export", "institutional", "online", "other"
+  ]).notNull(),
+  currency: varchar("currency", { length: 3 }).notNull(),
+  packSize: varchar("packSize", { length: 64 }), // "2 kg / 5 kg", "500 g"
+  unitOfMeasure: varchar("unitOfMeasure", { length: 16 }).default("kg"), // kg, g, unit, case
+  pricePerUnit: decimal("pricePerUnit", { precision: 15, scale: 4 }).notNull(),
+  taxMode: mysqlEnum("taxMode", ["exclusive", "inclusive", "exempt"]).default("exclusive").notNull(),
+  taxRate: decimal("taxRate", { precision: 5, scale: 2 }), // % VAT/GST
+  minOrderQty: decimal("minOrderQty", { precision: 15, scale: 4 }),
+  effectiveFrom: timestamp("effectiveFrom").notNull(),
+  effectiveTo: timestamp("effectiveTo"), // null = open ended (current price)
+  status: mysqlEnum("status", ["draft", "active", "superseded", "archived"]).default("active").notNull(),
+  contractOnly: boolean("contractOnly").default(false), // e.g. "Contract pricing for 500 kg+ recurring"
+  notes: text("notes"),
+  createdBy: int("createdBy").references(() => users.id),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ProductPriceTier = typeof productPriceTiers.$inferSelect;
+export type InsertProductPriceTier = typeof productPriceTiers.$inferInsert;
+
+// Volume discount bands attached to a price tier (e.g. 25-99 kg = 0%, 100-249 = -5%).
+export const productVolumeDiscounts = mysqlTable("product_volume_discounts", {
+  id: int("id").autoincrement().primaryKey(),
+  priceTierId: int("priceTierId").notNull().references(() => productPriceTiers.id),
+  minQty: decimal("minQty", { precision: 15, scale: 4 }).notNull(),
+  maxQty: decimal("maxQty", { precision: 15, scale: 4 }), // null = unbounded ("500 kg +")
+  discountPercent: decimal("discountPercent", { precision: 5, scale: 2 }).default("0"),
+  discountAmount: decimal("discountAmount", { precision: 15, scale: 4 }), // flat per-unit alternative
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ProductVolumeDiscount = typeof productVolumeDiscounts.$inferSelect;
+export type InsertProductVolumeDiscount = typeof productVolumeDiscounts.$inferInsert;
+
+// Region-specific SKU variants linked to a parent product (e.g. SH-BWS-001-SA, SH-BWS-001-IN).
+export const productRegionalSkus = mysqlTable("product_regional_skus", {
+  id: int("id").autoincrement().primaryKey(),
+  productId: int("productId").notNull().references(() => products.id),
+  region: varchar("region", { length: 8 }).notNull(),
+  regionalSku: varchar("regionalSku", { length: 64 }).notNull(),
+  barcode: varchar("barcode", { length: 32 }), // EAN-13, UPC, etc.
+  barcodeType: mysqlEnum("barcodeType", ["ean13", "upc", "gtin14", "code128", "other"]),
+  gs1Prefix: varchar("gs1Prefix", { length: 8 }), // e.g. "890" for India
+  localName: varchar("localName", { length: 255 }),
+  localDescription: text("localDescription"),
+  packagingFormat: varchar("packagingFormat", { length: 128 }), // "200ml Tetra Pak", "500 g retort pouch"
+  status: mysqlEnum("status", ["planned", "active", "discontinued"]).default("planned").notNull(),
+  launchedAt: timestamp("launchedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ProductRegionalSku = typeof productRegionalSkus.$inferSelect;
+export type InsertProductRegionalSku = typeof productRegionalSkus.$inferInsert;
+
+// ============================================
+// GOVERNMENT TENDERS (GeM, IRCTC, ICDS, CSD, AIIMS, state nutrition...)
+// ============================================
+
+export const governmentTenders = mysqlTable("government_tenders", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
+  title: varchar("title", { length: 500 }).notNull(),
+  portal: mysqlEnum("portal", [
+    "gem", "irctc", "icds", "csd", "aiims", "state_nutrition", "state_hospital",
+    "ministry_defense", "ministry_railways", "ministry_health", "ministry_food",
+    "eu_ted", "us_sam_gov", "uk_contracts_finder", "other"
+  ]).notNull(),
+  customPortalName: varchar("customPortalName", { length: 255 }),
+  category: mysqlEnum("category", [
+    "food_supply", "defense_canteen", "midday_meal", "hospital_procurement",
+    "railway_catering", "school_nutrition", "humanitarian_aid", "other"
+  ]).default("food_supply").notNull(),
+  solicitationNumber: varchar("solicitationNumber", { length: 128 }),
+  agency: varchar("agency", { length: 255 }),
+  country: varchar("country", { length: 8 }),
+  state: varchar("state", { length: 64 }),
+  // Dates
+  publishedDate: timestamp("publishedDate"),
+  submissionDeadline: timestamp("submissionDeadline"),
+  bidOpeningDate: timestamp("bidOpeningDate"),
+  awardDate: timestamp("awardDate"),
+  contractStartDate: timestamp("contractStartDate"),
+  contractEndDate: timestamp("contractEndDate"),
+  // Financials
+  estimatedValue: decimal("estimatedValue", { precision: 18, scale: 2 }),
+  bidAmount: decimal("bidAmount", { precision: 18, scale: 2 }),
+  awardedAmount: decimal("awardedAmount", { precision: 18, scale: 2 }),
+  emdAmount: decimal("emdAmount", { precision: 15, scale: 2 }), // earnest money deposit
+  emdRefundedAt: timestamp("emdRefundedAt"),
+  currency: varchar("currency", { length: 3 }).default("INR"),
+  // Status
+  status: mysqlEnum("status", [
+    "watching", "qualifying", "preparing", "submitted", "under_review",
+    "shortlisted", "awarded", "lost", "withdrawn", "cancelled"
+  ]).default("watching").notNull(),
+  // Compliance
+  classILocalSupplier: boolean("classILocalSupplier").default(false), // GeM Class I status
+  fssaiRequired: boolean("fssaiRequired").default(false),
+  bomRequired: boolean("bomRequired").default(false),
+  bankGuaranteeRequired: boolean("bankGuaranteeRequired").default(false),
+  // Contacts & links
+  contactName: varchar("contactName", { length: 255 }),
+  contactEmail: varchar("contactEmail", { length: 320 }),
+  contactPhone: varchar("contactPhone", { length: 32 }),
+  portalUrl: text("portalUrl"),
+  // Links
+  projectId: int("projectId").references(() => projects.id),
+  ownerId: int("ownerId").references(() => users.id),
+  notes: text("notes"),
+  createdBy: int("createdBy").references(() => users.id),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type GovernmentTender = typeof governmentTenders.$inferSelect;
+export type InsertGovernmentTender = typeof governmentTenders.$inferInsert;
+
+// ============================================
+// REGULATORY LICENSE REGISTRY (FSSAI, DPIIT, EFSA Novel Food, FDA, USDA, ...)
+// ============================================
+
+export const regulatoryLicenses = mysqlTable("regulatory_licenses", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
+  licenseType: mysqlEnum("licenseType", [
+    "fssai_central", "fssai_state", "fssai_basic",
+    "dpiit_startup_india",
+    "efsa_novel_food", "fic_1169_2011_label", "traces_nt", "eu_organic",
+    "fda_food_facility", "fda_ffr", "usda_organic", "usda_amS",
+    "haccp", "iso_22000", "brc", "sqf",
+    "halal", "kosher", "non_gmo", "vegan_certified",
+    "gst_registration", "iec_import_export", "rcmc",
+    "pmksy_grant", "maharashtra_agro_grant", "karnataka_udyog_mitra",
+    "trademark", "patent", "copyright",
+    "other"
+  ]).notNull(),
+  customTypeName: varchar("customTypeName", { length: 255 }),
+  country: varchar("country", { length: 8 }).notNull(),
+  state: varchar("state", { length: 64 }),
+  authority: varchar("authority", { length: 255 }), // issuing body name
+  licenseNumber: varchar("licenseNumber", { length: 128 }),
+  status: mysqlEnum("status", [
+    "planned", "applied", "in_review", "issued", "active",
+    "expiring_soon", "expired", "revoked", "renewed", "rejected", "withdrawn"
+  ]).default("planned").notNull(),
+  // Dates
+  appliedDate: timestamp("appliedDate"),
+  issuedDate: timestamp("issuedDate"),
+  expirationDate: timestamp("expirationDate"),
+  renewalDueDate: timestamp("renewalDueDate"),
+  renewalReminderDays: int("renewalReminderDays").default(60),
+  lastRenewedAt: timestamp("lastRenewedAt"),
+  // Cost
+  applicationFee: decimal("applicationFee", { precision: 15, scale: 2 }),
+  annualFee: decimal("annualFee", { precision: 15, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  // Coverage
+  coversFacilityId: int("coversFacilityId").references(() => warehouses.id),
+  coversProductIds: json("coversProductIds"), // optional JSON array of product ids
+  // Contacts
+  contactName: varchar("contactName", { length: 255 }),
+  contactEmail: varchar("contactEmail", { length: 320 }),
+  contactPhone: varchar("contactPhone", { length: 32 }),
+  portalUrl: text("portalUrl"),
+  documentUrl: text("documentUrl"), // scan of the issued license
+  // Ownership
+  responsibleUserId: int("responsibleUserId").references(() => users.id),
+  projectId: int("projectId").references(() => projects.id),
+  notes: text("notes"),
+  createdBy: int("createdBy").references(() => users.id),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type RegulatoryLicense = typeof regulatoryLicenses.$inferSelect;
+export type InsertRegulatoryLicense = typeof regulatoryLicenses.$inferInsert;
+
+// ============================================
+// SUBSIDIARY FUNDRAISING ROUNDS
+// (kept separate from parent capTable — for India JV, etc.)
+// ============================================
+
+export const subsidiaryFundraisingRounds = mysqlTable("subsidiary_fundraising_rounds", {
+  id: int("id").autoincrement().primaryKey(),
+  subsidiaryCompanyId: int("subsidiaryCompanyId").notNull().references(() => companies.id),
+  parentCompanyId: int("parentCompanyId").references(() => companies.id),
+  name: varchar("name", { length: 255 }).notNull(), // "India Series Seed"
+  roundType: mysqlEnum("roundType", [
+    "pre_seed", "seed", "series_a", "series_b", "series_c",
+    "bridge", "convertible_note", "safe", "debt", "grant", "strategic", "other"
+  ]).notNull(),
+  targetAmount: decimal("targetAmount", { precision: 18, scale: 2 }),
+  raisedAmount: decimal("raisedAmount", { precision: 18, scale: 2 }).default("0"),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  preMoneyValuation: decimal("preMoneyValuation", { precision: 18, scale: 2 }),
+  postMoneyValuation: decimal("postMoneyValuation", { precision: 18, scale: 2 }),
+  parentOwnershipPctBefore: decimal("parentOwnershipPctBefore", { precision: 6, scale: 3 }),
+  parentOwnershipPctAfter: decimal("parentOwnershipPctAfter", { precision: 6, scale: 3 }),
+  leadInvestorName: varchar("leadInvestorName", { length: 255 }),
+  openedDate: timestamp("openedDate"),
+  closedDate: timestamp("closedDate"),
+  status: mysqlEnum("status", ["planning", "open", "closing", "closed", "cancelled"]).default("planning").notNull(),
+  notes: text("notes"),
+  createdBy: int("createdBy").references(() => users.id),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SubsidiaryFundraisingRound = typeof subsidiaryFundraisingRounds.$inferSelect;
+export type InsertSubsidiaryFundraisingRound = typeof subsidiaryFundraisingRounds.$inferInsert;
+
+export const subsidiaryFundraisingInvestors = mysqlTable("subsidiary_fundraising_investors", {
+  id: int("id").autoincrement().primaryKey(),
+  roundId: int("roundId").notNull().references(() => subsidiaryFundraisingRounds.id),
+  investorName: varchar("investorName", { length: 255 }).notNull(),
+  investorType: mysqlEnum("investorType", [
+    "individual", "angel", "vc", "pe", "corporate", "government", "family_office",
+    "crowd", "strategic", "employee", "other"
+  ]).default("individual").notNull(),
+  email: varchar("email", { length: 320 }),
+  phone: varchar("phone", { length: 32 }),
+  country: varchar("country", { length: 8 }),
+  commitmentAmount: decimal("commitmentAmount", { precision: 18, scale: 2 }),
+  fundedAmount: decimal("fundedAmount", { precision: 18, scale: 2 }).default("0"),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  ownershipPct: decimal("ownershipPct", { precision: 6, scale: 3 }),
+  status: mysqlEnum("status", [
+    "introduced", "in_diligence", "term_sheet", "committed",
+    "wired", "closed", "declined", "lapsed"
+  ]).default("introduced").notNull(),
+  contactId: int("contactId").references(() => crmContacts.id),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SubsidiaryFundraisingInvestor = typeof subsidiaryFundraisingInvestors.$inferSelect;
+export type InsertSubsidiaryFundraisingInvestor = typeof subsidiaryFundraisingInvestors.$inferInsert;
+
+// ============================================
+// BRAND AMBASSADORS / INFLUENCERS / CHARACTERS
+// (celebrity, athlete, animated character — pipeline + active partnerships)
+// ============================================
+
+export const brandAmbassadors = mysqlTable("brand_ambassadors", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
+  name: varchar("name", { length: 255 }).notNull(),
+  type: mysqlEnum("type", [
+    "celebrity", "athlete", "influencer", "chef", "musician", "actor",
+    "podcaster", "youtuber", "streamer", "model", "creator",
+    "animated_character", "fictional_character", "mascot", "other"
+  ]).notNull(),
+  category: varchar("category", { length: 128 }), // "cricket", "bollywood", "olympic", "food", "fitness"
+  country: varchar("country", { length: 8 }),
+  region: varchar("region", { length: 64 }),
+  // Reach
+  socialHandles: json("socialHandles"), // { instagram, x, tiktok, youtube, ... }
+  followerCount: bigint("followerCount", { mode: "number" }), // aggregate
+  followerCountByPlatform: json("followerCountByPlatform"),
+  estimatedReach: bigint("estimatedReach", { mode: "number" }),
+  // Pipeline
+  stage: mysqlEnum("stage", [
+    "shortlist", "prospect", "contacted", "in_negotiation",
+    "term_sheet", "signed", "active", "paused", "ended", "declined", "blacklisted"
+  ]).default("prospect").notNull(),
+  priority: mysqlEnum("priority", ["low", "medium", "high"]).default("medium"),
+  // Representation
+  agencyName: varchar("agencyName", { length: 255 }),
+  agentName: varchar("agentName", { length: 255 }),
+  agentEmail: varchar("agentEmail", { length: 320 }),
+  agentPhone: varchar("agentPhone", { length: 32 }),
+  // Deal
+  campaignName: varchar("campaignName", { length: 255 }),
+  contractStartDate: timestamp("contractStartDate"),
+  contractEndDate: timestamp("contractEndDate"),
+  contractValue: decimal("contractValue", { precision: 15, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  paymentTerms: varchar("paymentTerms", { length: 255 }),
+  deliverables: text("deliverables"), // free text or JSON-encoded list
+  exclusivity: text("exclusivity"),
+  usageRights: text("usageRights"),
+  // Links
+  contactId: int("contactId").references(() => crmContacts.id),
+  projectId: int("projectId").references(() => projects.id),
+  ownerUserId: int("ownerUserId").references(() => users.id),
+  notes: text("notes"),
+  createdBy: int("createdBy").references(() => users.id),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type BrandAmbassador = typeof brandAmbassadors.$inferSelect;
+export type InsertBrandAmbassador = typeof brandAmbassadors.$inferInsert;
+
+// Ambassador activity log (touchpoints, deliverables shipped, posts published).
+export const brandAmbassadorActivities = mysqlTable("brand_ambassador_activities", {
+  id: int("id").autoincrement().primaryKey(),
+  ambassadorId: int("ambassadorId").notNull().references(() => brandAmbassadors.id),
+  activityType: mysqlEnum("activityType", [
+    "outreach", "meeting", "call", "email", "proposal_sent",
+    "contract_sent", "contract_signed", "content_published",
+    "appearance", "shipment", "payment", "note"
+  ]).notNull(),
+  occurredAt: timestamp("occurredAt").notNull(),
+  summary: varchar("summary", { length: 500 }),
+  details: text("details"),
+  postUrl: text("postUrl"),
+  impressions: bigint("impressions", { mode: "number" }),
+  engagements: bigint("engagements", { mode: "number" }),
+  createdBy: int("createdBy").references(() => users.id),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type BrandAmbassadorActivity = typeof brandAmbassadorActivities.$inferSelect;
+export type InsertBrandAmbassadorActivity = typeof brandAmbassadorActivities.$inferInsert;
