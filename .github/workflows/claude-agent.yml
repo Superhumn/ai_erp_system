@@ -1,0 +1,119 @@
+name: Claude Code Agent
+
+on:
+  issues:
+    types: [opened]
+  issue_comment:
+    types: [created]
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [created]
+  check_suite:
+    types: [completed]
+  push:
+    branches: [main, master]
+  schedule:
+    - cron: '0 6 * * *'
+
+concurrency:
+  group: claude-${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number || github.event.check_suite.pull_requests[0].number || github.event.check_suite.id || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  REPO_GUIDANCE: |
+    Before making changes, read CLAUDE.md and AGENTS.md at the repo root if
+    they exist for repo-specific conventions. Run any lint/test commands
+    documented there before pushing.
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+      use_auto_merge: ${{ steps.check.outputs.use_auto_merge }}
+    steps:
+      - name: Check rate limit and app config
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CAP: ${{ vars.CLAUDE_DAILY_RUN_CAP || '50' }}
+          APP_ID: ${{ vars.CLAUDE_APP_ID }}
+        run: |
+          today=$(date -u +%Y-%m-%d)
+          count=$(gh api "repos/${{ github.repository }}/actions/runs?per_page=100" \
+            --jq '[.workflow_runs[] | select(.name == "Claude Code Agent") | select(.created_at | startswith("'"$today"'"))] | length' 2>/dev/null || echo 0)
+          echo "Today's Claude Agent runs: $count / $CAP"
+          if [ "$count" -ge "$CAP" ]; then
+            echo "::warning::Daily Claude Agent run cap ($CAP) reached; skipping."
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -n "$APP_ID" ]; then
+            echo "use_auto_merge=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::CLAUDE_APP_ID not set; auto-merge disabled."
+            echo "use_auto_merge=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  fix-issue:
+    needs: preflight
+    if: >-
+      needs.preflight.outputs.should_run == 'true' &&
+      github.event_name == 'issues' &&
+      github.event.issue.user.type != 'Bot'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.CLAUDE_APP_ID }}
+          private-key: ${{ secrets.CLAUDE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token || github.token }}
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ steps.app-token.outputs.token || github.token }}
+          prompt: |
+            ${{ env.REPO_GUIDANCE }}
+            Read this issue. Create a `claude/issue-<issue-number>` branch,
+            implement the fix, run any available tests, open a PR linking the issue.
+            Auto-merge enabled: ${{ needs.preflight.outputs.use_auto_merge }}.
+            If true, run: gh pr merge <pr-number> --squash --auto --delete-branch
+          claude_args: --model claude-haiku-4-5
+
+  auto-approve-claude-prs:
+    needs: preflight
+    if: >-
+      needs.preflight.outputs.should_run == 'true' &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false &&
+      startsWith(github.event.pull_request.head.ref, 'claude/') &&
+      github.event.pull_request.user.type == 'Bot'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Approve PR as github-actions[bot]
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr review "$PR_NUMBER" --approve \
+            --body "Auto-approved: PR authored by the Claude agent." || true
