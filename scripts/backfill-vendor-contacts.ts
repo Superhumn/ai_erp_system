@@ -1,5 +1,5 @@
-import "dotenv/config";
-import { getVendors, getVendorById, findCrmContactForVendor, linkVendorContact } from "../server/db";
+mport "dotenv/config";
+import { getVendors, findCrmContactForVendor, linkVendorContact } from "../server/db";
 
 async function main() {
   const vendors = await getVendors();
