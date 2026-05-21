@@ -271,6 +271,8 @@ export const vendors = mysqlTable("vendors", {
   defaultLeadTimeDays: int("defaultLeadTimeDays").default(14), // Default lead time for this vendor
   minOrderAmount: decimal("minOrderAmount", { precision: 12, scale: 2 }), // Minimum order amount
   shippingMethod: varchar("shippingMethod", { length: 64 }), // Preferred shipping method
+  contactId: int("contactId").references(() => crmContacts.id), // FK to crm_contacts.id (set on auto-link by phone or manual picker)
+  whatsappNumber: varchar("whatsappNumber", { length: 32 }), // Direct WhatsApp number for this vendor (overrides contact's)
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

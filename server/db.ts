@@ -585,6 +585,49 @@ export async function deleteVendor(id: number) {
   await db.delete(vendors).where(eq(vendors.id, id));
 }
 
+/**
+ * Look up a CRM contact that plausibly belongs to this vendor by matching
+ * on the vendor's phone/whatsappNumber/email. Used both at click-time
+ * (auto-link on first chat) and by the one-time backfill script.
+ */
+export async function findCrmContactForVendor(vendor: {
+  phone?: string | null;
+  whatsappNumber?: string | null;
+  email?: string | null;
+}) {
+  return findCrmContactMatch({
+    email: vendor.email,
+    phone: vendor.phone,
+    whatsappNumber: vendor.whatsappNumber || vendor.phone,
+  });
+}
+
+/**
+ * Link a CRM contact to a vendor. If `whatsappNumber` is not provided,
+ * mirror the contact's whatsappNumber/phone onto the vendor so the chat
+ * drawer can fall back to vendor.whatsappNumber without re-fetching.
+ */
+export async function linkVendorContact(vendorId: number, contactId: number, whatsappNumber?: string | null) {
+  const db = await getDb();
+  if (!db) return;
+  const patch: Record<string, any> = { contactId };
+  if (whatsappNumber !== undefined) {
+    patch.whatsappNumber = whatsappNumber || null;
+  } else {
+    const contact = await getCrmContactById(contactId);
+    if (contact?.whatsappNumber || contact?.phone) {
+      patch.whatsappNumber = contact.whatsappNumber || contact.phone;
+    }
+  }
+  await db.update(vendors).set(patch).where(eq(vendors.id, vendorId));
+}
+
+export async function unlinkVendorContact(vendorId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(vendors).set({ contactId: null, whatsappNumber: null }).where(eq(vendors.id, vendorId));
+}
+
 // ============================================
 // PRODUCT MANAGEMENT
 // ============================================
