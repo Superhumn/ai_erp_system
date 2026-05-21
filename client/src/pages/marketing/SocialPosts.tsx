@@ -288,6 +288,22 @@ function VideoRow({ video, onChanged }: { video: any; onChanged: () => void }) {
     onError: (e: any) => toast.error(e.message),
   });
 
+  const updateVideo = trpc.marketing.updateVideo.useMutation({
+    onSuccess: () => {
+      toast.success("Video updated");
+      onChanged();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const deleteVideo = trpc.marketing.deleteVideo.useMutation({
+    onSuccess: () => {
+      toast.success("Video deleted");
+      onChanged();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
   const toggle = (key: PlatformKey) => {
     setSelected(s => s.includes(key) ? s.filter(k => k !== key) : [...s, key]);
   };
@@ -303,6 +319,34 @@ function VideoRow({ video, onChanged }: { video: any; onChanged: () => void }) {
         </div>
         {video.description && <p className="text-xs text-muted-foreground line-clamp-1">{video.description}</p>}
       </div>
+      <div className="flex items-center gap-1">
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 px-2 text-xs"
+          onClick={() => {
+            const newTitle = prompt("Update video title", video.title);
+            if (newTitle && newTitle !== video.title) {
+              updateVideo.mutate({ id: video.id, title: newTitle });
+            }
+          }}
+          disabled={updateVideo.isPending}
+        >
+          Edit
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+          onClick={() => {
+            if (confirm(`Delete "${video.title}"? This removes the video record and any unpublished cuts.`)) {
+              deleteVideo.mutate({ id: video.id });
+            }
+          }}
+          disabled={deleteVideo.isPending}
+        >
+          Delete
+        </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogTrigger asChild>
           <Button size="sm" variant="outline" className="h-7 text-xs"><Send className="h-3 w-3 mr-1" /> Publish</Button>
@@ -355,6 +399,7 @@ function VideoRow({ video, onChanged }: { video: any; onChanged: () => void }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </div>
   );
 }
