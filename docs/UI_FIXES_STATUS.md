@@ -72,3 +72,12 @@ A long tail of pages with one unmapped mutation that's either context-bound (nee
 - `scripts/dump-trpc-paths.ts` → `/tmp/server-procs.txt` (signatures of every wired tRPC procedure)
 
 Refresh cycle: re-dump procs, re-run the three gap scripts, triage.
+
+## Follow-ups tracked as GitHub issues
+
+- #268 — CRM admin page: `crm.campaigns.create/update`, `crm.tags.addToContact/removeFromContact`, `crm.whatsapp.updateStatus`
+- #269 — Shopify location mappings dialog (`shopify.locationMappings.create`); skip `shopify.stores.create` (OAuth is the right path)
+- #270 — R&D Tax Credit: `rdTaxCredit.importFromQuickBooks` dialog
+- #271 — Inventory Costing: `inventoryCosting.cogs.generateSummary` + `configs.update`
+
+Each issue has the server contract, a suggested home page, and any blockers (e.g. #269 needs a `shopify.locations.list` query that doesn't exist yet).
