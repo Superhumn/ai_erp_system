@@ -31,11 +31,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { SelectWithCreate } from "@/components/ui/select-with-create";
-import { ClipboardList, Plus, Search, Loader2, Sparkles, Send, Trash2 } from "lucide-react";
+import { ClipboardList, Plus, Search, Loader2, Sparkles, Send, Trash2, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
 import { getStatusColor } from "@/lib/statusColors";
+import WhatsAppDrawer from "@/components/WhatsAppDrawer";
+import LinkContactDialog from "@/components/LinkContactDialog";
 
 type LineItem = {
   productId?: number;
@@ -53,6 +55,8 @@ export default function PurchaseOrders() {
   const [textInput, setTextInput] = useState("");
   const [activeAction, setActiveAction] = useState<'draft' | 'email' | null>(null);
   const [deletePOId, setDeletePOId] = useState<number | null>(null);
+  const [chatTarget, setChatTarget] = useState<{ contactId: number; whatsappNumber: string; contactName?: string; subtitle?: string } | null>(null);
+  const [linkTarget, setLinkTarget] = useState<{ vendorId: number; vendorName: string; vendorPhone?: string | null; poNumber: string } | null>(null);
   const [poPreview, setPoPreview] = useState<{
     vendorId: number;
     vendorName: string;
@@ -174,6 +178,40 @@ export default function PurchaseOrders() {
       setActiveAction(null);
     },
   });
+
+  const autoLinkMutation = trpc.vendors.autoLinkContact.useMutation();
+
+  async function handleOpenChat(po: any, vendor: any, e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!vendor) {
+      toast.error("No vendor on this PO");
+      return;
+    }
+    try {
+      const result = await autoLinkMutation.mutateAsync({ vendorId: vendor.id });
+      if (result.contact) {
+        const waNumber = result.contact.whatsappNumber || result.contact.phone || vendor.whatsappNumber || vendor.phone;
+        if (!waNumber) {
+          toast.error("Contact has no WhatsApp/phone number");
+          return;
+        }
+        if (result.autoLinked) {
+          toast.success(`Auto-linked to ${result.contact.fullName || "contact"}`);
+          utils.vendors.list.invalidate();
+        }
+        setChatTarget({
+          contactId: result.contact.id,
+          whatsappNumber: waNumber,
+          contactName: result.contact.fullName || vendor.contactName || vendor.name,
+          subtitle: `${vendor.name} · PO ${po.poNumber}`,
+        });
+      } else {
+        setLinkTarget({ vendorId: vendor.id, vendorName: vendor.name, vendorPhone: vendor.phone, poNumber: po.poNumber });
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to open chat");
+    }
+  }
 
   const deletePO = trpc.purchaseOrders.delete.useMutation({
     onSuccess: () => {
@@ -661,14 +699,29 @@ export default function PurchaseOrders() {
                         {po.notes || "-"}
                       </TableCell>
                       <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Delete purchase order"
-                          onClick={() => setDeletePOId(po.id)}
-                        >
-                          <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
-                        </Button>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`Chat with ${vendor?.name || "vendor"} on WhatsApp`}
+                            onClick={(e) => handleOpenChat(po, vendor, e)}
+                            disabled={!vendor || (autoLinkMutation.isPending && (autoLinkMutation.variables as { vendorId: number } | undefined)?.vendorId === vendor?.id)}
+                          >
+                            {autoLinkMutation.isPending && (autoLinkMutation.variables as { vendorId: number } | undefined)?.vendorId === vendor?.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <MessageCircle className="h-4 w-4 text-muted-foreground hover:text-green-600" />
+                            )}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Delete purchase order"
+                            onClick={() => setDeletePOId(po.id)}
+                          >
+                            <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
@@ -701,6 +754,39 @@ export default function PurchaseOrders() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {chatTarget && (
+        <WhatsAppDrawer
+          open={!!chatTarget}
+          onOpenChange={(open) => !open && setChatTarget(null)}
+          contactId={chatTarget.contactId}
+          whatsappNumber={chatTarget.whatsappNumber}
+          contactName={chatTarget.contactName}
+          subtitle={chatTarget.subtitle}
+        />
+      )}
+
+      {linkTarget && (
+        <LinkContactDialog
+          open={!!linkTarget}
+          onOpenChange={(open) => !open && setLinkTarget(null)}
+          vendorId={linkTarget.vendorId}
+          vendorName={linkTarget.vendorName}
+          vendorPhone={linkTarget.vendorPhone}
+          onLinked={(contact) => {
+            const waNumber = contact.whatsappNumber || contact.phone;
+            if (waNumber) {
+              setChatTarget({
+                contactId: contact.id,
+                whatsappNumber: waNumber,
+                contactName: contact.fullName || linkTarget.vendorName,
+                subtitle: `${linkTarget.vendorName} · PO ${linkTarget.poNumber}`,
+              });
+            }
+            setLinkTarget(null);
+          }}
+        />
+      )}
     </div>
   );
 }
