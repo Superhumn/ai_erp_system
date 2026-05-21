@@ -1,4 +1,4 @@
-mport "dotenv/config";
+import "dotenv/config";
 import { getVendors, findCrmContactForVendor, linkVendorContact } from "../server/db";
 
 async function main() {
