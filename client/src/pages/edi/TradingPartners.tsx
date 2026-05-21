@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -65,6 +65,9 @@ export default function TradingPartners() {
     unitOfMeasure: "EA",
     packSize: "",
   });
+  const [showAddCompliance, setShowAddCompliance] = useState(false);
+  const [showAddDocMap, setShowAddDocMap] = useState(false);
+  const [editingDocMap, setEditingDocMap] = useState<any | null>(null);
   const [editingLocation, setEditingLocation] = useState<any | null>(null);
   const [editLocationForm, setEditLocationForm] = useState({
     locationCode: "",
@@ -102,6 +105,37 @@ export default function TradingPartners() {
     { tradingPartnerId: selectedPartnerId! },
     { enabled: !!selectedPartnerId }
   );
+  const { data: partnerDocMaps } = trpc.edi.documentMaps.list.useQuery(
+    { tradingPartnerId: selectedPartnerId! },
+    { enabled: !!selectedPartnerId }
+  );
+
+  const createCompliance = trpc.edi.compliance.create.useMutation({
+    onSuccess: () => {
+      toast.success("Scorecard recorded");
+      setShowAddCompliance(false);
+      utils.edi.compliance.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const createDocMap = trpc.edi.documentMaps.create.useMutation({
+    onSuccess: () => {
+      toast.success("Document map created");
+      setShowAddDocMap(false);
+      utils.edi.documentMaps.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const updateDocMap = trpc.edi.documentMaps.update.useMutation({
+    onSuccess: () => {
+      toast.success("Document map updated");
+      setEditingDocMap(null);
+      utils.edi.documentMaps.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   const createPartner = trpc.edi.partners.create.useMutation({
     onSuccess: () => {
@@ -309,6 +343,7 @@ export default function TradingPartners() {
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="crosswalks">Product Crosswalks ({partnerCrosswalks?.length || 0})</TabsTrigger>
             <TabsTrigger value="locations">Ship-To Locations ({partnerLocations?.length || 0})</TabsTrigger>
+            <TabsTrigger value="docMaps">Document Maps ({partnerDocMaps?.length || 0})</TabsTrigger>
             <TabsTrigger value="compliance">Compliance ({partnerScorecards?.length || 0})</TabsTrigger>
           </TabsList>
 
@@ -761,14 +796,110 @@ export default function TradingPartners() {
             </Card>
           </TabsContent>
 
+          <TabsContent value="docMaps">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <Package className="h-4 w-4" />
+                      Document Maps
+                    </CardTitle>
+                    <CardDescription>
+                      Per-transaction-set mapping rules (850, 856, 810, etc.) that translate
+                      between this partner's EDI envelopes and our internal records.
+                    </CardDescription>
+                  </div>
+                  <Dialog open={showAddDocMap} onOpenChange={setShowAddDocMap}>
+                    <DialogTrigger asChild>
+                      <Button size="sm">
+                        <Plug className="h-3.5 w-3.5 mr-1" /> New map
+                      </Button>
+                    </DialogTrigger>
+                    <AddDocMapDialog
+                      onClose={() => setShowAddDocMap(false)}
+                      onCreate={createDocMap}
+                      tradingPartnerId={selectedPartnerId}
+                    />
+                  </Dialog>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {partnerDocMaps && partnerDocMaps.length > 0 ? (
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b text-left">
+                        <th className="pb-1 text-sm font-medium text-muted-foreground">Transaction set</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground">Direction</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground">Version</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground">Active</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground w-8"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {partnerDocMaps.map((m: any) => (
+                        <tr key={m.id} className="hover:bg-muted/50">
+                          <td className="py-0.5 text-sm font-mono font-medium">{m.transactionSetCode}</td>
+                          <td className="py-0.5 text-sm">
+                            <Badge variant="outline" className="text-xs capitalize">{m.direction}</Badge>
+                          </td>
+                          <td className="py-0.5 text-sm font-mono">{m.version || "-"}</td>
+                          <td className="py-0.5 text-sm">
+                            <input
+                              type="checkbox"
+                              className="h-3.5 w-3.5"
+                              checked={m.isActive !== false}
+                              onChange={(e) => updateDocMap.mutate({ id: m.id, isActive: e.target.checked })}
+                            />
+                          </td>
+                          <td className="py-0.5 text-right">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              aria-label="Edit document map"
+                              onClick={() => setEditingDocMap(m)}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <p className="text-sm text-muted-foreground text-center py-6">
+                    No document maps yet. Add one per EDI transaction set you exchange with this
+                    partner (850 = inbound PO, 856 = outbound ASN, etc.).
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
           <TabsContent value="compliance">
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <BarChart3 className="h-4 w-4" />
-                  Compliance Scorecards
-                </CardTitle>
-                <CardDescription>Track EDI compliance metrics and chargebacks</CardDescription>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <BarChart3 className="h-4 w-4" />
+                      Compliance Scorecards
+                    </CardTitle>
+                    <CardDescription>Track EDI compliance metrics and chargebacks</CardDescription>
+                  </div>
+                  <Dialog open={showAddCompliance} onOpenChange={setShowAddCompliance}>
+                    <DialogTrigger asChild>
+                      <Button size="sm">
+                        <BarChart3 className="h-3.5 w-3.5 mr-1" /> New scorecard
+                      </Button>
+                    </DialogTrigger>
+                    <AddScorecardDialog
+                      onClose={() => setShowAddCompliance(false)}
+                      onCreate={createCompliance}
+                      tradingPartnerId={selectedPartnerId}
+                    />
+                  </Dialog>
+                </div>
               </CardHeader>
               <CardContent>
                 {partnerScorecards && partnerScorecards.length > 0 ? (
@@ -1259,6 +1390,305 @@ export default function TradingPartners() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Edit document map dialog (lives outside the trigger Dialog so it can be reused) */}
+      <Dialog open={editingDocMap !== null} onOpenChange={(open) => { if (!open) setEditingDocMap(null); }}>
+        <EditDocMapDialogContent
+          docMap={editingDocMap}
+          onClose={() => setEditingDocMap(null)}
+          onUpdate={updateDocMap}
+        />
+      </Dialog>
     </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
+// Compliance scorecard create dialog
+// ──────────────────────────────────────────────────────────────
+function AddScorecardDialog({
+  onClose,
+  onCreate,
+  tradingPartnerId,
+}: {
+  onClose: () => void;
+  onCreate: any;
+  tradingPartnerId: number | null;
+}) {
+  const [periodStart, setPeriodStart] = useState("");
+  const [periodEnd, setPeriodEnd] = useState("");
+  const [totalTransactions, setTotalTransactions] = useState("");
+  const [onTimeShipPercentage, setOnTimeShipPercentage] = useState("");
+  const [fillRatePercentage, setFillRatePercentage] = useState("");
+  const [asnAccuracyPercentage, setAsnAccuracyPercentage] = useState("");
+  const [chargebackCount, setChargebackCount] = useState("");
+  const [chargebackAmount, setChargebackAmount] = useState("");
+  const [overallScore, setOverallScore] = useState("");
+  const [notes, setNotes] = useState("");
+
+  return (
+    <DialogContent className="max-w-lg">
+      <DialogHeader>
+        <DialogTitle>New compliance scorecard</DialogTitle>
+        <DialogDescription>
+          Record metrics for an EDI compliance period. Used for chargeback dispute evidence.
+        </DialogDescription>
+      </DialogHeader>
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <Label htmlFor="scStart" className="text-xs">Period start *</Label>
+            <Input id="scStart" type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} required />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="scEnd" className="text-xs">Period end *</Label>
+            <Input id="scEnd" type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} required />
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="space-y-1">
+            <Label htmlFor="scTxn" className="text-xs">Total transactions</Label>
+            <Input id="scTxn" type="number" value={totalTransactions} onChange={(e) => setTotalTransactions(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="scShip" className="text-xs">On-time ship %</Label>
+            <Input id="scShip" type="number" step="0.01" value={onTimeShipPercentage} onChange={(e) => setOnTimeShipPercentage(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="scFill" className="text-xs">Fill rate %</Label>
+            <Input id="scFill" type="number" step="0.01" value={fillRatePercentage} onChange={(e) => setFillRatePercentage(e.target.value)} />
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="space-y-1">
+            <Label htmlFor="scAsn" className="text-xs">ASN accuracy %</Label>
+            <Input id="scAsn" type="number" step="0.01" value={asnAccuracyPercentage} onChange={(e) => setAsnAccuracyPercentage(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="scCbCount" className="text-xs">Chargeback count</Label>
+            <Input id="scCbCount" type="number" value={chargebackCount} onChange={(e) => setChargebackCount(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="scCbAmount" className="text-xs">Chargeback $</Label>
+            <Input id="scCbAmount" type="number" step="0.01" value={chargebackAmount} onChange={(e) => setChargebackAmount(e.target.value)} />
+          </div>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="scOverall" className="text-xs">Overall score</Label>
+          <Input id="scOverall" type="number" step="0.01" value={overallScore} onChange={(e) => setOverallScore(e.target.value)} placeholder="0-100" />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="scNotes" className="text-xs">Notes</Label>
+          <Textarea id="scNotes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+        </div>
+      </div>
+      <DialogFooter>
+        <Button variant="outline" onClick={onClose}>Cancel</Button>
+        <Button
+          disabled={!periodStart || !periodEnd || !tradingPartnerId || onCreate.isPending}
+          onClick={() => {
+            if (!tradingPartnerId) return;
+            onCreate.mutate({
+              tradingPartnerId,
+              periodStart: new Date(periodStart),
+              periodEnd: new Date(periodEnd),
+              totalTransactions: totalTransactions ? parseInt(totalTransactions) : undefined,
+              onTimeShipPercentage: onTimeShipPercentage || undefined,
+              fillRatePercentage: fillRatePercentage || undefined,
+              asnAccuracyPercentage: asnAccuracyPercentage || undefined,
+              chargebackCount: chargebackCount ? parseInt(chargebackCount) : undefined,
+              chargebackAmount: chargebackAmount || undefined,
+              overallScore: overallScore || undefined,
+              notes: notes || undefined,
+            });
+          }}
+        >
+          {onCreate.isPending && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+          Create scorecard
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
+// Document map create dialog
+// ──────────────────────────────────────────────────────────────
+function AddDocMapDialog({
+  onClose,
+  onCreate,
+  tradingPartnerId,
+}: {
+  onClose: () => void;
+  onCreate: any;
+  tradingPartnerId: number | null;
+}) {
+  const [transactionSetCode, setTransactionSetCode] = useState("");
+  const [direction, setDirection] = useState<"inbound" | "outbound">("inbound");
+  const [version, setVersion] = useState("");
+  const [mappingRules, setMappingRules] = useState("{}");
+  const [validationRules, setValidationRules] = useState("");
+  const [notes, setNotes] = useState("");
+
+  return (
+    <DialogContent className="max-w-2xl">
+      <DialogHeader>
+        <DialogTitle>New document map</DialogTitle>
+        <DialogDescription>
+          Defines how a specific EDI transaction set is translated to/from internal records.
+        </DialogDescription>
+      </DialogHeader>
+      <div className="space-y-3">
+        <div className="grid grid-cols-3 gap-3">
+          <div className="space-y-1">
+            <Label htmlFor="dmCode" className="text-xs">Transaction set *</Label>
+            <Input id="dmCode" value={transactionSetCode} onChange={(e) => setTransactionSetCode(e.target.value)} placeholder="850" />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="dmDir" className="text-xs">Direction *</Label>
+            <Select value={direction} onValueChange={(v) => setDirection(v as any)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="inbound">Inbound</SelectItem>
+                <SelectItem value="outbound">Outbound</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="dmVer" className="text-xs">Version</Label>
+            <Input id="dmVer" value={version} onChange={(e) => setVersion(e.target.value)} placeholder="004010" />
+          </div>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="dmMapping" className="text-xs">Mapping rules (JSON) *</Label>
+          <textarea
+            id="dmMapping"
+            rows={8}
+            className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono"
+            value={mappingRules}
+            onChange={(e) => setMappingRules(e.target.value)}
+            placeholder='{"segments": {...}}'
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="dmValidation" className="text-xs">Validation rules (JSON, optional)</Label>
+          <textarea
+            id="dmValidation"
+            rows={4}
+            className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono"
+            value={validationRules}
+            onChange={(e) => setValidationRules(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="dmNotes" className="text-xs">Notes</Label>
+          <Textarea id="dmNotes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+        </div>
+      </div>
+      <DialogFooter>
+        <Button variant="outline" onClick={onClose}>Cancel</Button>
+        <Button
+          disabled={!transactionSetCode.trim() || !mappingRules.trim() || !tradingPartnerId || onCreate.isPending}
+          onClick={() => {
+            if (!tradingPartnerId) return;
+            onCreate.mutate({
+              tradingPartnerId,
+              transactionSetCode: transactionSetCode.trim(),
+              direction,
+              version: version || undefined,
+              mappingRules,
+              validationRules: validationRules || undefined,
+              notes: notes || undefined,
+            });
+          }}
+        >
+          {onCreate.isPending && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+          Create map
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
+// Document map edit dialog
+// ──────────────────────────────────────────────────────────────
+function EditDocMapDialogContent({
+  docMap,
+  onClose,
+  onUpdate,
+}: {
+  docMap: any | null;
+  onClose: () => void;
+  onUpdate: any;
+}) {
+  const [mappingRules, setMappingRules] = useState("");
+  const [validationRules, setValidationRules] = useState("");
+  const [notes, setNotes] = useState("");
+
+  // Re-sync local state whenever the dialog opens for a different map.
+  // Using a state-derived effect keeps the form in sync without lifting state up.
+  const lastIdRef = useRef<number | null>(null);
+  if (docMap && lastIdRef.current !== docMap.id) {
+    lastIdRef.current = docMap.id;
+    setMappingRules(docMap.mappingRules || "");
+    setValidationRules(docMap.validationRules || "");
+    setNotes(docMap.notes || "");
+  }
+
+  if (!docMap) return null;
+
+  return (
+    <DialogContent className="max-w-2xl">
+      <DialogHeader>
+        <DialogTitle>Edit document map</DialogTitle>
+        <DialogDescription>
+          {docMap.transactionSetCode} · {docMap.direction} · {docMap.version || "no version"}
+        </DialogDescription>
+      </DialogHeader>
+      <div className="space-y-3">
+        <div className="space-y-1">
+          <Label htmlFor="edmMapping" className="text-xs">Mapping rules (JSON)</Label>
+          <textarea
+            id="edmMapping"
+            rows={8}
+            className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono"
+            value={mappingRules}
+            onChange={(e) => setMappingRules(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="edmValidation" className="text-xs">Validation rules (JSON)</Label>
+          <textarea
+            id="edmValidation"
+            rows={4}
+            className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono"
+            value={validationRules}
+            onChange={(e) => setValidationRules(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="edmNotes" className="text-xs">Notes</Label>
+          <Textarea id="edmNotes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+        </div>
+      </div>
+      <DialogFooter>
+        <Button variant="outline" onClick={onClose}>Cancel</Button>
+        <Button
+          disabled={onUpdate.isPending}
+          onClick={() => {
+            onUpdate.mutate({
+              id: docMap.id,
+              mappingRules,
+              validationRules: validationRules || undefined,
+              notes: notes || undefined,
+            });
+          }}
+        >
+          {onUpdate.isPending && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+          Save changes
+        </Button>
+      </DialogFooter>
+    </DialogContent>
   );
 }
