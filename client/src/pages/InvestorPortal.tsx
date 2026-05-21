@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2, TrendingUp, TrendingDown, Wallet, Clock, Receipt, LineChart, Megaphone, Shield, FileText, Download, UserCog, PieChart, Gavel, ExternalLink, Rocket, CheckCircle2 } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Loader2, TrendingUp, TrendingDown, Wallet, Clock, Receipt, LineChart, Megaphone, Shield, FileText, Download, UserCog, PieChart, Gavel, ExternalLink, Rocket, CheckCircle2, Building2 } from "lucide-react";
 import { toast } from "sonner";
 
 // The logged-in existing-investor view. Reuses the same tRPC client the
@@ -40,9 +41,14 @@ function formatShares(s: number | string | null | undefined): string {
 }
 
 export default function InvestorPortal() {
-  const { data: me, isLoading: meLoading, error: meError } = trpc.investorPortal.me.useQuery();
-  const { data: fin, isLoading: finLoading } = trpc.investorPortal.financials.useQuery();
-  const { data: updates } = trpc.investorPortal.updates.useQuery();
+  // Multi-entity: an investor with stakes in parent + JVs picks which
+  // entity they're viewing. Default (undefined) → server picks the
+  // earliest stakeholder row.
+  const [companyId, setCompanyId] = useState<number | undefined>(undefined);
+  const queryInput = companyId !== undefined ? { companyId } : undefined;
+  const { data: me, isLoading: meLoading, error: meError } = trpc.investorPortal.me.useQuery(queryInput);
+  const { data: fin, isLoading: finLoading } = trpc.investorPortal.financials.useQuery(queryInput);
+  const { data: updates } = trpc.investorPortal.updates.useQuery(queryInput);
 
   if (meLoading) {
     return (
@@ -98,21 +104,49 @@ export default function InvestorPortal() {
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Investor Portal</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Welcome back, {me.stakeholder.name}. This is your always-current view of your
-            equity position and the company's financials.
-          </p>
-          {me.entity && (
-            <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1.5">
-              Viewing entity:
-              <span className="font-medium text-foreground">{me.entity.name}</span>
-              {me.entity.country && (
-                <Badge variant="outline" className="text-[10px] px-1 py-0">{me.entity.country}</Badge>
-              )}
-              <Badge variant="outline" className="text-[10px] px-1 py-0 capitalize">{me.entity.type}</Badge>
+        <div className="space-y-2">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Investor Portal</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              Welcome back, {me.stakeholder.name}. This is your always-current view of your
+              equity position and the company's financials.
             </p>
+          </div>
+          {me.entities && me.entities.length > 1 ? (
+            <div className="flex items-center gap-2">
+              <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">Viewing entity:</span>
+              <Select
+                value={String(me.entity?.id ?? me.entities[0].id)}
+                onValueChange={(v) => setCompanyId(Number(v))}
+              >
+                <SelectTrigger className="h-7 w-auto min-w-[12rem] text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {me.entities.map((e) => (
+                    <SelectItem key={e.id} value={String(e.id)}>
+                      {e.name}{e.country ? ` — ${e.country}` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <span className="text-xs text-muted-foreground">
+                ({me.entities.length} stakes)
+              </span>
+            </div>
+          ) : (
+            me.entity && (
+              <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                <Building2 className="h-3.5 w-3.5" />
+                Viewing entity:
+                <span className="font-medium text-foreground">{me.entity.name}</span>
+                {me.entity.country && (
+                  <Badge variant="outline" className="text-[10px] px-1 py-0">{me.entity.country}</Badge>
+                )}
+                <Badge variant="outline" className="text-[10px] px-1 py-0 capitalize">{me.entity.type}</Badge>
+              </p>
+            )
           )}
         </div>
         {me.stakeholder.accreditedInvestor && (
@@ -263,20 +297,20 @@ export default function InvestorPortal() {
       </Card>
 
       {/* My Documents */}
-      <MyDocumentsSection />
+      <MyDocumentsSection companyId={companyId} />
 
       {/* Active rounds — only renders when the company has an open round.
           The query returns an empty array otherwise; the section hides itself. */}
-      <ActiveRoundsSection />
+      <ActiveRoundsSection companyId={companyId} />
 
       {/* Cap table summary */}
-      <CapTableSummarySection />
+      <CapTableSummarySection companyId={companyId} />
 
       {/* Board materials — only renders when the investor holds tier=board. */}
-      {me.stakeholder.tier === "board" && <BoardMaterialsSection />}
+      {me.stakeholder.tier === "board" && <BoardMaterialsSection companyId={companyId} />}
 
       {/* Profile & Preferences */}
-      <ProfileSection />
+      <ProfileSection companyId={companyId} />
     </div>
   );
 }
@@ -288,8 +322,10 @@ export default function InvestorPortal() {
 // just unhide this section to fetch the data. Drafts and in-review
 // resolutions are hidden server-side (only approved / signed /
 // archived flow through).
-function BoardMaterialsSection() {
-  const { data: resolutions, isLoading } = trpc.investorPortal.boardMaterials.useQuery();
+function BoardMaterialsSection({ companyId }: { companyId?: number }) {
+  const { data: resolutions, isLoading } = trpc.investorPortal.boardMaterials.useQuery(
+    companyId !== undefined ? { companyId } : undefined,
+  );
 
   return (
     <Card>
@@ -358,8 +394,10 @@ function BoardMaterialsSection() {
 // investor signal pro-rata interest. The signal is non-binding — IR
 // follows up offline to collect subscription docs. Hides itself when
 // no active rounds exist (typical case).
-function ActiveRoundsSection() {
-  const { data: rounds, isLoading } = trpc.investorPortal.activeRounds.useQuery();
+function ActiveRoundsSection({ companyId }: { companyId?: number }) {
+  const { data: rounds, isLoading } = trpc.investorPortal.activeRounds.useQuery(
+    companyId !== undefined ? { companyId } : undefined,
+  );
   if (isLoading) return null;
   if (!rounds || rounds.length === 0) return null;
 
@@ -377,7 +415,7 @@ function ActiveRoundsSection() {
       </CardHeader>
       <CardContent className="space-y-4">
         {rounds.map((raw) => (
-          <RoundCard key={raw.id} round={raw as RoundShape} />
+          <RoundCard key={raw.id} round={raw as RoundShape} companyId={companyId} />
         ))}
       </CardContent>
     </Card>
@@ -403,7 +441,7 @@ type RoundShape = {
   } | null;
 };
 
-function RoundCard({ round }: { round: RoundShape }) {
+function RoundCard({ round, companyId }: { round: RoundShape; companyId?: number }) {
   const utils = trpc.useUtils();
   const [editing, setEditing] = useState(round.myIndication?.status !== "interested");
   const [amount, setAmount] = useState(round.myIndication?.indicatedAmount ?? "");
@@ -483,7 +521,7 @@ function RoundCard({ round }: { round: RoundShape }) {
                 disabled={withdraw.isPending}
                 onClick={() => {
                   if (confirm("Withdraw your interest in this round?")) {
-                    withdraw.mutate({ campaignId: round.id, withdraw: true });
+                    withdraw.mutate({ campaignId: round.id, withdraw: true, companyId });
                   }
                 }}
               >
@@ -532,6 +570,7 @@ function RoundCard({ round }: { round: RoundShape }) {
               disabled={indicate.isPending}
               onClick={() => indicate.mutate({
                 campaignId: round.id,
+                companyId,
                 indicatedAmount: amount.trim() || undefined,
                 notes: notes.trim() || undefined,
               })}
@@ -552,8 +591,10 @@ function RoundCard({ round }: { round: RoundShape }) {
 // major / board tiers additionally see a top-holders list (name + %,
 // never check size). The server enforces the gate — this component
 // just renders whatever the server returned.
-function CapTableSummarySection() {
-  const { data, isLoading } = trpc.investorPortal.capTableSummary.useQuery();
+function CapTableSummarySection({ companyId }: { companyId?: number }) {
+  const { data, isLoading } = trpc.investorPortal.capTableSummary.useQuery(
+    companyId !== undefined ? { companyId } : undefined,
+  );
 
   if (isLoading) {
     return (
@@ -644,8 +685,10 @@ function CapTableSummarySection() {
 // capital-call / distribution notices. Downloads go through a
 // short-lived signed URL the server issues per request — we never
 // hand the storage key to the browser.
-function MyDocumentsSection() {
-  const { data: docs, isLoading } = trpc.investorPortal.documents.list.useQuery();
+function MyDocumentsSection({ companyId }: { companyId?: number }) {
+  const { data: docs, isLoading } = trpc.investorPortal.documents.list.useQuery(
+    companyId !== undefined ? { companyId } : undefined,
+  );
   const downloadMutation = trpc.investorPortal.documents.downloadUrl.useMutation({
     onSuccess: ({ url }) => {
       // Open in a new tab — keeps the portal context, lets the browser
@@ -710,7 +753,7 @@ function MyDocumentsSection() {
                     size="sm"
                     variant="outline"
                     disabled={pendingForThisRow}
-                    onClick={() => downloadMutation.mutate({ id: d.id })}
+                    onClick={() => downloadMutation.mutate({ id: d.id, companyId })}
                   >
                     {pendingForThisRow ? (
                       <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
@@ -735,9 +778,11 @@ function MyDocumentsSection() {
 // payment-preference note, and accreditation re-attestation. Edits use
 // optimistic-ish form state — we don't reset on every keystroke from
 // the server.
-function ProfileSection() {
+function ProfileSection({ companyId }: { companyId?: number }) {
   const utils = trpc.useUtils();
-  const { data: profile, isLoading } = trpc.investorPortal.profile.get.useQuery();
+  const { data: profile, isLoading } = trpc.investorPortal.profile.get.useQuery(
+    companyId !== undefined ? { companyId } : undefined,
+  );
   const [draft, setDraft] = useState<{
     name: string; email: string; address: string;
     mailingAddress: string; paymentPreference: string;
@@ -854,7 +899,7 @@ function ProfileSection() {
               <Button
                 size="sm"
                 disabled={updateMutation.isPending}
-                onClick={() => updateMutation.mutate(draft)}
+                onClick={() => updateMutation.mutate({ ...draft, companyId })}
               >
                 {updateMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
                 Save
@@ -885,7 +930,7 @@ function ProfileSection() {
               size="sm"
               variant="outline"
               disabled={reAttest.isPending}
-              onClick={() => reAttest.mutate({ accredited: true })}
+              onClick={() => reAttest.mutate({ accredited: true, companyId })}
             >
               {reAttest.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
               Re-attest

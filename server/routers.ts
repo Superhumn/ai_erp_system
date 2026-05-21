@@ -260,6 +260,45 @@ async function assertEmailAccessRuleOwnership(ruleId: number, userId: number, us
   return rule;
 }
 
+// Resolve which stakeholder + entity an investor-portal call should act on.
+// A user can hold positions in multiple entities (parent + JVs), so callers
+// pass an optional companyId to select one; if omitted we default to their
+// earliest cap-table row. Admins/execs bypass the linkage requirement and
+// can scope by companyId for support, or leave it unscoped.
+async function resolveInvestorContext(
+  ctx: { user: { id: number; role: string } },
+  requestedCompanyId?: number,
+) {
+  if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
+  }
+  if (ctx.user.role !== "investor") {
+    return {
+      stakeholder: undefined as Awaited<ReturnType<typeof db.getStakeholderByUserId>> | undefined,
+      companyId: requestedCompanyId,
+      allStakeholders: [] as Awaited<ReturnType<typeof db.getStakeholdersByUserId>>,
+    };
+  }
+  const allStakeholders = await db.getStakeholdersByUserId(ctx.user.id);
+  if (allStakeholders.length === 0) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "No cap-table record is linked to your account. Ask the admin to link your stakeholder row.",
+    });
+  }
+  if (requestedCompanyId != null) {
+    const match = allStakeholders.find((s) => s.companyId === requestedCompanyId);
+    if (!match) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "You don't hold a position in that entity." });
+    }
+    return { stakeholder: match, companyId: match.companyId ?? undefined, allStakeholders };
+  }
+  const primary = allStakeholders[0];
+  return { stakeholder: primary, companyId: primary.companyId ?? undefined, allStakeholders };
+}
+
+const investorCompanyIdInput = z.object({ companyId: z.number().optional() }).optional();
+
 
 export const appRouter = router({
   system: systemRouter,
@@ -21185,11 +21224,10 @@ Return JSON array only. No markdown.`;
     // The logged-in investor's own cap-table position. Returns their
     // stakeholder row, every grant, and the total-shares figure used to
     // derive ownership % — but never data about other stakeholders.
-    me: protectedProcedure.query(async ({ ctx }) => {
-      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
-      }
-      const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+    me: protectedProcedure
+      .input(investorCompanyIdInput)
+      .query(async ({ ctx, input }) => {
+      const { stakeholder, allStakeholders } = await resolveInvestorContext(ctx, input?.companyId);
       if (!stakeholder) {
         throw new TRPCError({
           code: "NOT_FOUND",
@@ -21202,6 +21240,16 @@ Return JSON array only. No markdown.`;
       const entity = stakeholder.companyId
         ? await db.getCompanyById(stakeholder.companyId)
         : undefined;
+      // The full list of entities this user holds a position in, so the
+      // UI can render an entity switcher. Resolved in one query per id
+      // since a typical investor has 1–3 entities.
+      const entities = await Promise.all(
+        allStakeholders.map(async (s) => {
+          if (!s.companyId) return null;
+          const c = await db.getCompanyById(s.companyId);
+          return c ? { id: c.id, name: c.name, type: c.type, country: c.country } : null;
+        }),
+      ).then((rows) => rows.filter((r) => r !== null));
 
       const totalShares = allGrants.reduce(
         (s: number, g: { shares?: string | number | null }) =>
@@ -21239,6 +21287,7 @@ Return JSON array only. No markdown.`;
         entity: entity
           ? { id: entity.id, name: entity.name, type: entity.type, country: entity.country }
           : null,
+        entities,
         grants: decoratedGrants,
         ownershipPct,
         sharesOutstanding: mySharesOutstanding,
@@ -21247,42 +21296,23 @@ Return JSON array only. No markdown.`;
     }),
 
     // Wider financials snapshot than the prospect-facing /dr/:code page.
-    financials: protectedProcedure.query(async ({ ctx }) => {
-      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
-      }
-      // Gate on stakeholder linkage too — admins hitting this for support
-      // are fine, but an investor-role user without a cap-table link is a
-      // broken onboarding state and should surface the same message as `me`.
-      // Also picks up the stakeholder's companyId so the snapshot is
-      // scoped rather than aggregated across all companies in the DB.
-      const stakeholder = ctx.user.role === "investor"
-        ? await db.getStakeholderByUserId(ctx.user.id)
-        : undefined;
-      if (ctx.user.role === "investor" && !stakeholder) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
-      }
-      const { computeInvestorPortalFinancials } = await import("./investorPortalFinancials");
-      return computeInvestorPortalFinancials({
-        companyId: stakeholder?.companyId ?? undefined,
-      });
-    }),
+    financials: protectedProcedure
+      .input(investorCompanyIdInput)
+      .query(async ({ ctx, input }) => {
+        const { companyId } = await resolveInvestorContext(ctx, input?.companyId);
+        const { computeInvestorPortalFinancials } = await import("./investorPortalFinancials");
+        return computeInvestorPortalFinancials({ companyId });
+      }),
 
     // Investor updates the admin has published. We only show `status='sent'`
     // so drafts and in-review pieces don't leak.
-    updates: protectedProcedure.query(async ({ ctx }) => {
-      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
-      }
-      const stakeholder = ctx.user.role === "investor"
-        ? await db.getStakeholderByUserId(ctx.user.id)
-        : undefined;
-      if (ctx.user.role === "investor" && !stakeholder) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
-      }
+    updates: protectedProcedure
+      .input(investorCompanyIdInput)
+      .query(async ({ ctx, input }) => {
+      const { companyId } = await resolveInvestorContext(ctx, input?.companyId);
       const updates = await db.getInvestorUpdates({
         status: "sent",
-        companyId: stakeholder?.companyId ?? undefined,
+        companyId,
       });
       return updates.map((u: Record<string, unknown>) => ({
         id: u.id,
@@ -21387,18 +21417,11 @@ Return JSON array only. No markdown.`;
     // collect subscription docs. We deliberately don't expose the
     // campaign's existing investor list (other check sizes / commits)
     // here; that's an IR/founder view, not an investor view.
-    activeRounds: protectedProcedure.query(async ({ ctx }) => {
-      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
-      }
-      const stakeholder = ctx.user.role === "investor"
-        ? await db.getStakeholderByUserId(ctx.user.id)
-        : undefined;
-      if (ctx.user.role === "investor" && !stakeholder) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
-      }
-
-      const all = await db.getFundraisingCampaigns(stakeholder?.companyId ?? undefined);
+    activeRounds: protectedProcedure
+      .input(investorCompanyIdInput)
+      .query(async ({ ctx, input }) => {
+      const { stakeholder, companyId } = await resolveInvestorContext(ctx, input?.companyId);
+      const all = await db.getFundraisingCampaigns(companyId);
       type Campaign = {
         id: number; name: string; description: string | null;
         targetAmount: string | null; raisedAmount: string | null;
@@ -21445,6 +21468,7 @@ Return JSON array only. No markdown.`;
     indicateInterest: protectedProcedure
       .input(z.object({
         campaignId: z.number(),
+        companyId: z.number().optional(),
         // Decimal-as-string: stays out of float-rounding territory and
         // matches how Drizzle's decimal column accepts values.
         indicatedAmount: z.string()
@@ -21459,12 +21483,12 @@ Return JSON array only. No markdown.`;
         if (ctx.user.role !== "investor") {
           throw new TRPCError({ code: "FORBIDDEN", message: "Only investors can signal pro-rata interest." });
         }
-        const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+        const { stakeholder, companyId } = await resolveInvestorContext(ctx, input.companyId);
         if (!stakeholder) {
           throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
         }
         // Verify the campaign is real, active, and in the same company.
-        const all = await db.getFundraisingCampaigns(stakeholder.companyId ?? undefined);
+        const all = await db.getFundraisingCampaigns(companyId);
         const campaign = (all as Array<{ id: number; status: string }>).find((c) => c.id === input.campaignId);
         if (!campaign) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Round not found" });
@@ -21491,14 +21515,10 @@ Return JSON array only. No markdown.`;
     //
     // Drafts and in-review resolutions are excluded so we don't leak
     // pre-decisional material.
-    boardMaterials: protectedProcedure.query(async ({ ctx }) => {
-      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
-      }
-      const stakeholder = ctx.user.role === "investor"
-        ? await db.getStakeholderByUserId(ctx.user.id)
-        : undefined;
-
+    boardMaterials: protectedProcedure
+      .input(investorCompanyIdInput)
+      .query(async ({ ctx, input }) => {
+      const { stakeholder, companyId } = await resolveInvestorContext(ctx, input?.companyId);
       // Tier gate: investor must hold tier='board'. Admin/exec bypass.
       const allowed = ctx.user.role === "admin"
         || ctx.user.role === "exec"
@@ -21510,9 +21530,7 @@ Return JSON array only. No markdown.`;
         });
       }
 
-      const resolutions = await db.getBoardResolutions({
-        companyId: stakeholder?.companyId ?? undefined,
-      });
+      const resolutions = await db.getBoardResolutions({ companyId });
       // Whitelist statuses we're willing to show. `approved`/`signed`/
       // `archived` are board-history; everything else is pre-decisional.
       const visible = (resolutions as Array<{
@@ -21540,18 +21558,10 @@ Return JSON array only. No markdown.`;
     // holders list (name + ownership %, never check size). Ordinary
     // tier deliberately doesn't get other-investor names — that's the
     // line-item leak we want to avoid.
-    capTableSummary: protectedProcedure.query(async ({ ctx }) => {
-      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
-      }
-      const stakeholder = ctx.user.role === "investor"
-        ? await db.getStakeholderByUserId(ctx.user.id)
-        : undefined;
-      if (ctx.user.role === "investor" && !stakeholder) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
-      }
-
-      const companyId = stakeholder?.companyId ?? undefined;
+    capTableSummary: protectedProcedure
+      .input(investorCompanyIdInput)
+      .query(async ({ ctx, input }) => {
+      const { stakeholder, companyId } = await resolveInvestorContext(ctx, input?.companyId);
       const [grants, classes, allStakeholders] = await Promise.all([
         db.getEquityGrants(companyId),
         db.getShareClasses(companyId),
@@ -21638,8 +21648,10 @@ Return JSON array only. No markdown.`;
     // record. Admins can browse any stakeholder's locker via the
     // `capTable.stakeholders.documents.*` admin endpoints.
     documents: router({
-      list: protectedProcedure.query(async ({ ctx }) => {
-        const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+      list: protectedProcedure
+        .input(investorCompanyIdInput)
+        .query(async ({ ctx, input }) => {
+        const { stakeholder } = await resolveInvestorContext(ctx, input?.companyId);
         if (!stakeholder) {
           throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
         }
@@ -21662,14 +21674,18 @@ Return JSON array only. No markdown.`;
       // We re-validate ownership on every call so a leaked id from one
       // investor can't be replayed by another.
       downloadUrl: protectedProcedure
-        .input(z.object({ id: z.number() }))
+        .input(z.object({ id: z.number(), companyId: z.number().optional() }))
         .mutation(async ({ input, ctx }) => {
-          const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+          const { stakeholder, allStakeholders } = await resolveInvestorContext(ctx, input.companyId);
           if (!stakeholder) {
             throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
           }
           const doc = await db.getStakeholderDocumentById(input.id);
-          if (!doc || doc.stakeholderId !== stakeholder.id) {
+          // Allow download if the doc belongs to ANY stakeholder row this
+          // user owns — so switching entities in the UI doesn't break
+          // download links the user just rendered.
+          const ownedIds = new Set(allStakeholders.map((s) => s.id));
+          if (!doc || !ownedIds.has(doc.stakeholderId)) {
             throw new TRPCError({ code: "NOT_FOUND", message: "Document not found" });
           }
           const { storageGet } = await import("./storage");
@@ -21684,8 +21700,10 @@ Return JSON array only. No markdown.`;
     // info. Email is editable but `userId` and `type` aren't — those
     // are admin-controlled.
     profile: router({
-      get: protectedProcedure.query(async ({ ctx }) => {
-        const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+      get: protectedProcedure
+        .input(investorCompanyIdInput)
+        .query(async ({ ctx, input }) => {
+        const { stakeholder } = await resolveInvestorContext(ctx, input?.companyId);
         if (!stakeholder) {
           throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
         }
@@ -21701,6 +21719,7 @@ Return JSON array only. No markdown.`;
       }),
       update: protectedProcedure
         .input(z.object({
+          companyId: z.number().optional(),
           name: z.string().min(1).max(256).optional(),
           email: z.string().email().optional(),
           address: z.string().max(2000).optional(),
@@ -21708,11 +21727,12 @@ Return JSON array only. No markdown.`;
           paymentPreference: z.string().max(2000).optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+          const { companyId, ...patch } = input;
+          const { stakeholder } = await resolveInvestorContext(ctx, companyId);
           if (!stakeholder) {
             throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
           }
-          await db.updateStakeholder(stakeholder.id, input);
+          await db.updateStakeholder(stakeholder.id, patch);
           return { success: true };
         }),
       // Re-attestation creates a timestamped self-certification that the
@@ -21720,9 +21740,9 @@ Return JSON array only. No markdown.`;
       // criteria. We don't re-validate the criteria here — that's a
       // legal review the investor does themselves.
       reAttestAccreditation: protectedProcedure
-        .input(z.object({ accredited: z.boolean() }))
+        .input(z.object({ accredited: z.boolean(), companyId: z.number().optional() }))
         .mutation(async ({ input, ctx }) => {
-          const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+          const { stakeholder } = await resolveInvestorContext(ctx, input.companyId);
           if (!stakeholder) {
             throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
           }

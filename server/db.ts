@@ -12524,6 +12524,14 @@ export async function getStakeholderByUserId(userId: number) {
   return result[0];
 }
 
+export async function getStakeholdersByUserId(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(stakeholders)
+    .where(eq(stakeholders.userId, userId))
+    .orderBy(asc(stakeholders.id));
+}
+
 // --- Stakeholder Documents (investor portal "My Documents" locker) ---
 
 export async function getStakeholderDocuments(stakeholderId: number) {
