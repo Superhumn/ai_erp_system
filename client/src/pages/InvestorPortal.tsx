@@ -104,6 +104,16 @@ export default function InvestorPortal() {
             Welcome back, {me.stakeholder.name}. This is your always-current view of your
             equity position and the company's financials.
           </p>
+          {me.entity && (
+            <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1.5">
+              Viewing entity:
+              <span className="font-medium text-foreground">{me.entity.name}</span>
+              {me.entity.country && (
+                <Badge variant="outline" className="text-[10px] px-1 py-0">{me.entity.country}</Badge>
+              )}
+              <Badge variant="outline" className="text-[10px] px-1 py-0 capitalize">{me.entity.type}</Badge>
+            </p>
+          )}
         </div>
         {me.stakeholder.accreditedInvestor && (
           <Badge variant="outline">Accredited</Badge>

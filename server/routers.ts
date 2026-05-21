@@ -21199,6 +21199,9 @@ Return JSON array only. No markdown.`;
       const grants = await db.getEquityGrantsByStakeholder(stakeholder.id);
       const allGrants = await db.getEquityGrants(stakeholder.companyId ?? undefined);
       const shareClasses = await db.getShareClasses(stakeholder.companyId ?? undefined);
+      const entity = stakeholder.companyId
+        ? await db.getCompanyById(stakeholder.companyId)
+        : undefined;
 
       const totalShares = allGrants.reduce(
         (s: number, g: { shares?: string | number | null }) =>
@@ -21233,6 +21236,9 @@ Return JSON array only. No markdown.`;
           tier: stakeholder.tier,
           accreditedInvestor: stakeholder.accreditedInvestor,
         },
+        entity: entity
+          ? { id: entity.id, name: entity.name, type: entity.type, country: entity.country }
+          : null,
         grants: decoratedGrants,
         ownershipPct,
         sharesOutstanding: mySharesOutstanding,
@@ -21268,7 +21274,16 @@ Return JSON array only. No markdown.`;
       if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
         throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
       }
-      const updates = await db.getInvestorUpdates({ status: "sent" });
+      const stakeholder = ctx.user.role === "investor"
+        ? await db.getStakeholderByUserId(ctx.user.id)
+        : undefined;
+      if (ctx.user.role === "investor" && !stakeholder) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+      }
+      const updates = await db.getInvestorUpdates({
+        status: "sent",
+        companyId: stakeholder?.companyId ?? undefined,
+      });
       return updates.map((u: Record<string, unknown>) => ({
         id: u.id,
         title: u.title,
