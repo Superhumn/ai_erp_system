@@ -36,7 +36,8 @@ import {
   Linkedin, Building2, DollarSign, TrendingUp, UserPlus,
   Smartphone, QrCode, CreditCard, Filter, MoreHorizontal,
   Calendar, Clock, MessageCircle, Target, Handshake, HardDrive,
-  Sparkles, ChevronDown, ChevronUp, ArrowRight, Upload, Heart, Truck
+  Sparkles, ChevronDown, ChevronUp, ArrowRight, Upload, Heart, Truck,
+  Settings, Trash2
 } from "lucide-react";
 import { Link } from "wouter";
 import {
@@ -143,6 +144,31 @@ export default function CRMHub() {
     onSuccess: () => refetchDeals(),
   });
 
+  const deleteDeal = trpc.crm.deals.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Deal deleted");
+      refetchDeals();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const deletePlaceholderContacts = trpc.crm.contacts.deletePlaceholders.useMutation({
+    onSuccess: (r: any) => {
+      const n = r?.deleted ?? 0;
+      toast.success(n > 0 ? `Removed ${n} placeholder contact${n === 1 ? "" : "s"}` : "No placeholder contacts found");
+      refetchContacts();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const autoMergeContacts = trpc.crm.contacts.autoMergeDuplicates.useMutation({
+    onSuccess: (r: any) => {
+      const n = r?.merged ?? 0;
+      toast.success(n > 0 ? `Merged ${n} duplicate group${n === 1 ? "" : "s"}` : "No duplicates found");
+      refetchContacts();
+    },
+    onError: (e) => toast.error(e.message),
+  });
   const createDeal = trpc.crm.deals.create.useMutation({
     onSuccess: () => {
       toast.success("Deal created");
@@ -403,6 +429,39 @@ export default function CRMHub() {
             )}
             {syncFromSheets.isPending ? "Syncing..." : "Sync from Sheets"}
           </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm">
+                <Settings className="h-4 w-4 mr-2" />
+                CRM admin
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-64">
+              <DropdownMenuItem
+                disabled={autoMergeContacts.isPending}
+                onClick={() => {
+                  if (confirm("Auto-merge contacts that look like duplicates? (Email or normalized name matches)")) {
+                    autoMergeContacts.mutate();
+                  }
+                }}
+              >
+                <Users className="h-4 w-4 mr-2" />
+                Auto-merge duplicate contacts
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                disabled={deletePlaceholderContacts.isPending}
+                onClick={() => {
+                  if (confirm("Remove contacts whose names look like placeholders (Contact 1, Lead 2, etc.)?")) {
+                    deletePlaceholderContacts.mutate();
+                  }
+                }}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Clean up placeholder contacts
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Dialog open={isCaptureDialogOpen} onOpenChange={setIsCaptureDialogOpen}>
             <DialogTrigger asChild>
               <Button variant="outline">
@@ -915,10 +974,17 @@ export default function CRMHub() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem>View Details</DropdownMenuItem>
-                            <DropdownMenuItem>Edit Deal</DropdownMenuItem>
-                            <DropdownMenuItem>Move Stage</DropdownMenuItem>
-                            <DropdownMenuItem className="text-red-600">Delete</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setExpandedDealId(deal.id)}>View Details</DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="text-red-600"
+                              onClick={() => {
+                                if (confirm(`Delete deal "${deal.name}"?`)) {
+                                  deleteDeal.mutate({ id: deal.id });
+                                }
+                              }}
+                            >
+                              Delete
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>

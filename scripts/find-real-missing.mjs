@@ -38,8 +38,15 @@ function buildServerProcMap() {
 
 function extractTrpc(src) {
   const set = new Set();
+  // Pattern 1: trpc.foo.bar.useQuery  (standard typed path)
   for (const m of src.matchAll(/trpc(?:\.[a-zA-Z0-9_]+)+\.(useQuery|useMutation|useInfiniteQuery|useSuspenseQuery|query|mutate)/g))
     set.add(m[0].replace("trpc.", "").replace(/\.(useQuery|useMutation|useInfiniteQuery|useSuspenseQuery|query|mutate)$/, ""));
+  // Pattern 2: (trpc.foo as any).bar.useQuery  (escape hatch when proc isn't yet on the typed router)
+  for (const m of src.matchAll(/\(\s*trpc((?:\.[a-zA-Z0-9_]+)+)\s+as\s+any\s*\)((?:\.[a-zA-Z0-9_]+)+)\.(useQuery|useMutation|useInfiniteQuery|useSuspenseQuery|query|mutate)/g)) {
+    const prefix = m[1].replace(/^\./, "");
+    const tail = m[2].replace(/^\./, "").replace(/\.(useQuery|useMutation|useInfiniteQuery|useSuspenseQuery|query|mutate)$/, "");
+    set.add(`${prefix}.${tail}`);
+  }
   return set;
 }
 
