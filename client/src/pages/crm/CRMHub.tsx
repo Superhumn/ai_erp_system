@@ -37,13 +37,14 @@ import {
   Smartphone, QrCode, CreditCard, Filter, MoreHorizontal,
   Calendar, Clock, MessageCircle, Target, Handshake, HardDrive,
   Sparkles, ChevronDown, ChevronUp, ArrowRight, Upload, Heart, Truck,
-  Settings, Trash2
+  Settings, Trash2, Edit
 } from "lucide-react";
 import { Link } from "wouter";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
@@ -82,6 +83,8 @@ export default function CRMHub() {
   const [dealForm, setDealForm] = useState({ name: "", contactId: 0, contactName: "", contactEmail: "", contactCompany: "", stage: "discovery", amount: "", source: "", notes: "" });
   const [isContactDialogOpen, setIsContactDialogOpen] = useState(false);
   const [isCaptureDialogOpen, setIsCaptureDialogOpen] = useState(false);
+  const [showTagsManager, setShowTagsManager] = useState(false);
+  const [showPipelinesManager, setShowPipelinesManager] = useState(false);
   const [captureMethod, setCaptureMethod] = useState<string>("manual");
   const [selectedContact, setSelectedContact] = useState<any>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -437,6 +440,15 @@ export default function CRMHub() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-64">
+              <DropdownMenuItem onClick={() => setShowTagsManager(true)}>
+                <Heart className="h-4 w-4 mr-2" />
+                Manage tags
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setShowPipelinesManager(true)}>
+                <Target className="h-4 w-4 mr-2" />
+                Manage pipelines
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem
                 disabled={autoMergeContacts.isPending}
                 onClick={() => {
@@ -1530,6 +1542,320 @@ export default function CRMHub() {
             return <ContactDetailView />;
           })()}
       </DetailSheet>
+
+      <TagsManagerDialog open={showTagsManager} onClose={() => setShowTagsManager(false)} />
+      <PipelinesManagerDialog open={showPipelinesManager} onClose={() => setShowPipelinesManager(false)} />
     </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
+// Tag manager — list / create / delete CRM tags. Tags can be
+// assigned to contacts or deals via tags.addToContact (not exposed
+// here yet; happens elsewhere via inline contact UIs).
+// ──────────────────────────────────────────────────────────────
+function TagsManagerDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const utils = trpc.useUtils();
+  const { data: tags } = trpc.crm.tags.list.useQuery({}, { enabled: open });
+  const [newName, setNewName] = useState("");
+  const [newColor, setNewColor] = useState("#6366f1");
+  const [newCategory, setNewCategory] = useState<"contact" | "deal" | "general">("contact");
+
+  const createTag = trpc.crm.tags.create.useMutation({
+    onSuccess: () => {
+      toast.success("Tag created");
+      setNewName("");
+      utils.crm.tags.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const deleteTag = trpc.crm.tags.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Tag deleted");
+      utils.crm.tags.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Tag manager</DialogTitle>
+          <DialogDescription>
+            Tags are reusable labels you can attach to contacts or deals to drive segmentation
+            and filtering.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div className="max-h-[40vh] overflow-y-auto space-y-1">
+            {!tags || (tags as any[]).length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">No tags yet.</p>
+            ) : (
+              (tags as any[]).map((t: any) => (
+                <div key={t.id} className="flex items-center gap-2 rounded-md border p-2">
+                  <span
+                    className="h-3 w-3 rounded-full shrink-0"
+                    style={{ background: t.color || "#94a3b8" }}
+                  />
+                  <span className="flex-1 text-sm font-medium truncate">{t.name}</span>
+                  {t.category && <Badge variant="outline" className="text-[10px]">{t.category}</Badge>}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                    aria-label="Delete tag"
+                    disabled={deleteTag.isPending}
+                    onClick={() => {
+                      if (confirm(`Delete tag "${t.name}"? Existing contact / deal assignments are removed too.`)) {
+                        deleteTag.mutate({ id: t.id });
+                      }
+                    }}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="border-t pt-3 space-y-2">
+            <Label className="text-xs uppercase tracking-wider text-muted-foreground">New tag</Label>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                className="h-9 w-12 rounded border bg-background cursor-pointer"
+                value={newColor}
+                onChange={(e) => setNewColor(e.target.value)}
+                aria-label="Tag color"
+              />
+              <Input
+                placeholder="Tag name"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                className="flex-1"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && newName.trim()) {
+                    createTag.mutate({ name: newName.trim(), color: newColor, category: newCategory });
+                  }
+                }}
+              />
+              <select
+                className="h-9 rounded-md border bg-background px-2 text-sm"
+                value={newCategory}
+                onChange={(e) => setNewCategory(e.target.value as any)}
+                aria-label="Tag category"
+              >
+                <option value="contact">contact</option>
+                <option value="deal">deal</option>
+                <option value="general">general</option>
+              </select>
+              <Button
+                size="sm"
+                disabled={!newName.trim() || createTag.isPending}
+                onClick={() => createTag.mutate({ name: newName.trim(), color: newColor, category: newCategory })}
+              >
+                {createTag.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
+// Pipeline manager — list / create / edit CRM pipelines. Stages
+// stored as JSON array string for now (matches server contract);
+// a richer stage builder is a future enhancement.
+// ──────────────────────────────────────────────────────────────
+function PipelinesManagerDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const utils = trpc.useUtils();
+  const { data: pipelines } = trpc.crm.pipelines.list.useQuery(undefined, { enabled: open });
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [form, setForm] = useState({
+    name: "",
+    type: "sales" as "sales" | "fundraising" | "partnerships" | "other",
+    stages: '["discovery","qualification","proposal","negotiation","closed_won","closed_lost"]',
+    isDefault: false,
+  });
+
+  const createPipeline = trpc.crm.pipelines.create.useMutation({
+    onSuccess: () => {
+      toast.success("Pipeline created");
+      setCreating(false);
+      setForm({
+        name: "",
+        type: "sales",
+        stages: '["discovery","qualification","proposal","negotiation","closed_won","closed_lost"]',
+        isDefault: false,
+      });
+      utils.crm.pipelines.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const updatePipeline = trpc.crm.pipelines.update.useMutation({
+    onSuccess: () => {
+      toast.success("Pipeline updated");
+      setEditingId(null);
+      utils.crm.pipelines.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const startEdit = (p: any) => {
+    setEditingId(p.id);
+    setForm({
+      name: p.name || "",
+      type: (p.type || "sales") as any,
+      stages: p.stages || "[]",
+      isDefault: !!p.isDefault,
+    });
+  };
+
+  const submit = () => {
+    if (!form.name.trim()) return;
+    if (editingId !== null) {
+      updatePipeline.mutate({
+        id: editingId,
+        name: form.name.trim(),
+        stages: form.stages,
+        isDefault: form.isDefault,
+      });
+    } else {
+      createPipeline.mutate({
+        name: form.name.trim(),
+        type: form.type,
+        stages: form.stages,
+        isDefault: form.isDefault,
+      });
+    }
+  };
+
+  const showingForm = creating || editingId !== null;
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Pipeline manager</DialogTitle>
+          <DialogDescription>
+            Pipelines define the stage flow for deals. Each pipeline has a type (sales /
+            fundraising / partnerships) and a JSON array of stage names.
+          </DialogDescription>
+        </DialogHeader>
+
+        {showingForm ? (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="plName" className="text-xs">Name *</Label>
+                <Input id="plName" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="plType" className="text-xs">Type</Label>
+                <select
+                  id="plType"
+                  className="flex h-9 w-full items-center rounded-md border bg-background px-3 text-sm"
+                  value={form.type}
+                  onChange={(e) => setForm({ ...form, type: e.target.value as any })}
+                  disabled={editingId !== null}
+                >
+                  <option value="sales">sales</option>
+                  <option value="fundraising">fundraising</option>
+                  <option value="partnerships">partnerships</option>
+                  <option value="other">other</option>
+                </select>
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="plStages" className="text-xs">Stages (JSON array)</Label>
+              <textarea
+                id="plStages"
+                rows={4}
+                className="flex w-full rounded-md border bg-background px-3 py-2 text-xs font-mono"
+                value={form.stages}
+                onChange={(e) => setForm({ ...form, stages: e.target.value })}
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={form.isDefault}
+                onChange={(e) => setForm({ ...form, isDefault: e.target.checked })}
+              />
+              Default for this type
+            </label>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => { setCreating(false); setEditingId(null); }}>
+                Cancel
+              </Button>
+              <Button size="sm" disabled={!form.name.trim() || createPipeline.isPending || updatePipeline.isPending} onClick={submit}>
+                {(createPipeline.isPending || updatePipeline.isPending) && (
+                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                )}
+                {editingId !== null ? "Save changes" : "Create pipeline"}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="flex justify-end">
+              <Button size="sm" onClick={() => setCreating(true)}>
+                <Plus className="h-3.5 w-3.5 mr-1" /> New pipeline
+              </Button>
+            </div>
+            <div className="max-h-[40vh] overflow-y-auto space-y-2">
+              {!pipelines || (pipelines as any[]).length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">No pipelines yet.</p>
+              ) : (
+                (pipelines as any[]).map((p: any) => {
+                  let stageCount = 0;
+                  try {
+                    const parsed = typeof p.stages === "string" ? JSON.parse(p.stages) : p.stages;
+                    stageCount = Array.isArray(parsed) ? parsed.length : 0;
+                  } catch {
+                    // ignore parse errors
+                  }
+                  return (
+                    <div key={p.id} className="flex items-center gap-3 rounded-md border p-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-sm">{p.name}</span>
+                          <Badge variant="outline" className="text-[10px]">{p.type}</Badge>
+                          {p.isDefault && (
+                            <Badge className="text-[10px] bg-blue-500/15 text-blue-700">default</Badge>
+                          )}
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          {stageCount} stage{stageCount === 1 ? "" : "s"}
+                        </div>
+                      </div>
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => startEdit(p)}>
+                        <Edit className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
