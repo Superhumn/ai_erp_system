@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { GlobalStructureCard } from "@/components/GlobalStructureCard";
 
 const Employees = lazy(() => import("./Employees"));
 const EmployeePortal = lazy(() => import("./EmployeePortal"));
@@ -18,14 +19,17 @@ export default function HRHub() {
     </div>
   );
   return (
-    <Suspense
-      fallback={
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
-      }
-    >
-      {isManager ? <Employees /> : <EmployeePortal />}
-    </Suspense>
+    <div className="space-y-4">
+      <GlobalStructureCard />
+      <Suspense
+        fallback={
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        }
+      >
+        {isManager ? <Employees /> : <EmployeePortal />}
+      </Suspense>
+    </div>
   );
 }

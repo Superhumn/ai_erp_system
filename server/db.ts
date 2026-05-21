@@ -472,6 +472,46 @@ export async function updateCompany(id: number, data: Partial<InsertCompany>) {
   await db.update(companies).set(data).where(eq(companies.id, id));
 }
 
+export async function getCompanyStructure() {
+  const db = await getDb();
+  if (!db) return { entities: [], unassigned: [] };
+  const allCompanies = await db.select().from(companies).orderBy(asc(companies.type), asc(companies.name));
+  const roster = await db
+    .select({
+      id: employees.id,
+      companyId: employees.companyId,
+      firstName: employees.firstName,
+      lastName: employees.lastName,
+      email: employees.email,
+      jobTitle: employees.jobTitle,
+      employmentType: employees.employmentType,
+      status: employees.status,
+      hireDate: employees.hireDate,
+      managerId: employees.managerId,
+    })
+    .from(employees)
+    .where(ne(employees.status, "terminated"))
+    .orderBy(asc(employees.lastName));
+  const byCompany = new Map<number, typeof roster>();
+  const unassigned: typeof roster = [];
+  for (const e of roster) {
+    if (e.companyId == null) {
+      unassigned.push(e);
+      continue;
+    }
+    const bucket = byCompany.get(e.companyId);
+    if (bucket) bucket.push(e);
+    else byCompany.set(e.companyId, [e]);
+  }
+  return {
+    entities: allCompanies.map((c) => {
+      const list = byCompany.get(c.id) ?? [];
+      return { ...c, employees: list, headcount: list.length };
+    }),
+    unassigned,
+  };
+}
+
 // ============================================
 // CUSTOMER MANAGEMENT
 // ============================================

@@ -375,6 +375,7 @@ export const appRouter = router({
         await createAuditLog(ctx.user.id, 'update', 'company', id);
         return { success: true };
       }),
+    structure: protectedProcedure.query(() => db.getCompanyStructure()),
   }),
 
   // ============================================
