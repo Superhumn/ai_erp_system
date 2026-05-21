@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { format, formatDistanceToNow } from "date-fns";
+import { format } from "date-fns";
 import { Send, MessageCircle, Loader2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
