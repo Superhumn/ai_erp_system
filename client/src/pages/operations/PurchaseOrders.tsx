@@ -87,6 +87,15 @@ export default function PurchaseOrders() {
   const { data: products } = trpc.products.list.useQuery();
   const utils = trpc.useUtils();
 
+  const poIds = (purchaseOrders || []).map((po) => po.id);
+  const { data: invoiceCounts } = trpc.purchaseOrders.parsedInvoiceCounts.useQuery(
+    { purchaseOrderIds: poIds },
+    { enabled: poIds.length > 0 }
+  );
+  const invoiceCountMap = new Map<number, number>(
+    (invoiceCounts || []).map((c) => [c.purchaseOrderId, c.count])
+  );
+
   const resetForm = () => {
     setFormData({ vendorId: 0, expectedDeliveryDate: "", notes: "" });
     setLineItems([]);
@@ -667,6 +676,7 @@ export default function PurchaseOrders() {
                   <TableHead>Order Date</TableHead>
                   <TableHead>Expected Date</TableHead>
                   <TableHead className="text-right">Items Count</TableHead>
+                  <TableHead className="text-right">Invoices</TableHead>
                   <TableHead>Notes</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
@@ -694,6 +704,15 @@ export default function PurchaseOrders() {
                       </TableCell>
                       <TableCell className="text-right">
                         {(po as any).items?.length ?? "-"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {invoiceCountMap.get(po.id) ? (
+                          <Badge variant="outline" className="font-mono">
+                            {invoiceCountMap.get(po.id)}
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
                         {po.notes || "-"}

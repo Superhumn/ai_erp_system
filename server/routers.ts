@@ -2060,6 +2060,15 @@ ONLY return the JSON array, no other text.`;
     getItems: opsProcedure
       .input(z.object({ purchaseOrderId: z.number() }))
       .query(({ input }) => db.getPurchaseOrderItems(input.purchaseOrderId)),
+    parsedInvoices: opsProcedure
+      .input(z.object({ purchaseOrderId: z.number() }))
+      .query(({ input }) => db.getParsedDocumentsForPO(input.purchaseOrderId)),
+    parsedInvoiceCounts: opsProcedure
+      .input(z.object({ purchaseOrderIds: z.array(z.number()) }))
+      .query(async ({ input }) => {
+        const counts = await db.getParsedDocumentCountsByPO(input.purchaseOrderIds);
+        return Array.from(counts.entries()).map(([purchaseOrderId, count]) => ({ purchaseOrderId, count }));
+      }),
     create: opsProcedure
       .input(z.object({
         companyId: z.number().optional(),

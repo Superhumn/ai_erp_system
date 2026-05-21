@@ -6279,6 +6279,42 @@ export async function getParsedDocuments(options?: {
     .offset(options?.offset || 0);
 }
 
+/**
+ * Parsed documents (typically invoices) that the email pipeline linked
+ * to a specific purchase order. Used to surface "this PO has 2 invoices
+ * pulled from Alibaba emails" badges in the UI.
+ */
+export async function getParsedDocumentsForPO(purchaseOrderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(parsedDocuments)
+    .where(eq(parsedDocuments.purchaseOrderId, purchaseOrderId))
+    .orderBy(desc(parsedDocuments.documentDate));
+}
+
+/**
+ * Returns a map of purchaseOrderId -> count of linked parsed documents.
+ * Used by the PO list view to show a single badge per row without N+1.
+ */
+export async function getParsedDocumentCountsByPO(purchaseOrderIds: number[]) {
+  const db = await getDb();
+  const result = new Map<number, number>();
+  if (!db || purchaseOrderIds.length === 0) return result;
+  const rows = await db.select({
+    purchaseOrderId: parsedDocuments.purchaseOrderId,
+    cnt: sql<number>`count(*)`.as("cnt"),
+  })
+    .from(parsedDocuments)
+    .where(inArray(parsedDocuments.purchaseOrderId, purchaseOrderIds))
+    .groupBy(parsedDocuments.purchaseOrderId);
+  for (const row of rows) {
+    if (row.purchaseOrderId != null) {
+      result.set(row.purchaseOrderId, Number(row.cnt));
+    }
+  }
+  return result;
+}
+
 export async function getParsedDocumentById(id: number) {
   const db = await getDb();
   if (!db) return null;
