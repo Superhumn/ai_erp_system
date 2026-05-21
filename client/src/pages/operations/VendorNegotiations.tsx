@@ -130,6 +130,23 @@ export default function VendorNegotiations() {
     },
   });
 
+  const updateNegotiation = trpc.vendorNegotiations.update.useMutation({
+    onSuccess: () => {
+      toast.success("Negotiation updated");
+      utils.vendorNegotiations.get.invalidate();
+      utils.vendorNegotiations.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const generateDraft = trpc.vendorNegotiations.generateDraft.useMutation({
+    onSuccess: (r: any) => {
+      toast.success("Draft generated", { description: r?.subject ?? "Email drafted" });
+      utils.vendorNegotiations.get.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   function resetCreateForm() {
     setFormVendorId("");
     setFormTitle("");
@@ -598,9 +615,28 @@ export default function VendorNegotiations() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-sm text-muted-foreground">Status</p>
-                  <Badge variant={(statusColors[selectedDetail.negotiation.status] || "secondary") as any}>
-                    {selectedDetail.negotiation.status.replace(/_/g, " ")}
-                  </Badge>
+                  <Select
+                    value={selectedDetail.negotiation.status}
+                    onValueChange={(v) => {
+                      if (v === selectedDetail.negotiation.status) return;
+                      updateNegotiation.mutate({ id: selectedDetail.negotiation.id, status: v as any });
+                    }}
+                    disabled={updateNegotiation.isPending}
+                  >
+                    <SelectTrigger className="h-7 w-40">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="draft">draft</SelectItem>
+                      <SelectItem value="analyzing">analyzing</SelectItem>
+                      <SelectItem value="ready">ready</SelectItem>
+                      <SelectItem value="in_progress">in progress</SelectItem>
+                      <SelectItem value="counter_offered">counter offered</SelectItem>
+                      <SelectItem value="accepted">accepted</SelectItem>
+                      <SelectItem value="rejected">rejected</SelectItem>
+                      <SelectItem value="expired">expired</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Type</p>
@@ -697,18 +733,43 @@ export default function VendorNegotiations() {
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-sm">Negotiation Rounds</CardTitle>
-                    {["draft", "ready", "in_progress", "counter_offered"].includes(selectedDetail.negotiation.status) && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          setRoundDialogOpen(true);
-                        }}
-                      >
-                        <Plus className="h-3 w-3 mr-1" />
-                        Add Round
-                      </Button>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {["draft", "ready", "in_progress", "counter_offered"].includes(selectedDetail.negotiation.status) && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            const nextRound = (selectedDetail.rounds?.length ?? 0) + 1;
+                            generateDraft.mutate({
+                              negotiationId: selectedDetail.negotiation.id,
+                              roundNumber: nextRound,
+                              messageType: nextRound === 1 ? "initial_offer" : "counter_offer",
+                            });
+                          }}
+                          disabled={generateDraft.isPending}
+                          title="Use AI to draft the next outbound message"
+                        >
+                          {generateDraft.isPending ? (
+                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                          ) : (
+                            <Bot className="h-3 w-3 mr-1" />
+                          )}
+                          Generate draft
+                        </Button>
+                      )}
+                      {["draft", "ready", "in_progress", "counter_offered"].includes(selectedDetail.negotiation.status) && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setRoundDialogOpen(true);
+                          }}
+                        >
+                          <Plus className="h-3 w-3 mr-1" />
+                          Add Round
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent>
