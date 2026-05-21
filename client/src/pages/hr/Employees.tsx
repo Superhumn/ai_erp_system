@@ -248,6 +248,16 @@ export default function PeopleAndEquity() {
   const [isGrantOpen, setIsGrantOpen] = useState(false);
   const [isShareClassOpen, setIsShareClassOpen] = useState(false);
   const [isValuationOpen, setIsValuationOpen] = useState(false);
+  const [isValuationListOpen, setIsValuationListOpen] = useState(false);
+  const [editingValuation, setEditingValuation] = useState<any | null>(null);
+  const [editValuationForm, setEditValuationForm] = useState({
+    fairMarketValue: "",
+    provider: "",
+    methodology: "",
+    status: "draft" as "draft" | "pending" | "approved" | "expired",
+    expirationDate: "",
+    notes: "",
+  });
   const [isTransactionOpen, setIsTransactionOpen] = useState(false);
   const [valuationForm, setValuationForm] = useState({
     valuationDate: "",
@@ -338,6 +348,15 @@ export default function PeopleAndEquity() {
     onSuccess: () => {
       toast.success("Share class deleted");
       utils.capTable.shareClasses.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const { data: valuationsList } = trpc.capTable.valuations.list.useQuery({});
+  const updateValuation = trpc.capTable.valuations.update.useMutation({
+    onSuccess: () => {
+      toast.success("Valuation updated");
+      setEditingValuation(null);
+      utils.capTable.valuations.list.invalidate();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -741,6 +760,10 @@ export default function PeopleAndEquity() {
               <DropdownMenuItem onClick={() => setIsValuationOpen(true)}>
                 <TrendingUp className="h-4 w-4 mr-2" />
                 Record 409A Valuation
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setIsValuationListOpen(true)}>
+                <Layers className="h-4 w-4 mr-2" />
+                Manage Valuations
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setIsTransactionOpen(true)}>
                 <ArrowLeftRight className="h-4 w-4 mr-2" />
@@ -1505,6 +1528,186 @@ export default function PeopleAndEquity() {
               <Button type="submit" disabled={createTransaction.isPending}>
                 {createTransaction.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 Record Transaction
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Manage valuations list */}
+      <Dialog open={isValuationListOpen} onOpenChange={setIsValuationListOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>409A valuations</DialogTitle>
+            <DialogDescription>
+              Edit existing valuation records. Most recent first.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-y-auto">
+            {!valuationsList || valuationsList.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">
+                No valuations recorded yet.
+              </p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Date</TableHead>
+                    <TableHead className="text-right">FMV / share</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Provider</TableHead>
+                    <TableHead>Expires</TableHead>
+                    <TableHead className="w-12"></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {[...(valuationsList as any[])]
+                    .sort((a, b) => new Date(b.valuationDate).getTime() - new Date(a.valuationDate).getTime())
+                    .map((v: any) => (
+                      <TableRow key={v.id}>
+                        <TableCell>{new Date(v.valuationDate).toLocaleDateString()}</TableCell>
+                        <TableCell className="text-right font-mono">${Number(v.fairMarketValue || 0).toFixed(4)}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="capitalize">{v.status || "draft"}</Badge>
+                        </TableCell>
+                        <TableCell className="text-sm">{v.provider || "—"}</TableCell>
+                        <TableCell className="text-sm">
+                          {v.expirationDate ? new Date(v.expirationDate).toLocaleDateString() : "—"}
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Edit valuation"
+                            onClick={() => {
+                              setEditingValuation(v);
+                              setEditValuationForm({
+                                fairMarketValue: v.fairMarketValue != null ? String(v.fairMarketValue) : "",
+                                provider: v.provider || "",
+                                methodology: v.methodology || "",
+                                status: (v.status || "draft") as any,
+                                expirationDate: v.expirationDate
+                                  ? new Date(v.expirationDate).toISOString().slice(0, 10)
+                                  : "",
+                                notes: v.notes || "",
+                              });
+                            }}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsValuationListOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit valuation */}
+      <Dialog open={editingValuation !== null} onOpenChange={(open) => { if (!open) setEditingValuation(null); }}>
+        <DialogContent>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!editingValuation) return;
+              updateValuation.mutate({
+                id: editingValuation.id,
+                fairMarketValue: editValuationForm.fairMarketValue || undefined,
+                provider: editValuationForm.provider || undefined,
+                methodology: editValuationForm.methodology || undefined,
+                status: editValuationForm.status,
+                expirationDate: editValuationForm.expirationDate || undefined,
+                notes: editValuationForm.notes || undefined,
+              });
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>Edit 409A valuation</DialogTitle>
+              <DialogDescription>
+                Valuation date (
+                {editingValuation && new Date(editingValuation.valuationDate).toLocaleDateString()}
+                ) is fixed — to record a new valuation date, create a new entry instead.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="evFmv">FMV per share *</Label>
+                  <Input
+                    id="evFmv"
+                    type="number"
+                    step="0.0001"
+                    value={editValuationForm.fairMarketValue}
+                    onChange={(e) => setEditValuationForm({ ...editValuationForm, fairMarketValue: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="evStatus">Status</Label>
+                  <Select
+                    value={editValuationForm.status}
+                    onValueChange={(v) => setEditValuationForm({ ...editValuationForm, status: v as any })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="draft">Draft</SelectItem>
+                      <SelectItem value="pending">Pending</SelectItem>
+                      <SelectItem value="approved">Approved</SelectItem>
+                      <SelectItem value="expired">Expired</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="evProvider">Provider</Label>
+                  <Input
+                    id="evProvider"
+                    value={editValuationForm.provider}
+                    onChange={(e) => setEditValuationForm({ ...editValuationForm, provider: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="evMethodology">Methodology</Label>
+                  <Input
+                    id="evMethodology"
+                    value={editValuationForm.methodology}
+                    onChange={(e) => setEditValuationForm({ ...editValuationForm, methodology: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="evExpires">Expires</Label>
+                <Input
+                  id="evExpires"
+                  type="date"
+                  value={editValuationForm.expirationDate}
+                  onChange={(e) => setEditValuationForm({ ...editValuationForm, expirationDate: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="evNotes">Notes</Label>
+                <Textarea
+                  id="evNotes"
+                  rows={2}
+                  value={editValuationForm.notes}
+                  onChange={(e) => setEditValuationForm({ ...editValuationForm, notes: e.target.value })}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setEditingValuation(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={updateValuation.isPending}>
+                {updateValuation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Save changes
               </Button>
             </DialogFooter>
           </form>
