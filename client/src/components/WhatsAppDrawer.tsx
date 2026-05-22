@@ -119,22 +119,23 @@ export default function WhatsAppDrawer({ open, onOpenChange, contactId, whatsapp
             </div>
           ) : (
             messages.map((msg: any) => {
-              const isOutbound = msg.direction === "outbound" || msg.interactionType === "sent";
+              const isOutbound = msg.direction === "outbound";
+              const channelLabel = msg.type;
               return (
-                <div key={`${msg.id}-${msg.channel || "wa"}`} className={`flex ${isOutbound ? "justify-end" : "justify-start"}`}>
+                <div key={`${msg.type}-${msg.id}`} className={`flex ${isOutbound ? "justify-end" : "justify-start"}`}>
                   <div
                     className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
                       isOutbound ? "bg-green-600 text-white" : "bg-background border"
                     }`}
                   >
-                    {msg.channel && msg.channel !== "whatsapp" && (
+                    {channelLabel && channelLabel !== "whatsapp" && (
                       <Badge variant="outline" className="mb-1 text-[10px] h-4">
-                        {msg.channel}
+                        {channelLabel}
                       </Badge>
                     )}
                     <div className="whitespace-pre-wrap break-words">{msg.content}</div>
                     <div className={`text-[10px] mt-1 ${isOutbound ? "text-green-100" : "text-muted-foreground"}`}>
-                      {formatMessageTime(msg.createdAt)}
+                      {formatMessageTime(msg.timestamp)}
                     </div>
                   </div>
                 </div>
