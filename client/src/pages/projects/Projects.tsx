@@ -409,13 +409,40 @@ export default function Projects() {
     const cols: Record<string, Task[]> = { todo: [], in_progress: [], review: [], completed: [] };
     filteredTasks.forEach((task) => {
       if (task.status === "cancelled") return;
+      if (hideCompleted && task.status === "completed") return;
       cols[task.status]?.push(task);
     });
     Object.values(cols).forEach((list) =>
       list.sort((a, b) => (PRIORITY_ORDER[a.priority] ?? 9) - (PRIORITY_ORDER[b.priority] ?? 9))
     );
     return cols;
-  }, [filteredTasks]);
+  }, [filteredTasks, hideCompleted]);
+
+  const visibleBoardColumns = useMemo(
+    () => (hideCompleted ? BOARD_COLUMNS.filter((column) => column.key !== "completed") : BOARD_COLUMNS),
+    [hideCompleted]
+  );
+
+  const projectTaskStats = useMemo(() => {
+    const stats = new Map<number, { total: number; completed: number }>();
+    taskList.forEach((task) => {
+      const current = stats.get(task.projectId) ?? { total: 0, completed: 0 };
+      current.total += 1;
+      if (task.status === "completed") current.completed += 1;
+      stats.set(task.projectId, current);
+    });
+    return stats;
+  }, [taskList]);
+
+  const hiddenCompletedByProject = useMemo(() => {
+    const counts = new Map<number, number>();
+    if (!hideCompleted) return counts;
+    filteredTasks.forEach((task) => {
+      if (task.status !== "completed") return;
+      counts.set(task.projectId, (counts.get(task.projectId) ?? 0) + 1);
+    });
+    return counts;
+  }, [filteredTasks, hideCompleted]);
 
   const metrics = useMemo(() => {
     const total = filteredTasks.length;
@@ -840,13 +867,11 @@ export default function Projects() {
           {groupedByProject.map(([projectId, tasks], projectIndex) => {
             const project = projectMap.get(projectId);
             const collapsed = collapsedProjects.has(projectId);
-            // Compute progress from ALL tasks in the project (not just visible) so
-            // hiding completed tasks doesn't make a 90%-done project look like 0%.
-            const allProjectTasks = taskList.filter((t) => t.projectId === projectId);
-            const doneCount = allProjectTasks.filter((t) => t.status === "completed").length;
-            const totalCount = allProjectTasks.length;
+            const projectStats = projectTaskStats.get(projectId);
+            const doneCount = projectStats?.completed ?? 0;
+            const totalCount = projectStats?.total ?? 0;
             const projectProgress = totalCount === 0 ? 0 : Math.round((doneCount / totalCount) * 100);
-            const hiddenCount = totalCount - tasks.length;
+            const hiddenCount = hideCompleted ? (hiddenCompletedByProject.get(projectId) ?? 0) : 0;
             const priorityCfg = PRIORITY_CONFIG[project?.priority || "medium"];
 
             return (
@@ -1073,7 +1098,7 @@ export default function Projects() {
         </div>
       ) : (
         <div className="grid gap-4 lg:grid-cols-4">
-          {BOARD_COLUMNS.map((column, colIndex) => {
+          {visibleBoardColumns.map((column, colIndex) => {
             const tasks = boardTasks[column.key] || [];
             return (
               <div
