@@ -610,11 +610,13 @@ export const emailRouter = router({
 
         try {
           // Parse email content with AI (includes full categorization)
+          const { isAlibabaEmail, ALIBABA_PARSE_HINT } = await import("../_core/alibabaEmail");
           const result = await parseEmailContent(
             input.subject,
             input.bodyText,
             input.fromEmail,
-            input.fromName
+            input.fromName,
+            isAlibabaEmail(input.fromEmail) ? ALIBABA_PARSE_HINT : undefined
           );
 
           if (!result.success) {
@@ -1082,7 +1084,8 @@ export const emailRouter = router({
         if (!email) throw new TRPCError({ code: "NOT_FOUND" });
 
         const { parseEmailContent } = await import("../_core/emailParser");
-        
+        const { isAlibabaEmail, ALIBABA_PARSE_HINT } = await import("../_core/alibabaEmail");
+
         await db.updateInboundEmailStatus(input.id, "processing");
 
         try {
@@ -1090,7 +1093,8 @@ export const emailRouter = router({
             email.subject || "",
             email.bodyText || "",
             email.fromEmail,
-            email.fromName || undefined
+            email.fromName || undefined,
+            isAlibabaEmail(email.fromEmail) ? ALIBABA_PARSE_HINT : undefined
           );
 
           if (!result.success) {
