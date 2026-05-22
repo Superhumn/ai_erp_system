@@ -30,7 +30,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Building2, Plus, Search, Loader2, Upload, ShoppingBag, Star, ExternalLink, CheckCircle2, Trash2 } from "lucide-react";
+import { Building2, Plus, Search, Loader2, Upload, ShoppingBag, Star, ExternalLink, CheckCircle2, Trash2, MessageCircle } from "lucide-react";
+import WhatsAppDrawer from "@/components/WhatsAppDrawer";
+import LinkContactDialog from "@/components/LinkContactDialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -77,6 +79,8 @@ export default function Vendors() {
   const [alibabaUsedFallback, setAlibabaUsedFallback] = useState(false);
   const [expandedVendorId, setExpandedVendorId] = useState<number | null>(null);
   const [vendorToDelete, setVendorToDelete] = useState<{ id: number; name: string } | null>(null);
+  const [chatTarget, setChatTarget] = useState<{ contactId: number; whatsappNumber: string; contactName?: string; vendorName: string } | null>(null);
+  const [linkTarget, setLinkTarget] = useState<{ vendorId: number; vendorName: string; vendorPhone?: string | null } | null>(null);
   const [newMaterialName, setNewMaterialName] = useState("");
   const [newMaterialUnit, setNewMaterialUnit] = useState("kg");
   const [newMaterialCost, setNewMaterialCost] = useState("");
@@ -140,6 +144,36 @@ export default function Vendors() {
       toast.error(error.message);
     },
   });
+
+  const autoLinkMutation = trpc.vendors.autoLinkContact.useMutation();
+
+  async function handleOpenChat(vendor: any, e: React.MouseEvent) {
+    e.stopPropagation();
+    try {
+      const result = await autoLinkMutation.mutateAsync({ vendorId: vendor.id });
+      if (result.contact) {
+        const waNumber = result.contact.whatsappNumber || result.contact.phone || vendor.whatsappNumber || vendor.phone;
+        if (!waNumber) {
+          toast.error("Contact has no WhatsApp/phone number");
+          return;
+        }
+        if (result.autoLinked) {
+          toast.success(`Auto-linked to ${result.contact.fullName || "contact"}`);
+          utils.vendors.list.invalidate();
+        }
+        setChatTarget({
+          contactId: result.contact.id,
+          whatsappNumber: waNumber,
+          contactName: result.contact.fullName || vendor.contactName || vendor.name,
+          vendorName: vendor.name,
+        });
+      } else {
+        setLinkTarget({ vendorId: vendor.id, vendorName: vendor.name, vendorPhone: vendor.phone });
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to open chat");
+    }
+  }
 
   const alibabaSearch = trpc.vendors.searchAlibaba.useMutation({
     onSuccess: (data: any) => {
@@ -734,18 +768,34 @@ export default function Vendors() {
                           <DocumentsCell referenceType="vendor" referenceId={vendor.id} />
                         </TableCell>
                         <TableCell className="text-sm whitespace-nowrap">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setVendorToDelete({ id: vendor.id, name: vendor.name });
-                            }}
-                            aria-label={`Delete vendor ${vendor.name}`}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-green-600"
+                              onClick={(e) => handleOpenChat(vendor, e)}
+                              disabled={autoLinkMutation.isPending && (autoLinkMutation.variables as { vendorId: number } | undefined)?.vendorId === vendor.id}
+                              aria-label={`Chat on WhatsApp with ${vendor.name}`}
+                            >
+                              {autoLinkMutation.isPending && (autoLinkMutation.variables as { vendorId: number } | undefined)?.vendorId === vendor.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <MessageCircle className="h-4 w-4" />
+                              )}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setVendorToDelete({ id: vendor.id, name: vendor.name });
+                              }}
+                              aria-label={`Delete vendor ${vendor.name}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                       {isExpanded && (
@@ -877,6 +927,39 @@ export default function Vendors() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {chatTarget && (
+        <WhatsAppDrawer
+          open={!!chatTarget}
+          onOpenChange={(open) => !open && setChatTarget(null)}
+          contactId={chatTarget.contactId}
+          whatsappNumber={chatTarget.whatsappNumber}
+          contactName={chatTarget.contactName}
+          subtitle={chatTarget.vendorName}
+        />
+      )}
+
+      {linkTarget && (
+        <LinkContactDialog
+          open={!!linkTarget}
+          onOpenChange={(open) => !open && setLinkTarget(null)}
+          vendorId={linkTarget.vendorId}
+          vendorName={linkTarget.vendorName}
+          vendorPhone={linkTarget.vendorPhone}
+          onLinked={(contact) => {
+            const waNumber = contact.whatsappNumber || contact.phone;
+            if (waNumber) {
+              setChatTarget({
+                contactId: contact.id,
+                whatsappNumber: waNumber,
+                contactName: contact.fullName || linkTarget.vendorName,
+                vendorName: linkTarget.vendorName,
+              });
+            }
+            setLinkTarget(null);
+          }}
+        />
+      )}
     </div>
   );
 }
