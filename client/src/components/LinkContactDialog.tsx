@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,18 @@ export default function LinkContactDialog({ open, onOpenChange, vendorId, vendor
     whatsappNumber: vendorPhone || "",
     organization: vendorName,
   });
+
+  useEffect(() => {
+    if (!open) return;
+    setMode("search");
+    setSearch("");
+    setNewContact({
+      firstName: "",
+      lastName: "",
+      whatsappNumber: vendorPhone || "",
+      organization: vendorName,
+    });
+  }, [open, vendorId, vendorName, vendorPhone]);
 
   const { data: contactsRaw, isLoading } = trpc.crm.contacts.list.useQuery(
     { search: search || undefined, limit: 20 },
