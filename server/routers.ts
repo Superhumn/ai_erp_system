@@ -611,8 +611,10 @@ export const appRouter = router({
     unlinkContact: opsProcedure
       .input(z.object({ vendorId: z.number() }))
       .mutation(async ({ input, ctx }) => {
+        const vendor = await db.getVendorById(input.vendorId);
+        if (!vendor) throw new TRPCError({ code: "NOT_FOUND", message: "Vendor not found" });
         await db.unlinkVendorContact(input.vendorId);
-        await createAuditLog(ctx.user.id, "update", "vendor", input.vendorId, undefined, null, { contactId: null });
+        await createAuditLog(ctx.user.id, "update", "vendor", input.vendorId, vendor.name, null, { contactId: null });
         return { success: true };
       }),
 
