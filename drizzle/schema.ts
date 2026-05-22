@@ -271,6 +271,8 @@ export const vendors = mysqlTable("vendors", {
   defaultLeadTimeDays: int("defaultLeadTimeDays").default(14), // Default lead time for this vendor
   minOrderAmount: decimal("minOrderAmount", { precision: 12, scale: 2 }), // Minimum order amount
   shippingMethod: varchar("shippingMethod", { length: 64 }), // Preferred shipping method
+  contactId: int("contactId").references(() => crmContacts.id, { onDelete: "set null" }), // FK to crm_contacts.id (set on auto-link by phone or manual picker)
+  whatsappNumber: varchar("whatsappNumber", { length: 32 }), // Direct WhatsApp number for this vendor (overrides contact's)
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -883,6 +885,7 @@ export const projects = mysqlTable("projects", {
   currency: varchar("currency", { length: 3 }).default("USD"),
   progress: int("progress").default(0),
   notes: text("notes"),
+  archivedAt: timestamp("archivedAt"),
   createdBy: int("createdBy"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -6965,3 +6968,125 @@ export const emailCannedResponses = mysqlTable("email_canned_responses", {
 
 export type EmailCannedResponse = typeof emailCannedResponses.$inferSelect;
 export type InsertEmailCannedResponse = typeof emailCannedResponses.$inferInsert;
+
+// ============================================
+// PROJECT MANAGEMENT MODULE (Market × Function matrix)
+// Tables prefixed `pm_` to namespace cleanly. Built for tracking
+// international market expansion as a grid of (Market × Function) cells.
+// See docs/pm-module.md for the full data model rationale.
+// ============================================
+
+export const pmMarkets = mysqlTable("pm_markets", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 128 }).notNull(),
+  code: varchar("code", { length: 8 }).notNull().unique(),
+  tier: int("tier").notNull().default(3),
+  status: mysqlEnum("status", ["active", "planning", "watchlist", "paused"]).default("watchlist").notNull(),
+  entityType: mysqlEnum("entity_type", ["jv", "owned", "copacker", "distributor"]).default("distributor").notNull(),
+  partnerName: varchar("partnerName", { length: 255 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type PmMarket = typeof pmMarkets.$inferSelect;
+export type InsertPmMarket = typeof pmMarkets.$inferInsert;
+
+export const pmFunctions = mysqlTable("pm_functions", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 128 }).notNull(),
+  code: varchar("code", { length: 16 }).notNull().unique(),
+  sortOrder: int("sortOrder").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type PmFunction = typeof pmFunctions.$inferSelect;
+export type InsertPmFunction = typeof pmFunctions.$inferInsert;
+
+export const pmPrograms = mysqlTable("pm_programs", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  marketId: int("marketId").notNull().references(() => pmMarkets.id),
+  description: text("description"),
+  startDate: timestamp("startDate"),
+  targetEndDate: timestamp("targetEndDate"),
+  actualEndDate: timestamp("actualEndDate"),
+  status: mysqlEnum("status", ["not_started", "in_progress", "blocked", "complete", "cancelled"]).default("not_started").notNull(),
+  ownerUserId: int("ownerUserId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type PmProgram = typeof pmPrograms.$inferSelect;
+export type InsertPmProgram = typeof pmPrograms.$inferInsert;
+
+export const pmProjects = mysqlTable("pm_projects", {
+  id: int("id").autoincrement().primaryKey(),
+  programId: int("programId").references(() => pmPrograms.id),
+  // Denormalized market_id + function_id so matrix view can filter without joins.
+  marketId: int("marketId").notNull().references(() => pmMarkets.id),
+  functionId: int("functionId").notNull().references(() => pmFunctions.id),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  startDate: timestamp("startDate"),
+  targetEndDate: timestamp("targetEndDate"),
+  actualEndDate: timestamp("actualEndDate"),
+  status: mysqlEnum("status", ["not_started", "in_progress", "blocked", "complete", "cancelled"]).default("not_started").notNull(),
+  priority: mysqlEnum("priority", ["p0", "p1", "p2", "p3"]).default("p2").notNull(),
+  ownerUserId: int("ownerUserId"),
+  // Cash event triggers a push to financial_model when status -> complete.
+  cashEventAmount: decimal("cashEventAmount", { precision: 18, scale: 2 }),
+  cashEventType: mysqlEnum("cash_event_type", ["revenue", "capex", "opex", "funding"]),
+  cashEventDate: timestamp("cashEventDate"),
+  blockerReason: text("blockerReason"),
+  blockedSince: timestamp("blockedSince"),
+  atRisk: boolean("atRisk").default(false).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type PmProject = typeof pmProjects.$inferSelect;
+export type InsertPmProject = typeof pmProjects.$inferInsert;
+
+export const pmTasks = mysqlTable("pm_tasks", {
+  id: int("id").autoincrement().primaryKey(),
+  projectId: int("projectId").notNull().references(() => pmProjects.id),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  assigneeUserId: int("assigneeUserId"),
+  status: mysqlEnum("status", ["todo", "in_progress", "blocked", "done"]).default("todo").notNull(),
+  dueDate: timestamp("dueDate"),
+  completedAt: timestamp("completedAt"),
+  orderIndex: int("orderIndex").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type PmTask = typeof pmTasks.$inferSelect;
+export type InsertPmTask = typeof pmTasks.$inferInsert;
+
+export const pmDependencies = mysqlTable("pm_dependencies", {
+  id: int("id").autoincrement().primaryKey(),
+  predecessorProjectId: int("predecessorProjectId").notNull().references((): AnyMySqlColumn => pmProjects.id),
+  successorProjectId: int("successorProjectId").notNull().references((): AnyMySqlColumn => pmProjects.id),
+  dependencyType: mysqlEnum("dependency_type", ["blocks", "related", "informs"]).default("blocks").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type PmDependency = typeof pmDependencies.$inferSelect;
+export type InsertPmDependency = typeof pmDependencies.$inferInsert;
+
+export const pmMilestones = mysqlTable("pm_milestones", {
+  id: int("id").autoincrement().primaryKey(),
+  projectId: int("projectId").notNull().references(() => pmProjects.id),
+  name: varchar("name", { length: 255 }).notNull(),
+  targetDate: timestamp("targetDate").notNull(),
+  actualDate: timestamp("actualDate"),
+  description: text("description"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type PmMilestone = typeof pmMilestones.$inferSelect;
+export type InsertPmMilestone = typeof pmMilestones.$inferInsert;
