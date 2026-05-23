@@ -159,18 +159,18 @@ export default function GrantBidSubmitter() {
 
       {/* Main Tabs: Discover vs Applications */}
       <Tabs value={mainTab} onValueChange={setMainTab}>
-        <TabsList className="grid w-full max-w-2xl grid-cols-4">
+        <TabsList className="grid w-full max-w-3xl grid-cols-4">
           <TabsTrigger value="discover" className="flex items-center gap-2">
             <Search className="h-4 w-4" /> Discover Opportunities
           </TabsTrigger>
           <TabsTrigger value="applications" className="flex items-center gap-2">
             <FileText className="h-4 w-4" /> My Applications
           </TabsTrigger>
-          <TabsTrigger value="tenders" className="flex items-center gap-2">
-            <Landmark className="h-4 w-4" /> Government Tenders
-          </TabsTrigger>
           <TabsTrigger value="templates" className="flex items-center gap-2">
             <FileText className="h-4 w-4" /> Templates
+          </TabsTrigger>
+          <TabsTrigger value="tenders" className="flex items-center gap-2">
+            <Landmark className="h-4 w-4" /> Government Tenders
           </TabsTrigger>
         </TabsList>
 
@@ -295,14 +295,13 @@ export default function GrantBidSubmitter() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="templates" className="space-y-2">
+          <NarrativeTemplates />
+        </TabsContent>
+
         {/* Government Tenders Tab */}
         <TabsContent value="tenders" className="space-y-2">
           <GovernmentTenders />
-        </TabsContent>
-
-        {/* Templates Tab */}
-        <TabsContent value="templates" className="space-y-2">
-          <NarrativeTemplates />
         </TabsContent>
       </Tabs>
 
