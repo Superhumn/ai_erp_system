@@ -391,19 +391,38 @@ export default function Meetings() {
    * sections (e.g. "🌱 **Title** text 🖥️ **Title2** text ...") into separate items.
    */
   const parseShorthandBullets = (raw: string | string[]): string[] => {
-    if (Array.isArray(raw)) return raw.filter(Boolean);
+    const stripLeadingMarker = (s: string) => s.replace(/^\s*[*•\-]\s+/, "").trim();
+    if (Array.isArray(raw)) return raw.map(stripLeadingMarker).filter(Boolean);
     if (!raw) return [];
     // Try newline split first
-    const byNewline = raw.split(/\n+/).map((s) => s.trim()).filter(Boolean);
+    const byNewline = raw.split(/\n+/).map((s) => stripLeadingMarker(s)).filter(Boolean);
     if (byNewline.length > 1) return byNewline;
     // Split before emoji characters that start a new section
     // Covers most common emoji ranges (Miscellaneous Symbols, Pictographs, etc.)
     const byEmoji = raw
       .split(/\s+(?=[\u{1F300}-\u{1F9FF}\u{2600}-\u{27BF}\u{1FA00}-\u{1FAFF}])/u)
-      .map((s) => s.trim())
+      .map((s) => stripLeadingMarker(s))
       .filter(Boolean);
     if (byEmoji.length > 1) return byEmoji;
-    return [raw];
+    return [stripLeadingMarker(raw)];
+  };
+
+  /**
+   * Split a shorthand_bullet point like "🌱 **AI Tools Usage** Jade Cheng uses..."
+   * into { emoji, label, body } so the heading can render on its own line and
+   * the body becomes a scannable paragraph below it.
+   */
+  const splitBulletParts = (point: string): { emoji: string; label: string; body: string } => {
+    const cleaned = stripTimestamps(point);
+    const match = cleaned.match(/^\s*(\p{Emoji_Presentation}|\p{Extended_Pictographic})?\s*\*\*(.+?)\*\*[:\-–\s]*([\s\S]*)$/u);
+    if (match) {
+      return {
+        emoji: (match[1] || "").trim(),
+        label: (match[2] || "").trim(),
+        body: (match[3] || "").trim(),
+      };
+    }
+    return { emoji: "", label: "", body: cleaned };
   };
 
   return (
@@ -502,7 +521,7 @@ export default function Meetings() {
           {filtered.map((meeting: any) => {
             const summary = meeting.parsedSummary;
             const bullets = getBullets(meeting);
-            const tasks = (meeting.parsedActionItems || []) as Array<{ text: string; assignee?: string }>;
+            const tasks = ((meeting.parsedActionItems || []) as Array<{ text: string; assignee?: string }>).filter((t) => t.text.trim());
             const previewTasks = tasks.slice(0, 3);
 
             return (
@@ -554,22 +573,7 @@ export default function Meetings() {
                       )}
                     </div>
 
-                    {/* Inline preview bullets */}
-                    {bullets.length > 0 && (
-                      <ul className="mt-0.5 space-y-0">
-                        {bullets.map((bullet: string, i: number) => (
-                          <li key={i} className="flex items-start gap-1.5 text-[12px] text-muted-foreground leading-[1.4]">
-                            <span className="mt-[3px] h-1 w-1 shrink-0 rounded-full bg-muted-foreground/40" />
-                            <span className="line-clamp-1">{bullet}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    {!bullets.length && summary?.overview && (
-                      <p className="mt-0.5 text-[12px] text-muted-foreground line-clamp-1 leading-[1.4]">{stripTimestamps(summary.overview)}</p>
-                    )}
-
-                    {/* Inline task preview */}
+                    {/* Inline task preview — shown first so action items lead */}
                     {previewTasks.length > 0 && (
                       <ul className="mt-1 space-y-0">
                         {previewTasks.map((task, i) => (
@@ -590,6 +594,21 @@ export default function Meetings() {
                         )}
                       </ul>
                     )}
+
+                    {/* Inline preview bullets — hidden when tasks exist to keep the row scannable */}
+                    {previewTasks.length === 0 && bullets.length > 0 && (
+                      <ul className="mt-0.5 space-y-0">
+                        {bullets.map((bullet: string, i: number) => (
+                          <li key={i} className="flex items-start gap-1.5 text-[12px] text-muted-foreground leading-[1.4]">
+                            <span className="mt-[3px] h-1 w-1 shrink-0 rounded-full bg-muted-foreground/40" />
+                            <span className="line-clamp-1">{bullet}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {previewTasks.length === 0 && !bullets.length && summary?.overview && (
+                      <p className="mt-0.5 text-[12px] text-muted-foreground line-clamp-1 leading-[1.4]">{stripTimestamps(summary.overview)}</p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -604,7 +623,7 @@ export default function Meetings() {
           {panelMeeting && (() => {
             const m = panelMeeting;
             const summary = m.parsedSummary;
-            const actionItems = m.parsedActionItems || [];
+            const actionItems = (m.parsedActionItems || []).filter((item: any) => { const t = typeof item === "string" ? item : item.text || item.description || ""; return cleanActionText(t).trim(); });
 
             return (
               <>
@@ -633,6 +652,38 @@ export default function Meetings() {
 
                 {/* Scrollable content */}
                 <div className="flex-1 overflow-y-auto px-5 py-5 space-y-6">
+                  {/* Tasks — leading section so action items are the first thing seen */}
+                  {actionItems.length > 0 ? (
+                    <section>
+                      <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Tasks ({actionItems.length})
+                      </h3>
+                      <ul className="space-y-2 rounded-lg border bg-emerald-50/40 dark:bg-emerald-950/10 p-3">
+                        {actionItems.map((item: any, i: number) => {
+                          const rawText = typeof item === "string" ? item : item.text || item.description || "";
+                          const text = cleanActionText(rawText);
+                          return (
+                            <li key={i} className="flex items-start gap-2.5 text-[13px] leading-relaxed">
+                              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                              <span className="flex-1">{renderInlineMd(text)}</span>
+                              {item.assignee && (
+                                <span className="shrink-0 text-[11px] font-medium text-blue-600 dark:text-blue-400">@{item.assignee}</span>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </section>
+                  ) : (
+                    <section className="rounded-lg border border-dashed bg-muted/30 px-3 py-2.5 text-[12px] text-muted-foreground">
+                      <span className="font-medium text-foreground/70">No action items detected.</span>{" "}
+                      {m.processingStatus === "pending"
+                        ? "Process this meeting to extract tasks from the transcript."
+                        : "The transcript may not contain any explicit follow-ups."}
+                    </section>
+                  )}
+
                   {/* Inline recording player */}
                   {m.recordingUrl && (
                     <section>
@@ -645,31 +696,6 @@ export default function Meetings() {
                     </section>
                   )}
 
-                  {/* Tasks */}
-                  {actionItems.length > 0 && (
-                    <section>
-                      <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                        Tasks ({actionItems.length})
-                      </h3>
-                      <ul className="space-y-2">
-                        {actionItems.map((item: any, i: number) => {
-                          const rawText = typeof item === "string" ? item : item.text || item.description || "";
-                          const text = cleanActionText(rawText);
-                          return (
-                            <li key={i} className="flex items-start gap-2.5 text-[13px] leading-relaxed">
-                              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
-                              <span>{renderInlineMd(text)}</span>
-                              {item.assignee && (
-                                <span className="shrink-0 text-[11px] font-medium text-blue-600 dark:text-blue-400">@{item.assignee}</span>
-                              )}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </section>
-                  )}
-
                   {/* Summary */}
                   {summary?.overview && (() => {
                     const bullets = parseOverviewBullets(summary.overview);
@@ -677,13 +703,14 @@ export default function Meetings() {
                       <section>
                         <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Summary</h3>
                         {bullets.length > 1 ? (
-                          <div className="space-y-3">
+                          <ul className="space-y-2">
                             {bullets.map((bullet, i) => (
-                              <p key={i} className="text-[13px] leading-relaxed">
-                                {renderInlineMd(bullet)}
-                              </p>
+                              <li key={i} className="flex gap-2 text-[13px] leading-relaxed">
+                                <span className="mt-[8px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/50" />
+                                <span className="flex-1">{renderInlineMd(bullet)}</span>
+                              </li>
                             ))}
-                          </div>
+                          </ul>
                         ) : (
                           <p className="text-[13px] leading-relaxed">{renderInlineMd(summary.overview)}</p>
                         )}
@@ -691,18 +718,37 @@ export default function Meetings() {
                     );
                   })()}
 
-                  {/* Key Points */}
+                  {/* Key Points — each emoji-prefixed section gets its own card with
+                      the bold label promoted to a heading so the panel is scannable. */}
                   {summary?.shorthand_bullet && (() => {
                     const points = parseShorthandBullets(summary.shorthand_bullet);
                     return (
                       <section>
                         <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Key Points</h3>
-                        <div className="space-y-3">
-                          {points.map((point: string, i: number) => (
-                            <p key={i} className="text-[13px] leading-relaxed">
-                              {renderInlineMd(point)}
-                            </p>
-                          ))}
+                        <div className="space-y-2.5">
+                          {points.map((point: string, i: number) => {
+                            const { emoji, label, body } = splitBulletParts(point);
+                            if (!label) {
+                              return (
+                                <p key={i} className="text-[13px] leading-relaxed">
+                                  {renderInlineMd(point)}
+                                </p>
+                              );
+                            }
+                            return (
+                              <div key={i} className="rounded-md border bg-muted/20 px-3 py-2">
+                                <div className="flex items-center gap-1.5 text-[13px] font-semibold">
+                                  {emoji && <span aria-hidden>{emoji}</span>}
+                                  <span>{label}</span>
+                                </div>
+                                {body && (
+                                  <p className="mt-1 text-[12.5px] leading-relaxed text-foreground/80">
+                                    {renderInlineMd(body)}
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       </section>
                     );
