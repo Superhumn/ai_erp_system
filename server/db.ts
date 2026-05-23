@@ -646,6 +646,49 @@ export async function deleteVendor(id: number) {
   await db.delete(vendors).where(eq(vendors.id, id));
 }
 
+/**
+ * Look up a CRM contact that plausibly belongs to this vendor by matching
+ * on the vendor's phone/whatsappNumber/email. Used both at click-time
+ * (auto-link on first chat) and by the one-time backfill script.
+ */
+export async function findCrmContactForVendor(vendor: {
+  phone?: string | null;
+  whatsappNumber?: string | null;
+  email?: string | null;
+}) {
+  return findCrmContactMatch({
+    email: vendor.email,
+    phone: vendor.phone,
+    whatsappNumber: vendor.whatsappNumber || vendor.phone,
+  });
+}
+
+/**
+ * Link a CRM contact to a vendor. If `whatsappNumber` is not provided,
+ * mirror the contact's whatsappNumber/phone onto the vendor so the chat
+ * drawer can fall back to vendor.whatsappNumber without re-fetching.
+ */
+export async function linkVendorContact(vendorId: number, contactId: number, whatsappNumber?: string | null) {
+  const db = await getDb();
+  if (!db) return;
+  const patch: Record<string, any> = { contactId };
+  if (whatsappNumber !== undefined) {
+    patch.whatsappNumber = whatsappNumber || null;
+  } else {
+    const contact = await getCrmContactById(contactId);
+    if (contact?.whatsappNumber || contact?.phone) {
+      patch.whatsappNumber = contact.whatsappNumber || contact.phone;
+    }
+  }
+  await db.update(vendors).set(patch).where(eq(vendors.id, vendorId));
+}
+
+export async function unlinkVendorContact(vendorId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(vendors).set({ contactId: null, whatsappNumber: null }).where(eq(vendors.id, vendorId));
+}
+
 // ============================================
 // PRODUCT MANAGEMENT
 // ============================================
@@ -6295,6 +6338,42 @@ export async function getParsedDocuments(options?: {
   return query.orderBy(desc(parsedDocuments.createdAt))
     .limit(options?.limit || 100)
     .offset(options?.offset || 0);
+}
+
+/**
+ * Parsed documents (typically invoices) that the email pipeline linked
+ * to a specific purchase order. Used to surface "this PO has 2 invoices
+ * pulled from Alibaba emails" badges in the UI.
+ */
+export async function getParsedDocumentsForPO(purchaseOrderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(parsedDocuments)
+    .where(eq(parsedDocuments.purchaseOrderId, purchaseOrderId))
+    .orderBy(desc(parsedDocuments.documentDate));
+}
+
+/**
+ * Returns a map of purchaseOrderId -> count of linked parsed documents.
+ * Used by the PO list view to show a single badge per row without N+1.
+ */
+export async function getParsedDocumentCountsByPO(purchaseOrderIds: number[]) {
+  const db = await getDb();
+  const result = new Map<number, number>();
+  if (!db || purchaseOrderIds.length === 0) return result;
+  const rows = await db.select({
+    purchaseOrderId: parsedDocuments.purchaseOrderId,
+    cnt: sql<number>`count(*)`.as("cnt"),
+  })
+    .from(parsedDocuments)
+    .where(inArray(parsedDocuments.purchaseOrderId, purchaseOrderIds))
+    .groupBy(parsedDocuments.purchaseOrderId);
+  for (const row of rows) {
+    if (row.purchaseOrderId != null) {
+      result.set(row.purchaseOrderId, Number(row.cnt));
+    }
+  }
+  return result;
 }
 
 export async function getParsedDocumentById(id: number) {

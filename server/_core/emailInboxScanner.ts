@@ -2,6 +2,7 @@
 import { ImapFlow } from "imapflow";
 import { ENV } from "./env";
 import { quickCategorize, parseEmailContent, type EmailCategorization, type EmailParseResult } from "./emailParser";
+import { isAlibabaEmail, ALIBABA_PARSE_HINT } from "./alibabaEmail";
 
 // Email inbox configuration
 export interface EmailInboxConfig {
@@ -478,7 +479,8 @@ export async function scanAndCategorizeInbox(
           email.subject,
           email.bodyText,
           email.from.address,
-          email.from.name
+          email.from.name,
+          isAlibabaEmail(email.from.address) ? ALIBABA_PARSE_HINT : undefined
         );
         
         // Update categorization from AI if available
