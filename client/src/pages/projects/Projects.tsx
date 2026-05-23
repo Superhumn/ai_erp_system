@@ -348,6 +348,7 @@ export default function Projects() {
   const filteredTasks = useMemo(() => {
     const query = search.trim().toLowerCase();
     return taskList.filter((task) => {
+      if (!projectMap.has(task.projectId)) return false;
       const projectName = projectMap.get(task.projectId)?.name || "";
       const matchesSearch =
         !query ||

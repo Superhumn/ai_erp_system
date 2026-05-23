@@ -46,6 +46,7 @@ export const ENV = {
     googleClientId: process.env.GOOGLE_CLIENT_ID ?? "",
     googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
     googleRedirectUri: process.env.GOOGLE_REDIRECT_URI ?? "",
+    googleChatOpsWebhook: process.env.GOOGLE_CHAT_OPS_WEBHOOK ?? "",
     appUrl: process.env.APP_URL ?? "http://localhost:3000",
 
     // Google Service Account (for reading private Drive folders shared with the

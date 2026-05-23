@@ -38,11 +38,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ClipboardList, Plus, Search, Loader2, Sparkles, Send, Trash2, MoreHorizontal, CheckCircle } from "lucide-react";
+import { ClipboardList, Plus, Search, Loader2, Sparkles, Send, Trash2, MoreHorizontal, CheckCircle, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
 import { getStatusColor } from "@/lib/statusColors";
+import WhatsAppDrawer from "@/components/WhatsAppDrawer";
+import LinkContactDialog from "@/components/LinkContactDialog";
 
 type LineItem = {
   productId?: number;
@@ -60,6 +62,8 @@ export default function PurchaseOrders() {
   const [textInput, setTextInput] = useState("");
   const [activeAction, setActiveAction] = useState<'draft' | 'email' | null>(null);
   const [deletePOId, setDeletePOId] = useState<number | null>(null);
+  const [chatTarget, setChatTarget] = useState<{ contactId: number; whatsappNumber: string; contactName?: string; subtitle?: string } | null>(null);
+  const [linkTarget, setLinkTarget] = useState<{ vendorId: number; vendorName: string; vendorPhone?: string | null; poNumber: string } | null>(null);
   const [poPreview, setPoPreview] = useState<{
     vendorId: number;
     vendorName: string;
@@ -89,6 +93,15 @@ export default function PurchaseOrders() {
   const { data: vendors } = trpc.vendors.list.useQuery();
   const { data: products } = trpc.products.list.useQuery();
   const utils = trpc.useUtils();
+
+  const poIds = (purchaseOrders || []).map((po) => po.id);
+  const { data: invoiceCounts } = trpc.purchaseOrders.parsedInvoiceCounts.useQuery(
+    { purchaseOrderIds: poIds },
+    { enabled: poIds.length > 0 }
+  );
+  const invoiceCountMap = new Map<number, number>(
+    (invoiceCounts || []).map((c) => [c.purchaseOrderId, c.count])
+  );
 
   const resetForm = () => {
     setFormData({ vendorId: 0, expectedDeliveryDate: "", notes: "" });
@@ -181,6 +194,40 @@ export default function PurchaseOrders() {
       setActiveAction(null);
     },
   });
+
+  const autoLinkMutation = trpc.vendors.autoLinkContact.useMutation();
+
+  async function handleOpenChat(po: any, vendor: any, e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!vendor) {
+      toast.error("No vendor on this PO");
+      return;
+    }
+    try {
+      const result = await autoLinkMutation.mutateAsync({ vendorId: vendor.id });
+      if (result.contact) {
+        const waNumber = result.contact.whatsappNumber || result.contact.phone || vendor.whatsappNumber || vendor.phone;
+        if (!waNumber) {
+          toast.error("Contact has no WhatsApp/phone number");
+          return;
+        }
+        if (result.autoLinked) {
+          toast.success(`Auto-linked to ${result.contact.fullName || "contact"}`);
+          utils.vendors.list.invalidate();
+        }
+        setChatTarget({
+          contactId: result.contact.id,
+          whatsappNumber: waNumber,
+          contactName: result.contact.fullName || vendor.contactName || vendor.name,
+          subtitle: `${vendor.name} · PO ${po.poNumber}`,
+        });
+      } else {
+        setLinkTarget({ vendorId: vendor.id, vendorName: vendor.name, vendorPhone: vendor.phone, poNumber: po.poNumber });
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to open chat");
+    }
+  }
 
   const deletePO = trpc.purchaseOrders.delete.useMutation({
     onSuccess: () => {
@@ -660,6 +707,7 @@ export default function PurchaseOrders() {
                   <TableHead>Order Date</TableHead>
                   <TableHead>Expected Date</TableHead>
                   <TableHead className="text-right">Items Count</TableHead>
+                  <TableHead className="text-right">Invoices</TableHead>
                   <TableHead>Notes</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
@@ -709,45 +757,69 @@ export default function PurchaseOrders() {
                       <TableCell className="text-right">
                         {(po as any).items?.length ?? "-"}
                       </TableCell>
+                      <TableCell className="text-right">
+                        {invoiceCountMap.get(po.id) ? (
+                          <Badge variant="outline" className="font-mono">
+                            {invoiceCountMap.get(po.id)}
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
                         {po.notes || "-"}
                       </TableCell>
                       <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" aria-label="Open actions menu">
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            {po.status === "draft" && (
-                              <DropdownMenuItem
-                                onClick={() => approvePO.mutate({ id: po.id })}
-                                disabled={approvePO.isPending}
-                              >
-                                <CheckCircle className="h-4 w-4 mr-2" />
-                                Approve (mark as Sent)
-                              </DropdownMenuItem>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`Chat with ${vendor?.name || "vendor"} on WhatsApp`}
+                            onClick={(e) => handleOpenChat(po, vendor, e)}
+                            disabled={!vendor || (autoLinkMutation.isPending && (autoLinkMutation.variables as { vendorId: number } | undefined)?.vendorId === vendor?.id)}
+                          >
+                            {autoLinkMutation.isPending && (autoLinkMutation.variables as { vendorId: number } | undefined)?.vendorId === vendor?.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <MessageCircle className="h-4 w-4 text-muted-foreground hover:text-green-600" />
                             )}
-                            {(po.status === "draft" || po.status === "sent") && (
+                          </Button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon" aria-label="Open actions menu">
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              {po.status === "draft" && (
+                                <DropdownMenuItem
+                                  onClick={() => approvePO.mutate({ id: po.id })}
+                                  disabled={approvePO.isPending}
+                                >
+                                  <CheckCircle className="h-4 w-4 mr-2" />
+                                  Approve (mark as Sent)
+                                </DropdownMenuItem>
+                              )}
+                              {(po.status === "draft" || po.status === "sent") && (
+                                <DropdownMenuItem
+                                  onClick={() => sendPOToSupplier.mutate({ poId: po.id })}
+                                  disabled={sendPOToSupplier.isPending}
+                                >
+                                  <Send className="h-4 w-4 mr-2" />
+                                  Send to Supplier
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuSeparator />
                               <DropdownMenuItem
-                                onClick={() => sendPOToSupplier.mutate({ poId: po.id })}
-                                disabled={sendPOToSupplier.isPending}
+                                className="text-destructive focus:text-destructive"
+                                onClick={() => setDeletePOId(po.id)}
                               >
-                                <Send className="h-4 w-4 mr-2" />
-                                Send to Supplier
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                Delete purchase order
                               </DropdownMenuItem>
-                            )}
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              className="text-destructive focus:text-destructive"
-                              onClick={() => setDeletePOId(po.id)}
-                            >
-                              <Trash2 className="h-4 w-4 mr-2" />
-                              Delete purchase order
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
@@ -780,6 +852,39 @@ export default function PurchaseOrders() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {chatTarget && (
+        <WhatsAppDrawer
+          open={!!chatTarget}
+          onOpenChange={(open) => !open && setChatTarget(null)}
+          contactId={chatTarget.contactId}
+          whatsappNumber={chatTarget.whatsappNumber}
+          contactName={chatTarget.contactName}
+          subtitle={chatTarget.subtitle}
+        />
+      )}
+
+      {linkTarget && (
+        <LinkContactDialog
+          open={!!linkTarget}
+          onOpenChange={(open) => !open && setLinkTarget(null)}
+          vendorId={linkTarget.vendorId}
+          vendorName={linkTarget.vendorName}
+          vendorPhone={linkTarget.vendorPhone}
+          onLinked={(contact) => {
+            const waNumber = contact.whatsappNumber || contact.phone;
+            if (waNumber) {
+              setChatTarget({
+                contactId: contact.id,
+                whatsappNumber: waNumber,
+                contactName: contact.fullName || linkTarget.vendorName,
+                subtitle: `${linkTarget.vendorName} · PO ${linkTarget.poNumber}`,
+              });
+            }
+            setLinkTarget(null);
+          }}
+        />
+      )}
     </div>
   );
 }

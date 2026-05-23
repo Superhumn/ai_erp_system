@@ -433,18 +433,19 @@ export async function parseEmailContent(
   subject: string,
   bodyText: string,
   fromEmail: string,
-  fromName?: string
+  fromName?: string,
+  senderHint?: string
 ): Promise<EmailParseResult> {
   try {
     // First, categorize the email
     const categorization = await categorizeEmail(subject, bodyText, fromEmail, fromName);
-    
+
     const prompt = `You are an expert document parser for a business ERP system. Analyze the following email and extract any business documents (receipts, invoices, purchase orders, freight documents, etc.).
 
 EMAIL DETAILS:
 From: ${fromName ? `${fromName} <${fromEmail}>` : fromEmail}
 Subject: ${subject}
-
+${senderHint ? `\nSENDER-SPECIFIC GUIDANCE:\n${senderHint}\n` : ""}
 BODY:
 ${bodyText?.substring(0, 8000) || "(empty)"}
 
