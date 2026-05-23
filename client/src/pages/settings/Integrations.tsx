@@ -46,6 +46,13 @@ export default function IntegrationsPage() {
   const { data: workspaceAuthUrl } = trpc.googleWorkspace.getAuthUrl.useQuery();
   const { data: sheetsAuthUrl } = trpc.sheetsImport.getAuthUrl.useQuery();
   
+  // Admin-only diagnostic showing which QuickBooks credentials the deployed
+  // server actually loaded from env. Used to confirm a Railway env update
+  // actually reached the running process.
+  const { data: quickbooksDebug } = trpc.quickbooks.debugConfig.useQuery(undefined, {
+    retry: false,
+  });
+
   // Get QuickBooks OAuth URL. The tRPC inferred type lands as `unknown` for
   // this procedure, so narrow it here to keep call sites type-checked.
   const { data: quickbooksAuthUrlData } = trpc.quickbooks.getAuthUrl.useQuery();
@@ -937,6 +944,24 @@ export default function IntegrationsPage() {
                           Development (sandbox) credentials only work with Intuit sandbox companies — real QuickBooks users will see a "no sandbox companies found" error.
                         </p>
                       </div>
+                      {quickbooksDebug && (
+                        <div className="mb-4 p-3 bg-slate-500/5 border border-slate-500/20 rounded-md text-xs space-y-1.5">
+                          <p className="font-medium text-sm">Live server config (admin diagnostic)</p>
+                          <p className="text-muted-foreground">
+                            What the deployed server has loaded from env right now. Compare the client_id against your Intuit Developer Dashboard → Keys &amp; OAuth → <strong>Production</strong> tab.
+                          </p>
+                          <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 font-mono pt-1">
+                            <span className="text-muted-foreground">client_id:</span>
+                            <span>{quickbooksDebug.clientIdMasked ?? <em className="text-red-500">not set</em>} <span className="text-muted-foreground">({quickbooksDebug.clientIdLength} chars)</span></span>
+                            <span className="text-muted-foreground">client_secret:</span>
+                            <span>{quickbooksDebug.clientSecretSet ? "set" : <em className="text-red-500">not set</em>}</span>
+                            <span className="text-muted-foreground">environment:</span>
+                            <span>{quickbooksDebug.environment}</span>
+                            <span className="text-muted-foreground">redirect_uri:</span>
+                            <span className="break-all">{quickbooksDebug.redirectUri}</span>
+                          </div>
+                        </div>
+                      )}
                       {quickbooksAuthUrl?.redirectUri && (
                         <div className="mb-4 p-3 bg-amber-500/5 border border-amber-500/20 rounded-md">
                           <p className="text-sm font-medium mb-1">Register this Redirect URI in Intuit</p>
