@@ -3,6 +3,8 @@ import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
@@ -48,6 +50,9 @@ import {
   Edit,
   Info,
   Mic,
+  Settings,
+  Trash2,
+  Plus,
 } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
@@ -385,6 +390,7 @@ export default function ApprovalQueue() {
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [isRejectDialogOpen, setIsRejectDialogOpen] = useState(false);
+  const [showAgentConfig, setShowAgentConfig] = useState(false);
   const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false);
   const [editedTaskData, setEditedTaskData] = useState("");
   const [activeTab, setActiveTab] = useState("pending");
@@ -806,10 +812,16 @@ export default function ApprovalQueue() {
           <h1 className="text-xl font-semibold tracking-[-0.02em]">AI Approval Queue</h1>
           <p className="text-muted-foreground">Review and approve AI-generated actions</p>
         </div>
-        <Button variant="outline" onClick={() => utils.aiAgent.tasks.invalidate()}>
-          <RefreshCw className="h-4 w-4 mr-2" />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => setShowAgentConfig(true)}>
+            <Settings className="h-4 w-4 mr-2" />
+            Agent config
+          </Button>
+          <Button variant="outline" onClick={() => utils.aiAgent.tasks.invalidate()}>
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Refresh
+          </Button>
+        </div>
       </div>
       
       {/* Stats */}
@@ -1233,6 +1245,451 @@ export default function ApprovalQueue() {
           if (!next) setSourceViewerTask(null);
         }}
       />
+
+      <AgentConfigDialog open={showAgentConfig} onClose={() => setShowAgentConfig(false)} />
     </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
+// Agent config — manage aiAgent.rules and aiAgent.emailTemplates.
+// Admin-gated server-side; the UI shows whatever the user can see
+// and lets them open/edit/delete what they can mutate.
+// ──────────────────────────────────────────────────────────────
+const RULE_TYPES = [
+  "inventory_reorder",
+  "po_auto_generate",
+  "rfq_auto_send",
+  "vendor_followup",
+  "payment_reminder",
+  "shipment_tracking",
+  "price_alert",
+  "quality_check",
+] as const;
+type RuleType = (typeof RULE_TYPES)[number];
+
+const TEMPLATE_TYPES = [
+  "po_to_vendor",
+  "rfq_request",
+  "quote_request",
+  "shipment_confirmation",
+  "payment_reminder",
+  "vendor_followup",
+  "quality_issue",
+  "general",
+] as const;
+type TemplateType = (typeof TEMPLATE_TYPES)[number];
+
+function AgentConfigDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const utils = trpc.useUtils();
+  const [tab, setTab] = useState<"rules" | "templates">("rules");
+
+  // ─ Rules ─
+  const { data: rules } = trpc.aiAgent.rules.list.useQuery({}, { enabled: open && tab === "rules" });
+  const [editingRule, setEditingRule] = useState<any | null>(null);
+  const [creatingRule, setCreatingRule] = useState(false);
+  const [ruleForm, setRuleForm] = useState({
+    name: "",
+    description: "",
+    ruleType: "inventory_reorder" as RuleType,
+    triggerCondition: "{}",
+    actionConfig: "{}",
+    requiresApproval: true,
+    autoApproveThreshold: "",
+  });
+
+  const createRule = trpc.aiAgent.rules.create.useMutation({
+    onSuccess: () => {
+      toast.success("Rule created");
+      setCreatingRule(false);
+      utils.aiAgent.rules.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const updateRule = trpc.aiAgent.rules.update.useMutation({
+    onSuccess: () => {
+      toast.success("Rule updated");
+      setEditingRule(null);
+      utils.aiAgent.rules.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  // ─ Templates ─
+  const { data: templates } = trpc.aiAgent.emailTemplates.list.useQuery({}, { enabled: open && tab === "templates" });
+  const [editingTpl, setEditingTpl] = useState<any | null>(null);
+  const [creatingTpl, setCreatingTpl] = useState(false);
+  const [tplForm, setTplForm] = useState({
+    name: "",
+    templateType: "general" as TemplateType,
+    subject: "",
+    bodyTemplate: "",
+    isDefault: false,
+  });
+
+  const createTpl = trpc.aiAgent.emailTemplates.create.useMutation({
+    onSuccess: () => {
+      toast.success("Email template created");
+      setCreatingTpl(false);
+      utils.aiAgent.emailTemplates.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const updateTpl = trpc.aiAgent.emailTemplates.update.useMutation({
+    onSuccess: () => {
+      toast.success("Email template updated");
+      setEditingTpl(null);
+      utils.aiAgent.emailTemplates.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const openCreateRule = () => {
+    setRuleForm({
+      name: "",
+      description: "",
+      ruleType: "inventory_reorder",
+      triggerCondition: "{}",
+      actionConfig: "{}",
+      requiresApproval: true,
+      autoApproveThreshold: "",
+    });
+    setCreatingRule(true);
+  };
+  const openEditRule = (r: any) => {
+    setRuleForm({
+      name: r.name || "",
+      description: r.description || "",
+      ruleType: (r.ruleType || "inventory_reorder") as RuleType,
+      triggerCondition: r.triggerCondition || "{}",
+      actionConfig: r.actionConfig || "{}",
+      requiresApproval: r.requiresApproval !== false,
+      autoApproveThreshold: r.autoApproveThreshold || "",
+    });
+    setEditingRule(r);
+  };
+
+  const openCreateTpl = () => {
+    setTplForm({ name: "", templateType: "general", subject: "", bodyTemplate: "", isDefault: false });
+    setCreatingTpl(true);
+  };
+  const openEditTpl = (t: any) => {
+    setTplForm({
+      name: t.name || "",
+      templateType: (t.templateType || "general") as TemplateType,
+      subject: t.subject || "",
+      bodyTemplate: t.bodyTemplate || "",
+      isDefault: !!t.isDefault,
+    });
+    setEditingTpl(t);
+  };
+
+  const submitRule = () => {
+    if (!ruleForm.name.trim()) return;
+    if (editingRule) {
+      updateRule.mutate({
+        id: editingRule.id,
+        name: ruleForm.name.trim(),
+        description: ruleForm.description || undefined,
+        triggerCondition: ruleForm.triggerCondition,
+        actionConfig: ruleForm.actionConfig,
+        requiresApproval: ruleForm.requiresApproval,
+        autoApproveThreshold: ruleForm.autoApproveThreshold || undefined,
+      });
+    } else {
+      createRule.mutate({
+        name: ruleForm.name.trim(),
+        description: ruleForm.description || undefined,
+        ruleType: ruleForm.ruleType,
+        triggerCondition: ruleForm.triggerCondition,
+        actionConfig: ruleForm.actionConfig,
+        requiresApproval: ruleForm.requiresApproval,
+        autoApproveThreshold: ruleForm.autoApproveThreshold || undefined,
+      });
+    }
+  };
+
+  const submitTpl = () => {
+    if (!tplForm.name.trim() || !tplForm.subject.trim() || !tplForm.bodyTemplate.trim()) return;
+    if (editingTpl) {
+      updateTpl.mutate({
+        id: editingTpl.id,
+        name: tplForm.name.trim(),
+        subject: tplForm.subject.trim(),
+        bodyTemplate: tplForm.bodyTemplate,
+        isDefault: tplForm.isDefault,
+      });
+    } else {
+      createTpl.mutate({
+        name: tplForm.name.trim(),
+        templateType: tplForm.templateType,
+        subject: tplForm.subject.trim(),
+        bodyTemplate: tplForm.bodyTemplate,
+        isDefault: tplForm.isDefault,
+      });
+    }
+  };
+
+  const showingRuleForm = creatingRule || editingRule !== null;
+  const showingTplForm = creatingTpl || editingTpl !== null;
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-4xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Bot className="h-5 w-5" /> AI agent config</DialogTitle>
+          <DialogDescription>
+            Manage automation rules and email templates used by the AI agent to draft and send
+            outbound communications.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="border-b -mx-6 px-6 flex gap-4">
+          <button
+            type="button"
+            className={`py-2 text-sm font-medium border-b-2 ${tab === "rules" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
+            onClick={() => setTab("rules")}
+          >
+            Rules
+          </button>
+          <button
+            type="button"
+            className={`py-2 text-sm font-medium border-b-2 ${tab === "templates" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
+            onClick={() => setTab("templates")}
+          >
+            Email templates
+          </button>
+        </div>
+
+        {tab === "rules" && (
+          showingRuleForm ? (
+            <div className="space-y-3 py-2">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="agRuleName" className="text-xs">Name *</Label>
+                  <Input id="agRuleName" value={ruleForm.name} onChange={(e) => setRuleForm({ ...ruleForm, name: e.target.value })} />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="agRuleType" className="text-xs">Rule type</Label>
+                  <select
+                    id="agRuleType"
+                    className="flex h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={ruleForm.ruleType}
+                    onChange={(e) => setRuleForm({ ...ruleForm, ruleType: e.target.value as RuleType })}
+                    disabled={!!editingRule}
+                  >
+                    {RULE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="agRuleDescription" className="text-xs">Description</Label>
+                <Input id="agRuleDescription" value={ruleForm.description} onChange={(e) => setRuleForm({ ...ruleForm, description: e.target.value })} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="agRuleTrigger" className="text-xs">Trigger condition (JSON)</Label>
+                  <textarea
+                    id="agRuleTrigger"
+                    rows={4}
+                    className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono"
+                    value={ruleForm.triggerCondition}
+                    onChange={(e) => setRuleForm({ ...ruleForm, triggerCondition: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="agRuleAction" className="text-xs">Action config (JSON)</Label>
+                  <textarea
+                    id="agRuleAction"
+                    rows={4}
+                    className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono"
+                    value={ruleForm.actionConfig}
+                    onChange={(e) => setRuleForm({ ...ruleForm, actionConfig: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 items-end">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4"
+                    checked={ruleForm.requiresApproval}
+                    onChange={(e) => setRuleForm({ ...ruleForm, requiresApproval: e.target.checked })}
+                  />
+                  Requires human approval
+                </label>
+                <div className="space-y-1">
+                  <Label htmlFor="agRuleThreshold" className="text-xs">Auto-approve under ($)</Label>
+                  <Input
+                    id="agRuleThreshold"
+                    type="number"
+                    value={ruleForm.autoApproveThreshold}
+                    onChange={(e) => setRuleForm({ ...ruleForm, autoApproveThreshold: e.target.value })}
+                    disabled={ruleForm.requiresApproval}
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" size="sm" onClick={() => { setCreatingRule(false); setEditingRule(null); }}>
+                  Cancel
+                </Button>
+                <Button size="sm" disabled={!ruleForm.name.trim() || createRule.isPending || updateRule.isPending} onClick={submitRule}>
+                  {(createRule.isPending || updateRule.isPending) && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                  {editingRule ? "Save changes" : "Create rule"}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex justify-end">
+                <Button size="sm" onClick={openCreateRule}><Plus className="h-3.5 w-3.5 mr-1" /> New rule</Button>
+              </div>
+              <div className="max-h-[50vh] overflow-y-auto">
+                {!rules || (rules as any[]).length === 0 ? (
+                  <p className="py-6 text-center text-sm text-muted-foreground">No agent rules configured.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {(rules as any[]).map((r: any) => (
+                      <div key={r.id} className="flex items-center gap-3 rounded-md border p-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-sm">{r.name}</span>
+                            <Badge variant="outline" className="text-[10px]">{r.ruleType}</Badge>
+                            {r.requiresApproval ? (
+                              <Badge variant="outline" className="text-[10px]">needs approval</Badge>
+                            ) : (
+                              <Badge className="text-[10px] bg-emerald-500/15 text-emerald-700">auto</Badge>
+                            )}
+                          </div>
+                          {r.description && <div className="text-xs text-muted-foreground truncate mt-0.5">{r.description}</div>}
+                        </div>
+                        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <input
+                            type="checkbox"
+                            className="h-3.5 w-3.5"
+                            checked={!!r.isActive}
+                            onChange={(e) => updateRule.mutate({ id: r.id, isActive: e.target.checked })}
+                          />
+                          On
+                        </label>
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditRule(r)}>
+                          <Edit className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )
+        )}
+
+        {tab === "templates" && (
+          showingTplForm ? (
+            <div className="space-y-3 py-2">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="agTplName" className="text-xs">Name *</Label>
+                  <Input id="agTplName" value={tplForm.name} onChange={(e) => setTplForm({ ...tplForm, name: e.target.value })} />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="agTplType" className="text-xs">Template type</Label>
+                  <select
+                    id="agTplType"
+                    className="flex h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={tplForm.templateType}
+                    onChange={(e) => setTplForm({ ...tplForm, templateType: e.target.value as TemplateType })}
+                    disabled={!!editingTpl}
+                  >
+                    {TEMPLATE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="agTplSubject" className="text-xs">Subject *</Label>
+                <Input id="agTplSubject" value={tplForm.subject} onChange={(e) => setTplForm({ ...tplForm, subject: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="agTplBody" className="text-xs">Body template *</Label>
+                <textarea
+                  id="agTplBody"
+                  rows={8}
+                  className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={tplForm.bodyTemplate}
+                  onChange={(e) => setTplForm({ ...tplForm, bodyTemplate: e.target.value })}
+                />
+                <p className="text-[10px] text-muted-foreground">Template variables like {"{{vendorName}}"} are replaced at send time.</p>
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={tplForm.isDefault}
+                  onChange={(e) => setTplForm({ ...tplForm, isDefault: e.target.checked })}
+                />
+                Default for this type
+              </label>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" size="sm" onClick={() => { setCreatingTpl(false); setEditingTpl(null); }}>
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={!tplForm.name.trim() || !tplForm.subject.trim() || !tplForm.bodyTemplate.trim() || createTpl.isPending || updateTpl.isPending}
+                  onClick={submitTpl}
+                >
+                  {(createTpl.isPending || updateTpl.isPending) && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                  {editingTpl ? "Save changes" : "Create template"}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex justify-end">
+                <Button size="sm" onClick={openCreateTpl}><Plus className="h-3.5 w-3.5 mr-1" /> New template</Button>
+              </div>
+              <div className="max-h-[50vh] overflow-y-auto">
+                {!templates || (templates as any[]).length === 0 ? (
+                  <p className="py-6 text-center text-sm text-muted-foreground">No email templates yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {(templates as any[]).map((t: any) => (
+                      <div key={t.id} className="flex items-center gap-3 rounded-md border p-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-sm">{t.name}</span>
+                            <Badge variant="outline" className="text-[10px]">{t.templateType}</Badge>
+                            {t.isDefault && <Badge className="text-[10px] bg-blue-500/15 text-blue-700">default</Badge>}
+                          </div>
+                          <div className="text-xs text-muted-foreground truncate mt-0.5">{t.subject}</div>
+                        </div>
+                        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <input
+                            type="checkbox"
+                            className="h-3.5 w-3.5"
+                            checked={t.isActive !== false}
+                            onChange={(e) => updateTpl.mutate({ id: t.id, isActive: e.target.checked })}
+                          />
+                          On
+                        </label>
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditTpl(t)}>
+                          <Edit className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

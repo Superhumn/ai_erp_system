@@ -555,6 +555,7 @@ export const appRouter = router({
         paymentTerms: z.number().optional(),
         defaultLeadTimeDays: z.number().optional(),
         notes: z.string().optional(),
+        whatsappNumber: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
@@ -567,6 +568,53 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         await db.deleteVendor(input.id);
         await createAuditLog(ctx.user.id, 'delete', 'vendor', input.id);
+        return { success: true };
+      }),
+
+    // Try to find a CRM contact for this vendor by matching phone/whatsapp/email.
+    // If found, auto-link and return the contact. If not, return null so the
+    // client can fall back to the manual picker / "add new contact" flow.
+    autoLinkContact: opsProcedure
+      .input(z.object({ vendorId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const vendor = await db.getVendorById(input.vendorId);
+        if (!vendor) throw new TRPCError({ code: "NOT_FOUND", message: "Vendor not found" });
+        if (vendor.contactId) {
+          const contact = await db.getCrmContactById(vendor.contactId);
+          if (contact) return { contact, autoLinked: false };
+        }
+        const match = await db.findCrmContactForVendor({
+          phone: vendor.phone,
+          whatsappNumber: vendor.whatsappNumber,
+          email: vendor.email,
+        });
+        if (!match) return { contact: null, autoLinked: false };
+        await db.linkVendorContact(input.vendorId, match.id);
+        await createAuditLog(ctx.user.id, "update", "vendor", input.vendorId, vendor.name, null, { contactId: match.id, autoLinked: true });
+        return { contact: match, autoLinked: true };
+      }),
+
+    linkContact: opsProcedure
+      .input(z.object({
+        vendorId: z.number(),
+        contactId: z.number(),
+        whatsappNumber: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const vendor = await db.getVendorById(input.vendorId);
+        if (!vendor) throw new TRPCError({ code: "NOT_FOUND", message: "Vendor not found" });
+        await db.linkVendorContact(input.vendorId, input.contactId, input.whatsappNumber);
+        await createAuditLog(ctx.user.id, "update", "vendor", input.vendorId, vendor.name, null, { contactId: input.contactId });
+        return { success: true };
+      }),
+
+    unlinkContact: opsProcedure
+      .input(z.object({ vendorId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const vendor = await db.getVendorById(input.vendorId);
+        if (!vendor) throw new TRPCError({ code: "NOT_FOUND", message: "Vendor not found" });
+        await db.unlinkVendorContact(input.vendorId);
+        await createAuditLog(ctx.user.id, "update", "vendor", input.vendorId, vendor.name, null, { contactId: null });
         return { success: true };
       }),
 
@@ -2014,6 +2062,15 @@ ONLY return the JSON array, no other text.`;
     getItems: opsProcedure
       .input(z.object({ purchaseOrderId: z.number() }))
       .query(({ input }) => db.getPurchaseOrderItems(input.purchaseOrderId)),
+    parsedInvoices: opsProcedure
+      .input(z.object({ purchaseOrderId: z.number() }))
+      .query(({ input }) => db.getParsedDocumentsForPO(input.purchaseOrderId)),
+    parsedInvoiceCounts: opsProcedure
+      .input(z.object({ purchaseOrderIds: z.array(z.number()) }))
+      .query(async ({ input }) => {
+        const counts = await db.getParsedDocumentCountsByPO(input.purchaseOrderIds);
+        return Array.from(counts.entries()).map(([purchaseOrderId, count]) => ({ purchaseOrderId, count }));
+      }),
     create: opsProcedure
       .input(z.object({
         companyId: z.number().optional(),
@@ -5519,6 +5576,26 @@ ONLY return the JSON array, no other text.`;
     // Get QuickBooks OAuth URL
     getAuthUrl: protectedProcedure.query(({ ctx }) => {
       return getQuickBooksAuthUrl(ctx.user.id);
+    }),
+
+    // Diagnostic: reveal the QuickBooks credentials the running server has
+    // loaded from env, with the client_id masked. Lets an admin verify that
+    // a deploy actually picked up updated env vars without leaking secrets.
+    debugConfig: adminProcedure.query(async () => {
+      const { getQuickBooksRedirectUri } = await import("./_core/quickbooks");
+      const clientId = ENV.quickbooksClientId;
+      const mask = (s: string) =>
+        s.length <= 8 ? "*".repeat(s.length) : `${s.slice(0, 8)}…${s.slice(-4)}`;
+      return {
+        clientIdPrefix: clientId ? clientId.slice(0, 8) : null,
+        clientIdSuffix: clientId ? clientId.slice(-4) : null,
+        clientIdMasked: clientId ? mask(clientId) : null,
+        clientIdLength: clientId.length,
+        clientSecretSet: !!ENV.quickbooksClientSecret,
+        environment: ENV.quickbooksEnvironment,
+        redirectUri: getQuickBooksRedirectUri(),
+        publicAppUrl: ENV.publicAppUrl,
+      };
     }),
 
     // Get connection status

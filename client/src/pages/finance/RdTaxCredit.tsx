@@ -548,6 +548,13 @@ function ExpensesTab({ studyId, projects, expenses, onRefresh }: { studyId: numb
     },
     onError: (e) => toast.error(e.message),
   });
+  const updateExpense = trpc.rdTaxCredit.updateExpense.useMutation({
+    onSuccess: () => {
+      toast.success("Expense updated");
+      onRefresh();
+    },
+    onError: (e) => toast.error(e.message),
+  });
   const deleteExpense = trpc.rdTaxCredit.deleteExpense.useMutation({
     onSuccess: () => { toast.success("Expense removed"); onRefresh(); },
     onError: (e) => toast.error(e.message),
@@ -602,7 +609,12 @@ function ExpensesTab({ studyId, projects, expenses, onRefresh }: { studyId: numb
                 <TableCell className="max-w-xs truncate">{exp.description || "—"}</TableCell>
                 <TableCell>{exp.employeeName || exp.vendorName || "—"}</TableCell>
                 <TableCell className="text-right">{fmt(exp.grossAmount)}</TableCell>
-                <TableCell className="text-right">{parseFloat(exp.rdPercentage || "100")}%</TableCell>
+                <TableCell className="text-right">
+                  <InlineRdPercent
+                    value={parseFloat(exp.rdPercentage || "100")}
+                    onSave={(v) => updateExpense.mutate({ id: exp.id, rdPercentage: String(v) })}
+                  />
+                </TableCell>
                 <TableCell className="text-right font-medium">{fmt(exp.qualifiedAmount)}</TableCell>
                 <TableCell>
                   <Button size="sm" variant="ghost" onClick={() => { if (confirm("Delete?")) deleteExpense.mutate({ id: exp.id }); }}>
@@ -754,5 +766,44 @@ function Form6765Tab({ studyId }: { studyId: number }) {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+// Inline R&D % editor — click to edit, blur or Enter to save.
+function InlineRdPercent({ value, onSave }: { value: number; onSave: (v: number) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(String(value));
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        className="rounded px-1 -mx-1 text-right hover:bg-muted"
+        onClick={() => { setDraft(String(value)); setEditing(true); }}
+        title="Click to edit"
+      >
+        {value}%
+      </button>
+    );
+  }
+  const commit = () => {
+    const n = parseFloat(draft);
+    if (!isNaN(n) && n !== value) onSave(Math.max(0, Math.min(100, n)));
+    setEditing(false);
+  };
+  return (
+    <input
+      autoFocus
+      type="number"
+      min={0}
+      max={100}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") commit();
+        if (e.key === "Escape") setEditing(false);
+      }}
+      className="w-16 rounded border bg-background px-1 text-right text-sm"
+    />
   );
 }

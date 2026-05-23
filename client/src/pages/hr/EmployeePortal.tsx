@@ -43,6 +43,7 @@ import {
   Plus,
   Trash2,
   Circle,
+  Phone,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -1088,6 +1089,14 @@ function EmergencyContactsTab({
     onError: (err) => toast.error(err.message),
   });
 
+  const update = trpc.employeePortal.updateEmergencyContact.useMutation({
+    onSuccess: () => {
+      toast.success("Contact updated");
+      onChange();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
@@ -1168,14 +1177,40 @@ function EmergencyContactsTab({
                     {c.email && <span>{c.email}</span>}
                   </div>
                 </div>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  aria-label="Delete emergency contact"
-                  onClick={() => remove.mutate({ id: c.id })}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    aria-label="Mark as primary"
+                    title={c.isPrimary ? "Already primary" : "Mark as primary"}
+                    disabled={c.isPrimary || update.isPending}
+                    onClick={() => update.mutate({ id: c.id, isPrimary: true })}
+                  >
+                    <Badge variant="outline" className="text-[10px]">Primary</Badge>
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    aria-label="Edit phone"
+                    onClick={() => {
+                      const newPhone = prompt(`Update phone for "${c.name}"`, c.phone || "");
+                      if (newPhone !== null && newPhone !== c.phone) {
+                        update.mutate({ id: c.id, phone: newPhone });
+                      }
+                    }}
+                    disabled={update.isPending}
+                  >
+                    <Phone className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    aria-label="Delete emergency contact"
+                    onClick={() => remove.mutate({ id: c.id })}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
             ))}
           </div>
