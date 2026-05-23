@@ -41,6 +41,7 @@ import {
   X,
   Check,
   BookOpen,
+  Bot,
   MailOpen,
   AlertCircle,
 } from "lucide-react";
@@ -226,6 +227,7 @@ export default function EmailInbox() {
   const [stepForm, setStepForm] = useState({ subject: "", body: "", delayDays: 1 });
   const [editingStepId, setEditingStepId] = useState<number | null>(null);
   const [showCannedManager, setShowCannedManager] = useState(false);
+  const [showAutoReplyManager, setShowAutoReplyManager] = useState(false);
   const [showCannedPicker, setShowCannedPicker] = useState(false);
   const [cannedSearch, setCannedSearch] = useState("");
   const [cannedForm, setCannedForm] = useState<{ open: boolean; id: number | null; name: string; content: string; shortcut: string; category: string }>({ open: false, id: null, name: "", content: "", shortcut: "", category: "" });
@@ -598,6 +600,7 @@ export default function EmailInbox() {
             <Button variant="ghost" size="icon" className="h-7 w-7" title="Auto-categorize" onClick={() => bulkCategorizeMutation.mutate({ useAi: false, limit: 100 })} disabled={bulkCategorizeMutation.isPending}>{bulkCategorizeMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}</Button>
             <Button variant="ghost" size="icon" className="h-7 w-7" title="Scan inbox" onClick={() => scanNowMutation.mutate({ folders: ["INBOX"], unseenOnly: false, limit: 200 })} disabled={scanNowMutation.isPending}>{scanNowMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Inbox className="h-3.5 w-3.5" />}</Button>
             <Button variant="ghost" size="icon" className="h-7 w-7" title="Canned responses" onClick={() => setShowCannedManager(true)}><BookOpen className="h-3.5 w-3.5" /></Button>
+            <Button variant="ghost" size="icon" className="h-7 w-7" title="Auto-reply rules" onClick={() => setShowAutoReplyManager(true)}><Bot className="h-3.5 w-3.5" /></Button>
             <div className="ml-auto flex items-center pr-1"><div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" /></div>
           </div>
         </div>
@@ -809,6 +812,367 @@ export default function EmailInbox() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <AutoReplyRulesDialog open={showAutoReplyManager} onClose={() => setShowAutoReplyManager(false)} />
     </>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
+// Auto-reply rules — list + create + edit + delete. Each rule
+// matches inbound emails by category + optional sender/subject/
+// keyword patterns and either drafts or auto-sends a reply.
+// ──────────────────────────────────────────────────────────────
+const REPLY_TONES = ["professional", "friendly", "formal"] as const;
+type ReplyTone = (typeof REPLY_TONES)[number];
+
+function AutoReplyRulesDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const utils = trpc.useUtils();
+  const { data: rules, isLoading } = (trpc.emailScanning as any).getAutoReplyRules.useQuery(
+    {},
+    { enabled: open },
+  );
+  const [editing, setEditing] = useState<any | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [form, setForm] = useState({
+    name: "",
+    category: "",
+    replyTemplate: "",
+    senderPattern: "",
+    subjectPattern: "",
+    tone: "professional" as ReplyTone,
+    autoSend: false,
+    delayMinutes: "0",
+    priority: "100",
+  });
+
+  const createRule = (trpc.emailScanning as any).createAutoReplyRule.useMutation({
+    onSuccess: () => {
+      toast.success("Auto-reply rule created");
+      setCreating(false);
+      setForm({
+        name: "",
+        category: "",
+        replyTemplate: "",
+        senderPattern: "",
+        subjectPattern: "",
+        tone: "professional",
+        autoSend: false,
+        delayMinutes: "0",
+        priority: "100",
+      });
+      (utils.emailScanning as any).getAutoReplyRules.invalidate();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const updateRule = (trpc.emailScanning as any).updateAutoReplyRule.useMutation({
+    onSuccess: () => {
+      toast.success("Rule updated");
+      setEditing(null);
+      (utils.emailScanning as any).getAutoReplyRules.invalidate();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const deleteRule = (trpc.emailScanning as any).deleteAutoReplyRule.useMutation({
+    onSuccess: () => {
+      toast.success("Rule deleted");
+      setDeletingId(null);
+      (utils.emailScanning as any).getAutoReplyRules.invalidate();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const openCreate = () => {
+    setForm({
+      name: "",
+      category: "",
+      replyTemplate: "",
+      senderPattern: "",
+      subjectPattern: "",
+      tone: "professional",
+      autoSend: false,
+      delayMinutes: "0",
+      priority: "100",
+    });
+    setCreating(true);
+  };
+
+  const openEdit = (r: any) => {
+    setForm({
+      name: r.name || "",
+      category: r.category || "",
+      replyTemplate: r.replyTemplate || "",
+      senderPattern: r.senderPattern || "",
+      subjectPattern: r.subjectPattern || "",
+      tone: (r.tone || "professional") as ReplyTone,
+      autoSend: !!r.autoSend,
+      delayMinutes: r.delayMinutes != null ? String(r.delayMinutes) : "0",
+      priority: r.priority != null ? String(r.priority) : "100",
+    });
+    setEditing(r);
+  };
+
+  const submitCreateOrEdit = () => {
+    if (!form.name.trim() || !form.category.trim() || !form.replyTemplate.trim()) return;
+    if (editing) {
+      updateRule.mutate({
+        id: editing.id,
+        name: form.name.trim(),
+        category: form.category.trim(),
+        replyTemplate: form.replyTemplate,
+        senderPattern: form.senderPattern || undefined,
+        subjectPattern: form.subjectPattern || undefined,
+        tone: form.tone,
+        autoSend: form.autoSend,
+        delayMinutes: form.delayMinutes ? parseInt(form.delayMinutes) : undefined,
+        priority: form.priority ? parseInt(form.priority) : undefined,
+      });
+    } else {
+      createRule.mutate({
+        name: form.name.trim(),
+        category: form.category.trim(),
+        replyTemplate: form.replyTemplate,
+        senderPattern: form.senderPattern || undefined,
+        subjectPattern: form.subjectPattern || undefined,
+        tone: form.tone,
+        autoSend: form.autoSend,
+        delayMinutes: form.delayMinutes ? parseInt(form.delayMinutes) : undefined,
+        priority: form.priority ? parseInt(form.priority) : undefined,
+      });
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Bot className="h-5 w-5" /> Auto-reply rules</DialogTitle>
+          <DialogDescription>
+            When inbound mail matches a rule's category and patterns, the system either drafts a
+            reply or sends it automatically.
+          </DialogDescription>
+        </DialogHeader>
+
+        {creating || editing !== null ? (
+          <div className="space-y-3 py-2">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="arName" className="text-xs">Name *</Label>
+                <Input
+                  id="arName"
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  placeholder="e.g. Customer order acknowledgement"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="arCategory" className="text-xs">Category *</Label>
+                <Input
+                  id="arCategory"
+                  value={form.category}
+                  onChange={(e) => setForm({ ...form, category: e.target.value })}
+                  placeholder="e.g. customer_order"
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="arTemplate" className="text-xs">Reply template *</Label>
+              <textarea
+                id="arTemplate"
+                className="flex min-h-[100px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                value={form.replyTemplate}
+                onChange={(e) => setForm({ ...form, replyTemplate: e.target.value })}
+                placeholder="Hi {{senderName}}, thanks for your order…"
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Variables like {"{{senderName}}"} are filled at send time.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="arSender" className="text-xs">Sender pattern (regex, optional)</Label>
+                <Input
+                  id="arSender"
+                  value={form.senderPattern}
+                  onChange={(e) => setForm({ ...form, senderPattern: e.target.value })}
+                  placeholder="@walmart.com$"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="arSubject" className="text-xs">Subject pattern (regex, optional)</Label>
+                <Input
+                  id="arSubject"
+                  value={form.subjectPattern}
+                  onChange={(e) => setForm({ ...form, subjectPattern: e.target.value })}
+                  placeholder="purchase order"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="arTone" className="text-xs">Tone</Label>
+                <select
+                  id="arTone"
+                  className="flex h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                  value={form.tone}
+                  onChange={(e) => setForm({ ...form, tone: e.target.value as ReplyTone })}
+                >
+                  {REPLY_TONES.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="arDelay" className="text-xs">Delay (min)</Label>
+                <Input
+                  id="arDelay"
+                  type="number"
+                  value={form.delayMinutes}
+                  onChange={(e) => setForm({ ...form, delayMinutes: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="arPriority" className="text-xs">Priority</Label>
+                <Input
+                  id="arPriority"
+                  type="number"
+                  value={form.priority}
+                  onChange={(e) => setForm({ ...form, priority: e.target.value })}
+                />
+              </div>
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={form.autoSend}
+                onChange={(e) => setForm({ ...form, autoSend: e.target.checked })}
+              />
+              Auto-send (skip the draft review step)
+            </label>
+            <div className="flex gap-2 justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setCreating(false);
+                  setEditing(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                disabled={
+                  !form.name.trim() ||
+                  !form.category.trim() ||
+                  !form.replyTemplate.trim() ||
+                  createRule.isPending ||
+                  updateRule.isPending
+                }
+                onClick={submitCreateOrEdit}
+              >
+                {(createRule.isPending || updateRule.isPending) && (
+                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                )}
+                {editing ? "Save changes" : "Create rule"}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="flex justify-end">
+              <Button size="sm" onClick={openCreate}>
+                <Plus className="h-3.5 w-3.5 mr-1" /> New rule
+              </Button>
+            </div>
+            <div className="max-h-[50vh] overflow-y-auto">
+              {isLoading ? (
+                <div className="py-8 text-center"><Loader2 className="h-5 w-5 animate-spin mx-auto" /></div>
+              ) : !rules || (rules as any[]).length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted-foreground">
+                  No auto-reply rules yet.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {(rules as any[]).map((r: any) => (
+                    <div key={r.id} className="flex items-center gap-3 rounded-md border p-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-sm">{r.name}</span>
+                          <Badge variant="outline" className="text-[10px]">{r.category}</Badge>
+                          {r.autoSend ? (
+                            <Badge className="text-[10px] bg-amber-500/15 text-amber-700">auto-send</Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-[10px]">draft</Badge>
+                          )}
+                        </div>
+                        {(r.senderPattern || r.subjectPattern) && (
+                          <div className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                            {r.senderPattern && <>sender: <code>{r.senderPattern}</code></>}
+                            {r.senderPattern && r.subjectPattern && " · "}
+                            {r.subjectPattern && <>subject: <code>{r.subjectPattern}</code></>}
+                          </div>
+                        )}
+                      </div>
+                      <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <input
+                          type="checkbox"
+                          className="h-3.5 w-3.5"
+                          checked={!!r.isEnabled}
+                          onChange={(e) => updateRule.mutate({ id: r.id, isEnabled: e.target.checked })}
+                        />
+                        On
+                      </label>
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(r)}>
+                        <Edit2 className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                        onClick={() => setDeletingId(r.id)}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Close</Button>
+        </DialogFooter>
+
+        <Dialog open={deletingId !== null} onOpenChange={(o) => { if (!o) setDeletingId(null); }}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Delete rule?</DialogTitle>
+              <DialogDescription>
+                Inbound emails will stop matching this rule. Already-queued replies are not
+                affected.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeletingId(null)}>Cancel</Button>
+              <Button
+                variant="destructive"
+                disabled={deleteRule.isPending}
+                onClick={() => {
+                  if (deletingId !== null) deleteRule.mutate({ id: deletingId });
+                }}
+              >
+                {deleteRule.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Delete
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </DialogContent>
+    </Dialog>
   );
 }

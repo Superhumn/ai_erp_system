@@ -110,6 +110,22 @@ type Checklist = {
 
 function ChecklistDetail({ checklistId, onBack }: { checklistId: number; onBack: () => void }) {
   const { data: checklist, isLoading, refetch } = trpc.investmentGrants.get.useQuery({ id: checklistId });
+  const [showAddItem, setShowAddItem] = useState(false);
+  const [newItem, setNewItem] = useState({
+    category: "entity_entry_setup" as
+      | "entity_entry_setup"
+      | "project_definition"
+      | "capex_financials"
+      | "land_infrastructure"
+      | "jobs_localization"
+      | "incentive_application"
+      | "construction_equipment"
+      | "grant_disbursement",
+    taskName: "",
+    description: "",
+    startMonth: "",
+    durationMonths: "",
+  });
   const updateItem = trpc.investmentGrants.updateItem.useMutation({
     onSuccess: () => {
       refetch();
@@ -117,6 +133,23 @@ function ChecklistDetail({ checklistId, onBack }: { checklistId: number; onBack:
     onError: (error) => {
       toast.error(error.message);
     },
+  });
+
+  const updateChecklist = trpc.investmentGrants.update.useMutation({
+    onSuccess: () => {
+      toast.success("Checklist updated");
+      refetch();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const addItem = trpc.investmentGrants.addItem.useMutation({
+    onSuccess: () => {
+      toast.success("Item added");
+      setShowAddItem(false);
+      refetch();
+    },
+    onError: (error) => toast.error(error.message),
   });
 
   if (isLoading) {
@@ -184,9 +217,24 @@ function ChecklistDetail({ checklistId, onBack }: { checklistId: number; onBack:
             <p className="text-muted-foreground text-sm mt-1">{checklist.description}</p>
           )}
         </div>
-        <Badge className={STATUS_CONFIG[checklist.status]?.color}>
-          {STATUS_CONFIG[checklist.status]?.label || checklist.status}
-        </Badge>
+        <Select
+          value={checklist.status}
+          onValueChange={(v) => {
+            if (v === checklist.status) return;
+            updateChecklist.mutate({ id: checklist.id, status: v as any });
+          }}
+          disabled={updateChecklist.isPending}
+        >
+          <SelectTrigger className={`h-8 w-40 border-0 ${STATUS_CONFIG[checklist.status]?.color || ""}`}>
+            <SelectValue>{STATUS_CONFIG[checklist.status]?.label || checklist.status}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="not_started">Not Started</SelectItem>
+            <SelectItem value="in_progress">In Progress</SelectItem>
+            <SelectItem value="completed">Completed</SelectItem>
+            <SelectItem value="on_hold">On Hold</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Summary Cards */}
@@ -229,6 +277,12 @@ function ChecklistDetail({ checklistId, onBack }: { checklistId: number; onBack:
             </p>
           </CardContent>
         </Card>
+      </div>
+
+      <div className="flex justify-end">
+        <Button size="sm" variant="outline" onClick={() => setShowAddItem(true)}>
+          <Plus className="h-4 w-4 mr-1" /> Add item
+        </Button>
       </div>
 
       {/* Checklist Items Grouped by Category */}
@@ -316,6 +370,93 @@ function ChecklistDetail({ checklistId, onBack }: { checklistId: number; onBack:
           );
         })}
       </div>
+
+      {/* Add custom item dialog */}
+      <Dialog open={showAddItem} onOpenChange={setShowAddItem}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add checklist item</DialogTitle>
+            <DialogDescription>
+              Custom items live alongside the default ones and contribute to the completion
+              percentage.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="igCategory" className="text-xs">Category *</Label>
+                <Select
+                  value={newItem.category}
+                  onValueChange={(v) => setNewItem({ ...newItem, category: v as any })}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {Object.keys(CATEGORY_LABELS).map((c) => (
+                      <SelectItem key={c} value={c}>{CATEGORY_LABELS[c as keyof typeof CATEGORY_LABELS]}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="igTaskName" className="text-xs">Task name *</Label>
+                <Input
+                  id="igTaskName"
+                  value={newItem.taskName}
+                  onChange={(e) => setNewItem({ ...newItem, taskName: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="igDescription" className="text-xs">Description</Label>
+              <Textarea
+                id="igDescription"
+                rows={2}
+                value={newItem.description}
+                onChange={(e) => setNewItem({ ...newItem, description: e.target.value })}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="igStartMonth" className="text-xs">Start month</Label>
+                <Input
+                  id="igStartMonth"
+                  type="number"
+                  value={newItem.startMonth}
+                  onChange={(e) => setNewItem({ ...newItem, startMonth: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="igDurationMonths" className="text-xs">Duration (months)</Label>
+                <Input
+                  id="igDurationMonths"
+                  type="number"
+                  value={newItem.durationMonths}
+                  onChange={(e) => setNewItem({ ...newItem, durationMonths: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAddItem(false)}>Cancel</Button>
+            <Button
+              disabled={!newItem.taskName.trim() || addItem.isPending}
+              onClick={() => {
+                addItem.mutate({
+                  checklistId,
+                  category: newItem.category,
+                  taskName: newItem.taskName.trim(),
+                  description: newItem.description || undefined,
+                  startMonth: newItem.startMonth ? parseInt(newItem.startMonth) : undefined,
+                  durationMonths: newItem.durationMonths ? parseInt(newItem.durationMonths) : undefined,
+                });
+              }}
+            >
+              {addItem.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Add item
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
