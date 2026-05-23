@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   MapPin, Package, Ship, Plane, Truck, Search, Loader2,
   ChevronRight, Clock, Navigation, ExternalLink,
@@ -87,6 +88,15 @@ export default function FreightTracking() {
   const trackMutation = trpc.freight.trackShipment.useMutation({
     onSuccess: (data) => setLiveData(data),
     onError: (err) => toast.error("Tracking failed: " + err.message),
+  });
+
+  const utils = trpc.useUtils();
+  const updateBooking = trpc.freight.bookings.update.useMutation({
+    onSuccess: () => {
+      toast.success("Booking updated");
+      utils.freight.bookings.list.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
   });
 
   const handleLiveTrack = (number: string, type?: "CT" | "BL" | "BK") => {
@@ -365,9 +375,28 @@ export default function FreightTracking() {
                     Track Live
                   </Button>
                 )}
-                <Badge className={`${statusColors[selected.status]} text-sm px-3 py-1`}>
-                  {(selected.status || "pending").replace(/_/g, " ")}
-                </Badge>
+                <Select
+                  value={selected.status || "pending"}
+                  onValueChange={(v) => {
+                    if (v === selected.status) return;
+                    updateBooking.mutate({ id: selected.id, status: v as any });
+                  }}
+                  disabled={updateBooking.isPending}
+                >
+                  <SelectTrigger
+                    className={`h-9 w-44 border-0 ${statusColors[selected.status] || statusColors.pending}`}
+                  >
+                    <SelectValue>{(selected.status || "pending").replace(/_/g, " ")}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pending">pending</SelectItem>
+                    <SelectItem value="confirmed">confirmed</SelectItem>
+                    <SelectItem value="in_transit">in transit</SelectItem>
+                    <SelectItem value="arrived">arrived</SelectItem>
+                    <SelectItem value="delivered">delivered</SelectItem>
+                    <SelectItem value="cancelled">cancelled</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 

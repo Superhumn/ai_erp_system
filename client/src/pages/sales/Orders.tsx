@@ -21,9 +21,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { SpreadsheetTable, Column } from "@/components/SpreadsheetTable";
 import { DetailSheet } from "@/components/DetailSheet";
-import { ShoppingCart, Plus, Loader2, ExternalLink } from "lucide-react";
+import { ShoppingCart, Plus, Loader2, ExternalLink, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { Link } from "wouter";
@@ -103,6 +113,7 @@ function OrderSummaryBody({ order }: { order: any }) {
 export default function Orders() {
   const [isOpen, setIsOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
+  const [orderToDelete, setOrderToDelete] = useState<any | null>(null);
   const [selectedOrders, setSelectedOrders] = useState<Set<number | string>>(new Set());
   const [formData, setFormData] = useState({
     customerId: 0,
@@ -138,6 +149,23 @@ export default function Orders() {
     onError: (err: any) => toast.error(err.message),
   });
 
+  const updateOrder = trpc.orders.update.useMutation({
+    onSuccess: () => {
+      utils.orders.list.invalidate();
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const deleteOrder = trpc.orders.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Order deleted");
+      setOrderToDelete(null);
+      setSelectedOrder(null);
+      utils.orders.list.invalidate();
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
   // Enrich orders for dense display: resolve customer name and item count.
   const customerById = useMemo(() => {
     const map = new Map<number, string>();
@@ -162,7 +190,7 @@ export default function Orders() {
     { key: "orderNumber", header: "Order #", type: "text", sortable: true },
     { key: "_customerName", header: "Customer", type: "text", sortable: true },
     { key: "orderDate", header: "Date", type: "date", sortable: true },
-    { key: "status", header: "Status", type: "status", options: orderStatusOptions, filterable: true },
+    { key: "status", header: "Status", type: "status", options: orderStatusOptions, editable: true, filterable: true },
     { key: "_itemCount", header: "Items", type: "number", sortable: true },
     { key: "subtotal", header: "Subtotal", type: "currency", sortable: true },
     { key: "taxAmount", header: "Tax", type: "currency" },
@@ -350,6 +378,11 @@ export default function Orders() {
             onSelectionChange={setSelectedOrders}
             bulkActions={bulkActions}
             onBulkAction={handleBulkAction}
+            onCellEdit={(rowId, key, value) => {
+              if (key === "status") {
+                updateOrder.mutate({ id: Number(rowId), status: value });
+              }
+            }}
             compact
           />
         </CardContent>
@@ -372,17 +405,55 @@ export default function Orders() {
         subtitle={selectedOrder?._customerName}
         actions={
           selectedOrder && (
-            <Button asChild size="sm" variant="outline">
-              <Link href={`/sales/orders/${selectedOrder.id}`}>
-                Open full page
-                <ExternalLink className="h-3.5 w-3.5 ml-1.5" />
-              </Link>
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-destructive hover:text-destructive"
+                onClick={() => setOrderToDelete(selectedOrder)}
+              >
+                <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                Delete
+              </Button>
+              <Button asChild size="sm" variant="outline">
+                <Link href={`/sales/orders/${selectedOrder.id}`}>
+                  Open full page
+                  <ExternalLink className="h-3.5 w-3.5 ml-1.5" />
+                </Link>
+              </Button>
+            </div>
           )
         }
       >
         {selectedOrder && <OrderSummaryBody order={selectedOrder} />}
       </DetailSheet>
+
+      <AlertDialog open={!!orderToDelete} onOpenChange={(open) => !open && setOrderToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete order?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes order{" "}
+              <span className="font-mono font-medium">{orderToDelete?.orderNumber}</span> and its line items.
+              This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteOrder.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteOrder.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (orderToDelete) deleteOrder.mutate({ id: orderToDelete.id });
+              }}
+            >
+              {deleteOrder.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Delete order
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

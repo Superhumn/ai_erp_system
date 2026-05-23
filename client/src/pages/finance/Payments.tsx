@@ -101,6 +101,14 @@ export default function Payments() {
     onError: (err: any) => toast.error(err.message),
   });
 
+  const updatePayment = trpc.payments.update.useMutation({
+    onSuccess: () => {
+      toast.success("Payment updated");
+      utils.payments.list.invalidate();
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
   const columns: Column<any>[] = [
     { key: "paymentNumber", header: "Payment #", type: "text", sortable: true },
     { key: "type", header: "Type", type: "badge", options: typeOptions, filterable: true },
@@ -113,7 +121,7 @@ export default function Payments() {
     },
     { key: "referenceNumber", header: "Reference", type: "text" },
     { key: "amount", header: "Amount", type: "currency", sortable: true },
-    { key: "status", header: "Status", type: "status", options: statusOptions, filterable: true },
+    { key: "status", header: "Status", type: "status", options: statusOptions, editable: true, filterable: true },
   ];
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -251,6 +259,11 @@ export default function Payments() {
             showExport
             onRowClick={(row) => setSelectedPayment(row)}
             expandedRowId={selectedPayment?.id ?? null}
+            onCellEdit={(rowId, key, value) => {
+              if (key === "status") {
+                updatePayment.mutate({ id: Number(rowId), status: value as any });
+              }
+            }}
             compact
           />
         </CardContent>

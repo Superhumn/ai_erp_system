@@ -7,15 +7,35 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { ArrowLeft, Play, CheckCircle, Package, AlertTriangle } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { ArrowLeft, Play, CheckCircle, Package, AlertTriangle, MoreHorizontal, Trash2, Ban, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { Link, useParams } from "wouter";
+import { Link, useParams, useLocation } from "wouter";
 
 export default function WorkOrderDetail() {
   const params = useParams<{ id: string }>();
+  const [, setLocation] = useLocation();
   const workOrderId = parseInt(params.id || "0");
   const [completedQty, setCompletedQty] = useState("");
   const [isCompleteOpen, setIsCompleteOpen] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const { data: workOrder, isLoading, refetch } = trpc.workOrders.getById.useQuery({ id: workOrderId });
   const { data: materials } = trpc.workOrders.getMaterials.useQuery({ workOrderId });
@@ -36,6 +56,23 @@ export default function WorkOrderDetail() {
       toast.success("Production completed - materials consumed");
       setIsCompleteOpen(false);
       refetch();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const updateMutation = trpc.workOrders.update.useMutation({
+    onSuccess: () => {
+      toast.success("Work order updated");
+      setShowCancelConfirm(false);
+      refetch();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const deleteMutation = trpc.workOrders.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Work order deleted");
+      setLocation("/operations/work-orders");
     },
     onError: (err) => toast.error(err.message),
   });
@@ -92,6 +129,29 @@ export default function WorkOrderDetail() {
               <Play className="w-4 h-4 mr-2" /> Start Production
             </Button>
           )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm">
+                <MoreHorizontal className="w-4 h-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {workOrder.status !== 'cancelled' && workOrder.status !== 'completed' && (
+                <DropdownMenuItem onClick={() => setShowCancelConfirm(true)}>
+                  <Ban className="w-4 h-4 mr-2" />
+                  Cancel Work Order
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                onClick={() => setShowDeleteConfirm(true)}
+              >
+                <Trash2 className="w-4 h-4 mr-2" />
+                Delete Work Order
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           {workOrder.status === 'in_progress' && (
             <Dialog open={isCompleteOpen} onOpenChange={setIsCompleteOpen}>
               <DialogTrigger asChild>
@@ -288,6 +348,57 @@ export default function WorkOrderDetail() {
             </div>
           </CardContent>
         </Card>
+
+        <AlertDialog open={showCancelConfirm} onOpenChange={setShowCancelConfirm}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Cancel work order?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Cancels {workOrder.workOrderNumber}. Reserved materials will be released. This does
+                not delete the record.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={updateMutation.isPending}>Keep open</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={updateMutation.isPending}
+                onClick={(e) => {
+                  e.preventDefault();
+                  updateMutation.mutate({ id: workOrder.id, status: "cancelled" });
+                }}
+              >
+                {updateMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Cancel work order
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete work order?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Permanently removes {workOrder.workOrderNumber}. Consumed materials remain in the
+                inventory audit log. This cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                disabled={deleteMutation.isPending}
+                onClick={(e) => {
+                  e.preventDefault();
+                  deleteMutation.mutate({ id: workOrder.id });
+                }}
+              >
+                {deleteMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Delete work order
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
   );
 }

@@ -10,11 +10,28 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
-import { 
-  FileText, Building2, Package, Search, Plus, Eye, 
+import {
+  FileText, Building2, Package, Search, Plus, Eye,
   CheckCircle, Clock, AlertTriangle, DollarSign, Calendar,
-  Truck, Mail, Phone
+  Truck, Mail, Phone, MoreHorizontal, Trash2, Power, Loader2,
 } from "lucide-react";
 import { useCostVisibility } from "@/hooks/useCostVisibility";
 
@@ -148,11 +165,22 @@ function PurchaseOrdersTab({ searchTerm }: { searchTerm: string }) {
   const [newPO, setNewPO] = useState({ vendorId: "", notes: "" });
   const utils = trpc.useUtils();
 
+  const [poToDelete, setPoToDelete] = useState<any | null>(null);
+
   const createMutation = trpc.purchaseOrders.create.useMutation({
     onSuccess: () => {
       toast.success("Purchase order created");
       setCreateOpen(false);
       setNewPO({ vendorId: "", notes: "" });
+      utils.purchaseOrders.list.invalidate();
+    },
+    onError: (error: { message: string }) => toast.error(error.message),
+  });
+
+  const deleteMutation = trpc.purchaseOrders.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Purchase order deleted");
+      setPoToDelete(null);
       utils.purchaseOrders.list.invalidate();
     },
     onError: (error: { message: string }) => toast.error(error.message),
@@ -273,11 +301,29 @@ function PurchaseOrdersTab({ searchTerm }: { searchTerm: string }) {
                       : "-"}
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button variant="ghost" size="sm" asChild>
-                      <a href={`/operations/purchase-orders/${po.id}`}>
-                        <Eye className="h-4 w-4" />
-                      </a>
-                    </Button>
+                    <div className="flex items-center justify-end gap-1">
+                      <Button variant="ghost" size="sm" asChild>
+                        <a href={`/operations/purchase-orders/${po.id}`}>
+                          <Eye className="h-4 w-4" />
+                        </a>
+                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="sm">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onClick={() => setPoToDelete(po)}
+                          >
+                            <Trash2 className="h-4 w-4 mr-2" />
+                            Delete PO
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -285,6 +331,32 @@ function PurchaseOrdersTab({ searchTerm }: { searchTerm: string }) {
           </Table>
         )}
       </CardContent>
+      <AlertDialog open={!!poToDelete} onOpenChange={(open) => !open && setPoToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete purchase order?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes PO{" "}
+              <span className="font-mono font-medium">{poToDelete?.poNumber}</span> and its line items.
+              This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteMutation.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (poToDelete) deleteMutation.mutate({ id: poToDelete.id });
+              }}
+            >
+              {deleteMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Delete PO
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }
@@ -296,11 +368,29 @@ function VendorsTab({ searchTerm }: { searchTerm: string }) {
   const [newVendor, setNewVendor] = useState({ name: "", email: "", phone: "", type: "supplier" });
   const utils = trpc.useUtils();
 
+  const [vendorToDelete, setVendorToDelete] = useState<any | null>(null);
+
   const createMutation = trpc.vendors.create.useMutation({
     onSuccess: () => {
       toast.success("Vendor created");
       setCreateOpen(false);
       setNewVendor({ name: "", email: "", phone: "", type: "supplier" });
+      utils.vendors.list.invalidate();
+    },
+    onError: (error: { message: string }) => toast.error(error.message),
+  });
+
+  const updateMutation = trpc.vendors.update.useMutation({
+    onSuccess: () => {
+      utils.vendors.list.invalidate();
+    },
+    onError: (error: { message: string }) => toast.error(error.message),
+  });
+
+  const deleteMutation = trpc.vendors.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Vendor deleted");
+      setVendorToDelete(null);
       utils.vendors.list.invalidate();
     },
     onError: (error: { message: string }) => toast.error(error.message),
@@ -421,6 +511,7 @@ function VendorsTab({ searchTerm }: { searchTerm: string }) {
                 <TableHead>Lead Time</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Open POs</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -449,12 +540,67 @@ function VendorsTab({ searchTerm }: { searchTerm: string }) {
                     </Badge>
                   </TableCell>
                   <TableCell>-</TableCell>
+                  <TableCell className="text-right">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="sm">
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          onClick={() =>
+                            updateMutation.mutate({
+                              id: vendor.id,
+                              status: vendor.status === "active" ? "inactive" : "active",
+                            })
+                          }
+                        >
+                          <Power className="h-4 w-4 mr-2" />
+                          {vendor.status === "active" ? "Deactivate" : "Activate"}
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          className="text-destructive focus:text-destructive"
+                          onClick={() => setVendorToDelete(vendor)}
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          Delete vendor
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         )}
       </CardContent>
+      <AlertDialog open={!!vendorToDelete} onOpenChange={(open) => !open && setVendorToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete vendor?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes <span className="font-medium">{vendorToDelete?.name}</span>.
+              Existing purchase orders for this vendor are preserved. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteMutation.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (vendorToDelete) deleteMutation.mutate({ id: vendorToDelete.id });
+              }}
+            >
+              {deleteMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Delete vendor
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }
@@ -470,11 +616,22 @@ function RawMaterialsTab({ searchTerm }: { searchTerm: string }) {
   });
   const utils = trpc.useUtils();
 
+  const [materialToDelete, setMaterialToDelete] = useState<any | null>(null);
+
   const createMutation = trpc.rawMaterials.create.useMutation({
     onSuccess: () => {
       toast.success("Raw material created");
       setCreateOpen(false);
       setNewMaterial({ name: "", sku: "", unit: "kg", vendorId: "", unitCost: "" });
+      utils.rawMaterials.list.invalidate();
+    },
+    onError: (error: { message: string }) => toast.error(error.message),
+  });
+
+  const deleteMutation = trpc.rawMaterials.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Raw material deleted");
+      setMaterialToDelete(null);
       utils.rawMaterials.list.invalidate();
     },
     onError: (error: { message: string }) => toast.error(error.message),
@@ -608,6 +765,7 @@ function RawMaterialsTab({ searchTerm }: { searchTerm: string }) {
                 <TableHead>On Hand</TableHead>
                 <TableHead>Lead Time</TableHead>
                 <TableHead>Vendor</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -620,12 +778,57 @@ function RawMaterialsTab({ searchTerm }: { searchTerm: string }) {
                   <TableCell>{Number(material.quantityOnHand || 0).toLocaleString()}</TableCell>
                   <TableCell>{material.leadTimeDays ? `${material.leadTimeDays} days` : "-"}</TableCell>
                   <TableCell>{material.vendor?.name || "-"}</TableCell>
+                  <TableCell className="text-right">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="sm">
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          className="text-destructive focus:text-destructive"
+                          onClick={() => setMaterialToDelete(material)}
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          Delete material
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         )}
       </CardContent>
+      <AlertDialog open={!!materialToDelete} onOpenChange={(open) => !open && setMaterialToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete raw material?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes{" "}
+              <span className="font-medium">{materialToDelete?.name}</span>
+              {materialToDelete?.sku ? ` (${materialToDelete.sku})` : ""}. Bills of materials and
+              past inventory transactions are preserved. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteMutation.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (materialToDelete) deleteMutation.mutate({ id: materialToDelete.id });
+              }}
+            >
+              {deleteMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Delete material
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

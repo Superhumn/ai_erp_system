@@ -17,6 +17,16 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -90,6 +100,7 @@ export default function GrantBidSubmitter() {
   const [filterType, setFilterType] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [mainTab, setMainTab] = useState<string>("applications");
+  const [deletingAppId, setDeletingAppId] = useState<number | null>(null);
 
   // Queries
   const { data: applications, refetch: refetchApps, isLoading } = trpc.grantBid.applications.list.useQuery(
@@ -98,6 +109,15 @@ export default function GrantBidSubmitter() {
       : undefined
   );
   const { data: stats } = trpc.grantBid.stats.useQuery();
+
+  const deleteAppMutation = trpc.grantBid.applications.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Application deleted");
+      setDeletingAppId(null);
+      refetchApps();
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   const filteredApps = (applications || []).filter((app: any) =>
     !search || app.title.toLowerCase().includes(search.toLowerCase()) ||
@@ -139,12 +159,15 @@ export default function GrantBidSubmitter() {
 
       {/* Main Tabs: Discover vs Applications */}
       <Tabs value={mainTab} onValueChange={setMainTab}>
-        <TabsList className="grid w-full max-w-2xl grid-cols-3">
+        <TabsList className="grid w-full max-w-3xl grid-cols-4">
           <TabsTrigger value="discover" className="flex items-center gap-2">
             <Search className="h-4 w-4" /> Discover Opportunities
           </TabsTrigger>
           <TabsTrigger value="applications" className="flex items-center gap-2">
             <FileText className="h-4 w-4" /> My Applications
+          </TabsTrigger>
+          <TabsTrigger value="templates" className="flex items-center gap-2">
+            <FileText className="h-4 w-4" /> Templates
           </TabsTrigger>
           <TabsTrigger value="tenders" className="flex items-center gap-2">
             <Landmark className="h-4 w-4" /> Government Tenders
@@ -216,6 +239,7 @@ export default function GrantBidSubmitter() {
                       <TableHead>Deadline</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Updated</TableHead>
+                      <TableHead className="w-12"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -251,6 +275,16 @@ export default function GrantBidSubmitter() {
                           <TableCell className="text-sm text-muted-foreground">
                             {format(new Date(app.updatedAt), "MMM d, yyyy")}
                           </TableCell>
+                          <TableCell onClick={(e) => e.stopPropagation()}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Delete application"
+                              onClick={() => setDeletingAppId(app.id)}
+                            >
+                              <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                            </Button>
+                          </TableCell>
                         </TableRow>
                       );
                     })}
@@ -261,12 +295,346 @@ export default function GrantBidSubmitter() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="templates" className="space-y-2">
+          <NarrativeTemplates />
+        </TabsContent>
+
         {/* Government Tenders Tab */}
         <TabsContent value="tenders" className="space-y-2">
           <GovernmentTenders />
         </TabsContent>
       </Tabs>
+
+      <AlertDialog open={deletingAppId !== null} onOpenChange={(open) => { if (!open) setDeletingAppId(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete application?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Permanently removes the application and any narrative drafts attached to it.
+              Generated documents stay in your Documents library. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteAppMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteAppMutation.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (deletingAppId !== null) deleteAppMutation.mutate({ id: deletingAppId });
+              }}
+            >
+              {deleteAppMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Delete application
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
+// Narrative Templates — manage reusable proposal templates that
+// the AI narrative generator uses as a starting outline. Each
+// template has a type, optional description, and JSON sections.
+// ──────────────────────────────────────────────────────────────
+const TEMPLATE_TYPES = [
+  { value: "grant", label: "Grant" },
+  { value: "procurement_bid", label: "Procurement Bid" },
+  { value: "rfp_response", label: "RFP Response" },
+  { value: "subsidy", label: "Subsidy" },
+  { value: "tax_incentive", label: "Tax Incentive" },
+] as const;
+
+type TemplateType = (typeof TEMPLATE_TYPES)[number]["value"];
+
+function NarrativeTemplates() {
+  const utils = trpc.useUtils();
+  const { data: templates, isLoading } = trpc.grantBid.templates.list.useQuery();
+  const [editing, setEditing] = useState<any | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [form, setForm] = useState({
+    name: "",
+    type: "grant" as TemplateType,
+    description: "",
+    sections: "",
+  });
+
+  const createTemplate = trpc.grantBid.templates.create.useMutation({
+    onSuccess: () => {
+      toast.success("Template created");
+      setCreating(false);
+      setForm({ name: "", type: "grant", description: "", sections: "" });
+      utils.grantBid.templates.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const updateTemplate = trpc.grantBid.templates.update.useMutation({
+    onSuccess: () => {
+      toast.success("Template updated");
+      setEditing(null);
+      utils.grantBid.templates.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const deleteTemplate = trpc.grantBid.templates.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Template deleted");
+      setDeletingId(null);
+      utils.grantBid.templates.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const openCreate = () => {
+    setForm({ name: "", type: "grant", description: "", sections: "" });
+    setCreating(true);
+  };
+
+  const openEdit = (t: any) => {
+    setForm({
+      name: t.name || "",
+      type: (t.type as TemplateType) || "grant",
+      description: t.description || "",
+      sections: t.sections || "",
+    });
+    setEditing(t);
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-base font-medium">Narrative templates</div>
+            <p className="text-sm text-muted-foreground">
+              Reusable proposal templates. The AI narrative generator uses these as the starting
+              outline for new applications of the matching type.
+            </p>
+          </div>
+          <Button onClick={openCreate}>
+            <Plus className="h-4 w-4 mr-2" />
+            New template
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="py-8 text-center text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin mx-auto" />
+          </div>
+        ) : !templates || templates.length === 0 ? (
+          <div className="py-8 text-center text-muted-foreground">
+            <p className="text-sm">No templates yet.</p>
+            <p className="text-xs">
+              New applications will fall back to the built-in default sections for their type.
+            </p>
+          </div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Description</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="w-24"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(templates as any[]).map((t: any) => (
+                <TableRow key={t.id}>
+                  <TableCell className="font-medium">{t.name}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline">
+                      {TEMPLATE_TYPES.find((tp) => tp.value === t.type)?.label || t.type}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground max-w-md truncate">
+                    {t.description || "—"}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={t.isActive === false ? "secondary" : "outline"}>
+                      {t.isActive === false ? "Inactive" : "Active"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label="Edit template"
+                        onClick={() => openEdit(t)}
+                      >
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label="Delete template"
+                        onClick={() => setDeletingId(t.id)}
+                      >
+                        <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+
+      {/* Create / edit dialog */}
+      <Dialog
+        open={creating || editing !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCreating(false);
+            setEditing(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-xl">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!form.name.trim()) return;
+              if (editing) {
+                updateTemplate.mutate({
+                  id: editing.id,
+                  name: form.name.trim(),
+                  description: form.description || undefined,
+                  sections: form.sections || undefined,
+                });
+              } else {
+                createTemplate.mutate({
+                  name: form.name.trim(),
+                  type: form.type,
+                  description: form.description || undefined,
+                  sections: form.sections || undefined,
+                });
+              }
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>{editing ? "Edit template" : "New template"}</DialogTitle>
+              <DialogDescription>
+                Sections are a JSON array — leave blank to use the server's built-in defaults for
+                this type.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="tplName">Name *</Label>
+                  <Input
+                    id="tplName"
+                    value={form.name}
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="tplType">Type</Label>
+                  <Select
+                    value={form.type}
+                    onValueChange={(v) => setForm({ ...form, type: v as TemplateType })}
+                    disabled={!!editing}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TEMPLATE_TYPES.map((tp) => (
+                        <SelectItem key={tp.value} value={tp.value}>
+                          {tp.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="tplDescription">Description</Label>
+                <Textarea
+                  id="tplDescription"
+                  rows={2}
+                  value={form.description}
+                  onChange={(e) => setForm({ ...form, description: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="tplSections">Sections (JSON)</Label>
+                <Textarea
+                  id="tplSections"
+                  rows={6}
+                  value={form.sections}
+                  onChange={(e) => setForm({ ...form, sections: e.target.value })}
+                  className="font-mono text-xs"
+                  placeholder='[{"key": "summary", "title": "Project Summary", "prompt": "..."}]'
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setCreating(false);
+                  setEditing(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={!form.name.trim() || createTemplate.isPending || updateTemplate.isPending}
+              >
+                {(createTemplate.isPending || updateTemplate.isPending) && (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                )}
+                {editing ? "Save changes" : "Create template"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete confirm */}
+      <AlertDialog
+        open={deletingId !== null}
+        onOpenChange={(open) => { if (!open) setDeletingId(null); }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete template?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Applications already generated from this template are not affected. Future
+              generations of this type will fall back to the built-in defaults.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteTemplate.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteTemplate.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (deletingId !== null) deleteTemplate.mutate({ id: deletingId });
+              }}
+            >
+              {deleteTemplate.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Delete template
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Card>
   );
 }
 
@@ -840,6 +1208,11 @@ function OpportunityDiscovery({ onStartApplication }: { onStartApplication: (app
     onSuccess: () => { toast.success("Opportunity dismissed"); refetchOpps(); },
   });
 
+  const deleteOpportunityMutation = trpc.grantBid.opportunities.delete.useMutation({
+    onSuccess: () => { toast.success("Opportunity deleted"); refetchOpps(); },
+    onError: (err) => toast.error(err.message),
+  });
+
   const startAppMutation = trpc.grantBid.opportunities.startApplication.useMutation({
     onSuccess: (result) => {
       toast.success("Application created from opportunity");
@@ -1096,6 +1469,21 @@ function OpportunityDiscovery({ onStartApplication }: { onStartApplication: (app
                     )}
                     {opp.status === 'applying' && (
                       <Badge variant="secondary" className="bg-indigo-100 text-indigo-700">Application in progress</Badge>
+                    )}
+                    {(opp.status === 'dismissed' || opp.status === 'expired' || opp.status === 'not_eligible') && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-muted-foreground hover:text-destructive"
+                        onClick={() => {
+                          if (confirm(`Permanently delete "${opp.title}"?`)) {
+                            deleteOpportunityMutation.mutate({ id: opp.id });
+                          }
+                        }}
+                        disabled={deleteOpportunityMutation.isPending}
+                      >
+                        <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete permanently
+                      </Button>
                     )}
                     {opp.sourceUrl && (
                       <Button size="sm" variant="ghost" className="ml-auto" asChild>
