@@ -5578,6 +5578,26 @@ ONLY return the JSON array, no other text.`;
       return getQuickBooksAuthUrl(ctx.user.id);
     }),
 
+    // Diagnostic: reveal the QuickBooks credentials the running server has
+    // loaded from env, with the client_id masked. Lets an admin verify that
+    // a deploy actually picked up updated env vars without leaking secrets.
+    debugConfig: adminProcedure.query(async () => {
+      const { getQuickBooksRedirectUri } = await import("./_core/quickbooks");
+      const clientId = ENV.quickbooksClientId;
+      const mask = (s: string) =>
+        s.length <= 8 ? "*".repeat(s.length) : `${s.slice(0, 8)}…${s.slice(-4)}`;
+      return {
+        clientIdPrefix: clientId ? clientId.slice(0, 8) : null,
+        clientIdSuffix: clientId ? clientId.slice(-4) : null,
+        clientIdMasked: clientId ? mask(clientId) : null,
+        clientIdLength: clientId.length,
+        clientSecretSet: !!ENV.quickbooksClientSecret,
+        environment: ENV.quickbooksEnvironment,
+        redirectUri: getQuickBooksRedirectUri(),
+        publicAppUrl: ENV.publicAppUrl,
+      };
+    }),
+
     // Get connection status
     getConnectionStatus: protectedProcedure.query(async ({ ctx }) => {
       const token = await db.getQuickBooksOAuthToken(ctx.user.id);
