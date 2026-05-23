@@ -135,6 +135,17 @@ const Team = lazy(() => import("./pages/settings/Team"));
 const Projects = lazy(() => import("./pages/projects/Projects"));
 const InvestmentGrantChecklist = lazy(() => import("./pages/projects/InvestmentGrantChecklist"));
 
+// PM module (Market × Function matrix for international expansion)
+const PmIndex = lazy(() => import("./pages/pm/Index"));
+const PmMatrix = lazy(() => import("./pages/pm/Matrix"));
+const PmMarket = lazy(() => import("./pages/pm/Market"));
+const PmFunction = lazy(() => import("./pages/pm/Function"));
+const PmCockpit = lazy(() => import("./pages/pm/Cockpit"));
+const PmCash = lazy(() => import("./pages/pm/Cash"));
+const PmTimeline = lazy(() => import("./pages/pm/Timeline"));
+const PmProject = lazy(() => import("./pages/pm/Project"));
+const PmAdmin = lazy(() => import("./pages/pm/Admin"));
+
 // Grants & Bids
 const GrantBidSubmitter = lazy(() => import("./pages/grants/GrantBidSubmitter"));
 
@@ -331,6 +342,17 @@ function Router() {
           <Route path="/projects" component={Projects} />
           <Route path="/projects/ai" component={ProjectsAI} />
           <Route path="/projects/investment-grants" component={InvestmentGrantChecklist} />
+
+          {/* PM module — Market × Function matrix */}
+          <Route path="/pm" component={PmIndex} />
+          <Route path="/pm/matrix" component={PmMatrix} />
+          <Route path="/pm/timeline" component={PmTimeline} />
+          <Route path="/pm/cockpit" component={PmCockpit} />
+          <Route path="/pm/cash" component={PmCash} />
+          <Route path="/pm/admin" component={PmAdmin} />
+          <Route path="/pm/market/:code" component={PmMarket} />
+          <Route path="/pm/function/:code" component={PmFunction} />
+          <Route path="/pm/project/:id" component={PmProject} />
 
           {/* Investor Updates */}
           <Route path="/investor-updates" component={InvestorUpdates} />
