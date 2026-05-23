@@ -443,6 +443,19 @@ export default function Projects() {
     return { total, completed, inProgress, review, overdue, completionRate: total === 0 ? 0 : Math.round((completed / total) * 100) };
   }, [filteredTasks]);
 
+  // Precompute per-project total and completed counts from ALL tasks (not just visible)
+  // so that hiding completed tasks doesn't affect progress bars.
+  const projectTaskCounts = useMemo(() => {
+    const map = new Map<number, { total: number; done: number }>();
+    taskList.forEach((t) => {
+      const entry = map.get(t.projectId) ?? { total: 0, done: 0 };
+      entry.total += 1;
+      if (t.status === "completed") entry.done += 1;
+      map.set(t.projectId, entry);
+    });
+    return map;
+  }, [taskList]);
+
   const isLoading = projectsLoading || tasksLoading;
 
   function handleProjectSubmit(e: FormEvent) {
@@ -814,6 +827,8 @@ export default function Projects() {
             size="sm"
             className="gap-1.5"
             onClick={() => setHideCompleted((v) => !v)}
+            aria-pressed={hideCompleted}
+            aria-label={hideCompleted ? "Show completed tasks" : "Hide completed tasks"}
             title={hideCompleted ? "Currently hiding completed tasks" : "Currently showing completed tasks"}
           >
             {hideCompleted ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -917,11 +932,8 @@ export default function Projects() {
           {groupedByProject.map(([projectId, tasks], projectIndex) => {
             const project = projectMap.get(projectId);
             const collapsed = collapsedProjects.has(projectId);
-            // Compute progress from ALL tasks in the project (not just visible) so
-            // hiding completed tasks doesn't make a 90%-done project look like 0%.
-            const allProjectTasks = taskList.filter((t) => t.projectId === projectId);
-            const doneCount = allProjectTasks.filter((t) => t.status === "completed").length;
-            const totalCount = allProjectTasks.length;
+            // Use precomputed counts so progress reflects ALL tasks, not just visible ones.
+            const { total: totalCount, done: doneCount } = projectTaskCounts.get(projectId) ?? { total: 0, done: 0 };
             const projectProgress = totalCount === 0 ? 0 : Math.round((doneCount / totalCount) * 100);
             const hiddenCount = totalCount - tasks.length;
             const priorityCfg = PRIORITY_CONFIG[project?.priority || "medium"];
