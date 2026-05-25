@@ -124,6 +124,7 @@ Source: `server/routers.ts` (appRouter L265–L23455, 109 top-level keys).
 
 These exist only in `server/routers.ts` — the extracted `server/routers/` tree does not cover them.
 
+<<<<<<< claude/auto-archive-bulk-actions-F5pN4
 - `bills` — L1258–L1272 (15 lines)
 - `orders` — L1401–L1508 (108 lines)
 - `orderItems` — L1509–L1520 (12 lines)
@@ -164,11 +165,54 @@ These exist only in `server/routers.ts` — the extracted `server/routers/` tree
 - `emailSequences` — L22809–L22955 (147 lines)
 - `emailCannedResponses` — L22956–L23034 (79 lines)
 - `pm` — L23035–L23454 (420 lines)
+=======
+- `bills` — L1257–L1271 (15 lines)
+- `orders` — L1400–L1507 (108 lines)
+- `orderItems` — L1508–L1519 (12 lines)
+- `rdTaxCredit` — L3102–L3482 (381 lines)
+- `googleWorkspace` — L5338–L5528 (191 lines)
+- `calendar` — L5529–L5574 (46 lines)
+- `quickbooks` — L5575–L5828 (254 lines)
+- `freightQuotes` — L7713–L7837 (125 lines)
+- `team` — L8064–L8142 (79 lines)
+- `invitations` — L8143–L8221 (79 lines)
+- `teamInvites` — L8222–L8316 (95 lines)
+- `productionOrders` — L9957–L9969 (13 lines)
+- `shopify` — L11146–L11550 (405 lines)
+- `salesOrders` — L11551–L11670 (120 lines)
+- `nda` — L15486–L15731 (246 lines)
+- `vendorNegotiations` — L17739–L17836 (98 lines)
+- `inventoryManagement` — L18239–L18262 (24 lines)
+- `financeAi` — L18263–L18303 (41 lines)
+- `fireflies` — L18304–L18792 (489 lines)
+- `hrAi` — L18793–L18833 (41 lines)
+- `manufacturingAi` — L18834–L18864 (31 lines)
+- `legalAi` — L18865–L18902 (38 lines)
+- `projectsAi` — L18903–L18940 (38 lines)
+- `ediAi` — L18941–L18955 (15 lines)
+- `supplierScoring` — L18956–L18969 (14 lines)
+- `grantBid` — L18970–L19688 (719 lines)
+- `capTable` — L19689–L20567 (879 lines)
+- `exerciseRequests` — L20568–L20642 (75 lines)
+- `offerLetters` — L20643–L20796 (154 lines)
+- `timeTracking` — L20797–L21052 (256 lines)
+- `banking` — L21053–L21239 (187 lines)
+- `investorPortal` — L21240–L21779 (540 lines)
+- `financialModel` — L21850–L21950 (101 lines)
+- `kpiGoals` — L21951–L22028 (78 lines)
+- `legalCases` — L22029–L22112 (84 lines)
+- `marketing` — L22317–L22562 (246 lines)
+- `notes` — L22563–L22795 (233 lines)
+- `emailSequences` — L22796–L22942 (147 lines)
+- `emailCannedResponses` — L22943–L23021 (79 lines)
+- `pm` — L23022–L23441 (420 lines)
+>>>>>>> main
 
 ## Also in extracted tree (69)
 
 Top-level key exists in both. **Route-level parity is not guaranteed** — spot checks have found legacy-only procedures inside several of these (e.g. `crm` has ~7 legacy-only procedures, `invoices` has 2). If you need completeness, diff the specific sub-router.
 
+<<<<<<< claude/auto-archive-bulk-actions-F5pN4
 - `system` — legacy L266–L268 · extracted in `server/routers/index.ts`
 - `autonomousWorkflows` — legacy L269–L271 · extracted in `server/routers/index.ts`
 - `agent` — legacy L272–L274 · extracted in `server/routers/index.ts`
@@ -238,3 +282,74 @@ Top-level key exists in both. **Route-level parity is not guaranteed** — spot 
 - `edi` — legacy L17850–L18251 · extracted in `server/routers/edi.ts`
 - `investorUpdates` — legacy L21793–L21862 · extracted in `server/routers/investorUpdates.ts`
 - `financialReports` — legacy L22126–L22329 · extracted in `server/routers/finance.ts`
+=======
+- `system` — legacy L265–L267 · extracted in `server/routers/index.ts`
+- `autonomousWorkflows` — legacy L268–L270 · extracted in `server/routers/index.ts`
+- `agent` — legacy L271–L273 · extracted in `server/routers/index.ts`
+- `employeePortal` — legacy L274–L275 · extracted in `server/routers/index.ts`
+- `auth` — legacy L276–L290 · extracted in `server/routers/auth.ts`
+- `users` — legacy L291–L330 · extracted in `server/routers/auth.ts`
+- `companies` — legacy L331–L382 · extracted in `server/routers/auth.ts`
+- `customers` — legacy L383–L515 · extracted in `server/routers/sales.ts`
+- `vendors` — legacy L516–L734 · extracted in `server/routers/procurement.ts`
+- `products` — legacy L735–L796 · extracted in `server/routers/operations.ts`
+- `accounts` — legacy L797–L837 · extracted in `server/routers/finance.ts`
+- `invoices` — legacy L838–L1256 · extracted in `server/routers/finance.ts`
+- `payments` — legacy L1272–L1371 · extracted in `server/routers/finance.ts`
+- `transactions` — legacy L1372–L1399 · extracted in `server/routers/finance.ts`
+- `inventory` — legacy L1520–L1697 · extracted in `server/routers/operations.ts`
+- `warehouses` — legacy L1698–L1767 · extracted in `server/routers/operations.ts`
+- `transfers` — legacy L1768–L1859 · extracted in `server/routers/operations.ts`
+- `cogs` — legacy L1860–L2007 · extracted in `server/routers/finance.ts`
+- `productionBatches` — legacy L2008–L2050 · extracted in `server/routers/operations.ts`
+- `purchaseOrders` — legacy L2051–L2357 · extracted in `server/routers/procurement.ts`
+- `shipments` — legacy L2358–L2488 · extracted in `server/routers/procurement.ts`
+- `departments` — legacy L2489–L2510 · extracted in `server/routers/hr.ts`
+- `employees` — legacy L2511–L2600 · extracted in `server/routers/hr.ts`
+- `employeePayments` — legacy L2601–L2632 · extracted in `server/routers/hr.ts`
+- `contracts` — legacy L2633–L2725 · extracted in `server/routers/legal.ts`
+- `disputes` — legacy L2726–L2780 · extracted in `server/routers/legal.ts`
+- `documents` — legacy L2781–L2942 · extracted in `server/routers/legal.ts`
+- `projects` — legacy L2943–L3101 · extracted in `server/routers/projects.ts`
+- `investmentGrants` — legacy L3483–L3612 · extracted in `server/routers/projects.ts`
+- `dashboard` — legacy L3613–L3622 · extracted in `server/routers/settings.ts`
+- `auditLogs` — legacy L3623–L3636 · extracted in `server/routers/settings.ts`
+- `notifications` — legacy L3637–L3670 · extracted in `server/routers/settings.ts`
+- `integrations` — legacy L3671–L3903 · extracted in `server/routers/settings.ts`
+- `transactionalEmail` — legacy L3904–L4231 · extracted in `server/routers/email.ts`
+- `sheetsImport` — legacy L4232–L5131 · extracted in `server/routers/settings.ts`
+- `gmail` — legacy L5132–L5337 · extracted in `server/routers/email.ts`
+- `ai` — legacy L5829–L6089 · extracted in `server/routers/ai.ts`
+- `aiAgent` — legacy L6090–L7012 · extracted in `server/routers/ai.ts`
+- `freight` — legacy L7013–L7712 · extracted in `server/routers/freight.ts`
+- `customs` — legacy L7838–L8063 · extracted in `server/routers/freight.ts`
+- `copackerPortal` — legacy L8317–L8968 · extracted in `server/routers/procurement.ts`
+- `vendorPortal` — legacy L8969–L9137 · extracted in `server/routers/procurement.ts`
+- `bom` — legacy L9138–L9296 · extracted in `server/routers/manufacturing.ts`
+- `rawMaterials` — legacy L9297–L9493 · extracted in `server/routers/manufacturing.ts`
+- `ingredients` — legacy L9494–L9530 · extracted in `server/routers/manufacturing.ts`
+- `recipes` — legacy L9531–L9672 · extracted in `server/routers/manufacturing.ts`
+- `moisture` — legacy L9673–L9694 · extracted in `server/routers/manufacturing.ts`
+- `workOrders` — legacy L9695–L9956 · extracted in `server/routers/manufacturing.ts`
+- `rawMaterialInventory` — legacy L9970–L10019 · extracted in `server/routers/manufacturing.ts`
+- `poReceiving` — legacy L10020–L10060 · extracted in `server/routers/procurement.ts`
+- `forecasting` — legacy L10061–L10550 · extracted in `server/routers/ai.ts`
+- `alerts` — legacy L10551–L10604 · extracted in `server/routers/ai.ts`
+- `recommendations` — legacy L10605–L10630 · extracted in `server/routers/ai.ts`
+- `vendorQuotes` — legacy L10631–L11145 · extracted in `server/routers/procurement.ts`
+- `inventoryLots` — legacy L11671–L11764 · extracted in `server/routers/operations.ts`
+- `reconciliation` — legacy L11765–L11794 · extracted in `server/routers/finance.ts`
+- `allocations` — legacy L11795–L11837 · extracted in `server/routers/finance.ts`
+- `emailScanning` — legacy L11838–L12975 · extracted in `server/routers/email.ts`
+- `dataRoom` — legacy L12976–L15188 · extracted in `server/routers/dataRoom.ts`
+- `imapCredentials` — legacy L15189–L15276 · extracted in `server/routers/email.ts`
+- `emailCredentials` — legacy L15277–L15485 · extracted in `server/routers/email.ts`
+- `recurringInvoices` — legacy L15732–L15918 · extracted in `server/routers/finance.ts`
+- `supplierPortal` — legacy L15919–L16030 · extracted in `server/routers/procurement.ts`
+- `documentImport` — legacy L16031–L16526 · extracted in `server/routers/procurement.ts`
+- `crm` — legacy L16527–L17602 · extracted in `server/routers/crm.ts`
+- `inventoryCosting` — legacy L17603–L17738 · extracted in `server/routers/finance.ts`
+- `edi` — legacy L17837–L18238 · extracted in `server/routers/edi.ts`
+- `investorUpdates` — legacy L21780–L21849 · extracted in `server/routers/investorUpdates.ts`
+- `financialReports` — legacy L22113–L22316 · extracted in `server/routers/finance.ts`
+>>>>>>> main

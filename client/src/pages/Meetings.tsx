@@ -521,7 +521,7 @@ export default function Meetings() {
           {filtered.map((meeting: any) => {
             const summary = meeting.parsedSummary;
             const bullets = getBullets(meeting);
-            const tasks = (meeting.parsedActionItems || []) as Array<{ text: string; assignee?: string }>;
+            const tasks = ((meeting.parsedActionItems || []) as Array<{ text: string; assignee?: string }>).filter((t) => t.text.trim());
             const previewTasks = tasks.slice(0, 3);
 
             return (
@@ -623,7 +623,7 @@ export default function Meetings() {
           {panelMeeting && (() => {
             const m = panelMeeting;
             const summary = m.parsedSummary;
-            const actionItems = m.parsedActionItems || [];
+            const actionItems = (m.parsedActionItems || []).filter((item: any) => { const t = typeof item === "string" ? item : item.text || item.description || ""; return cleanActionText(t).trim(); });
 
             return (
               <>
