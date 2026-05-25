@@ -215,6 +215,16 @@ export default function GovernmentTenders() {
                     </Select>
                   </div>
                 </div>
+                {form.portal === "other" && (
+                  <div className="space-y-1">
+                    <Label>Custom portal name</Label>
+                    <Input
+                      value={form.customPortalName}
+                      onChange={(e) => setForm({ ...form, customPortalName: e.target.value })}
+                      placeholder="e.g. State eProcurement portal"
+                    />
+                  </div>
+                )}
                 <div className="grid grid-cols-3 gap-3">
                   <div className="space-y-1">
                     <Label>Solicitation #</Label>

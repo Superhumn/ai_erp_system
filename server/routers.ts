@@ -1,6 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, lte, gte, or, isNull } from "drizzle-orm";
 import { safeDecryptToken } from "./_core/crypto";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
@@ -23468,7 +23468,7 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
       .input(z.object({
         productId: z.number().optional(),
         region: z.string().optional(),
-        channel: z.string().optional(),
+        channel: z.enum(["foodservice", "wholesale", "retail_msrp", "retail_dtc", "export", "institutional", "online", "other"]).optional(),
         activeOnly: z.boolean().default(true),
       }).optional())
       .query(async ({ input }) => {
@@ -23478,7 +23478,7 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
         const conditions: any[] = [];
         if (input?.productId) conditions.push(eq(productPriceTiers.productId, input.productId));
         if (input?.region) conditions.push(eq(productPriceTiers.region, input.region));
-        if (input?.channel) conditions.push(eq(productPriceTiers.channel, input.channel as any));
+        if (input?.channel) conditions.push(eq(productPriceTiers.channel, input.channel));
         if (input?.activeOnly !== false) conditions.push(eq(productPriceTiers.status, "active"));
         const q = database.select().from(productPriceTiers);
         const rows = conditions.length ? await q.where(and(...conditions)) : await q;
@@ -23587,12 +23587,15 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
         const database = await db.getDb();
         if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
         const { productPriceTiers, productVolumeDiscounts } = await import("../drizzle/schema");
+        const now = new Date();
         const [tier] = await database.select().from(productPriceTiers).where(and(
           eq(productPriceTiers.productId, input.productId),
           eq(productPriceTiers.region, input.region),
-          eq(productPriceTiers.channel, input.channel as any),
+          eq(productPriceTiers.channel, input.channel),
           eq(productPriceTiers.status, "active"),
-        ));
+          lte(productPriceTiers.effectiveFrom, now),
+          or(isNull(productPriceTiers.effectiveTo), gte(productPriceTiers.effectiveTo, now)),
+        )).orderBy(desc(productPriceTiers.effectiveFrom)).limit(1);
         if (!tier) return null;
         const bands = await database.select().from(productVolumeDiscounts)
           .where(eq(productVolumeDiscounts.priceTierId, tier.id));
@@ -23686,8 +23689,15 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
   governmentTenders: router({
     list: protectedProcedure
       .input(z.object({
-        portal: z.string().optional(),
-        status: z.string().optional(),
+        portal: z.enum([
+          "gem", "irctc", "icds", "csd", "aiims", "state_nutrition", "state_hospital",
+          "ministry_defense", "ministry_railways", "ministry_health", "ministry_food",
+          "eu_ted", "us_sam_gov", "uk_contracts_finder", "other",
+        ]).optional(),
+        status: z.enum([
+          "watching", "qualifying", "preparing", "submitted", "under_review",
+          "shortlisted", "awarded", "lost", "withdrawn", "cancelled",
+        ]).optional(),
         country: z.string().optional(),
       }).optional())
       .query(async ({ input }) => {
@@ -23695,8 +23705,8 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
         if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
         const { governmentTenders } = await import("../drizzle/schema");
         const conditions: any[] = [];
-        if (input?.portal) conditions.push(eq(governmentTenders.portal, input.portal as any));
-        if (input?.status) conditions.push(eq(governmentTenders.status, input.status as any));
+        if (input?.portal) conditions.push(eq(governmentTenders.portal, input.portal));
+        if (input?.status) conditions.push(eq(governmentTenders.status, input.status));
         if (input?.country) conditions.push(eq(governmentTenders.country, input.country));
         const q = database.select().from(governmentTenders).orderBy(desc(governmentTenders.submissionDeadline));
         return conditions.length ? await q.where(and(...conditions)) : await q;
@@ -23713,7 +23723,7 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
         return row;
       }),
 
-    create: protectedProcedure
+    create: opsProcedure
       .input(z.object({
         title: z.string().min(1).max(500),
         portal: z.enum([
@@ -23763,7 +23773,7 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
         return { id: (result as any)[0]?.insertId ?? (result as any).insertId };
       }),
 
-    updateStatus: protectedProcedure
+    updateStatus: opsProcedure
       .input(z.object({
         id: z.number(),
         status: z.enum([
@@ -23822,9 +23832,20 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
         return row;
       }),
 
-    create: protectedProcedure
+    create: legalProcedure
       .input(z.object({
-        licenseType: z.string(),
+        licenseType: z.enum([
+          "fssai_central", "fssai_state", "fssai_basic",
+          "dpiit_startup_india",
+          "efsa_novel_food", "fic_1169_2011_label", "traces_nt", "eu_organic",
+          "fda_food_facility", "fda_ffr", "usda_organic", "usda_amS",
+          "haccp", "iso_22000", "brc", "sqf",
+          "halal", "kosher", "non_gmo", "vegan_certified",
+          "gst_registration", "iec_import_export", "rcmc",
+          "pmksy_grant", "maharashtra_agro_grant", "karnataka_udyog_mitra",
+          "trademark", "patent", "copyright",
+          "other",
+        ]),
         customTypeName: z.string().optional(),
         country: z.string().min(2).max(8),
         state: z.string().optional(),
@@ -23863,11 +23884,14 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
         return { id: (result as any)[0]?.insertId ?? (result as any).insertId };
       }),
 
-    update: protectedProcedure
+    update: legalProcedure
       .input(z.object({
         id: z.number(),
         patch: z.object({
-          status: z.string().optional(),
+          status: z.enum([
+            "planned", "applied", "in_review", "issued", "active",
+            "expiring_soon", "expired", "revoked", "renewed", "rejected", "withdrawn",
+          ]).optional(),
           licenseNumber: z.string().optional(),
           issuedDate: z.coerce.date().optional(),
           expirationDate: z.coerce.date().optional(),
@@ -23977,7 +24001,10 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
       .input(z.object({
         id: z.number(),
         patch: z.object({
-          status: z.string().optional(),
+          status: z.enum([
+            "introduced", "in_diligence", "term_sheet", "committed",
+            "wired", "closed", "declined", "lapsed",
+          ]).optional(),
           commitmentAmount: z.string().optional(),
           fundedAmount: z.string().optional(),
           ownershipPct: z.string().optional(),
