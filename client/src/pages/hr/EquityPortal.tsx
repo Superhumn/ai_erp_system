@@ -137,6 +137,30 @@ export default function EquityPortal() {
     onError: (err) => toast.error(err.message),
   });
 
+  const approveExercise = trpc.exerciseRequests.approve.useMutation({
+    onSuccess: () => {
+      toast.success("Exercise request approved");
+      utils.exerciseRequests.list.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const denyExercise = trpc.exerciseRequests.deny.useMutation({
+    onSuccess: () => {
+      toast.success("Exercise request denied");
+      utils.exerciseRequests.list.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const cancelExercise = trpc.exerciseRequests.cancel.useMutation({
+    onSuccess: () => {
+      toast.success("Exercise request cancelled");
+      utils.exerciseRequests.list.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
   // Latest 409A FMV
   const latestFMV = useMemo(() => {
     if (!valuations?.length) return 0;
@@ -582,28 +606,80 @@ export default function EquityPortal() {
                   <TableHead className="text-right">Total Cost</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {exerciseRequests.map((req: any) => (
-                  <TableRow key={req.id}>
-                    <TableCell>{fmtDate(req.requestedAt)}</TableCell>
-                    <TableCell className="text-right">{fmtNum(req.sharesToExercise)}</TableCell>
-                    <TableCell className="text-right">{fmt$(req.exercisePrice)}</TableCell>
-                    <TableCell className="text-right font-medium">{fmt$(req.totalCost)}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{req.exerciseType?.replace(/_/g, " ")}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={getStatusColor(req.status || "pending")}>
-                        {req.status === "completed" && <CheckCircle2 className="h-3 w-3 mr-1" />}
-                        {req.status === "pending" && <Clock className="h-3 w-3 mr-1" />}
-                        {req.status === "denied" && <XCircle className="h-3 w-3 mr-1" />}
-                        {req.status}
-                      </Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {exerciseRequests.map((req: any) => {
+                  const isPending = req.status === "pending" || !req.status;
+                  return (
+                    <TableRow key={req.id}>
+                      <TableCell>{fmtDate(req.requestedAt)}</TableCell>
+                      <TableCell className="text-right">{fmtNum(req.sharesToExercise)}</TableCell>
+                      <TableCell className="text-right">{fmt$(req.exercisePrice)}</TableCell>
+                      <TableCell className="text-right font-medium">{fmt$(req.totalCost)}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{req.exerciseType?.replace(/_/g, " ")}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge className={getStatusColor(req.status || "pending")}>
+                          {req.status === "completed" && <CheckCircle2 className="h-3 w-3 mr-1" />}
+                          {req.status === "pending" && <Clock className="h-3 w-3 mr-1" />}
+                          {req.status === "denied" && <XCircle className="h-3 w-3 mr-1" />}
+                          {req.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {isPending ? (
+                          isAdmin ? (
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={approveExercise.isPending}
+                                onClick={() => approveExercise.mutate({ id: req.id })}
+                              >
+                                <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
+                                Approve
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive hover:text-destructive"
+                                disabled={denyExercise.isPending}
+                                onClick={() => {
+                                  const reason = prompt("Reason for denying this exercise request:");
+                                  if (reason && reason.trim()) {
+                                    denyExercise.mutate({ id: req.id, reason: reason.trim() });
+                                  }
+                                }}
+                              >
+                                <XCircle className="h-3.5 w-3.5 mr-1" />
+                                Deny
+                              </Button>
+                            </div>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-muted-foreground"
+                              disabled={cancelExercise.isPending}
+                              onClick={() => {
+                                if (confirm("Cancel this exercise request?")) {
+                                  cancelExercise.mutate({ id: req.id });
+                                }
+                              }}
+                            >
+                              Cancel
+                            </Button>
+                          )
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </CardContent>

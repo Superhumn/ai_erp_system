@@ -31,7 +31,14 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { SelectWithCreate } from "@/components/ui/select-with-create";
-import { ClipboardList, Plus, Search, Loader2, Sparkles, Send, Trash2, MessageCircle } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { ClipboardList, Plus, Search, Loader2, Sparkles, Send, Trash2, MoreHorizontal, CheckCircle, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
@@ -226,6 +233,30 @@ export default function PurchaseOrders() {
     onSuccess: () => {
       toast.success("Purchase order deleted");
       setDeletePOId(null);
+      utils.purchaseOrders.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const updatePO = trpc.purchaseOrders.update.useMutation({
+    onSuccess: () => {
+      toast.success("Purchase order updated");
+      utils.purchaseOrders.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const approvePO = trpc.purchaseOrders.approve.useMutation({
+    onSuccess: () => {
+      toast.success("Purchase order approved");
+      utils.purchaseOrders.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const sendPOToSupplier = trpc.purchaseOrders.sendToSupplier.useMutation({
+    onSuccess: () => {
+      toast.success("PO sent to supplier");
       utils.purchaseOrders.list.invalidate();
     },
     onError: (error) => toast.error(error.message),
@@ -694,7 +725,28 @@ export default function PurchaseOrders() {
                         {formatCurrency(po.totalAmount)}
                       </TableCell>
                       <TableCell>
-                        <Badge className={getStatusColor(po.status)}>{po.status}</Badge>
+                        <Select
+                          value={po.status}
+                          onValueChange={(value) => {
+                            if (value === po.status) return;
+                            updatePO.mutate({ id: po.id, status: value as any });
+                          }}
+                          disabled={updatePO.isPending}
+                        >
+                          <SelectTrigger
+                            className={`h-7 w-32 border-0 px-2 ${getStatusColor(po.status) || ""}`}
+                          >
+                            <SelectValue>{po.status}</SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="draft">Draft</SelectItem>
+                            <SelectItem value="sent">Sent</SelectItem>
+                            <SelectItem value="confirmed">Confirmed</SelectItem>
+                            <SelectItem value="partial">Partial</SelectItem>
+                            <SelectItem value="received">Received</SelectItem>
+                            <SelectItem value="cancelled">Cancelled</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </TableCell>
                       <TableCell>
                         {po.orderDate ? format(new Date(po.orderDate), "MMM d, yyyy") : "-"}
@@ -732,14 +784,41 @@ export default function PurchaseOrders() {
                               <MessageCircle className="h-4 w-4 text-muted-foreground hover:text-green-600" />
                             )}
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label="Delete purchase order"
-                            onClick={() => setDeletePOId(po.id)}
-                          >
-                            <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
-                          </Button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon" aria-label="Open actions menu">
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              {po.status === "draft" && (
+                                <DropdownMenuItem
+                                  onClick={() => approvePO.mutate({ id: po.id })}
+                                  disabled={approvePO.isPending}
+                                >
+                                  <CheckCircle className="h-4 w-4 mr-2" />
+                                  Approve (mark as Sent)
+                                </DropdownMenuItem>
+                              )}
+                              {(po.status === "draft" || po.status === "sent") && (
+                                <DropdownMenuItem
+                                  onClick={() => sendPOToSupplier.mutate({ poId: po.id })}
+                                  disabled={sendPOToSupplier.isPending}
+                                >
+                                  <Send className="h-4 w-4 mr-2" />
+                                  Send to Supplier
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                className="text-destructive focus:text-destructive"
+                                onClick={() => setDeletePOId(po.id)}
+                              >
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                Delete purchase order
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </div>
                       </TableCell>
                     </TableRow>

@@ -124,6 +124,22 @@ export default function Invoices() {
     onError: (error) => toast.error(error.message),
   });
 
+  const updateInvoice = trpc.invoices.update.useMutation({
+    onSuccess: () => {
+      toast.success("Invoice updated");
+      utils.invoices.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const approveInvoice = trpc.invoices.approve.useMutation({
+    onSuccess: () => {
+      toast.success("Invoice approved");
+      utils.invoices.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   const { data: recurringInvoices } = trpc.recurringInvoices.list.useQuery();
 
   const generatePdf = trpc.invoices.generatePdf.useMutation({
@@ -957,9 +973,28 @@ export default function Invoices() {
                     </TableCell>
                     <TableCell>{formatCurrency(invoice.totalAmount)}</TableCell>
                     <TableCell>
-                      <Badge className={getStatusColor(invoice.status) || ""}>
-                        {invoice.status}
-                      </Badge>
+                      <Select
+                        value={invoice.status}
+                        onValueChange={(value) => {
+                          if (value === invoice.status) return;
+                          updateInvoice.mutate({ id: invoice.id, status: value as any });
+                        }}
+                        disabled={updateInvoice.isPending}
+                      >
+                        <SelectTrigger
+                          className={`h-7 w-32 border-0 px-2 ${getStatusColor(invoice.status) || ""}`}
+                        >
+                          <SelectValue>{invoice.status}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="draft">Draft</SelectItem>
+                          <SelectItem value="sent">Sent</SelectItem>
+                          <SelectItem value="paid">Paid</SelectItem>
+                          <SelectItem value="partial">Partial</SelectItem>
+                          <SelectItem value="overdue">Overdue</SelectItem>
+                          <SelectItem value="cancelled">Cancelled</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </TableCell>
                     <TableCell className="text-right">
                       <DropdownMenu>
@@ -969,18 +1004,27 @@ export default function Invoices() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                          {invoice.status === "draft" && (
+                            <DropdownMenuItem
+                              onClick={() => approveInvoice.mutate({ id: invoice.id })}
+                              disabled={approveInvoice.isPending}
+                            >
+                              <Send className="h-4 w-4 mr-2" />
+                              Approve (mark as Sent)
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuItem onClick={() => generatePdf.mutate({ invoiceId: invoice.id })}>
                             <Download className="h-4 w-4 mr-2" />
                             Download PDF
                           </DropdownMenuItem>
-                          <DropdownMenuItem 
+                          <DropdownMenuItem
                             onClick={() => openEmailDialog(invoice.id)}
                             disabled={invoice.status === "paid" || invoice.status === "cancelled"}
                           >
                             <Mail className="h-4 w-4 mr-2" />
                             Email Invoice
                           </DropdownMenuItem>
-                          <DropdownMenuItem 
+                          <DropdownMenuItem
                             onClick={() => openPaymentDialog(invoice.id, invoice.totalAmount, invoice.paidAmount)}
                             disabled={invoice.status === "paid" || invoice.status === "cancelled"}
                           >
