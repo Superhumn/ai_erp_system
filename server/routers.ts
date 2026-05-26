@@ -1,6 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc, lte, gte, or, isNull } from "drizzle-orm";
 import { safeDecryptToken } from "./_core/crypto";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
@@ -23509,6 +23509,698 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
         return runWeeklyDigestWorkflow();
       }),
     }),
+  }),
+
+  // ============================================
+  // MULTI-TIER PRICE BOOK  (foodservice / wholesale / MSRP per region)
+  // ============================================
+  priceBook: router({
+    listTiers: protectedProcedure
+      .input(z.object({
+        productId: z.number().optional(),
+        region: z.string().optional(),
+        channel: z.enum(["foodservice", "wholesale", "retail_msrp", "retail_dtc", "export", "institutional", "online", "other"]).optional(),
+        activeOnly: z.boolean().default(true),
+      }).optional())
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { productPriceTiers } = await import("../drizzle/schema");
+        const conditions: any[] = [];
+        if (input?.productId) conditions.push(eq(productPriceTiers.productId, input.productId));
+        if (input?.region) conditions.push(eq(productPriceTiers.region, input.region));
+        if (input?.channel) conditions.push(eq(productPriceTiers.channel, input.channel));
+        if (input?.activeOnly !== false) conditions.push(eq(productPriceTiers.status, "active"));
+        const q = database.select().from(productPriceTiers);
+        const rows = conditions.length ? await q.where(and(...conditions)) : await q;
+        return rows;
+      }),
+
+    getTier: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { productPriceTiers, productVolumeDiscounts } = await import("../drizzle/schema");
+        const [tier] = await database.select().from(productPriceTiers).where(eq(productPriceTiers.id, input.id));
+        if (!tier) throw new TRPCError({ code: 'NOT_FOUND', message: 'Price tier not found' });
+        const bands = await database.select().from(productVolumeDiscounts)
+          .where(eq(productVolumeDiscounts.priceTierId, input.id));
+        return { ...tier, volumeDiscounts: bands };
+      }),
+
+    createTier: opsProcedure
+      .input(z.object({
+        productId: z.number(),
+        region: z.string().min(2).max(8),
+        channel: z.enum(["foodservice", "wholesale", "retail_msrp", "retail_dtc", "export", "institutional", "online", "other"]),
+        currency: z.string().length(3),
+        packSize: z.string().optional(),
+        unitOfMeasure: z.string().default("kg"),
+        pricePerUnit: z.string(),
+        taxMode: z.enum(["exclusive", "inclusive", "exempt"]).default("exclusive"),
+        taxRate: z.string().optional(),
+        minOrderQty: z.string().optional(),
+        effectiveFrom: z.coerce.date(),
+        effectiveTo: z.coerce.date().optional(),
+        contractOnly: z.boolean().default(false),
+        notes: z.string().optional(),
+        volumeDiscounts: z.array(z.object({
+          minQty: z.string(),
+          maxQty: z.string().optional(),
+          discountPercent: z.string().default("0"),
+          notes: z.string().optional(),
+        })).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { productPriceTiers, productVolumeDiscounts } = await import("../drizzle/schema");
+        const { volumeDiscounts, ...tierInput } = input;
+        const result = await database.insert(productPriceTiers).values({
+          ...tierInput,
+          createdBy: ctx.user.id,
+        } as any);
+        const insertId = (result as any)[0]?.insertId ?? (result as any).insertId;
+        if (volumeDiscounts && volumeDiscounts.length) {
+          await database.insert(productVolumeDiscounts).values(
+            volumeDiscounts.map(d => ({ ...d, priceTierId: insertId } as any)),
+          );
+        }
+        return { id: insertId };
+      }),
+
+    updateTier: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        patch: z.object({
+          pricePerUnit: z.string().optional(),
+          taxRate: z.string().optional(),
+          minOrderQty: z.string().optional(),
+          effectiveTo: z.coerce.date().optional(),
+          status: z.enum(["draft", "active", "superseded", "archived"]).optional(),
+          notes: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { productPriceTiers } = await import("../drizzle/schema");
+        await database.update(productPriceTiers).set(input.patch as any).where(eq(productPriceTiers.id, input.id));
+        return { ok: true };
+      }),
+
+    addVolumeDiscount: opsProcedure
+      .input(z.object({
+        priceTierId: z.number(),
+        minQty: z.string(),
+        maxQty: z.string().optional(),
+        discountPercent: z.string().default("0"),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { productVolumeDiscounts } = await import("../drizzle/schema");
+        const result = await database.insert(productVolumeDiscounts).values(input as any);
+        return { id: (result as any)[0]?.insertId ?? (result as any).insertId };
+      }),
+
+    // Compute effective price including volume discount band, for a given product/region/channel/qty.
+    quote: protectedProcedure
+      .input(z.object({
+        productId: z.number(),
+        region: z.string(),
+        channel: z.enum(["foodservice", "wholesale", "retail_msrp", "retail_dtc", "export", "institutional", "online", "other"]),
+        quantity: z.number().positive(),
+      }))
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { productPriceTiers, productVolumeDiscounts } = await import("../drizzle/schema");
+        const now = new Date();
+        const [tier] = await database.select().from(productPriceTiers).where(and(
+          eq(productPriceTiers.productId, input.productId),
+          eq(productPriceTiers.region, input.region),
+          eq(productPriceTiers.channel, input.channel),
+          eq(productPriceTiers.status, "active"),
+          lte(productPriceTiers.effectiveFrom, now),
+          or(isNull(productPriceTiers.effectiveTo), gte(productPriceTiers.effectiveTo, now)),
+        )).orderBy(desc(productPriceTiers.effectiveFrom)).limit(1);
+        if (!tier) return null;
+        const bands = await database.select().from(productVolumeDiscounts)
+          .where(eq(productVolumeDiscounts.priceTierId, tier.id));
+        const qty = input.quantity;
+        const band = bands.find(b => qty >= Number(b.minQty) && (b.maxQty == null || qty <= Number(b.maxQty)));
+        const basePrice = Number(tier.pricePerUnit);
+        const discountPct = band ? Number(band.discountPercent ?? 0) : 0;
+        const effectivePerUnit = basePrice * (1 - discountPct / 100);
+        return {
+          tier,
+          band,
+          quantity: qty,
+          basePricePerUnit: basePrice,
+          discountPercent: discountPct,
+          effectivePricePerUnit: effectivePerUnit,
+          subtotal: effectivePerUnit * qty,
+          currency: tier.currency,
+          taxMode: tier.taxMode,
+          taxRate: tier.taxRate,
+        };
+      }),
+  }),
+
+  // ============================================
+  // REGIONAL SKUs  (SH-BWS-001 ↔ SH-BWS-001-SA, etc.)
+  // ============================================
+  regionalSkus: router({
+    list: protectedProcedure
+      .input(z.object({
+        productId: z.number().optional(),
+        region: z.string().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { productRegionalSkus } = await import("../drizzle/schema");
+        const conditions: any[] = [];
+        if (input?.productId) conditions.push(eq(productRegionalSkus.productId, input.productId));
+        if (input?.region) conditions.push(eq(productRegionalSkus.region, input.region));
+        const q = database.select().from(productRegionalSkus);
+        return conditions.length ? await q.where(and(...conditions)) : await q;
+      }),
+
+    create: opsProcedure
+      .input(z.object({
+        productId: z.number(),
+        region: z.string().min(2).max(8),
+        regionalSku: z.string().min(1).max(64),
+        barcode: z.string().optional(),
+        barcodeType: z.enum(["ean13", "upc", "gtin14", "code128", "other"]).optional(),
+        gs1Prefix: z.string().optional(),
+        localName: z.string().optional(),
+        localDescription: z.string().optional(),
+        packagingFormat: z.string().optional(),
+        status: z.enum(["planned", "active", "discontinued"]).default("planned"),
+        launchedAt: z.coerce.date().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { productRegionalSkus } = await import("../drizzle/schema");
+        const result = await database.insert(productRegionalSkus).values(input as any);
+        return { id: (result as any)[0]?.insertId ?? (result as any).insertId };
+      }),
+
+    update: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        patch: z.object({
+          regionalSku: z.string().optional(),
+          barcode: z.string().optional(),
+          status: z.enum(["planned", "active", "discontinued"]).optional(),
+          launchedAt: z.coerce.date().optional(),
+          localName: z.string().optional(),
+          localDescription: z.string().optional(),
+          packagingFormat: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { productRegionalSkus } = await import("../drizzle/schema");
+        await database.update(productRegionalSkus).set(input.patch as any).where(eq(productRegionalSkus.id, input.id));
+        return { ok: true };
+      }),
+  }),
+
+  // ============================================
+  // GOVERNMENT TENDERS  (GeM, IRCTC, ICDS, CSD, AIIMS...)
+  // ============================================
+  governmentTenders: router({
+    list: protectedProcedure
+      .input(z.object({
+        portal: z.enum([
+          "gem", "irctc", "icds", "csd", "aiims", "state_nutrition", "state_hospital",
+          "ministry_defense", "ministry_railways", "ministry_health", "ministry_food",
+          "eu_ted", "us_sam_gov", "uk_contracts_finder", "other",
+        ]).optional(),
+        status: z.enum([
+          "watching", "qualifying", "preparing", "submitted", "under_review",
+          "shortlisted", "awarded", "lost", "withdrawn", "cancelled",
+        ]).optional(),
+        country: z.string().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { governmentTenders } = await import("../drizzle/schema");
+        const conditions: any[] = [];
+        if (input?.portal) conditions.push(eq(governmentTenders.portal, input.portal));
+        if (input?.status) conditions.push(eq(governmentTenders.status, input.status));
+        if (input?.country) conditions.push(eq(governmentTenders.country, input.country));
+        const q = database.select().from(governmentTenders).orderBy(desc(governmentTenders.submissionDeadline));
+        return conditions.length ? await q.where(and(...conditions)) : await q;
+      }),
+
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { governmentTenders } = await import("../drizzle/schema");
+        const [row] = await database.select().from(governmentTenders).where(eq(governmentTenders.id, input.id));
+        if (!row) throw new TRPCError({ code: 'NOT_FOUND', message: 'Tender not found' });
+        return row;
+      }),
+
+    create: opsProcedure
+      .input(z.object({
+        title: z.string().min(1).max(500),
+        portal: z.enum([
+          "gem", "irctc", "icds", "csd", "aiims", "state_nutrition", "state_hospital",
+          "ministry_defense", "ministry_railways", "ministry_health", "ministry_food",
+          "eu_ted", "us_sam_gov", "uk_contracts_finder", "other",
+        ]),
+        customPortalName: z.string().optional(),
+        category: z.enum([
+          "food_supply", "defense_canteen", "midday_meal", "hospital_procurement",
+          "railway_catering", "school_nutrition", "humanitarian_aid", "other",
+        ]).default("food_supply"),
+        solicitationNumber: z.string().optional(),
+        agency: z.string().optional(),
+        country: z.string().optional(),
+        state: z.string().optional(),
+        publishedDate: z.coerce.date().optional(),
+        submissionDeadline: z.coerce.date().optional(),
+        bidOpeningDate: z.coerce.date().optional(),
+        estimatedValue: z.string().optional(),
+        emdAmount: z.string().optional(),
+        currency: z.string().length(3).default("INR"),
+        status: z.enum([
+          "watching", "qualifying", "preparing", "submitted", "under_review",
+          "shortlisted", "awarded", "lost", "withdrawn", "cancelled",
+        ]).default("watching"),
+        classILocalSupplier: z.boolean().optional(),
+        fssaiRequired: z.boolean().optional(),
+        bomRequired: z.boolean().optional(),
+        bankGuaranteeRequired: z.boolean().optional(),
+        contactName: z.string().optional(),
+        contactEmail: z.string().email().optional(),
+        contactPhone: z.string().optional(),
+        portalUrl: z.string().url().optional(),
+        projectId: z.number().optional(),
+        ownerId: z.number().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { governmentTenders } = await import("../drizzle/schema");
+        const result = await database.insert(governmentTenders).values({
+          ...input,
+          createdBy: ctx.user.id,
+        } as any);
+        return { id: (result as any)[0]?.insertId ?? (result as any).insertId };
+      }),
+
+    updateStatus: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        status: z.enum([
+          "watching", "qualifying", "preparing", "submitted", "under_review",
+          "shortlisted", "awarded", "lost", "withdrawn", "cancelled",
+        ]),
+        bidAmount: z.string().optional(),
+        awardedAmount: z.string().optional(),
+        awardDate: z.coerce.date().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { governmentTenders } = await import("../drizzle/schema");
+        const { id, ...patch } = input;
+        await database.update(governmentTenders).set(patch as any).where(eq(governmentTenders.id, id));
+        return { ok: true };
+      }),
+  }),
+
+  // ============================================
+  // REGULATORY LICENSES  (FSSAI, DPIIT, EFSA Novel Food, ...)
+  // ============================================
+  regulatoryLicenses: router({
+    list: protectedProcedure
+      .input(z.object({
+        country: z.string().optional(),
+        status: z.string().optional(),
+        expiringWithinDays: z.number().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { regulatoryLicenses } = await import("../drizzle/schema");
+        const conditions: any[] = [];
+        if (input?.country) conditions.push(eq(regulatoryLicenses.country, input.country));
+        if (input?.status) conditions.push(eq(regulatoryLicenses.status, input.status as any));
+        const q = database.select().from(regulatoryLicenses).orderBy(desc(regulatoryLicenses.expirationDate));
+        const rows = conditions.length ? await q.where(and(...conditions)) : await q;
+        if (input?.expiringWithinDays) {
+          const cutoff = Date.now() + input.expiringWithinDays * 86400_000;
+          return rows.filter(r => r.expirationDate && new Date(r.expirationDate).getTime() <= cutoff);
+        }
+        return rows;
+      }),
+
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { regulatoryLicenses } = await import("../drizzle/schema");
+        const [row] = await database.select().from(regulatoryLicenses).where(eq(regulatoryLicenses.id, input.id));
+        if (!row) throw new TRPCError({ code: 'NOT_FOUND', message: 'License not found' });
+        return row;
+      }),
+
+    create: legalProcedure
+      .input(z.object({
+        licenseType: z.enum([
+          "fssai_central", "fssai_state", "fssai_basic",
+          "dpiit_startup_india",
+          "efsa_novel_food", "fic_1169_2011_label", "traces_nt", "eu_organic",
+          "fda_food_facility", "fda_ffr", "usda_organic", "usda_amS",
+          "haccp", "iso_22000", "brc", "sqf",
+          "halal", "kosher", "non_gmo", "vegan_certified",
+          "gst_registration", "iec_import_export", "rcmc",
+          "pmksy_grant", "maharashtra_agro_grant", "karnataka_udyog_mitra",
+          "trademark", "patent", "copyright",
+          "other",
+        ]),
+        customTypeName: z.string().optional(),
+        country: z.string().min(2).max(8),
+        state: z.string().optional(),
+        authority: z.string().optional(),
+        licenseNumber: z.string().optional(),
+        status: z.enum([
+          "planned", "applied", "in_review", "issued", "active",
+          "expiring_soon", "expired", "revoked", "renewed", "rejected", "withdrawn",
+        ]).default("planned"),
+        appliedDate: z.coerce.date().optional(),
+        issuedDate: z.coerce.date().optional(),
+        expirationDate: z.coerce.date().optional(),
+        renewalDueDate: z.coerce.date().optional(),
+        renewalReminderDays: z.number().default(60),
+        applicationFee: z.string().optional(),
+        annualFee: z.string().optional(),
+        currency: z.string().length(3).default("USD"),
+        coversFacilityId: z.number().optional(),
+        contactName: z.string().optional(),
+        contactEmail: z.string().email().optional(),
+        contactPhone: z.string().optional(),
+        portalUrl: z.string().url().optional(),
+        documentUrl: z.string().url().optional(),
+        responsibleUserId: z.number().optional(),
+        projectId: z.number().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { regulatoryLicenses } = await import("../drizzle/schema");
+        const result = await database.insert(regulatoryLicenses).values({
+          ...input,
+          createdBy: ctx.user.id,
+        } as any);
+        return { id: (result as any)[0]?.insertId ?? (result as any).insertId };
+      }),
+
+    update: legalProcedure
+      .input(z.object({
+        id: z.number(),
+        patch: z.object({
+          status: z.enum([
+            "planned", "applied", "in_review", "issued", "active",
+            "expiring_soon", "expired", "revoked", "renewed", "rejected", "withdrawn",
+          ]).optional(),
+          licenseNumber: z.string().optional(),
+          issuedDate: z.coerce.date().optional(),
+          expirationDate: z.coerce.date().optional(),
+          renewalDueDate: z.coerce.date().optional(),
+          lastRenewedAt: z.coerce.date().optional(),
+          notes: z.string().optional(),
+          documentUrl: z.string().url().optional(),
+        }),
+      }))
+      .mutation(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { regulatoryLicenses } = await import("../drizzle/schema");
+        await database.update(regulatoryLicenses).set(input.patch as any).where(eq(regulatoryLicenses.id, input.id));
+        return { ok: true };
+      }),
+  }),
+
+  // ============================================
+  // SUBSIDIARY FUNDRAISING ROUNDS
+  // ============================================
+  subsidiaryFundraising: router({
+    listRounds: financeProcedure
+      .input(z.object({ subsidiaryCompanyId: z.number().optional() }).optional())
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { subsidiaryFundraisingRounds } = await import("../drizzle/schema");
+        const q = database.select().from(subsidiaryFundraisingRounds).orderBy(desc(subsidiaryFundraisingRounds.openedDate));
+        if (input?.subsidiaryCompanyId) {
+          return q.where(eq(subsidiaryFundraisingRounds.subsidiaryCompanyId, input.subsidiaryCompanyId));
+        }
+        return q;
+      }),
+
+    getRound: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { subsidiaryFundraisingRounds, subsidiaryFundraisingInvestors } = await import("../drizzle/schema");
+        const [round] = await database.select().from(subsidiaryFundraisingRounds)
+          .where(eq(subsidiaryFundraisingRounds.id, input.id));
+        if (!round) throw new TRPCError({ code: 'NOT_FOUND', message: 'Round not found' });
+        const investors = await database.select().from(subsidiaryFundraisingInvestors)
+          .where(eq(subsidiaryFundraisingInvestors.roundId, input.id));
+        return { ...round, investors };
+      }),
+
+    createRound: financeProcedure
+      .input(z.object({
+        subsidiaryCompanyId: z.number(),
+        parentCompanyId: z.number().optional(),
+        name: z.string().min(1).max(255),
+        roundType: z.enum([
+          "pre_seed", "seed", "series_a", "series_b", "series_c",
+          "bridge", "convertible_note", "safe", "debt", "grant", "strategic", "other",
+        ]),
+        targetAmount: z.string().optional(),
+        currency: z.string().length(3).default("USD"),
+        preMoneyValuation: z.string().optional(),
+        leadInvestorName: z.string().optional(),
+        openedDate: z.coerce.date().optional(),
+        status: z.enum(["planning", "open", "closing", "closed", "cancelled"]).default("planning"),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { subsidiaryFundraisingRounds } = await import("../drizzle/schema");
+        const result = await database.insert(subsidiaryFundraisingRounds).values({
+          ...input,
+          createdBy: ctx.user.id,
+        } as any);
+        return { id: (result as any)[0]?.insertId ?? (result as any).insertId };
+      }),
+
+    addInvestor: financeProcedure
+      .input(z.object({
+        roundId: z.number(),
+        investorName: z.string().min(1),
+        investorType: z.enum([
+          "individual", "angel", "vc", "pe", "corporate", "government", "family_office",
+          "crowd", "strategic", "employee", "other",
+        ]).default("individual"),
+        email: z.string().email().optional(),
+        phone: z.string().optional(),
+        country: z.string().optional(),
+        commitmentAmount: z.string().optional(),
+        currency: z.string().length(3).default("USD"),
+        contactId: z.number().optional(),
+        status: z.enum([
+          "introduced", "in_diligence", "term_sheet", "committed",
+          "wired", "closed", "declined", "lapsed",
+        ]).default("introduced"),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { subsidiaryFundraisingInvestors } = await import("../drizzle/schema");
+        const result = await database.insert(subsidiaryFundraisingInvestors).values(input as any);
+        return { id: (result as any)[0]?.insertId ?? (result as any).insertId };
+      }),
+
+    updateInvestor: financeProcedure
+      .input(z.object({
+        id: z.number(),
+        patch: z.object({
+          status: z.enum([
+            "introduced", "in_diligence", "term_sheet", "committed",
+            "wired", "closed", "declined", "lapsed",
+          ]).optional(),
+          commitmentAmount: z.string().optional(),
+          fundedAmount: z.string().optional(),
+          ownershipPct: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { subsidiaryFundraisingInvestors } = await import("../drizzle/schema");
+        await database.update(subsidiaryFundraisingInvestors).set(input.patch as any)
+          .where(eq(subsidiaryFundraisingInvestors.id, input.id));
+        return { ok: true };
+      }),
+  }),
+
+  // ============================================
+  // BRAND AMBASSADORS / INFLUENCERS / CHARACTERS
+  // ============================================
+  brandAmbassadors: router({
+    list: protectedProcedure
+      .input(z.object({
+        stage: z.string().optional(),
+        type: z.string().optional(),
+        country: z.string().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { brandAmbassadors } = await import("../drizzle/schema");
+        const conditions: any[] = [];
+        if (input?.stage) conditions.push(eq(brandAmbassadors.stage, input.stage as any));
+        if (input?.type) conditions.push(eq(brandAmbassadors.type, input.type as any));
+        if (input?.country) conditions.push(eq(brandAmbassadors.country, input.country));
+        const q = database.select().from(brandAmbassadors).orderBy(desc(brandAmbassadors.updatedAt));
+        return conditions.length ? await q.where(and(...conditions)) : await q;
+      }),
+
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { brandAmbassadors, brandAmbassadorActivities } = await import("../drizzle/schema");
+        const [row] = await database.select().from(brandAmbassadors).where(eq(brandAmbassadors.id, input.id));
+        if (!row) throw new TRPCError({ code: 'NOT_FOUND', message: 'Ambassador not found' });
+        const activities = await database.select().from(brandAmbassadorActivities)
+          .where(eq(brandAmbassadorActivities.ambassadorId, input.id))
+          .orderBy(desc(brandAmbassadorActivities.occurredAt));
+        return { ...row, activities };
+      }),
+
+    create: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1).max(255),
+        type: z.enum([
+          "celebrity", "athlete", "influencer", "chef", "musician", "actor",
+          "podcaster", "youtuber", "streamer", "model", "creator",
+          "animated_character", "fictional_character", "mascot", "other",
+        ]),
+        category: z.string().optional(),
+        country: z.string().optional(),
+        region: z.string().optional(),
+        socialHandles: z.record(z.string(), z.string()).optional(),
+        followerCount: z.number().optional(),
+        followerCountByPlatform: z.record(z.string(), z.number()).optional(),
+        estimatedReach: z.number().optional(),
+        stage: z.enum([
+          "shortlist", "prospect", "contacted", "in_negotiation",
+          "term_sheet", "signed", "active", "paused", "ended", "declined", "blacklisted",
+        ]).default("prospect"),
+        priority: z.enum(["low", "medium", "high"]).default("medium"),
+        agencyName: z.string().optional(),
+        agentName: z.string().optional(),
+        agentEmail: z.string().email().optional(),
+        agentPhone: z.string().optional(),
+        campaignName: z.string().optional(),
+        contractStartDate: z.coerce.date().optional(),
+        contractEndDate: z.coerce.date().optional(),
+        contractValue: z.string().optional(),
+        currency: z.string().length(3).default("USD"),
+        paymentTerms: z.string().optional(),
+        deliverables: z.string().optional(),
+        exclusivity: z.string().optional(),
+        usageRights: z.string().optional(),
+        contactId: z.number().optional(),
+        projectId: z.number().optional(),
+        ownerUserId: z.number().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { brandAmbassadors } = await import("../drizzle/schema");
+        const result = await database.insert(brandAmbassadors).values({
+          ...input,
+          createdBy: ctx.user.id,
+        } as any);
+        return { id: (result as any)[0]?.insertId ?? (result as any).insertId };
+      }),
+
+    updateStage: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        stage: z.enum([
+          "shortlist", "prospect", "contacted", "in_negotiation",
+          "term_sheet", "signed", "active", "paused", "ended", "declined", "blacklisted",
+        ]),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { brandAmbassadors } = await import("../drizzle/schema");
+        const patch: any = { stage: input.stage };
+        if (input.notes) patch.notes = input.notes;
+        await database.update(brandAmbassadors).set(patch).where(eq(brandAmbassadors.id, input.id));
+        return { ok: true };
+      }),
+
+    logActivity: protectedProcedure
+      .input(z.object({
+        ambassadorId: z.number(),
+        activityType: z.enum([
+          "outreach", "meeting", "call", "email", "proposal_sent",
+          "contract_sent", "contract_signed", "content_published",
+          "appearance", "shipment", "payment", "note",
+        ]),
+        occurredAt: z.coerce.date(),
+        summary: z.string().optional(),
+        details: z.string().optional(),
+        postUrl: z.string().url().optional(),
+        impressions: z.number().optional(),
+        engagements: z.number().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { brandAmbassadorActivities } = await import("../drizzle/schema");
+        const result = await database.insert(brandAmbassadorActivities).values({
+          ...input,
+          createdBy: ctx.user.id,
+        } as any);
+        return { id: (result as any)[0]?.insertId ?? (result as any).insertId };
+      }),
   }),
 });
 
