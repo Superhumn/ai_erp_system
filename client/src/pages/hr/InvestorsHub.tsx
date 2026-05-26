@@ -4,6 +4,7 @@ import { FileBarChart, Megaphone, Sparkles, UserCheck, Briefcase } from "lucide-
 import { lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
+import { GlobalStructureCard } from "@/components/GlobalStructureCard";
 
 const EquityReports = lazy(() => import("./EquityReports"));
 const InvestorUpdates = lazy(() => import("../InvestorUpdates"));
@@ -36,7 +37,8 @@ export default function InvestorsHub() {
   }
 
   return (
-    <div className="space-y-2 animate-fade-in">
+    <div className="space-y-4 animate-fade-in">
+      <GlobalStructureCard />
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="captable" className="flex items-center gap-1.5">
