@@ -1,6 +1,10 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+<<<<<<< HEAD
 import { eq, and, inArray } from "drizzle-orm";
+=======
+import { eq, and, desc, lte, gte, or, isNull } from "drizzle-orm";
+>>>>>>> origin/main
 import { safeDecryptToken } from "./_core/crypto";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
@@ -56,6 +60,7 @@ import { planPublish, publishToPlatform, type Platform as SocialPlatform } from 
 import { getYouTubeAuthUrl } from "./_core/youtube";
 import { encrypt, decrypt } from "./_core/crypto";
 import { ENV } from "./_core/env";
+import { reassignProjectTaskToHuman } from "./taskAgentBridge";
 import { createDecipheriv, createHash } from "crypto";
 // Decrypts a stored password supporting both the current AES-256-GCM format
 // (iv:authTag:ciphertext) and the legacy AES-256-CBC format (plain hex ciphertext).
@@ -260,6 +265,45 @@ async function assertEmailAccessRuleOwnership(ruleId: number, userId: number, us
   return rule;
 }
 
+// Resolve which stakeholder + entity an investor-portal call should act on.
+// A user can hold positions in multiple entities (parent + JVs), so callers
+// pass an optional companyId to select one; if omitted we default to their
+// earliest cap-table row. Admins/execs bypass the linkage requirement and
+// can scope by companyId for support, or leave it unscoped.
+async function resolveInvestorContext(
+  ctx: { user: { id: number; role: string } },
+  requestedCompanyId?: number,
+) {
+  if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
+  }
+  if (ctx.user.role !== "investor") {
+    return {
+      stakeholder: undefined as Awaited<ReturnType<typeof db.getStakeholderByUserId>> | undefined,
+      companyId: requestedCompanyId,
+      allStakeholders: [] as Awaited<ReturnType<typeof db.getStakeholdersByUserId>>,
+    };
+  }
+  const allStakeholders = await db.getStakeholdersByUserId(ctx.user.id);
+  if (allStakeholders.length === 0) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "No cap-table record is linked to your account. Ask the admin to link your stakeholder row.",
+    });
+  }
+  if (requestedCompanyId != null) {
+    const match = allStakeholders.find((s) => s.companyId === requestedCompanyId);
+    if (!match) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "You don't hold a position in that entity." });
+    }
+    return { stakeholder: match, companyId: match.companyId ?? undefined, allStakeholders };
+  }
+  const primary = allStakeholders[0];
+  return { stakeholder: primary, companyId: primary.companyId ?? undefined, allStakeholders };
+}
+
+const investorCompanyIdInput = z.object({ companyId: z.number().optional() }).optional();
+
 
 export const appRouter = router({
   system: systemRouter,
@@ -375,6 +419,22 @@ export const appRouter = router({
         await createAuditLog(ctx.user.id, 'update', 'company', id);
         return { success: true };
       }),
+    // Lightweight: entity metadata + active-employee headcounts only.
+    // Safe for any authenticated role (incl. investor/vendor/contractor)
+    // because it doesn't expose individual employee identities.
+    structure: protectedProcedure.query(() => db.getCompanyStructureSummary()),
+    // Full roster (names, emails, titles). Gated to internal roles —
+    // external roles (investor/vendor/contractor/copacker) get FORBIDDEN.
+    structureWithRoster: protectedProcedure.query(({ ctx }) => {
+      const external = new Set(["investor", "vendor", "contractor", "copacker"]);
+      if (external.has(ctx.user.role)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "The employee directory is only available to internal team members.",
+        });
+      }
+      return db.getCompanyStructure();
+    }),
   }),
 
   // ============================================
@@ -3095,6 +3155,7 @@ ONLY return the JSON array, no other text.`;
         assigneeId: z.number().nullable(),
       }))
       .mutation(async ({ input, ctx }) => {
+<<<<<<< HEAD
         const callerCompanyId = (ctx.user as any).companyId as number | undefined;
         // Scope the update to tasks belonging to the caller's company.
         let allowedIds = input.ids;
@@ -3119,6 +3180,13 @@ ONLY return the JSON array, no other text.`;
           allowedIds.map((id) => createAuditLog(ctx.user.id, 'update', 'projectTask', id))
         );
         return { success: true, count: allowedIds.length };
+=======
+        for (const id of input.ids) {
+          await reassignProjectTaskToHuman(id, input.assigneeId, ctx.user.id);
+          await createAuditLog(ctx.user.id, 'update', 'projectTask', id);
+        }
+        return { success: true, count: input.ids.length };
+>>>>>>> origin/main
       }),
     tasks: protectedProcedure
       .input(z.object({ projectId: z.number() }))
@@ -5607,6 +5675,26 @@ ONLY return the JSON array, no other text.`;
     // Get QuickBooks OAuth URL
     getAuthUrl: protectedProcedure.query(({ ctx }) => {
       return getQuickBooksAuthUrl(ctx.user.id);
+    }),
+
+    // Diagnostic: reveal the QuickBooks credentials the running server has
+    // loaded from env, with the client_id masked. Lets an admin verify that
+    // a deploy actually picked up updated env vars without leaking secrets.
+    debugConfig: adminProcedure.query(async () => {
+      const { getQuickBooksRedirectUri } = await import("./_core/quickbooks");
+      const clientId = ENV.quickbooksClientId;
+      const mask = (s: string) =>
+        s.length <= 8 ? "*".repeat(s.length) : `${s.slice(0, 8)}…${s.slice(-4)}`;
+      return {
+        clientIdPrefix: clientId ? clientId.slice(0, 8) : null,
+        clientIdSuffix: clientId ? clientId.slice(-4) : null,
+        clientIdMasked: clientId ? mask(clientId) : null,
+        clientIdLength: clientId.length,
+        clientSecretSet: !!ENV.quickbooksClientSecret,
+        environment: ENV.quickbooksEnvironment,
+        redirectUri: getQuickBooksRedirectUri(),
+        publicAppUrl: ENV.publicAppUrl,
+      };
     }),
 
     // Get connection status
@@ -21272,11 +21360,10 @@ Return JSON array only. No markdown.`;
     // The logged-in investor's own cap-table position. Returns their
     // stakeholder row, every grant, and the total-shares figure used to
     // derive ownership % — but never data about other stakeholders.
-    me: protectedProcedure.query(async ({ ctx }) => {
-      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
-      }
-      const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+    me: protectedProcedure
+      .input(investorCompanyIdInput)
+      .query(async ({ ctx, input }) => {
+      const { stakeholder, allStakeholders } = await resolveInvestorContext(ctx, input?.companyId);
       if (!stakeholder) {
         throw new TRPCError({
           code: "NOT_FOUND",
@@ -21286,6 +21373,19 @@ Return JSON array only. No markdown.`;
       const grants = await db.getEquityGrantsByStakeholder(stakeholder.id);
       const allGrants = await db.getEquityGrants(stakeholder.companyId ?? undefined);
       const shareClasses = await db.getShareClasses(stakeholder.companyId ?? undefined);
+      const entity = stakeholder.companyId
+        ? await db.getCompanyById(stakeholder.companyId)
+        : undefined;
+      // The full list of entities this user holds a position in, so the
+      // UI can render an entity switcher. Resolved in one query per id
+      // since a typical investor has 1–3 entities.
+      const entities = await Promise.all(
+        allStakeholders.map(async (s) => {
+          if (!s.companyId) return null;
+          const c = await db.getCompanyById(s.companyId);
+          return c ? { id: c.id, name: c.name, type: c.type, country: c.country } : null;
+        }),
+      ).then((rows) => rows.filter((r) => r !== null));
 
       const totalShares = allGrants.reduce(
         (s: number, g: { shares?: string | number | null }) =>
@@ -21320,6 +21420,10 @@ Return JSON array only. No markdown.`;
           tier: stakeholder.tier,
           accreditedInvestor: stakeholder.accreditedInvestor,
         },
+        entity: entity
+          ? { id: entity.id, name: entity.name, type: entity.type, country: entity.country }
+          : null,
+        entities,
         grants: decoratedGrants,
         ownershipPct,
         sharesOutstanding: mySharesOutstanding,
@@ -21328,34 +21432,24 @@ Return JSON array only. No markdown.`;
     }),
 
     // Wider financials snapshot than the prospect-facing /dr/:code page.
-    financials: protectedProcedure.query(async ({ ctx }) => {
-      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
-      }
-      // Gate on stakeholder linkage too — admins hitting this for support
-      // are fine, but an investor-role user without a cap-table link is a
-      // broken onboarding state and should surface the same message as `me`.
-      // Also picks up the stakeholder's companyId so the snapshot is
-      // scoped rather than aggregated across all companies in the DB.
-      const stakeholder = ctx.user.role === "investor"
-        ? await db.getStakeholderByUserId(ctx.user.id)
-        : undefined;
-      if (ctx.user.role === "investor" && !stakeholder) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
-      }
-      const { computeInvestorPortalFinancials } = await import("./investorPortalFinancials");
-      return computeInvestorPortalFinancials({
-        companyId: stakeholder?.companyId ?? undefined,
-      });
-    }),
+    financials: protectedProcedure
+      .input(investorCompanyIdInput)
+      .query(async ({ ctx, input }) => {
+        const { companyId } = await resolveInvestorContext(ctx, input?.companyId);
+        const { computeInvestorPortalFinancials } = await import("./investorPortalFinancials");
+        return computeInvestorPortalFinancials({ companyId });
+      }),
 
     // Investor updates the admin has published. We only show `status='sent'`
     // so drafts and in-review pieces don't leak.
-    updates: protectedProcedure.query(async ({ ctx }) => {
-      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
-      }
-      const updates = await db.getInvestorUpdates({ status: "sent" });
+    updates: protectedProcedure
+      .input(investorCompanyIdInput)
+      .query(async ({ ctx, input }) => {
+      const { companyId } = await resolveInvestorContext(ctx, input?.companyId);
+      const updates = await db.getInvestorUpdates({
+        status: "sent",
+        companyId,
+      });
       return updates.map((u: Record<string, unknown>) => ({
         id: u.id,
         title: u.title,
@@ -21459,18 +21553,11 @@ Return JSON array only. No markdown.`;
     // collect subscription docs. We deliberately don't expose the
     // campaign's existing investor list (other check sizes / commits)
     // here; that's an IR/founder view, not an investor view.
-    activeRounds: protectedProcedure.query(async ({ ctx }) => {
-      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
-      }
-      const stakeholder = ctx.user.role === "investor"
-        ? await db.getStakeholderByUserId(ctx.user.id)
-        : undefined;
-      if (ctx.user.role === "investor" && !stakeholder) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
-      }
-
-      const all = await db.getFundraisingCampaigns(stakeholder?.companyId ?? undefined);
+    activeRounds: protectedProcedure
+      .input(investorCompanyIdInput)
+      .query(async ({ ctx, input }) => {
+      const { stakeholder, companyId } = await resolveInvestorContext(ctx, input?.companyId);
+      const all = await db.getFundraisingCampaigns(companyId);
       type Campaign = {
         id: number; name: string; description: string | null;
         targetAmount: string | null; raisedAmount: string | null;
@@ -21517,6 +21604,7 @@ Return JSON array only. No markdown.`;
     indicateInterest: protectedProcedure
       .input(z.object({
         campaignId: z.number(),
+        companyId: z.number().optional(),
         // Decimal-as-string: stays out of float-rounding territory and
         // matches how Drizzle's decimal column accepts values.
         indicatedAmount: z.string()
@@ -21531,12 +21619,12 @@ Return JSON array only. No markdown.`;
         if (ctx.user.role !== "investor") {
           throw new TRPCError({ code: "FORBIDDEN", message: "Only investors can signal pro-rata interest." });
         }
-        const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+        const { stakeholder, companyId } = await resolveInvestorContext(ctx, input.companyId);
         if (!stakeholder) {
           throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
         }
         // Verify the campaign is real, active, and in the same company.
-        const all = await db.getFundraisingCampaigns(stakeholder.companyId ?? undefined);
+        const all = await db.getFundraisingCampaigns(companyId);
         const campaign = (all as Array<{ id: number; status: string }>).find((c) => c.id === input.campaignId);
         if (!campaign) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Round not found" });
@@ -21563,14 +21651,10 @@ Return JSON array only. No markdown.`;
     //
     // Drafts and in-review resolutions are excluded so we don't leak
     // pre-decisional material.
-    boardMaterials: protectedProcedure.query(async ({ ctx }) => {
-      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
-      }
-      const stakeholder = ctx.user.role === "investor"
-        ? await db.getStakeholderByUserId(ctx.user.id)
-        : undefined;
-
+    boardMaterials: protectedProcedure
+      .input(investorCompanyIdInput)
+      .query(async ({ ctx, input }) => {
+      const { stakeholder, companyId } = await resolveInvestorContext(ctx, input?.companyId);
       // Tier gate: investor must hold tier='board'. Admin/exec bypass.
       const allowed = ctx.user.role === "admin"
         || ctx.user.role === "exec"
@@ -21582,9 +21666,7 @@ Return JSON array only. No markdown.`;
         });
       }
 
-      const resolutions = await db.getBoardResolutions({
-        companyId: stakeholder?.companyId ?? undefined,
-      });
+      const resolutions = await db.getBoardResolutions({ companyId });
       // Whitelist statuses we're willing to show. `approved`/`signed`/
       // `archived` are board-history; everything else is pre-decisional.
       const visible = (resolutions as Array<{
@@ -21612,18 +21694,10 @@ Return JSON array only. No markdown.`;
     // holders list (name + ownership %, never check size). Ordinary
     // tier deliberately doesn't get other-investor names — that's the
     // line-item leak we want to avoid.
-    capTableSummary: protectedProcedure.query(async ({ ctx }) => {
-      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
-      }
-      const stakeholder = ctx.user.role === "investor"
-        ? await db.getStakeholderByUserId(ctx.user.id)
-        : undefined;
-      if (ctx.user.role === "investor" && !stakeholder) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
-      }
-
-      const companyId = stakeholder?.companyId ?? undefined;
+    capTableSummary: protectedProcedure
+      .input(investorCompanyIdInput)
+      .query(async ({ ctx, input }) => {
+      const { stakeholder, companyId } = await resolveInvestorContext(ctx, input?.companyId);
       const [grants, classes, allStakeholders] = await Promise.all([
         db.getEquityGrants(companyId),
         db.getShareClasses(companyId),
@@ -21710,8 +21784,10 @@ Return JSON array only. No markdown.`;
     // record. Admins can browse any stakeholder's locker via the
     // `capTable.stakeholders.documents.*` admin endpoints.
     documents: router({
-      list: protectedProcedure.query(async ({ ctx }) => {
-        const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+      list: protectedProcedure
+        .input(investorCompanyIdInput)
+        .query(async ({ ctx, input }) => {
+        const { stakeholder } = await resolveInvestorContext(ctx, input?.companyId);
         if (!stakeholder) {
           throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
         }
@@ -21734,14 +21810,18 @@ Return JSON array only. No markdown.`;
       // We re-validate ownership on every call so a leaked id from one
       // investor can't be replayed by another.
       downloadUrl: protectedProcedure
-        .input(z.object({ id: z.number() }))
+        .input(z.object({ id: z.number(), companyId: z.number().optional() }))
         .mutation(async ({ input, ctx }) => {
-          const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+          const { stakeholder, allStakeholders } = await resolveInvestorContext(ctx, input.companyId);
           if (!stakeholder) {
             throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
           }
           const doc = await db.getStakeholderDocumentById(input.id);
-          if (!doc || doc.stakeholderId !== stakeholder.id) {
+          // Allow download if the doc belongs to ANY stakeholder row this
+          // user owns — so switching entities in the UI doesn't break
+          // download links the user just rendered.
+          const ownedIds = new Set(allStakeholders.map((s) => s.id));
+          if (!doc || !ownedIds.has(doc.stakeholderId)) {
             throw new TRPCError({ code: "NOT_FOUND", message: "Document not found" });
           }
           const { storageGet } = await import("./storage");
@@ -21756,8 +21836,10 @@ Return JSON array only. No markdown.`;
     // info. Email is editable but `userId` and `type` aren't — those
     // are admin-controlled.
     profile: router({
-      get: protectedProcedure.query(async ({ ctx }) => {
-        const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+      get: protectedProcedure
+        .input(investorCompanyIdInput)
+        .query(async ({ ctx, input }) => {
+        const { stakeholder } = await resolveInvestorContext(ctx, input?.companyId);
         if (!stakeholder) {
           throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
         }
@@ -21773,6 +21855,7 @@ Return JSON array only. No markdown.`;
       }),
       update: protectedProcedure
         .input(z.object({
+          companyId: z.number().optional(),
           name: z.string().min(1).max(256).optional(),
           email: z.string().email().optional(),
           address: z.string().max(2000).optional(),
@@ -21780,11 +21863,12 @@ Return JSON array only. No markdown.`;
           paymentPreference: z.string().max(2000).optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+          const { companyId, ...patch } = input;
+          const { stakeholder } = await resolveInvestorContext(ctx, companyId);
           if (!stakeholder) {
             throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
           }
-          await db.updateStakeholder(stakeholder.id, input);
+          await db.updateStakeholder(stakeholder.id, patch);
           return { success: true };
         }),
       // Re-attestation creates a timestamped self-certification that the
@@ -21792,9 +21876,9 @@ Return JSON array only. No markdown.`;
       // criteria. We don't re-validate the criteria here — that's a
       // legal review the investor does themselves.
       reAttestAccreditation: protectedProcedure
-        .input(z.object({ accredited: z.boolean() }))
+        .input(z.object({ accredited: z.boolean(), companyId: z.number().optional() }))
         .mutation(async ({ input, ctx }) => {
-          const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+          const { stakeholder } = await resolveInvestorContext(ctx, input.companyId);
           if (!stakeholder) {
             throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
           }
@@ -23469,6 +23553,698 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
         return runWeeklyDigestWorkflow();
       }),
     }),
+  }),
+
+  // ============================================
+  // MULTI-TIER PRICE BOOK  (foodservice / wholesale / MSRP per region)
+  // ============================================
+  priceBook: router({
+    listTiers: protectedProcedure
+      .input(z.object({
+        productId: z.number().optional(),
+        region: z.string().optional(),
+        channel: z.enum(["foodservice", "wholesale", "retail_msrp", "retail_dtc", "export", "institutional", "online", "other"]).optional(),
+        activeOnly: z.boolean().default(true),
+      }).optional())
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { productPriceTiers } = await import("../drizzle/schema");
+        const conditions: any[] = [];
+        if (input?.productId) conditions.push(eq(productPriceTiers.productId, input.productId));
+        if (input?.region) conditions.push(eq(productPriceTiers.region, input.region));
+        if (input?.channel) conditions.push(eq(productPriceTiers.channel, input.channel));
+        if (input?.activeOnly !== false) conditions.push(eq(productPriceTiers.status, "active"));
+        const q = database.select().from(productPriceTiers);
+        const rows = conditions.length ? await q.where(and(...conditions)) : await q;
+        return rows;
+      }),
+
+    getTier: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { productPriceTiers, productVolumeDiscounts } = await import("../drizzle/schema");
+        const [tier] = await database.select().from(productPriceTiers).where(eq(productPriceTiers.id, input.id));
+        if (!tier) throw new TRPCError({ code: 'NOT_FOUND', message: 'Price tier not found' });
+        const bands = await database.select().from(productVolumeDiscounts)
+          .where(eq(productVolumeDiscounts.priceTierId, input.id));
+        return { ...tier, volumeDiscounts: bands };
+      }),
+
+    createTier: opsProcedure
+      .input(z.object({
+        productId: z.number(),
+        region: z.string().min(2).max(8),
+        channel: z.enum(["foodservice", "wholesale", "retail_msrp", "retail_dtc", "export", "institutional", "online", "other"]),
+        currency: z.string().length(3),
+        packSize: z.string().optional(),
+        unitOfMeasure: z.string().default("kg"),
+        pricePerUnit: z.string(),
+        taxMode: z.enum(["exclusive", "inclusive", "exempt"]).default("exclusive"),
+        taxRate: z.string().optional(),
+        minOrderQty: z.string().optional(),
+        effectiveFrom: z.coerce.date(),
+        effectiveTo: z.coerce.date().optional(),
+        contractOnly: z.boolean().default(false),
+        notes: z.string().optional(),
+        volumeDiscounts: z.array(z.object({
+          minQty: z.string(),
+          maxQty: z.string().optional(),
+          discountPercent: z.string().default("0"),
+          notes: z.string().optional(),
+        })).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { productPriceTiers, productVolumeDiscounts } = await import("../drizzle/schema");
+        const { volumeDiscounts, ...tierInput } = input;
+        const result = await database.insert(productPriceTiers).values({
+          ...tierInput,
+          createdBy: ctx.user.id,
+        } as any);
+        const insertId = (result as any)[0]?.insertId ?? (result as any).insertId;
+        if (volumeDiscounts && volumeDiscounts.length) {
+          await database.insert(productVolumeDiscounts).values(
+            volumeDiscounts.map(d => ({ ...d, priceTierId: insertId } as any)),
+          );
+        }
+        return { id: insertId };
+      }),
+
+    updateTier: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        patch: z.object({
+          pricePerUnit: z.string().optional(),
+          taxRate: z.string().optional(),
+          minOrderQty: z.string().optional(),
+          effectiveTo: z.coerce.date().optional(),
+          status: z.enum(["draft", "active", "superseded", "archived"]).optional(),
+          notes: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { productPriceTiers } = await import("../drizzle/schema");
+        await database.update(productPriceTiers).set(input.patch as any).where(eq(productPriceTiers.id, input.id));
+        return { ok: true };
+      }),
+
+    addVolumeDiscount: opsProcedure
+      .input(z.object({
+        priceTierId: z.number(),
+        minQty: z.string(),
+        maxQty: z.string().optional(),
+        discountPercent: z.string().default("0"),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { productVolumeDiscounts } = await import("../drizzle/schema");
+        const result = await database.insert(productVolumeDiscounts).values(input as any);
+        return { id: (result as any)[0]?.insertId ?? (result as any).insertId };
+      }),
+
+    // Compute effective price including volume discount band, for a given product/region/channel/qty.
+    quote: protectedProcedure
+      .input(z.object({
+        productId: z.number(),
+        region: z.string(),
+        channel: z.enum(["foodservice", "wholesale", "retail_msrp", "retail_dtc", "export", "institutional", "online", "other"]),
+        quantity: z.number().positive(),
+      }))
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { productPriceTiers, productVolumeDiscounts } = await import("../drizzle/schema");
+        const now = new Date();
+        const [tier] = await database.select().from(productPriceTiers).where(and(
+          eq(productPriceTiers.productId, input.productId),
+          eq(productPriceTiers.region, input.region),
+          eq(productPriceTiers.channel, input.channel),
+          eq(productPriceTiers.status, "active"),
+          lte(productPriceTiers.effectiveFrom, now),
+          or(isNull(productPriceTiers.effectiveTo), gte(productPriceTiers.effectiveTo, now)),
+        )).orderBy(desc(productPriceTiers.effectiveFrom)).limit(1);
+        if (!tier) return null;
+        const bands = await database.select().from(productVolumeDiscounts)
+          .where(eq(productVolumeDiscounts.priceTierId, tier.id));
+        const qty = input.quantity;
+        const band = bands.find(b => qty >= Number(b.minQty) && (b.maxQty == null || qty <= Number(b.maxQty)));
+        const basePrice = Number(tier.pricePerUnit);
+        const discountPct = band ? Number(band.discountPercent ?? 0) : 0;
+        const effectivePerUnit = basePrice * (1 - discountPct / 100);
+        return {
+          tier,
+          band,
+          quantity: qty,
+          basePricePerUnit: basePrice,
+          discountPercent: discountPct,
+          effectivePricePerUnit: effectivePerUnit,
+          subtotal: effectivePerUnit * qty,
+          currency: tier.currency,
+          taxMode: tier.taxMode,
+          taxRate: tier.taxRate,
+        };
+      }),
+  }),
+
+  // ============================================
+  // REGIONAL SKUs  (SH-BWS-001 ↔ SH-BWS-001-SA, etc.)
+  // ============================================
+  regionalSkus: router({
+    list: protectedProcedure
+      .input(z.object({
+        productId: z.number().optional(),
+        region: z.string().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { productRegionalSkus } = await import("../drizzle/schema");
+        const conditions: any[] = [];
+        if (input?.productId) conditions.push(eq(productRegionalSkus.productId, input.productId));
+        if (input?.region) conditions.push(eq(productRegionalSkus.region, input.region));
+        const q = database.select().from(productRegionalSkus);
+        return conditions.length ? await q.where(and(...conditions)) : await q;
+      }),
+
+    create: opsProcedure
+      .input(z.object({
+        productId: z.number(),
+        region: z.string().min(2).max(8),
+        regionalSku: z.string().min(1).max(64),
+        barcode: z.string().optional(),
+        barcodeType: z.enum(["ean13", "upc", "gtin14", "code128", "other"]).optional(),
+        gs1Prefix: z.string().optional(),
+        localName: z.string().optional(),
+        localDescription: z.string().optional(),
+        packagingFormat: z.string().optional(),
+        status: z.enum(["planned", "active", "discontinued"]).default("planned"),
+        launchedAt: z.coerce.date().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { productRegionalSkus } = await import("../drizzle/schema");
+        const result = await database.insert(productRegionalSkus).values(input as any);
+        return { id: (result as any)[0]?.insertId ?? (result as any).insertId };
+      }),
+
+    update: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        patch: z.object({
+          regionalSku: z.string().optional(),
+          barcode: z.string().optional(),
+          status: z.enum(["planned", "active", "discontinued"]).optional(),
+          launchedAt: z.coerce.date().optional(),
+          localName: z.string().optional(),
+          localDescription: z.string().optional(),
+          packagingFormat: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { productRegionalSkus } = await import("../drizzle/schema");
+        await database.update(productRegionalSkus).set(input.patch as any).where(eq(productRegionalSkus.id, input.id));
+        return { ok: true };
+      }),
+  }),
+
+  // ============================================
+  // GOVERNMENT TENDERS  (GeM, IRCTC, ICDS, CSD, AIIMS...)
+  // ============================================
+  governmentTenders: router({
+    list: protectedProcedure
+      .input(z.object({
+        portal: z.enum([
+          "gem", "irctc", "icds", "csd", "aiims", "state_nutrition", "state_hospital",
+          "ministry_defense", "ministry_railways", "ministry_health", "ministry_food",
+          "eu_ted", "us_sam_gov", "uk_contracts_finder", "other",
+        ]).optional(),
+        status: z.enum([
+          "watching", "qualifying", "preparing", "submitted", "under_review",
+          "shortlisted", "awarded", "lost", "withdrawn", "cancelled",
+        ]).optional(),
+        country: z.string().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { governmentTenders } = await import("../drizzle/schema");
+        const conditions: any[] = [];
+        if (input?.portal) conditions.push(eq(governmentTenders.portal, input.portal));
+        if (input?.status) conditions.push(eq(governmentTenders.status, input.status));
+        if (input?.country) conditions.push(eq(governmentTenders.country, input.country));
+        const q = database.select().from(governmentTenders).orderBy(desc(governmentTenders.submissionDeadline));
+        return conditions.length ? await q.where(and(...conditions)) : await q;
+      }),
+
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { governmentTenders } = await import("../drizzle/schema");
+        const [row] = await database.select().from(governmentTenders).where(eq(governmentTenders.id, input.id));
+        if (!row) throw new TRPCError({ code: 'NOT_FOUND', message: 'Tender not found' });
+        return row;
+      }),
+
+    create: opsProcedure
+      .input(z.object({
+        title: z.string().min(1).max(500),
+        portal: z.enum([
+          "gem", "irctc", "icds", "csd", "aiims", "state_nutrition", "state_hospital",
+          "ministry_defense", "ministry_railways", "ministry_health", "ministry_food",
+          "eu_ted", "us_sam_gov", "uk_contracts_finder", "other",
+        ]),
+        customPortalName: z.string().optional(),
+        category: z.enum([
+          "food_supply", "defense_canteen", "midday_meal", "hospital_procurement",
+          "railway_catering", "school_nutrition", "humanitarian_aid", "other",
+        ]).default("food_supply"),
+        solicitationNumber: z.string().optional(),
+        agency: z.string().optional(),
+        country: z.string().optional(),
+        state: z.string().optional(),
+        publishedDate: z.coerce.date().optional(),
+        submissionDeadline: z.coerce.date().optional(),
+        bidOpeningDate: z.coerce.date().optional(),
+        estimatedValue: z.string().optional(),
+        emdAmount: z.string().optional(),
+        currency: z.string().length(3).default("INR"),
+        status: z.enum([
+          "watching", "qualifying", "preparing", "submitted", "under_review",
+          "shortlisted", "awarded", "lost", "withdrawn", "cancelled",
+        ]).default("watching"),
+        classILocalSupplier: z.boolean().optional(),
+        fssaiRequired: z.boolean().optional(),
+        bomRequired: z.boolean().optional(),
+        bankGuaranteeRequired: z.boolean().optional(),
+        contactName: z.string().optional(),
+        contactEmail: z.string().email().optional(),
+        contactPhone: z.string().optional(),
+        portalUrl: z.string().url().optional(),
+        projectId: z.number().optional(),
+        ownerId: z.number().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { governmentTenders } = await import("../drizzle/schema");
+        const result = await database.insert(governmentTenders).values({
+          ...input,
+          createdBy: ctx.user.id,
+        } as any);
+        return { id: (result as any)[0]?.insertId ?? (result as any).insertId };
+      }),
+
+    updateStatus: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        status: z.enum([
+          "watching", "qualifying", "preparing", "submitted", "under_review",
+          "shortlisted", "awarded", "lost", "withdrawn", "cancelled",
+        ]),
+        bidAmount: z.string().optional(),
+        awardedAmount: z.string().optional(),
+        awardDate: z.coerce.date().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { governmentTenders } = await import("../drizzle/schema");
+        const { id, ...patch } = input;
+        await database.update(governmentTenders).set(patch as any).where(eq(governmentTenders.id, id));
+        return { ok: true };
+      }),
+  }),
+
+  // ============================================
+  // REGULATORY LICENSES  (FSSAI, DPIIT, EFSA Novel Food, ...)
+  // ============================================
+  regulatoryLicenses: router({
+    list: protectedProcedure
+      .input(z.object({
+        country: z.string().optional(),
+        status: z.string().optional(),
+        expiringWithinDays: z.number().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { regulatoryLicenses } = await import("../drizzle/schema");
+        const conditions: any[] = [];
+        if (input?.country) conditions.push(eq(regulatoryLicenses.country, input.country));
+        if (input?.status) conditions.push(eq(regulatoryLicenses.status, input.status as any));
+        const q = database.select().from(regulatoryLicenses).orderBy(desc(regulatoryLicenses.expirationDate));
+        const rows = conditions.length ? await q.where(and(...conditions)) : await q;
+        if (input?.expiringWithinDays) {
+          const cutoff = Date.now() + input.expiringWithinDays * 86400_000;
+          return rows.filter(r => r.expirationDate && new Date(r.expirationDate).getTime() <= cutoff);
+        }
+        return rows;
+      }),
+
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { regulatoryLicenses } = await import("../drizzle/schema");
+        const [row] = await database.select().from(regulatoryLicenses).where(eq(regulatoryLicenses.id, input.id));
+        if (!row) throw new TRPCError({ code: 'NOT_FOUND', message: 'License not found' });
+        return row;
+      }),
+
+    create: legalProcedure
+      .input(z.object({
+        licenseType: z.enum([
+          "fssai_central", "fssai_state", "fssai_basic",
+          "dpiit_startup_india",
+          "efsa_novel_food", "fic_1169_2011_label", "traces_nt", "eu_organic",
+          "fda_food_facility", "fda_ffr", "usda_organic", "usda_amS",
+          "haccp", "iso_22000", "brc", "sqf",
+          "halal", "kosher", "non_gmo", "vegan_certified",
+          "gst_registration", "iec_import_export", "rcmc",
+          "pmksy_grant", "maharashtra_agro_grant", "karnataka_udyog_mitra",
+          "trademark", "patent", "copyright",
+          "other",
+        ]),
+        customTypeName: z.string().optional(),
+        country: z.string().min(2).max(8),
+        state: z.string().optional(),
+        authority: z.string().optional(),
+        licenseNumber: z.string().optional(),
+        status: z.enum([
+          "planned", "applied", "in_review", "issued", "active",
+          "expiring_soon", "expired", "revoked", "renewed", "rejected", "withdrawn",
+        ]).default("planned"),
+        appliedDate: z.coerce.date().optional(),
+        issuedDate: z.coerce.date().optional(),
+        expirationDate: z.coerce.date().optional(),
+        renewalDueDate: z.coerce.date().optional(),
+        renewalReminderDays: z.number().default(60),
+        applicationFee: z.string().optional(),
+        annualFee: z.string().optional(),
+        currency: z.string().length(3).default("USD"),
+        coversFacilityId: z.number().optional(),
+        contactName: z.string().optional(),
+        contactEmail: z.string().email().optional(),
+        contactPhone: z.string().optional(),
+        portalUrl: z.string().url().optional(),
+        documentUrl: z.string().url().optional(),
+        responsibleUserId: z.number().optional(),
+        projectId: z.number().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { regulatoryLicenses } = await import("../drizzle/schema");
+        const result = await database.insert(regulatoryLicenses).values({
+          ...input,
+          createdBy: ctx.user.id,
+        } as any);
+        return { id: (result as any)[0]?.insertId ?? (result as any).insertId };
+      }),
+
+    update: legalProcedure
+      .input(z.object({
+        id: z.number(),
+        patch: z.object({
+          status: z.enum([
+            "planned", "applied", "in_review", "issued", "active",
+            "expiring_soon", "expired", "revoked", "renewed", "rejected", "withdrawn",
+          ]).optional(),
+          licenseNumber: z.string().optional(),
+          issuedDate: z.coerce.date().optional(),
+          expirationDate: z.coerce.date().optional(),
+          renewalDueDate: z.coerce.date().optional(),
+          lastRenewedAt: z.coerce.date().optional(),
+          notes: z.string().optional(),
+          documentUrl: z.string().url().optional(),
+        }),
+      }))
+      .mutation(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { regulatoryLicenses } = await import("../drizzle/schema");
+        await database.update(regulatoryLicenses).set(input.patch as any).where(eq(regulatoryLicenses.id, input.id));
+        return { ok: true };
+      }),
+  }),
+
+  // ============================================
+  // SUBSIDIARY FUNDRAISING ROUNDS
+  // ============================================
+  subsidiaryFundraising: router({
+    listRounds: financeProcedure
+      .input(z.object({ subsidiaryCompanyId: z.number().optional() }).optional())
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { subsidiaryFundraisingRounds } = await import("../drizzle/schema");
+        const q = database.select().from(subsidiaryFundraisingRounds).orderBy(desc(subsidiaryFundraisingRounds.openedDate));
+        if (input?.subsidiaryCompanyId) {
+          return q.where(eq(subsidiaryFundraisingRounds.subsidiaryCompanyId, input.subsidiaryCompanyId));
+        }
+        return q;
+      }),
+
+    getRound: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { subsidiaryFundraisingRounds, subsidiaryFundraisingInvestors } = await import("../drizzle/schema");
+        const [round] = await database.select().from(subsidiaryFundraisingRounds)
+          .where(eq(subsidiaryFundraisingRounds.id, input.id));
+        if (!round) throw new TRPCError({ code: 'NOT_FOUND', message: 'Round not found' });
+        const investors = await database.select().from(subsidiaryFundraisingInvestors)
+          .where(eq(subsidiaryFundraisingInvestors.roundId, input.id));
+        return { ...round, investors };
+      }),
+
+    createRound: financeProcedure
+      .input(z.object({
+        subsidiaryCompanyId: z.number(),
+        parentCompanyId: z.number().optional(),
+        name: z.string().min(1).max(255),
+        roundType: z.enum([
+          "pre_seed", "seed", "series_a", "series_b", "series_c",
+          "bridge", "convertible_note", "safe", "debt", "grant", "strategic", "other",
+        ]),
+        targetAmount: z.string().optional(),
+        currency: z.string().length(3).default("USD"),
+        preMoneyValuation: z.string().optional(),
+        leadInvestorName: z.string().optional(),
+        openedDate: z.coerce.date().optional(),
+        status: z.enum(["planning", "open", "closing", "closed", "cancelled"]).default("planning"),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { subsidiaryFundraisingRounds } = await import("../drizzle/schema");
+        const result = await database.insert(subsidiaryFundraisingRounds).values({
+          ...input,
+          createdBy: ctx.user.id,
+        } as any);
+        return { id: (result as any)[0]?.insertId ?? (result as any).insertId };
+      }),
+
+    addInvestor: financeProcedure
+      .input(z.object({
+        roundId: z.number(),
+        investorName: z.string().min(1),
+        investorType: z.enum([
+          "individual", "angel", "vc", "pe", "corporate", "government", "family_office",
+          "crowd", "strategic", "employee", "other",
+        ]).default("individual"),
+        email: z.string().email().optional(),
+        phone: z.string().optional(),
+        country: z.string().optional(),
+        commitmentAmount: z.string().optional(),
+        currency: z.string().length(3).default("USD"),
+        contactId: z.number().optional(),
+        status: z.enum([
+          "introduced", "in_diligence", "term_sheet", "committed",
+          "wired", "closed", "declined", "lapsed",
+        ]).default("introduced"),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { subsidiaryFundraisingInvestors } = await import("../drizzle/schema");
+        const result = await database.insert(subsidiaryFundraisingInvestors).values(input as any);
+        return { id: (result as any)[0]?.insertId ?? (result as any).insertId };
+      }),
+
+    updateInvestor: financeProcedure
+      .input(z.object({
+        id: z.number(),
+        patch: z.object({
+          status: z.enum([
+            "introduced", "in_diligence", "term_sheet", "committed",
+            "wired", "closed", "declined", "lapsed",
+          ]).optional(),
+          commitmentAmount: z.string().optional(),
+          fundedAmount: z.string().optional(),
+          ownershipPct: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { subsidiaryFundraisingInvestors } = await import("../drizzle/schema");
+        await database.update(subsidiaryFundraisingInvestors).set(input.patch as any)
+          .where(eq(subsidiaryFundraisingInvestors.id, input.id));
+        return { ok: true };
+      }),
+  }),
+
+  // ============================================
+  // BRAND AMBASSADORS / INFLUENCERS / CHARACTERS
+  // ============================================
+  brandAmbassadors: router({
+    list: protectedProcedure
+      .input(z.object({
+        stage: z.string().optional(),
+        type: z.string().optional(),
+        country: z.string().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { brandAmbassadors } = await import("../drizzle/schema");
+        const conditions: any[] = [];
+        if (input?.stage) conditions.push(eq(brandAmbassadors.stage, input.stage as any));
+        if (input?.type) conditions.push(eq(brandAmbassadors.type, input.type as any));
+        if (input?.country) conditions.push(eq(brandAmbassadors.country, input.country));
+        const q = database.select().from(brandAmbassadors).orderBy(desc(brandAmbassadors.updatedAt));
+        return conditions.length ? await q.where(and(...conditions)) : await q;
+      }),
+
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { brandAmbassadors, brandAmbassadorActivities } = await import("../drizzle/schema");
+        const [row] = await database.select().from(brandAmbassadors).where(eq(brandAmbassadors.id, input.id));
+        if (!row) throw new TRPCError({ code: 'NOT_FOUND', message: 'Ambassador not found' });
+        const activities = await database.select().from(brandAmbassadorActivities)
+          .where(eq(brandAmbassadorActivities.ambassadorId, input.id))
+          .orderBy(desc(brandAmbassadorActivities.occurredAt));
+        return { ...row, activities };
+      }),
+
+    create: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1).max(255),
+        type: z.enum([
+          "celebrity", "athlete", "influencer", "chef", "musician", "actor",
+          "podcaster", "youtuber", "streamer", "model", "creator",
+          "animated_character", "fictional_character", "mascot", "other",
+        ]),
+        category: z.string().optional(),
+        country: z.string().optional(),
+        region: z.string().optional(),
+        socialHandles: z.record(z.string(), z.string()).optional(),
+        followerCount: z.number().optional(),
+        followerCountByPlatform: z.record(z.string(), z.number()).optional(),
+        estimatedReach: z.number().optional(),
+        stage: z.enum([
+          "shortlist", "prospect", "contacted", "in_negotiation",
+          "term_sheet", "signed", "active", "paused", "ended", "declined", "blacklisted",
+        ]).default("prospect"),
+        priority: z.enum(["low", "medium", "high"]).default("medium"),
+        agencyName: z.string().optional(),
+        agentName: z.string().optional(),
+        agentEmail: z.string().email().optional(),
+        agentPhone: z.string().optional(),
+        campaignName: z.string().optional(),
+        contractStartDate: z.coerce.date().optional(),
+        contractEndDate: z.coerce.date().optional(),
+        contractValue: z.string().optional(),
+        currency: z.string().length(3).default("USD"),
+        paymentTerms: z.string().optional(),
+        deliverables: z.string().optional(),
+        exclusivity: z.string().optional(),
+        usageRights: z.string().optional(),
+        contactId: z.number().optional(),
+        projectId: z.number().optional(),
+        ownerUserId: z.number().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { brandAmbassadors } = await import("../drizzle/schema");
+        const result = await database.insert(brandAmbassadors).values({
+          ...input,
+          createdBy: ctx.user.id,
+        } as any);
+        return { id: (result as any)[0]?.insertId ?? (result as any).insertId };
+      }),
+
+    updateStage: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        stage: z.enum([
+          "shortlist", "prospect", "contacted", "in_negotiation",
+          "term_sheet", "signed", "active", "paused", "ended", "declined", "blacklisted",
+        ]),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { brandAmbassadors } = await import("../drizzle/schema");
+        const patch: any = { stage: input.stage };
+        if (input.notes) patch.notes = input.notes;
+        await database.update(brandAmbassadors).set(patch).where(eq(brandAmbassadors.id, input.id));
+        return { ok: true };
+      }),
+
+    logActivity: protectedProcedure
+      .input(z.object({
+        ambassadorId: z.number(),
+        activityType: z.enum([
+          "outreach", "meeting", "call", "email", "proposal_sent",
+          "contract_sent", "contract_signed", "content_published",
+          "appearance", "shipment", "payment", "note",
+        ]),
+        occurredAt: z.coerce.date(),
+        summary: z.string().optional(),
+        details: z.string().optional(),
+        postUrl: z.string().url().optional(),
+        impressions: z.number().optional(),
+        engagements: z.number().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const { brandAmbassadorActivities } = await import("../drizzle/schema");
+        const result = await database.insert(brandAmbassadorActivities).values({
+          ...input,
+          createdBy: ctx.user.id,
+        } as any);
+        return { id: (result as any)[0]?.insertId ?? (result as any).insertId };
+      }),
   }),
 });
 

@@ -19,7 +19,7 @@ on:
     - cron: '0 6 * * *'
 
 concurrency:
-  group: claude-${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number || github.event.check_suite.pull_requests[0].number || github.event.check_suite.id || github.run_id }}
+  group: claude-${{ github.workflow_ref }}-${{ github.event.pull_request.number || github.event.issue.number || github.event.check_suite.pull_requests[0].number || github.event.check_suite.id || github.run_id }}
   cancel-in-progress: true
 
 env:

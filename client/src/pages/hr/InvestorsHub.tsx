@@ -1,15 +1,17 @@
 import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { FileBarChart, Megaphone, Sparkles, UserCheck } from "lucide-react";
+import { FileBarChart, Megaphone, Sparkles, UserCheck, Briefcase } from "lucide-react";
 import { lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
+import { GlobalStructureCard } from "@/components/GlobalStructureCard";
 
 const EquityReports = lazy(() => import("./EquityReports"));
 const InvestorUpdates = lazy(() => import("../InvestorUpdates"));
 const DashboardGenerator = lazy(() => import("./DashboardGenerator"));
 const InvestorPortal = lazy(() => import("../InvestorPortal"));
 const InvestorPortalAdmin = lazy(() => import("./InvestorPortalAdmin"));
+const SubsidiaryFundraising = lazy(() => import("./SubsidiaryFundraising"));
 
 const fallback = (
   <div className="flex items-center justify-center py-12">
@@ -35,7 +37,8 @@ export default function InvestorsHub() {
   }
 
   return (
-    <div className="space-y-2 animate-fade-in">
+    <div className="space-y-4 animate-fade-in">
+      <GlobalStructureCard />
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="captable" className="flex items-center gap-1.5">
@@ -45,6 +48,10 @@ export default function InvestorsHub() {
           <TabsTrigger value="updates" className="flex items-center gap-1.5">
             <Megaphone className="h-3.5 w-3.5" />
             Investor Updates
+          </TabsTrigger>
+          <TabsTrigger value="subsidiary" className="flex items-center gap-1.5">
+            <Briefcase className="h-3.5 w-3.5" />
+            Subsidiary Rounds
           </TabsTrigger>
           <TabsTrigger value="portal" className="flex items-center gap-1.5">
             <UserCheck className="h-3.5 w-3.5" />
@@ -61,6 +68,9 @@ export default function InvestorsHub() {
         </TabsContent>
         <TabsContent value="updates">
           <Suspense fallback={fallback}><InvestorUpdates /></Suspense>
+        </TabsContent>
+        <TabsContent value="subsidiary">
+          <Suspense fallback={fallback}><SubsidiaryFundraising /></Suspense>
         </TabsContent>
         <TabsContent value="portal">
           <Suspense fallback={fallback}><InvestorPortalAdmin /></Suspense>

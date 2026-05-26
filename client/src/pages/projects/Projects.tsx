@@ -57,7 +57,10 @@ import {
   UserMinus,
   Archive,
   ArchiveRestore,
+  Flag,
+  CalendarPlus,
 } from "lucide-react";
+import { format } from "date-fns";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -245,6 +248,7 @@ export default function Projects() {
   const inlineRef = useRef<HTMLInputElement>(null);
 
   const [deleteProjectId, setDeleteProjectId] = useState<number | null>(null);
+  const [milestonesProjectId, setMilestonesProjectId] = useState<number | null>(null);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<number>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
@@ -316,6 +320,15 @@ export default function Projects() {
   const deleteProjectsMany = (trpc.projects as any).deleteMany.useMutation({
     onError: (e: any) => toast.error(e.message),
   });
+  const deleteSingleTask = (trpc.projects as any).deleteTask.useMutation({
+    onSuccess: () => {
+      toast.success("Task deleted");
+      (utils.projects as any).listAllTasks.invalidate();
+      utils.projects.list.invalidate();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
   const deleteTasksMany = (trpc.projects as any).deleteTasks.useMutation({
     onError: (e: any) => toast.error(e.message),
   });
@@ -423,13 +436,40 @@ export default function Projects() {
     const cols: Record<string, Task[]> = { todo: [], in_progress: [], review: [], completed: [] };
     filteredTasks.forEach((task) => {
       if (task.status === "cancelled") return;
+      if (hideCompleted && task.status === "completed") return;
       cols[task.status]?.push(task);
     });
     Object.values(cols).forEach((list) =>
       list.sort((a, b) => (PRIORITY_ORDER[a.priority] ?? 9) - (PRIORITY_ORDER[b.priority] ?? 9))
     );
     return cols;
-  }, [filteredTasks]);
+  }, [filteredTasks, hideCompleted]);
+
+  const visibleBoardColumns = useMemo(
+    () => (hideCompleted ? BOARD_COLUMNS.filter((column) => column.key !== "completed") : BOARD_COLUMNS),
+    [hideCompleted]
+  );
+
+  const projectTaskStats = useMemo(() => {
+    const stats = new Map<number, { total: number; completed: number }>();
+    taskList.forEach((task) => {
+      const current = stats.get(task.projectId) ?? { total: 0, completed: 0 };
+      current.total += 1;
+      if (task.status === "completed") current.completed += 1;
+      stats.set(task.projectId, current);
+    });
+    return stats;
+  }, [taskList]);
+
+  const hiddenCompletedByProject = useMemo(() => {
+    const counts = new Map<number, number>();
+    if (!hideCompleted) return counts;
+    filteredTasks.forEach((task) => {
+      if (task.status !== "completed") return;
+      counts.set(task.projectId, (counts.get(task.projectId) ?? 0) + 1);
+    });
+    return counts;
+  }, [filteredTasks, hideCompleted]);
 
   const metrics = useMemo(() => {
     const total = filteredTasks.length;
@@ -827,8 +867,11 @@ export default function Projects() {
             size="sm"
             className="gap-1.5"
             onClick={() => setHideCompleted((v) => !v)}
+<<<<<<< HEAD
             aria-pressed={hideCompleted}
             aria-label={hideCompleted ? "Show completed tasks" : "Hide completed tasks"}
+=======
+>>>>>>> origin/main
             title={hideCompleted ? "Currently hiding completed tasks" : "Currently showing completed tasks"}
           >
             {hideCompleted ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -932,10 +975,18 @@ export default function Projects() {
           {groupedByProject.map(([projectId, tasks], projectIndex) => {
             const project = projectMap.get(projectId);
             const collapsed = collapsedProjects.has(projectId);
+<<<<<<< HEAD
             // Use precomputed counts so progress reflects ALL tasks, not just visible ones.
             const { total: totalCount, done: doneCount } = projectTaskCounts.get(projectId) ?? { total: 0, done: 0 };
             const projectProgress = totalCount === 0 ? 0 : Math.round((doneCount / totalCount) * 100);
             const hiddenCount = totalCount - tasks.length;
+=======
+            const projectStats = projectTaskStats.get(projectId);
+            const doneCount = projectStats?.completed ?? 0;
+            const totalCount = projectStats?.total ?? 0;
+            const projectProgress = totalCount === 0 ? 0 : Math.round((doneCount / totalCount) * 100);
+            const hiddenCount = hideCompleted ? (hiddenCompletedByProject.get(projectId) ?? 0) : 0;
+>>>>>>> origin/main
             const priorityCfg = PRIORITY_CONFIG[project?.priority || "medium"];
 
             return (
@@ -1015,6 +1066,15 @@ export default function Projects() {
                           {project.archivedAt ? <ArchiveRestore className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
                         </button>
                       )}
+                      <button
+                        type="button"
+                        aria-label="Milestones"
+                        onClick={(e) => { e.stopPropagation(); setMilestonesProjectId(projectId); }}
+                        className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
+                        title="Milestones"
+                      >
+                        <Flag className="h-3.5 w-3.5" />
+                      </button>
                       <button
                         type="button"
                         aria-label="Delete project"
@@ -1151,7 +1211,7 @@ export default function Projects() {
                                   {task.estimatedHours && <span>Est: {task.estimatedHours}h</span>}
                                   {task.actualHours && <span>Actual: {task.actualHours}h</span>}
                                 </div>
-                                <div onClick={(e) => e.stopPropagation()}>
+                                <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-1">
                                   <Select value={task.status} onValueChange={(next) => handleStatusUpdate(task.id, next as Task["status"])}>
                                     <SelectTrigger className="h-8 w-[160px] text-xs"><SelectValue /></SelectTrigger>
                                     <SelectContent>
@@ -1165,6 +1225,19 @@ export default function Projects() {
                                       ))}
                                     </SelectContent>
                                   </Select>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                    aria-label="Delete task"
+                                    onClick={() => {
+                                      if (confirm(`Delete task "${task.name}"?`)) {
+                                        deleteSingleTask.mutate({ id: task.id });
+                                      }
+                                    }}
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
                                 </div>
                               </div>
                             </div>
@@ -1217,7 +1290,7 @@ export default function Projects() {
         </div>
       ) : (
         <div className="grid gap-4 lg:grid-cols-4">
-          {BOARD_COLUMNS.map((column, colIndex) => {
+          {visibleBoardColumns.map((column, colIndex) => {
             const tasks = boardTasks[column.key] || [];
             return (
               <div
@@ -1307,9 +1380,9 @@ export default function Projects() {
                             )}
                           </div>
 
-                          <div onClick={(e) => e.stopPropagation()}>
+                          <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-1">
                             <Select value={task.status} onValueChange={(next) => handleStatusUpdate(task.id, next as Task["status"])}>
-                              <SelectTrigger className="h-7 text-[11px]"><SelectValue /></SelectTrigger>
+                              <SelectTrigger className="h-7 flex-1 text-[11px]"><SelectValue /></SelectTrigger>
                               <SelectContent>
                                 {Object.entries(STATUS_META).map(([value, meta]) => (
                                   <SelectItem key={value} value={value}>
@@ -1321,6 +1394,19 @@ export default function Projects() {
                                 ))}
                               </SelectContent>
                             </Select>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                              aria-label="Delete task"
+                              onClick={() => {
+                                if (confirm(`Delete task "${task.name}"?`)) {
+                                  deleteSingleTask.mutate({ id: task.id });
+                                }
+                              }}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
                           </div>
                         </CardContent>
                       </Card>
@@ -1465,6 +1551,179 @@ export default function Projects() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <MilestonesDialog
+        projectId={milestonesProjectId}
+        projectName={milestonesProjectId !== null ? (projectMap.get(milestonesProjectId)?.name ?? "Project") : ""}
+        onClose={() => setMilestonesProjectId(null)}
+      />
     </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
+// MilestonesDialog — load + edit a project's milestones via
+// projects.get (the detail query already returns milestones[]).
+// Wires projects.addMilestone + updateMilestone.
+// ──────────────────────────────────────────────────────────────
+const MILESTONE_STATUS_OPTIONS = [
+  { value: "pending", label: "Pending" },
+  { value: "in_progress", label: "In Progress" },
+  { value: "completed", label: "Completed" },
+  { value: "overdue", label: "Overdue" },
+] as const;
+
+function MilestonesDialog({
+  projectId,
+  projectName,
+  onClose,
+}: {
+  projectId: number | null;
+  projectName: string;
+  onClose: () => void;
+}) {
+  const open = projectId !== null;
+  const { data: project, refetch } = trpc.projects.get.useQuery(
+    { id: projectId ?? 0 },
+    { enabled: open },
+  );
+  const [newName, setNewName] = useState("");
+  const [newDate, setNewDate] = useState("");
+
+  const addMilestone = trpc.projects.addMilestone.useMutation({
+    onSuccess: () => {
+      toast.success("Milestone added");
+      setNewName("");
+      setNewDate("");
+      refetch();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const updateMilestone = trpc.projects.updateMilestone.useMutation({
+    onSuccess: () => refetch(),
+    onError: (e) => toast.error(e.message),
+  });
+
+  const milestones = (project as any)?.milestones || [];
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Milestones — {projectName}</DialogTitle>
+          <DialogDescription>
+            Track high-level deliverables. Status drives the milestone's color in the project
+            timeline.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          {milestones.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-3">
+              No milestones yet.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {milestones.map((m: any) => {
+                const isComplete = m.status === "completed";
+                return (
+                  <div
+                    key={m.id}
+                    className="flex items-center gap-2 rounded-md border p-2 hover:bg-muted/30"
+                  >
+                    <Flag className={cn("h-4 w-4 shrink-0", isComplete ? "text-emerald-500" : "text-muted-foreground")} />
+                    <div className="flex-1 min-w-0">
+                      <div className={cn("text-sm font-medium truncate", isComplete && "line-through text-muted-foreground")}>
+                        {m.name}
+                      </div>
+                      {m.dueDate && (
+                        <div className="text-xs text-muted-foreground">
+                          Due {format(new Date(m.dueDate), "MMM d, yyyy")}
+                        </div>
+                      )}
+                    </div>
+                    <Select
+                      value={m.status || "pending"}
+                      onValueChange={(v) => {
+                        updateMilestone.mutate({
+                          id: m.id,
+                          status: v as any,
+                          completedDate: v === "completed" ? new Date() : undefined,
+                        });
+                      }}
+                    >
+                      <SelectTrigger className="h-7 w-32 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {MILESTONE_STATUS_OPTIONS.map((s) => (
+                          <SelectItem key={s.value} value={s.value}>
+                            {s.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="border-t pt-3">
+            <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+              Add milestone
+            </Label>
+            <div className="flex items-center gap-2 mt-1">
+              <Input
+                placeholder="Milestone name"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && newName.trim() && projectId !== null) {
+                    addMilestone.mutate({
+                      projectId,
+                      name: newName.trim(),
+                      dueDate: newDate ? new Date(newDate) : undefined,
+                    });
+                  }
+                }}
+                className="flex-1"
+              />
+              <Input
+                type="date"
+                value={newDate}
+                onChange={(e) => setNewDate(e.target.value)}
+                className="w-44"
+              />
+              <Button
+                size="sm"
+                disabled={!newName.trim() || addMilestone.isPending || projectId === null}
+                onClick={() => {
+                  if (projectId === null) return;
+                  addMilestone.mutate({
+                    projectId,
+                    name: newName.trim(),
+                    dueDate: newDate ? new Date(newDate) : undefined,
+                  });
+                }}
+              >
+                {addMilestone.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <>
+                    <CalendarPlus className="h-4 w-4 mr-1" /> Add
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

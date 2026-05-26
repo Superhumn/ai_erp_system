@@ -472,6 +472,67 @@ export async function updateCompany(id: number, data: Partial<InsertCompany>) {
   await db.update(companies).set(data).where(eq(companies.id, id));
 }
 
+export async function getCompanyStructureSummary() {
+  const db = await getDb();
+  if (!db) return { entities: [], unassignedCount: 0 };
+  const allCompanies = await db.select().from(companies).orderBy(asc(companies.type), asc(companies.name));
+  const counts = await db
+    .select({ companyId: employees.companyId, count: sql<number>`count(*)`.mapWith(Number) })
+    .from(employees)
+    .where(eq(employees.status, "active"))
+    .groupBy(employees.companyId);
+  const byCompany = new Map<number, number>();
+  let unassignedCount = 0;
+  for (const row of counts) {
+    if (row.companyId == null) unassignedCount = row.count;
+    else byCompany.set(row.companyId, row.count);
+  }
+  return {
+    entities: allCompanies.map((c) => ({ ...c, headcount: byCompany.get(c.id) ?? 0 })),
+    unassignedCount,
+  };
+}
+
+export async function getCompanyStructure() {
+  const db = await getDb();
+  if (!db) return { entities: [], unassigned: [] };
+  const allCompanies = await db.select().from(companies).orderBy(asc(companies.type), asc(companies.name));
+  const roster = await db
+    .select({
+      id: employees.id,
+      companyId: employees.companyId,
+      firstName: employees.firstName,
+      lastName: employees.lastName,
+      email: employees.email,
+      jobTitle: employees.jobTitle,
+      employmentType: employees.employmentType,
+      status: employees.status,
+      hireDate: employees.hireDate,
+      managerId: employees.managerId,
+    })
+    .from(employees)
+    .where(eq(employees.status, "active"))
+    .orderBy(asc(employees.lastName));
+  const byCompany = new Map<number, typeof roster>();
+  const unassigned: typeof roster = [];
+  for (const e of roster) {
+    if (e.companyId == null) {
+      unassigned.push(e);
+      continue;
+    }
+    const bucket = byCompany.get(e.companyId);
+    if (bucket) bucket.push(e);
+    else byCompany.set(e.companyId, [e]);
+  }
+  return {
+    entities: allCompanies.map((c) => {
+      const list = byCompany.get(c.id) ?? [];
+      return { ...c, employees: list, headcount: list.length };
+    }),
+    unassigned,
+  };
+}
+
 // ============================================
 // CUSTOMER MANAGEMENT
 // ============================================
@@ -12561,6 +12622,14 @@ export async function getStakeholderByUserId(userId: number) {
     .where(eq(stakeholders.userId, userId))
     .limit(1);
   return result[0];
+}
+
+export async function getStakeholdersByUserId(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(stakeholders)
+    .where(eq(stakeholders.userId, userId))
+    .orderBy(asc(stakeholders.id));
 }
 
 // --- Stakeholder Documents (investor portal "My Documents" locker) ---
