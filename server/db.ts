@@ -9455,6 +9455,126 @@ export async function hasPendingDealApprovalForCompany(company: string): Promise
   });
 }
 
+// Strip the legacy "Deal from: " prefix and normalize whitespace/case so meeting-
+// derived deals can be matched against company-named ones.
+function normalizeDealName(name: string | null | undefined): string {
+  return (name || '')
+    .replace(/^\s*deal\s+from:\s*/i, '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
+// Group deals that look like duplicates of each other. Keys off either the
+// normalized deal name or the linked contact's organization — whichever is
+// available. Groups with fewer than 2 deals are dropped.
+export async function findDuplicateCrmDealGroups() {
+  const db = await getDb();
+  if (!db) return [];
+
+  const rows = await db
+    .select({ deal: crmDeals, contact: crmContacts })
+    .from(crmDeals)
+    .leftJoin(crmContacts, eq(crmDeals.contactId, crmContacts.id));
+
+  type Group = { key: string; reason: string; deals: any[] };
+  const groups = new Map<string, Group>();
+  const assign = (key: string, reason: string, deal: any) => {
+    if (!key) return;
+    const existing = groups.get(key);
+    if (existing) {
+      if (!existing.deals.find((d) => d.id === deal.id)) existing.deals.push(deal);
+    } else {
+      groups.set(key, { key, reason, deals: [deal] });
+    }
+  };
+
+  for (const r of rows) {
+    const d: any = r.deal;
+    const enriched = { ...d, _contactOrganization: (r.contact as any)?.organization || null };
+    const normalizedName = normalizeDealName(d.name);
+    const company = ((r.contact as any)?.organization || '').trim().toLowerCase();
+    if (company) assign('company:' + company, 'company', enriched);
+    if (normalizedName) assign('name:' + normalizedName, 'name', enriched);
+  }
+
+  return Array.from(groups.values()).filter((g) => g.deals.length >= 2);
+}
+
+// Merge duplicate deals into a single primary. Re-points crm_interactions.relatedDealId
+// to the primary, then deletes the duplicate deal rows. Runs inside a single
+// transaction so a mid-merge failure cannot orphan interactions.
+export async function mergeCrmDeals(primaryId: number, duplicateIds: number[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const ids = duplicateIds.filter((id) => id !== primaryId);
+  if (ids.length === 0) return { merged: 0 };
+
+  await db.transaction(async (tx) => {
+    await tx.update(crmInteractions).set({ relatedDealId: primaryId }).where(inArray(crmInteractions.relatedDealId, ids));
+    await tx.delete(crmDeals).where(inArray(crmDeals.id, ids));
+  });
+
+  return { merged: ids.length };
+}
+
+// One-shot cleanup for legacy "Deal from: <meeting title>" rows that predate
+// the company-named + approval-gated deal flow. For each such deal:
+//   - if the linked contact has an organization → rename to that company
+//   - else leave the name as-is (the dedupe pass below will still group by
+//     normalized meeting name)
+// Then deduplicate by normalized key, keeping the deal with the most signal
+// (contact set, longer notes, larger amount) as the primary.
+export async function cleanupLegacyMeetingDeals() {
+  const db = await getDb();
+  if (!db) return { renamed: 0, merged: 0, groupsMerged: 0 };
+
+  // 1. Rename "Deal from:" rows whose contact has an organization
+  const legacyPattern = sql`LOWER(${crmDeals.name}) LIKE 'deal from:%'`;
+  const legacyRows = await db
+    .select({ deal: crmDeals, contact: crmContacts })
+    .from(crmDeals)
+    .leftJoin(crmContacts, eq(crmDeals.contactId, crmContacts.id))
+    .where(legacyPattern);
+
+  let renamed = 0;
+  for (const r of legacyRows) {
+    const company = ((r.contact as any)?.organization || '').trim();
+    if (company && (r.deal as any).name !== company) {
+      await db.update(crmDeals).set({ name: company }).where(eq(crmDeals.id, (r.deal as any).id));
+      renamed++;
+    }
+  }
+
+  // 2. Auto-merge any duplicate groups produced by the rename (or pre-existing).
+  // For each group, keep the deal with the richest signal as the primary.
+  const groups = await findDuplicateCrmDealGroups();
+  let merged = 0;
+  let groupsMerged = 0;
+  const score = (d: any) =>
+    (d.contactId ? 10 : 0) +
+    (d.amount && Number(d.amount) > 0 ? 5 : 0) +
+    (d.notes ? Math.min(3, d.notes.length / 50) : 0) +
+    (d.status === 'open' ? 1 : 0);
+
+  const seen = new Set<number>();
+  for (const g of groups) {
+    const candidates = g.deals.filter((d: any) => !seen.has(d.id));
+    if (candidates.length < 2) continue;
+    const sorted = [...candidates].sort((a, b) => score(b) - score(a) || a.id - b.id);
+    const primary = sorted[0];
+    const dupeIds = sorted.slice(1).map((d: any) => d.id);
+    if (dupeIds.length === 0) continue;
+    const result = await mergeCrmDeals(primary.id, dupeIds);
+    merged += result.merged;
+    groupsMerged++;
+    seen.add(primary.id);
+    dupeIds.forEach((id) => seen.add(id));
+  }
+
+  return { renamed, merged, groupsMerged };
+}
+
 export async function getCrmDealStats(pipelineId?: number) {
   const db = await getDb();
   if (!db) return null;

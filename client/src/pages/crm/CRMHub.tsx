@@ -36,8 +36,8 @@ import {
   Linkedin, Building2, DollarSign, TrendingUp, UserPlus,
   Smartphone, QrCode, CreditCard, Filter, MoreHorizontal,
   Calendar, Clock, MessageCircle, Target, Handshake, HardDrive,
-  Sparkles, ChevronDown, ChevronUp, ArrowRight, Upload, Heart, Truck,
-  Settings, Trash2, Edit
+  Sparkles, ArrowRight, Upload, Heart, Truck,
+  Settings, Trash2, Edit, LayoutGrid, List
 } from "lucide-react";
 import { Link } from "wouter";
 import {
@@ -88,7 +88,10 @@ export default function CRMHub() {
   const [captureMethod, setCaptureMethod] = useState<string>("manual");
   const [selectedContact, setSelectedContact] = useState<any>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-  const [expandedDealId, setExpandedDealId] = useState<number | null>(null);
+  const [selectedDealId, setSelectedDealId] = useState<number | null>(null);
+  const [dealView, setDealView] = useState<"table" | "kanban">("table");
+  const [dealStatusFilter, setDealStatusFilter] = useState<"open" | "won" | "lost" | "stalled" | "all">("open");
+  const [draggingDealId, setDraggingDealId] = useState<number | null>(null);
 
   const [contactForm, setContactForm] = useState({
     firstName: "",
@@ -123,13 +126,15 @@ export default function CRMHub() {
   });
 
   const { data: dealStats } = trpc.crm.deals.getStats.useQuery();
-  const { data: deals, isLoading: dealsLoading, refetch: refetchDeals } = trpc.crm.deals.list.useQuery({ status: "open" });
+  const { data: deals, isLoading: dealsLoading, refetch: refetchDeals } = trpc.crm.deals.list.useQuery({
+    status: dealStatusFilter === "all" ? undefined : dealStatusFilter,
+  });
   const { data: pipelines } = trpc.crm.pipelines.list.useQuery();
 
-  // AI Next Steps for expanded deal
+  // AI Next Steps for the deal currently open in the detail sheet
   const { data: nextStepsData, isLoading: nextStepsLoading } = trpc.crm.deals.getNextSteps.useQuery(
-    { dealId: expandedDealId! },
-    { enabled: !!expandedDealId }
+    { dealId: selectedDealId! },
+    { enabled: !!selectedDealId }
   );
 
   // Mutations
@@ -171,6 +176,29 @@ export default function CRMHub() {
       refetchContacts();
     },
     onError: (e) => toast.error(e.message),
+  });
+
+  const autoMergeDeals = trpc.crm.deals.autoMergeDuplicates.useMutation({
+    onSuccess: (r: any) => {
+      const n = r?.merged ?? 0;
+      toast.success(n > 0 ? `Merged ${n} duplicate deal${n === 1 ? "" : "s"} across ${r.groupsMerged} group${r.groupsMerged === 1 ? "" : "s"}` : "No duplicate deals found");
+      refetchDeals();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const cleanupLegacyDeals = trpc.crm.deals.cleanupLegacyMeetingDeals.useMutation({
+    onSuccess: (r: any) => {
+      const renamed = r?.renamed ?? 0;
+      const merged = r?.merged ?? 0;
+      if (renamed === 0 && merged === 0) {
+        toast.info("No legacy meeting deals to clean up");
+      } else {
+        toast.success(`Renamed ${renamed} deal${renamed === 1 ? "" : "s"} to company; merged ${merged} duplicate${merged === 1 ? "" : "s"}`);
+      }
+      refetchDeals();
+    },
+    onError: (e: any) => toast.error(e.message),
   });
   const createDeal = trpc.crm.deals.create.useMutation({
     onSuccess: () => {
@@ -459,6 +487,28 @@ export default function CRMHub() {
               >
                 <Users className="h-4 w-4 mr-2" />
                 Auto-merge duplicate contacts
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={autoMergeDeals.isPending}
+                onClick={() => {
+                  if (confirm("Auto-merge deals that look like duplicates? (Same company, or same normalized name)")) {
+                    autoMergeDeals.mutate();
+                  }
+                }}
+              >
+                <Handshake className="h-4 w-4 mr-2" />
+                Merge duplicate deals
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={cleanupLegacyDeals.isPending}
+                onClick={() => {
+                  if (confirm("Rename legacy 'Deal from: ...' rows to their contact's company name, then merge resulting duplicates?")) {
+                    cleanupLegacyDeals.mutate();
+                  }
+                }}
+              >
+                <Sparkles className="h-4 w-4 mr-2" />
+                Clean up legacy meeting deals
               </DropdownMenuItem>
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
@@ -898,13 +948,48 @@ export default function CRMHub() {
         </Card>
       )}
 
-      {/* Deals Table — sales tab only */}
+      {/* Deals — sales tab only */}
       {category === "sales" && (
       <Card className="py-3">
         <CardHeader className="pb-2">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-sm">Deals</CardTitle>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-3">
+              <CardTitle className="text-sm">Deals</CardTitle>
+              {/* Status filter pills */}
+              <div className="flex items-center gap-1 text-xs">
+                {(["open", "won", "lost", "stalled", "all"] as const).map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => setDealStatusFilter(s)}
+                    className={`px-2 py-0.5 rounded capitalize ${
+                      dealStatusFilter === s
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="flex items-center gap-2">
+              {/* View toggle */}
+              <div className="flex items-center rounded border bg-background">
+                <button
+                  onClick={() => setDealView("table")}
+                  className={`px-2 py-1 ${dealView === "table" ? "bg-muted" : ""}`}
+                  title="Table view"
+                >
+                  <List className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => setDealView("kanban")}
+                  className={`px-2 py-1 ${dealView === "kanban" ? "bg-muted" : ""}`}
+                  title="Kanban view"
+                >
+                  <LayoutGrid className="h-4 w-4" />
+                </button>
+              </div>
               <div className="relative">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
@@ -929,39 +1014,35 @@ export default function CRMHub() {
           ) : filteredDeals.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <TrendingUp className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p>No open deals yet. Create your first deal to start tracking opportunities.</p>
+              <p>
+                {dealStatusFilter === "open"
+                  ? "No open deals yet. Create your first deal to start tracking opportunities."
+                  : `No ${dealStatusFilter} deals.`}
+              </p>
             </div>
-          ) : (
+          ) : dealView === "table" ? (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="min-w-[130px]">Deal Name</TableHead>
-                    <TableHead className="min-w-[80px]">Contact</TableHead>
-                    <TableHead className="min-w-[80px]">Company</TableHead>
-                    <TableHead className="min-w-[60px] text-right">Value</TableHead>
-                    <TableHead className="min-w-[80px]">Stage</TableHead>
-                    <TableHead className="min-w-[70px]">Source</TableHead>
-                    <TableHead className="min-w-[85px]">Last Contact</TableHead>
-                    <TableHead className="min-w-[110px]">Next Step</TableHead>
+                    <TableHead className="min-w-[140px]">Company</TableHead>
+                    <TableHead className="min-w-[120px]">Contact</TableHead>
+                    <TableHead className="min-w-[90px]">Stage</TableHead>
+                    <TableHead className="min-w-[80px] text-right">Value</TableHead>
+                    <TableHead className="min-w-[100px]">Last activity</TableHead>
+                    <TableHead className="min-w-[140px]">Next step</TableHead>
                     <TableHead className="w-[32px]"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredDeals.map((deal: any) => (
-                    <React.Fragment key={deal.id}>
-                    <TableRow className="hover:bg-muted/50 cursor-pointer text-xs h-7" onClick={() => setExpandedDealId(expandedDealId === deal.id ? null : deal.id)}>
-                      <TableCell className="font-medium">
-                        <div className="flex items-center gap-1">
-                          {expandedDealId === deal.id ? <ChevronUp className="h-3 w-3 text-muted-foreground" /> : <ChevronDown className="h-3 w-3 text-muted-foreground" />}
-                          <span className="font-medium">{deal.name}</span>
-                        </div>
-                      </TableCell>
+                    <TableRow
+                      key={deal.id}
+                      className="hover:bg-muted/50 cursor-pointer text-xs h-7"
+                      onClick={() => setSelectedDealId(deal.id)}
+                    >
+                      <TableCell className="font-medium">{deal._company !== "-" ? deal._company : deal.name}</TableCell>
                       <TableCell>{deal._contactName}</TableCell>
-                      <TableCell>{deal._company}</TableCell>
-                      <TableCell className="text-right font-semibold text-green-600" onClick={(e) => e.stopPropagation()}>
-                        <InlineEdit value={deal._value || "0"} type="number" onSave={(v) => updateDeal.mutate({ id: deal.id, amount: v })} />
-                      </TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         <select
                           value={deal.stage}
@@ -973,11 +1054,13 @@ export default function CRMHub() {
                           ))}
                         </select>
                       </TableCell>
-                      <TableCell className="capitalize">{deal._source}</TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {deal._lastContact ? format(new Date(deal._lastContact), "MMM d, yyyy") : "-"}
+                      <TableCell className="text-right font-semibold text-green-600" onClick={(e) => e.stopPropagation()}>
+                        <InlineEdit value={deal._value || "0"} type="number" onSave={(v) => updateDeal.mutate({ id: deal.id, amount: v })} />
                       </TableCell>
-                      <TableCell className="max-w-[110px] truncate">{deal._nextStep}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {deal._lastContact ? format(new Date(deal._lastContact), "MMM d") : "-"}
+                      </TableCell>
+                      <TableCell className="max-w-[180px] truncate">{deal._nextStep}</TableCell>
                       <TableCell className="px-0">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -986,7 +1069,7 @@ export default function CRMHub() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => setExpandedDealId(deal.id)}>View Details</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setSelectedDealId(deal.id)}>View details</DropdownMenuItem>
                             <DropdownMenuItem
                               className="text-red-600"
                               onClick={() => {
@@ -1001,60 +1084,183 @@ export default function CRMHub() {
                         </DropdownMenu>
                       </TableCell>
                     </TableRow>
-                    {expandedDealId === deal.id && (
-                      <TableRow>
-                        <TableCell colSpan={9} className="bg-muted/30 p-0">
-                          <div className="px-6 py-4">
-                            <div className="flex items-center gap-2 mb-3">
-                              <Sparkles className="h-4 w-4 text-purple-500" />
-                              <h4 className="font-medium text-sm">AI-Recommended Next Steps</h4>
-                            </div>
-                            {nextStepsLoading ? (
-                              <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                                Analyzing deal and generating recommendations...
-                              </div>
-                            ) : nextStepsData?.steps?.length > 0 ? (
-                              <div className="space-y-2">
-                                {nextStepsData.steps.map((step: any, idx: number) => (
-                                  <div key={idx} className="flex items-start gap-3 p-3 bg-background rounded-lg border">
-                                    <div className="mt-0.5">
-                                      <ArrowRight className="h-4 w-4 text-muted-foreground" />
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                      <div className="flex items-center gap-2 mb-1">
-                                        <span className="font-medium text-sm">{step.action}</span>
-                                        <Badge variant={step.priority === "high" ? "destructive" : step.priority === "medium" ? "default" : "secondary"} className="text-xs">
-                                          {step.priority}
-                                        </Badge>
-                                        {step.suggestedDate && (
-                                          <span className="text-xs text-muted-foreground flex items-center gap-1">
-                                            <Clock className="h-3 w-3" />
-                                            {step.suggestedDate}
-                                          </span>
-                                        )}
-                                      </div>
-                                      <p className="text-xs text-muted-foreground">{step.reasoning}</p>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <p className="text-sm text-muted-foreground">No recommendations available for this deal.</p>
-                            )}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    )}
-                    </React.Fragment>
                   ))}
                 </TableBody>
               </Table>
+            </div>
+          ) : (
+            // Kanban view — one column per stage, drag a card to move stage
+            <div className="flex gap-2 overflow-x-auto pb-2">
+              {["discovery", "qualification", "proposal", "negotiation", "closed_won", "closed_lost"].map((stage) => {
+                const stageDeals = filteredDeals.filter((d: any) => d.stage === stage);
+                const stageValue = stageDeals.reduce((sum: number, d: any) => sum + Number(d._value || 0), 0);
+                return (
+                  <div
+                    key={stage}
+                    className="min-w-[220px] flex-1 bg-muted/30 rounded p-2"
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      if (draggingDealId != null) {
+                        updateDeal.mutate({ id: draggingDealId, stage });
+                        setDraggingDealId(null);
+                      }
+                    }}
+                  >
+                    <div className="flex items-center justify-between mb-2 px-1">
+                      <span className="text-xs font-semibold capitalize">{stage.replace(/_/g, " ")}</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {stageDeals.length} · ${stageValue.toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="space-y-1.5">
+                      {stageDeals.map((deal: any) => (
+                        <div
+                          key={deal.id}
+                          draggable
+                          onDragStart={() => setDraggingDealId(deal.id)}
+                          onDragEnd={() => setDraggingDealId(null)}
+                          onClick={() => setSelectedDealId(deal.id)}
+                          className="bg-background border rounded p-2 text-xs cursor-pointer hover:border-primary"
+                        >
+                          <div className="font-medium truncate">{deal._company !== "-" ? deal._company : deal.name}</div>
+                          {deal._contactName !== "-" && (
+                            <div className="text-muted-foreground text-[11px] truncate">{deal._contactName}</div>
+                          )}
+                          <div className="flex items-center justify-between mt-1">
+                            <span className="text-green-600 font-semibold">
+                              ${Number(deal._value || 0).toLocaleString()}
+                            </span>
+                            {deal._lastContact && (
+                              <span className="text-muted-foreground text-[10px]">
+                                {format(new Date(deal._lastContact), "MMM d")}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      {stageDeals.length === 0 && (
+                        <div className="text-[10px] text-muted-foreground text-center py-2 italic">
+                          No deals
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </CardContent>
       </Card>
       )}
+
+      {/* Deal detail side-sheet — opens on row click. AI Next Steps query is
+          gated on selectedDealId so it only fires when a deal is selected. */}
+      <DetailSheet
+        open={!!selectedDealId}
+        onOpenChange={(o) => !o && setSelectedDealId(null)}
+        title={(() => {
+          const d = filteredDeals.find((d: any) => d.id === selectedDealId);
+          return d ? (d._company !== "-" ? d._company : d.name) : "Deal";
+        })()}
+        subtitle={(() => {
+          const d = filteredDeals.find((d: any) => d.id === selectedDealId);
+          if (!d) return null;
+          const parts = [d._contactName !== "-" ? d._contactName : null, d.stage?.replace(/_/g, " ")].filter(Boolean);
+          return parts.length ? parts.join(" · ") : null;
+        })()}
+        width="md"
+      >
+        {(() => {
+          const deal = filteredDeals.find((d: any) => d.id === selectedDealId);
+          if (!deal) return null;
+          return (
+            <div className="space-y-4 p-4">
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <div className="text-xs text-muted-foreground">Value</div>
+                  <div className="font-semibold text-green-600">${Number(deal._value || 0).toLocaleString()}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Stage</div>
+                  <div className="capitalize">{deal.stage?.replace(/_/g, " ")}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Source</div>
+                  <div className="capitalize">{deal._source}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Last activity</div>
+                  <div>{deal._lastContact ? format(new Date(deal._lastContact), "MMM d, yyyy") : "—"}</div>
+                </div>
+                {deal._email !== "-" && (
+                  <div className="col-span-2">
+                    <div className="text-xs text-muted-foreground">Email</div>
+                    <div>{deal._email}</div>
+                  </div>
+                )}
+                {deal.notes && (
+                  <div className="col-span-2">
+                    <div className="text-xs text-muted-foreground">Notes</div>
+                    <div className="text-sm whitespace-pre-wrap">{deal.notes}</div>
+                  </div>
+                )}
+              </div>
+              <div className="border-t pt-3">
+                <div className="flex items-center gap-2 mb-3">
+                  <Sparkles className="h-4 w-4 text-purple-500" />
+                  <h4 className="font-medium text-sm">AI-Recommended Next Steps</h4>
+                </div>
+                {nextStepsLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Analyzing deal and generating recommendations...
+                  </div>
+                ) : nextStepsData?.steps?.length > 0 ? (
+                  <div className="space-y-2">
+                    {nextStepsData.steps.map((step: any, idx: number) => (
+                      <div key={idx} className="flex items-start gap-3 p-3 bg-muted/30 rounded-lg border">
+                        <ArrowRight className="h-4 w-4 text-muted-foreground mt-0.5" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
+                            <span className="font-medium text-sm">{step.action}</span>
+                            <Badge variant={step.priority === "high" ? "destructive" : step.priority === "medium" ? "default" : "secondary"} className="text-xs">
+                              {step.priority}
+                            </Badge>
+                            {step.suggestedDate && (
+                              <span className="text-xs text-muted-foreground flex items-center gap-1">
+                                <Clock className="h-3 w-3" />
+                                {step.suggestedDate}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground">{step.reasoning}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No recommendations available for this deal.</p>
+                )}
+              </div>
+              <div className="border-t pt-3 flex justify-end gap-2">
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => {
+                    if (confirm(`Delete deal "${deal.name}"?`)) {
+                      deleteDeal.mutate({ id: deal.id });
+                      setSelectedDealId(null);
+                    }
+                  }}
+                >
+                  Delete deal
+                </Button>
+              </div>
+            </div>
+          );
+        })()}
+      </DetailSheet>
 
       {/* Contacts Table — hidden on investors tab (investors have their own page) */}
       {category !== "investors" && (
