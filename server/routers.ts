@@ -17239,6 +17239,62 @@ Ask if they received the original request and if they can provide a quote.`;
         .input(z.object({ pipelineId: z.number().optional() }).optional())
         .query(({ input }) => db.getCrmDealStats(input?.pipelineId)),
 
+      findDuplicates: protectedProcedure.query(async () => {
+        const groups = await db.findDuplicateCrmDealGroups();
+        return { groups, totalDuplicates: groups.reduce((n: number, g: any) => n + g.deals.length - 1, 0) };
+      }),
+
+      merge: protectedProcedure
+        .input(z.object({ primaryId: z.number(), duplicateIds: z.array(z.number()).min(1) }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.mergeCrmDeals(input.primaryId, input.duplicateIds);
+          await createAuditLog(ctx.user.id, 'update', 'crm_deal', input.primaryId, `merged ${result.merged} duplicates`);
+          return result;
+        }),
+
+      autoMergeDuplicates: protectedProcedure.mutation(async ({ ctx }) => {
+        const groups = await db.findDuplicateCrmDealGroups();
+        let merged = 0;
+        let groupsMerged = 0;
+        const score = (d: any) =>
+          (d.contactId ? 10 : 0) +
+          (d.amount && Number(d.amount) > 0 ? 5 : 0) +
+          (d.notes ? Math.min(3, d.notes.length / 50) : 0) +
+          (d.status === 'open' ? 1 : 0);
+        const seen = new Set<number>();
+        for (const g of groups as any[]) {
+          const candidates = g.deals.filter((d: any) => !seen.has(d.id));
+          if (candidates.length < 2) continue;
+          const sorted = [...candidates].sort((a, b) => score(b) - score(a) || a.id - b.id);
+          const primary = sorted[0];
+          const dupeIds = sorted.slice(1).map((d: any) => d.id);
+          if (dupeIds.length === 0) continue;
+          const result = await db.mergeCrmDeals(primary.id, dupeIds);
+          merged += result.merged;
+          groupsMerged++;
+          seen.add(primary.id);
+          dupeIds.forEach((id: number) => seen.add(id));
+        }
+        if (merged > 0) {
+          await createAuditLog(ctx.user.id, 'update', 'crm_deal', 0, `auto-merged ${merged} duplicates across ${groupsMerged} groups`);
+        }
+        return { merged, groupsMerged };
+      }),
+
+      cleanupLegacyMeetingDeals: protectedProcedure.mutation(async ({ ctx }) => {
+        const result = await db.cleanupLegacyMeetingDeals();
+        if (result.renamed > 0 || result.merged > 0) {
+          await createAuditLog(
+            ctx.user.id,
+            'update',
+            'crm_deal',
+            0,
+            `legacy cleanup: renamed ${result.renamed}, merged ${result.merged} across ${result.groupsMerged} groups`,
+          );
+        }
+        return result;
+      }),
+
       moveStage: protectedProcedure
         .input(z.object({
           id: z.number(),
