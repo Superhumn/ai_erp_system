@@ -25,6 +25,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Plus,
   Search,
   Loader2,
@@ -41,15 +46,21 @@ import {
   CheckCircle2,
   Timer,
   Eye,
+  EyeOff,
   XCircle,
   Sparkles,
   SlidersHorizontal,
   X,
   Circle,
   Trash2,
+  UserPlus,
+  UserMinus,
   Archive,
   ArchiveRestore,
+  Flag,
+  CalendarPlus,
 } from "lucide-react";
+import { format } from "date-fns";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -237,9 +248,22 @@ export default function Projects() {
   const inlineRef = useRef<HTMLInputElement>(null);
 
   const [deleteProjectId, setDeleteProjectId] = useState<number | null>(null);
+  const [milestonesProjectId, setMilestonesProjectId] = useState<number | null>(null);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<number>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [assignPopoverOpen, setAssignPopoverOpen] = useState(false);
+  const [hideCompleted, setHideCompleted] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    const v = window.localStorage.getItem("projects.hideCompleted");
+    return v === null ? true : v === "true";
+  });
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("projects.hideCompleted", String(hideCompleted));
+    }
+  }, [hideCompleted]);
 
   useEffect(() => {
     const t = setTimeout(() => setStatsVisible(true), 100);
@@ -296,9 +320,36 @@ export default function Projects() {
   const deleteProjectsMany = (trpc.projects as any).deleteMany.useMutation({
     onError: (e: any) => toast.error(e.message),
   });
+  const deleteSingleTask = (trpc.projects as any).deleteTask.useMutation({
+    onSuccess: () => {
+      toast.success("Task deleted");
+      (utils.projects as any).listAllTasks.invalidate();
+      utils.projects.list.invalidate();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
   const deleteTasksMany = (trpc.projects as any).deleteTasks.useMutation({
     onError: (e: any) => toast.error(e.message),
   });
+  const assignTasksMany = (trpc.projects as any).assignTasks.useMutation({
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  async function runBulkAssign(assigneeId: number | null) {
+    const ids = Array.from(selectedTaskIds);
+    if (ids.length === 0) return;
+    try {
+      await assignTasksMany.mutateAsync({ ids, assigneeId });
+      const name = assigneeId === null ? "unassigned" : `assigned to ${getUserName(userList, assigneeId) || "user"}`;
+      toast.success(`${ids.length} task${ids.length === 1 ? "" : "s"} ${name}`);
+      setSelectedTaskIds(new Set());
+      setAssignPopoverOpen(false);
+      (utils.projects as any).listAllTasks.invalidate();
+    } catch {
+      // onError already toasted
+    }
+  }
 
   async function runBulkDelete() {
     const projectIds = Array.from(selectedProjectIds);
@@ -335,6 +386,7 @@ export default function Projects() {
   const filteredTasks = useMemo(() => {
     const query = search.trim().toLowerCase();
     return taskList.filter((task) => {
+      if (!projectMap.has(task.projectId)) return false;
       const projectName = projectMap.get(task.projectId)?.name || "";
       const matchesSearch =
         !query ||
@@ -351,6 +403,7 @@ export default function Projects() {
   const groupedByProject = useMemo(() => {
     const groups = new Map<number, Task[]>();
     filteredTasks.forEach((task) => {
+      if (hideCompleted && task.status === "completed") return;
       const list = groups.get(task.projectId) || [];
       list.push(task);
       groups.set(task.projectId, list);
@@ -377,19 +430,46 @@ export default function Projects() {
       const bName = projectMap.get(b)?.name || "";
       return aName.localeCompare(bName);
     });
-  }, [filteredTasks, projectList, projectFilter, search, projectMap]);
+  }, [filteredTasks, projectList, projectFilter, search, projectMap, hideCompleted]);
 
   const boardTasks = useMemo(() => {
     const cols: Record<string, Task[]> = { todo: [], in_progress: [], review: [], completed: [] };
     filteredTasks.forEach((task) => {
       if (task.status === "cancelled") return;
+      if (hideCompleted && task.status === "completed") return;
       cols[task.status]?.push(task);
     });
     Object.values(cols).forEach((list) =>
       list.sort((a, b) => (PRIORITY_ORDER[a.priority] ?? 9) - (PRIORITY_ORDER[b.priority] ?? 9))
     );
     return cols;
-  }, [filteredTasks]);
+  }, [filteredTasks, hideCompleted]);
+
+  const visibleBoardColumns = useMemo(
+    () => (hideCompleted ? BOARD_COLUMNS.filter((column) => column.key !== "completed") : BOARD_COLUMNS),
+    [hideCompleted]
+  );
+
+  const projectTaskStats = useMemo(() => {
+    const stats = new Map<number, { total: number; completed: number }>();
+    taskList.forEach((task) => {
+      const current = stats.get(task.projectId) ?? { total: 0, completed: 0 };
+      current.total += 1;
+      if (task.status === "completed") current.completed += 1;
+      stats.set(task.projectId, current);
+    });
+    return stats;
+  }, [taskList]);
+
+  const hiddenCompletedByProject = useMemo(() => {
+    const counts = new Map<number, number>();
+    if (!hideCompleted) return counts;
+    filteredTasks.forEach((task) => {
+      if (task.status !== "completed") return;
+      counts.set(task.projectId, (counts.get(task.projectId) ?? 0) + 1);
+    });
+    return counts;
+  }, [filteredTasks, hideCompleted]);
 
   const metrics = useMemo(() => {
     const total = filteredTasks.length;
@@ -770,6 +850,17 @@ export default function Projects() {
 
         <div className="flex items-center gap-2">
           <Button
+            variant={hideCompleted ? "outline" : "secondary"}
+            size="sm"
+            className="gap-1.5"
+            onClick={() => setHideCompleted((v) => !v)}
+            title={hideCompleted ? "Currently hiding completed tasks" : "Currently showing completed tasks"}
+          >
+            {hideCompleted ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            {hideCompleted ? "Show completed" : "Hide completed"}
+          </Button>
+
+          <Button
             variant={showFilters ? "secondary" : "outline"}
             size="sm"
             className="gap-1.5"
@@ -866,8 +957,11 @@ export default function Projects() {
           {groupedByProject.map(([projectId, tasks], projectIndex) => {
             const project = projectMap.get(projectId);
             const collapsed = collapsedProjects.has(projectId);
-            const doneCount = tasks.filter((t) => t.status === "completed").length;
-            const projectProgress = tasks.length === 0 ? 0 : Math.round((doneCount / tasks.length) * 100);
+            const projectStats = projectTaskStats.get(projectId);
+            const doneCount = projectStats?.completed ?? 0;
+            const totalCount = projectStats?.total ?? 0;
+            const projectProgress = totalCount === 0 ? 0 : Math.round((doneCount / totalCount) * 100);
+            const hiddenCount = hideCompleted ? (hiddenCompletedByProject.get(projectId) ?? 0) : 0;
             const priorityCfg = PRIORITY_CONFIG[project?.priority || "medium"];
 
             return (
@@ -931,7 +1025,7 @@ export default function Projects() {
                         <priorityCfg.Icon className={cn("h-3 w-3 shrink-0", priorityCfg.color)} />
                       )}
                       <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
-                        {projectProgress}% · {tasks.length}
+                        {projectProgress}% · {totalCount}
                       </span>
                       <Progress value={projectProgress} className="hidden h-1 w-16 shrink-0 sm:block" />
                     </div>
@@ -947,6 +1041,15 @@ export default function Projects() {
                           {project.archivedAt ? <ArchiveRestore className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
                         </button>
                       )}
+                      <button
+                        type="button"
+                        aria-label="Milestones"
+                        onClick={(e) => { e.stopPropagation(); setMilestonesProjectId(projectId); }}
+                        className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
+                        title="Milestones"
+                      >
+                        <Flag className="h-3.5 w-3.5" />
+                      </button>
                       <button
                         type="button"
                         aria-label="Delete project"
@@ -965,7 +1068,9 @@ export default function Projects() {
                     {tasks.length === 0 && (
                       <div className="flex items-center gap-2 px-5 py-4 text-sm text-muted-foreground">
                         <Sparkles className="h-4 w-4 opacity-50" />
-                        No tasks yet. Add one below.
+                        {hiddenCount > 0
+                          ? `All ${hiddenCount} task${hiddenCount === 1 ? "" : "s"} archived. Toggle "Show completed" to view them.`
+                          : "No tasks yet. Add one below."}
                       </div>
                     )}
 
@@ -1081,7 +1186,7 @@ export default function Projects() {
                                   {task.estimatedHours && <span>Est: {task.estimatedHours}h</span>}
                                   {task.actualHours && <span>Actual: {task.actualHours}h</span>}
                                 </div>
-                                <div onClick={(e) => e.stopPropagation()}>
+                                <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-1">
                                   <Select value={task.status} onValueChange={(next) => handleStatusUpdate(task.id, next as Task["status"])}>
                                     <SelectTrigger className="h-8 w-[160px] text-xs"><SelectValue /></SelectTrigger>
                                     <SelectContent>
@@ -1095,6 +1200,19 @@ export default function Projects() {
                                       ))}
                                     </SelectContent>
                                   </Select>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                    aria-label="Delete task"
+                                    onClick={() => {
+                                      if (confirm(`Delete task "${task.name}"?`)) {
+                                        deleteSingleTask.mutate({ id: task.id });
+                                      }
+                                    }}
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
                                 </div>
                               </div>
                             </div>
@@ -1147,7 +1265,7 @@ export default function Projects() {
         </div>
       ) : (
         <div className="grid gap-4 lg:grid-cols-4">
-          {BOARD_COLUMNS.map((column, colIndex) => {
+          {visibleBoardColumns.map((column, colIndex) => {
             const tasks = boardTasks[column.key] || [];
             return (
               <div
@@ -1237,9 +1355,9 @@ export default function Projects() {
                             )}
                           </div>
 
-                          <div onClick={(e) => e.stopPropagation()}>
+                          <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-1">
                             <Select value={task.status} onValueChange={(next) => handleStatusUpdate(task.id, next as Task["status"])}>
-                              <SelectTrigger className="h-7 text-[11px]"><SelectValue /></SelectTrigger>
+                              <SelectTrigger className="h-7 flex-1 text-[11px]"><SelectValue /></SelectTrigger>
                               <SelectContent>
                                 {Object.entries(STATUS_META).map(([value, meta]) => (
                                   <SelectItem key={value} value={value}>
@@ -1251,6 +1369,19 @@ export default function Projects() {
                                 ))}
                               </SelectContent>
                             </Select>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                              aria-label="Delete task"
+                              onClick={() => {
+                                if (confirm(`Delete task "${task.name}"?`)) {
+                                  deleteSingleTask.mutate({ id: task.id });
+                                }
+                              }}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
                           </div>
                         </CardContent>
                       </Card>
@@ -1263,7 +1394,7 @@ export default function Projects() {
         </div>
       )}
 
-      {/* Bulk-delete floating action bar */}
+      {/* Bulk-action floating bar */}
       {hasSelection && (
         <div className="fixed bottom-4 left-1/2 z-40 -translate-x-1/2 animate-fade-in-up">
           <div className="flex items-center gap-2 rounded-full border bg-background/95 px-3 py-1.5 text-sm shadow-lg backdrop-blur">
@@ -1275,6 +1406,53 @@ export default function Projects() {
                 </span>
               )}
             </span>
+            {selectedTaskIds.size > 0 && (
+              <Popover open={assignPopoverOpen} onOpenChange={setAssignPopoverOpen}>
+                <PopoverTrigger asChild>
+                  <Button size="sm" variant="outline" className="h-7">
+                    <UserPlus className="mr-1 h-3.5 w-3.5" /> Assign
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-64 p-0" align="center" side="top">
+                  <div className="border-b px-3 py-2 text-xs font-medium text-muted-foreground">
+                    Assign {selectedTaskIds.size} task{selectedTaskIds.size === 1 ? "" : "s"} to…
+                  </div>
+                  <div className="max-h-64 overflow-y-auto py-1">
+                    {userList.length === 0 && (
+                      <div className="px-3 py-2 text-xs text-muted-foreground">No team members found</div>
+                    )}
+                    {userList.map((u) => {
+                      const display = u.name || u.email.split("@")[0];
+                      return (
+                        <button
+                          key={u.id}
+                          type="button"
+                          disabled={assignTasksMany.isPending}
+                          onClick={() => runBulkAssign(u.id)}
+                          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-muted/40 disabled:opacity-50"
+                        >
+                          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[10px] font-bold text-primary">
+                            {getInitials(display)}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate">{display}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="border-t">
+                    <button
+                      type="button"
+                      disabled={assignTasksMany.isPending}
+                      onClick={() => runBulkAssign(null)}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/40 disabled:opacity-50"
+                    >
+                      <UserMinus className="h-3.5 w-3.5" />
+                      Unassign
+                    </button>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            )}
             <Button size="sm" variant="destructive" className="h-7" onClick={() => setBulkDeleteOpen(true)}>
               <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
             </Button>
@@ -1348,6 +1526,179 @@ export default function Projects() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <MilestonesDialog
+        projectId={milestonesProjectId}
+        projectName={milestonesProjectId !== null ? (projectMap.get(milestonesProjectId)?.name ?? "Project") : ""}
+        onClose={() => setMilestonesProjectId(null)}
+      />
     </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
+// MilestonesDialog — load + edit a project's milestones via
+// projects.get (the detail query already returns milestones[]).
+// Wires projects.addMilestone + updateMilestone.
+// ──────────────────────────────────────────────────────────────
+const MILESTONE_STATUS_OPTIONS = [
+  { value: "pending", label: "Pending" },
+  { value: "in_progress", label: "In Progress" },
+  { value: "completed", label: "Completed" },
+  { value: "overdue", label: "Overdue" },
+] as const;
+
+function MilestonesDialog({
+  projectId,
+  projectName,
+  onClose,
+}: {
+  projectId: number | null;
+  projectName: string;
+  onClose: () => void;
+}) {
+  const open = projectId !== null;
+  const { data: project, refetch } = trpc.projects.get.useQuery(
+    { id: projectId ?? 0 },
+    { enabled: open },
+  );
+  const [newName, setNewName] = useState("");
+  const [newDate, setNewDate] = useState("");
+
+  const addMilestone = trpc.projects.addMilestone.useMutation({
+    onSuccess: () => {
+      toast.success("Milestone added");
+      setNewName("");
+      setNewDate("");
+      refetch();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const updateMilestone = trpc.projects.updateMilestone.useMutation({
+    onSuccess: () => refetch(),
+    onError: (e) => toast.error(e.message),
+  });
+
+  const milestones = (project as any)?.milestones || [];
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Milestones — {projectName}</DialogTitle>
+          <DialogDescription>
+            Track high-level deliverables. Status drives the milestone's color in the project
+            timeline.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          {milestones.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-3">
+              No milestones yet.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {milestones.map((m: any) => {
+                const isComplete = m.status === "completed";
+                return (
+                  <div
+                    key={m.id}
+                    className="flex items-center gap-2 rounded-md border p-2 hover:bg-muted/30"
+                  >
+                    <Flag className={cn("h-4 w-4 shrink-0", isComplete ? "text-emerald-500" : "text-muted-foreground")} />
+                    <div className="flex-1 min-w-0">
+                      <div className={cn("text-sm font-medium truncate", isComplete && "line-through text-muted-foreground")}>
+                        {m.name}
+                      </div>
+                      {m.dueDate && (
+                        <div className="text-xs text-muted-foreground">
+                          Due {format(new Date(m.dueDate), "MMM d, yyyy")}
+                        </div>
+                      )}
+                    </div>
+                    <Select
+                      value={m.status || "pending"}
+                      onValueChange={(v) => {
+                        updateMilestone.mutate({
+                          id: m.id,
+                          status: v as any,
+                          completedDate: v === "completed" ? new Date() : undefined,
+                        });
+                      }}
+                    >
+                      <SelectTrigger className="h-7 w-32 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {MILESTONE_STATUS_OPTIONS.map((s) => (
+                          <SelectItem key={s.value} value={s.value}>
+                            {s.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="border-t pt-3">
+            <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+              Add milestone
+            </Label>
+            <div className="flex items-center gap-2 mt-1">
+              <Input
+                placeholder="Milestone name"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && newName.trim() && projectId !== null) {
+                    addMilestone.mutate({
+                      projectId,
+                      name: newName.trim(),
+                      dueDate: newDate ? new Date(newDate) : undefined,
+                    });
+                  }
+                }}
+                className="flex-1"
+              />
+              <Input
+                type="date"
+                value={newDate}
+                onChange={(e) => setNewDate(e.target.value)}
+                className="w-44"
+              />
+              <Button
+                size="sm"
+                disabled={!newName.trim() || addMilestone.isPending || projectId === null}
+                onClick={() => {
+                  if (projectId === null) return;
+                  addMilestone.mutate({
+                    projectId,
+                    name: newName.trim(),
+                    dueDate: newDate ? new Date(newDate) : undefined,
+                  });
+                }}
+              >
+                {addMilestone.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <>
+                    <CalendarPlus className="h-4 w-4 mr-1" /> Add
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

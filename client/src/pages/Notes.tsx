@@ -3,7 +3,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Loader2, StickyNote, Search, Sparkles, Trash2, RefreshCw, ListTodo, Users, Bell, Lightbulb, CheckCircle2 } from "lucide-react";
+import { Loader2, StickyNote, Search, Sparkles, Trash2, RefreshCw, ListTodo, Users, Bell, Lightbulb, CheckCircle2, Pencil } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { QuickNoteDialog } from "@/components/QuickNoteDialog";
@@ -33,11 +36,20 @@ function formatRelative(date: string | Date | null | undefined) {
 export default function Notes() {
   const [search, setSearch] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
+  const [editingNote, setEditingNote] = useState<{ id: number; title: string; content: string } | null>(null);
 
   const utils = trpc.useUtils();
   const { data: notes, isLoading } = trpc.notes.list.useQuery({ limit: 200 });
   const reparseMutation = trpc.notes.parse.useMutation();
   const deleteMutation = trpc.notes.delete.useMutation();
+  const updateMutation = trpc.notes.update.useMutation({
+    onSuccess: () => {
+      toast.success("Note updated");
+      setEditingNote(null);
+      utils.notes.list.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
 
   const filtered = useMemo(() => {
     if (!notes) return [];
@@ -162,6 +174,21 @@ export default function Notes() {
                     size="sm"
                     variant="ghost"
                     className="h-7 text-xs"
+                    onClick={() =>
+                      setEditingNote({
+                        id: note.id,
+                        title: note.title || "",
+                        content: note.content || "",
+                      })
+                    }
+                  >
+                    <Pencil className="h-3 w-3 mr-1" />
+                    Edit
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 text-xs"
                     onClick={() => handleReparse(note.id)}
                     disabled={reparseMutation.isPending}
                   >
@@ -186,6 +213,60 @@ export default function Notes() {
       </div>
 
       <QuickNoteDialog open={composeOpen} onOpenChange={setComposeOpen} />
+
+      <Dialog open={editingNote !== null} onOpenChange={(open) => { if (!open) setEditingNote(null); }}>
+        <DialogContent className="max-w-lg">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!editingNote) return;
+              updateMutation.mutate({
+                id: editingNote.id,
+                title: editingNote.title || undefined,
+                content: editingNote.content,
+              });
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>Edit note</DialogTitle>
+              <DialogDescription>
+                Changing the content re-parses it through the LLM. Parsed action items are
+                rebuilt accordingly.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-2">
+              <div className="space-y-2">
+                <Label htmlFor="editNoteTitle">Title (optional)</Label>
+                <Input
+                  id="editNoteTitle"
+                  value={editingNote?.title || ""}
+                  onChange={(e) => setEditingNote(editingNote ? { ...editingNote, title: e.target.value } : null)}
+                  placeholder="(auto-derived from content)"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="editNoteContent">Content</Label>
+                <Textarea
+                  id="editNoteContent"
+                  rows={10}
+                  value={editingNote?.content || ""}
+                  onChange={(e) => setEditingNote(editingNote ? { ...editingNote, content: e.target.value } : null)}
+                  required
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setEditingNote(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={!editingNote?.content || updateMutation.isPending}>
+                {updateMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Save
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

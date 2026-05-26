@@ -5,6 +5,7 @@ import { Loader2 } from "lucide-react";
 const Contracts = lazy(() => import("./Contracts"));
 const Disputes = lazy(() => import("./Disputes"));
 const Documents = lazy(() => import("./Documents"));
+const RegulatoryLicenses = lazy(() => import("./RegulatoryLicenses"));
 
 const fallback = (
   <div className="flex items-center justify-center py-12">
@@ -19,6 +20,10 @@ export default function LegalHub() {
         <Scale className="h-4 w-4" />
         Legal
       </h1>
+
+      <Suspense fallback={fallback}><RegulatoryLicenses /></Suspense>
+
+      <div className="border-t border-border/40" />
 
       <Suspense fallback={fallback}><Contracts /></Suspense>
 

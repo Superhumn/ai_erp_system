@@ -11,13 +11,14 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import {
   Plus, FolderOpen, Link2, Users, Settings,
   Eye, Download, Clock, Trash2, Copy, ExternalLink,
   FileText, Lock, Upload, File, Folder,
   ChevronRight, ArrowLeft, MoreVertical, Mail, Send, Cloud,
-  HardDrive, RefreshCw, Shield, Activity,
+  HardDrive, RefreshCw, Shield, Activity, Pencil,
   AlertCircle, CheckCircle2, XCircle, ClipboardList,
   CheckSquare, Square, AlertTriangle, ChevronDown, Wand2
 } from "lucide-react";
@@ -67,6 +68,23 @@ export default function DataRoomDetail() {
   const [deleteAllOpen, setDeleteAllOpen] = useState(false);
   const [isDeletingAll, setIsDeletingAll] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
+  const [renamingFolder, setRenamingFolder] = useState<{ id: number; name: string } | null>(null);
+  const [renameFolderValue, setRenameFolderValue] = useState("");
+  const [renamingDoc, setRenamingDoc] = useState<{ id: number; name: string } | null>(null);
+  const [renameDocValue, setRenameDocValue] = useState("");
+  const [editingLink, setEditingLink] = useState<any | null>(null);
+  const [editLinkForm, setEditLinkForm] = useState({
+    name: "",
+    isActive: true,
+    expiresAt: "",
+    maxViews: "",
+  });
+  const [editingInvite, setEditingInvite] = useState<any | null>(null);
+  const [editInviteForm, setEditInviteForm] = useState({
+    role: "viewer" as "viewer" | "editor" | "admin",
+    allowDownload: true,
+    allowPrint: true,
+  });
   const [newLink, setNewLink] = useState({
     name: "",
     password: "",
@@ -210,6 +228,58 @@ export default function DataRoomDetail() {
     onError: (error) => {
       toast.error(error.message);
     },
+  });
+
+  const updateFolderMutation = trpc.dataRoom.folders.update.useMutation({
+    onSuccess: () => {
+      toast.success("Folder renamed");
+      setRenamingFolder(null);
+      refetchFolders();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const updateDocMutation = trpc.dataRoom.documents.update.useMutation({
+    onSuccess: () => {
+      toast.success("Document renamed");
+      setRenamingDoc(null);
+      refetchDocuments();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const updateLinkMutation = trpc.dataRoom.links.update.useMutation({
+    onSuccess: () => {
+      toast.success("Share link updated");
+      setEditingLink(null);
+      refetchLinks();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const { data: invitations, refetch: refetchInvitations } =
+    (trpc.dataRoom.invitations as any).list.useQuery({ dataRoomId: roomId });
+
+  const resendInviteMutation = trpc.dataRoom.invitations.resend.useMutation({
+    onSuccess: () => toast.success("Invitation re-sent"),
+    onError: (error) => toast.error(error.message),
+  });
+
+  const revokeInviteMutation = trpc.dataRoom.invitations.revoke.useMutation({
+    onSuccess: () => {
+      toast.success("Invitation revoked");
+      refetchInvitations();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const updateInvitePermissionsMutation = trpc.dataRoom.invitations.updatePermissions.useMutation({
+    onSuccess: () => {
+      toast.success("Permissions updated");
+      setEditingInvite(null);
+      refetchInvitations();
+    },
+    onError: (error) => toast.error(error.message),
   });
 
   const handleDeleteAll = async () => {
@@ -709,6 +779,15 @@ export default function DataRoomDetail() {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem
+                              onClick={() => {
+                                setRenamingFolder({ id: folder.id, name: folder.name });
+                                setRenameFolderValue(folder.name);
+                              }}
+                            >
+                              <Pencil className="h-4 w-4 mr-2" />
+                              Rename Folder
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
                               className="text-destructive focus:text-destructive"
                               onClick={() => {
                                 if (confirm(`Delete folder "${folder.name}" and all its contents?`)) {
@@ -764,6 +843,15 @@ export default function DataRoomDetail() {
                                   Download
                                 </DropdownMenuItem>
                               )}
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  setRenamingDoc({ id: doc.id, name: doc.name });
+                                  setRenameDocValue(doc.name);
+                                }}
+                              >
+                                <Pencil className="h-4 w-4 mr-2" />
+                                Rename
+                              </DropdownMenuItem>
                               <DropdownMenuItem
                                 className="text-destructive focus:text-destructive"
                                 onClick={() => {
@@ -1108,6 +1196,7 @@ export default function DataRoomDetail() {
                               <Button
                                 variant="ghost"
                                 size="icon"
+                                aria-label="Copy share link"
                                 onClick={() => copyLinkUrl(link.linkCode)}
                               >
                                 <Copy className="h-4 w-4" />
@@ -1115,6 +1204,25 @@ export default function DataRoomDetail() {
                               <Button
                                 variant="ghost"
                                 size="icon"
+                                aria-label="Edit share link"
+                                onClick={() => {
+                                  setEditingLink(link);
+                                  setEditLinkForm({
+                                    name: link.name || "",
+                                    isActive: link.isActive ?? true,
+                                    expiresAt: link.expiresAt
+                                      ? new Date(link.expiresAt).toISOString().slice(0, 10)
+                                      : "",
+                                    maxViews: link.maxViews != null ? String(link.maxViews) : "",
+                                  });
+                                }}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label="Delete share link"
                                 onClick={() => deleteLinkMutation.mutate({ id: link.id })}
                               >
                                 <Trash2 className="h-4 w-4 text-destructive" />
@@ -1291,6 +1399,103 @@ export default function DataRoomDetail() {
                                 )}
                               </DropdownMenuContent>
                             </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Pending invitations */}
+            <Card className="mt-4">
+              <CardHeader>
+                <CardTitle>Pending invitations</CardTitle>
+                <CardDescription>
+                  Emailed invitations that haven't been accepted yet. Resend reminder emails or
+                  revoke access.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {!invitations || invitations.length === 0 ? (
+                  <div className="text-sm text-muted-foreground py-4 text-center">
+                    No outstanding invitations.
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Recipient</TableHead>
+                        <TableHead>Role</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Sent</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {(invitations as any[]).map((inv: any) => (
+                        <TableRow key={inv.id}>
+                          <TableCell>
+                            <div className="font-medium">{inv.email}</div>
+                            {inv.name && (
+                              <div className="text-xs text-muted-foreground">{inv.name}</div>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="capitalize">{inv.role}</Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={inv.status === "pending" ? "secondary" : "outline"}
+                              className="capitalize"
+                            >
+                              {inv.status || "pending"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {inv.createdAt ? new Date(inv.createdAt).toLocaleDateString() : "-"}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={inv.status !== "pending" || resendInviteMutation.isPending}
+                                onClick={() => resendInviteMutation.mutate({ id: inv.id })}
+                              >
+                                <Send className="h-3.5 w-3.5 mr-1" />
+                                Resend
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label="Edit invitation permissions"
+                                onClick={() => {
+                                  setEditingInvite(inv);
+                                  setEditInviteForm({
+                                    role: (inv.role || "viewer") as any,
+                                    allowDownload: inv.allowDownload ?? true,
+                                    allowPrint: inv.allowPrint ?? true,
+                                  });
+                                }}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label="Revoke invitation"
+                                disabled={inv.status !== "pending" || revokeInviteMutation.isPending}
+                                onClick={() => {
+                                  if (confirm(`Revoke invitation to ${inv.email}?`)) {
+                                    revokeInviteMutation.mutate({ id: inv.id });
+                                  }
+                                }}
+                              >
+                                <XCircle className="h-3.5 w-3.5 text-destructive" />
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -1876,6 +2081,238 @@ export default function DataRoomDetail() {
         </Dialog>
 
 
+
+      {/* Rename document dialog */}
+      <Dialog
+        open={renamingDoc !== null}
+        onOpenChange={(open) => { if (!open) setRenamingDoc(null); }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Rename document</DialogTitle>
+            <DialogDescription>
+              Changes the display name. The underlying file (and any Drive link) is not modified.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <Label htmlFor="renameDocInput">New name</Label>
+            <Input
+              id="renameDocInput"
+              autoFocus
+              value={renameDocValue}
+              onChange={(e) => setRenameDocValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && renameDocValue.trim() && renamingDoc) {
+                  updateDocMutation.mutate({ id: renamingDoc.id, name: renameDocValue.trim() });
+                }
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenamingDoc(null)}>Cancel</Button>
+            <Button
+              disabled={!renameDocValue.trim() || updateDocMutation.isPending}
+              onClick={() => {
+                if (!renamingDoc) return;
+                updateDocMutation.mutate({ id: renamingDoc.id, name: renameDocValue.trim() });
+              }}
+            >
+              {updateDocMutation.isPending ? "Saving…" : "Rename"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Rename folder dialog */}
+      <Dialog
+        open={renamingFolder !== null}
+        onOpenChange={(open) => { if (!open) setRenamingFolder(null); }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Rename folder</DialogTitle>
+            <DialogDescription>
+              Renaming "{renamingFolder?.name}" doesn't affect any documents inside.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <Label htmlFor="renameFolderInput">New name</Label>
+            <Input
+              id="renameFolderInput"
+              autoFocus
+              value={renameFolderValue}
+              onChange={(e) => setRenameFolderValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && renameFolderValue.trim() && renamingFolder) {
+                  updateFolderMutation.mutate({ id: renamingFolder.id, name: renameFolderValue.trim() });
+                }
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenamingFolder(null)}>Cancel</Button>
+            <Button
+              disabled={!renameFolderValue.trim() || updateFolderMutation.isPending}
+              onClick={() => {
+                if (!renamingFolder) return;
+                updateFolderMutation.mutate({ id: renamingFolder.id, name: renameFolderValue.trim() });
+              }}
+            >
+              {updateFolderMutation.isPending ? "Saving…" : "Rename"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit share link dialog */}
+      <Dialog
+        open={editingLink !== null}
+        onOpenChange={(open) => { if (!open) setEditingLink(null); }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit share link</DialogTitle>
+            <DialogDescription>
+              {editingLink?.linkCode && (
+                <span className="font-mono text-xs">/{editingLink.linkCode}</span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="editLinkName">Name</Label>
+              <Input
+                id="editLinkName"
+                value={editLinkForm.name}
+                onChange={(e) => setEditLinkForm({ ...editLinkForm, name: e.target.value })}
+                placeholder="e.g. Series A — Sequoia"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="editLinkExpires">Expires</Label>
+                <Input
+                  id="editLinkExpires"
+                  type="date"
+                  value={editLinkForm.expiresAt}
+                  onChange={(e) => setEditLinkForm({ ...editLinkForm, expiresAt: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="editLinkMaxViews">Max views</Label>
+                <Input
+                  id="editLinkMaxViews"
+                  type="number"
+                  value={editLinkForm.maxViews}
+                  onChange={(e) => setEditLinkForm({ ...editLinkForm, maxViews: e.target.value })}
+                  placeholder="Unlimited"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <div>
+                <Label htmlFor="editLinkActive" className="text-sm font-medium">Active</Label>
+                <p className="text-xs text-muted-foreground">
+                  When off, the link returns a 410 to visitors.
+                </p>
+              </div>
+              <Switch
+                id="editLinkActive"
+                checked={editLinkForm.isActive}
+                onCheckedChange={(v) => setEditLinkForm({ ...editLinkForm, isActive: v })}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingLink(null)}>Cancel</Button>
+            <Button
+              disabled={updateLinkMutation.isPending}
+              onClick={() => {
+                if (!editingLink) return;
+                updateLinkMutation.mutate({
+                  id: editingLink.id,
+                  name: editLinkForm.name || undefined,
+                  isActive: editLinkForm.isActive,
+                  expiresAt: editLinkForm.expiresAt ? new Date(editLinkForm.expiresAt) : null,
+                  maxViews: editLinkForm.maxViews ? parseInt(editLinkForm.maxViews) : null,
+                });
+              }}
+            >
+              {updateLinkMutation.isPending ? "Saving…" : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit invitation permissions */}
+      <Dialog
+        open={editingInvite !== null}
+        onOpenChange={(open) => { if (!open) setEditingInvite(null); }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit invitation permissions</DialogTitle>
+            <DialogDescription>
+              {editingInvite?.email}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="editInviteRole">Role</Label>
+              <Select
+                value={editInviteForm.role}
+                onValueChange={(v: any) => setEditInviteForm({ ...editInviteForm, role: v })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="viewer">Viewer — read-only</SelectItem>
+                  <SelectItem value="editor">Editor — can comment + tag</SelectItem>
+                  <SelectItem value="admin">Admin — full access</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <Label htmlFor="editInviteDownload" className="text-sm font-medium">
+                Allow download
+              </Label>
+              <Switch
+                id="editInviteDownload"
+                checked={editInviteForm.allowDownload}
+                onCheckedChange={(v) => setEditInviteForm({ ...editInviteForm, allowDownload: v })}
+              />
+            </div>
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <Label htmlFor="editInvitePrint" className="text-sm font-medium">
+                Allow print
+              </Label>
+              <Switch
+                id="editInvitePrint"
+                checked={editInviteForm.allowPrint}
+                onCheckedChange={(v) => setEditInviteForm({ ...editInviteForm, allowPrint: v })}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingInvite(null)}>Cancel</Button>
+            <Button
+              disabled={updateInvitePermissionsMutation.isPending}
+              onClick={() => {
+                if (!editingInvite) return;
+                updateInvitePermissionsMutation.mutate({
+                  id: editingInvite.id,
+                  role: editInviteForm.role,
+                  allowDownload: editInviteForm.allowDownload,
+                  allowPrint: editInviteForm.allowPrint,
+                });
+              }}
+            >
+              {updateInvitePermissionsMutation.isPending ? "Saving…" : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       </div>
   );
 }
@@ -2944,6 +3381,13 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [showMissingOnly, setShowMissingOnly] = useState(false);
   const [hasAutoMatched, setHasAutoMatched] = useState(false);
+  const [addItemOpen, setAddItemOpen] = useState(false);
+  const [newItemForm, setNewItemForm] = useState({
+    categoryName: "",
+    itemName: "",
+    itemDescription: "",
+    requirement: "required" as "required" | "recommended" | "optional",
+  });
 
   const { data: summary, refetch: refetchSummary } = trpc.dataRoom.dueDiligence.getSummary.useQuery({ dataRoomId });
   const { data: checklistData, refetch: refetchChecklist } = trpc.dataRoom.dueDiligence.getById.useQuery(
@@ -2991,6 +3435,35 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
       refetchChecklist();
       refetchSummary();
     },
+  });
+
+  const addItemMutation = trpc.dataRoom.dueDiligence.addItem.useMutation({
+    onSuccess: () => {
+      toast.success("Item added");
+      setAddItemOpen(false);
+      setNewItemForm({ categoryName: "", itemName: "", itemDescription: "", requirement: "required" });
+      refetchSummary();
+      refetchChecklist();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const deleteChecklistMutation = trpc.dataRoom.dueDiligence.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Checklist removed");
+      refetchSummary();
+      refetchChecklist();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const deleteItemMutation = trpc.dataRoom.dueDiligence.deleteItem.useMutation({
+    onSuccess: () => {
+      toast.success("Item removed");
+      refetchSummary();
+      refetchChecklist();
+    },
+    onError: (error) => toast.error(error.message),
   });
 
   // Auto-parse documents on initial load when checklist exists
@@ -3158,6 +3631,29 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
               >
                 <Wand2 className={`h-4 w-4 mr-1 ${autoMatchMutation.isPending ? 'animate-spin' : ''}`} />
                 {autoMatchMutation.isPending ? 'Scanning...' : 'Re-scan'}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setAddItemOpen(true)}>
+                <Plus className="h-4 w-4 mr-1" />
+                Add Item
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground hover:text-destructive"
+                disabled={deleteChecklistMutation.isPending}
+                onClick={() => {
+                  if (
+                    summary?.checklist?.id &&
+                    confirm(
+                      `Remove "${summary.checklist.name}"? All items and document links are deleted. You can recreate from a template afterwards.`,
+                    )
+                  ) {
+                    deleteChecklistMutation.mutate({ id: summary.checklist.id });
+                  }
+                }}
+              >
+                <Trash2 className="h-4 w-4 mr-1" />
+                {deleteChecklistMutation.isPending ? "Deleting…" : "Delete"}
               </Button>
             </div>
           </div>
@@ -3393,6 +3889,17 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
                                 <AlertCircle className="h-4 w-4 mr-2 text-red-500" />
                                 Reset to Missing
                               </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className="text-destructive focus:text-destructive"
+                                onClick={() => {
+                                  if (confirm(`Remove "${item.itemName}" from this checklist?`)) {
+                                    deleteItemMutation.mutate({ id: item.id });
+                                  }
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                Remove from checklist
+                              </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </div>
@@ -3405,6 +3912,91 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
           </Card>
         );
       })}
+
+      {/* Add custom item dialog */}
+      <Dialog open={addItemOpen} onOpenChange={setAddItemOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add checklist item</DialogTitle>
+            <DialogDescription>
+              Add a custom due-diligence item to this checklist.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="addItemCategory">Category *</Label>
+              <Input
+                id="addItemCategory"
+                list="dd-category-options"
+                value={newItemForm.categoryName}
+                onChange={(e) => setNewItemForm({ ...newItemForm, categoryName: e.target.value })}
+                placeholder="e.g. Corporate Documents"
+              />
+              <datalist id="dd-category-options">
+                {(checklistData?.categories || []).map((c) => (
+                  <option key={c.name} value={c.name} />
+                ))}
+              </datalist>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="addItemName">Item *</Label>
+              <Input
+                id="addItemName"
+                value={newItemForm.itemName}
+                onChange={(e) => setNewItemForm({ ...newItemForm, itemName: e.target.value })}
+                placeholder="e.g. Board resolutions (2024)"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="addItemDescription">Description</Label>
+              <Textarea
+                id="addItemDescription"
+                rows={2}
+                value={newItemForm.itemDescription}
+                onChange={(e) => setNewItemForm({ ...newItemForm, itemDescription: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="addItemRequirement">Requirement</Label>
+              <Select
+                value={newItemForm.requirement}
+                onValueChange={(v: any) => setNewItemForm({ ...newItemForm, requirement: v })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="required">Required</SelectItem>
+                  <SelectItem value="recommended">Recommended</SelectItem>
+                  <SelectItem value="optional">Optional</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddItemOpen(false)}>Cancel</Button>
+            <Button
+              disabled={
+                !newItemForm.categoryName.trim() ||
+                !newItemForm.itemName.trim() ||
+                addItemMutation.isPending
+              }
+              onClick={() => {
+                if (!summary?.checklist?.id) return;
+                addItemMutation.mutate({
+                  checklistId: summary.checklist.id,
+                  categoryName: newItemForm.categoryName.trim(),
+                  itemName: newItemForm.itemName.trim(),
+                  itemDescription: newItemForm.itemDescription || undefined,
+                  requirement: newItemForm.requirement,
+                });
+              }}
+            >
+              {addItemMutation.isPending ? "Adding…" : "Add Item"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -118,6 +118,22 @@ export default function TimeTracking() {
     onError: (err) => toast.error(err.message),
   });
 
+  const approveEntry = trpc.timeTracking.entries.approve.useMutation({
+    onSuccess: () => {
+      toast.success("Entry approved");
+      refetchEntries();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const updateEntry = trpc.timeTracking.entries.update.useMutation({
+    onSuccess: () => {
+      toast.success("Entry updated");
+      refetchEntries();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
   const generateInvoice = trpc.timeTracking.generateInvoice.useMutation({
     onSuccess: (data) => {
       toast.success(`Invoice ${data.invoiceNumber} created — ${data.entriesCount} entries, ${data.totalHours.toFixed(2)} hours`);
@@ -377,6 +393,23 @@ export default function TimeTracking() {
                               <Button
                                 variant="outline"
                                 size="sm"
+                                onClick={() => {
+                                  const newHours = prompt(
+                                    `Update hours for "${entry.taskDescription}" (current: ${parseFloat(String(entry.hours)).toFixed(2)})`,
+                                    String(entry.hours),
+                                  );
+                                  if (newHours && !isNaN(parseFloat(newHours))) {
+                                    updateEntry.mutate({ id: entry.id, hours: newHours });
+                                  }
+                                }}
+                                disabled={updateEntry.isPending}
+                                title="Edit hours"
+                              >
+                                <Clock className="h-3 w-3" />
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
                                 onClick={() => submitEntry.mutate({ id: entry.id })}
                                 disabled={submitEntry.isPending}
                               >
@@ -391,6 +424,16 @@ export default function TimeTracking() {
                                 <Trash2 className="h-3 w-3 text-red-500" />
                               </Button>
                             </>
+                          )}
+                          {entry.status === "submitted" && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => approveEntry.mutate({ id: entry.id })}
+                              disabled={approveEntry.isPending}
+                            >
+                              <CheckCircle className="h-3 w-3 mr-1" /> Approve
+                            </Button>
                           )}
                         </div>
                       </TableCell>

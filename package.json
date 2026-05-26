@@ -18,6 +18,8 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "db:push": "drizzle-kit generate && drizzle-kit migrate",
+    "db:push:direct": "drizzle-kit push",
+    "db:baseline": "drizzle-kit pull",
     "index:legacy": "node scripts/generate-legacy-indexes.mjs",
     "index:legacy:check": "node scripts/generate-legacy-indexes.mjs && git diff --exit-code ROUTERS_INDEX.md DB_INDEX.md"
   },
