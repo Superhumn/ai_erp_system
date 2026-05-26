@@ -662,6 +662,71 @@ export function registerLocalAuthRoutes(app: Express) {
   });
 
   /**
+   * POST /api/auth/admin-reset-credentials
+   * Recovery endpoint — sets a new password for an email, creating the
+   * localAuthCredentials row if a user exists but has none (e.g. OAuth-only
+   * accounts, or accounts orphaned by a partial migration). Gated by JWT_SECRET.
+   */
+  app.post("/api/auth/admin-reset-credentials", async (req: Request, res: Response) => {
+    const clientIp = getClientIp(req);
+    try {
+      const { email, newPassword, secret } = req.body as {
+        email: string;
+        newPassword: string;
+        secret: string;
+      };
+
+      if (!secret || secret !== process.env.JWT_SECRET) {
+        return res.status(403).json({ error: "Invalid secret" });
+      }
+
+      if (!email || !newPassword) {
+        return res.status(400).json({ error: "email and newPassword are required" });
+      }
+
+      if (!isValidEmail(email)) {
+        return res.status(400).json({ error: "Invalid email format" });
+      }
+
+      if (!isValidPassword(newPassword)) {
+        return res.status(400).json({ error: "Password must be at least 8 characters" });
+      }
+
+      const normalizedEmail = email.toLowerCase();
+      const user = await db.getUserByEmail(normalizedEmail);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const salt = generateSalt();
+      const passwordHash = hashPassword(newPassword, salt);
+
+      const existing = await db.getLocalAuthCredentialByOpenId(user.openId);
+      if (existing) {
+        await db.updateLocalAuthCredential(user.openId, { passwordHash, salt });
+      } else {
+        await db.createLocalAuthCredential({
+          openId: user.openId,
+          email: normalizedEmail,
+          passwordHash,
+          salt,
+        });
+      }
+
+      await logAuthEvent("update", "auth_admin_reset_credentials", user.id, clientIp, normalizedEmail);
+
+      return res.status(200).json({
+        success: true,
+        message: `Credentials reset for ${normalizedEmail}`,
+        created: !existing,
+      });
+    } catch (error) {
+      console.error("[Local Auth] Admin credential reset failed", error);
+      return res.status(500).json({ error: "Credential reset failed" });
+    }
+  });
+
+  /**
    * POST /api/auth/promote-admin
    * One-time admin promotion endpoint. Requires a secret key.
    * Remove this endpoint after initial setup.
