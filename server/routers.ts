@@ -56,6 +56,7 @@ import { planPublish, publishToPlatform, type Platform as SocialPlatform } from 
 import { getYouTubeAuthUrl } from "./_core/youtube";
 import { encrypt, decrypt } from "./_core/crypto";
 import { ENV } from "./_core/env";
+import { reassignProjectTaskToHuman } from "./taskAgentBridge";
 import { createDecipheriv, createHash } from "crypto";
 // Decrypts a stored password supporting both the current AES-256-GCM format
 // (iv:authTag:ciphertext) and the legacy AES-256-CBC format (plain hex ciphertext).
@@ -3141,6 +3142,18 @@ ONLY return the JSON array, no other text.`;
         await db.deleteProjectTasks(input.ids);
         for (const id of input.ids) {
           await createAuditLog(ctx.user.id, 'delete', 'projectTask', id);
+        }
+        return { success: true, count: input.ids.length };
+      }),
+    assignTasks: protectedProcedure
+      .input(z.object({
+        ids: z.array(z.number()).min(1),
+        assigneeId: z.number().nullable(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        for (const id of input.ids) {
+          await reassignProjectTaskToHuman(id, input.assigneeId, ctx.user.id);
+          await createAuditLog(ctx.user.id, 'update', 'projectTask', id);
         }
         return { success: true, count: input.ids.length };
       }),
