@@ -33,9 +33,26 @@ function runStrict() {
     cwd: ROOT,
     encoding: "utf8",
   });
-  // tsc exits 0 only if there are zero errors. Any non-zero exit means errors;
-  // we still parse stdout.
-  return `${r.stdout ?? ""}${r.stderr ?? ""}`;
+  const output = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+
+  if (r.error) {
+    console.error(`Failed to execute strict typecheck: ${r.error.message}`);
+    if (output.trim()) console.error(output.trim());
+    process.exit(2);
+  }
+  if (r.status === null) {
+    console.error("Strict typecheck terminated before completion.");
+    if (output.trim()) console.error(output.trim());
+    process.exit(2);
+  }
+  // tsc exits 0 with no errors, 1 with type errors.
+  // Other exit codes (e.g. 2 for config/options errors) are fatal.
+  if (r.status !== 0 && r.status !== 1) {
+    console.error(`Strict typecheck failed with exit code ${r.status}.`);
+    if (output.trim()) console.error(output.trim());
+    process.exit(2);
+  }
+  return output;
 }
 
 function parseErrors(raw) {
