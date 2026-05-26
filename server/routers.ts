@@ -1,10 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-<<<<<<< HEAD
-import { eq, and, inArray } from "drizzle-orm";
-=======
-import { eq, and, desc, lte, gte, or, isNull } from "drizzle-orm";
->>>>>>> origin/main
+import { eq, and, inArray, desc, lte, gte, or, isNull } from "drizzle-orm";
 import { safeDecryptToken } from "./_core/crypto";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
@@ -3155,7 +3151,6 @@ ONLY return the JSON array, no other text.`;
         assigneeId: z.number().nullable(),
       }))
       .mutation(async ({ input, ctx }) => {
-<<<<<<< HEAD
         const callerCompanyId = (ctx.user as any).companyId as number | undefined;
         // Scope the update to tasks belonging to the caller's company.
         let allowedIds = input.ids;
@@ -3174,19 +3169,12 @@ ONLY return the JSON array, no other text.`;
           }
         }
         await Promise.all(
-          allowedIds.map((id) => db.updateProjectTask(id, { assigneeId: input.assigneeId }))
+          allowedIds.map((id) => reassignProjectTaskToHuman(id, input.assigneeId, ctx.user.id))
         );
         await Promise.all(
           allowedIds.map((id) => createAuditLog(ctx.user.id, 'update', 'projectTask', id))
         );
         return { success: true, count: allowedIds.length };
-=======
-        for (const id of input.ids) {
-          await reassignProjectTaskToHuman(id, input.assigneeId, ctx.user.id);
-          await createAuditLog(ctx.user.id, 'update', 'projectTask', id);
-        }
-        return { success: true, count: input.ids.length };
->>>>>>> origin/main
       }),
     tasks: protectedProcedure
       .input(z.object({ projectId: z.number() }))
