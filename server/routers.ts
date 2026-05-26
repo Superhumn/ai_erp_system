@@ -1,6 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { eq, and, desc, lte, gte, or, isNull } from "drizzle-orm";
+import { eq, and, inArray, desc, lte, gte, or, isNull } from "drizzle-orm";
 import { safeDecryptToken } from "./_core/crypto";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
@@ -3151,11 +3151,30 @@ ONLY return the JSON array, no other text.`;
         assigneeId: z.number().nullable(),
       }))
       .mutation(async ({ input, ctx }) => {
-        for (const id of input.ids) {
-          await reassignProjectTaskToHuman(id, input.assigneeId, ctx.user.id);
-          await createAuditLog(ctx.user.id, 'update', 'projectTask', id);
+        const callerCompanyId = (ctx.user as any).companyId as number | undefined;
+        // Scope the update to tasks belonging to the caller's company.
+        let allowedIds = input.ids;
+        if (callerCompanyId) {
+          const database = await db.getDb();
+          if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+          const { projectTasks: pt, projects: proj } = await import("../drizzle/schema");
+          const rows = await database
+            .select({ id: pt.id })
+            .from(pt)
+            .innerJoin(proj, eq(pt.projectId, proj.id))
+            .where(and(inArray(pt.id, input.ids), eq(proj.companyId, callerCompanyId)));
+          allowedIds = rows.map((r) => r.id);
+          if (allowedIds.length !== input.ids.length) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'One or more tasks do not belong to your company' });
+          }
         }
-        return { success: true, count: input.ids.length };
+        await Promise.all(
+          allowedIds.map((id) => reassignProjectTaskToHuman(id, input.assigneeId, ctx.user.id))
+        );
+        await Promise.all(
+          allowedIds.map((id) => createAuditLog(ctx.user.id, 'update', 'projectTask', id))
+        );
+        return { success: true, count: allowedIds.length };
       }),
     tasks: protectedProcedure
       .input(z.object({ projectId: z.number() }))

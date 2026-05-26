@@ -854,6 +854,8 @@ export default function Projects() {
             size="sm"
             className="gap-1.5"
             onClick={() => setHideCompleted((v) => !v)}
+            aria-pressed={hideCompleted}
+            aria-label={hideCompleted ? "Show completed tasks" : "Hide completed tasks"}
             title={hideCompleted ? "Currently hiding completed tasks" : "Currently showing completed tasks"}
           >
             {hideCompleted ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}

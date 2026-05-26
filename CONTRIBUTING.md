@@ -38,6 +38,36 @@ Thank you for your interest in contributing to the AI ERP System! This document 
 - **Testing**: Add tests for new features and bug fixes when applicable
 - **Type Safety**: Ensure `pnpm run check` passes without errors
 
+### Strict-mode ratchet
+
+The repo's main `tsconfig.json` has `noImplicitAny` and `strictNullChecks` disabled
+because the legacy code can't pass with them on. To prevent the codebase from drifting
+further away from strict, we ratchet:
+
+1. `tsconfig.strict-full.json` enables both flags across the whole project.
+2. `.strict-baseline.json` records the per-file error count at the time of the last update.
+3. CI runs `pnpm run strict:check`, which fails the build if any file's count *grows*.
+
+Workflow:
+
+| Command                | When to run                                                |
+|------------------------|------------------------------------------------------------|
+| `pnpm run strict:audit`  | See current strict-error counts per file                  |
+| `pnpm run strict:check`  | Same gate CI runs — verifies no file exceeds its baseline |
+| `pnpm run strict:update` | After fixing strict errors, lower the baseline             |
+
+Rules of thumb:
+
+- Touching a file already in the baseline? Try to leave it with the same or fewer
+  strict errors than you found it. CI will catch you if you don't.
+- Fixed some errors? Run `pnpm run strict:update` and commit the updated baseline.
+- New code should be strict-clean — adding a brand-new file with strict errors will
+  introduce a new baseline entry that reviewers will (rightly) push back on.
+
+Files in the manually-curated `tsconfig.strict.json` allowlist are held to a stricter
+bar: they must pass `pnpm run check:strict` with zero errors. Add a file there only
+once you've confirmed it (and its transitive imports) are fully strict-clean.
+
 ### Project Structure
 
 - `client/` - React frontend application
