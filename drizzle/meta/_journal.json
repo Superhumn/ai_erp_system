@@ -316,6 +316,13 @@
                         "when": 1779148800000,
                         "tag": "0044_pm_module",
                         "breakpoints": true
+                },
+                {
+                        "idx": 45,
+                        "version": "5",
+                        "when": 1779494400000,
+                        "tag": "0045_pricing_tenders_licenses_rounds_ambassadors",
+                        "breakpoints": true
                 }
         ]
 }

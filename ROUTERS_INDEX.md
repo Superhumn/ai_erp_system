@@ -120,7 +120,7 @@ Source: `server/routers.ts` (appRouter L265–L23475, 109 top-level keys).
 | `emailCannedResponses` | L22976–L23054 | 79 | ✗ legacy-only |
 | `pm` | L23055–L23474 | 420 | ✗ legacy-only |
 
-## Legacy-only (40)
+## Legacy-only (46)
 
 These exist only in `server/routers.ts` — the extracted `server/routers/` tree does not cover them.
 

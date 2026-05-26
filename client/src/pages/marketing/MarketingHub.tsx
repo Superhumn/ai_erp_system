@@ -22,11 +22,12 @@ import {
   Megaphone, Calendar as CalendarIcon, PenSquare, Inbox, Target,
   Loader2, Plus, Send, Sparkles, Link as LinkIcon, CheckCircle2,
   TrendingUp, Eye, MousePointerClick, MessageCircle, AlertTriangle,
-  Users as UsersIcon, DollarSign, Mail, ExternalLink, Trash2,
+  Users as UsersIcon, DollarSign, Mail, ExternalLink, Trash2, Star,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format, isSameDay, addDays, startOfDay } from "date-fns";
 import { Link } from "wouter";
+import BrandAmbassadors from "./BrandAmbassadors";
 
 // The merged AppRouter type is large enough that the tRPC React client
 // silently drops some top-level namespaces from its inferred type (existing
@@ -1149,6 +1150,7 @@ export default function MarketingHub() {
           <TabsTrigger value="engagement"><Inbox className="h-3 w-3 mr-1" /> Engagement</TabsTrigger>
           <TabsTrigger value="campaigns"><Target className="h-3 w-3 mr-1" /> Campaigns</TabsTrigger>
           <TabsTrigger value="influencers"><UsersIcon className="h-3 w-3 mr-1" /> Influencers</TabsTrigger>
+          <TabsTrigger value="ambassadors"><Star className="h-3 w-3 mr-1" /> Ambassadors</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview"><OverviewTab /></TabsContent>
@@ -1157,6 +1159,7 @@ export default function MarketingHub() {
         <TabsContent value="engagement"><EngagementTab /></TabsContent>
         <TabsContent value="campaigns"><CampaignsTab /></TabsContent>
         <TabsContent value="influencers"><InfluencersTab /></TabsContent>
+        <TabsContent value="ambassadors"><BrandAmbassadors /></TabsContent>
       </Tabs>
     </div>
   );

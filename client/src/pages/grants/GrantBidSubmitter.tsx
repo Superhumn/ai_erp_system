@@ -53,10 +53,11 @@ import {
   Download, Sparkles, ClipboardCheck, FileSpreadsheet,
   Building2, DollarSign, Users, Target, AlertTriangle,
   RefreshCw, Trash2, Edit, Globe, Copy, Code, ClipboardCopy,
-  Bot, Play, ChevronRight, AlertCircle, HandMetal,
+  Bot, Play, ChevronRight, AlertCircle, HandMetal, Landmark,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import GovernmentTenders from "./GovernmentTenders";
 
 const TYPE_LABELS: Record<string, string> = {
   grant: "Grant Application",
@@ -158,7 +159,7 @@ export default function GrantBidSubmitter() {
 
       {/* Main Tabs: Discover vs Applications */}
       <Tabs value={mainTab} onValueChange={setMainTab}>
-        <TabsList className="grid w-full max-w-lg grid-cols-3">
+        <TabsList className="grid w-full max-w-3xl grid-cols-4">
           <TabsTrigger value="discover" className="flex items-center gap-2">
             <Search className="h-4 w-4" /> Discover Opportunities
           </TabsTrigger>
@@ -167,6 +168,9 @@ export default function GrantBidSubmitter() {
           </TabsTrigger>
           <TabsTrigger value="templates" className="flex items-center gap-2">
             <FileText className="h-4 w-4" /> Templates
+          </TabsTrigger>
+          <TabsTrigger value="tenders" className="flex items-center gap-2">
+            <Landmark className="h-4 w-4" /> Government Tenders
           </TabsTrigger>
         </TabsList>
 
@@ -293,6 +297,11 @@ export default function GrantBidSubmitter() {
 
         <TabsContent value="templates" className="space-y-2">
           <NarrativeTemplates />
+        </TabsContent>
+
+        {/* Government Tenders Tab */}
+        <TabsContent value="tenders" className="space-y-2">
+          <GovernmentTenders />
         </TabsContent>
       </Tabs>
 
