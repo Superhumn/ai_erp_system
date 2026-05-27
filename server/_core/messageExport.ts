@@ -6,9 +6,6 @@
  * PDF rendering reuses the same Puppeteer setup as invoicePdf.ts.
  */
 import * as XLSX from "xlsx";
-// @types/sanitize-html resolves locally but the CI strict ratchet sees the import as untyped; @ts-ignore tolerates both states.
-// @ts-ignore
-import sanitizeHtml from "sanitize-html";
 
 export type ExportFormat = "csv" | "xlsx" | "pdf";
 
@@ -32,8 +29,23 @@ function escapeHtml(s: string): string {
 
 function stripHtml(html: string): string {
   if (!html) return "";
-  return sanitizeHtml(html, { allowedTags: [], allowedAttributes: {} })
-    .replace(/\s+/g, " ")
+  // Replace common block-level tags with newlines, drop all other tags,
+  // then collapse runs of whitespace. Good enough for plain-text rows
+  // in a CSV/XLSX export — we are not trying to preserve formatting.
+  return html
+    .replace(/<\s*(br|p|div|tr|li|h[1-6])\b[^>]*>/gi, "\n")
+    .replace(/<\/\s*(p|div|tr|li|h[1-6])\s*>/gi, "\n")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
@@ -191,17 +203,28 @@ export function emailsToXlsx(emails: EmailExportRow[]): string {
   return rowsToXlsxBase64(EMAIL_HEADERS, emails.map(emailRow), "Emails");
 }
 
+// Drop tags that can execute code or load remote resources when the
+// PDF is being rendered, and strip any inline event handlers. Puppeteer
+// runs sandboxed and the output is a static PDF, so this is defence in
+// depth rather than a full XSS guard.
+function scrubHtmlForPdf(html: string): string {
+  return html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<(iframe|object|embed|link|meta|base)\b[^>]*>/gi, "")
+    .replace(/\son\w+\s*=\s*"[^"]*"/gi, "")
+    .replace(/\son\w+\s*=\s*'[^']*'/gi, "")
+    .replace(/\son\w+\s*=\s*[^\s>]+/gi, "")
+    .replace(/javascript:/gi, "");
+}
+
 export function emailsToHtml(emails: EmailExportRow[], title: string): string {
   const items = emails
     .map((e) => {
       const bodyHtmlRaw = e.bodyHtml || "";
       const safeBodyHtml = bodyHtmlRaw
-        ? sanitizeHtml(bodyHtmlRaw, {
-            allowedTags: sanitizeHtml.defaults.allowedTags.concat(["img"]),
-            allowedAttributes: { ...sanitizeHtml.defaults.allowedAttributes, img: ["src", "alt"] },
-            allowedSchemes: ["http", "https", "data", "mailto"],
-          })
-        : escapeHtml(e.bodyText || "");
+        ? scrubHtmlForPdf(bodyHtmlRaw)
+        : escapeHtml(e.bodyText || "").replace(/\n/g, "<br>");
       return `
         <div class="email">
           <div class="email-head">
