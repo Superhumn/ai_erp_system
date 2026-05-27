@@ -6,8 +6,8 @@
  * PDF rendering reuses the same Puppeteer setup as invoicePdf.ts.
  */
 import * as XLSX from "xlsx";
-// @ts-ignore — @types/sanitize-html resolves locally but the CI strict
-// ratchet sees the import as untyped; ignore tolerates both states.
+// @types/sanitize-html resolves locally but the CI strict ratchet sees the import as untyped; @ts-ignore tolerates both states.
+// @ts-ignore
 import sanitizeHtml from "sanitize-html";
 
 export type ExportFormat = "csv" | "xlsx" | "pdf";
