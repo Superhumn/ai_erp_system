@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "generatedAt": "2026-05-26",
-  "totalErrors": 142,
+  "generatedAt": "2026-05-27",
+  "totalErrors": 141,
   "files": {
     "client/src/components/FloatingAIAssistant.tsx": 2,
     "client/src/pages/autonomous/Approvals.tsx": 1,
@@ -18,7 +18,7 @@
     "client/src/pages/sales/CRMInvestors.tsx": 3,
     "server/_core/emailService.ts": 1,
     "server/_core/sendgridProvider.ts": 7,
-    "server/_core/shopify.ts": 2,
+    "server/_core/shopify.ts": 1,
     "server/_core/twilioWebhooks.ts": 14,
     "server/agent/loop.ts": 1,
     "server/agent/memory/working.ts": 4,

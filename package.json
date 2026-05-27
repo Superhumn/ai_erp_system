@@ -118,6 +118,7 @@
     "@types/puppeteer": "^7.0.4",
     "@types/react": "^19.2.1",
     "@types/react-dom": "^19.2.1",
+    "@types/sanitize-html": "^2.16.1",
     "@types/ssh2-sftp-client": "^9.0.6",
     "@vitejs/plugin-react": "^5.0.4",
     "add": "^2.0.6",
