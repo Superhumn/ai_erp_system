@@ -324,7 +324,12 @@ export function registerLocalAuthRoutes(app: Express) {
       });
     } catch (error) {
       console.error("[Local Auth] Signup failed", error);
-      return res.status(500).json({ error: "Signup failed" });
+      const err = error as { message?: string; code?: string };
+      return res.status(500).json({
+        error: "Signup failed",
+        reason: err?.message,
+        code: err?.code,
+      });
     }
   });
 
