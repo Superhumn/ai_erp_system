@@ -48,6 +48,7 @@ const CustomerSupport = lazy(() => import("./pages/cx/CustomerSupport"));
 
 // CRM
 const CRMHub = lazy(() => import("./pages/crm/CRMHub"));
+const CRMAdmin = lazy(() => import("./pages/crm/CRMAdmin"));
 
 // Operations
 const Products = lazy(() => import("./pages/operations/Products"));
