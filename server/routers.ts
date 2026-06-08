@@ -13075,6 +13075,45 @@ Ask if they received the original request and if they can provide a quote.`;
           errors,
         };
       }),
+
+    // Export emails to CSV, XLSX, or PDF. Either pass `ids` for a specific
+    // selection or use `category` / `status` filters to export a filtered
+    // inbox view. Returns base64 (xlsx/pdf) or utf-8 text (csv).
+    exportEmails: protectedProcedure
+      .input(z.object({
+        format: z.enum(["csv", "xlsx", "pdf"]),
+        ids: z.array(z.number()).optional(),
+        category: z.string().optional(),
+        status: z.string().optional(),
+        limit: z.number().max(2000).optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { exportEmails } = await import("./_core/messageExport");
+
+        let emails: any[] = [];
+        if (input.ids && input.ids.length > 0) {
+          // Fetch full detail for each requested email so the PDF can include
+          // the HTML body.
+          for (const id of input.ids) {
+            const e = await db.getInboundEmailById(id);
+            if (e) emails.push(e);
+          }
+        } else {
+          emails = await db.getInboundEmails({
+            category: input.category,
+            status: input.status,
+            limit: input.limit ?? 500,
+          });
+        }
+
+        const label = input.ids?.length === 1
+          ? `email_${input.ids[0]}`
+          : input.category
+            ? `inbox_${input.category}`
+            : "inbox";
+
+        return exportEmails(emails, input.format, label);
+      }),
   }),
 
   // ============================================
@@ -16822,6 +16861,43 @@ Ask if they received the original request and if they can provide a quote.`;
       getMessagingHistory: protectedProcedure
         .input(z.object({ contactId: z.number(), limit: z.number().optional() }))
         .query(({ input }) => db.getUnifiedMessagingHistory(input.contactId, input.limit)),
+
+      // Export unified messaging history (WhatsApp + email + other channels)
+      // for a single contact. Returns base64 (xlsx/pdf) or utf-8 (csv).
+      exportMessagingHistory: protectedProcedure
+        .input(z.object({
+          contactId: z.number(),
+          format: z.enum(["csv", "xlsx", "pdf"]),
+          limit: z.number().max(5000).optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { exportMessages } = await import("./_core/messageExport");
+          const contact = await db.getCrmContactById(input.contactId);
+          const history = await db.getUnifiedMessagingHistory(input.contactId, input.limit ?? 1000);
+          // Flatten the {type, data, ...} envelope into the row shape exportMessages expects.
+          const rows = (history as any[]).map((h: any) => {
+            const d = h.data || {};
+            return {
+              id: h.id,
+              channel: h.type, // "whatsapp" | "email" | ...
+              direction: h.direction,
+              content: h.content || d.bodyText || d.subject || "",
+              subject: d.subject,
+              status: h.status,
+              whatsappNumber: d.whatsappNumber,
+              fromName: d.fromName,
+              toName: d.toEmail || d.contactName,
+              messageType: d.messageType,
+              sentAt: d.sentAt,
+              receivedAt: d.receivedAt,
+              createdAt: d.createdAt || h.timestamp,
+              conversationId: d.conversationId,
+            };
+          });
+          const name = contact?.fullName || contact?.firstName || `contact_${input.contactId}`;
+          const label = `messages_${name.replace(/\s+/g, "_")}`;
+          return exportMessages(rows, input.format, label, name);
+        }),
     }),
 
     // --- TAGS ---
@@ -16968,6 +17044,42 @@ Ask if they received the original request and if they can provide a quote.`;
         .mutation(async ({ input }) => {
           await db.updateWhatsappMessageStatus(input.id, input.status, new Date());
           return { success: true };
+        }),
+
+      // Export WhatsApp messages to CSV, XLSX, or PDF. Filter by contact,
+      // conversation, or number. Returns base64 (xlsx/pdf) or utf-8 (csv).
+      exportMessages: protectedProcedure
+        .input(z.object({
+          format: z.enum(["csv", "xlsx", "pdf"]),
+          contactId: z.number().optional(),
+          whatsappNumber: z.string().optional(),
+          conversationId: z.string().optional(),
+          limit: z.number().max(5000).optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { exportMessages } = await import("./_core/messageExport");
+          const msgs = await db.getWhatsappMessages({
+            contactId: input.contactId,
+            whatsappNumber: input.whatsappNumber,
+            conversationId: input.conversationId,
+            limit: input.limit ?? 1000,
+          });
+          const tagged = msgs.map((m: any) => ({ ...m, channel: "whatsapp" }));
+
+          let label = "whatsapp_messages";
+          let subtitle: string | undefined;
+          if (input.contactId) {
+            const c = await db.getCrmContactById(input.contactId);
+            if (c) {
+              label = `whatsapp_${(c.fullName || c.firstName || `contact_${input.contactId}`).replace(/\s+/g, "_")}`;
+              subtitle = c.fullName || c.firstName || undefined;
+            }
+          } else if (input.whatsappNumber) {
+            label = `whatsapp_${input.whatsappNumber.replace(/[^0-9]/g, "")}`;
+            subtitle = input.whatsappNumber;
+          }
+
+          return exportMessages(tagged, input.format, label, subtitle);
         }),
     }),
 

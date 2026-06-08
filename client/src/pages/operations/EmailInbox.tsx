@@ -3,12 +3,14 @@ import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
+import { downloadExport } from "@/lib/downloadExport";
 
 import {
   Mail,
@@ -44,6 +46,9 @@ import {
   Bot,
   MailOpen,
   AlertCircle,
+  Download,
+  FileSpreadsheet,
+  FileDown,
 } from "lucide-react";
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -250,6 +255,10 @@ export default function EmailInbox() {
   const testConnectionMutation = trpc.emailScanning.testInboxConnection.useMutation({ onSuccess: (r) => { if (r.success) toast.success(`Connected! ${r.mailboxes?.length || 0} mailboxes`); else toast.error(`Failed: ${r.error}`); }, onError: (e) => toast.error(e.message) });
   const scanNowMutation = (trpc.emailScanning as any).scanNow.useMutation({ onSuccess: (r: any) => { toast.success(`Scanned: ${r.emailsProcessed} emails`); utils.emailScanning.list.invalidate(); }, onError: (e: any) => toast.error("Scan failed: " + e.message) });
   const bulkCategorizeMutation = trpc.emailScanning.bulkCategorize.useMutation({ onSuccess: (r) => { if (r.success) { toast.success(`Categorized ${r.categorized}`); utils.emailScanning.list.invalidate(); } }, onError: (e) => toast.error(e.message) });
+  const exportEmailsMutation = (trpc.emailScanning as any).exportEmails.useMutation({
+    onSuccess: (r: any) => { downloadExport(r); toast.success(`Downloaded ${r.filename}`); },
+    onError: (e: any) => toast.error(`Export failed: ${e.message}`),
+  });
   const generateReplyMutation = trpc.aiAgent.generateEmailReply.useMutation({ onSuccess: (r) => { setGeneratedReply(r as any); setShowAiReplyDialog(true); setIsGeneratingReply(false); }, onError: (e) => { toast.error(`Failed: ${e.message}`); setIsGeneratingReply(false); } });
   const sendReplyMutation = trpc.aiAgent.sendEmailReply.useMutation({ onSuccess: (r) => { if (r.emailSent) { toast.success("Reply sent!"); setShowAiReplyDialog(false); setGeneratedReply(null); } else toast.error("Failed to send"); }, onError: (e) => toast.error(e.message) });
   const createReplyTaskMutation = trpc.aiAgent.createEmailReplyTask.useMutation({ onSuccess: () => { toast.success("Reply queued"); setShowAiReplyDialog(false); setGeneratedReply(null); }, onError: (e) => toast.error(e.message) });
@@ -494,6 +503,24 @@ export default function EmailInbox() {
         <div className="border-b px-4 py-2.5 flex items-center gap-2 bg-background shrink-0">
           <h2 className="font-semibold flex-1 truncate text-sm">{selectedEmail.subject || "(No subject)"}</h2>
           <button className="h-7 w-7 flex items-center justify-center rounded hover:bg-accent" onClick={e => toggleStar(e, selectedEmail.id)}><Star className={`h-4 w-4 ${starredEmails.has(selectedEmail.id) ? "text-yellow-400 fill-yellow-400" : "text-muted-foreground"}`} /></button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7" title="Download" disabled={exportEmailsMutation.isPending}>
+                {exportEmailsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              <DropdownMenuItem onSelect={() => exportEmailsMutation.mutate({ format: "pdf", ids: [selectedEmail.id] })}>
+                <FileDown className="h-4 w-4 mr-2" />Download as PDF
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => exportEmailsMutation.mutate({ format: "xlsx", ids: [selectedEmail.id] })}>
+                <FileSpreadsheet className="h-4 w-4 mr-2" />Download as Excel
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => exportEmailsMutation.mutate({ format: "csv", ids: [selectedEmail.id] })}>
+                <FileSpreadsheet className="h-4 w-4 mr-2" />Download as CSV
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => archiveEmailMutation.mutate({ id: selectedEmail.id })} disabled={archiveEmailMutation.isPending}><Archive className="h-4 w-4" /></Button>
           <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => { setDeleteTargetId(selectedEmail.id); setShowDeleteConfirm(true); }}><Trash2 className="h-4 w-4" /></Button>
         </div>
@@ -601,6 +628,24 @@ export default function EmailInbox() {
             <Button variant="ghost" size="icon" className="h-7 w-7" title="Scan inbox" onClick={() => scanNowMutation.mutate({ folders: ["INBOX"], unseenOnly: false, limit: 200 })} disabled={scanNowMutation.isPending}>{scanNowMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Inbox className="h-3.5 w-3.5" />}</Button>
             <Button variant="ghost" size="icon" className="h-7 w-7" title="Canned responses" onClick={() => setShowCannedManager(true)}><BookOpen className="h-3.5 w-3.5" /></Button>
             <Button variant="ghost" size="icon" className="h-7 w-7" title="Auto-reply rules" onClick={() => setShowAutoReplyManager(true)}><Bot className="h-3.5 w-3.5" /></Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-7 w-7" title="Download inbox" disabled={exportEmailsMutation.isPending}>
+                  {exportEmailsMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-52">
+                <DropdownMenuItem onSelect={() => exportEmailsMutation.mutate({ format: "pdf", category: categoryFilter !== "all" ? categoryFilter : undefined })}>
+                  <FileDown className="h-4 w-4 mr-2" />Download view as PDF
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => exportEmailsMutation.mutate({ format: "xlsx", category: categoryFilter !== "all" ? categoryFilter : undefined })}>
+                  <FileSpreadsheet className="h-4 w-4 mr-2" />Download view as Excel
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => exportEmailsMutation.mutate({ format: "csv", category: categoryFilter !== "all" ? categoryFilter : undefined })}>
+                  <FileSpreadsheet className="h-4 w-4 mr-2" />Download view as CSV
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <div className="ml-auto flex items-center pr-1"><div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" /></div>
           </div>
         </div>

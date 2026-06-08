@@ -6,10 +6,12 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { trpc } from "@/lib/trpc";
 import { useOfflineMutation } from "@/hooks/useOfflineMutation";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { toast } from "sonner";
+import { downloadExport } from "@/lib/downloadExport";
 import {
   MessageSquare,
   Search,
@@ -30,6 +32,9 @@ import {
   ArrowRight,
   ArrowLeft,
   Smartphone,
+  Download,
+  FileDown,
+  FileSpreadsheet,
 } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 
@@ -140,6 +145,12 @@ export default function Messaging() {
     path: "crm.whatsapp.sendMessage",
     label: "Message",
     online: (input) => sendMutationTrpc.mutateAsync(input),
+  });
+
+  // Export the current conversation (unified across WhatsApp + email) to PDF / XLSX / CSV.
+  const exportConversationMutation = (trpc.crm.contacts as any).exportMessagingHistory.useMutation({
+    onSuccess: (r: any) => { downloadExport(r); toast.success(`Downloaded ${r.filename}`); },
+    onError: (e: any) => toast.error(`Export failed: ${e.message}`),
   });
 
   // Auto-scroll to bottom when messages change
@@ -365,6 +376,41 @@ export default function Messaging() {
                     </div>
                   </div>
                 </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 gap-1.5"
+                      title="Download conversation"
+                      disabled={exportConversationMutation.isPending || messages.length === 0}
+                    >
+                      {exportConversationMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="h-4 w-4" />
+                      )}
+                      <span className="hidden sm:inline text-xs">Download</span>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-44">
+                    <DropdownMenuItem
+                      onSelect={() => exportConversationMutation.mutate({ contactId: selectedContact.id, format: "pdf" })}
+                    >
+                      <FileDown className="h-4 w-4 mr-2" />Download as PDF
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() => exportConversationMutation.mutate({ contactId: selectedContact.id, format: "xlsx" })}
+                    >
+                      <FileSpreadsheet className="h-4 w-4 mr-2" />Download as Excel
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() => exportConversationMutation.mutate({ contactId: selectedContact.id, format: "csv" })}
+                    >
+                      <FileSpreadsheet className="h-4 w-4 mr-2" />Download as CSV
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
 
               {/* Messages Area */}
