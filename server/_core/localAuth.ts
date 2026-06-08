@@ -191,12 +191,13 @@ export function registerLocalAuthRoutes(app: Express) {
 
     try {
       const { email, password, name } = req.body as LocalAuthCredentials;
-      const normalizedEmail = email?.toLowerCase();
 
       // Validate input
       if (!email || !password) {
         return res.status(400).json({ error: "Email and password are required" });
       }
+
+      const normalizedEmail = email.toLowerCase();
 
       if (!isValidEmail(email)) {
         return res.status(400).json({ error: "Invalid email format" });
