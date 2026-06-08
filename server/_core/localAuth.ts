@@ -191,6 +191,7 @@ export function registerLocalAuthRoutes(app: Express) {
 
     try {
       const { email, password, name } = req.body as LocalAuthCredentials;
+      const normalizedEmail = email?.toLowerCase();
 
       // Validate input
       if (!email || !password) {
@@ -206,9 +207,17 @@ export function registerLocalAuthRoutes(app: Express) {
       }
 
       // Check if user already exists
-      const existingUser = await db.getUserByEmail(email.toLowerCase());
-      if (existingUser) {
+      const existingUser = await db.getUserByEmail(normalizedEmail);
+      const existingCredential = await db.getLocalAuthCredentialByEmail(normalizedEmail);
+      if (existingCredential) {
         return res.status(409).json({ error: "User with this email already exists" });
+      }
+
+      if (existingUser) {
+        return res.status(409).json({
+          error: "An account with this email already exists. Use Forgot password to set your password.",
+          recovery: "reset_password",
+        });
       }
 
       // Generate salt and hash password
@@ -219,7 +228,7 @@ export function registerLocalAuthRoutes(app: Express) {
       // Store credentials
       await db.createLocalAuthCredential({
         openId,
-        email: email.toLowerCase(),
+        email: normalizedEmail,
         passwordHash,
         salt,
       });
@@ -228,7 +237,7 @@ export function registerLocalAuthRoutes(app: Express) {
       await db.upsertUser({
         openId,
         name: name || email.split("@")[0],
-        email: email.toLowerCase(),
+        email: normalizedEmail,
         loginMethod: "email",
         lastSignedIn: new Date(),
       });
@@ -293,7 +302,6 @@ export function registerLocalAuthRoutes(app: Express) {
 
       // Generate email verification token (24-hour expiry)
       const verificationToken = randomBytes(32).toString("hex");
-      const normalizedEmail = email.toLowerCase();
       await db.createAuthToken({
         token: verificationToken,
         type: "email_verification",
@@ -547,11 +555,9 @@ export function registerLocalAuthRoutes(app: Express) {
       }
 
       const normalizedEmail = email.toLowerCase();
+      const user = await db.getUserByEmail(normalizedEmail);
 
-      // Look up credentials for this email
-      const credentials = await db.getLocalAuthCredentialByEmail(normalizedEmail);
-
-      if (credentials) {
+      if (user) {
         // Generate a secure reset token (32 bytes hex)
         const token = randomBytes(32).toString("hex");
         await db.createAuthToken({
@@ -630,29 +636,36 @@ export function registerLocalAuthRoutes(app: Express) {
         return res.status(400).json({ error: "Reset token has expired" });
       }
 
-      // Look up the credential record for this email
-      const credentials = await db.getLocalAuthCredentialByEmail(tokenData.email);
-      if (!credentials) {
-        // Token was valid but credential no longer exists — invalidate and return error
+      const user = await db.getUserByEmail(tokenData.email);
+      if (!user) {
         await db.deleteAuthToken(token);
         return res.status(400).json({ error: "Account not found" });
       }
+
+      const credentials = await db.getLocalAuthCredentialByOpenId(user.openId);
 
       // Hash the new password with a new salt
       const newSalt = generateSalt();
       const newPasswordHash = hashPassword(newPassword, newSalt);
 
-      // Update the credential record
-      await db.updateLocalAuthCredential(credentials.openId, {
-        passwordHash: newPasswordHash,
-        salt: newSalt,
-      });
+      if (credentials) {
+        await db.updateLocalAuthCredential(credentials.openId, {
+          passwordHash: newPasswordHash,
+          salt: newSalt,
+        });
+      } else {
+        await db.createLocalAuthCredential({
+          openId: user.openId,
+          email: tokenData.email,
+          passwordHash: newPasswordHash,
+          salt: newSalt,
+        });
+      }
 
       // Invalidate every reset token for this email (used + any others)
       await db.deleteAuthTokensByEmail(tokenData.email, "password_reset");
 
-      const user = await db.getUserByOpenId(credentials.openId);
-      await logAuthEvent("update", "auth_password_reset_completed", user?.id, clientIp, tokenData.email);
+      await logAuthEvent("update", "auth_password_reset_completed", user.id, clientIp, tokenData.email);
 
       resetRateLimit(clientIp);
 
