@@ -292,6 +292,14 @@ export default function ShopifySettings() {
                     </Dialog>
                   </div>
                   <SkuMappingTable storeId={store.id} />
+                                    {/* Location Mappings */}
+                  <div className="mt-6">
+                    <div className="flex items-center justify-between mb-3">
+                      <Label className="text-sm font-medium">Location Mappings</Label>
+                      <AddLocationMappingButton storeId={store.id} />
+                    </div>
+                    <p className="text-xs text-muted-foreground">Map Shopify fulfillment locations to ERP warehouses for inventory sync.</p>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -338,5 +346,93 @@ function SkuMappingTable({ storeId }: { storeId: number }) {
         ))}
       </TableBody>
     </Table>
+  );
+}
+// ============================================
+// LOCATION MAPPING BUTTON (Issue #269)
+// ============================================
+function AddLocationMappingButton({ storeId }: { storeId: number }) {
+  const [open, setOpen] = useState(false);
+  const [shopifyLocationId, setShopifyLocationId] = useState("");
+  const [warehouseId, setWarehouseId] = useState("");
+  const [locationName, setLocationName] = useState("");
+
+  const { data: warehouses } = trpc.locations.list.useQuery({});
+
+  const createMapping = trpc.shopify.locationMappings.create.useMutation({
+    onSuccess: () => {
+      toast.success("Location mapping created");
+      setOpen(false);
+      setShopifyLocationId("");
+      setWarehouseId("");
+      setLocationName("");
+    },
+    onError: (error: any) => toast.error(error.message),
+  });
+
+  return (
+    <>
+      <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+        <Plus className="h-4 w-4 mr-2" />
+        Add Location Mapping
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Location Mapping</DialogTitle>
+            <DialogDescription>
+              Map a Shopify fulfillment location to an internal warehouse. Enter the Shopify Location ID from your Shopify admin.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Shopify Location ID</Label>
+              <Input
+                placeholder="e.g. 12345678901234"
+                value={shopifyLocationId}
+                onChange={(e) => setShopifyLocationId(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Find this in your Shopify admin under Locations.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>Location Name (optional)</Label>
+              <Input
+                placeholder="e.g. Main Warehouse"
+                value={locationName}
+                onChange={(e) => setLocationName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>ERP Warehouse</Label>
+              <Select value={warehouseId} onValueChange={setWarehouseId}>
+                <SelectTrigger><SelectValue placeholder="Select warehouse" /></SelectTrigger>
+                <SelectContent>
+                  {warehouses?.map((w: any) => (
+                    <SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => createMapping.mutate({
+                storeId,
+                shopifyLocationId,
+                locationName: locationName || undefined,
+                warehouseId: parseInt(warehouseId),
+              })}
+              disabled={!shopifyLocationId || !warehouseId || createMapping.isPending}
+            >
+              {createMapping.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Create Mapping
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
