@@ -167,6 +167,7 @@ export default function InventoryCosting() {
             <Settings2 className="h-4 w-4 mr-2" />
             Method
           </Button>
+                    <GenerateSummaryButton products={products || []} />
         </div>
       </div>
 
@@ -522,5 +523,116 @@ export default function InventoryCosting() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+// ============================================
+// GENERATE COGS SUMMARY BUTTON (Issue #271)
+// ============================================
+type CogsPeriodType = "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
+
+function GenerateSummaryButton({ products }: { products: any[] }) {
+  const utils = trpc.useUtils();
+  const [open, setOpen] = useState(false);
+  const [productId, setProductId] = useState("");
+  const [periodType, setPeriodType] = useState<CogsPeriodType>("monthly");
+  const [periodStart, setPeriodStart] = useState(() => {
+    const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10);
+  });
+  const [periodEnd, setPeriodEnd] = useState(() => {
+    const d = new Date(); return d.toISOString().slice(0, 10);
+  });
+
+  const handlePeriodTypeChange = (type: CogsPeriodType) => {
+    setPeriodType(type);
+    const now = new Date();
+    if (type === "monthly") {
+      setPeriodStart(new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10));
+      setPeriodEnd(new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10));
+    } else if (type === "quarterly") {
+      const q = Math.floor(now.getMonth() / 3);
+      setPeriodStart(new Date(now.getFullYear(), q * 3, 1).toISOString().slice(0, 10));
+      setPeriodEnd(new Date(now.getFullYear(), q * 3 + 3, 0).toISOString().slice(0, 10));
+    } else if (type === "yearly") {
+      setPeriodStart(new Date(now.getFullYear(), 0, 1).toISOString().slice(0, 10));
+      setPeriodEnd(new Date(now.getFullYear(), 11, 31).toISOString().slice(0, 10));
+    }
+  };
+
+  const generateMutation = trpc.inventoryCosting.cogs.generateSummary.useMutation({
+    onSuccess: () => {
+      toast.success("CoGS period summary generated");
+      setOpen(false);
+      utils.inventoryCosting.cogs.dashboard.invalidate();
+      utils.inventoryCosting.cogs.list.invalidate();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  return (
+    <>
+      <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+        <Calculator className="h-4 w-4 mr-2" />
+        Generate Summary
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Generate CoGS Period Summary</DialogTitle>
+            <DialogDescription>
+              Aggregate layer consumption events into a period summary row.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Period Type</Label>
+              <div className="flex flex-wrap gap-2 mt-1">
+                {(["daily", "weekly", "monthly", "quarterly", "yearly"] as CogsPeriodType[]).map((t) => (
+                  <Button
+                    key={t}
+                    variant={periodType === t ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => handlePeriodTypeChange(t)}
+                    className="capitalize"
+                  >
+                    {t}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div><Label>Period Start</Label><Input type="date" value={periodStart} onChange={e => setPeriodStart(e.target.value)} /></div>
+              <div><Label>Period End</Label><Input type="date" value={periodEnd} onChange={e => setPeriodEnd(e.target.value)} /></div>
+            </div>
+            <div>
+              <Label>Product (optional)</Label>
+              <Select value={productId} onValueChange={setProductId}>
+                <SelectTrigger><SelectValue placeholder="All products" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">All products</SelectItem>
+                  {products?.map((p: any) => (
+                    <SelectItem key={p.id} value={String(p.id)}>{p.name} ({p.sku})</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => generateMutation.mutate({
+                productId: productId ? parseInt(productId) : undefined,
+                periodType,
+                periodStart: new Date(periodStart),
+                periodEnd: new Date(periodEnd),
+              })}
+              disabled={generateMutation.isPending}
+            >
+              {generateMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Generate Summary
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
