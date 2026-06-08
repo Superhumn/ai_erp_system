@@ -13,6 +13,7 @@ import { OfflineIndicator } from "@/components/OfflineIndicator";
 import Home from "./pages/Home";
 import Login from "./pages/Login";
 import ResetPassword from "./pages/ResetPassword";
+import RecoverAccount from "./pages/RecoverAccount";
 import NotFound from "@/pages/NotFound";
 
 // Lazy-loaded pages — split into separate chunks for smaller initial bundle
@@ -417,6 +418,7 @@ function App() {
                 {/* Public routes (outside dashboard) */}
                 <Route path="/login" component={Login} />
                 <Route path="/reset-password" component={ResetPassword} />
+                <Route path="/recover-account" component={RecoverAccount} />
                 {/* Public Data Room Access (outside dashboard) */}
                 <Route path="/share/:code/financials" component={DataRoomFinancialsPublic} />
                 <Route path="/dr/:code/financials" component={DataRoomFinancialsPublic} />
