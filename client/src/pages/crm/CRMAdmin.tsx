@@ -222,9 +222,9 @@ function CampaignsSection() {
               disabled={!form.name || createCampaign.isPending || updateCampaign.isPending}
               onClick={() => {
                 if (editingId) {
-                  updateCampaign.mutate({ id: editingId, ...form, startDate: form.startDate || undefined, endDate: form.endDate || undefined });
+                  updateCampaign.mutate({ id: editingId, name: form.name, scheduledAt: form.startDate ? new Date(form.startDate) : undefined });
                 } else {
-                  createCampaign.mutate({ ...form, startDate: form.startDate || undefined, endDate: form.endDate || undefined });
+                  createCampaign.mutate({ name: form.name, subject: form.name, bodyHtml: form.description || "", scheduledAt: form.startDate ? new Date(form.startDate) : undefined });
                 }
               }}
             >
@@ -319,7 +319,7 @@ function TagsSection() {
 export function ContactTagsPicker({ contactId }: { contactId: number }) {
   const utils = trpc.useUtils();
   const { data: allTags } = trpc.crm.tags.list.useQuery({});
-  const { data: contactTags } = trpc.crm.tags.listForContact?.useQuery?.({ contactId }) ?? { data: [] };
+  const { data: contactTags } = trpc.crm.tags.getForContact.useQuery({ contactId }) ?? { data: [] };
 
   const addTag = trpc.crm.tags.addToContact.useMutation({
     onSuccess: () => { toast.success("Tag added"); utils.crm.tags.invalidate(); },
