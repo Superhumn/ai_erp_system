@@ -785,6 +785,31 @@ function InlineRdPercent({ value, onSave }: { value: number; onSave: (v: number)
         {value}%
       </button>
     );
+  }
+
+  const commit = () => {
+    const n = parseFloat(draft);
+    if (!isNaN(n) && n !== value) onSave(Math.max(0, Math.min(100, n)));
+    setEditing(false);
+  };
+  return (
+    <input
+      autoFocus
+      type="number"
+      min={0}
+      max={100}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") commit();
+        if (e.key === "Escape") setEditing(false);
+      }}
+      className="w-16 rounded border bg-background px-1 text-right text-sm"
+    />
+  );
+}
+
 // ============================================
 // IMPORT FROM QB BUTTON (Issue #270)
 // ============================================
@@ -867,28 +892,5 @@ function ImportFromQBButton({ studyId, projects, onRefresh }: {
         </DialogContent>
       </Dialog>
     </>
-  );
-}
-  }
-  const commit = () => {
-    const n = parseFloat(draft);
-    if (!isNaN(n) && n !== value) onSave(Math.max(0, Math.min(100, n)));
-    setEditing(false);
-  };
-  return (
-    <input
-      autoFocus
-      type="number"
-      min={0}
-      max={100}
-      value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") commit();
-        if (e.key === "Escape") setEditing(false);
-      }}
-      className="w-16 rounded border bg-background px-1 text-right text-sm"
-    />
   );
 }
