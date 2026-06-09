@@ -642,7 +642,7 @@ function ExpensesTab({ studyId, projects, expenses, onRefresh }: { studyId: numb
                 <Select value={form.projectId} onValueChange={v => setForm(f => ({ ...f, projectId: v }))}>
                   <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
                   <SelectContent>
-                    {projects.map((p) => <SelectItem key={p.id} value={String(p.id)}>{p.projectName}</SelectItem>)}
+                    {projects.map((p) => <SelectItem key={p.id ?? 0} value={String(p.id ?? 0)}>{p.projectName ?? ''}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -817,7 +817,7 @@ type QBImportCategory = "wages" | "supplies" | "contract_research" | "cloud_comp
 
 function ImportFromQBButton({ studyId, projects, onRefresh }: {
   studyId: number;
-  projects: { id: number; projectName: string }[];
+  projects: Array<{ id?: number | null; projectName?: string | null }>;
   onRefresh: () => void;
 }) {
   const [open, setOpen] = useState(false);
