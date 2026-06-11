@@ -73,7 +73,7 @@ export default function RdTaxCredit() {
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <FlaskConical className="h-6 w-6" /> R&D Tax Credit
           </h1>
-          <p className="text-muted-foreground">IRC Section 41 — Calculate and file R&D tax credits (Form 6765)</p>
+          <p className="text-muted-foreground">IRC Section 41 â Calculate and file R&D tax credits (Form 6765)</p>
         </div>
         <Button onClick={() => setShowNewStudy(true)}>
           <Plus className="h-4 w-4 mr-2" /> New Study
@@ -119,7 +119,7 @@ function StudyList({ onSelect }: { onSelect: (id: number) => void }) {
                   <Badge className={statusColors[study.status] || ""}>{study.status.replace("_", " ")}</Badge>
                   <Badge variant="outline">{study.calculationMethod === "asc" ? "ASC Method" : "Regular Credit"}</Badge>
                 </div>
-                <p className="text-sm text-muted-foreground">Tax Year {study.taxYear} — Form {study.formNumber || "6765"}</p>
+                <p className="text-sm text-muted-foreground">Tax Year {study.taxYear} â Form {study.formNumber || "6765"}</p>
               </div>
               <div className="text-right space-y-1">
                 <p className="text-2xl font-bold text-green-600">{fmt(study.netCredit)}</p>
@@ -184,8 +184,8 @@ function NewStudyDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
             <Select value={form.calculationMethod} onValueChange={(v) => setForm(f => ({ ...f, calculationMethod: v as any }))}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="asc">Alternative Simplified Credit (ASC) — 14% rate</SelectItem>
-                <SelectItem value="regular">Regular Credit (RC) — 20% rate</SelectItem>
+                <SelectItem value="asc">Alternative Simplified Credit (ASC) â 14% rate</SelectItem>
+                <SelectItem value="regular">Regular Credit (RC) â 20% rate</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -263,7 +263,7 @@ function StudyDetail({ studyId, onBack }: { studyId: number; onBack: () => void 
           <Button variant="ghost" size="sm" onClick={onBack}><ArrowLeft className="h-4 w-4" /></Button>
           <div>
             <h1 className="text-2xl font-bold">{study.studyName}</h1>
-            <p className="text-muted-foreground">Tax Year {study.taxYear} — {study.calculationMethod === "asc" ? "Alternative Simplified Credit" : "Regular Credit"}</p>
+            <p className="text-muted-foreground">Tax Year {study.taxYear} â {study.calculationMethod === "asc" ? "Alternative Simplified Credit" : "Regular Credit"}</p>
           </div>
           <Badge className={statusColors[study.status] || ""}>{study.status.replace("_", " ")}</Badge>
         </div>
@@ -280,7 +280,7 @@ function StudyDetail({ studyId, onBack }: { studyId: number; onBack: () => void 
           </Select>
           <div className="flex items-center gap-2 text-sm">
             <Switch id="elect280c" checked={elect280C} onCheckedChange={setElect280C} />
-            <Label htmlFor="elect280c" className="cursor-pointer whitespace-nowrap">§280C Election</Label>
+            <Label htmlFor="elect280c" className="cursor-pointer whitespace-nowrap">Â§280C Election</Label>
           </div>
           <Button onClick={() => calculateCredit.mutate({ studyId, elect280CReduction: elect280C })} disabled={calculateCredit.isPending}>
             {calculateCredit.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Calculator className="h-4 w-4 mr-2" />}
@@ -307,7 +307,7 @@ function StudyDetail({ studyId, onBack }: { studyId: number; onBack: () => void 
           <p className="text-xl font-bold">{fmt(study.grossCredit)}</p>
         </CardContent></Card>
         <Card><CardContent className="pt-4 text-center">
-          <p className="text-xs text-muted-foreground">§280C Reduction</p>
+          <p className="text-xs text-muted-foreground">Â§280C Reduction</p>
           <p className="text-xl font-bold text-red-500">{fmt(study.section280CReduction)}</p>
         </CardContent></Card>
         <Card className="border-green-200 bg-green-50"><CardContent className="pt-4 text-center">
@@ -457,7 +457,7 @@ function ProjectsTab({ studyId, projects, onRefresh }: { studyId: number; projec
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Add R&D Project</DialogTitle>
-            <DialogDescription>Document the project and complete the IRC §41 four-part test.</DialogDescription>
+            <DialogDescription>Document the project and complete the IRC Â§41 four-part test.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
@@ -468,7 +468,7 @@ function ProjectsTab({ studyId, projects, onRefresh }: { studyId: number; projec
 
             {/* Four-Part Test */}
             <div className="border rounded-lg p-4 space-y-4">
-              <h4 className="font-semibold flex items-center gap-2"><ClipboardCheck className="h-4 w-4" /> IRC §41 Four-Part Test</h4>
+              <h4 className="font-semibold flex items-center gap-2"><ClipboardCheck className="h-4 w-4" /> IRC Â§41 Four-Part Test</h4>
 
               {[
                 { key: "technologicalInNature", notesKey: "technologicalNatureNotes", label: "1. Technological in Nature", desc: "Does the activity rely on principles of physical/biological science, engineering, or computer science?" },
@@ -501,7 +501,7 @@ function ProjectsTab({ studyId, projects, onRefresh }: { studyId: number; projec
 
               <div className="border-t pt-3">
                 {fourPartTestPasses(form) ? (
-                  <Badge className="bg-green-100 text-green-700"><CheckCircle2 className="h-3 w-3 mr-1" /> All four parts satisfied — project qualifies</Badge>
+                  <Badge className="bg-green-100 text-green-700"><CheckCircle2 className="h-3 w-3 mr-1" /> All four parts satisfied â project qualifies</Badge>
                 ) : (
                   <Badge className="bg-yellow-100 text-yellow-700">Complete all four parts for the project to qualify</Badge>
                 )}
@@ -607,8 +607,8 @@ function ExpensesTab({ studyId, projects, expenses, onRefresh }: { studyId: numb
             {expenses.map((exp) => (
               <TableRow key={exp.id}>
                 <TableCell><Badge variant="outline">{categoryLabels[exp.category] || exp.category}</Badge></TableCell>
-                <TableCell className="max-w-xs truncate">{exp.description || "—"}</TableCell>
-                <TableCell>{exp.employeeName || exp.vendorName || "—"}</TableCell>
+                <TableCell className="max-w-xs truncate">{exp.description || "â"}</TableCell>
+                <TableCell>{exp.employeeName || exp.vendorName || "â"}</TableCell>
                 <TableCell className="text-right">{fmt(exp.grossAmount)}</TableCell>
                 <TableCell className="text-right">
                   <InlineRdPercent
@@ -672,7 +672,7 @@ function ExpensesTab({ studyId, projects, expenses, onRefresh }: { studyId: numb
               <div><Label>Qualified Amount</Label><Input value={computeQualified()} readOnly className="bg-muted" /></div>
             </div>
             {form.category === "contract_research" && (
-              <p className="text-xs text-muted-foreground">Contract research expenses are qualified at 65% per IRC §41(b)(3).</p>
+              <p className="text-xs text-muted-foreground">Contract research expenses are qualified at 65% per IRC Â§41(b)(3).</p>
             )}
           </div>
           <DialogFooter>
@@ -715,18 +715,18 @@ function Form6765Tab({ studyId }: { studyId: number }) {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><FileText className="h-5 w-5" /> IRS Form 6765 — Credit for Increasing Research Activities</CardTitle>
-          <CardDescription>Tax Year {form.taxYear} — {form.calculationMethod === "asc" ? "Section B (Alternative Simplified Credit)" : "Section A (Regular Credit)"}</CardDescription>
+          <CardTitle className="flex items-center gap-2"><FileText className="h-5 w-5" /> IRS Form 6765 â Credit for Increasing Research Activities</CardTitle>
+          <CardDescription>Tax Year {form.taxYear} â {form.calculationMethod === "asc" ? "Section B (Alternative Simplified Credit)" : "Section A (Regular Credit)"}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           {/* QRE Summary */}
           <div className="border rounded-lg p-4 space-y-3">
             <h4 className="font-semibold">Qualified Research Expenses</h4>
             <div className="grid grid-cols-2 gap-2 text-sm">
-              <span className="text-muted-foreground">Line 1 — Wages for qualified services</span><span className="text-right font-mono">{fmt(form.line1_wages)}</span>
-              <span className="text-muted-foreground">Line 2 — Cost of supplies</span><span className="text-right font-mono">{fmt(form.line2_supplies)}</span>
-              <span className="text-muted-foreground">Line 3 — Contract research (65%)</span><span className="text-right font-mono">{fmt(form.line3_contractResearch)}</span>
-              <span className="text-muted-foreground font-semibold">Line 5 — Total QREs</span><span className="text-right font-mono font-semibold">{fmt(form.line5_totalQre)}</span>
+              <span className="text-muted-foreground">Line 1 â Wages for qualified services</span><span className="text-right font-mono">{fmt(form.line1_wages)}</span>
+              <span className="text-muted-foreground">Line 2 â Cost of supplies</span><span className="text-right font-mono">{fmt(form.line2_supplies)}</span>
+              <span className="text-muted-foreground">Line 3 â Contract research (65%)</span><span className="text-right font-mono">{fmt(form.line3_contractResearch)}</span>
+              <span className="text-muted-foreground font-semibold">Line 5 â Total QREs</span><span className="text-right font-mono font-semibold">{fmt(form.line5_totalQre)}</span>
             </div>
           </div>
 
@@ -742,12 +742,12 @@ function Form6765Tab({ studyId }: { studyId: number }) {
                   <span className="text-muted-foreground">Average Prior QRE</span><span className="text-right font-mono">{fmt(form.averagePriorQre)}</span>
                 </>
               )}
-              <span className="text-muted-foreground">Line 6 — Base amount</span><span className="text-right font-mono">{fmt(form.line6_baseAmount)}</span>
-              <span className="text-muted-foreground">Line 7 — QREs over base</span><span className="text-right font-mono">{fmt(form.line7_excessQre)}</span>
-              <span className="text-muted-foreground">Line 8 — Credit rate</span><span className="text-right font-mono">{((parseFloat(String(form.line8_creditRate ?? 0))) * 100).toFixed(0)}%</span>
-              <span className="text-muted-foreground font-semibold">Line 9 — Gross credit</span><span className="text-right font-mono font-semibold">{fmt(form.line9_grossCredit)}</span>
-              <span className="text-muted-foreground">Line 10 — §280C reduction</span><span className="text-right font-mono text-red-500">{fmt(form.line10_section280C)}</span>
-              <span className="text-muted-foreground font-bold">Line 11 — Net credit</span><span className="text-right font-mono font-bold text-green-600 text-lg">{fmt(form.line11_netCredit)}</span>
+              <span className="text-muted-foreground">Line 6 â Base amount</span><span className="text-right font-mono">{fmt(form.line6_baseAmount)}</span>
+              <span className="text-muted-foreground">Line 7 â QREs over base</span><span className="text-right font-mono">{fmt(form.line7_excessQre)}</span>
+              <span className="text-muted-foreground">Line 8 â Credit rate</span><span className="text-right font-mono">{((parseFloat(String(form.line8_creditRate ?? 0))) * 100).toFixed(0)}%</span>
+              <span className="text-muted-foreground font-semibold">Line 9 â Gross credit</span><span className="text-right font-mono font-semibold">{fmt(form.line9_grossCredit)}</span>
+              <span className="text-muted-foreground">Line 10 â Â§280C reduction</span><span className="text-right font-mono text-red-500">{fmt(form.line10_section280C)}</span>
+              <span className="text-muted-foreground font-bold">Line 11 â Net credit</span><span className="text-right font-mono font-bold text-green-600 text-lg">{fmt(form.line11_netCredit)}</span>
             </div>
           </div>
 
@@ -770,7 +770,7 @@ function Form6765Tab({ studyId }: { studyId: number }) {
   );
 }
 
-// Inline R&D % editor — click to edit, blur or Enter to save.
+// Inline R&D % editor â click to edit, blur or Enter to save.
 function InlineRdPercent({ value, onSave }: { value: number; onSave: (v: number) => void }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(String(value));
@@ -796,6 +796,31 @@ function InlineRdPercent({ value, onSave }: { value: number; onSave: (v: number)
     <input
       autoFocus
       type="number"
+      min={0}
+      max={100}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") commit();
+        if (e.key === "Escape") setEditing(false);
+      }}
+      className="w-16 rounded border bg-background px-1 text-right text-sm"
+    />
+  );
+}
+
+// ============================================
+// IMPORT FROM QB BUTTON (Issue #270)
+// ============================================
+type QBImportCategory = "wages" | "supplies" | "contract_research" | "cloud_computing";
+
+function ImportFromQBButton({ studyId, projects, onRefresh }: {
+  studyId: number;
+  projects: Array<{ id?: number | null; projectName?: string | null }>;
+  onRefresh: () => void;
+}) {
+  const [open, setOpen] = useState(false);
       min={0}
       max={100}
       value={draft}
@@ -865,32 +890,9 @@ function ImportFromQBButton({ studyId, projects, onRefresh }: {
             <div className="grid grid-cols-2 gap-4">
               <div><Label>Start Date</Label><Input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} /></div>
               <div><Label>End Date</Label><Input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} /></div>
-            </div>
-            <div>
-              <Label>Category</Label>
-              <Select value={category} onValueChange={(v) => setCategory(v as QBImportCategory)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="wages">Employee Wages</SelectItem>
-                  <SelectItem value="supplies">Supplies</SelectItem>
-                  <SelectItem value="contract_research">Contract Research (65%)</SelectItem>
-                  <SelectItem value="cloud_computing">Cloud Computing</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button
-              onClick={() => importMutation.mutate({ studyId, projectId: parseInt(projectId), startDate, endDate, category })}
-              disabled={!projectId || importMutation.isPending}
-            >
-              {importMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Import Expenses
-            </Button>
-          </DialogFooter>
-        </DialogContent>
       </Dialog>
     </>
+  );
+}
   );
 }
