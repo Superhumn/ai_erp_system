@@ -20,6 +20,12 @@ const OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
+const SHOPIFY_API_VERSION = process.env.SHOPIFY_API_VERSION || '2024-01';
+const SHOPIFY_SCOPES = 'read_products,write_products,read_orders,write_orders,read_inventory,write_inventory';
+const OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
+
+// Role-based access middleware
+const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (ctx.user.role !== 'admin') {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Admin access required' });
   }
@@ -2000,7 +2006,7 @@ export const appRouter = router({
       .input(z.object({ testEmail: z.string().email() }))
       .mutation(async ({ input }) => {
         if (!isEmailConfigured()) {
-          throw new TRPCError({ code: 'BAD_REQUEST', message: 'SendGrid is not configured. Add SENDGRID_API_KEY and SENDGRID_FROM_EMAIL in Settings → Secrets.' });
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'SendGrid is not configured. Add SENDGRID_API_KEY and SENDGRID_FROM_EMAIL in Settings â Secrets.' });
         }
         
         const result = await sendEmail({
@@ -2026,12 +2032,247 @@ export const appRouter = router({
     // Sync history
     getSyncHistory: protectedProcedure
       .input(z.object({ limit: z.number().optional() }))
-      .query(async ({ input }) => {
-        return await db.getSyncHistory(input.limit || 50);
-      }),
+      await db.clearSyncHistory();
+      return { success: true };
+    }),
 
-    // Clear sync history
-    clearSyncHistory: adminProcedure.mutation(async () => {
+    // Shopify OAuth integration
+    // Provides secure OAuth-based connection to Shopify stores for order and inventory sync
+    shopify: router({
+      // Initiate OAuth flow
+      // Returns the Shopify authorization URL for the user to visit
+      initiateOAuth: protectedProcedure
+        .input(z.object({
+          shop: z.string().min(1), // shop domain like 'mystore.myshopify.com'
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const clientId = process.env.SHOPIFY_CLIENT_ID;
+          if (!clientId) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Shopify OAuth is not configured. Please add SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET environment variables.' });
+          }
+
+          // Normalize shop domain
+          let shopDomain = input.shop.trim().toLowerCase();
+          if (!shopDomain.includes('.')) {
+            shopDomain = `${shopDomain}.myshopify.com`;
+          }
+          if (!shopDomain.endsWith('.myshopify.com')) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid shop domain. Must be a myshopify.com domain.' });
+          }
+
+          // Build OAuth URL
+          const redirectUri = `${process.env.VITE_APP_URL || process.env.APP_URL || 'http://localhost:3000'}/api/shopify/callback`;
+          const state = `${ctx.user.id}:${ctx.user.companyId || 'undefined'}:${shopDomain}:${Date.now()}`; // Include user ID, company ID, shop, and timestamp
+
+          const authUrl = `https://${shopDomain}/admin/oauth/authorize?client_id=${clientId}&scope=${SHOPIFY_SCOPES}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}&grant_options[]=per-user`;
+
+          return { 
+            authUrl,
+            shop: shopDomain,
+            state,
+          };
+        }),
+
+      // Handle OAuth callback (exchange code for token)
+      handleCallback: protectedProcedure
+        .input(z.object({
+          shop: z.string().min(1),
+          code: z.string().min(1),
+          state: z.string().min(1), // Required for CSRF protection
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const clientId = process.env.SHOPIFY_CLIENT_ID;
+          const clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
+
+          if (!clientId || !clientSecret) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Shopify OAuth is not configured' });
+          }
+
+          // Validate state parameter to prevent CSRF attacks
+          if (!input.state || !input.state.includes(':')) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid state parameter' });
+          }
+
+          const stateParts = input.state.split(':');
+          if (stateParts.length < 4) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid state format' });
+          }
+
+          const stateUserId = parseInt(stateParts[0]);
+          const stateCompanyId = stateParts[1] !== 'undefined' ? parseInt(stateParts[1]) : undefined;
+          const stateShop = stateParts[2];
+          const stateTimestamp = parseInt(stateParts[3]);
+
+          // Verify state matches current user
+          if (stateUserId !== ctx.user.id) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'State parameter does not match current user' });
+          }
+
+          // Verify company ID matches (if user has one)
+          if (ctx.user.companyId && stateCompanyId !== ctx.user.companyId) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Company mismatch in OAuth flow' });
+          }
+
+          // Verify shop domain matches
+          if (stateShop !== input.shop.trim().toLowerCase()) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Shop domain does not match state' });
+          }
+
+          // Check state is not too old (10 minutes max)
+          if (Date.now() - stateTimestamp > OAUTH_STATE_MAX_AGE_MS) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'OAuth state has expired. Please try again.' });
+          }
+
+          // Validate shop domain
+          let shopDomain = input.shop.trim().toLowerCase();
+          if (!shopDomain.endsWith('.myshopify.com')) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid shop domain' });
+          }
+
+          // Exchange authorization code for access token
+          const tokenUrl = `https://${shopDomain}/admin/oauth/access_token`;
+          const response = await fetch(tokenUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              client_id: clientId,
+              client_secret: clientSecret,
+              code: input.code,
+            }),
+          });
+
+          if (!response.ok) {
+            const error = await response.text();
+            throw new TRPCError({ code: 'BAD_REQUEST', message: `Failed to get access token: ${error}` });
+          }
+
+          const tokenData = await response.json();
+          const accessToken = tokenData.access_token;
+
+          // Verify the token works by fetching shop info
+          const shopInfoResponse = await fetch(`https://${shopDomain}/admin/api/2024-01/shop.json`, {
+            headers: {
+              'X-Shopify-Access-Token': accessToken,
+              'Content-Type': 'application/json',
+            },
+          });
+
+          if (!shopInfoResponse.ok) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Failed to verify Shopify access token' });
+          }
+
+          const shopInfo = await shopInfoResponse.json();
+          const shop = shopInfo.shop;
+
+          // Encrypt the access token before storing
+          const encryptedToken = encrypt(accessToken);
+
+          // Store or update the Shopify store connection
+          const result = await db.upsertShopifyStore(shopDomain, {
+            companyId: ctx.user.companyId || undefined,
+            storeDomain: shopDomain,
+            storeName: shop.name || shopDomain,
+            accessToken: encryptedToken,
+            apiVersion: SHOPIFY_API_VERSION,
+            isEnabled: true,
+            syncInventory: true,
+            syncOrders: true,
+            inventoryAuthority: 'hybrid',
+          });
+
+          // Log the connection
+          await db.createSyncLog({
+            integration: 'shopify',
+            action: 'store_connected',
+            status: 'success',
+            details: `Connected store: ${shop.name} (${shopDomain})`,
+          });
+
+          await createAuditLog(ctx.user.id, 'create', 'shopify_store', result.id, `Connected ${shop.name}`);
+
+          return {
+            success: true,
+            store: {
+              id: result.id,
+              storeName: shop.name,
+              storeDomain: shopDomain,
+              isNew: result.isNew,
+            },
+          };
+        }),
+
+      // Disconnect a Shopify store
+      disconnect: protectedProcedure
+        .input(z.object({ storeId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const store = await db.getShopifyStoreById(input.storeId);
+          if (!store) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Store not found' });
+          }
+
+          // Disable the store instead of deleting it to preserve history
+          await db.updateShopifyStore(input.storeId, { 
+            isEnabled: false,
+            accessToken: null, // Clear the token
+          });
+
+          await db.createSyncLog({
+            integration: 'shopify',
+            action: 'store_disconnected',
+            status: 'success',
+            details: `Disconnected store: ${store.storeName} (${store.storeDomain})`,
+          });
+
+          await createAuditLog(ctx.user.id, 'delete', 'shopify_store', input.storeId, `Disconnected ${store.storeName}`);
+
+          return { success: true };
+        }),
+
+      // Test connection to a Shopify store
+      testConnection: protectedProcedure
+        .input(z.object({ storeId: z.number() }))
+        .mutation(async ({ input }) => {
+          const store = await db.getShopifyStoreById(input.storeId);
+          if (!store) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Store not found' });
+          }
+
+          if (!store.accessToken) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Store has no access token' });
+          }
+
+          // Decrypt the access token
+          const accessToken = decrypt(store.accessToken);
+
+          // Test by fetching shop info
+          const response = await fetch(`https://${store.storeDomain}/admin/api/${store.apiVersion}/shop.json`, {
+            headers: {
+              'X-Shopify-Access-Token': accessToken,
+              'Content-Type': 'application/json',
+            },
+          });
+
+          if (!response.ok) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Failed to connect to Shopify. Token may be invalid.' });
+          }
+
+          const data = await response.json();
+          
+          return {
+            success: true,
+            message: `Connected to ${data.shop.name}`,
+            shopInfo: {
+              name: data.shop.name,
+              email: data.shop.email,
+              domain: data.shop.domain,
+              plan: data.shop.plan_name,
+            },
+          };
+        }),
+    }),
+  }),
+
+  // ============================================
       await db.clearSyncHistory();
       return { success: true };
     }),
@@ -3954,7 +4195,7 @@ Format the email professionally and request a response by ${rfq.quoteDueDate ? n
           const analysisPrompt = `Analyze and compare these freight quotes for the following shipment:
 
 Shipment Details:
-- Route: ${rfq?.originCity}, ${rfq?.originCountry} → ${rfq?.destinationCity}, ${rfq?.destinationCountry}
+- Route: ${rfq?.originCity}, ${rfq?.originCountry} â ${rfq?.destinationCity}, ${rfq?.destinationCountry}
 - Cargo: ${rfq?.cargoDescription}
 - Weight: ${rfq?.totalWeight} kg
 - Volume: ${rfq?.totalVolume} CBM
