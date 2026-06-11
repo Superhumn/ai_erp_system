@@ -3,6 +3,7 @@ import * as React from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -28,7 +29,6 @@ import {
   Loader2,
   ExternalLink
 } from "lucide-react";
-
 export default function IntegrationsPage() {
   const [testEmail, setTestEmail] = useState("");
   const [showAddShopify, setShowAddShopify] = useState(false);
@@ -38,7 +38,6 @@ export default function IntegrationsPage() {
 
   const { data: status, isLoading, refetch } = trpc.integrations.getStatus.useQuery();
   const { data: syncHistory } = trpc.integrations.getSyncHistory.useQuery({ limit: 20 });
-
   const testSendgridMutation = trpc.integrations.testSendgrid.useMutation({
     onSuccess: (data) => {
       toast.success(data.message);
@@ -46,6 +45,7 @@ export default function IntegrationsPage() {
     },
     onError: (error) => {
       toast.error(error.message);
+    },
     },
   });
 
@@ -134,22 +134,93 @@ export default function IntegrationsPage() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "connected":
+  const shopifyDisconnectMutation = trpc.integrations.shopify.disconnect.useMutation({
+    onSuccess: () => {
+      toast.success("Store disconnected successfully");
+      refetch();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const shopifyTestConnectionMutation = trpc.integrations.shopify.testConnection.useMutation({
+    onSuccess: (data) => {
+      toast.success(data.message);
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const clearHistoryMutation = trpc.integrations.clearSyncHistory.useMutation({
+    onSuccess: () => {
+      toast.success("Sync history cleared");
+      refetch();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  // Check for OAuth callback success/error in URL
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const shopifySuccess = params.get('shopify_success');
+    const shopifyError = params.get('shopify_error');
+    const shopName = params.get('shop');
+
+    if (shopifySuccess === 'connected') {
+      toast.success(`Successfully connected to ${shopName || 'Shopify store'}!`);
+      refetch();
+      // Clean up URL
+      window.history.replaceState({}, '', '/settings/integrations');
+    } else if (shopifyError) {
+      const errorMessages: Record<string, string> = {
+        'missing_params': 'Missing required parameters from Shopify',
+        'not_configured': 'Shopify integration is not configured. Please contact your administrator.',
+          </Button>
+        </div>
+
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+          <TabsList>
+            <TabsTrigger value="connections">Connections</TabsTrigger>
+            <TabsTrigger value="shopify">Shopify</TabsTrigger>
+        'token_exchange_failed': 'Failed to exchange authorization code for access token',
+        'failed_to_fetch_shop_info': 'Failed to fetch shop information',
+        'oauth_failed': 'OAuth authentication failed',
+      };
+      toast.error(errorMessages[shopifyError] || 'Failed to connect Shopify store');
+      // Clean up URL
+      window.history.replaceState({}, '', '/settings/integrations');
+    }
+  }, [refetch]);
+
+  const handleConnectShopify = () => {
+    if (!shopifyShopDomain.trim()) {
+      toast.error("Please enter your Shopify store domain");
+      return;
+    }
+    setShopifyConnecting(true);
+    shopifyInitiateOAuthMutation.mutate({ shop: shopifyShopDomain });
+  };
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case "connected":
         return <Badge className="bg-green-500/10 text-green-500 border-green-500/20"><CheckCircle2 className="w-3 h-3 mr-1" /> Connected</Badge>;
       case "error":
         return <Badge variant="destructive"><XCircle className="w-3 h-3 mr-1" /> Error</Badge>;
       case "not_configured":
         return <Badge variant="secondary"><AlertCircle className="w-3 h-3 mr-1" /> Not Configured</Badge>;
       default:
-        return <Badge variant="outline">{status}</Badge>;
-    }
-  };
-
-  const getSyncStatusBadge = (status: string) => {
-    switch (status) {
-      case "success":
-        return <Badge className="bg-green-500/10 text-green-500 border-green-500/20">Success</Badge>;
-      case "error":
-        return <Badge variant="destructive">Error</Badge>;
+                    variant="outline" 
+                    size="sm"
+                    disabled={!status?.sendgrid?.configured}
+                    onClick={() => setActiveTab("email")}
+                  >
+                    <Settings className="w-4 h-4 mr-2" />
+                    Configure
       case "warning":
         return <Badge className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20">Warning</Badge>;
       case "pending":
@@ -174,16 +245,13 @@ export default function IntegrationsPage() {
             <h1 className="text-3xl font-bold">Integration Settings</h1>
             <p className="text-muted-foreground mt-1">
               Manage API connections, sync configurations, and external services
-            </p>
-          </div>
-          <Button variant="outline" onClick={() => refetch()}>
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Refresh Status
-          </Button>
-        </div>
-
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-          <TabsList>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => setActiveTab("shopify")}
+                  >
+                    <Settings className="w-4 h-4 mr-2" />
+                    Configure
             <TabsTrigger value="connections">Connections</TabsTrigger>
             <TabsTrigger value="shopify">Shopify</TabsTrigger>
             <TabsTrigger value="email">Email (SendGrid)</TabsTrigger>
@@ -211,7 +279,7 @@ export default function IntegrationsPage() {
                   <p className="text-sm text-muted-foreground mb-4">
                     {status?.sendgrid?.configured 
                       ? "SendGrid is configured and ready to send emails."
-                      : "Add SENDGRID_API_KEY and SENDGRID_FROM_EMAIL in Settings → Secrets to enable email sending."}
+                      : "Add SENDGRID_API_KEY and SENDGRID_FROM_EMAIL in Settings â Secrets to enable email sending."}
                   </p>
                   <Button 
                     variant="outline" 
@@ -255,74 +323,6 @@ export default function IntegrationsPage() {
                   </Button>
                 </CardContent>
               </Card>
-
-              {/* Google Sheets Card */}
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-emerald-500/10 rounded-lg">
-                      <FileSpreadsheet className="w-5 h-5 text-emerald-500" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-lg">Google Sheets</CardTitle>
-                      <CardDescription>Data import/export</CardDescription>
-                    </div>
-                  </div>
-                  {getStatusBadge(status?.google?.status || "not_configured")}
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    Connect Google account to import data from Google Sheets.
-                  </p>
-                  <Button variant="outline" size="sm" disabled>
-                    <Settings className="w-4 h-4 mr-2" />
-                    Configure
-                  </Button>
-                </CardContent>
-              </Card>
-
-              {/* QuickBooks Card */}
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-purple-500/10 rounded-lg">
-                      <Calculator className="w-5 h-5 text-purple-500" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-lg">QuickBooks</CardTitle>
-                      <CardDescription>Accounting software</CardDescription>
-                    </div>
-                  </div>
-                  {getStatusBadge(status?.quickbooks?.status || "not_configured")}
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    Connect QuickBooks for automatic financial sync.
-                  </p>
-                  <Button variant="outline" size="sm" disabled>
-                    <Settings className="w-4 h-4 mr-2" />
-                    Coming Soon
-                  </Button>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          {/* Shopify Tab */}
-          <TabsContent value="shopify" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle>Shopify Stores</CardTitle>
-                    <CardDescription>Manage connected Shopify stores for order and inventory sync</CardDescription>
-                  </div>
-                  <Dialog open={showAddShopify} onOpenChange={setShowAddShopify}>
-                    <DialogTrigger asChild>
-                      <Button>
-                        <Plus className="w-4 h-4 mr-2" />
-                        Add Store
-                      </Button>
                     </DialogTrigger>
                     <DialogContent>
                       <DialogHeader>
@@ -382,20 +382,106 @@ export default function IntegrationsPage() {
                         </Button>
                       </DialogFooter>
                     </DialogContent>
-                  </Dialog>
+                  <div>
+                    <CardTitle>Shopify Stores</CardTitle>
+                    <CardDescription>Manage connected Shopify stores for order and inventory sync</CardDescription>
+                  </div>
+                  <Dialog open={showAddShopify} onOpenChange={setShowAddShopify}>
+                    <DialogTrigger asChild>
+                      <Button>
+                        <Plus className="w-4 h-4 mr-2" />
+                        Add Store
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Connect Shopify Store</DialogTitle>
+                        <DialogDescription>
+                          Enter your Shopify store domain to securely connect via OAuth
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4 py-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="shopDomain">Shopify Store Domain</Label>
+                          <Input
+                            id="shopDomain"
+                            placeholder="mystore.myshopify.com"
+                            value={shopifyShopDomain}
+                            onChange={(e) => setShopifyShopDomain(e.target.value)}
+                            disabled={shopifyConnecting}
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Enter your store name or full domain (e.g., "mystore" or "mystore.myshopify.com")
+                          </p>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex gap-2">
+                              <Button 
+                                variant="ghost" 
+                                size="sm"
+                                onClick={() => shopifyTestConnectionMutation.mutate({ storeId: store.id })}
+                                disabled={shopifyTestConnectionMutation.isPending || !store.isEnabled}
+                                title="Test connection"
+                              >
+                                <TestTube className="w-4 h-4" />
+                              </Button>
+                              <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                className="text-destructive"
+                                onClick={() => {
+                                  if (confirm(`Are you sure you want to disconnect ${store.storeName || store.storeDomain}?`)) {
+                                    shopifyDisconnectMutation.mutate({ storeId: store.id });
+                                  }
+                                }}
+                                disabled={shopifyDisconnectMutation.isPending}
+                                title="Disconnect store"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </div>
+                            setShopifyShopDomain("");
+                            setShopifyConnecting(false);
+                          }}
+                          disabled={shopifyConnecting}
+                        >
+                          Cancel
+                        </Button>
+                        <Button 
+                          onClick={handleConnectShopify}
+                          disabled={shopifyConnecting || !shopifyShopDomain.trim()}
+                        >
+                          {shopifyConnecting ? (
+
+                <div className="mt-6 p-4 bg-muted/50 rounded-lg">
+                  <h4 className="font-medium mb-2">Sync Settings</h4>
+                  <p className="text-xs text-muted-foreground mb-3">
+                    Default settings for new store connections. Editing existing store settings coming soon.
+                  </p>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label>Sync Orders</Label>
+                        <p className="text-xs text-muted-foreground">Automatically import orders from Shopify</p>
+                      </div>
+                      <Switch defaultChecked disabled />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label>Sync Inventory</Label>
+                        <p className="text-xs text-muted-foreground">Push inventory levels to Shopify</p>
+                      </div>
+                      <Switch defaultChecked disabled />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label>Auto-fulfill Orders</Label>
+                        <p className="text-xs text-muted-foreground">Mark orders as fulfilled when shipped</p>
+                      </div>
+                      <Switch disabled />
+                    </div>
+                  </div>
                 </div>
-              </CardHeader>
-              <CardContent>
-                {status?.shopify?.stores && status.shopify.stores.length > 0 ? (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Store Name</TableHead>
-                        <TableHead>Domain</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Last Sync</TableHead>
-                        <TableHead>Actions</TableHead>
-                      </TableRow>
                     </TableHeader>
                     <TableBody>
                       {status.shopify.stores.map((store: any) => (
@@ -511,7 +597,7 @@ export default function IntegrationsPage() {
                     <p className="text-sm text-muted-foreground">
                       {status?.sendgrid?.configured 
                         ? "Your SendGrid API key is set and ready to send emails."
-                        : "Add your SendGrid credentials in Settings → Secrets to enable email sending."}
+                        : "Add your SendGrid credentials in Settings â Secrets to enable email sending."}
                     </p>
                   </div>
                 </div>
@@ -521,9 +607,9 @@ export default function IntegrationsPage() {
                     <h4 className="font-medium">Setup Instructions</h4>
                     <ol className="list-decimal list-inside space-y-2 text-sm text-muted-foreground">
                       <li>Create a SendGrid account at <a href="https://sendgrid.com" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">sendgrid.com</a></li>
-                      <li>Go to Settings → API Keys and create a new API key with "Mail Send" permissions</li>
-                      <li>Verify a sender email address in Settings → Sender Authentication</li>
-                      <li>Add the following secrets in Settings → Secrets:
+                      <li>Go to Settings â API Keys and create a new API key with "Mail Send" permissions</li>
+                      <li>Verify a sender email address in Settings â Sender Authentication</li>
+                      <li>Add the following secrets in Settings â Secrets:
                         <ul className="list-disc list-inside ml-4 mt-1">
                           <li><code className="bg-muted px-1 rounded">SENDGRID_API_KEY</code> - Your API key (starts with SG.)</li>
                           <li><code className="bg-muted px-1 rounded">SENDGRID_FROM_EMAIL</code> - Your verified sender email</li>
