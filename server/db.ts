@@ -3728,6 +3728,20 @@ export async function upsertShopifyStore(storeDomain: string, data: InsertShopif
 // Webhook Events
 export async function createWebhookEvent(data: InsertWebhookEvent) {
   const db = await getDb();
+  
+  const existing = await getShopifyStoreByDomain(storeDomain);
+  if (existing) {
+    await updateShopifyStore(existing.id, data);
+    return { id: existing.id, isNew: false };
+  } else {
+    const result = await createShopifyStore(data);
+    return { id: result.id, isNew: true };
+  }
+}
+
+// Webhook Events
+export async function createWebhookEvent(data: InsertWebhookEvent) {
+  const db = await getDb();
   if (!db) throw new Error("Database not available");
   const result = await db.insert(webhookEvents).values(data);
   return { id: result[0].insertId };
