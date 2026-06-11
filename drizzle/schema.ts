@@ -1921,6 +1921,7 @@ export const shopifyStores = mysqlTable("shopifyStores", {
   storeDomain: varchar("storeDomain", { length: 255 }).notNull().unique(), // mystore.myshopify.com
   storeName: varchar("storeName", { length: 255 }),
   accessToken: text("accessToken"), // Encrypted in production
+  accessToken: text("accessToken"), // Encrypted in production
   apiVersion: varchar("apiVersion", { length: 16 }).default("2024-01"),
   isEnabled: boolean("isEnabled").default(true),
   syncInventory: boolean("syncInventory").default(true),
