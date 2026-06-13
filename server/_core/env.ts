@@ -33,6 +33,9 @@ export const ENV = {
     sendgridReplyTo: process.env.SENDGRID_REPLY_TO ?? "",      // REPLY_TO - optional reply-to address
     sendgridWebhookSecret: process.env.SENDGRID_WEBHOOK_SECRET ?? "", // For webhook signature verification
 
+    // B2B Rocket lead-intake webhook (via Zapier "New Lead" trigger)
+    b2brocketWebhookSecret: process.env.B2BROCKET_WEBHOOK_SECRET ?? "", // Shared secret sent by Zapier as ?secret= or x-webhook-secret header
+
     // Public app URL for email links
     publicAppUrl: process.env.PUBLIC_APP_URL ?? process.env.APP_URL ?? "http://localhost:3000",
 
