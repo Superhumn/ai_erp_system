@@ -45,9 +45,16 @@ function runStrict() {
     if (output.trim()) console.error(output.trim());
     process.exit(2);
   }
-  // tsc exits 0 with no errors, 1 with type errors.
-  // Other exit codes (e.g. 2 for config/options errors) are fatal.
-  if (r.status !== 0 && r.status !== 1) {
+  // tsc's exit code is unreliable for gating. With `incremental` enabled, a
+  // clean run that finds errors exits 2 (no prior .tsbuildinfo on disk), while
+  // a warm re-run with a cached .tsbuildinfo exits 1. CI always runs clean, so
+  // gating on the exit code alone makes the ratchet fail on every run. Instead,
+  // decide based on whether tsc produced parseable per-file diagnostics: if it
+  // did, the typecheck genuinely ran and we proceed to count. Only bail when a
+  // non-zero/non-one exit produced no diagnostics at all (a real tooling or
+  // config failure, e.g. pnpm missing or an invalid tsconfig).
+  const hasDiagnostics = /^[^()\s][^()]*\(\d+,\d+\):\s+error\s/m.test(output);
+  if (r.status !== 0 && r.status !== 1 && !hasDiagnostics) {
     console.error(
       `Strict typecheck failed with exit code ${r.status}. This usually indicates a tooling/config issue (e.g. pnpm not available or invalid TypeScript config).`,
     );
