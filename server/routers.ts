@@ -11252,13 +11252,11 @@ Ask if they received the original request and if they can provide a quote.`;
             throw new TRPCError({ code: 'BAD_REQUEST', message: 'No received quotes to level for this RFQ' });
           }
 
-          const vendorNames = new Map<number, string>();
-          for (const q of quotes) {
-            if (!vendorNames.has(q.vendorId)) {
-              const v = await db.getVendorById(q.vendorId);
-              vendorNames.set(q.vendorId, v?.name || `Vendor ${q.vendorId}`);
-            }
-          }
+          // Batch-load vendors (avoid an N+1 per-quote lookup).
+          const uniqueVendorIds = Array.from(new Set(quotes.map(q => q.vendorId)));
+          const vendorList = await db.getVendorsByIds(uniqueVendorIds);
+          const vendorNames = new Map<number, string>(uniqueVendorIds.map(id => [id, `Vendor ${id}`]));
+          for (const v of vendorList) vendorNames.set(v.id, v.name || `Vendor ${v.id}`);
 
           const requirementBlock = `RFQ ${rfq.rfqNumber}
 Material: ${rfq.materialName}${rfq.materialDescription ? ` — ${rfq.materialDescription}` : ''}
@@ -11327,7 +11325,7 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
                               properties: {
                                 requirement: { type: 'string' },
                                 finding: { type: 'string' },
-                                severity: { type: 'string' },
+                                severity: { type: 'string', enum: ['low', 'medium', 'high'] },
                               },
                               required: ['requirement', 'finding', 'severity'],
                               additionalProperties: false,
@@ -11350,38 +11348,81 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
 
           const raw = response.choices[0]?.message?.content;
           const content = typeof raw === 'string' ? raw : JSON.stringify(raw);
-          let parsed: any;
+          let parsed: unknown;
           try {
             parsed = JSON.parse(content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, ''));
           } catch {
             throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to parse bid-leveling response' });
           }
 
+          // `response_format: json_schema` is only a prompt hint here (see
+          // server/_core/llm.ts) — nothing enforces the shape — so validate at
+          // runtime. The overall structure must match; per-quote field fuzz the
+          // model may emit (bad severity casing, missing numbers) falls back
+          // rather than failing the whole leveling pass.
+          const deviationSchema = z.object({
+            requirement: z.string().catch(''),
+            finding: z.string().catch(''),
+            severity: z
+              .preprocess(v => (typeof v === 'string' ? v.toLowerCase() : v), z.enum(['low', 'medium', 'high']))
+              .catch('medium'),
+          });
+          const leveledQuoteSchema = z.object({
+            quoteId: z.number(),
+            leveledTotalCost: z.number().nullable().catch(null),
+            leveledRank: z.number().nullable().catch(null),
+            score: z.number().nullable().catch(null),
+            rationale: z.string().nullable().catch(null),
+            scopeDeviations: z.array(deviationSchema).catch([]),
+          });
+          const responseSchema = z.object({
+            quotes: z.array(leveledQuoteSchema),
+            recommendedQuoteId: z.number().nullable().catch(null),
+            summary: z.string(),
+          });
+          const validation = responseSchema.safeParse(parsed);
+          if (!validation.success) {
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message: 'Bid-leveling response did not match the expected shape',
+            });
+          }
+          const leveled = validation.data;
+
           const now = new Date();
           const validIds = new Set(quotes.map(q => q.id));
-          for (const item of (parsed.quotes || [])) {
+          for (const item of leveled.quotes) {
             if (!validIds.has(item.quoteId)) continue;
             await db.updateVendorQuote(item.quoteId, {
-              leveledTotalCost: typeof item.leveledTotalCost === 'number' ? item.leveledTotalCost.toFixed(2) : null,
-              leveledRank: typeof item.leveledRank === 'number' ? item.leveledRank : null,
-              scopeDeviations: JSON.stringify(item.scopeDeviations || []),
-              leveledNotes: item.rationale || null,
-              aiScore: typeof item.score === 'number' ? Math.round(item.score) : undefined,
+              leveledTotalCost: item.leveledTotalCost != null ? item.leveledTotalCost.toFixed(2) : null,
+              leveledRank: item.leveledRank,
+              scopeDeviations: JSON.stringify(item.scopeDeviations),
+              leveledNotes: item.rationale,
               leveledAt: now,
+              // Only set aiScore when the model returned a number, so a missing
+              // score leaves the existing column value untouched.
+              ...(item.score != null ? { aiScore: Math.round(item.score) } : {}),
             });
           }
 
           await db.updateVendorRfq(input.rfqId, {
-            levelingSummary: parsed.summary || null,
+            levelingSummary: leveled.summary || null,
             leveledAt: now,
           });
+
+          // Only surface a recommendation that maps to a real quote on this RFQ;
+          // ignore a hallucinated id.
+          const recommendedQuoteId =
+            leveled.recommendedQuoteId != null && validIds.has(leveled.recommendedQuoteId)
+              ? leveled.recommendedQuoteId
+              : null;
 
           await createAuditLog(ctx.user.id, 'update', 'vendor_rfq', input.rfqId, `AI bid leveling across ${quotes.length} quotes`);
           return {
             success: true,
             leveledCount: quotes.length,
-            recommendedQuoteId: parsed.recommendedQuoteId,
-            summary: parsed.summary,
+            recommendedQuoteId,
+            summary: leveled.summary,
           };
         }),
     }),

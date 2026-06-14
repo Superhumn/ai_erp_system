@@ -471,7 +471,7 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                                 <td className="px-1.5 py-0.5 text-right font-mono">{formatCurrency(quote.unitPrice)}</td>
                                 <td className="px-1.5 py-0.5 text-right font-mono font-semibold">{formatCurrency(quote.totalPrice)}</td>
                                 <td className="px-1.5 py-0.5 text-right font-mono">
-                                  {quote.leveledTotalCost ? (
+                                  {quote.leveledTotalCost != null ? (
                                     <span title={quote.leveledNotes || ''}>{formatCurrency(quote.leveledTotalCost)}</span>
                                   ) : (
                                     <span className="text-muted-foreground">-</span>
