@@ -429,6 +429,8 @@ function AddLocationMappingButton({ storeId }: { storeId: number }) {
               Create Mapping
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
