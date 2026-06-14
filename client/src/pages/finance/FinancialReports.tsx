@@ -791,7 +791,7 @@ export default function FinancialReports() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Categories</SelectItem>
-                  {(modelCategories.data ?? []).map((cat: string) => (
+                  {(modelCategories.data ?? []).map((cat: any) => (
                     <SelectItem key={cat} value={cat}>{cat}</SelectItem>
                   ))}
                 </SelectContent>

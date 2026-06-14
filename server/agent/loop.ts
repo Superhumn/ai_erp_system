@@ -171,7 +171,7 @@ export async function runAgent(
       runId,
       status,
       iterations,
-      summary,
+      summary: summary ?? undefined,
       totalTokensUsed: totalTokens,
       totalDurationMs: totalDuration,
       toolCallCount,

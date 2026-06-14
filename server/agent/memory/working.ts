@@ -14,6 +14,7 @@ import type { AgentContext } from "../types";
  */
 export async function buildWorkingContext(userId: string, companyId?: number): Promise<AgentContext> {
   const db = await getDb();
+  if (!db) throw new Error("Database connection unavailable");
 
   let activeDealCount = 0;
   let openInvoiceCount = 0;

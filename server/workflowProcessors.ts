@@ -616,7 +616,7 @@ const procurementProcessor: WorkflowProcessor = {
             .where(eq(suggestedPoItems.suggestedPoId, spo.id));
 
           // Calculate totals
-          const subtotal = items.reduce((sum, item) => sum + parseFloat(item.totalPrice || "0"), 0);
+          const subtotal = items.reduce((sum: number, item: any) => sum + parseFloat(item.totalPrice || "0"), 0);
 
           // Create PO
           const poNumber = `PO-${Date.now().toString(36).toUpperCase()}`;

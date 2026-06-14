@@ -38,6 +38,7 @@ function getTwilioClient() {
  */
 export async function runSmsCommunication(input: SmsInput): Promise<ToolAdapterResult> {
   const db = await getDb();
+  if (!db) throw new Error("Database connection unavailable");
   const { action, payload } = input;
 
   switch (action) {

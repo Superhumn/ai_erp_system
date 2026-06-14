@@ -60,7 +60,7 @@ export default function VendorPortal() {
       setCustomsUploadOpen(false);
       refetchCustoms();
     },
-    onError: (error) => {
+    onError: (error: any) => {
       toast.error("Failed to upload customs document", { description: error.message });
     },
   });

@@ -124,7 +124,7 @@ export default function CodePage() {
 
   // Mutations
   const executeMutation = codeApi.execute.useMutation({
-    onSuccess: (data) => {
+    onSuccess: (data: any) => {
       setExecutionOutput(data);
       setActiveTab("output");
       if (data.exitCode === 0) {
@@ -133,16 +133,16 @@ export default function CodePage() {
         toast.error("Execution failed");
       }
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err: any) => toast.error(err.message),
   });
 
   const aiMutation = codeApi.aiAction.useMutation({
-    onSuccess: (data) => {
+    onSuccess: (data: any) => {
       setAiResult(data);
       setActiveTab("ai-result");
       toast.success("AI response received");
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err: any) => toast.error(err.message),
   });
 
   const createSnippetMutation = codeApi.createSnippet.useMutation({
@@ -151,7 +151,7 @@ export default function CodePage() {
       setShowSaveDialog(false);
       snippetsQuery.refetch();
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err: any) => toast.error(err.message),
   });
 
   const updateSnippetMutation = codeApi.updateSnippet.useMutation({
@@ -159,7 +159,7 @@ export default function CodePage() {
       toast.success("Snippet updated");
       snippetsQuery.refetch();
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err: any) => toast.error(err.message),
   });
 
   const deleteSnippetMutation = codeApi.deleteSnippet.useMutation({
@@ -172,7 +172,7 @@ export default function CodePage() {
         setSnippetTitle("");
       }
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err: any) => toast.error(err.message),
   });
 
   const handleRun = useCallback(() => {

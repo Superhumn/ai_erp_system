@@ -1185,10 +1185,10 @@ ONLY return the JSON array, no other text.`;
           });
 
           // Debit: Cash/Bank, Credit: Accounts Receivable
-          const cashAccount = await db.getAccountByCode("1000", invoice.companyId)
-            || await db.getAccountByName("Cash", invoice.companyId);
-          const arAccount = await db.getAccountByCode("1200", invoice.companyId)
-            || await db.getAccountByName("Accounts Receivable", invoice.companyId);
+          const cashAccount = await db.getAccountByCode("1000", invoice.companyId ?? undefined)
+            || await db.getAccountByName("Cash", invoice.companyId ?? undefined);
+          const arAccount = await db.getAccountByCode("1200", invoice.companyId ?? undefined)
+            || await db.getAccountByName("Accounts Receivable", invoice.companyId ?? undefined);
 
           if (cashAccount) {
             await db.createTransactionLine({
@@ -8003,7 +8003,7 @@ Extract and return as JSON:
                 const poItems = await db.getPurchaseOrderItems(shipment.purchaseOrderId);
                 for (const item of poItems) {
                   const quantity = item.quantity || '0';
-                  const existingInventory = await db.getInventory({ productId: item.productId, warehouseId });
+                  const existingInventory = await db.getInventory({ productId: item.productId ?? undefined, warehouseId });
                   if (existingInventory.length > 0) {
                     const existing = existingInventory[0];
                     const newQty = (parseFloat(existing.quantity) + parseFloat(quantity)).toString();
