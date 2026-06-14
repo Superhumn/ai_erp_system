@@ -3997,6 +3997,11 @@ export const vendorRfqs = mysqlTable("vendorRfqs", {
   notes: text("notes"),
   internalNotes: text("internalNotes"),
   createdById: int("createdById"),
+
+  // Bid leveling
+  levelingSummary: text("levelingSummary"), // AI award-recommendation narrative comparing leveled bids
+  leveledAt: timestamp("leveledAt"),
+
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -4038,6 +4043,13 @@ export const vendorQuotes = mysqlTable("vendorQuotes", {
   priceComparisonRank: int("priceComparisonRank"), // 1 = best price
   leadTimeComparisonRank: int("leadTimeComparisonRank"), // 1 = fastest
   overallRank: int("overallRank"), // Combined ranking
+
+  // Bid leveling (scope-normalized comparison)
+  leveledTotalCost: decimal("leveledTotalCost", { precision: 15, scale: 2 }), // Normalized total cost adjusted to a common scope baseline
+  leveledRank: int("leveledRank"), // 1 = best leveled value
+  scopeDeviations: text("scopeDeviations"), // JSON array of { requirement, finding, severity }
+  leveledNotes: text("leveledNotes"), // AI rationale for the leveling adjustments on this quote
+  leveledAt: timestamp("leveledAt"),
   
   // Communication
   receivedVia: mysqlEnum("receivedVia", ["email", "portal", "phone", "manual"]).default("email"),

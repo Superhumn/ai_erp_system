@@ -184,6 +184,15 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
     onError: (err) => toast.error(err.message),
   });
 
+  const levelBids = trpc.vendorQuotes.quotes.levelBids.useMutation({
+    onSuccess: (res) => {
+      toast.success(`Leveled ${res.leveledCount} quote${res.leveledCount === 1 ? '' : 's'} to a common scope baseline`);
+      utils.vendorQuotes.quotes.getWithVendorInfo.invalidate();
+      utils.vendorQuotes.rfqs.list.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
   const selectedRfq = rfqs?.find((r: any) => r.id === selectedRfqId);
 
   const rfqColumns: Column<any>[] = [
@@ -400,7 +409,31 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                   {/* Received Quotes Comparison */}
                   {selectedRfqQuotes && selectedRfqQuotes.length > 0 && (
                     <div>
-                      <h4 className="text-sm font-medium mb-2">Received Quotes ({selectedRfqQuotes.length})</h4>
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-sm font-medium">Received Quotes ({selectedRfqQuotes.length})</h4>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7"
+                          onClick={() => levelBids.mutate({ rfqId: selectedRfq.id })}
+                          disabled={levelBids.isPending}
+                        >
+                          {levelBids.isPending ? (
+                            <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                          ) : (
+                            <Sparkles className="h-3.5 w-3.5 mr-1" />
+                          )}
+                          Level Bids (AI)
+                        </Button>
+                      </div>
+                      {selectedRfq.levelingSummary && (
+                        <div className="mb-2 rounded border border-blue-200 bg-blue-50 p-2 text-xs text-blue-900">
+                          <div className="flex items-center gap-1 font-medium mb-0.5">
+                            <Sparkles className="h-3.5 w-3.5" /> Bid leveling summary
+                          </div>
+                          <p className="whitespace-pre-wrap">{selectedRfq.levelingSummary}</p>
+                        </div>
+                      )}
                       <div className="border rounded overflow-hidden">
                         <table className="w-full text-sm">
                           <thead className="bg-muted">
@@ -409,24 +442,58 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                               <th className="text-left px-1.5 py-1">Vendor</th>
                               <th className="text-right px-1.5 py-1">Unit Price</th>
                               <th className="text-right px-1.5 py-1">Total</th>
+                              <th className="text-right px-1.5 py-1">Leveled Cost</th>
+                              <th className="text-center px-1.5 py-1">Scope</th>
                               <th className="text-center px-1.5 py-1">Lead Time</th>
                               <th className="text-center px-1.5 py-1">Valid Until</th>
                               <th className="text-center px-1.5 py-1">Actions</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {selectedRfqQuotes.map((quote: any, idx: number) => (
+                            {[...selectedRfqQuotes]
+                              .sort((a: any, b: any) => (a.leveledRank ?? a.overallRank ?? 999) - (b.leveledRank ?? b.overallRank ?? 999))
+                              .map((quote: any, idx: number) => {
+                              const deviations: any[] = (() => {
+                                try { return quote.scopeDeviations ? JSON.parse(quote.scopeDeviations) : []; }
+                                catch { return []; }
+                              })();
+                              const highSeverity = deviations.some(d => d.severity === 'high');
+                              return (
                               <tr key={quote.id} className={`border-t ${idx === 0 ? 'bg-green-50' : ''}`}>
                                 <td className="px-1.5 py-0.5">
                                   {idx === 0 ? (
                                     <Badge className="bg-green-500">Best</Badge>
                                   ) : (
-                                    <span className="text-muted-foreground">#{quote.overallRank || idx + 1}</span>
+                                    <span className="text-muted-foreground">#{quote.leveledRank || quote.overallRank || idx + 1}</span>
                                   )}
                                 </td>
                                 <td className="px-1.5 py-0.5 font-medium">{quote.vendor?.name}</td>
                                 <td className="px-1.5 py-0.5 text-right font-mono">{formatCurrency(quote.unitPrice)}</td>
                                 <td className="px-1.5 py-0.5 text-right font-mono font-semibold">{formatCurrency(quote.totalPrice)}</td>
+                                <td className="px-1.5 py-0.5 text-right font-mono">
+                                  {quote.leveledTotalCost ? (
+                                    <span title={quote.leveledNotes || ''}>{formatCurrency(quote.leveledTotalCost)}</span>
+                                  ) : (
+                                    <span className="text-muted-foreground">-</span>
+                                  )}
+                                </td>
+                                <td className="px-1.5 py-0.5 text-center">
+                                  {quote.leveledAt ? (
+                                    deviations.length === 0 ? (
+                                      <Badge variant="outline" className="text-green-600 border-green-300">OK</Badge>
+                                    ) : (
+                                      <Badge
+                                        variant={highSeverity ? 'destructive' : 'outline'}
+                                        className={highSeverity ? '' : 'text-amber-600 border-amber-300'}
+                                        title={deviations.map(d => `${d.requirement}: ${d.finding} (${d.severity})`).join('\n')}
+                                      >
+                                        {deviations.length} flag{deviations.length === 1 ? '' : 's'}
+                                      </Badge>
+                                    )
+                                  ) : (
+                                    <span className="text-muted-foreground">-</span>
+                                  )}
+                                </td>
                                 <td className="px-1.5 py-0.5 text-center">{quote.leadTimeDays ? `${quote.leadTimeDays} days` : '-'}</td>
                                 <td className="px-1.5 py-0.5 text-center">{formatDate(quote.validUntil)}</td>
                                 <td className="px-1.5 py-0.5 text-center">
@@ -457,7 +524,7 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                                   {quote.status === 'converted_to_po' && <Badge className="bg-purple-500">PO Created</Badge>}
                                 </td>
                               </tr>
-                            ))}
+                            );})}
                           </tbody>
                         </table>
                       </div>
