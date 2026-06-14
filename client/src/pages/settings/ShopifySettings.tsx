@@ -356,7 +356,6 @@ function AddLocationMappingButton({ storeId }: { storeId: number }) {
   const [open, setOpen] = useState(false);
   const [shopifyLocationId, setShopifyLocationId] = useState("");
   const [warehouseId, setWarehouseId] = useState("");
-  const [locationName, setLocationName] = useState("");
 
   const { data: warehouses } = trpc.warehouses.list.useQuery();
 
@@ -366,7 +365,6 @@ function AddLocationMappingButton({ storeId }: { storeId: number }) {
       setOpen(false);
       setShopifyLocationId("");
       setWarehouseId("");
-      setLocationName("");
     },
     onError: (error: any) => toast.error(error.message),
   });
@@ -396,14 +394,6 @@ function AddLocationMappingButton({ storeId }: { storeId: number }) {
               <p className="text-xs text-muted-foreground">
                 Find this in your Shopify admin under Locations.
               </p>
-            </div>
-            <div className="space-y-2">
-              <Label>Location Name (optional)</Label>
-              <Input
-                placeholder="e.g. Main Warehouse"
-                value={locationName}
-                onChange={(e) => setLocationName(e.target.value)}
-              />
             </div>
             <div className="space-y-2">
               <Label>ERP Warehouse</Label>
