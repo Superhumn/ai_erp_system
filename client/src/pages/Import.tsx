@@ -53,18 +53,31 @@ const DATA_SECTIONS = [
   { value: "projects", label: "Projects" },
 ] as const;
 
-function parseCsvText(text: string): { headers: string[]; rows: Record<string, string>[] } {
-  const lines = text.split(/\r?\n/).filter(l => l.trim());
-  if (lines.length === 0) return { headers: [], rows: [] };
-  const sep = lines[0].includes("\t") ? "\t" : ",";
-  const headers = lines[0].split(sep).map(h => h.replace(/^"|"$/g, "").trim());
-  const rows = lines.slice(1).map(line => {
-    const vals = line.split(sep).map(v => v.replace(/^"|"$/g, "").trim());
-    const obj: Record<string, string> = {};
-    headers.forEach((h, i) => { obj[h] = vals[i] || ""; });
-    return obj;
-  });
-  return { headers, rows };
+type ParsedSheet = { headers: string[]; rows: Record<string, any>[] };
+type ParsedWorkbook = { sheetNames: string[]; sheets: Record<string, ParsedSheet> };
+
+// Parse a CSV/TSV/XLSX file into one or more sheets. SheetJS handles RFC 4180
+// CSV quoting (commas, escaped quotes and newlines inside quoted cells) and
+// multi-tab workbooks — both of which the previous naive splitter dropped.
+async function parseFileToWorkbook(file: File): Promise<ParsedWorkbook> {
+  const name = file.name.toLowerCase();
+  let workbook: XLSX.WorkBook;
+  if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
+    const buffer = await file.arrayBuffer();
+    workbook = XLSX.read(buffer, { type: "array", raw: false });
+  } else {
+    // CSV / TSV / plain text — SheetJS detects the delimiter and quoting.
+    const text = await file.text();
+    workbook = XLSX.read(text, { type: "string", raw: false });
+  }
+  const sheets: Record<string, ParsedSheet> = {};
+  for (const sheetName of workbook.SheetNames) {
+    const ws = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: "", raw: false });
+    const headers = rows.length > 0 ? Object.keys(rows[0]) : [];
+    sheets[sheetName] = { headers, rows };
+  }
+  return { sheetNames: workbook.SheetNames, sheets };
 }
 
 type DrivePreview = { fileId: string; fileName: string; detectedType: string; rowCount: number; supported: boolean };
@@ -447,15 +460,17 @@ function GoogleDriveFiles() {
   );
 }
 
-function CsvImportPanel({ file, onClear, parseXlsx }: {
+function CsvImportPanel({ file, onClear }: {
   file: File;
   onClear: () => void;
-  parseXlsx: (f: File) => Promise<{ headers: string[]; rows: Record<string, unknown>[] } | null>;
 }) {
   const [targetModule, setTargetModule] = useState<ImportModule | "">("");
-  const [parsed, setParsed] = useState<{ headers: string[]; rows: Record<string, any>[] } | null>(null);
+  const [workbook, setWorkbook] = useState<ParsedWorkbook | null>(null);
+  const [activeSheet, setActiveSheet] = useState<string>("");
   const [columnMapping, setColumnMapping] = useState<Record<string, string>>({});
   const [importing, setImporting] = useState(false);
+
+  const parsed: ParsedSheet | null = workbook && activeSheet ? workbook.sheets[activeSheet] ?? null : null;
 
   const importMutation = trpc.sheetsImport.importData.useMutation({
     onSuccess: (data) => {
@@ -471,34 +486,40 @@ function CsvImportPanel({ file, onClear, parseXlsx }: {
     },
   });
 
-  // Re-suggest a column->field mapping whenever the file is parsed or the
-  // target module changes. Manual dropdown edits live in columnMapping and are
-  // intentionally NOT a dependency, so they survive until module/file changes.
+  // Re-suggest a column->field mapping whenever the active sheet or target
+  // module changes. Manual dropdown edits live in columnMapping and are
+  // intentionally NOT a dependency, so they survive until sheet/module changes.
   useEffect(() => {
     if (parsed && targetModule) {
       setColumnMapping(buildDefaultMapping(parsed.headers, targetModule));
     }
-  }, [parsed, targetModule]);
+  }, [workbook, activeSheet, targetModule]);
 
   const handleParse = async () => {
-    const name = file.name.toLowerCase();
-    if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
-      const result = await parseXlsx(file);
-      if (result) {
-        setParsed({ headers: result.headers, rows: result.rows as any });
-        toast.success(`Parsed ${result.rows.length} rows`);
+    try {
+      const wb = await parseFileToWorkbook(file);
+      if (wb.sheetNames.length === 0) {
+        toast.error("No sheets found in the file");
+        return;
       }
-    } else {
-      const text = await file.text();
-      const result = parseCsvText(text);
-      setParsed(result);
-      toast.success(`Parsed ${result.rows.length} rows`);
+      setWorkbook(wb);
+      setActiveSheet(wb.sheetNames[0]);
+      const first = wb.sheets[wb.sheetNames[0]];
+      toast.success(
+        `Parsed ${first.rows.length} rows` +
+          (wb.sheetNames.length > 1 ? ` from "${wb.sheetNames[0]}" (${wb.sheetNames.length} sheets)` : ""),
+      );
+    } catch (err) {
+      toast.error("Failed to parse file");
+      console.error("Parse error:", err);
     }
   };
 
   const fields = targetModule ? IMPORT_FIELDS[targetModule] : [];
   const missingRequired = parsed && targetModule ? missingRequiredFields(targetModule, columnMapping) : [];
   const sectionLabel = DATA_SECTIONS.find(s => s.value === targetModule)?.label ?? "...";
+  const ignoredColumns = parsed ? parsed.headers.filter(h => (columnMapping[h] ?? IMPORT_SKIP) === IMPORT_SKIP) : [];
+  const mappedCount = parsed ? parsed.headers.length - ignoredColumns.length : 0;
 
   const handleImport = () => {
     if (!parsed || !targetModule) {
@@ -564,6 +585,26 @@ function CsvImportPanel({ file, onClear, parseXlsx }: {
           </Button>
         ) : (
           <div className="space-y-3">
+            {workbook && workbook.sheetNames.length > 1 && (
+              <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 dark:bg-amber-950/30 p-2">
+                <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
+                <span className="text-xs text-amber-700 dark:text-amber-300">
+                  This file has {workbook.sheetNames.length} sheets. Importing one at a time — choose which:
+                </span>
+                <select
+                  value={activeSheet}
+                  onChange={(e) => setActiveSheet(e.target.value)}
+                  className="text-xs border rounded-md px-2 py-1 bg-background ml-auto shrink-0"
+                >
+                  {workbook.sheetNames.map((name) => (
+                    <option key={name} value={name}>
+                      {name} ({workbook.sheets[name]?.rows.length ?? 0})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div className="text-sm text-muted-foreground">
               Found <strong>{parsed.rows.length}</strong> rows. Map each spreadsheet column to a{" "}
               <strong>{sectionLabel}</strong> field so the data lands in the right place
@@ -607,6 +648,18 @@ function CsvImportPanel({ file, onClear, parseXlsx }: {
                 {missingRequired.map(f => f.label).join(", ")}
               </div>
             )}
+
+            {/* Pre-flight transparency: exactly what will and won't be written. */}
+            <div className="rounded-md border bg-muted/40 p-2 text-xs space-y-1">
+              <div className="text-muted-foreground">
+                Importing <strong>{mappedCount}</strong> of {parsed.headers.length} column{parsed.headers.length === 1 ? "" : "s"} into <strong>{sectionLabel}</strong>.
+              </div>
+              {ignoredColumns.length > 0 && (
+                <div className="text-amber-600">
+                  Will be ignored: {ignoredColumns.join(", ")}
+                </div>
+              )}
+            </div>
 
             <Button onClick={handleImport} disabled={importing || !targetModule || missingRequired.length > 0}>
               {importing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
@@ -792,26 +845,6 @@ export default function Import() {
     setCsvFile(file);
     toast.success(`File "${file.name}" ready for upload`);
   }, [isImageFile, handleImageFile]);
-
-  const parseXlsxFile = useCallback(async (file: File): Promise<{ headers: string[]; rows: Record<string, unknown>[] } | null> => {
-    try {
-      const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: "array" });
-      const firstSheetName = workbook.SheetNames[0];
-      if (!firstSheetName) {
-        toast.error("No sheets found in the workbook");
-        return null;
-      }
-      const worksheet = workbook.Sheets[firstSheetName];
-      const jsonData = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet);
-      const headers = jsonData.length > 0 ? Object.keys(jsonData[0]) : [];
-      return { headers, rows: jsonData };
-    } catch (err) {
-      toast.error("Failed to parse XLSX file");
-      console.error("XLSX parse error:", err);
-      return null;
-    }
-  }, []);
 
   const getTypeBadgeColor = (type: string) => {
     switch (type) {
@@ -1149,7 +1182,7 @@ export default function Import() {
           )}
 
           {csvFile && !imagePreviewUrl && (
-            <CsvImportPanel file={csvFile} onClear={() => setCsvFile(null)} parseXlsx={parseXlsxFile} />
+            <CsvImportPanel file={csvFile} onClear={() => setCsvFile(null)} />
           )}
         </CardContent>
       </Card>
