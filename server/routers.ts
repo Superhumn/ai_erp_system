@@ -251,12 +251,15 @@ export function detectSheetType(headers: string[]): string {
   return 'unknown';
 }
 
-// Helper to generate unique numbers
+// Helper to generate unique reference numbers (e.g. EMP-2606-1234). Uses a
+// CSPRNG for the suffix — not because these are secrets, but to satisfy static
+// analysis and avoid Math.random()'s modulo bias.
 export function generateNumber(prefix: string) {
   const date = new Date();
   const year = date.getFullYear().toString().slice(-2);
   const month = (date.getMonth() + 1).toString().padStart(2, '0');
-  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+  const crypto = require('crypto');
+  const random = crypto.randomInt(10000).toString().padStart(4, '0');
   return `${prefix}-${year}${month}-${random}`;
 }
 // Secure password hashing helpers using scrypt
