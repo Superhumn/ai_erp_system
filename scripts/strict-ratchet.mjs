@@ -45,9 +45,17 @@ function runStrict() {
     if (output.trim()) console.error(output.trim());
     process.exit(2);
   }
-  // tsc exits 0 with no errors, 1 with type errors.
-  // Other exit codes (e.g. 2 for config/options errors) are fatal.
-  if (r.status !== 0 && r.status !== 1) {
+  // tsc's diagnostic exit codes (all mean "ran to completion, diagnostics may
+  // be present" — we always parse `output` for the per-file counts):
+  //   0 = Success (no errors)
+  //   1 = DiagnosticsPresent_OutputsSkipped   (errors, nothing emitted)
+  //   2 = DiagnosticsPresent_OutputsGenerated (errors, but an output was still
+  //       written — happens here because the base tsconfig sets
+  //       `incremental: true`, so a cold run with no cached `.tsbuildinfo`
+  //       writes one even under `--noEmit`. A warm run skips the write and
+  //       exits 1. CI always runs cold, so it always sees 2.)
+  // Anything else (3/4 project-reference errors, etc.) is a real tooling fault.
+  if (r.status !== 0 && r.status !== 1 && r.status !== 2) {
     console.error(
       `Strict typecheck failed with exit code ${r.status}. This usually indicates a tooling/config issue (e.g. pnpm not available or invalid TypeScript config).`,
     );
