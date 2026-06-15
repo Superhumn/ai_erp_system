@@ -422,7 +422,7 @@ function AddLocationMappingButton({ storeId }: { storeId: number }) {
               onClick={() => createMapping.mutate({
                 storeId,
                 shopifyLocationId,
-                warehouseId: parseInt(warehouseId),
+                warehouseId: parseInt(warehouseId, 10),
               })}
               disabled={!shopifyLocationId || !warehouseId || createMapping.isPending}
             >
