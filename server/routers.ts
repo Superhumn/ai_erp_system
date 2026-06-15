@@ -11315,6 +11315,7 @@ Ask if they received the original request and if they can provide a quote.`;
         .input(z.object({
           storeId: z.number(),
           shopifyLocationId: z.string(),
+          shopifyLocationName: z.string().optional(),
           warehouseId: z.number(),
           isActive: z.boolean().default(true),
         }))

@@ -298,7 +298,8 @@ export default function ShopifySettings() {
                       <Label className="text-sm font-medium">Location Mappings</Label>
                       <AddLocationMappingButton storeId={store.id} />
                     </div>
-                    <p className="text-xs text-muted-foreground">Map Shopify fulfillment locations to ERP warehouses for inventory sync.</p>
+                    <p className="text-xs text-muted-foreground mb-3">Map Shopify fulfillment locations to ERP warehouses for inventory sync.</p>
+                    <LocationMappingTable storeId={store.id} />
                   </div>
                 </div>
               </CardContent>
@@ -357,6 +358,7 @@ function AddLocationMappingButton({ storeId }: { storeId: number }) {
   const [warehouseId, setWarehouseId] = useState("");
   const [locationName, setLocationName] = useState("");
 
+  const utils = trpc.useUtils();
   const { data: warehouses } = trpc.warehouses.list.useQuery();
 
   const createMapping = trpc.shopify.locationMappings.create.useMutation({
@@ -366,6 +368,7 @@ function AddLocationMappingButton({ storeId }: { storeId: number }) {
       setShopifyLocationId("");
       setWarehouseId("");
       setLocationName("");
+      utils.shopify.locationMappings.list.invalidate({ storeId });
     },
     onError: (error: any) => toast.error(error.message),
   });
@@ -422,6 +425,7 @@ function AddLocationMappingButton({ storeId }: { storeId: number }) {
               onClick={() => createMapping.mutate({
                 storeId,
                 shopifyLocationId,
+                shopifyLocationName: locationName || undefined,
                 warehouseId: parseInt(warehouseId),
               })}
               disabled={!shopifyLocationId || !warehouseId || createMapping.isPending}
@@ -432,5 +436,48 @@ function AddLocationMappingButton({ storeId }: { storeId: number }) {
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+function LocationMappingTable({ storeId }: { storeId: number }) {
+  const { data: mappings, isLoading } = trpc.shopify.locationMappings.list.useQuery({ storeId });
+  const { data: warehouses } = trpc.warehouses.list.useQuery();
+
+  const warehouseName = (id: number) =>
+    warehouses?.find((w: any) => w.id === id)?.name ?? `#${id}`;
+
+  if (isLoading) {
+    return <div className="text-sm text-muted-foreground py-2">Loading location mappings...</div>;
+  }
+
+  if (!mappings || mappings.length === 0) {
+    return <p className="text-sm text-muted-foreground py-2">No location mappings configured yet.</p>;
+  }
+
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Shopify Location</TableHead>
+          <TableHead>Shopify Location ID</TableHead>
+          <TableHead>ERP Warehouse</TableHead>
+          <TableHead>Status</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {mappings.map((mapping: any) => (
+          <TableRow key={mapping.id}>
+            <TableCell>{mapping.shopifyLocationName || "—"}</TableCell>
+            <TableCell className="font-mono text-sm">{mapping.shopifyLocationId}</TableCell>
+            <TableCell>{warehouseName(mapping.warehouseId)}</TableCell>
+            <TableCell>
+              <Badge variant={mapping.isActive ? "default" : "secondary"}>
+                {mapping.isActive ? "Active" : "Inactive"}
+              </Badge>
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
   );
 }

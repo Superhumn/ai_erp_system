@@ -319,7 +319,7 @@ function TagsSection() {
 export function ContactTagsPicker({ contactId }: { contactId: number }) {
   const utils = trpc.useUtils();
   const { data: allTags } = trpc.crm.tags.list.useQuery({});
-  const { data: contactTags } = trpc.crm.tags.getForContact.useQuery({ contactId }) ?? { data: [] };
+  const { data: contactTags } = trpc.crm.tags.getForContact.useQuery({ contactId });
 
   const addTag = trpc.crm.tags.addToContact.useMutation({
     onSuccess: () => { toast.success("Tag added"); utils.crm.tags.invalidate(); },
