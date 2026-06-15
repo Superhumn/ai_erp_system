@@ -45,9 +45,15 @@ function runStrict() {
     if (output.trim()) console.error(output.trim());
     process.exit(2);
   }
-  // tsc exits 0 with no errors, 1 with type errors.
-  // Other exit codes (e.g. 2 for config/options errors) are fatal.
-  if (r.status !== 0 && r.status !== 1) {
+  // tsc's ExitStatus for a completed typecheck:
+  //   0 = Success
+  //   1 = DiagnosticsPresent_OutputsSkipped   (errors, nothing emitted)
+  //   2 = DiagnosticsPresent_OutputsGenerated (errors, but output emitted —
+  //       e.g. the incremental .tsbuildinfo from `incremental: true`, which
+  //       happens on a fresh checkout like CI where no buildinfo exists yet)
+  // All three produce parseable diagnostics. Codes >= 3 (InvalidProject /
+  // ProjectReferenceCycle) are genuine config/tooling failures and stay fatal.
+  if (r.status !== 0 && r.status !== 1 && r.status !== 2) {
     console.error(
       `Strict typecheck failed with exit code ${r.status}. This usually indicates a tooling/config issue (e.g. pnpm not available or invalid TypeScript config).`,
     );
