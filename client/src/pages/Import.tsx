@@ -3,6 +3,7 @@ import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import {
   FileSpreadsheet,
@@ -18,6 +19,7 @@ import {
   File,
   Download,
   HardDrive,
+  Search,
 } from "lucide-react";
 import React, { useState, useEffect, useCallback } from "react";
 import * as XLSX from "xlsx";
@@ -62,6 +64,7 @@ function DriveFileBrowser({ onSyncAll }: { onSyncAll: () => void }) {
   const { data: spreadsheets, isLoading } = trpc.sheetsImport.listSpreadsheets.useQuery(undefined, { enabled: showBrowser });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [syncing, setSyncing] = useState(false);
+  const [search, setSearch] = useState("");
 
   const syncSelectedMutation = trpc.sheetsImport.syncGoogleDrive.useMutation({
     onSuccess: (data) => {
@@ -83,23 +86,47 @@ function DriveFileBrowser({ onSyncAll }: { onSyncAll: () => void }) {
   };
 
   const files = (spreadsheets as any)?.spreadsheets || [];
+  const query = search.trim().toLowerCase();
+  const filteredFiles = query
+    ? files.filter((f: any) => (f.name || "").toLowerCase().includes(query))
+    : files;
+  const allFilteredSelected = filteredFiles.length > 0 && filteredFiles.every((f: any) => selectedIds.has(f.id));
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <h4 className="text-sm font-medium">Google Drive Files</h4>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => {
-            if (selectedIds.size === files.length) setSelectedIds(new Set());
-            else setSelectedIds(new Set(files.map((f: any) => f.id)));
+          <Button variant="outline" size="sm" disabled={filteredFiles.length === 0} onClick={() => {
+            if (allFilteredSelected) {
+              const next = new Set(selectedIds);
+              filteredFiles.forEach((f: any) => next.delete(f.id));
+              setSelectedIds(next);
+            } else {
+              const next = new Set(selectedIds);
+              filteredFiles.forEach((f: any) => next.add(f.id));
+              setSelectedIds(next);
+            }
           }}>
-            {selectedIds.size === files.length ? "Deselect All" : "Select All"}
+            {allFilteredSelected ? "Deselect All" : "Select All"}
           </Button>
           <Button variant="outline" size="sm" onClick={onSyncAll}>
             <RefreshCw className="h-3 w-3 mr-1" /> Sync All
           </Button>
         </div>
       </div>
+
+      {files.length > 0 && (
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            placeholder="Search files by name..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-8 h-8"
+          />
+        </div>
+      )}
 
       {isLoading ? (
         <div className="flex items-center justify-center py-8">
@@ -109,9 +136,13 @@ function DriveFileBrowser({ onSyncAll }: { onSyncAll: () => void }) {
         <div className="text-center py-6 text-sm text-muted-foreground">
           No spreadsheets found in your Google Drive.
         </div>
+      ) : filteredFiles.length === 0 ? (
+        <div className="text-center py-6 text-sm text-muted-foreground">
+          No files match "{search}".
+        </div>
       ) : (
         <div className="border rounded-lg divide-y max-h-64 overflow-y-auto">
-          {files.map((file: any) => (
+          {filteredFiles.map((file: any) => (
             <label
               key={file.id}
               className="flex items-center gap-3 p-3 hover:bg-muted/50 cursor-pointer transition-colors"
@@ -188,6 +219,7 @@ function formatFileSize(bytes: string | number | undefined) {
 function GoogleDriveFiles() {
   const [activeTab, setActiveTab] = useState(0);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
   const mimeType = DRIVE_TABS[activeTab].mimeType;
 
   const { data, isLoading, refetch } = trpc.sheetsImport.listDriveFiles.useQuery(
@@ -232,6 +264,10 @@ function GoogleDriveFiles() {
   };
 
   const files = data?.files || [];
+  const query = search.trim().toLowerCase();
+  const filteredFiles = query
+    ? files.filter((f: any) => (f.name || "").toLowerCase().includes(query))
+    : files;
 
   return (
     <Card>
@@ -264,6 +300,17 @@ function GoogleDriveFiles() {
           </button>
         </div>
 
+        {/* Search */}
+        <div className="relative mb-3">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            placeholder="Search files by name..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-8 h-8"
+          />
+        </div>
+
         {/* File list */}
         {isLoading ? (
           <div className="flex items-center justify-center py-8">
@@ -271,9 +318,11 @@ function GoogleDriveFiles() {
           </div>
         ) : files.length === 0 ? (
           <div className="text-center py-6 text-sm text-muted-foreground">No files found.</div>
+        ) : filteredFiles.length === 0 ? (
+          <div className="text-center py-6 text-sm text-muted-foreground">No files match "{search}".</div>
         ) : (
           <div className="border rounded-lg divide-y max-h-80 overflow-y-auto">
-            {files.map((file: any) => {
+            {filteredFiles.map((file: any) => {
               const exp = driveExportLabel(file.mimeType);
               const isDownloading = downloadingId === file.id;
               return (
