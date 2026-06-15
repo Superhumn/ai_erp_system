@@ -26,6 +26,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build application
+        run: pnpm run build
+
+      - name: Run database migrations (staging)
+        # Applies any new Drizzle migrations from drizzle/*.sql against the
+        # staging DB before the new build goes live. Idempotent — the migration
+        # runner tracks which files have already been applied. Skipped if
+        # DATABASE_URL isn't configured for the environment.
+        run: |
+          if [ -n "$DATABASE_URL" ]; then
+            node dist/migrate.js
+          else
+            echo "DATABASE_URL not set for staging environment, skipping migrations"
+          fi
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
@@ -48,6 +79,37 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build application
+        run: pnpm run build
+
+      - name: Run database migrations (production)
+        # Applies any new Drizzle migrations from drizzle/*.sql against the
+        # production DB before the new build goes live. Idempotent — the
+        # migration runner tracks which files have already been applied. Skipped
+        # if DATABASE_URL isn't configured for the environment.
+        run: |
+          if [ -n "$DATABASE_URL" ]; then
+            node dist/migrate.js
+          else
+            echo "DATABASE_URL not set for production environment, skipping migrations"
+          fi
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
       - name: Install Railway CLI
         run: npm install -g @railway/cli
