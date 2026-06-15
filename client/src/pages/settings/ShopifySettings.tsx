@@ -440,11 +440,23 @@ function AddLocationMappingButton({ storeId }: { storeId: number }) {
 }
 
 function LocationMappingTable({ storeId }: { storeId: number }) {
+  const utils = trpc.useUtils();
   const { data: mappings, isLoading } = trpc.shopify.locationMappings.list.useQuery({ storeId });
   const { data: warehouses } = trpc.warehouses.list.useQuery();
 
   const warehouseName = (id: number) =>
     warehouses?.find((w: any) => w.id === id)?.name ?? `#${id}`;
+
+  const invalidate = () => utils.shopify.locationMappings.list.invalidate({ storeId });
+
+  const updateMapping = trpc.shopify.locationMappings.update.useMutation({
+    onSuccess: invalidate,
+    onError: (error: any) => toast.error(error.message),
+  });
+  const deleteMapping = trpc.shopify.locationMappings.delete.useMutation({
+    onSuccess: () => { toast.success("Location mapping deleted"); invalidate(); },
+    onError: (error: any) => toast.error(error.message),
+  });
 
   if (isLoading) {
     return <div className="text-sm text-muted-foreground py-2">Loading location mappings...</div>;
@@ -461,7 +473,8 @@ function LocationMappingTable({ storeId }: { storeId: number }) {
           <TableHead>Shopify Location</TableHead>
           <TableHead>Shopify Location ID</TableHead>
           <TableHead>ERP Warehouse</TableHead>
-          <TableHead>Status</TableHead>
+          <TableHead>Active</TableHead>
+          <TableHead className="w-10"></TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -471,9 +484,23 @@ function LocationMappingTable({ storeId }: { storeId: number }) {
             <TableCell className="font-mono text-sm">{mapping.shopifyLocationId}</TableCell>
             <TableCell>{warehouseName(mapping.warehouseId)}</TableCell>
             <TableCell>
-              <Badge variant={mapping.isActive ? "default" : "secondary"}>
-                {mapping.isActive ? "Active" : "Inactive"}
-              </Badge>
+              <Switch
+                checked={!!mapping.isActive}
+                disabled={updateMapping.isPending}
+                onCheckedChange={(checked) => updateMapping.mutate({ id: mapping.id, isActive: checked })}
+                aria-label={mapping.isActive ? "Deactivate mapping" : "Activate mapping"}
+              />
+            </TableCell>
+            <TableCell>
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled={deleteMapping.isPending}
+                onClick={() => deleteMapping.mutate({ id: mapping.id })}
+                aria-label="Delete mapping"
+              >
+                <Trash2 className="h-4 w-4 text-destructive" />
+              </Button>
             </TableCell>
           </TableRow>
         ))}

@@ -11322,6 +11322,23 @@ Ask if they received the original request and if they can provide a quote.`;
         .mutation(async ({ input }) => {
           return db.createShopifyLocationMapping(input);
         }),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          shopifyLocationId: z.string().optional(),
+          shopifyLocationName: z.string().optional(),
+          warehouseId: z.number().optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { id, ...data } = input;
+          return db.updateShopifyLocationMapping(id, data);
+        }),
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          return db.deleteShopifyLocationMapping(input.id);
+        }),
     }),
     // Sync operations
     sync: router({

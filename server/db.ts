@@ -5313,6 +5313,23 @@ export async function createShopifyLocationMapping(data: InsertShopifyLocationMa
   return { id: result[0].insertId };
 }
 
+export async function updateShopifyLocationMapping(
+  id: number,
+  data: Partial<InsertShopifyLocationMapping>,
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(shopifyLocationMappings).set(data).where(eq(shopifyLocationMappings.id, id));
+  return { id };
+}
+
+export async function deleteShopifyLocationMapping(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(shopifyLocationMappings).where(eq(shopifyLocationMappings.id, id));
+  return { id };
+}
+
 export async function getWarehouseByShopifyLocation(storeId: number, shopifyLocationId: string) {
   const db = await getDb();
   if (!db) return undefined;
