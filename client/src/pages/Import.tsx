@@ -25,6 +25,13 @@ import React, { useState, useEffect, useCallback } from "react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { useLocation, useSearch } from "wouter";
+import {
+  IMPORT_FIELDS,
+  IMPORT_SKIP,
+  buildDefaultMapping,
+  missingRequiredFields,
+  type ImportModule,
+} from "@shared/importFields";
 
 type SyncResult = {
   sheet: string;
@@ -376,7 +383,7 @@ function CsvImportPanel({ file, onClear, parseXlsx }: {
   onClear: () => void;
   parseXlsx: (f: File) => Promise<{ headers: string[]; rows: Record<string, unknown>[] } | null>;
 }) {
-  const [targetModule, setTargetModule] = useState<string>("");
+  const [targetModule, setTargetModule] = useState<ImportModule | "">("");
   const [parsed, setParsed] = useState<{ headers: string[]; rows: Record<string, any>[] } | null>(null);
   const [columnMapping, setColumnMapping] = useState<Record<string, string>>({});
   const [importing, setImporting] = useState(false);
@@ -395,6 +402,15 @@ function CsvImportPanel({ file, onClear, parseXlsx }: {
     },
   });
 
+  // Re-suggest a column->field mapping whenever the file is parsed or the
+  // target module changes. Manual dropdown edits live in columnMapping and are
+  // intentionally NOT a dependency, so they survive until module/file changes.
+  useEffect(() => {
+    if (parsed && targetModule) {
+      setColumnMapping(buildDefaultMapping(parsed.headers, targetModule));
+    }
+  }, [parsed, targetModule]);
+
   const handleParse = async () => {
     const name = file.name.toLowerCase();
     if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
@@ -402,25 +418,26 @@ function CsvImportPanel({ file, onClear, parseXlsx }: {
       if (result) {
         setParsed({ headers: result.headers, rows: result.rows as any });
         toast.success(`Parsed ${result.rows.length} rows`);
-        // Auto-map columns by matching header names
-        const mapping: Record<string, string> = {};
-        result.headers.forEach(h => { mapping[h] = h.toLowerCase().replace(/\s+/g, "_"); });
-        setColumnMapping(mapping);
       }
     } else {
       const text = await file.text();
       const result = parseCsvText(text);
       setParsed(result);
       toast.success(`Parsed ${result.rows.length} rows`);
-      const mapping: Record<string, string> = {};
-      result.headers.forEach(h => { mapping[h] = h.toLowerCase().replace(/\s+/g, "_"); });
-      setColumnMapping(mapping);
     }
   };
+
+  const fields = targetModule ? IMPORT_FIELDS[targetModule] : [];
+  const missingRequired = parsed && targetModule ? missingRequiredFields(targetModule, columnMapping) : [];
+  const sectionLabel = DATA_SECTIONS.find(s => s.value === targetModule)?.label ?? "...";
 
   const handleImport = () => {
     if (!parsed || !targetModule) {
       toast.error("Please select a data section and parse the file first");
+      return;
+    }
+    if (missingRequired.length > 0) {
+      toast.error(`Map the required field(s) first: ${missingRequired.map(f => f.label).join(", ")}`);
       return;
     }
     setImporting(true);
@@ -429,10 +446,14 @@ function CsvImportPanel({ file, onClear, parseXlsx }: {
       for (const [k, v] of Object.entries(row)) { obj[k] = String(v ?? ""); }
       return obj;
     });
+    // Only send columns the user actually mapped to a field.
+    const cleanMapping = Object.fromEntries(
+      Object.entries(columnMapping).filter(([, field]) => field !== IMPORT_SKIP),
+    );
     importMutation.mutate({
-      targetModule: targetModule as any,
+      targetModule,
       data: stringRows,
-      columnMapping,
+      columnMapping: cleanMapping,
     });
   };
 
@@ -475,35 +496,52 @@ function CsvImportPanel({ file, onClear, parseXlsx }: {
         ) : (
           <div className="space-y-3">
             <div className="text-sm text-muted-foreground">
-              Found <strong>{parsed.rows.length}</strong> rows with columns: {parsed.headers.join(", ")}
+              Found <strong>{parsed.rows.length}</strong> rows. Map each spreadsheet column to a{" "}
+              <strong>{sectionLabel}</strong> field so the data lands in the right place
+              (<span className="text-amber-600">*</span> = required):
             </div>
 
-            {/* Column mapping preview */}
-            <div className="max-h-32 overflow-y-auto text-xs border rounded p-2 bg-background">
-              <table className="w-full">
-                <thead>
-                  <tr>
-                    {parsed.headers.slice(0, 6).map(h => (
-                      <th key={h} className="text-left p-1 font-medium">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {parsed.rows.slice(0, 3).map((row, i) => (
-                    <tr key={i}>
-                      {parsed.headers.slice(0, 6).map(h => (
-                        <td key={h} className="p-1 text-muted-foreground truncate max-w-[120px]">{String(row[h] || "")}</td>
+            {/* Column → field mapping */}
+            <div className="border rounded-lg divide-y max-h-72 overflow-y-auto">
+              {parsed.headers.map(h => {
+                const sample = parsed.rows.find(r => String(r[h] ?? "").trim() !== "")?.[h];
+                return (
+                  <div key={h} className="flex items-center gap-3 p-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate">{h}</div>
+                      <div className="text-xs text-muted-foreground truncate">
+                        e.g. {sample != null && String(sample).trim() !== "" ? String(sample) : "—"}
+                      </div>
+                    </div>
+                    <span className="text-muted-foreground text-xs shrink-0">→</span>
+                    <select
+                      value={columnMapping[h] ?? IMPORT_SKIP}
+                      onChange={(e) => setColumnMapping(m => ({ ...m, [h]: e.target.value }))}
+                      className="text-sm border rounded-md px-2 py-1 bg-background w-44 shrink-0"
+                    >
+                      <option value={IMPORT_SKIP}>— Don't import —</option>
+                      {fields.map(f => (
+                        <option key={f.key} value={f.key}>
+                          {f.label}{f.required ? " *" : ""}
+                        </option>
                       ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {parsed.rows.length > 3 && <div className="text-center text-muted-foreground mt-1">... and {parsed.rows.length - 3} more rows</div>}
+                    </select>
+                  </div>
+                );
+              })}
             </div>
 
-            <Button onClick={handleImport} disabled={importing || !targetModule}>
+            {missingRequired.length > 0 && (
+              <div className="flex items-center gap-2 text-xs text-amber-600">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                Required field{missingRequired.length > 1 ? "s" : ""} not mapped:{" "}
+                {missingRequired.map(f => f.label).join(", ")}
+              </div>
+            )}
+
+            <Button onClick={handleImport} disabled={importing || !targetModule || missingRequired.length > 0}>
               {importing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
-              Import {parsed.rows.length} rows into {targetModule || "..."}
+              Import {parsed.rows.length} rows into {sectionLabel}
             </Button>
           </div>
         )}
