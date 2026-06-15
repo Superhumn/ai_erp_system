@@ -817,86 +817,80 @@ type QBImportCategory = "wages" | "supplies" | "contract_research" | "cloud_comp
 
 function ImportFromQBButton({ studyId, projects, onRefresh }: {
   studyId: number;
-  projects: Array<{ id?: number | null; projectName?: string | null }>;
+  projects: RdProjectRow[];
   onRefresh: () => void;
 }) {
   const [open, setOpen] = useState(false);
-      min={0}
-      max={100}
-      value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") commit();
-        if (e.key === "Escape") setEditing(false);
-      }}
-      className="w-16 rounded border bg-background px-1 text-right text-sm"
-    />
-  );
-}
+  const [projectId, setProjectId] = useState("");
+  const [startDate, setStartDate] = useState(() => {
+    const d = new Date(); d.setMonth(0, 1); return d.toISOString().slice(0, 10);
+  });
+  const [endDate, setEndDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [category, setCategory] = useState<QBImportCategory>("wages");
 
-// ============================================
-// IMPORT FROM QB BUTTON (Issue #270)
-// ============================================
-type QBImportCategory = "wages" | "supplies" | "contract_research" | "cloud_computing";
+  const importMutation = trpc.rdTaxCredit.importFromQuickBooks.useMutation({
+    onSuccess: (data: any) => {
+      toast.success(`Imported ${data.imported ?? 0} expense(s) from QuickBooks`);
+      setOpen(false);
+      onRefresh();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
 
-function ImportFromQBButton({ studyId, projects, onRefresh }: {
-  studyId: number;
-  projects: Array<{ id?: number | null; projectName?: string | null }>;
-  onRefresh: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-      min={0}
-      max={100}
-      value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") commit();
-        if (e.key === "Escape") setEditing(false);
-      }}
-      className="w-16 rounded border bg-background px-1 text-right text-sm"
-    />
-  );
-}
-
-// ============================================
-// IMPORT FROM QB BUTTON (Issue #270)
-// ============================================
-type QBImportCategory = "wages" | "supplies" | "contract_research" | "cloud_computing";
-
-function ImportFromQBButton({ studyId, projects, onRefresh }: {
-  studyId: number;
-  projects: Array<{ id?: number | null; projectName?: string | null }>;
-  onRefresh: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-      min={0}
-      max={100}
-      value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") commit();
-        if (e.key === "Escape") setEditing(false);
-      }}
-      className="w-16 rounded border bg-background px-1 text-right text-sm"
-    />
-  );
-}
-
-// ============================================
-// IMPORT FROM QB BUTTON (Issue #270)
+  return (
+    <>
+      <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+        <Download className="h-4 w-4 mr-1" /> Import from QuickBooks
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Import from QuickBooks</DialogTitle>
+            <DialogDescription>
+              Pull posted QuickBooks transactions matching the date range and category.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Project</Label>
+              <Select value={projectId} onValueChange={setProjectId}>
+                <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
+                <SelectContent>
+                  {projects.map((p) => (
+                    <SelectItem key={p.id} value={String(p.id)}>{p.projectName}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="grid grid-cols-2 gap-4">
               <div><Label>Start Date</Label><Input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} /></div>
               <div><Label>End Date</Label><Input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} /></div>
+            </div>
+            <div>
+              <Label>Category</Label>
+              <Select value={category} onValueChange={(v) => setCategory(v as QBImportCategory)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="wages">Employee Wages</SelectItem>
+                  <SelectItem value="supplies">Supplies</SelectItem>
+                  <SelectItem value="contract_research">Contract Research (65%)</SelectItem>
+                  <SelectItem value="cloud_computing">Cloud Computing</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => importMutation.mutate({ studyId, projectId: parseInt(projectId), startDate, endDate, category })}
+              disabled={!projectId || importMutation.isPending}
+            >
+              {importMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Import Expenses
+            </Button>
+          </DialogFooter>
+        </DialogContent>
       </Dialog>
     </>
-  );
-}
-  );
-}
-  );
-}
   );
 }
