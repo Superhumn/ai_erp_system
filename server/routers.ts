@@ -23,6 +23,7 @@ import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import { agentRouter } from "./agent";
 import { parseNoteWithLLM } from "./notesParser";
 import type { NoteAppliedItem, NoteParseResult, NoteParsedItem } from "@shared/notes";
+import { buildImportRecord } from "@shared/importFields";
 import { employeePortalRouter } from "./routers/employeePortal";
 import { parseCopackerInventoryEmail, applyCopackerInventoryUpdate } from "./copackerEmailExtractor";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
@@ -4643,136 +4644,70 @@ ONLY return the JSON array, no other text.`;
         
         for (const row of data) {
           try {
-            // Map the row data to the target fields
-            const mappedData: Record<string, any> = {};
-            for (const [sheetCol, erpField] of Object.entries(columnMapping)) {
-              if (row[sheetCol] !== undefined && row[sheetCol] !== '') {
-                mappedData[erpField] = row[sheetCol];
-              }
+            // Coerce + validate the row against the destination's field catalogue.
+            // What the UI advertises == what we persist (see shared/importFields.ts).
+            const { record, errors: rowErrors } = buildImportRecord(row, columnMapping, targetModule);
+            if (rowErrors.length > 0) {
+              results.errors.push(rowErrors[0]);
+              results.failed++;
+              continue;
             }
-            
-            // Import based on target module
+
+            // Per-module glue: generated numbers + synthetic/derived columns.
             switch (targetModule) {
               case 'customers':
-                if (!mappedData.name) {
-                  results.errors.push(`Row missing required field: name`);
-                  results.failed++;
-                  continue;
-                }
-                await db.createCustomer({ 
-                  name: mappedData.name,
-                  email: mappedData.email || null,
-                  phone: mappedData.phone || null,
-                  address: mappedData.address || null,
-                  city: mappedData.city || null,
-                  state: mappedData.state || null,
-                  country: mappedData.country || null,
-                  postalCode: mappedData.postalCode || null,
-                  notes: mappedData.notes || null,
-                });
+                await db.createCustomer(record as any);
                 break;
-                
+
               case 'vendors':
-                if (!mappedData.name) {
-                  results.errors.push(`Row missing required field: name`);
-                  results.failed++;
-                  continue;
-                }
-                await db.createVendor({ 
-                  name: mappedData.name,
-                  email: mappedData.email || null,
-                  phone: mappedData.phone || null,
-                  address: mappedData.address || null,
-                  city: mappedData.city || null,
-                  state: mappedData.state || null,
-                  country: mappedData.country || null,
-                  postalCode: mappedData.postalCode || null,
-                  paymentTerms: mappedData.paymentTerms ? parseInt(mappedData.paymentTerms) : null,
-                  notes: mappedData.notes || null,
-                });
+                await db.createVendor(record as any);
                 break;
-                
+
               case 'products':
-                if (!mappedData.name) {
-                  results.errors.push(`Row missing required field: name`);
-                  results.failed++;
-                  continue;
-                }
-                const sku = mappedData.sku || generateNumber('PROD');
-                await db.createProduct({ 
-                  name: mappedData.name,
-                  sku,
-                  unitPrice: mappedData.price || mappedData.unitPrice || '0',
-                  description: mappedData.description || null,
-                  category: mappedData.category || null,
-                  costPrice: mappedData.cost || mappedData.costPrice || null,
-                });
+                await db.createProduct({
+                  ...record,
+                  sku: record.sku || generateNumber('PROD'),
+                  unitPrice: record.unitPrice ?? '0', // NOT NULL on the table
+                } as any);
                 break;
-                
+
               case 'employees':
-                if (!mappedData.firstName || !mappedData.lastName) {
-                  results.errors.push(`Row missing required fields: firstName, lastName`);
-                  results.failed++;
-                  continue;
-                }
-                const employeeNumber = generateNumber('EMP');
-                await db.createEmployee({ 
-                  ...mappedData, 
-                  employeeNumber,
-                  firstName: mappedData.firstName,
-                  lastName: mappedData.lastName,
-                });
+                await db.createEmployee({
+                  ...record,
+                  employeeNumber: generateNumber('EMP'),
+                } as any);
                 break;
-                
-              case 'invoices':
-                if (!mappedData.customerId || !mappedData.amount) {
-                  results.errors.push(`Row missing required fields: customerId, amount`);
-                  results.failed++;
-                  continue;
-                }
-                const invoiceNumber = generateNumber('INV');
-                const amount = mappedData.amount || '0';
-                await db.createInvoice({ 
-                  ...mappedData, 
-                  invoiceNumber,
-                  customerId: parseInt(mappedData.customerId) || 0,
+
+              case 'invoices': {
+                const amount = record.amount ?? '0';
+                delete record.amount; // synthetic -> subtotal/total below
+                await db.createInvoice({
+                  ...record,
+                  invoiceNumber: generateNumber('INV'),
                   issueDate: new Date(),
-                  dueDate: mappedData.dueDate ? new Date(mappedData.dueDate) : new Date(),
+                  dueDate: record.dueDate ?? new Date(),
                   subtotal: amount,
                   totalAmount: amount,
-                });
+                } as any);
                 break;
-                
+              }
+
               case 'contracts':
-                if (!mappedData.title) {
-                  results.errors.push(`Row missing required field: title`);
-                  results.failed++;
-                  continue;
-                }
-                const contractNumber = generateNumber('CON');
-                await db.createContract({ 
-                  ...mappedData, 
-                  contractNumber,
-                  title: mappedData.title,
-                  type: (mappedData.type as any) || 'service',
-                });
+                await db.createContract({
+                  ...record,
+                  contractNumber: generateNumber('CON'),
+                  type: record.type || 'service', // NOT NULL, no default
+                } as any);
                 break;
-                
+
               case 'projects':
-                if (!mappedData.name) {
-                  results.errors.push(`Row missing required field: name`);
-                  results.failed++;
-                  continue;
-                }
-                const projectNumber = generateNumber('PROJ');
-                await db.createProject({ 
-                  ...mappedData, 
-                  projectNumber,
-                  name: mappedData.name,
-                });
+                await db.createProject({
+                  ...record,
+                  projectNumber: generateNumber('PROJ'),
+                } as any);
                 break;
             }
-            
+
             results.imported++;
           } catch (error: any) {
             results.errors.push(`Import error: ${error.message}`);

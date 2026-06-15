@@ -3,6 +3,8 @@ import {
   suggestFieldForHeader,
   buildDefaultMapping,
   missingRequiredFields,
+  coerceImportValue,
+  buildImportRecord,
   IMPORT_SKIP,
 } from "@shared/importFields";
 
@@ -53,5 +55,54 @@ describe("missingRequiredFields", () => {
   it("returns nothing once all required fields are mapped", () => {
     const mapping = { A: "firstName", B: "lastName" };
     expect(missingRequiredFields("employees", mapping)).toHaveLength(0);
+  });
+});
+
+
+describe("coerceImportValue", () => {
+  const def = (type: any, enumValues?: string[]) => ({ key: "f", label: "F", type, enumValues });
+
+  it("parses decimals, stripping currency/commas", () => {
+    expect(coerceImportValue("$1,200.50", def("decimal"))).toEqual({ value: "1200.50" });
+    expect(coerceImportValue("not money", def("decimal")).error).toBeTruthy();
+  });
+
+  it("parses ints and dates", () => {
+    expect(coerceImportValue("45", def("int"))).toEqual({ value: 45 });
+    expect(coerceImportValue("abc", def("int")).error).toBeTruthy();
+    const d = coerceImportValue("2025-01-15", def("date")).value as Date;
+    expect(d instanceof Date && d.getUTCFullYear()).toBe(2025);
+    expect(coerceImportValue("nope", def("date")).error).toBeTruthy();
+  });
+
+  it("matches enums case-insensitively and rejects unknowns", () => {
+    expect(coerceImportValue("Business", def("enum", ["individual", "business"]))).toEqual({ value: "business" });
+    expect(coerceImportValue("vip", def("enum", ["individual", "business"])).error).toBeTruthy();
+  });
+
+  it("treats blank as undefined (not an error)", () => {
+    expect(coerceImportValue("  ", def("string"))).toEqual({ value: undefined });
+  });
+});
+
+describe("buildImportRecord", () => {
+  it("coerces mapped columns into a typed record", () => {
+    const { record, errors } = buildImportRecord(
+      { Name: "Acme", Kind: "Business", Credit: "$50,000", Terms: "45" },
+      { Name: "name", Kind: "type", Credit: "creditLimit", Terms: "paymentTerms" },
+      "customers",
+    );
+    expect(errors).toHaveLength(0);
+    expect(record).toEqual({ name: "Acme", type: "business", creditLimit: "50000", paymentTerms: 45 });
+  });
+
+  it("reports an error for an invalid enum value", () => {
+    const { errors } = buildImportRecord({ Name: "Acme", Kind: "vip" }, { Name: "name", Kind: "type" }, "customers");
+    expect(errors.some((e) => /Type/.test(e))).toBe(true);
+  });
+
+  it("flags a missing required field", () => {
+    const { errors } = buildImportRecord({ Email: "a@b.com" }, { Email: "email" }, "customers");
+    expect(errors.some((e) => /Name/.test(e))).toBe(true);
   });
 });
