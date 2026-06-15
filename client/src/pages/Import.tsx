@@ -28,6 +28,7 @@ import { useLocation, useSearch } from "wouter";
 import {
   IMPORT_FIELDS,
   IMPORT_SKIP,
+  DRIVE_IMPORT_TYPES,
   buildDefaultMapping,
   missingRequiredFields,
   type ImportModule,
@@ -66,25 +67,20 @@ function parseCsvText(text: string): { headers: string[]; rows: Record<string, s
   return { headers, rows };
 }
 
-function DriveFileBrowser({ onSyncAll }: { onSyncAll: () => void }) {
-  const [showBrowser, setShowBrowser] = useState(true);
+type DrivePreview = { fileId: string; fileName: string; detectedType: string; rowCount: number; supported: boolean };
+
+function DriveFileBrowser({ onImport }: { onImport: (selections: { fileId: string; type: string }[]) => void }) {
+  const [showBrowser] = useState(true);
   const { data: spreadsheets, isLoading } = trpc.sheetsImport.listSpreadsheets.useQuery(undefined, { enabled: showBrowser });
+  const utils = trpc.useUtils();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [syncing, setSyncing] = useState(false);
   const [search, setSearch] = useState("");
 
-  const syncSelectedMutation = trpc.sheetsImport.syncGoogleDrive.useMutation({
-    onSuccess: (data) => {
-      setSyncing(false);
-      const totalImported = data.results.reduce((sum: number, r: any) => sum + r.imported, 0);
-      toast.success(`Imported ${totalImported} records from ${selectedIds.size} files`);
-      setSelectedIds(new Set());
-    },
-    onError: (error) => {
-      setSyncing(false);
-      toast.error(error.message);
-    },
-  });
+  // Confirmation step: previews from the server + the user's per-file choice
+  // (a DRIVE_IMPORT_TYPES value, or "" to skip the file).
+  const [previewing, setPreviewing] = useState(false);
+  const [previews, setPreviews] = useState<DrivePreview[] | null>(null);
+  const [choices, setChoices] = useState<Record<string, string>>({});
 
   const toggleFile = (id: string) => {
     const next = new Set(selectedIds);
@@ -99,6 +95,78 @@ function DriveFileBrowser({ onSyncAll }: { onSyncAll: () => void }) {
     : files;
   const allFilteredSelected = filteredFiles.length > 0 && filteredFiles.every((f: any) => selectedIds.has(f.id));
 
+  const runPreview = async (fileIds?: string[]) => {
+    setPreviewing(true);
+    try {
+      const res = await utils.sheetsImport.previewGoogleDrive.fetch(
+        fileIds && fileIds.length ? { fileIds } : {},
+      );
+      const rows = res.previews as DrivePreview[];
+      setPreviews(rows);
+      // Default each file to its detected type when we can import it, else skip.
+      const next: Record<string, string> = {};
+      rows.forEach((p) => { next[p.fileId] = p.supported ? p.detectedType : ""; });
+      setChoices(next);
+    } catch (error: any) {
+      toast.error(error.message);
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  // ---- Confirmation step ----
+  if (previews) {
+    const importable = previews.filter((p) => choices[p.fileId]);
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h4 className="text-sm font-medium">Confirm destinations</h4>
+          <Button variant="ghost" size="sm" onClick={() => setPreviews(null)}>Back</Button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          We detected where each sheet should go. Review and adjust before importing — nothing is written until you confirm.
+        </p>
+
+        <div className="border rounded-lg divide-y max-h-72 overflow-y-auto">
+          {previews.map((p) => (
+            <div key={p.fileId} className="flex items-center gap-3 p-3">
+              <FileSpreadsheet className="h-4 w-4 text-green-600 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium truncate">{p.fileName}</div>
+                <div className="text-xs text-muted-foreground">
+                  {p.rowCount} row{p.rowCount === 1 ? "" : "s"}
+                  {p.detectedType === "unknown" && " · type not recognised"}
+                  {p.detectedType === "error" && " · could not read sheet"}
+                </div>
+              </div>
+              <span className="text-muted-foreground text-xs shrink-0">→</span>
+              <select
+                value={choices[p.fileId] ?? ""}
+                onChange={(e) => setChoices((c) => ({ ...c, [p.fileId]: e.target.value }))}
+                className="text-sm border rounded-md px-2 py-1 bg-background w-44 shrink-0"
+              >
+                <option value="">— Don't import —</option>
+                {DRIVE_IMPORT_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </select>
+            </div>
+          ))}
+        </div>
+
+        <Button
+          className="w-full"
+          disabled={importable.length === 0}
+          onClick={() => onImport(importable.map((p) => ({ fileId: p.fileId, type: choices[p.fileId] })))}
+        >
+          <CloudDownload className="h-4 w-4 mr-2" />
+          Import {importable.length} file{importable.length === 1 ? "" : "s"}
+        </Button>
+      </div>
+    );
+  }
+
+  // ---- Browse + select step ----
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -117,8 +185,9 @@ function DriveFileBrowser({ onSyncAll }: { onSyncAll: () => void }) {
           }}>
             {allFilteredSelected ? "Deselect All" : "Select All"}
           </Button>
-          <Button variant="outline" size="sm" onClick={onSyncAll}>
-            <RefreshCw className="h-3 w-3 mr-1" /> Sync All
+          <Button variant="outline" size="sm" disabled={previewing || files.length === 0} onClick={() => runPreview()}>
+            {previewing && selectedIds.size === 0 ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <RefreshCw className="h-3 w-3 mr-1" />}
+            Review All
           </Button>
         </div>
       </div>
@@ -174,17 +243,17 @@ function DriveFileBrowser({ onSyncAll }: { onSyncAll: () => void }) {
 
       {selectedIds.size > 0 && (
         <Button
-          onClick={() => { setSyncing(true); syncSelectedMutation.mutate(); }}
-          disabled={syncing}
+          onClick={() => runPreview([...selectedIds])}
+          disabled={previewing}
           className="w-full"
         >
-          {syncing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CloudDownload className="h-4 w-4 mr-2" />}
-          Sync {selectedIds.size} Selected File{selectedIds.size > 1 ? "s" : ""}
+          {previewing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CloudDownload className="h-4 w-4 mr-2" />}
+          Review {selectedIds.size} Selected File{selectedIds.size > 1 ? "s" : ""}
         </Button>
       )}
 
       <p className="text-xs text-muted-foreground text-center">
-        Select specific files to sync, or click "Sync All" to import everything.
+        Select specific files, or click "Review All" — you'll confirm where each sheet goes before importing.
       </p>
     </div>
   );
@@ -647,10 +716,10 @@ export default function Import() {
     }
   };
 
-  const handleSync = () => {
+  const handleImportSelections = (selections: { fileId: string; type: string }[]) => {
     setSyncState("syncing");
     setSyncResults([]);
-    syncMutation.mutate();
+    syncMutation.mutate({ selections } as any);
   };
 
   const handleReset = () => {
@@ -853,7 +922,7 @@ export default function Import() {
                 </Button>
               </div>
 
-              <DriveFileBrowser onSyncAll={handleSync} />
+              <DriveFileBrowser onImport={handleImportSelections} />
 
               {/* Previously imported — persisted sync history */}
               {syncHistory && syncHistory.length > 0 && (

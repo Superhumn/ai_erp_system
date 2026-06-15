@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { appRouter } from "./routers";
+import { appRouter, detectSheetType } from "./routers";
 import type { TrpcContext } from "./_core/context";
 
 type AuthenticatedUser = NonNullable<TrpcContext["user"]>;
@@ -43,6 +43,25 @@ function createAdminContext(): TrpcContext {
     } as unknown as TrpcContext["res"],
   };
 }
+
+describe("detectSheetType (Drive auto-sync detection)", () => {
+  // Headers arrive lowercased/trimmed, matching the server read path.
+  it("detects supported types from header keywords", () => {
+    expect(detectSheetType(["vendor name", "email"])).toBe("vendors");
+    expect(detectSheetType(["customer", "phone"])).toBe("customers");
+    expect(detectSheetType(["sku", "price"])).toBe("products");
+    expect(detectSheetType(["first name", "last name", "employee id"])).toBe("employees");
+    expect(detectSheetType(["ingredient", "unit cost"])).toBe("raw_materials");
+    expect(detectSheetType(["contact name", "lead source"])).toBe("crm_contacts");
+    expect(detectSheetType(["investor", "commitment"])).toBe("fundraising");
+  });
+
+  it("returns non-importable markers for ambiguous/unsupported sheets", () => {
+    expect(detectSheetType(["random", "columns"])).toBe("unknown");
+    expect(detectSheetType(["invoice number", "bill to"])).toBe("invoices");
+    expect(detectSheetType(["purchase order", "po number"])).toBe("purchase_orders");
+  });
+});
 
 describe("Google Sheets Import - Data Import", () => {
   beforeEach(() => {

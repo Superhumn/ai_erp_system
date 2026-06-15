@@ -85,6 +85,22 @@ export const IMPORT_FIELDS: Record<ImportModule, ImportFieldDef[]> = {
 /** Sentinel value meaning "do not import this column". */
 export const IMPORT_SKIP = "";
 
+/**
+ * Destination types the Google Drive auto-sync importer can write to. MUST stay
+ * in sync with `DRIVE_SUPPORTED_TYPES` in server/routers.ts — these are the
+ * options offered when a user confirms/overrides a detected sheet type.
+ */
+export const DRIVE_IMPORT_TYPES = [
+  { value: "vendors", label: "Vendors" },
+  { value: "customers", label: "Customers" },
+  { value: "products", label: "Products" },
+  { value: "employees", label: "Employees" },
+  { value: "raw_materials", label: "Raw materials" },
+  { value: "crm_contacts", label: "CRM contacts" },
+  { value: "crm_deals", label: "CRM deals" },
+  { value: "fundraising", label: "Fundraising / investors" },
+] as const;
+
 function normalize(s: string): string {
   return s.toLowerCase().replace(/[\s_-]+/g, " ").trim();
 }

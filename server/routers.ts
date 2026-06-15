@@ -224,6 +224,32 @@ async function getValidGoogleToken(userId: number): Promise<{ accessToken: strin
   return { accessToken: token.accessToken };
 }
 
+// Data types the Google Drive auto-sync importer knows how to write. Anything
+// else (unknown / invoices / purchase_orders) is surfaced in the preview but
+// cannot be imported without manual handling.
+const DRIVE_SUPPORTED_TYPES = [
+  'vendors', 'customers', 'products', 'employees',
+  'raw_materials', 'crm_contacts', 'crm_deals', 'fundraising',
+] as const;
+
+// Detect the destination type for a sheet from its (lowercased) header row.
+// Shared by previewGoogleDrive (detect-only) and syncGoogleDrive (detect+import)
+// so the suggestion the user confirms is exactly what gets imported.
+export function detectSheetType(headers: string[]): string {
+  if (headers.some((h) => h.includes('vendor') || h.includes('supplier'))) return 'vendors';
+  if (headers.some((h) => h.includes('customer') || h.includes('client') || h.includes('buyer'))) return 'customers';
+  if (headers.some((h) => h.includes('sku') || h.includes('product') || h.includes('item'))) return 'products';
+  if (headers.some((h) => h.includes('invoice') || h.includes('bill'))) return 'invoices';
+  if (headers.some((h) => h.includes('employee') || h.includes('team') || h.includes('staff'))) return 'employees';
+  if (headers.some((h) => h.includes('ingredient') || h.includes('raw material') || h.includes('material'))) return 'raw_materials';
+  if (headers.some((h) => h.includes('order') || h.includes('po') || h.includes('purchase'))) return 'purchase_orders';
+  if (headers.some((h) => h.includes('price') || h.includes('cost') || h.includes('rate'))) return 'products';
+  if (headers.some((h) => h.includes('contact') || h.includes('lead') || h.includes('prospect') || h.includes('pipeline'))) return 'crm_contacts';
+  if (headers.some((h) => h.includes('investor') || h.includes('fund') || h.includes('commitment') || h.includes('round') || h.includes('series'))) return 'fundraising';
+  if (headers.some((h) => h.includes('deal') || h.includes('opportunity') || h.includes('stage'))) return 'crm_deals';
+  return 'unknown';
+}
+
 // Helper to generate unique numbers
 export function generateNumber(prefix: string) {
   const date = new Date();
@@ -4761,8 +4787,80 @@ ONLY return the JSON array, no other text.`;
       }),
 
     // Sync all Google Drive spreadsheets automatically
+    // Detect the destination type of each spreadsheet WITHOUT importing, so the
+    // UI can let the user confirm or override the target before any write.
+    previewGoogleDrive: protectedProcedure
+      .input(z.object({ fileIds: z.array(z.string()).optional() }).optional())
+      .query(async ({ input, ctx }) => {
+        const { accessToken, error: tokenError } = await getValidGoogleToken(ctx.user.id);
+        if (tokenError || !accessToken) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: tokenError || 'Google not connected. Go to Settings to connect your Google account.' });
+        }
+
+        const sheetsResponse = await fetch(
+          `https://www.googleapis.com/drive/v3/files?q=(mimeType='application/vnd.google-apps.spreadsheet' or mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or mimeType='text/csv')&fields=files(id,name,modifiedTime,mimeType)&orderBy=modifiedTime desc&pageSize=100`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+        if (!sheetsResponse.ok) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list Google Sheets from Drive' });
+        }
+        const sheetsData = await sheetsResponse.json();
+        let files = sheetsData.files || [];
+        const wanted = input?.fileIds && input.fileIds.length > 0 ? new Set(input.fileIds) : null;
+        if (wanted) files = files.filter((f: any) => wanted.has(f.id));
+
+        const previews: { fileId: string; fileName: string; detectedType: string; rowCount: number; supported: boolean }[] = [];
+        for (const file of files) {
+          try {
+            let data: any;
+            const dataResponse = await fetch(
+              `https://sheets.googleapis.com/v4/spreadsheets/${file.id}/values/Sheet1?majorDimension=ROWS`,
+              { headers: { Authorization: `Bearer ${accessToken}` } },
+            );
+            if (dataResponse.ok) {
+              data = await dataResponse.json();
+            } else {
+              const fallback = await fetch(
+                `https://sheets.googleapis.com/v4/spreadsheets/${file.id}/values/A:ZZ?majorDimension=ROWS`,
+                { headers: { Authorization: `Bearer ${accessToken}` } },
+              );
+              if (!fallback.ok) {
+                previews.push({ fileId: file.id, fileName: file.name, detectedType: 'error', rowCount: 0, supported: false });
+                continue;
+              }
+              data = await fallback.json();
+            }
+            const rows = data.values || [];
+            if (rows.length < 2) {
+              previews.push({ fileId: file.id, fileName: file.name, detectedType: 'skipped', rowCount: 0, supported: false });
+              continue;
+            }
+            const headers: string[] = rows[0].map((h: string) => h.toLowerCase().trim());
+            const detectedType = detectSheetType(headers);
+            previews.push({
+              fileId: file.id,
+              fileName: file.name,
+              detectedType,
+              rowCount: rows.length - 1,
+              supported: (DRIVE_SUPPORTED_TYPES as readonly string[]).includes(detectedType),
+            });
+          } catch (e: any) {
+            previews.push({ fileId: file.id, fileName: file.name, detectedType: 'error', rowCount: 0, supported: false });
+          }
+        }
+        return { previews };
+      }),
+
     syncGoogleDrive: protectedProcedure
-      .mutation(async ({ ctx }) => {
+      .input(z.object({
+        // When provided, import ONLY these files using the user-confirmed type
+        // (overriding auto-detection). Omitted = legacy "detect & import all".
+        selections: z.array(z.object({
+          fileId: z.string(),
+          type: z.enum(DRIVE_SUPPORTED_TYPES),
+        })).optional(),
+      }).optional())
+      .mutation(async ({ ctx, input }) => {
         const results: { sheet: string; type: string; imported: number; errors: string[] }[] = [];
 
         // 1. Get valid Google OAuth token
@@ -4770,6 +4868,10 @@ ONLY return the JSON array, no other text.`;
         if (tokenError || !accessToken) {
           throw new TRPCError({ code: 'PRECONDITION_FAILED', message: tokenError || 'Google not connected. Go to Settings to connect your Google account.' });
         }
+
+        const forcedTypes = input?.selections && input.selections.length > 0
+          ? new Map(input.selections.map((s) => [s.fileId, s.type as string]))
+          : null;
 
         // 2. List all Google Sheets in Drive
         const sheetsResponse = await fetch(
@@ -4780,7 +4882,9 @@ ONLY return the JSON array, no other text.`;
           throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list Google Sheets from Drive' });
         }
         const sheetsData = await sheetsResponse.json();
-        const files = sheetsData.files || [];
+        let files = sheetsData.files || [];
+        // Only import the confirmed files when selections were supplied.
+        if (forcedTypes) files = files.filter((f: any) => forcedTypes.has(f.id));
 
         // 3. For each spreadsheet, read the first sheet, detect type, and import
         for (const file of files) {
@@ -4813,21 +4917,10 @@ ONLY return the JSON array, no other text.`;
             const headers: string[] = rows[0].map((h: string) => h.toLowerCase().trim());
             const dataRows: string[][] = rows.slice(1);
 
-            // Auto-detect type based on column headers
-            let type = 'unknown';
-            if (headers.some((h: string) => h.includes('vendor') || h.includes('supplier'))) type = 'vendors';
-            else if (headers.some((h: string) => h.includes('customer') || h.includes('client') || h.includes('buyer'))) type = 'customers';
-            else if (headers.some((h: string) => h.includes('sku') || h.includes('product') || h.includes('item'))) type = 'products';
-            else if (headers.some((h: string) => h.includes('invoice') || h.includes('bill'))) type = 'invoices';
-            else if (headers.some((h: string) => h.includes('employee') || h.includes('team') || h.includes('staff'))) type = 'employees';
-            else if (headers.some((h: string) => h.includes('ingredient') || h.includes('raw material') || h.includes('material'))) type = 'raw_materials';
-            else if (headers.some((h: string) => h.includes('order') || h.includes('po') || h.includes('purchase'))) type = 'purchase_orders';
-            else if (headers.some((h: string) => h.includes('price') || h.includes('cost') || h.includes('rate'))) type = 'products';
-            else if (headers.some((h: string) => h.includes('contact') || h.includes('lead') || h.includes('prospect') || h.includes('pipeline'))) type = 'crm_contacts';
-            else if (headers.some((h: string) => h.includes('investor') || h.includes('fund') || h.includes('commitment') || h.includes('round') || h.includes('series'))) type = 'fundraising';
-            else if (headers.some((h: string) => h.includes('deal') || h.includes('opportunity') || h.includes('stage'))) type = 'crm_deals';
+            // Use the user-confirmed type when supplied, else auto-detect.
+            const type = forcedTypes?.get(file.id) ?? detectSheetType(headers);
 
-            if (type === 'unknown' || type === 'invoices' || type === 'purchase_orders') {
+            if (!(DRIVE_SUPPORTED_TYPES as readonly string[]).includes(type)) {
               results.push({ sheet: file.name, type, imported: 0, errors: type === 'unknown' ? ['Could not detect data type from headers'] : ['Auto-import not supported for this type'] });
               continue;
             }
