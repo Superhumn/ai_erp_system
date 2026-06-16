@@ -1,4 +1,4 @@
-import { eq, and, or, desc, sql, count, inArray } from "drizzle-orm";
+import { eq, and, or, desc, sql, inArray } from "drizzle-orm";
 import {
   billOfMaterials, InsertBillOfMaterials, bomComponents, InsertBomComponent,
   rawMaterials, InsertRawMaterial, bomVersionHistory, InsertBomVersionHistory,
