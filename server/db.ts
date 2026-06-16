@@ -4100,7 +4100,54 @@ export async function receivePurchaseOrderItems(
   return receiving;
 }
 
-// Consume materials for a work order
+/**
+ * Receive a purchase order's outstanding line items into raw-material inventory.
+ * Resolves each PO item's linked raw material and a target warehouse, then delegates
+ * to receivePurchaseOrderItems (which upserts inventory, logs transactions, and
+ * updates PO + shipment status). Only the not-yet-received quantity is taken, so this
+ * is safe to call more than once (e.g. on a freight delivery for the same PO).
+ */
+export async function receivePurchaseOrderIntoInventory(
+  purchaseOrderId: number,
+  opts: { warehouseId?: number; receivedBy?: number; shipmentId?: number } = {}
+): Promise<{ received: boolean; reason?: string; warehouseId?: number; itemCount?: number }> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Resolve a warehouse: explicit, else the first active one, else any.
+  let warehouseId = opts.warehouseId;
+  if (!warehouseId) {
+    const active = await getWarehouses({ status: "active" });
+    warehouseId = active[0]?.id ?? (await getWarehouses())[0]?.id;
+  }
+  if (!warehouseId) {
+    return { received: false, reason: "No warehouse configured to receive into" };
+  }
+
+  // getPurchaseOrderItems returns each item with its linked rawMaterial { id, unit }.
+  const items = await getPurchaseOrderItems(purchaseOrderId);
+  const toReceive: Array<{ purchaseOrderItemId: number; rawMaterialId?: number; quantity: number; unit: string }> = [];
+  for (const it of items as Array<any>) {
+    const ordered = parseFloat(it.quantity?.toString() || "0");
+    const already = parseFloat(it.receivedQuantity?.toString() || "0");
+    const outstanding = ordered - already;
+    if (outstanding <= 0) continue;
+    toReceive.push({
+      purchaseOrderItemId: it.id,
+      rawMaterialId: it.rawMaterial?.id ?? undefined,
+      quantity: outstanding,
+      unit: it.rawMaterial?.unit || "EA",
+    });
+  }
+
+  if (toReceive.length === 0) {
+    return { received: false, reason: "PO has no outstanding quantity to receive", warehouseId };
+  }
+
+  await receivePurchaseOrderItems(purchaseOrderId, warehouseId, toReceive, opts.receivedBy, opts.shipmentId);
+  return { received: true, warehouseId, itemCount: toReceive.length };
+}
+
 export async function consumeWorkOrderMaterials(workOrderId: number, performedBy?: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");

@@ -16251,9 +16251,11 @@ Ask if they received the original request and if they can provide a quote.`;
         }),
         linkToPO: z.boolean().default(true),
         createMissingVendor: z.boolean().default(false),
+        receiveInventory: z.boolean().default(false),
+        warehouseId: z.number().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        return importFreightInvoice(input.invoiceData as any, ctx.user.id, input.createMissingVendor);
+        return importFreightInvoice(input.invoiceData as any, ctx.user.id, input.createMissingVendor, input.receiveInventory, input.warehouseId);
       }),
 
     // Import a vendor invoice

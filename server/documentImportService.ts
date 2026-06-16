@@ -1000,7 +1000,9 @@ export async function importPurchaseOrder(
 export async function importFreightInvoice(
   invoice: ImportedFreightInvoice,
   userId: number,
-  createMissingVendor: boolean = false
+  createMissingVendor: boolean = false,
+  receiveInventory: boolean = false,
+  warehouseId?: number
 ): Promise<ImportResult> {
   const createdRecords: ImportResult["createdRecords"] = [];
   const updatedRecords: ImportResult["updatedRecords"] = [];
@@ -1073,6 +1075,25 @@ export async function importFreightInvoice(
         name: invoice.relatedPoNumber!,
         changes: `Freight cost added: $${invoice.totalAmount}`
       });
+
+      // 5. Optionally receive the carried goods into inventory. A freight invoice
+      // typically arrives on/after delivery, so this lets freight drive inventory
+      // for the linked PO. Only outstanding quantities are received.
+      if (receiveInventory) {
+        const result = await db.receivePurchaseOrderIntoInventory(relatedPoId, { warehouseId, receivedBy: userId });
+        if (result.received) {
+          updatedRecords.push({
+            type: "purchase_order",
+            id: relatedPoId,
+            name: invoice.relatedPoNumber!,
+            changes: `Received ${result.itemCount} line item(s) into inventory (warehouse #${result.warehouseId})`
+          });
+        } else {
+          warnings.push(`Goods not received into inventory: ${result.reason}`);
+        }
+      }
+    } else if (receiveInventory) {
+      warnings.push("Could not receive goods into inventory: freight invoice is not linked to a purchase order.");
     }
 
     return {
