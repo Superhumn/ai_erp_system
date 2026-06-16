@@ -60,20 +60,15 @@ import { reassignProjectTaskToHuman } from "./taskAgentBridge";
 import { createDecipheriv, createHash } from "crypto";
 
 /**
- * Strip heavy inline content (base64 data URLs) from email attachment rows
- * before sending them to the client, and expose a lightweight `hasStoredContent`
- * flag the UI uses to decide whether the Parse / View actions are available.
+ * Expose a lightweight `hasStoredContent` flag the UI uses to decide whether the
+ * View / Download / Parse actions are available for an email attachment. Content
+ * lives in object storage (R2), keyed by `storageKey`.
  */
 function sanitizeAttachments(attachments: any[]): any[] {
-  return (attachments || []).map((a) => {
-    const meta = (a.metadata as any) || {};
-    const { contentDataUrl, ...restMeta } = meta;
-    return {
-      ...a,
-      metadata: restMeta,
-      hasStoredContent: !!(a.storageKey || contentDataUrl),
-    };
-  });
+  return (attachments || []).map((a) => ({
+    ...a,
+    hasStoredContent: !!a.storageKey,
+  }));
 }
 
 // Decrypts a stored password supporting both the current AES-256-GCM format
@@ -12013,15 +12008,13 @@ Ask if they received the original request and if they can provide a quote.`;
                 // AUTO-IMPORT each into the correct ERP location.
                 if ((email as any).attachmentContents?.length > 0) {
                   const { importEmailAttachmentToErp } = await import("./documentImportService");
-                  const { storagePut, isStorageConfigured } = await import("./storage");
+                  const { storagePut } = await import("./storage");
                   const existing = await db.getEmailAttachments(emailId);
                   const existingNames = new Set(existing.map((a: any) => a.filename));
                   for (const att of (email as any).attachmentContents as Array<{ filename: string; contentType: string; data: Buffer }>) {
                     if (existingNames.has(att.filename)) continue;
-                    const base64 = att.data.toString("base64");
-                    const dataUrl = `data:${att.contentType};base64,${base64}`;
 
-                    // Create the row first so we can build a stable serving URL.
+                    // Persist the row, then store the bytes in object storage (R2).
                     const { id: attachmentId } = await db.createEmailAttachment({
                       emailId,
                       filename: att.filename,
@@ -12030,35 +12023,24 @@ Ask if they received the original request and if they can provide a quote.`;
                       isProcessed: false,
                     } as any);
 
-                    // Durable storage: upload to object storage (R2) when
-                    // configured; otherwise keep small files inline as a base64
-                    // data URL so they remain viewable / re-parseable.
-                    let storageKey: string | null = null;
-                    let metadata: any = {};
-                    if (isStorageConfigured()) {
-                      try {
-                        const safeName = att.filename.replace(/[^\w.\-]+/g, "_").slice(0, 120) || "file";
-                        const put = await storagePut(`email-attachments/${emailId}/${attachmentId}-${safeName}`, att.data, att.contentType);
-                        storageKey = put.key;
-                      } catch (e: any) {
-                        console.error("[scanNow] attachment upload failed:", e?.message);
-                      }
+                    try {
+                      const safeName = att.filename.replace(/[^\w.\-]+/g, "_").slice(0, 120) || "file";
+                      const put = await storagePut(`email-attachments/${emailId}/${attachmentId}-${safeName}`, att.data, att.contentType);
+                      await db.updateEmailAttachment(attachmentId, {
+                        storageKey: put.key,
+                        storageUrl: `/api/attachments/${attachmentId}`,
+                      } as any);
+                    } catch (e: any) {
+                      console.error("[scanNow] attachment upload failed:", e?.message);
+                      continue; // no stored bytes — skip parsing this attachment
                     }
-                    if (!storageKey) {
-                      // ~4.5MB base64 fits comfortably in a JSON column / packet.
-                      metadata = base64.length <= 4_500_000 ? { contentDataUrl: dataUrl } : { contentTooLarge: true };
-                    }
-                    await db.updateEmailAttachment(attachmentId, {
-                      storageKey,
-                      storageUrl: `/api/attachments/${attachmentId}`,
-                      metadata,
-                    } as any);
 
                     try {
                       const r = await importEmailAttachmentToErp({
                         emailId,
                         attachmentId,
-                        content: dataUrl,
+                        // Parse from the in-memory bytes we just uploaded (no R2 round-trip).
+                        content: `data:${att.contentType};base64,${att.data.toString("base64")}`,
                         filename: att.filename,
                         mimeType: att.contentType,
                         userId: 1,
@@ -12140,26 +12122,20 @@ Ask if they received the original request and if they can provide a quote.`;
         const attachment = await db.getEmailAttachmentById(input.attachmentId);
         if (!attachment) throw new TRPCError({ code: "NOT_FOUND", message: "Attachment not found" });
 
-        // Resolve a fetchable source for the bytes: object storage (R2) first,
-        // then a base64 data URL fallback. parseUploadedDocument fetch()es it,
-        // so an https presigned URL or a data: URL both work.
-        const meta = (attachment.metadata as any) || {};
-        let source: string | undefined;
-        if (attachment.storageKey) {
-          try {
-            const { storageGet } = await import("./storage");
-            source = (await storageGet(attachment.storageKey)).url;
-          } catch (e: any) {
-            throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `Could not load stored attachment: ${e.message}` });
-          }
-        } else if (meta.contentDataUrl) {
-          source = meta.contentDataUrl;
-        }
-        if (!source) {
+        // Resolve a fetchable source for the bytes from object storage (R2).
+        // parseUploadedDocument fetch()es it, so the presigned/public URL works.
+        if (!attachment.storageKey) {
           throw new TRPCError({
             code: "PRECONDITION_FAILED",
-            message: "Attachment content is not available to parse (too large or not stored). Re-scan the inbox to refetch it.",
+            message: "Attachment content is not stored. Re-scan the inbox to refetch it.",
           });
+        }
+        let source: string;
+        try {
+          const { storageGet } = await import("./storage");
+          source = (await storageGet(attachment.storageKey)).url;
+        } catch (e: any) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `Could not load stored attachment: ${e.message}` });
         }
 
         const { importEmailAttachmentToErp } = await import("./documentImportService");

@@ -41,34 +41,22 @@ export function registerAttachmentRoutes(app: Express) {
     const mimeType = attachment.mimeType || "application/octet-stream";
     const filename = attachment.filename || "attachment";
 
-    try {
-      // Preferred: object storage (R2).
-      if (attachment.storageKey) {
-        const { url } = await storageGet(attachment.storageKey);
-        const upstream = await fetch(url);
-        if (!upstream.ok || !upstream.body) {
-          return res.status(502).json({ error: "Failed to fetch stored attachment" });
-        }
-        setDispositionHeaders(res, filename, mimeType, download);
-        const len = upstream.headers.get("content-length");
-        if (len) res.setHeader("Content-Length", len);
-        const { Readable } = await import("node:stream");
-        Readable.fromWeb(upstream.body as any).pipe(res);
-        return;
-      }
-
-      // Fallback: base64 data URL stored on metadata (small files, no R2).
-      const meta = (attachment.metadata as any) || {};
-      const dataUrl: string | undefined = meta.contentDataUrl;
-      if (dataUrl && dataUrl.startsWith("data:")) {
-        const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
-        const buffer = Buffer.from(base64, "base64");
-        setDispositionHeaders(res, filename, mimeType, download);
-        res.setHeader("Content-Length", buffer.length);
-        return res.end(buffer);
-      }
-
+    if (!attachment.storageKey) {
       return res.status(404).json({ error: "Attachment content is not available" });
+    }
+
+    try {
+      // Stream the bytes from object storage (R2).
+      const { url } = await storageGet(attachment.storageKey);
+      const upstream = await fetch(url);
+      if (!upstream.ok || !upstream.body) {
+        return res.status(502).json({ error: "Failed to fetch stored attachment" });
+      }
+      setDispositionHeaders(res, filename, mimeType, download);
+      const len = upstream.headers.get("content-length");
+      if (len) res.setHeader("Content-Length", len);
+      const { Readable } = await import("node:stream");
+      Readable.fromWeb(upstream.body as any).pipe(res);
     } catch (err: any) {
       console.error("[attachments] serve failed:", err?.message);
       return res.status(500).json({ error: "Failed to serve attachment" });
