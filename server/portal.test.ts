@@ -350,6 +350,115 @@ describe("copackerPortal", () => {
       ).rejects.toThrow("You do not have access to this customs clearance");
     });
   });
+
+  describe("getInventory", () => {
+    it("should return only the copacker's assigned warehouse inventory", async () => {
+      const ctx = createMockContext({ role: "copacker", linkedWarehouseId: 5 });
+      const caller = appRouter.createCaller(ctx);
+
+      const byWarehouse = vi.spyOn(db, "getInventoryByWarehouse").mockResolvedValue([
+        { inventory: { id: 10, productId: 100, warehouseId: 5, quantity: "25" } } as any,
+      ]);
+      const all = vi.spyOn(db, "getInventory").mockResolvedValue([]);
+
+      const result = await caller.copackerPortal.getInventory();
+
+      expect(byWarehouse).toHaveBeenCalledWith(5);
+      expect(all).not.toHaveBeenCalled();
+      expect(result).toHaveLength(1);
+      expect((result[0] as any).inventory.warehouseId).toBe(5);
+    });
+
+    it("should reject a copacker with no warehouse assigned", async () => {
+      const ctx = createMockContext({ role: "copacker", linkedWarehouseId: undefined });
+      const caller = appRouter.createCaller(ctx);
+
+      await expect(caller.copackerPortal.getInventory()).rejects.toThrow(
+        "No warehouse assigned to this account"
+      );
+    });
+  });
+
+  describe("biweekly inventory update lifecycle", () => {
+    it("should create a draft update with its line items", async () => {
+      const ctx = createMockContext({ role: "copacker", linkedWarehouseId: 5 });
+      const caller = appRouter.createCaller(ctx);
+
+      const createUpdate = vi
+        .spyOn(db, "createCopackerInventoryUpdate")
+        .mockResolvedValue({ id: 77 } as any);
+      const createItem = vi
+        .spyOn(db, "createCopackerInventoryUpdateItem")
+        .mockResolvedValue({ id: 1 } as any);
+      vi.spyOn(db, "createAuditLog").mockResolvedValue({ id: 1 } as any);
+
+      const result = await caller.copackerPortal.createInventoryUpdate({
+        periodStart: "2026-06-01",
+        periodEnd: "2026-06-15",
+        items: [
+          { productId: 100, newQuantity: "30", quantityReceived: "10" },
+          { productId: 101, newQuantity: "5" },
+        ],
+      });
+
+      expect(result.id).toBe(77);
+      expect(createUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ warehouseId: 5, status: "draft", submittedBy: 1 })
+      );
+      expect(createItem).toHaveBeenCalledTimes(2);
+      // Optional quantity fields default to "0"
+      expect(createItem).toHaveBeenCalledWith(
+        expect.objectContaining({ updateId: 77, productId: 101, quantityReceived: "0" })
+      );
+    });
+
+    it("should submit a draft and apply quantities to live inventory", async () => {
+      const ctx = createMockContext({ role: "copacker", linkedWarehouseId: 5 });
+      const caller = appRouter.createCaller(ctx);
+
+      vi.spyOn(db, "getCopackerInventoryUpdateById").mockResolvedValue({
+        id: 77,
+        warehouseId: 5,
+        status: "draft",
+      } as any);
+      const markSubmitted = vi
+        .spyOn(db, "updateCopackerInventoryUpdate")
+        .mockResolvedValue({ success: true } as any);
+      vi.spyOn(db, "getCopackerInventoryUpdateItems").mockResolvedValue([
+        { productId: 100, newQuantity: "30" } as any,
+      ]);
+      vi.spyOn(db, "getInventoryByWarehouse").mockResolvedValue([
+        { inventory: { id: 10, productId: 100, warehouseId: 5 } } as any,
+      ]);
+      const applyQty = vi
+        .spyOn(db, "updateInventoryQuantityById")
+        .mockResolvedValue(undefined as any);
+      vi.spyOn(db, "createAuditLog").mockResolvedValue({ id: 1 } as any);
+
+      const result = await caller.copackerPortal.submitInventoryUpdate({ id: 77 });
+
+      expect(result.success).toBe(true);
+      expect(markSubmitted).toHaveBeenCalledWith(77, { status: "submitted" });
+      expect(applyQty).toHaveBeenCalledWith(10, 30, 1, expect.stringContaining("Biweekly update"));
+    });
+
+    it("should deny submitting an update belonging to another warehouse", async () => {
+      const ctx = createMockContext({ role: "copacker", linkedWarehouseId: 5 });
+      const caller = appRouter.createCaller(ctx);
+
+      vi.spyOn(db, "getCopackerInventoryUpdateById").mockResolvedValue({
+        id: 88,
+        warehouseId: 6, // different warehouse
+        status: "draft",
+      } as any);
+      const markSubmitted = vi.spyOn(db, "updateCopackerInventoryUpdate");
+
+      await expect(
+        caller.copackerPortal.submitInventoryUpdate({ id: 88 })
+      ).rejects.toThrow();
+      expect(markSubmitted).not.toHaveBeenCalled();
+    });
+  });
 });
 describe("customs clearance inventory integration", () => {
   beforeEach(() => {
