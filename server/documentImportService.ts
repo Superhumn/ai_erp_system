@@ -697,7 +697,7 @@ If document type is unknown, return all as null.`;
     const parsed = JSON.parse(jsonText);
     console.log("[DocumentImport] Parsed result:", JSON.stringify(parsed, null, 2).substring(0, 1000));
     
-    return {
+    return reclassifyFreightDocument({
       success: true,
       documentType: parsed.documentType,
       purchaseOrder: parsed.purchaseOrder,
@@ -705,7 +705,7 @@ If document type is unknown, return all as null.`;
       freightInvoice: parsed.freightInvoice,
       customsDocument: parsed.customsDocument,
       rawText: `Document parsed from: ${fileUrl}`
-    };
+    });
   } catch (error) {
     console.error("Document parse error:", error);
     return {
@@ -767,6 +767,76 @@ export function isNonMaterialLineItem(item: { description?: string | null; unit?
   const unit = (item.unit ?? "").trim().toLowerCase();
   if (unit && NON_MATERIAL_UNITS.has(unit)) return true;
   return false;
+}
+
+/**
+ * Strong freight/logistics signals (on a line-item description or a vendor name).
+ * Used to recognise freight bills that the AI parser mislabels as vendor invoices
+ * or purchase orders.
+ */
+const FREIGHT_SIGNAL_PATTERNS: RegExp[] = [
+  /\bfreight\b/i, /\bocean\s*freight\b/i, /\bair\s*freight\b/i, /\bsea\s*freight\b/i,
+  /\bshipping\b/i, /\bdrayage\b/i, /\bdemurrage\b/i, /\bdetention\b/i,
+  /\bhaulage\b/i, /\bcartage\b/i, /\bforward(?:er|ing)\b/i, /\blogistics\b/i,
+  /\bbill\s*of\s*lading\b/i, /\bcontainer\b/i, /\bport\b/i, /\bterminal handling\b/i,
+  /\bthc\b/i, /\bbaf\b/i, /\bcustoms\b/i, /\bbroker(?:age)?\b/i,
+  /\b(fcl|lcl|cfs)\b/i, /\bvessel\b/i, /\bvoyage\b/i,
+];
+const hasFreightSignal = (text: string | null | undefined) =>
+  FREIGHT_SIGNAL_PATTERNS.some((re) => re.test(text ?? ""));
+
+/**
+ * Decide whether a parsed vendor-invoice / purchase-order is really a freight bill.
+ * True when the vendor is clearly a carrier/forwarder, or freight charges make up at
+ * least half the line items. Conservative so ordinary goods invoices (which may carry
+ * a single "shipping" line) are not reclassified.
+ */
+export function looksLikeFreightInvoice(
+  vendorName: string | null | undefined,
+  lineItems: Array<{ description?: string | null }>,
+): boolean {
+  if (hasFreightSignal(vendorName)) return true;
+  if (!lineItems.length) return false;
+  const freightLines = lineItems.filter((li) => hasFreightSignal(li.description)).length;
+  return freightLines / lineItems.length >= 0.5;
+}
+
+function toFreightInvoice(src: ImportedVendorInvoice | ImportedPurchaseOrder): ImportedFreightInvoice {
+  const isInvoice = "invoiceNumber" in src;
+  const charges = src.lineItems.map((li) => li.description).filter(Boolean).join("; ");
+  return {
+    invoiceNumber: isInvoice ? (src as ImportedVendorInvoice).invoiceNumber : (src as ImportedPurchaseOrder).poNumber,
+    carrierName: src.vendorName,
+    carrierEmail: src.vendorEmail,
+    invoiceDate: isInvoice ? (src as ImportedVendorInvoice).invoiceDate : (src as ImportedPurchaseOrder).orderDate,
+    deliveryDate: "deliveryDate" in src ? (src as ImportedPurchaseOrder).deliveryDate : undefined,
+    freightCharges: src.subtotal ?? src.totalAmount,
+    totalAmount: src.totalAmount,
+    currency: src.currency,
+    relatedPoNumber: isInvoice ? (src as ImportedVendorInvoice).relatedPoNumber : (src as ImportedPurchaseOrder).poNumber,
+    notes: [src.notes, charges && `Charges: ${charges}`].filter(Boolean).join(" | ") || undefined,
+    confidence: src.confidence,
+  };
+}
+
+/**
+ * Deterministic safety net for parse results: freight/logistics bills are routinely
+ * misclassified as vendor invoices or POs, which sends them through the materials-
+ * creating import path instead of the freight path. Reclassify clear freight bills to
+ * `freight_invoice` so the existing routing imports them via importFreightInvoice
+ * (freight-history record, no materials).
+ */
+export function reclassifyFreightDocument(result: DocumentParseResult): DocumentParseResult {
+  if (!result.success) return result;
+  if (result.documentType === "vendor_invoice" && result.vendorInvoice
+      && looksLikeFreightInvoice(result.vendorInvoice.vendorName, result.vendorInvoice.lineItems)) {
+    return { ...result, documentType: "freight_invoice", freightInvoice: toFreightInvoice(result.vendorInvoice), vendorInvoice: undefined };
+  }
+  if (result.documentType === "purchase_order" && result.purchaseOrder
+      && looksLikeFreightInvoice(result.purchaseOrder.vendorName, result.purchaseOrder.lineItems)) {
+    return { ...result, documentType: "freight_invoice", freightInvoice: toFreightInvoice(result.purchaseOrder), purchaseOrder: undefined };
+  }
+  return result;
 }
 
 export async function matchLineItemsToMaterials(
