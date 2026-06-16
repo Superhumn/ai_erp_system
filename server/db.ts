@@ -6082,6 +6082,14 @@ export async function getEmailAttachments(emailId: number) {
   return db.select().from(emailAttachments).where(eq(emailAttachments.emailId, emailId));
 }
 
+export async function getEmailAttachmentById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const rows = await db.select().from(emailAttachments).where(eq(emailAttachments.id, id)).limit(1);
+  return rows[0] ?? null;
+}
+
 export async function updateAttachmentProcessed(id: number, extractedText?: string) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");

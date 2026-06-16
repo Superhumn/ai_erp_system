@@ -49,7 +49,15 @@ import {
   Download,
   FileSpreadsheet,
   FileDown,
+  Paperclip,
 } from "lucide-react";
+
+const formatBytes = (n?: number | null) => {
+  if (!n || n <= 0) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+};
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -251,6 +259,19 @@ export default function EmailInbox() {
   const archiveEmailMutation = trpc.emailScanning.archiveEmail.useMutation({ onSuccess: () => { toast.success("Email archived"); setSelectedEmailId(null); utils.emailScanning.list.invalidate(); } });
   const deleteEmailMutation = trpc.emailScanning.deleteEmail.useMutation({ onSuccess: () => { toast.success("Email deleted"); setSelectedEmailId(null); setShowDeleteConfirm(false); setDeleteTargetId(null); utils.emailScanning.list.invalidate(); }, onError: (e) => toast.error(`Failed: ${e.message}`) });
   const reparseEmailMutation = trpc.emailScanning.reparseEmail.useMutation({ onSuccess: (r) => { if (r.success) { toast.success(`Reparsed! ${r.documentsFound} docs`); utils.emailScanning.list.invalidate(); } else toast.error(`Reparse failed: ${r.error}`); } });
+  const parseAttachmentMutation = (trpc.emailScanning as any).parseAttachment.useMutation({
+    onSuccess: (r: any) => {
+      if (r.success) {
+        const created = (r.createdRecords || []).map((x: any) => `${String(x.type).replace(/_/g, " ")} ${x.name}`).join(", ");
+        toast.success(created ? `Imported ${String(r.documentType).replace(/_/g, " ")} → ${created}` : `Parsed ${String(r.documentType).replace(/_/g, " ")} (no new records)`);
+      } else {
+        toast.error(`Couldn't import: ${r.error}`);
+      }
+      if (selectedEmailId) utils.emailScanning.getById.invalidate({ id: selectedEmailId });
+      utils.emailScanning.list.invalidate();
+    },
+    onError: (e: any) => toast.error("Parse failed: " + e.message),
+  });
   const scanInboxMutation = trpc.emailScanning.scanInbox.useMutation({ onSuccess: (r) => { if (r.success) { toast.success(`Scanned! Imported ${r.imported}`); setShowScanDialog(false); utils.emailScanning.list.invalidate(); } else toast.error(`Failed: ${r.error}`); }, onError: (e) => toast.error(e.message) });
   const testConnectionMutation = trpc.emailScanning.testInboxConnection.useMutation({ onSuccess: (r) => { if (r.success) toast.success(`Connected! ${r.mailboxes?.length || 0} mailboxes`); else toast.error(`Failed: ${r.error}`); }, onError: (e) => toast.error(e.message) });
   const scanNowMutation = (trpc.emailScanning as any).scanNow.useMutation({ onSuccess: (r: any) => { toast.success(`Scanned: ${r.emailsProcessed} emails`); utils.emailScanning.list.invalidate(); }, onError: (e: any) => toast.error("Scan failed: " + e.message) });
@@ -542,6 +563,42 @@ export default function EmailInbox() {
             <div className="flex flex-wrap gap-2 py-2 border-y">
               <span className="text-xs text-muted-foreground font-medium w-full">Parsed Documents ({(detail as any).documents.length})</span>
               {(detail as any).documents.map((doc: any) => <Badge key={doc.id} variant="secondary" className="text-xs gap-1"><FileText className="h-3 w-3" />{doc.documentType?.replace(/_/g, " ")}{doc.totalAmount && ` — $${Number(doc.totalAmount).toFixed(2)}`}</Badge>)}
+            </div>
+          )}
+          {(detail as any)?.attachments?.length > 0 && (
+            <div className="space-y-2 py-2 border-y">
+              <span className="text-xs text-muted-foreground font-medium flex items-center gap-1.5"><Paperclip className="h-3.5 w-3.5" />Attachments ({(detail as any).attachments.length})</span>
+              <div className="space-y-1.5">
+                {(detail as any).attachments.map((att: any) => {
+                  const meta = att.metadata || {};
+                  const isParsing = parseAttachmentMutation.isPending && parseAttachmentMutation.variables?.attachmentId === att.id;
+                  const canParse = !!(meta.contentDataUrl || String(att.storageUrl || "").startsWith("data:"));
+                  return (
+                    <div key={att.id} className="flex items-center gap-2 rounded-lg border px-3 py-2 bg-muted/20">
+                      <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium truncate">{att.filename}</p>
+                        <p className="text-[11px] text-muted-foreground truncate">
+                          {att.mimeType || "file"}{att.size ? ` · ${formatBytes(att.size)}` : ""}
+                          {att.isProcessed && meta.documentType && (
+                            <span className={meta.imported ? "ml-1 text-emerald-600" : "ml-1 text-amber-600"}>
+                              {" · "}{String(meta.documentType).replace(/_/g, " ")}{meta.imported ? " imported" : meta.parseError ? " (parse failed)" : ""}
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                      {canParse ? (
+                        <Button variant="ghost" size="sm" className="h-7 text-xs gap-1 shrink-0" disabled={isParsing} onClick={() => parseAttachmentMutation.mutate({ attachmentId: att.id })}>
+                          {isParsing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : att.isProcessed ? <RefreshCw className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}
+                          {att.isProcessed ? "Reparse" : "Parse & Import"}
+                        </Button>
+                      ) : (
+                        <span className="text-[11px] text-muted-foreground shrink-0">content unavailable</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
           <EmailBody body={bodyRaw} />

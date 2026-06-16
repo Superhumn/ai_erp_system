@@ -11979,7 +11979,7 @@ Ask if they received the original request and if they can provide a quote.`;
 
             for (const { email } of parsedResults) {
               try {
-                await db.createInboundEmail?.({
+                const { id: emailId } = await db.createInboundEmail({
                   messageId: email.messageId,
                   fromEmail: email.from.address,
                   fromName: email.from.name || "",
@@ -11991,17 +11991,39 @@ Ask if they received the original request and if they can provide a quote.`;
                   category: email.categorization?.category || "other",
                 } as any);
 
-                // Parse attachments and AUTO-IMPORT into correct DB tables
+                // Persist attachment records (so they show in the inbox) and
+                // AUTO-IMPORT each into the correct ERP location.
                 if ((email as any).attachmentContents?.length > 0) {
-                  const { bulkImportDocuments } = await import("./documentImportService");
-                  const docs = (email as any).attachmentContents.map((att: any) => ({
-                    content: `data:${att.contentType};base64,${att.data.toString("base64")}`,
-                    filename: att.filename,
-                  }));
-                  try {
-                    const importResult = await bulkImportDocuments(docs, 1, true);
-                    totalAttachmentsParsed += importResult.successful;
-                  } catch { /* skip */ }
+                  const { importEmailAttachmentToErp } = await import("./documentImportService");
+                  const existing = await db.getEmailAttachments(emailId);
+                  const existingNames = new Set(existing.map((a: any) => a.filename));
+                  for (const att of (email as any).attachmentContents as Array<{ filename: string; contentType: string; data: Buffer }>) {
+                    if (existingNames.has(att.filename)) continue;
+                    const base64 = att.data.toString("base64");
+                    const dataUrl = `data:${att.contentType};base64,${base64}`;
+                    // Keep raw content for on-demand re-parse only when small enough
+                    // to fit comfortably in a JSON column / packet (~4.5MB base64).
+                    const storeContent = base64.length <= 4_500_000;
+                    const { id: attachmentId } = await db.createEmailAttachment({
+                      emailId,
+                      filename: att.filename,
+                      mimeType: att.contentType,
+                      size: att.data.length,
+                      isProcessed: false,
+                      metadata: storeContent ? { contentDataUrl: dataUrl } : { contentTooLarge: true },
+                    } as any);
+                    try {
+                      const r = await importEmailAttachmentToErp({
+                        emailId,
+                        attachmentId,
+                        content: dataUrl,
+                        filename: att.filename,
+                        mimeType: att.contentType,
+                        userId: 1,
+                      });
+                      if (r.success) totalAttachmentsParsed++;
+                    } catch { /* skip individual attachment failures */ }
+                  }
                 }
                 totalProcessed++;
               } catch { /* skip */ }
@@ -12062,6 +12084,60 @@ Ask if they received the original request and if they can provide a quote.`;
         const attachments = await db.getEmailAttachments(id);
         const documents = await db.getParsedDocuments({ emailId: id });
         return { ...email, attachments, documents };
+      }),
+
+    // Parse a stored attachment on demand and import its data into the ERP
+    // (purchase order / vendor invoice / freight invoice / customs document).
+    parseAttachment: protectedProcedure
+      .input(z.object({
+        attachmentId: z.number(),
+        hint: z.enum(["purchase_order", "vendor_invoice", "freight_invoice", "customs_document"]).optional(),
+        createMissingVendor: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const attachment = await db.getEmailAttachmentById(input.attachmentId);
+        if (!attachment) throw new TRPCError({ code: "NOT_FOUND", message: "Attachment not found" });
+
+        const meta = (attachment.metadata as any) || {};
+        const dataUrl: string | undefined = meta.contentDataUrl
+          || (attachment.storageUrl?.startsWith("data:") ? attachment.storageUrl : undefined);
+        if (!dataUrl) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: "Attachment content is not available to parse (too large or not stored). Re-scan the inbox to refetch it.",
+          });
+        }
+
+        const { importEmailAttachmentToErp } = await import("./documentImportService");
+        const result = await importEmailAttachmentToErp({
+          emailId: attachment.emailId,
+          attachmentId: attachment.id,
+          content: dataUrl,
+          filename: attachment.filename,
+          mimeType: attachment.mimeType || undefined,
+          userId: (ctx as any)?.user?.id ?? 1,
+          hint: input.hint,
+          createMissingVendor: input.createMissingVendor ?? true,
+        });
+
+        if (!result.success) {
+          return {
+            success: false,
+            documentType: result.documentType,
+            error: result.error || result.importResult?.error || "Could not import document",
+            createdRecords: result.importResult?.createdRecords ?? [],
+            warnings: result.importResult?.warnings ?? [],
+          };
+        }
+
+        return {
+          success: true,
+          documentType: result.documentType,
+          parsedDocumentId: result.parsedDocumentId,
+          createdRecords: result.importResult?.createdRecords ?? [],
+          updatedRecords: result.importResult?.updatedRecords ?? [],
+          warnings: result.importResult?.warnings ?? [],
+        };
       }),
 
     // Submit email for parsing (manual forward)
