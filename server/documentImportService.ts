@@ -719,6 +719,56 @@ If document type is unknown, return all as null.`;
 /**
  * Match line items to existing raw materials
  */
+/**
+ * Line items on imported documents that must NOT be promoted into the raw-materials
+ * catalog: freight/logistics charges, taxes & fees, and SaaS/usage/subscription
+ * billing. Vendor invoices and POs routinely include these alongside (or instead of)
+ * physical goods, and auto-creating a "material" for each was polluting the materials
+ * list with entries like "OCEAN FREIGHT...", "Build Minutes", and "Max plan".
+ *
+ * Conservative by design: only skips line items that clearly match a non-material
+ * signal, so genuine goods are still catalogued.
+ */
+const NON_MATERIAL_DESCRIPTION_PATTERNS: RegExp[] = [
+  // Freight / logistics services
+  /\bfreight\b/i, /\bshipping\b/i, /\bcourier\b/i, /\bdrayage\b/i, /\bdemurrage\b/i,
+  /\bdetention\b/i, /\bhandling\b/i, /\blogistics\b/i, /\bport\b/i, /\bvessel\b/i,
+  /\bcustoms\b/i, /\bbroker(age)?\b/i, /\bclearance\b/i,
+  // Taxes / fees / surcharges
+  /\bdut(y|ies)\b/i, /\btariff\b/i, /\b(vat|gst)\b/i, /\bsales tax\b/i,
+  /\bsurcharge\b/i, /\bfuel\b/i, /\bservice fee\b/i, /\bprocessing fee\b/i,
+  // SaaS / usage / subscription billing
+  /\bsubscription\b/i, /\bseat[s]?\b/i, /\blicen[sc]e\b/i, /\busage\b/i,
+  /\bcredit[s]?\s+purchase\b/i, /\bper\s+(gb|mb|kb|tb|min|minute|hour|hr)\b/i,
+  /\b(api\s+calls?|compute|hosting|bandwidth|build\s+minutes?)\b/i,
+  /\b(hobby|pro|max|team|enterprise|starter|business)\s+plan\b/i,
+  // Billing-period suffix, e.g. "Apr 1 - Apr 30, 2026" — a SaaS metering signal,
+  // not something a physical material name carries.
+  /\b[A-Za-z]{3,9}\s+\d{1,2}\s*[-–]\s*[A-Za-z]{3,9}\s+\d{1,2},?\s*\d{4}\b/,
+];
+
+const NON_MATERIAL_UNITS = new Set([
+  "min", "mins", "minute", "minutes", "hr", "hour", "hours",
+  "gb", "mb", "kb", "tb", "seat", "seats", "license", "licenses",
+  "month", "months", "mo", "subscription",
+]);
+
+/**
+ * Returns true when an imported line item is a service/charge/billing line rather
+ * than a physical material, so callers can skip creating a raw-material record for it.
+ * The underlying invoice/PO line is still recorded — only the materials-catalog
+ * pollution is prevented.
+ */
+export function isNonMaterialLineItem(item: { description?: string | null; unit?: string | null }): boolean {
+  const description = (item.description ?? "").trim();
+  // No usable description → don't fabricate a material from it.
+  if (!description) return true;
+  if (NON_MATERIAL_DESCRIPTION_PATTERNS.some((re) => re.test(description))) return true;
+  const unit = (item.unit ?? "").trim().toLowerCase();
+  if (unit && NON_MATERIAL_UNITS.has(unit)) return true;
+  return false;
+}
+
 export async function matchLineItemsToMaterials(
   lineItems: ImportedLineItem[]
 ): Promise<ImportedLineItem[]> {
@@ -780,9 +830,13 @@ export async function importPurchaseOrder(
     // 2. Match line items to raw materials
     const matchedItems = await matchLineItemsToMaterials(po.lineItems);
     
-    // 3. Create raw materials for unmatched items
+    // 3. Create raw materials for unmatched items (skip services/charges/SaaS lines)
     for (const item of matchedItems) {
       if (!item.rawMaterialId) {
+        if (isNonMaterialLineItem(item)) {
+          warnings.push(`Skipped non-material line item "${item.description}" — recorded on the order but not added to materials.`);
+          continue;
+        }
         const materialResult = await db.createRawMaterial({
           name: item.description,
           sku: item.sku || `RM-${Date.now()}`,
@@ -1021,9 +1075,13 @@ export async function importVendorInvoice(
       }
     }
 
-    // 4. Create raw materials for unmatched items
+    // 4. Create raw materials for unmatched items (skip services/charges/SaaS lines)
     for (const item of matchedItems) {
       if (!item.rawMaterialId) {
+        if (isNonMaterialLineItem(item)) {
+          warnings.push(`Skipped non-material line item "${item.description}" — recorded on the invoice but not added to materials.`);
+          continue;
+        }
         const materialResult = await db.createRawMaterial({
           name: item.description,
           sku: item.sku || `RM-${Date.now()}`,
@@ -1219,6 +1277,8 @@ export async function importCustomsDocument(
               changes: `Added HS Code: ${item.hsCode}`
             });
           }
+        } else if (isNonMaterialLineItem(item)) {
+          warnings.push(`Skipped non-material line item "${item.description}" — recorded on the customs document but not added to materials.`);
         } else {
           // Create new material with HS code
           const materialResult = await db.createRawMaterial({
