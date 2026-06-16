@@ -313,6 +313,13 @@ export const appRouter = router({
   // Employee self-service portal
   employeePortal: employeePortalRouter,
 
+  // Material Supply & Reorder — inventory + inbound freight + reorder recommendations
+  materialSupply: router({
+    overview: opsProcedure
+      .input(z.object({ companyId: z.number().optional() }).optional())
+      .query(({ input }) => db.getMaterialSupplyOverview({ companyId: input?.companyId })),
+  }),
+
   auth: router({
     me: publicProcedure.query(opts => {
       if (!opts.ctx.user) return null;

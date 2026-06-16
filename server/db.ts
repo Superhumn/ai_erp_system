@@ -187,6 +187,14 @@ import {
   pmMilestones, InsertPmMilestone,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
+import {
+  SAMPLE_MATERIAL_SUPPLY,
+  DEFAULT_MATERIAL_SUPPLY_PLANNING,
+  type MaterialSupplyOverview,
+  type MaterialSupplyCopacker,
+  type MaterialSupplyMaterial,
+  type MaterialSupplyInventoryLine,
+} from "../shared/materialSupply";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -14073,4 +14081,104 @@ export async function getPmMatrix(filters: { tier?: number; status?: PmProjectFi
   );
 
   return { markets, functions, cells };
+}
+
+// ============================================================================
+// MATERIAL SUPPLY & REORDER
+// ============================================================================
+// Assembles the data contract for the "Material Supply & Reorder" view from
+// live ERP tables: copackers (warehouses where type='copacker'), raw materials
+// (with lead time), and on-hand quantities (rawMaterialInventory). Daily usage
+// is derived from the trailing-30-day consume ledger. When the company has no
+// copacker / material / inventory data yet, the canonical sample dataset is
+// returned so the screen still renders meaningfully.
+//
+// NOTE: inbound sea-freight shipments are not yet modelled per material+copacker
+// in the ERP (the `shipments` table links to POs, not to a material/destination
+// copacker pair), so the live path returns an empty `shipments` array. Wire it
+// up here once ASN / freight-booking data carries material + destination.
+export async function getMaterialSupplyOverview(opts?: { companyId?: number }): Promise<MaterialSupplyOverview> {
+  const db = await getDb();
+  if (!db) return SAMPLE_MATERIAL_SUPPLY;
+
+  const companyId = opts?.companyId;
+
+  // Copacker sites
+  const whConditions = [eq(warehouses.type, "copacker" as any), eq(warehouses.status, "active" as any)];
+  if (companyId) whConditions.push(eq(warehouses.companyId, companyId));
+  const whRows = await db.select().from(warehouses).where(and(...whConditions)).orderBy(warehouses.name);
+
+  // Active raw materials
+  const rmConditions = [eq(rawMaterials.status, "active" as any)];
+  if (companyId) rmConditions.push(eq(rawMaterials.companyId, companyId));
+  const rmRows = await db.select().from(rawMaterials).where(and(...rmConditions)).orderBy(rawMaterials.name);
+
+  if (whRows.length === 0 || rmRows.length === 0) return SAMPLE_MATERIAL_SUPPLY;
+
+  const whById = new Map<number, typeof whRows[number]>(whRows.map((w) => [w.id, w]));
+  const rmById = new Map<number, typeof rmRows[number]>(rmRows.map((m) => [m.id, m]));
+  const codeFor = (w: typeof whRows[number]) => w.code || `WH${w.id}`;
+
+  // On-hand by material + location, scoped to the copacker sites + active materials
+  const invRows = await db
+    .select()
+    .from(rawMaterialInventory)
+    .where(
+      and(
+        inArray(rawMaterialInventory.warehouseId, whRows.map((w) => w.id)),
+        inArray(rawMaterialInventory.rawMaterialId, rmRows.map((m) => m.id)),
+      ),
+    );
+  if (invRows.length === 0) return SAMPLE_MATERIAL_SUPPLY;
+
+  // Daily usage from the trailing-30-day consume ledger
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const usageRows = await db
+    .select({
+      rawMaterialId: rawMaterialTransactions.rawMaterialId,
+      warehouseId: rawMaterialTransactions.warehouseId,
+      consumed: sql<number>`SUM(ABS(${rawMaterialTransactions.quantity}))`.mapWith(Number),
+    })
+    .from(rawMaterialTransactions)
+    .where(and(eq(rawMaterialTransactions.transactionType, "consume" as any), gte(rawMaterialTransactions.createdAt, since)))
+    .groupBy(rawMaterialTransactions.rawMaterialId, rawMaterialTransactions.warehouseId);
+  const usageByKey = new Map<string, number>();
+  for (const u of usageRows) usageByKey.set(`${u.rawMaterialId}:${u.warehouseId}`, (u.consumed ?? 0) / 30);
+
+  const copackers: MaterialSupplyCopacker[] = whRows.map((w) => ({
+    code: codeFor(w),
+    name: w.name,
+    short: w.name,
+    location: [w.city, w.state].filter(Boolean).join(", ") || w.country || "",
+  }));
+
+  const materials: MaterialSupplyMaterial[] = rmRows.map((m) => ({
+    id: String(m.id),
+    name: m.name,
+    unit: m.unit || "EA",
+    leadTimeDays: m.leadTimeDays ?? 0,
+  }));
+
+  const inventoryLines: MaterialSupplyInventoryLine[] = invRows
+    .filter((r) => whById.has(r.warehouseId) && rmById.has(r.rawMaterialId))
+    .map((r) => {
+      const onHand = Number(r.quantity) || 0;
+      const usage = usageByKey.get(`${r.rawMaterialId}:${r.warehouseId}`);
+      const dailyUsage = usage && usage > 0 ? usage : Math.max(1, Math.round(onHand / 45));
+      return {
+        copackerCode: codeFor(whById.get(r.warehouseId)!),
+        materialId: String(r.rawMaterialId),
+        onHand,
+        dailyUsage,
+      };
+    });
+
+  return {
+    source: "live",
+    planning: DEFAULT_MATERIAL_SUPPLY_PLANNING,
+    copackers,
+    materials,
+    inventoryLines,
+    shipments: [],
+  };
 }
