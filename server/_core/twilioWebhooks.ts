@@ -174,50 +174,42 @@ function extFromMime(mime: string | undefined): string {
 // in the ERP documents store so it outlives Twilio's short-lived media URLs.
 // Returns the durable stored URL (or undefined on failure). Best-effort: never
 // throws — a media failure must not break inbound message capture.
+//
+// The media is resolved via the Twilio API (by the signature-verified message
+// SID) rather than by fetching the webhook-supplied media URL: the download
+// target is derived from the API response, not from request input, so there is
+// no SSRF surface.
 async function importWhatsappMedia(
   waMsgId: number,
-  mediaUrl: string,
-  mediaType: string | undefined,
+  messageSid: string,
+  mediaTypeHint: string | undefined,
   fromNumber: string,
 ): Promise<string | undefined> {
   try {
     if (!ENV.twilioAccountSid || !ENV.twilioAuthToken) return undefined;
-
-    // SSRF guard: the media URL arrives in the webhook payload, so never send
-    // our Twilio credentials to an arbitrary host. Rather than fetch the
-    // supplied URL, we validate its shape and rebuild the request URL from a
-    // fixed Twilio template using only strictly-validated path segments and our
-    // own account SID — the request target can't be influenced by attacker
-    // input. (Twilio then redirects to its CDN; fetch drops the Authorization
-    // header on the cross-origin redirect per the fetch spec.)
-    let parsed: URL;
-    try {
-      parsed = new URL(mediaUrl);
-    } catch {
-      console.warn(`[Twilio Webhook] invalid media URL for msg ${waMsgId}`);
+    // Validate the SID shape before handing it to the Twilio SDK.
+    if (!/^(?:MM|SM)[0-9a-zA-Z]+$/.test(messageSid)) {
+      console.warn(`[Twilio Webhook] invalid message SID for msg ${waMsgId}`);
       return undefined;
     }
-    const pathMatch = parsed.pathname.match(
-      /^\/2010-04-01\/Accounts\/(AC[0-9a-zA-Z]+)\/Messages\/((?:MM|SM)[0-9a-zA-Z]+)\/Media\/(ME[0-9a-zA-Z]+)$/,
-    );
-    if (
-      parsed.protocol !== "https:" ||
-      parsed.hostname !== "api.twilio.com" ||
-      !pathMatch ||
-      pathMatch[1] !== ENV.twilioAccountSid
-    ) {
-      console.warn(`[Twilio Webhook] refusing non-Twilio media URL for msg ${waMsgId}`);
-      return undefined;
-    }
-    const safeUrl = `https://api.twilio.com/2010-04-01/Accounts/${pathMatch[1]}/Messages/${pathMatch[2]}/Media/${pathMatch[3]}`;
 
+    const twilioMod = await import("twilio");
+    const client = twilioMod.default(ENV.twilioAccountSid, ENV.twilioAuthToken);
+
+    // Look up the message's media via the API. The returned uri/contentType are
+    // response-derived (not attacker-controlled).
+    const mediaList = await client.messages(messageSid).media.list({ limit: 1 });
+    const media = mediaList[0];
+    if (!media) return undefined;
+
+    const mime = media.contentType || mediaTypeHint || "application/octet-stream";
+    const downloadUrl = `https://api.twilio.com${media.uri.replace(/\.json$/, "")}`;
     const auth = Buffer.from(`${ENV.twilioAccountSid}:${ENV.twilioAuthToken}`).toString("base64");
-    const resp = await fetch(safeUrl, { headers: { Authorization: `Basic ${auth}` } });
+    const resp = await fetch(downloadUrl, { headers: { Authorization: `Basic ${auth}` } });
     if (!resp.ok) {
       console.warn(`[Twilio Webhook] media fetch failed (${resp.status}) for msg ${waMsgId}`);
       return undefined;
     }
-    const mime = resp.headers.get("content-type") || mediaType || "application/octet-stream";
     const buffer = Buffer.from(await resp.arrayBuffer());
     const filename = `whatsapp-${waMsgId}.${extFromMime(mime)}`;
     const fileKey = `documents/whatsapp/${waMsgId}-${filename}`;
@@ -450,8 +442,8 @@ export function registerTwilioWebhooks(app: Express): void {
 
       // File any attached document into the ERP store in the background so the
       // webhook responds quickly. Repoints the message at the durable URL.
-      if (mediaUrl) {
-        void importWhatsappMedia(waMsg.id, mediaUrl, mediaType, from)
+      if (mediaUrl && messageSid) {
+        void importWhatsappMedia(waMsg.id, messageSid, mediaType, from)
           .then((durable) => {
             if (durable) {
               return db.update(whatsappMessages)
