@@ -70,7 +70,28 @@ import {
   TooltipTrigger,
 } from "./ui/tooltip";
 
+// External / outside-the-org roles. These users must only ever see a menu
+// containing the surface they actually have access to — never internal
+// navigation (Command Center, People, Tools, Finance, Operations, etc.).
+const EXTERNAL_PORTAL_MENUS: Record<
+  string,
+  Array<{ icon: typeof LayoutDashboard; label: string; path: string }>
+> = {
+  copacker: [{ icon: Factory, label: "Copacker Portal", path: "/portal/copacker" }],
+  vendor: [{ icon: Truck, label: "Vendor Portal", path: "/portal/vendor" }],
+  investor: [{ icon: TrendingUp, label: "Investor Portal", path: "/investor-portal" }],
+  // No dedicated contractor portal exists; scope is "assigned projects and
+  // documents". Least-privilege default: Projects only.
+  contractor: [{ icon: Target, label: "Projects", path: "/projects" }],
+};
+
 export function getMenuGroups(role: string = "user") {
+  // Outsiders get a portal-only menu and nothing else.
+  const portalItems = EXTERNAL_PORTAL_MENUS[role];
+  if (portalItems) {
+    return [{ label: "Portal", items: portalItems }];
+  }
+
   const isAdmin = ["admin", "exec"].includes(role);
   const hasFinance = ["admin", "exec", "finance"].includes(role);
   const hasOps = ["admin", "exec", "ops"].includes(role);
