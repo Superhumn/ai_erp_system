@@ -814,6 +814,12 @@ function InlineRdPercent({ value, onSave }: { value: number; onSave: (v: number)
 // ============================================
 type QBImportCategory = "wages" | "supplies" | "contract_research" | "cloud_computing";
 
+// Local-time YYYY-MM-DD for <input type="date">. Using toISOString() directly
+// would format in UTC and shift the day for users in non-zero timezones.
+function toDateInputValue(d: Date) {
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
 function ImportFromQBButton({ studyId, projects, onRefresh }: {
   studyId: number;
   projects: Array<{ id?: number | null; projectName?: string | null }>;
@@ -822,18 +828,18 @@ function ImportFromQBButton({ studyId, projects, onRefresh }: {
   const [open, setOpen] = useState(false);
   const [projectId, setProjectId] = useState("");
   const [startDate, setStartDate] = useState(() => {
-    const d = new Date(); d.setMonth(0, 1); return d.toISOString().slice(0, 10);
+    const d = new Date(); d.setMonth(0, 1); return toDateInputValue(d);
   });
-  const [endDate, setEndDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [endDate, setEndDate] = useState(() => toDateInputValue(new Date()));
   const [category, setCategory] = useState<QBImportCategory>("wages");
 
   const importMutation = trpc.rdTaxCredit.importFromQuickBooks.useMutation({
-    onSuccess: (data: any) => {
+    onSuccess: (data) => {
       toast.success(`Imported ${data.imported ?? 0} expense(s) from QuickBooks`);
       setOpen(false);
       onRefresh();
     },
-    onError: (e: any) => toast.error(e.message),
+    onError: (e) => toast.error(e.message),
   });
 
   return (

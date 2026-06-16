@@ -62,6 +62,21 @@ function runStrict() {
     if (output.trim()) console.error(output.trim());
     process.exit(2);
   }
+  // Now that exit code 2 is accepted, guard against diagnostics that carry no
+  // `file(line,col): error` prefix (e.g. an invalid tsconfig, "No inputs were
+  // found", TS5xxx option errors). Those parse to zero located errors, which
+  // would otherwise let the ratchet report a phantom improvement and pass green
+  // while the typecheck is actually broken. If tsc reported errors (status 1/2)
+  // but none are attributable to a file, treat it as a tooling failure.
+  if (r.status !== 0 && Object.keys(parseErrors(output)).length === 0) {
+    console.error(
+      "Strict typecheck reported errors, but none could be attributed to a " +
+        "file. This usually indicates a tsconfig/CLI problem; refusing to " +
+        "produce a baseline result from unparseable output.",
+    );
+    if (output.trim()) console.error(output.trim());
+    process.exit(2);
+  }
   return output;
 }
 
