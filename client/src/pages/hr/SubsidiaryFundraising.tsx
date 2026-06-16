@@ -75,6 +75,9 @@ function formatMoney(value: string | number | null | undefined, currency: string
 
 export default function SubsidiaryFundraising() {
   const { data: rounds, refetch } = trpc.subsidiaryFundraising.listRounds.useQuery({});
+  const { data: companies } = (trpc as any).companies.list.useQuery();
+  const companyName = (id: number | null | undefined) =>
+    id == null ? "-" : ((companies as any[] | undefined)?.find((c) => c.id === id)?.name ?? `Company #${id}`);
   const [open, setOpen] = useState(false);
   const [detailId, setDetailId] = useState<number | null>(null);
 
@@ -123,9 +126,20 @@ export default function SubsidiaryFundraising() {
             <div className="grid gap-3 py-2">
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <Label>Subsidiary company ID</Label>
-                  <Input type="number" placeholder="e.g. 42" value={form.subsidiaryCompanyId}
-                    onChange={(e) => setForm({ ...form, subsidiaryCompanyId: e.target.value })} />
+                  <Label>Subsidiary</Label>
+                  <Select
+                    value={form.subsidiaryCompanyId || undefined}
+                    onValueChange={(v) => setForm({ ...form, subsidiaryCompanyId: v })}
+                  >
+                    <SelectTrigger><SelectValue placeholder="Select subsidiary" /></SelectTrigger>
+                    <SelectContent>
+                      {(companies as any[] | undefined ?? []).map((c) => (
+                        <SelectItem key={c.id} value={String(c.id)}>
+                          {c.name}{c.type && c.type !== "parent" ? ` · ${c.type}` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-1">
                   <Label>Round name</Label>
@@ -223,6 +237,7 @@ export default function SubsidiaryFundraising() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Round</TableHead>
+                  <TableHead>Subsidiary</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead className="text-right">Target</TableHead>
                   <TableHead className="text-right">Raised</TableHead>
@@ -242,6 +257,7 @@ export default function SubsidiaryFundraising() {
                   return (
                     <TableRow key={r.id}>
                       <TableCell className="font-medium">{r.name}</TableCell>
+                      <TableCell className="text-xs">{companyName(r.subsidiaryCompanyId)}</TableCell>
                       <TableCell><Badge variant="outline">{roundTypeLabel}</Badge></TableCell>
                       <TableCell className="text-right font-mono">{formatMoney(r.targetAmount, r.currency || "USD")}</TableCell>
                       <TableCell className="text-right font-mono">

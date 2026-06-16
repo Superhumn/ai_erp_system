@@ -1,66 +1,65 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter,
-  DialogHeader, DialogTitle, DialogTrigger,
+  DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Plus, Loader2, Target, DollarSign, Calendar, TrendingUp, Edit } from "lucide-react";
+import { Plus, Loader2, Target, Edit, Building2 } from "lucide-react";
 import { toast } from "sonner";
+
+const NONE = "none";
+
+const blankForm = {
+  name: "", description: "", targetAmount: "", minimumInvestment: "",
+  valuation: "", roundType: "seed" as string, equityOffered: "",
+  status: "planning" as string, notes: "", companyId: "",
+};
+
+const statusColors: Record<string, string> = {
+  planning: "bg-gray-500/10 text-gray-600",
+  active: "bg-emerald-500/10 text-emerald-600",
+  paused: "bg-amber-500/10 text-amber-600",
+  closed: "bg-blue-500/10 text-blue-600",
+  cancelled: "bg-red-500/10 text-red-600",
+};
 
 export default function FundraisingCampaigns() {
   const [isOpen, setIsOpen] = useState(false);
-  const [formData, setFormData] = useState({
-    name: "", description: "", targetAmount: "", minimumInvestment: "",
-    valuation: "", roundType: "seed" as string, equityOffered: "",
-    status: "planning" as string, notes: "",
-  });
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [formData, setFormData] = useState({ ...blankForm });
 
   const { data: campaigns, isLoading, refetch } = (trpc.crm as any).listCampaigns.useQuery();
+  const { data: companies } = (trpc as any).companies.list.useQuery();
+
+  const companyName = (id: number | null | undefined) =>
+    id == null ? null : (companies?.find((c: any) => c.id === id)?.name ?? `Company #${id}`);
+
   const createCampaign = (trpc.crm as any).createCampaign.useMutation({
-    onSuccess: () => {
-      toast.success("Round created");
-      setIsOpen(false);
-      refetch();
-    },
+    onSuccess: () => { toast.success("Round created"); setIsOpen(false); refetch(); },
     onError: (error: any) => toast.error(error.message),
   });
   const updateCampaign = (trpc.crm as any).updateCampaign.useMutation({
-    onSuccess: () => {
-      toast.success("Round updated");
-      setIsOpen(false);
-      refetch();
-    },
+    onSuccess: () => { toast.success("Round updated"); setIsOpen(false); refetch(); },
     onError: (error: any) => toast.error(error.message),
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (round) {
-      updateCampaign.mutate({ id: round.id, ...formData });
-      return;
-    }
-    createCampaign.mutate(formData);
+  const openCreate = () => {
+    setEditingId(null);
+    setFormData({ ...blankForm });
+    setIsOpen(true);
   };
 
-  // Single round — use the first (most recent) campaign
-  const round = campaigns?.[0] || null;
-
-  useEffect(() => {
-    if (!isOpen) return;
-    if (!round) {
-      // Reset to blank when opening the create dialog
-      setFormData({ name: "", description: "", targetAmount: "", minimumInvestment: "", valuation: "", roundType: "seed", equityOffered: "", status: "planning", notes: "" });
-      return;
-    }
+  const openEdit = (round: any) => {
+    setEditingId(round.id);
     setFormData({
       name: round.name || "",
       description: round.description || "",
@@ -71,36 +70,53 @@ export default function FundraisingCampaigns() {
       equityOffered: round.equityOffered || "",
       status: round.status || "planning",
       notes: round.notes || "",
+      companyId: round.companyId != null ? String(round.companyId) : "",
     });
-  }, [isOpen, round]);
-
-  if (isLoading) {
-    return <div className="flex items-center justify-center h-96"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>;
-  }
-
-  const statusColors: Record<string, string> = {
-    planning: "bg-gray-500/10 text-gray-600",
-    active: "bg-emerald-500/10 text-emerald-600",
-    paused: "bg-amber-500/10 text-amber-600",
-    closed: "bg-blue-500/10 text-blue-600",
-    cancelled: "bg-red-500/10 text-red-600",
+    setIsOpen(true);
   };
 
-  // Create dialog (shared)
-  const createDialog = (
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const { companyId, ...rest } = formData;
+    const payload: Record<string, any> = { ...rest };
+    if (companyId) payload.companyId = parseInt(companyId);
+    if (editingId) {
+      updateCampaign.mutate({ id: editingId, ...payload });
+    } else {
+      createCampaign.mutate(payload);
+    }
+  };
+
+  const rounds: any[] = campaigns || [];
+
+  const dialog = (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
-      <DialogTrigger asChild>
-        <Button><Plus className="h-4 w-4 mr-2" />{round ? "Edit Round" : "Create Round"}</Button>
-      </DialogTrigger>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>{round ? "Edit Round" : "Create Fundraising Round"}</DialogTitle>
-          <DialogDescription>Configure your current fundraising round</DialogDescription>
+          <DialogTitle>{editingId ? "Edit Round" : "Create Fundraising Round"}</DialogTitle>
+          <DialogDescription>Each round can be scoped to a regional subsidiary</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label>Round Name *</Label>
-            <Input value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} placeholder="e.g., Seed Round 2026" required />
+            <Input value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} placeholder="e.g., Asia Seed 2026" required />
+          </div>
+          <div className="space-y-2">
+            <Label>Company / Subsidiary</Label>
+            <Select
+              value={formData.companyId || NONE}
+              onValueChange={(v) => setFormData({ ...formData, companyId: v === NONE ? "" : v })}
+            >
+              <SelectTrigger><SelectValue placeholder="Parent company" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NONE}>Parent company (no subsidiary)</SelectItem>
+                {(companies || []).map((c: any) => (
+                  <SelectItem key={c.id} value={String(c.id)}>
+                    {c.name}{c.type && c.type !== "parent" ? ` · ${c.type}` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
@@ -158,7 +174,7 @@ export default function FundraisingCampaigns() {
             <Button type="button" variant="outline" onClick={() => setIsOpen(false)}>Cancel</Button>
             <Button type="submit" disabled={createCampaign.isPending || updateCampaign.isPending}>
               {(createCampaign.isPending || updateCampaign.isPending) && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              {round ? "Save" : "Create Round"}
+              {editingId ? "Save" : "Create Round"}
             </Button>
           </DialogFooter>
         </form>
@@ -166,144 +182,75 @@ export default function FundraisingCampaigns() {
     </Dialog>
   );
 
-  // No round yet — show create prompt
-  if (!round) {
-    return (
-      <div className="space-y-2 animate-fade-in">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <h1 className="text-sm font-bold tracking-[-0.02em]">Fundraising</h1>
-          {createDialog}
-        </div>
+  if (isLoading) {
+    return <div className="flex items-center justify-center h-96"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>;
+  }
+
+  return (
+    <div className="space-y-3 animate-fade-in">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h1 className="text-sm font-bold tracking-[-0.02em]">Fundraising</h1>
+        <Button onClick={openCreate}><Plus className="h-4 w-4 mr-2" />New Round</Button>
+      </div>
+
+      {rounds.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16">
             <Target className="h-12 w-12 text-muted-foreground/30 mb-4" />
-            <h3 className="text-lg font-semibold mb-2">No fundraising round</h3>
-            <p className="text-muted-foreground mb-4 text-sm">Create your round to start tracking progress</p>
-            <Button onClick={() => setIsOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />Create Round
-            </Button>
+            <h3 className="text-lg font-semibold mb-2">No fundraising rounds</h3>
+            <p className="text-muted-foreground mb-4 text-sm">Create a round — scope it to a regional subsidiary or the parent company</p>
+            <Button onClick={openCreate}><Plus className="mr-2 h-4 w-4" />Create Round</Button>
           </CardContent>
         </Card>
-      </div>
-    );
-  }
+      ) : (
+        <div className="grid gap-3 md:grid-cols-2">
+          {rounds.map((round: any) => {
+            const raised = parseFloat(round.raisedAmount || "0");
+            const target = parseFloat(round.targetAmount || "1");
+            const progress = Math.min((raised / target) * 100, 100);
+            const valuation = parseFloat(round.valuation || "0");
+            const subsidiary = companyName(round.companyId);
+            return (
+              <Card key={round.id}>
+                <CardContent className="pt-5 space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="space-y-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold truncate">{round.name}</span>
+                        <Badge className={statusColors[round.status] || statusColors.planning}>{round.status}</Badge>
+                        <Badge variant="outline" className="capitalize">{(round.roundType || "seed").replace(/_/g, " ")}</Badge>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <Building2 className="h-3.5 w-3.5" />
+                        {subsidiary || "Parent company"}
+                      </div>
+                    </div>
+                    <Button size="sm" variant="ghost" onClick={() => openEdit(round)}>
+                      <Edit className="h-4 w-4" />
+                    </Button>
+                  </div>
 
-  // Single round detail view
-  const raised = parseFloat(round.raisedAmount || "0");
-  const target = parseFloat(round.targetAmount || "1");
-  const progress = Math.min((raised / target) * 100, 100);
-  const valuation = parseFloat(round.valuation || "0");
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">${raised.toLocaleString()} / ${target.toLocaleString()}</span>
+                    <span className="font-medium">{progress.toFixed(1)}%</span>
+                  </div>
+                  <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                    <div className="bg-green-600 h-2 rounded-full transition-all" style={{ width: `${progress}%` }} />
+                  </div>
 
-  return (
-    <div className="space-y-2 animate-fade-in">
-      {/* Header — single consolidated row */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-3 text-xs flex-wrap">
-          <h1 className="text-sm font-bold tracking-[-0.02em]">Fundraising</h1>
-          <span className="text-muted-foreground">{round.name}</span>
-          <Badge className={statusColors[round.status] || statusColors.planning}>
-            {round.status}
-          </Badge>
-          <Badge variant="outline" className="capitalize">{(round.roundType || "seed").replace(/_/g, " ")}</Badge>
+                  <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
+                    {valuation > 0 && <span>Valuation <span className="font-semibold text-foreground">${valuation.toLocaleString()}</span></span>}
+                    {round.equityOffered && <span>Equity <span className="font-semibold text-foreground">{round.equityOffered}%</span></span>}
+                    {round.minimumInvestment && <span>Min <span className="font-semibold text-foreground">${parseFloat(round.minimumInvestment).toLocaleString()}</span></span>}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
-        <div className="flex items-center gap-2">
-          {createDialog}
-        </div>
-      </div>
+      )}
 
-      {/* KPI bar */}
-      <div className="flex items-center gap-5 flex-wrap text-sm border rounded-xl px-4 py-3 bg-card">
-        <div>
-          <span className="text-xs text-muted-foreground">Target</span>
-          <div className="font-bold text-base">${target.toLocaleString()}</div>
-        </div>
-        <div className="h-8 w-px bg-border" />
-        <div>
-          <span className="text-xs text-muted-foreground">Raised</span>
-          <div className="font-bold text-base text-green-600">${raised.toLocaleString()}</div>
-        </div>
-        <div className="h-8 w-px bg-border" />
-        <div>
-          <span className="text-xs text-muted-foreground">Remaining</span>
-          <div className="font-bold text-base">${Math.max(0, target - raised).toLocaleString()}</div>
-        </div>
-        <div className="h-8 w-px bg-border" />
-        <div>
-          <span className="text-xs text-muted-foreground">Progress</span>
-          <div className="font-bold text-base">{progress.toFixed(1)}%</div>
-        </div>
-        {valuation > 0 && (
-          <>
-            <div className="h-8 w-px bg-border" />
-            <div>
-              <span className="text-xs text-muted-foreground">Valuation</span>
-              <div className="font-bold text-base">${valuation.toLocaleString()}</div>
-            </div>
-          </>
-        )}
-        {round.equityOffered && (
-          <>
-            <div className="h-8 w-px bg-border" />
-            <div>
-              <span className="text-xs text-muted-foreground">Equity</span>
-              <div className="font-bold text-base">{round.equityOffered}%</div>
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Progress bar */}
-      <Card>
-        <CardContent className="pt-6">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between text-sm">
-              <span className="font-medium">Round Progress</span>
-              <span className="text-muted-foreground">${raised.toLocaleString()} / ${target.toLocaleString()}</span>
-            </div>
-            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3">
-              <div
-                className="bg-green-600 h-3 rounded-full transition-all"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-          </div>
-
-          {/* Round details */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 pt-4 border-t">
-            {round.minimumInvestment && (
-              <div>
-                <div className="text-xs text-muted-foreground">Min Investment</div>
-                <div className="font-semibold">${parseFloat(round.minimumInvestment).toLocaleString()}</div>
-              </div>
-            )}
-            {round.startDate && (
-              <div>
-                <div className="text-xs text-muted-foreground">Started</div>
-                <div className="font-semibold">{new Date(round.startDate).toLocaleDateString()}</div>
-              </div>
-            )}
-            {round.targetCloseDate && (
-              <div>
-                <div className="text-xs text-muted-foreground">Target Close</div>
-                <div className="font-semibold">{new Date(round.targetCloseDate).toLocaleDateString()}</div>
-              </div>
-            )}
-            {round.investorCount !== undefined && (
-              <div>
-                <div className="text-xs text-muted-foreground">Investors</div>
-                <div className="font-semibold">{round.investorCount || 0}</div>
-              </div>
-            )}
-          </div>
-
-          {round.description && (
-            <div className="mt-4 pt-4 border-t">
-              <div className="text-xs text-muted-foreground mb-1">Notes</div>
-              <p className="text-sm whitespace-pre-wrap">{round.description}</p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {dialog}
     </div>
   );
 }
