@@ -7295,6 +7295,8 @@ export async function updateEmailAttachment(id: number, data: Partial<{
   extractedText: string;
   metadata: any;
   isProcessed: boolean;
+  storageKey: string | null;
+  storageUrl: string | null;
 }>) {
   const db = await getDb();
   if (!db) return;

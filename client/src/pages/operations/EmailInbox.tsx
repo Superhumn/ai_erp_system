@@ -50,6 +50,8 @@ import {
   FileSpreadsheet,
   FileDown,
   Paperclip,
+  Eye,
+  Image as ImageIcon,
 } from "lucide-react";
 
 const formatBytes = (n?: number | null) => {
@@ -572,10 +574,12 @@ export default function EmailInbox() {
                 {(detail as any).attachments.map((att: any) => {
                   const meta = att.metadata || {};
                   const isParsing = parseAttachmentMutation.isPending && parseAttachmentMutation.variables?.attachmentId === att.id;
-                  const canParse = !!(meta.contentDataUrl || String(att.storageUrl || "").startsWith("data:"));
+                  const hasContent = !!att.hasStoredContent;
+                  const viewUrl = att.storageUrl || `/api/attachments/${att.id}`;
+                  const isImage = String(att.mimeType || "").startsWith("image/");
                   return (
                     <div key={att.id} className="flex items-center gap-2 rounded-lg border px-3 py-2 bg-muted/20">
-                      <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                      {isImage ? <ImageIcon className="h-4 w-4 text-muted-foreground shrink-0" /> : <FileText className="h-4 w-4 text-muted-foreground shrink-0" />}
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-medium truncate">{att.filename}</p>
                         <p className="text-[11px] text-muted-foreground truncate">
@@ -587,11 +591,19 @@ export default function EmailInbox() {
                           )}
                         </p>
                       </div>
-                      {canParse ? (
-                        <Button variant="ghost" size="sm" className="h-7 text-xs gap-1 shrink-0" disabled={isParsing} onClick={() => parseAttachmentMutation.mutate({ attachmentId: att.id })}>
-                          {isParsing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : att.isProcessed ? <RefreshCw className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}
-                          {att.isProcessed ? "Reparse" : "Parse & Import"}
-                        </Button>
+                      {hasContent ? (
+                        <div className="flex items-center gap-1 shrink-0">
+                          <Button asChild variant="ghost" size="sm" className="h-7 text-xs gap-1" title="View attachment">
+                            <a href={viewUrl} target="_blank" rel="noopener noreferrer"><Eye className="h-3.5 w-3.5" />View</a>
+                          </Button>
+                          <Button asChild variant="ghost" size="icon" className="h-7 w-7" title="Download attachment">
+                            <a href={`${viewUrl}?download=1`}><Download className="h-3.5 w-3.5" /></a>
+                          </Button>
+                          <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" disabled={isParsing} onClick={() => parseAttachmentMutation.mutate({ attachmentId: att.id })}>
+                            {isParsing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : att.isProcessed ? <RefreshCw className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}
+                            {att.isProcessed ? "Reparse" : "Parse & Import"}
+                          </Button>
+                        </div>
                       ) : (
                         <span className="text-[11px] text-muted-foreground shrink-0">content unavailable</span>
                       )}
