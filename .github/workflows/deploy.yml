@@ -21,7 +21,6 @@ jobs:
     name: Deploy to Staging
     needs: ci
     runs-on: ubuntu-latest
-    continue-on-error: true
     environment: staging
     steps:
       - uses: actions/checkout@v4
@@ -61,6 +60,10 @@ jobs:
         run: npm install -g @railway/cli
 
       - name: Deploy to Staging
+        # Tolerate transient Railway deploy hiccups without failing the run.
+        # The migrate step above is strict, so a failed migration fails the job
+        # and this deploy step never runs.
+        continue-on-error: true
         run: |
           if [ -n "$RAILWAY_SERVICE_ID" ]; then
             railway up --service "$RAILWAY_SERVICE_ID"
@@ -75,7 +78,6 @@ jobs:
     name: Deploy to Production
     needs: deploy-staging
     runs-on: ubuntu-latest
-    continue-on-error: true
     environment: production
     steps:
       - uses: actions/checkout@v4
@@ -115,6 +117,10 @@ jobs:
         run: npm install -g @railway/cli
 
       - name: Deploy to Production
+        # Tolerate transient Railway deploy hiccups without failing the run.
+        # The migrate step above is strict, so a failed migration fails the job
+        # and this deploy step never runs.
+        continue-on-error: true
         run: |
           if [ -n "$RAILWAY_SERVICE_ID" ]; then
             railway up --service "$RAILWAY_SERVICE_ID"
