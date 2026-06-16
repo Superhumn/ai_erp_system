@@ -2425,6 +2425,8 @@ ONLY return the JSON array, no other text.`;
         type: z.enum(['inbound', 'outbound']),
         orderId: z.number().optional(),
         purchaseOrderId: z.number().optional(),
+        rawMaterialId: z.number().optional(),
+        quantity: z.string().optional(),
         carrier: z.string().optional(),
         trackingNumber: z.string().optional(),
         shipDate: z.date().optional(),
@@ -2438,6 +2440,26 @@ ONLY return the JSON array, no other text.`;
         const shipmentNumber = generateNumber('SHIP');
         const result = await db.createShipment({ ...input, shipmentNumber });
         await createAuditLog(ctx.user.id, 'create', 'shipment', result.id, shipmentNumber);
+
+        // ── Inventory link: inbound shipment carrying a raw material reserves
+        // the quantity as "in transit" until it's marked delivered. ──
+        if (input.type === 'inbound' && input.rawMaterialId && input.quantity) {
+          try {
+            const qty = parseFloat(input.quantity);
+            const mat = await db.getRawMaterialById(input.rawMaterialId);
+            if (mat && qty > 0) {
+              const inTransit = parseFloat(mat.quantityInTransit || '0') + qty;
+              await db.updateRawMaterial(input.rawMaterialId, {
+                quantityInTransit: String(inTransit),
+                receivingStatus: 'in_transit',
+                ...(input.shipDate ? { expectedDeliveryDate: input.shipDate } : {}),
+              });
+            }
+          } catch (e) {
+            console.warn('[Shipment] inbound in-transit inventory update failed:', e);
+          }
+        }
+
         return result;
       }),
     update: opsProcedure
@@ -2450,9 +2472,49 @@ ONLY return the JSON array, no other text.`;
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
-        const [oldShipment] = await db.getShipments({ id } as any) || [];
+        const oldShipment = await db.getShipmentById(id);
         await db.updateShipment(id, data);
         await createAuditLog(ctx.user.id, 'update', 'shipment', id);
+
+        // ── Inventory link: keep raw-material stock in sync with shipment status. ──
+        // Delivery moves the carried quantity from "in transit" → "received".
+        // Cancel/return releases the reservation. Guarded on the prior status so
+        // repeated updates can't double-count.
+        if (
+          oldShipment?.type === 'inbound' &&
+          oldShipment.rawMaterialId &&
+          oldShipment.quantity &&
+          data.status &&
+          data.status !== oldShipment.status
+        ) {
+          try {
+            const qty = parseFloat(oldShipment.quantity);
+            const mat = await db.getRawMaterialById(oldShipment.rawMaterialId);
+            if (mat && qty > 0) {
+              const inTransit = parseFloat(mat.quantityInTransit || '0');
+              const received = parseFloat(mat.quantityReceived || '0');
+              if (data.status === 'delivered' && oldShipment.status !== 'delivered') {
+                await db.updateRawMaterial(oldShipment.rawMaterialId, {
+                  quantityInTransit: String(Math.max(0, inTransit - qty)),
+                  quantityReceived: String(received + qty),
+                  receivingStatus: 'received',
+                  lastReceivedDate: new Date(),
+                  lastReceivedQty: String(qty),
+                });
+              } else if (
+                (data.status === 'cancelled' || data.status === 'returned') &&
+                oldShipment.status !== 'delivered'
+              ) {
+                // Release the in-transit reservation that create() set up.
+                await db.updateRawMaterial(oldShipment.rawMaterialId, {
+                  quantityInTransit: String(Math.max(0, inTransit - qty)),
+                });
+              }
+            }
+          } catch (e) {
+            console.warn('[Shipment] inventory sync on status change failed:', e);
+          }
+        }
         
         // Create notification for shipment status changes
         if (data.status && oldShipment?.status !== data.status) {
