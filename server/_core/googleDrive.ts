@@ -294,7 +294,11 @@ export async function syncDriveFolder(
 ): Promise<DriveSyncResult> {
   const allFolders: DriveFolder[] = [];
   const allFiles: DriveFile[] = [];
-  
+  // A failure to list the ROOT folder means the sync produced nothing usable,
+  // so it must be surfaced to the caller. Failures inside nested subfolders are
+  // tolerated (one inaccessible subfolder shouldn't abort the whole sync).
+  let rootError: string | undefined;
+
   async function syncRecursive(currentFolderId: string, depth: number) {
     if (depth > maxDepth) return;
 
@@ -302,8 +306,11 @@ export async function syncDriveFolder(
     const { folders, files, error } = await listDriveItems(accessToken, currentFolderId);
     if (error) {
       console.error(`[GoogleDrive] Error listing contents of ${currentFolderId}:`, error);
-      // Even if listing failed, do not abort the whole sync — other folders
-      // that were already discovered may still be processed by the caller.
+      // Root folder failure is fatal; record it so the caller can report why
+      // nothing synced (e.g. the folder isn't shared / token lacks Drive scope).
+      if (depth === 1) rootError = error;
+      // Nested folders: do not abort the whole sync — other folders that were
+      // already discovered may still be processed by the caller.
       return;
     }
 
@@ -315,11 +322,20 @@ export async function syncDriveFolder(
       await syncRecursive(folder.id, depth + 1);
     }
   }
-  
+
   try {
     // Sync root folder and all subfolders recursively
     await syncRecursive(folderId, 1);
-    
+
+    if (rootError) {
+      return {
+        success: false,
+        folders: [],
+        files: [],
+        error: rootError,
+      };
+    }
+
     return {
       success: true,
       folders: allFolders,
