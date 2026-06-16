@@ -184,9 +184,12 @@ async function importWhatsappMedia(
     if (!ENV.twilioAccountSid || !ENV.twilioAuthToken) return undefined;
 
     // SSRF guard: the media URL arrives in the webhook payload, so never send
-    // our Twilio credentials to an arbitrary host. Only fetch from Twilio's API
-    // domain over HTTPS. (Twilio then redirects to its CDN; fetch drops the
-    // Authorization header on the cross-origin redirect per the fetch spec.)
+    // our Twilio credentials to an arbitrary host. Rather than fetch the
+    // supplied URL, we validate its shape and rebuild the request URL from a
+    // fixed Twilio template using only strictly-validated path segments and our
+    // own account SID — the request target can't be influenced by attacker
+    // input. (Twilio then redirects to its CDN; fetch drops the Authorization
+    // header on the cross-origin redirect per the fetch spec.)
     let parsed: URL;
     try {
       parsed = new URL(mediaUrl);
@@ -194,13 +197,22 @@ async function importWhatsappMedia(
       console.warn(`[Twilio Webhook] invalid media URL for msg ${waMsgId}`);
       return undefined;
     }
-    if (parsed.protocol !== "https:" || parsed.hostname !== "api.twilio.com") {
-      console.warn(`[Twilio Webhook] refusing non-Twilio media URL (${parsed.hostname}) for msg ${waMsgId}`);
+    const pathMatch = parsed.pathname.match(
+      /^\/2010-04-01\/Accounts\/(AC[0-9a-zA-Z]+)\/Messages\/((?:MM|SM)[0-9a-zA-Z]+)\/Media\/(ME[0-9a-zA-Z]+)$/,
+    );
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.hostname !== "api.twilio.com" ||
+      !pathMatch ||
+      pathMatch[1] !== ENV.twilioAccountSid
+    ) {
+      console.warn(`[Twilio Webhook] refusing non-Twilio media URL for msg ${waMsgId}`);
       return undefined;
     }
+    const safeUrl = `https://api.twilio.com/2010-04-01/Accounts/${pathMatch[1]}/Messages/${pathMatch[2]}/Media/${pathMatch[3]}`;
 
     const auth = Buffer.from(`${ENV.twilioAccountSid}:${ENV.twilioAuthToken}`).toString("base64");
-    const resp = await fetch(parsed.href, { headers: { Authorization: `Basic ${auth}` } });
+    const resp = await fetch(safeUrl, { headers: { Authorization: `Basic ${auth}` } });
     if (!resp.ok) {
       console.warn(`[Twilio Webhook] media fetch failed (${resp.status}) for msg ${waMsgId}`);
       return undefined;
