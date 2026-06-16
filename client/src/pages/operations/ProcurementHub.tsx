@@ -881,9 +881,9 @@ function PoDetailPanel({ po, onClose, onSendToSupplier, onStatusChange }: {
                 {poItems.map((item: any) => (
                   <tr key={item.id} className="border-t">
                     <td className="px-1.5 py-0.5">{item.rawMaterial?.name || item.description || "-"}</td>
-                    <td className="px-1.5 py-0.5 text-right">{item.quantity} {item.rawMaterial?.unitOfMeasure || ""}</td>
+                    <td className="px-1.5 py-0.5 text-right">{item.quantity} {item.rawMaterial?.unit || ""}</td>
                     <td className="px-1.5 py-0.5 text-right font-mono">{formatCurrency(item.unitPrice)}</td>
-                    <td className="px-1.5 py-0.5 text-right font-mono">{formatCurrency(item.totalPrice)}</td>
+                    <td className="px-1.5 py-0.5 text-right font-mono">{formatCurrency(item.totalAmount)}</td>
                     <td className="px-1.5 py-0.5 text-right">
                       {item.receivedQuantity || 0} / {item.quantity}
                     </td>
