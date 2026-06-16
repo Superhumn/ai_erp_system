@@ -8,6 +8,7 @@ import {
   agentSmsLogs,
   crmContacts,
   crmInteractions,
+  whatsappMessages,
 } from "../../drizzle/schema";
 import { mapTwilioSmsStatus } from "../agent/tools/adapters/sms";
 
@@ -68,6 +69,33 @@ function mapTwilioCallStatus(status: string | undefined):
   }
 }
 
+function mapTwilioWhatsappStatus(status: string | undefined):
+  | "pending" | "sent" | "delivered" | "read" | "failed" | null {
+  if (!status) return null;
+  switch (status) {
+    case "accepted":
+    case "queued":
+    case "sending":
+      return "pending";
+    case "sent":
+      return "sent";
+    case "delivered":
+      return "delivered";
+    case "read":
+      return "read";
+    case "undelivered":
+    case "failed":
+      return "failed";
+    default:
+      return null;
+  }
+}
+
+// Twilio WhatsApp From/To arrive channel-prefixed, e.g. "whatsapp:+15551234567".
+function stripWhatsappPrefix(value: string): string {
+  return value.replace(/^whatsapp:/i, "");
+}
+
 // Twilio always delivers `From`/`To` in E.164. CRM data may have been entered
 // with formatting (parens, spaces, dashes). Match both representations.
 function normalizeToE164(phone: string): string | null {
@@ -99,6 +127,32 @@ async function findOrCreateInboundCrmContact(db: any, phone: string): Promise<nu
     lastName: phone,
     fullName: `Unknown (${phone})`,
     phone,
+    contactType: "lead",
+    source: "manual",
+  }).$returningId();
+  return created.id;
+}
+
+async function findOrCreateWhatsappContact(db: any, waNumber: string): Promise<number | undefined> {
+  if (!waNumber) return undefined;
+  const e164 = normalizeToE164(waNumber);
+  const match = e164 && e164 !== waNumber
+    ? or(eq(crmContacts.whatsappNumber, waNumber), eq(crmContacts.whatsappNumber, e164), eq(crmContacts.phone, waNumber), eq(crmContacts.phone, e164))
+    : or(eq(crmContacts.whatsappNumber, waNumber), eq(crmContacts.phone, waNumber));
+  const [existing] = await db.select().from(crmContacts).where(match).limit(1);
+  if (existing) {
+    // Backfill the WhatsApp number if we matched on phone only.
+    if (!existing.whatsappNumber) {
+      await db.update(crmContacts).set({ whatsappNumber: e164 ?? waNumber }).where(eq(crmContacts.id, existing.id));
+    }
+    return existing.id;
+  }
+  const [created] = await db.insert(crmContacts).values({
+    firstName: "Unknown",
+    lastName: waNumber,
+    fullName: `Unknown (${waNumber})`,
+    phone: e164 ?? waNumber,
+    whatsappNumber: e164 ?? waNumber,
     contactType: "lead",
     source: "manual",
   }).$returningId();
@@ -236,6 +290,106 @@ export function registerTwilioWebhooks(app: Express): void {
       res.status(200).send(EMPTY_TWIML);
     } catch (err) {
       console.error("[Twilio Webhook] sms/inbound error:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Inbound WhatsApp — idempotent on Twilio's MessageSid. Mirrors the SMS handler
+  // but writes to whatsapp_messages and links the supplier/contact by number.
+  app.post("/api/twilio/whatsapp/inbound", verify, async (req: Request, res: Response) => {
+    try {
+      const params = (req.body ?? {}) as TwilioParams;
+      const from = stripWhatsappPrefix(params.From ?? "");
+      const body = params.Body ?? "";
+      const messageSid = params.MessageSid || params.SmsSid;
+      const numMedia = params.NumMedia ? Number(params.NumMedia) : 0;
+      const mediaUrl = numMedia > 0 ? params.MediaUrl0 : undefined;
+      const mediaType = numMedia > 0 ? params.MediaContentType0 : undefined;
+
+      const db = await getDb();
+
+      if (messageSid) {
+        const [dup] = await db.select().from(whatsappMessages)
+          .where(eq(whatsappMessages.messageId, messageSid))
+          .limit(1);
+        if (dup) {
+          res.set("Content-Type", "text/xml");
+          return res.status(200).send(EMPTY_TWIML);
+        }
+      }
+
+      const contactId = await findOrCreateWhatsappContact(db, from);
+      let contactName: string | undefined;
+      if (contactId) {
+        const [contact] = await db.select().from(crmContacts).where(eq(crmContacts.id, contactId)).limit(1);
+        if (contact) contactName = contact.fullName ?? contact.firstName ?? undefined;
+      }
+
+      const [waMsg] = await db.insert(whatsappMessages).values({
+        contactId,
+        messageId: messageSid,
+        conversationId: `wa_${from}`,
+        whatsappNumber: from,
+        contactName,
+        direction: "inbound",
+        messageType: mediaUrl ? "document" : "text",
+        content: body,
+        mediaUrl,
+        mediaType,
+        status: "delivered",
+        sentAt: new Date(),
+      }).$returningId();
+
+      if (contactId) {
+        await db.insert(crmInteractions).values({
+          contactId,
+          channel: "whatsapp",
+          interactionType: "received",
+          subject: "Inbound WhatsApp",
+          content: body,
+          whatsappMessageId: waMsg.id,
+        });
+        await db.update(crmContacts)
+          .set({ lastRepliedAt: new Date() })
+          .where(eq(crmContacts.id, contactId));
+      }
+
+      res.set("Content-Type", "text/xml");
+      res.status(200).send(EMPTY_TWIML);
+    } catch (err) {
+      console.error("[Twilio Webhook] whatsapp/inbound error:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Outbound WhatsApp status callback — attaches delivery/read state by MessageSid.
+  app.post("/api/twilio/whatsapp/status", verify, async (req: Request, res: Response) => {
+    try {
+      const params = (req.body ?? {}) as TwilioParams;
+      const messageSid = params.MessageSid || params.SmsSid;
+      const status = mapTwilioWhatsappStatus(params.MessageStatus || params.SmsStatus);
+      const errorMessage = params.ErrorMessage;
+
+      if (!messageSid) {
+        return res.status(400).json({ error: "Missing MessageSid" });
+      }
+
+      const db = await getDb();
+      if (status) {
+        const update: Record<string, unknown> = { status };
+        const now = new Date();
+        if (status === "sent") update.sentAt = now;
+        if (status === "delivered") update.deliveredAt = now;
+        if (status === "read") update.readAt = now;
+        if (status === "failed" && errorMessage) update.failedReason = errorMessage;
+        await db.update(whatsappMessages)
+          .set(update)
+          .where(eq(whatsappMessages.messageId, messageSid));
+      }
+
+      res.status(200).json({ received: true });
+    } catch (err) {
+      console.error("[Twilio Webhook] whatsapp/status error:", err);
       res.status(500).json({ error: "Internal server error" });
     }
   });

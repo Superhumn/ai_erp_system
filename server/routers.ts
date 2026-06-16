@@ -17031,16 +17031,50 @@ Ask if they received the original request and if they can provide a quote.`;
           messageType: z.enum(["text", "image", "video", "audio", "document", "location", "contact", "template"]).optional(),
           templateName: z.string().optional(),
           templateParams: z.string().optional(),
+          conversationId: z.string().optional(),
+          // Optional linkage to another record (e.g. a shipment) so supplier
+          // chatter can be tied to the thing it's about.
+          relatedEntityType: z.string().optional(),
+          relatedEntityId: z.number().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          // Create message record (actual sending would be via WhatsApp Business API webhook)
+          const conversationId = input.conversationId || `wa_${input.whatsappNumber}_${Date.now()}`;
+
+          // Record the outbound message immediately (status pending).
           const id = await db.createWhatsappMessage({
             ...input,
             direction: "outbound",
             status: "pending",
             sentBy: ctx.user.id,
-            conversationId: `wa_${input.whatsappNumber}_${Date.now()}`,
+            conversationId,
           });
+
+          // Send for real via the Twilio WhatsApp Business API when configured.
+          // If not configured, the message stays a local "pending" log.
+          let status: "pending" | "sent" | "failed" = "pending";
+          let failedReason: string | undefined;
+          if (ENV.twilioAccountSid && ENV.twilioAuthToken && ENV.twilioWhatsappNumber) {
+            const withChannel = (n: string) =>
+              n.startsWith("whatsapp:") ? n : `whatsapp:${n.startsWith("+") ? n : `+${n.replace(/[^\d]/g, "")}`}`;
+            try {
+              const twilioMod = await import("twilio");
+              const client = twilioMod.default(ENV.twilioAccountSid, ENV.twilioAuthToken);
+              const msg = await client.messages.create({
+                to: withChannel(input.whatsappNumber),
+                from: withChannel(ENV.twilioWhatsappNumber),
+                body: input.content,
+                ...(ENV.publicAppUrl && ENV.publicAppUrl !== "http://localhost:3000"
+                  ? { statusCallback: `${ENV.publicAppUrl.replace(/\/$/, "")}/api/twilio/whatsapp/status` }
+                  : {}),
+              });
+              status = "sent";
+              await db.updateWhatsappMessage(id, { status: "sent", messageId: msg.sid, sentAt: new Date() });
+            } catch (err) {
+              status = "failed";
+              failedReason = (err as Error).message;
+              await db.updateWhatsappMessage(id, { status: "failed", failedReason });
+            }
+          }
 
           // Also create an interaction record
           if (input.contactId) {
@@ -17054,7 +17088,7 @@ Ask if they received the original request and if they can provide a quote.`;
             });
           }
 
-          return { id, status: "pending" };
+          return { id, status, failedReason };
         }),
 
       logInbound: protectedProcedure

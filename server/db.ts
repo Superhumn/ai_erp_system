@@ -9236,6 +9236,23 @@ export async function createWhatsappMessage(data: InsertWhatsappMessage) {
   return result[0].insertId;
 }
 
+export async function updateWhatsappMessage(id: number, data: Partial<InsertWhatsappMessage>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(whatsappMessages).set(data).where(eq(whatsappMessages.id, id));
+}
+
+// Look up an outbound WhatsApp message by its provider message id (Twilio SID),
+// used by the delivery-status webhook to attach status updates.
+export async function getWhatsappMessageByMessageId(messageId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(whatsappMessages)
+    .where(eq(whatsappMessages.messageId, messageId))
+    .limit(1);
+  return row;
+}
+
 export async function updateWhatsappMessageStatus(
   id: number,
   status: string,

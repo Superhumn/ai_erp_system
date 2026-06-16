@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/select";
 import { SpreadsheetTable, Column } from "@/components/SpreadsheetTable";
 import { DetailSheet } from "@/components/DetailSheet";
-import { Truck, Plus, Loader2, Paperclip, FileText, Trash2, Upload, Download } from "lucide-react";
+import { Truck, Plus, Loader2, Paperclip, FileText, Trash2, Upload, Download, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
@@ -166,6 +166,74 @@ function ShipmentStatusControl({ s, onUpdated }: { s: any; onUpdated: (patch: an
           Marking this delivered will receive {s.quantity ? Number(s.quantity) : ""} units into inventory.
         </p>
       )}
+    </div>
+  );
+}
+
+/** "Message supplier on WhatsApp" — opens WhatsApp (app or web) pre-filled with
+ *  shipment context. Works with a plain phone app today; when the WhatsApp
+ *  Business API is configured the same supplier is reachable in-app too. */
+function ShipmentSupplierWhatsApp({
+  shipment,
+  material,
+  vendor,
+}: {
+  shipment: any;
+  material: any;
+  vendor: any;
+}) {
+  const waNumber: string = vendor?.whatsappNumber || vendor?.phone || "";
+  const digits = waNumber.replace(/[^\d]/g, "");
+  if (!vendor || !digits) {
+    return (
+      <div className="space-y-2">
+        <h4 className="text-sm font-medium flex items-center gap-2">
+          <MessageCircle className="h-4 w-4" />
+          Supplier
+        </h4>
+        <p className="text-sm text-muted-foreground bg-muted/30 rounded p-3">
+          {!material?.rawMaterialId && !shipment.rawMaterialId
+            ? "Link a raw material to this shipment to reach its supplier."
+            : !vendor
+            ? "No preferred vendor set on this material — add one on the Raw Materials page."
+            : "This vendor has no WhatsApp number or phone on file."}
+        </p>
+      </div>
+    );
+  }
+
+  const qty = shipment.quantity ? `${Number(shipment.quantity)} ${material?.unit || ""}`.trim() : "";
+  const text = [
+    `Hi${vendor.contactName ? ` ${vendor.contactName}` : ""}, re shipment ${shipment.shipmentNumber}`,
+    material?.name ? `Material: ${material.name}${qty ? ` (${qty})` : ""}` : "",
+    shipment.trackingNumber ? `Tracking: ${shipment.trackingNumber}` : "",
+    `Current status: ${shipment.status}.`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const href = `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
+
+  return (
+    <div className="space-y-2">
+      <h4 className="text-sm font-medium flex items-center gap-2">
+        <MessageCircle className="h-4 w-4" />
+        Supplier
+      </h4>
+      <div className="rounded-lg border p-3 text-sm flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="font-medium truncate">{vendor.name}</div>
+          <div className="text-xs text-muted-foreground truncate">{waNumber}</div>
+        </div>
+        <a href={href} target="_blank" rel="noreferrer">
+          <Button size="sm" className="bg-[#25D366] hover:bg-[#1da851] text-white">
+            <MessageCircle className="h-4 w-4 mr-2" />
+            WhatsApp
+          </Button>
+        </a>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Opens WhatsApp with shipment details pre-filled.
+      </p>
     </div>
   );
 }
@@ -331,11 +399,17 @@ export default function Shipments() {
   const utils = trpc.useUtils();
   const { data: shipments, isLoading } = trpc.shipments.list.useQuery();
   const { data: rawMaterials } = trpc.rawMaterials.list.useQuery();
+  const { data: vendors } = trpc.vendors.list.useQuery();
   const materialsById = useMemo(() => {
     const map = new Map<number, any>();
     ((rawMaterials || []) as any[]).forEach((m) => map.set(m.id, m));
     return map;
   }, [rawMaterials]);
+  const vendorsById = useMemo(() => {
+    const map = new Map<number, any>();
+    ((vendors || []) as any[]).forEach((v) => map.set(v.id, v));
+    return map;
+  }, [vendors]);
   const materialLabel = (m: any) =>
     m ? `${m.name}${m.unit ? ` (${m.unit})` : ""}` : null;
 
@@ -649,6 +723,22 @@ export default function Shipments() {
                 setSelectedShipment((prev: any) => (prev ? { ...prev, ...patch } : prev));
               }}
             />
+            {selectedShipment.type === "inbound" && (
+              <ShipmentSupplierWhatsApp
+                shipment={selectedShipment}
+                material={
+                  selectedShipment.rawMaterialId
+                    ? materialsById.get(selectedShipment.rawMaterialId)
+                    : null
+                }
+                vendor={(() => {
+                  const m = selectedShipment.rawMaterialId
+                    ? materialsById.get(selectedShipment.rawMaterialId)
+                    : null;
+                  return m?.preferredVendorId ? vendorsById.get(m.preferredVendorId) : null;
+                })()}
+              />
+            )}
             <ShipmentDocuments shipmentId={selectedShipment.id} />
           </div>
         )}
