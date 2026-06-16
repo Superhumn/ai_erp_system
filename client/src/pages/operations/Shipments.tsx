@@ -224,12 +224,12 @@ function ShipmentSupplierWhatsApp({
           <div className="font-medium truncate">{vendor.name}</div>
           <div className="text-xs text-muted-foreground truncate">{waNumber}</div>
         </div>
-        <a href={href} target="_blank" rel="noreferrer">
-          <Button size="sm" className="bg-[#25D366] hover:bg-[#1da851] text-white">
+        <Button asChild size="sm" className="bg-[#25D366] hover:bg-[#1da851] text-white">
+          <a href={href} target="_blank" rel="noreferrer">
             <MessageCircle className="h-4 w-4 mr-2" />
             WhatsApp
-          </Button>
-        </a>
+          </a>
+        </Button>
       </div>
       <p className="text-xs text-muted-foreground">
         Opens WhatsApp with shipment details pre-filled.
@@ -358,11 +358,11 @@ function ShipmentDocuments({ shipmentId }: { shipmentId: number }) {
                   </div>
                 </div>
                 {d.fileUrl && (
-                  <a href={d.fileUrl} target="_blank" rel="noreferrer" download={d.name}>
-                    <Button variant="ghost" size="icon" className="h-8 w-8">
+                  <Button asChild variant="ghost" size="icon" className="h-8 w-8">
+                    <a href={d.fileUrl} target="_blank" rel="noreferrer" download={d.name}>
                       <Download className="h-4 w-4" />
-                    </Button>
-                  </a>
+                    </a>
+                  </Button>
                 )}
                 <Button
                   variant="ghost"

@@ -2426,7 +2426,7 @@ ONLY return the JSON array, no other text.`;
         orderId: z.number().optional(),
         purchaseOrderId: z.number().optional(),
         rawMaterialId: z.number().optional(),
-        quantity: z.string().optional(),
+        quantity: z.string().regex(/^\d+(\.\d+)?$/, "quantity must be numeric").optional(),
         carrier: z.string().optional(),
         trackingNumber: z.string().optional(),
         shipDate: z.date().optional(),
@@ -2446,11 +2446,8 @@ ONLY return the JSON array, no other text.`;
         if (input.type === 'inbound' && input.rawMaterialId && input.quantity) {
           try {
             const qty = parseFloat(input.quantity);
-            const mat = await db.getRawMaterialById(input.rawMaterialId);
-            if (mat && qty > 0) {
-              const inTransit = parseFloat(mat.quantityInTransit || '0') + qty;
-              await db.updateRawMaterial(input.rawMaterialId, {
-                quantityInTransit: String(inTransit),
+            if (qty > 0) {
+              await db.adjustRawMaterialInventory(input.rawMaterialId, { inTransit: qty }, {
                 receivingStatus: 'in_transit',
                 ...(input.shipDate ? { expectedDeliveryDate: input.shipDate } : {}),
               });
@@ -2489,26 +2486,28 @@ ONLY return the JSON array, no other text.`;
         ) {
           try {
             const qty = parseFloat(oldShipment.quantity);
-            const mat = await db.getRawMaterialById(oldShipment.rawMaterialId);
-            if (mat && qty > 0) {
-              const inTransit = parseFloat(mat.quantityInTransit || '0');
-              const received = parseFloat(mat.quantityReceived || '0');
-              if (data.status === 'delivered' && oldShipment.status !== 'delivered') {
-                await db.updateRawMaterial(oldShipment.rawMaterialId, {
-                  quantityInTransit: String(Math.max(0, inTransit - qty)),
-                  quantityReceived: String(received + qty),
+            const materialId = oldShipment.rawMaterialId;
+            if (qty > 0) {
+              if (data.status === 'delivered') {
+                // Arrived: move the quantity from in-transit into received.
+                await db.adjustRawMaterialInventory(materialId, { inTransit: -qty, received: qty }, {
                   receivingStatus: 'received',
                   lastReceivedDate: new Date(),
                   lastReceivedQty: String(qty),
                 });
-              } else if (
-                (data.status === 'cancelled' || data.status === 'returned') &&
-                oldShipment.status !== 'delivered'
-              ) {
-                // Release the in-transit reservation that create() set up.
-                await db.updateRawMaterial(oldShipment.rawMaterialId, {
-                  quantityInTransit: String(Math.max(0, inTransit - qty)),
-                });
+              } else if (oldShipment.status === 'delivered') {
+                // Reversing a previously-delivered shipment: pull the quantity
+                // back out of received so inventory isn't overstated. If it's
+                // going back to a pre-delivery state, restore the reservation.
+                const restoreInTransit = data.status === 'pending' || data.status === 'in_transit';
+                await db.adjustRawMaterialInventory(
+                  materialId,
+                  { received: -qty, ...(restoreInTransit ? { inTransit: qty } : {}) },
+                  { receivingStatus: restoreInTransit ? 'in_transit' : 'none' },
+                );
+              } else if (data.status === 'cancelled' || data.status === 'returned') {
+                // Pre-delivery cancellation: release the in-transit reservation.
+                await db.adjustRawMaterialInventory(materialId, { inTransit: -qty }, { receivingStatus: 'none' });
               }
             }
           } catch (e) {

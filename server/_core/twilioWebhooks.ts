@@ -218,8 +218,12 @@ async function importWhatsappMedia(
     try {
       fileUrl = (await storagePut(fileKey, buffer, mime)).url;
     } catch {
-      // Storage not configured — fall back to an inline data URL.
-      fileUrl = `data:${mime};base64,${buffer.toString("base64")}`;
+      // No object storage configured — skip persisting a document rather than
+      // stuff a base64 data: URL into the TEXT `fileUrl` column (which would
+      // overflow) with a fileKey pointing at a non-existent object. The Twilio
+      // media URL stays on the message for reference.
+      console.warn(`[Twilio Webhook] storage not configured; skipping stored document for msg ${waMsgId}`);
+      return undefined;
     }
 
     await createDocument({

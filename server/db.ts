@@ -3504,11 +3504,31 @@ export async function createRawMaterial(data: Omit<InsertRawMaterial, 'id' | 'cr
 export async function updateRawMaterial(id: number, data: Partial<InsertRawMaterial>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
+
   await db.update(rawMaterials).set({
     ...data,
     updatedAt: new Date(),
   }).where(eq(rawMaterials.id, id));
+}
+
+// Atomically adjust a raw material's quantity buckets by signed deltas, flooring
+// each at 0. Using SQL-level `col + delta` (rather than read-modify-write) keeps
+// concurrent shipment updates for the same material from clobbering each other.
+export async function adjustRawMaterialInventory(
+  id: number,
+  deltas: { onOrder?: number; inTransit?: number; received?: number },
+  extra?: Partial<InsertRawMaterial>,
+) {
+  const db = await getDb();
+  if (!db) return;
+  const set: Record<string, any> = { ...extra, updatedAt: new Date() };
+  if (deltas.onOrder !== undefined)
+    set.quantityOnOrder = sql`GREATEST(0, COALESCE(${rawMaterials.quantityOnOrder}, 0) + ${deltas.onOrder})`;
+  if (deltas.inTransit !== undefined)
+    set.quantityInTransit = sql`GREATEST(0, COALESCE(${rawMaterials.quantityInTransit}, 0) + ${deltas.inTransit})`;
+  if (deltas.received !== undefined)
+    set.quantityReceived = sql`GREATEST(0, COALESCE(${rawMaterials.quantityReceived}, 0) + ${deltas.received})`;
+  await db.update(rawMaterials).set(set).where(eq(rawMaterials.id, id));
 }
 
 export async function deleteRawMaterial(id: number) {
