@@ -307,6 +307,10 @@ export function registerTwilioWebhooks(app: Express): void {
       const mediaType = numMedia > 0 ? params.MediaContentType0 : undefined;
 
       const db = await getDb();
+      if (!db) {
+        res.set("Content-Type", "text/xml");
+        return res.status(200).send(EMPTY_TWIML);
+      }
 
       if (messageSid) {
         const [dup] = await db.select().from(whatsappMessages)
@@ -375,7 +379,7 @@ export function registerTwilioWebhooks(app: Express): void {
       }
 
       const db = await getDb();
-      if (status) {
+      if (db && status) {
         const update: Record<string, unknown> = { status };
         const now = new Date();
         if (status === "sent") update.sentAt = now;
