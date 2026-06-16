@@ -182,8 +182,25 @@ async function importWhatsappMedia(
 ): Promise<string | undefined> {
   try {
     if (!ENV.twilioAccountSid || !ENV.twilioAuthToken) return undefined;
+
+    // SSRF guard: the media URL arrives in the webhook payload, so never send
+    // our Twilio credentials to an arbitrary host. Only fetch from Twilio's API
+    // domain over HTTPS. (Twilio then redirects to its CDN; fetch drops the
+    // Authorization header on the cross-origin redirect per the fetch spec.)
+    let parsed: URL;
+    try {
+      parsed = new URL(mediaUrl);
+    } catch {
+      console.warn(`[Twilio Webhook] invalid media URL for msg ${waMsgId}`);
+      return undefined;
+    }
+    if (parsed.protocol !== "https:" || parsed.hostname !== "api.twilio.com") {
+      console.warn(`[Twilio Webhook] refusing non-Twilio media URL (${parsed.hostname}) for msg ${waMsgId}`);
+      return undefined;
+    }
+
     const auth = Buffer.from(`${ENV.twilioAccountSid}:${ENV.twilioAuthToken}`).toString("base64");
-    const resp = await fetch(mediaUrl, { headers: { Authorization: `Basic ${auth}` } });
+    const resp = await fetch(parsed.href, { headers: { Authorization: `Basic ${auth}` } });
     if (!resp.ok) {
       console.warn(`[Twilio Webhook] media fetch failed (${resp.status}) for msg ${waMsgId}`);
       return undefined;
