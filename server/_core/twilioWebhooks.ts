@@ -2,7 +2,8 @@ import type { Express, Request, Response, NextFunction } from "express";
 import twilio from "twilio";
 import { eq, or } from "drizzle-orm";
 import { ENV } from "./env";
-import { getDb } from "../db";
+import { getDb, createDocument } from "../db";
+import { storagePut } from "../storage";
 import {
   agentCallLogs,
   agentSmsLogs,
@@ -157,6 +158,66 @@ async function findOrCreateWhatsappContact(db: any, waNumber: string): Promise<n
     source: "manual",
   }).$returningId();
   return created.id;
+}
+
+function extFromMime(mime: string | undefined): string {
+  if (!mime) return "bin";
+  if (mime.includes("pdf")) return "pdf";
+  if (mime.includes("jpeg") || mime.includes("jpg")) return "jpg";
+  if (mime.includes("png")) return "png";
+  if (mime.includes("spreadsheet") || mime.includes("excel") || mime.includes("sheet")) return "xlsx";
+  const slash = mime.split("/")[1];
+  return slash ? slash.replace(/[^a-z0-9]/gi, "").slice(0, 8) || "bin" : "bin";
+}
+
+// Download a WhatsApp media attachment from Twilio (auth-protected) and file it
+// in the ERP documents store so it outlives Twilio's short-lived media URLs.
+// Returns the durable stored URL (or undefined on failure). Best-effort: never
+// throws — a media failure must not break inbound message capture.
+async function importWhatsappMedia(
+  waMsgId: number,
+  mediaUrl: string,
+  mediaType: string | undefined,
+  fromNumber: string,
+): Promise<string | undefined> {
+  try {
+    if (!ENV.twilioAccountSid || !ENV.twilioAuthToken) return undefined;
+    const auth = Buffer.from(`${ENV.twilioAccountSid}:${ENV.twilioAuthToken}`).toString("base64");
+    const resp = await fetch(mediaUrl, { headers: { Authorization: `Basic ${auth}` } });
+    if (!resp.ok) {
+      console.warn(`[Twilio Webhook] media fetch failed (${resp.status}) for msg ${waMsgId}`);
+      return undefined;
+    }
+    const mime = resp.headers.get("content-type") || mediaType || "application/octet-stream";
+    const buffer = Buffer.from(await resp.arrayBuffer());
+    const filename = `whatsapp-${waMsgId}.${extFromMime(mime)}`;
+    const fileKey = `documents/whatsapp/${waMsgId}-${filename}`;
+
+    let fileUrl: string;
+    try {
+      fileUrl = (await storagePut(fileKey, buffer, mime)).url;
+    } catch {
+      // Storage not configured — fall back to an inline data URL.
+      fileUrl = `data:${mime};base64,${buffer.toString("base64")}`;
+    }
+
+    await createDocument({
+      name: filename,
+      type: "other",
+      referenceType: "whatsapp",
+      referenceId: waMsgId,
+      fileUrl,
+      fileKey,
+      fileSize: buffer.length,
+      mimeType: mime,
+      description: `Document received via WhatsApp from ${fromNumber}`,
+    } as any);
+
+    return fileUrl;
+  } catch (err) {
+    console.warn(`[Twilio Webhook] media import failed for msg ${waMsgId}:`, err);
+    return undefined;
+  }
 }
 
 const EMPTY_TWIML = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response/>";
@@ -356,6 +417,20 @@ export function registerTwilioWebhooks(app: Express): void {
         await db.update(crmContacts)
           .set({ lastRepliedAt: new Date() })
           .where(eq(crmContacts.id, contactId));
+      }
+
+      // File any attached document into the ERP store in the background so the
+      // webhook responds quickly. Repoints the message at the durable URL.
+      if (mediaUrl) {
+        void importWhatsappMedia(waMsg.id, mediaUrl, mediaType, from)
+          .then((durable) => {
+            if (durable) {
+              return db.update(whatsappMessages)
+                .set({ mediaUrl: durable })
+                .where(eq(whatsappMessages.id, waMsg.id));
+            }
+          })
+          .catch((e) => console.warn("[Twilio Webhook] media post-process failed:", e));
       }
 
       res.set("Content-Type", "text/xml");

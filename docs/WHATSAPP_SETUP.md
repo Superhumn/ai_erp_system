@@ -42,6 +42,10 @@ in-app send/receive.
   Without config, it falls back to recording a local "pending" log (no message leaves).
 - **Receive**: the inbound webhook stores messages in `whatsapp_messages`, auto-links/creates
   the CRM contact by number, and logs a CRM interaction.
+- **Documents**: files a supplier sends over WhatsApp (PDF/image/etc.) are downloaded from
+  Twilio and saved into the ERP `documents` store (`referenceType: "whatsapp"`), so they
+  outlive Twilio's short-lived media URLs. (Auto-parsing WhatsApp docs into invoice/PO
+  records is a possible follow-up; today the email intake path does that richer parsing.)
 - **Status**: delivery/read receipts update the stored message via the status webhook.
 - **Vendors**: link a vendor to a WhatsApp number (Vendors page, or
   `scripts/backfill-vendor-contacts.ts`) to chat from the vendor row.
