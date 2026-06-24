@@ -809,7 +809,6 @@ function InlineRdPercent({ value, onSave }: { value: number; onSave: (v: number)
   );
 }
 
-
 // ============================================
 // IMPORT FROM QB BUTTON (Issue #270)
 // ============================================
@@ -817,15 +816,18 @@ type QBImportCategory = "wages" | "supplies" | "contract_research" | "cloud_comp
 
 function ImportFromQBButton({ studyId, projects, onRefresh }: {
   studyId: number;
-  projects: RdProjectRow[];
+  projects: Array<{ id?: number | null; projectName?: string | null }>;
   onRefresh: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [projectId, setProjectId] = useState("");
+  // Format in local time — toISOString() is UTC and can shift the date by a day.
+  const toDateInput = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   const [startDate, setStartDate] = useState(() => {
-    const d = new Date(); d.setMonth(0, 1); return d.toISOString().slice(0, 10);
+    const d = new Date(); d.setMonth(0, 1); return toDateInput(d);
   });
-  const [endDate, setEndDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [endDate, setEndDate] = useState(() => toDateInput(new Date()));
   const [category, setCategory] = useState<QBImportCategory>("wages");
 
   const importMutation = trpc.rdTaxCredit.importFromQuickBooks.useMutation({
@@ -856,9 +858,11 @@ function ImportFromQBButton({ studyId, projects, onRefresh }: {
               <Select value={projectId} onValueChange={setProjectId}>
                 <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
                 <SelectContent>
-                  {projects.map((p) => (
-                    <SelectItem key={p.id} value={String(p.id)}>{p.projectName}</SelectItem>
-                  ))}
+                  {projects
+                    .filter((p): p is { id: number; projectName?: string | null } => p.id != null)
+                    .map((p) => (
+                      <SelectItem key={p.id} value={String(p.id)}>{p.projectName ?? ""}</SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </div>
@@ -882,7 +886,7 @@ function ImportFromQBButton({ studyId, projects, onRefresh }: {
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
             <Button
-              onClick={() => importMutation.mutate({ studyId, projectId: parseInt(projectId), startDate, endDate, category })}
+              onClick={() => importMutation.mutate({ studyId, projectId: parseInt(projectId, 10), startDate, endDate, category })}
               disabled={!projectId || importMutation.isPending}
             >
               {importMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}

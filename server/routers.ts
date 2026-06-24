@@ -17984,6 +17984,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         equityOffered: z.string().optional(),
         status: z.enum(["planning", "active", "paused", "closed", "cancelled"]).default("planning"),
         notes: z.string().optional(),
+        companyId: z.number().optional(),
       }))
       .mutation(({ input, ctx }) => {
         const cleaned: Record<string, any> = {
@@ -17991,7 +17992,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           roundType: input.roundType,
           status: input.status,
           createdBy: ctx.user.id,
-          companyId: (ctx.user as any).companyId ?? null,
+          companyId: input.companyId ?? (ctx.user as any).companyId ?? null,
         };
         if (input.description) cleaned.description = input.description;
         if (input.targetAmount) cleaned.targetAmount = input.targetAmount;
@@ -18013,6 +18014,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         equityOffered: z.string().optional(),
         status: z.enum(["planning", "active", "paused", "closed", "cancelled"]).default("planning"),
         notes: z.string().optional(),
+        companyId: z.number().optional(),
       }))
       .mutation(({ input }) => {
         const { id, ...values } = input;
@@ -18027,6 +18029,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         cleaned.valuation = values.valuation || null;
         cleaned.equityOffered = values.equityOffered || null;
         cleaned.notes = values.notes || null;
+        if (values.companyId !== undefined) cleaned.companyId = values.companyId;
         return db.updateFundraisingCampaign(id, cleaned);
       }),
     listInvestments: protectedProcedure
