@@ -14104,12 +14104,12 @@ export async function getMaterialSupplyOverview(opts?: { companyId?: number }): 
   const companyId = opts?.companyId;
 
   // Copacker sites
-  const whConditions = [eq(warehouses.type, "copacker" as any), eq(warehouses.status, "active" as any)];
+  const whConditions = [eq(warehouses.type, "copacker"), eq(warehouses.status, "active")];
   if (companyId) whConditions.push(eq(warehouses.companyId, companyId));
   const whRows = await db.select().from(warehouses).where(and(...whConditions)).orderBy(warehouses.name);
 
   // Active raw materials
-  const rmConditions = [eq(rawMaterials.status, "active" as any)];
+  const rmConditions = [eq(rawMaterials.status, "active")];
   if (companyId) rmConditions.push(eq(rawMaterials.companyId, companyId));
   const rmRows = await db.select().from(rawMaterials).where(and(...rmConditions)).orderBy(rawMaterials.name);
 
@@ -14131,7 +14131,8 @@ export async function getMaterialSupplyOverview(opts?: { companyId?: number }): 
     );
   if (invRows.length === 0) return SAMPLE_MATERIAL_SUPPLY;
 
-  // Daily usage from the trailing-30-day consume ledger
+  // Daily usage from the trailing-30-day consume ledger, scoped to the same
+  // copacker warehouses + materials so we never full-scan the ledger.
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   const usageRows = await db
     .select({
@@ -14140,7 +14141,14 @@ export async function getMaterialSupplyOverview(opts?: { companyId?: number }): 
       consumed: sql<number>`SUM(ABS(${rawMaterialTransactions.quantity}))`.mapWith(Number),
     })
     .from(rawMaterialTransactions)
-    .where(and(eq(rawMaterialTransactions.transactionType, "consume" as any), gte(rawMaterialTransactions.createdAt, since)))
+    .where(
+      and(
+        eq(rawMaterialTransactions.transactionType, "consume"),
+        gte(rawMaterialTransactions.createdAt, since),
+        inArray(rawMaterialTransactions.warehouseId, whRows.map((w) => w.id)),
+        inArray(rawMaterialTransactions.rawMaterialId, rmRows.map((m) => m.id)),
+      ),
+    )
     .groupBy(rawMaterialTransactions.rawMaterialId, rawMaterialTransactions.warehouseId);
   const usageByKey = new Map<string, number>();
   for (const u of usageRows) usageByKey.set(`${u.rawMaterialId}:${u.warehouseId}`, (u.consumed ?? 0) / 30);

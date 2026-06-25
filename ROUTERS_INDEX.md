@@ -13,8 +13,8 @@ Source: `server/routers.ts` (appRouter L304–L24415, 116 top-level keys).
 | `system` | L305–L307 | 3 | ✓ `server/routers/index.ts` |
 | `autonomousWorkflows` | L308–L310 | 3 | ✓ `server/routers/index.ts` |
 | `agent` | L311–L313 | 3 | ✓ `server/routers/index.ts` |
-| `employeePortal` | L314–L316 | 3 | ✓ `server/routers/index.ts` |
-| `materialSupply` | L317–L322 | 6 | ✗ legacy-only |
+| `employeePortal` | L314–L318 | 5 | ✓ `server/routers/index.ts` |
+| `materialSupply` | L319–L322 | 4 | ✗ legacy-only |
 | `auth` | L323–L337 | 15 | ✓ `server/routers/auth.ts` |
 | `users` | L338–L377 | 40 | ✓ `server/routers/auth.ts` |
 | `companies` | L378–L445 | 68 | ✓ `server/routers/auth.ts` |
@@ -131,7 +131,7 @@ Source: `server/routers.ts` (appRouter L304–L24415, 116 top-level keys).
 
 These exist only in `server/routers.ts` — the extracted `server/routers/` tree does not cover them.
 
-- `materialSupply` — L317–L322 (6 lines)
+- `materialSupply` — L319–L322 (4 lines)
 - `bills` — L1320–L1334 (15 lines)
 - `orders` — L1463–L1570 (108 lines)
 - `orderItems` — L1571–L1582 (12 lines)
@@ -186,7 +186,7 @@ Top-level key exists in both. **Route-level parity is not guaranteed** — spot 
 - `system` — legacy L305–L307 · extracted in `server/routers/index.ts`
 - `autonomousWorkflows` — legacy L308–L310 · extracted in `server/routers/index.ts`
 - `agent` — legacy L311–L313 · extracted in `server/routers/index.ts`
-- `employeePortal` — legacy L314–L316 · extracted in `server/routers/index.ts`
+- `employeePortal` — legacy L314–L318 · extracted in `server/routers/index.ts`
 - `auth` — legacy L323–L337 · extracted in `server/routers/auth.ts`
 - `users` — legacy L338–L377 · extracted in `server/routers/auth.ts`
 - `companies` — legacy L378–L445 · extracted in `server/routers/auth.ts`

@@ -233,7 +233,7 @@ export function buildMaterialSupplyView(overview: MaterialSupplyOverview): Mater
       return {
         d: `M${o.x},${o.y} Q${cx},${cy} ${cp.x},${cp.y}`,
         color: STATUS_COLOR[worstSt],
-        anim: anySea ? "dashmove 1.5s linear infinite" : "none",
+        anim: anySea ? "msr-dashmove 1.5s linear infinite" : "none",
         lx,
         ly,
         lyEta: ly + 20,
