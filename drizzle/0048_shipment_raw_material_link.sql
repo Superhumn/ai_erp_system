@@ -1,4 +1,4 @@
--- Migration 0047: Link shipments to raw-material inventory.
+-- Migration 0048: Link shipments to raw-material inventory.
 -- Adds shipments.rawMaterialId + shipments.quantity so an inbound shipment can
 -- carry a specific raw material. Delivery of such a shipment moves that quantity
 -- from the material's "in transit" bucket into "received" (see shipments.update
