@@ -9,10 +9,19 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Calculator, Link2, Loader2, Plus, Share2, Trash2 } from "lucide-react";
+import { Calculator, KeyRound, Link2, Loader2, Lock, Plus, Share2, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
+import { useAuth } from "@/_core/hooks/useAuth";
+
+/** Extract a spreadsheet ID from a full Google Sheets URL, or pass through an ID. */
+function extractSpreadsheetId(input: string): string {
+  const trimmed = input.trim();
+  const match = trimmed.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  return match ? match[1] : trimmed;
+}
 
 export default function Recipes() {
+  const { user } = useAuth();
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedRecipeId, setSelectedRecipeId] = useState<number | null>(null);
@@ -117,10 +126,68 @@ export default function Recipes() {
     return m;
   }, [shares]);
 
+  // --- Import from Google Sheet ---
+  const [importOpen, setImportOpen] = useState(false);
+  const [importSheet, setImportSheet] = useState("");
+  const [importRange, setImportRange] = useState("");
+  const [importDefaultName, setImportDefaultName] = useState("");
+  const importFromSheet = trpc.recipes.importFromGoogleSheet.useMutation({
+    onSuccess: (res) => {
+      toast.success(
+        `Imported ${res.recipesCreated} recipe(s), ${res.linesCreated} line(s), ${res.ingredientsCreated} new ingredient(s).`,
+      );
+      res.warnings?.slice(0, 4).forEach((w) => toast.warning(w));
+      setImportOpen(false);
+      setImportSheet("");
+      setImportRange("");
+      setImportDefaultName("");
+      refetch();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  // --- Per-user access grants (owner only) ---
+  const [accessRecipeId, setAccessRecipeId] = useState<number | null>(null);
+  const [grantEmail, setGrantEmail] = useState("");
+  const [grantCanEdit, setGrantCanEdit] = useState(false);
+  const { data: accessGrants, refetch: refetchAccess } = trpc.recipes.listAccess.useQuery(
+    { recipeId: accessRecipeId! },
+    { enabled: !!accessRecipeId },
+  );
+  const grantAccess = trpc.recipes.grant.useMutation({
+    onSuccess: () => {
+      toast.success("Access granted");
+      setGrantEmail("");
+      setGrantCanEdit(false);
+      refetchAccess();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+  const revokeAccess = trpc.recipes.revoke.useMutation({
+    onSuccess: () => { toast.success("Access revoked"); refetchAccess(); },
+    onError: (err) => toast.error(err.message),
+  });
+  const accessRecipeName = useMemo(
+    () => recipes?.find((r) => r.id === accessRecipeId)?.name ?? "",
+    [recipes, accessRecipeId],
+  );
+  const isOwner = (recipe: { createdBy?: number | null }) =>
+    user?.id != null && recipe.createdBy === user.id;
+
   return (
     <div className="p-6 space-y-2">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <h1 className="text-sm font-bold tracking-[-0.02em]">Recipes</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-sm font-bold tracking-[-0.02em]">Recipes</h1>
+          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+            <Lock className="h-3 w-3" /> Private — visible only to you and people you grant
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+        <Button variant="outline" onClick={() => setImportOpen(true)}>
+          <Upload className="h-4 w-4 mr-2" />
+          Import from Google Sheet
+        </Button>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild>
             <Button>
@@ -188,6 +255,7 @@ export default function Recipes() {
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <div className="flex items-center gap-3">
@@ -240,6 +308,12 @@ export default function Recipes() {
                       <Calculator className="h-4 w-4 mr-1" />
                       Cost
                     </Button>
+                    {isOwner(recipe) && (
+                      <Button variant="ghost" size="sm" onClick={() => setAccessRecipeId(recipe.id)}>
+                        <KeyRound className="h-4 w-4 mr-1" />
+                        Access
+                      </Button>
+                    )}
                     <Button variant="ghost" size="sm" onClick={() => setShareRecipeId(recipe.id)}>
                       <Share2 className="h-4 w-4 mr-1" />
                       Share
@@ -387,6 +461,163 @@ export default function Recipes() {
                 </TableBody>
               </Table>
             )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={importOpen} onOpenChange={setImportOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Import formulations from Google Sheet</DialogTitle>
+            <DialogDescription>
+              Paste a Google Sheets link or ID. Use a header row with columns like
+              {" "}<span className="font-mono text-xs">Recipe</span>,{" "}
+              <span className="font-mono text-xs">Ingredient</span>,{" "}
+              <span className="font-mono text-xs">Quantity (g)</span>, and optionally{" "}
+              <span className="font-mono text-xs">SKU</span>,{" "}
+              <span className="font-mono text-xs">Category</span>,{" "}
+              <span className="font-mono text-xs">Procedure</span>. Imported recipes are private
+              to you until you grant access.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 pt-2">
+            <div className="space-y-1">
+              <Label>Google Sheet URL or ID</Label>
+              <Input
+                placeholder="https://docs.google.com/spreadsheets/d/…"
+                value={importSheet}
+                onChange={(e) => setImportSheet(e.target.value)}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label>Range (optional)</Label>
+                <Input
+                  placeholder="A1:Z1000"
+                  value={importRange}
+                  onChange={(e) => setImportRange(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>Default recipe name (optional)</Label>
+                <Input
+                  placeholder="Used when no Recipe column"
+                  value={importDefaultName}
+                  onChange={(e) => setImportDefaultName(e.target.value)}
+                />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              The sheet must be accessible by your connected Google account.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setImportOpen(false)}>Cancel</Button>
+            <Button
+              disabled={!importSheet.trim() || importFromSheet.isPending}
+              onClick={() =>
+                importFromSheet.mutate({
+                  spreadsheetId: extractSpreadsheetId(importSheet),
+                  range: importRange.trim() || undefined,
+                  defaultRecipeName: importDefaultName.trim() || undefined,
+                })
+              }
+            >
+              {importFromSheet.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Import
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={accessRecipeId != null} onOpenChange={(open) => !open && setAccessRecipeId(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Manage access</DialogTitle>
+            <DialogDescription>
+              <span className="font-medium">{accessRecipeName}</span> is private. Grant access to
+              individual people by email. Only you (the owner) and people listed below can see it.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div className="flex items-end gap-2">
+              <div className="flex-1 space-y-1">
+                <Label>Grant access to (email)</Label>
+                <Input
+                  type="email"
+                  placeholder="person@company.com"
+                  value={grantEmail}
+                  onChange={(e) => setGrantEmail(e.target.value)}
+                />
+              </div>
+              <label className="flex items-center gap-2 pb-2 text-sm whitespace-nowrap">
+                <Checkbox
+                  checked={grantCanEdit}
+                  onCheckedChange={(v) => setGrantCanEdit(!!v)}
+                />
+                Can edit
+              </label>
+              <Button
+                className="mb-0.5"
+                disabled={!grantEmail.trim() || grantAccess.isPending || accessRecipeId == null}
+                onClick={() => {
+                  if (accessRecipeId == null) return;
+                  grantAccess.mutate({
+                    recipeId: accessRecipeId,
+                    email: grantEmail.trim(),
+                    canEdit: grantCanEdit,
+                  });
+                }}
+              >
+                Grant
+              </Button>
+            </div>
+
+            <div>
+              <Label className="text-xs text-muted-foreground">People with access</Label>
+              {accessGrants?.length ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>User</TableHead>
+                      <TableHead>Access</TableHead>
+                      <TableHead className="text-right">Action</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {accessGrants.map((g: any) => (
+                      <TableRow key={g.id}>
+                        <TableCell>
+                          <div className="text-sm font-medium">{g.userName ?? "—"}</div>
+                          <div className="text-xs text-muted-foreground">{g.userEmail}</div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="secondary">{g.canEdit ? "Edit" : "View"}</Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={revokeAccess.isPending}
+                            onClick={() => {
+                              if (accessRecipeId == null) return;
+                              revokeAccess.mutate({ recipeId: accessRecipeId, userId: g.userId });
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4 mr-1" />
+                            Revoke
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : (
+                <p className="text-sm text-muted-foreground pt-1">
+                  No one else has access yet.
+                </p>
+              )}
+            </div>
           </div>
         </DialogContent>
       </Dialog>
