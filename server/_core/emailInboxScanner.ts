@@ -320,9 +320,9 @@ async function parseImapMessage(
         if (child.disposition === "attachment" || (child.disposition === "inline" && child.type !== "text")) {
           const filename = child.dispositionParameters?.filename || child.parameters?.name || "";
           const contentType = `${child.type}/${child.subtype}`;
-          // Only download PDFs, images, docs (skip large files >5MB)
+          // Only download PDFs, images, docs (skip very large files >20MB)
           const isParseable = /pdf|image|msword|spreadsheet|csv|excel|png|jpg|jpeg/i.test(contentType) || /\.pdf$|\.png$|\.jpg$|\.jpeg$|\.xlsx?$|\.csv$|\.doc/i.test(filename);
-          if (isParseable && (child.size || 0) < 5 * 1024 * 1024) {
+          if (isParseable && (child.size || 0) < 20 * 1024 * 1024) {
             try {
               const part = await client.download(uid.toString(), String(partIndex), { uid: true, markSeen: false });
               if (part?.content) {

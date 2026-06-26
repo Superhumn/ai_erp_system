@@ -59,6 +59,19 @@ import { encrypt, decrypt } from "./_core/crypto";
 import { ENV } from "./_core/env";
 import { reassignProjectTaskToHuman } from "./taskAgentBridge";
 import { createDecipheriv, createHash } from "crypto";
+
+/**
+ * Expose a lightweight `hasStoredContent` flag the UI uses to decide whether the
+ * View / Download / Parse actions are available for an email attachment. Content
+ * lives in object storage (R2), keyed by `storageKey`.
+ */
+function sanitizeAttachments(attachments: any[]): any[] {
+  return (attachments || []).map((a) => ({
+    ...a,
+    hasStoredContent: !!a.storageKey,
+  }));
+}
+
 // Decrypts a stored password supporting both the current AES-256-GCM format
 // (iv:authTag:ciphertext) and the legacy AES-256-CBC format (plain hex ciphertext).
 function decryptPassword(encryptedText: string): string {
@@ -12179,7 +12192,7 @@ Ask if they received the original request and if they can provide a quote.`;
 
             for (const { email } of parsedResults) {
               try {
-                await db.createInboundEmail?.({
+                const { id: emailId } = await db.createInboundEmail({
                   messageId: email.messageId,
                   fromEmail: email.from.address,
                   fromName: email.from.name || "",
@@ -12191,17 +12204,50 @@ Ask if they received the original request and if they can provide a quote.`;
                   category: email.categorization?.category || "other",
                 } as any);
 
-                // Parse attachments and AUTO-IMPORT into correct DB tables
+                // Persist attachment records (so they show in the inbox) and
+                // AUTO-IMPORT each into the correct ERP location.
                 if ((email as any).attachmentContents?.length > 0) {
-                  const { bulkImportDocuments } = await import("./documentImportService");
-                  const docs = (email as any).attachmentContents.map((att: any) => ({
-                    content: `data:${att.contentType};base64,${att.data.toString("base64")}`,
-                    filename: att.filename,
-                  }));
-                  try {
-                    const importResult = await bulkImportDocuments(docs, 1, true);
-                    totalAttachmentsParsed += importResult.successful;
-                  } catch { /* skip */ }
+                  const { importEmailAttachmentToErp } = await import("./documentImportService");
+                  const { storagePut } = await import("./storage");
+                  const existing = await db.getEmailAttachments(emailId);
+                  const existingNames = new Set(existing.map((a: any) => a.filename));
+                  for (const att of (email as any).attachmentContents as Array<{ filename: string; contentType: string; data: Buffer }>) {
+                    if (existingNames.has(att.filename)) continue;
+
+                    // Persist the row, then store the bytes in object storage (R2).
+                    const { id: attachmentId } = await db.createEmailAttachment({
+                      emailId,
+                      filename: att.filename,
+                      mimeType: att.contentType,
+                      size: att.data.length,
+                      isProcessed: false,
+                    } as any);
+
+                    try {
+                      const safeName = att.filename.replace(/[^\w.\-]+/g, "_").slice(0, 120) || "file";
+                      const put = await storagePut(`email-attachments/${emailId}/${attachmentId}-${safeName}`, att.data, att.contentType);
+                      await db.updateEmailAttachment(attachmentId, {
+                        storageKey: put.key,
+                        storageUrl: `/api/attachments/${attachmentId}`,
+                      } as any);
+                    } catch (e: any) {
+                      console.error("[scanNow] attachment upload failed:", e?.message);
+                      continue; // no stored bytes — skip parsing this attachment
+                    }
+
+                    try {
+                      const r = await importEmailAttachmentToErp({
+                        emailId,
+                        attachmentId,
+                        // Parse from the in-memory bytes we just uploaded (no R2 round-trip).
+                        content: `data:${att.contentType};base64,${att.data.toString("base64")}`,
+                        filename: att.filename,
+                        mimeType: att.contentType,
+                        userId: 1,
+                      });
+                      if (r.success) totalAttachmentsParsed++;
+                    } catch { /* skip individual attachment failures */ }
+                  }
                 }
                 totalProcessed++;
               } catch { /* skip */ }
@@ -12248,8 +12294,8 @@ Ask if they received the original request and if they can provide a quote.`;
         
         const attachments = await db.getEmailAttachments(input.id);
         const documents = await db.getParsedDocuments({ emailId: input.id });
-        
-        return { ...email, attachments, documents };
+
+        return { ...email, attachments: sanitizeAttachments(attachments), documents };
       }),
 
     /** Resolve by RFC Message-ID (approval queue source links). */
@@ -12261,7 +12307,67 @@ Ask if they received the original request and if they can provide a quote.`;
         const id = (email as { id: number }).id;
         const attachments = await db.getEmailAttachments(id);
         const documents = await db.getParsedDocuments({ emailId: id });
-        return { ...email, attachments, documents };
+        return { ...email, attachments: sanitizeAttachments(attachments), documents };
+      }),
+
+    // Parse a stored attachment on demand and import its data into the ERP
+    // (purchase order / vendor invoice / freight invoice / customs document).
+    parseAttachment: protectedProcedure
+      .input(z.object({
+        attachmentId: z.number(),
+        hint: z.enum(["purchase_order", "vendor_invoice", "freight_invoice", "customs_document"]).optional(),
+        createMissingVendor: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const attachment = await db.getEmailAttachmentById(input.attachmentId);
+        if (!attachment) throw new TRPCError({ code: "NOT_FOUND", message: "Attachment not found" });
+
+        // Resolve a fetchable source for the bytes from object storage (R2).
+        // parseUploadedDocument fetch()es it, so the presigned/public URL works.
+        if (!attachment.storageKey) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: "Attachment content is not stored. Re-scan the inbox to refetch it.",
+          });
+        }
+        let source: string;
+        try {
+          const { storageGet } = await import("./storage");
+          source = (await storageGet(attachment.storageKey)).url;
+        } catch (e: any) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `Could not load stored attachment: ${e.message}` });
+        }
+
+        const { importEmailAttachmentToErp } = await import("./documentImportService");
+        const result = await importEmailAttachmentToErp({
+          emailId: attachment.emailId,
+          attachmentId: attachment.id,
+          content: source,
+          filename: attachment.filename,
+          mimeType: attachment.mimeType || undefined,
+          userId: (ctx as any)?.user?.id ?? 1,
+          hint: input.hint,
+          createMissingVendor: input.createMissingVendor ?? true,
+        });
+
+        if (!result.success) {
+          return {
+            success: false,
+            documentType: result.documentType,
+            error: result.error || result.importResult?.error || "Could not import document",
+            createdRecords: result.importResult?.createdRecords ?? [],
+            warnings: result.importResult?.warnings ?? [],
+          };
+        }
+
+        return {
+          success: true,
+          documentType: result.documentType,
+          parsedDocumentId: result.parsedDocumentId,
+          createdRecords: result.importResult?.createdRecords ?? [],
+          updatedRecords: result.importResult?.updatedRecords ?? [],
+          warnings: result.importResult?.warnings ?? [],
+        };
       }),
 
     // Submit email for parsing (manual forward)
