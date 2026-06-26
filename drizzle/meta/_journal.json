@@ -337,6 +337,13 @@
                         "when": 1781614432393,
                         "tag": "0047_recipe_access_grants",
                         "breakpoints": true
+                },
+                {
+                        "idx": 48,
+                        "version": "5",
+                        "when": 1781700000000,
+                        "tag": "0048_ensure_subsidiary_fundraising_schema",
+                        "breakpoints": true
                 }
         ]
 }
