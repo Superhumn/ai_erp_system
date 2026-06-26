@@ -41,6 +41,7 @@ import { storagePut, storageDelete } from "./storage";
 import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile, type GmailSendOptions, type GmailDraftOptions } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
+import { parseFormulationSheet } from "./recipeSheetImport";
 import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
 import { getServiceAccountEmail, isServiceAccountConfigured } from "./_core/googleServiceAccount";
 import { getQuickBooksAuthUrl, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems, getProfitAndLoss, parseProfitAndLossReport } from "./_core/quickbooks";
@@ -235,6 +236,30 @@ async function getValidGoogleToken(userId: number): Promise<{ accessToken: strin
   }
   
   return { accessToken: token.accessToken };
+}
+
+/**
+ * Enforce per-recipe access. Recipes are private: only the creator (owner) or a
+ * user with an explicit grant may view, and edit/manage requires the matching
+ * permission. Throws FORBIDDEN otherwise. Returns the resolved access for reuse.
+ */
+async function requireRecipeAccess(
+  userId: number,
+  recipeId: number,
+  mode: "view" | "edit" | "own" = "view",
+) {
+  const access = await manufacturingDb.getRecipeAccess(userId, recipeId);
+  const ok = mode === "own" ? access.isOwner : mode === "edit" ? access.canEdit : access.canView;
+  if (!ok) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message:
+        mode === "view"
+          ? "You don't have access to this recipe."
+          : "You don't have permission to manage this recipe.",
+    });
+  }
+  return access;
 }
 
 // Helper to generate unique numbers
@@ -9655,7 +9680,7 @@ Provide a brief status summary, any missing documents, and next steps.`;
         status: z.string().optional(),
         isSubRecipe: z.boolean().optional(),
       }).optional())
-      .query(({ input }) => manufacturingDb.getRecipes(input)),
+      .query(({ input, ctx }) => manufacturingDb.getRecipesForUser(ctx.user.id, input)),
     create: protectedProcedure
       .input(z.object({
         recipeId: z.string().min(1),
@@ -9678,19 +9703,23 @@ Provide a brief status summary, any missing documents, and next steps.`;
         scaleFactor: z.number().optional(),
         targetLbs: z.number().optional(),
       }))
-      .query(({ input }) => manufacturingDb.calculateRecipeBatchCost({
-        recipeId: input.id,
-        formulation: input.formulation,
-        batchGrams: input.batchGrams,
-        scaleFactor: input.scaleFactor,
-        targetLbs: input.targetLbs,
-      })),
+      .query(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.id, "view");
+        return manufacturingDb.calculateRecipeBatchCost({
+          recipeId: input.id,
+          formulation: input.formulation,
+          batchGrams: input.batchGrams,
+          scaleFactor: input.scaleFactor,
+          targetLbs: input.targetLbs,
+        });
+      }),
     saveBatchSnapshot: protectedProcedure
       .input(z.object({
         recipeId: z.number(),
         formulationType: z.enum(["wet", "dry"]),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "view");
         const cost = await manufacturingDb.calculateRecipeBatchCost({
           recipeId: input.recipeId,
           formulation: input.formulationType,
@@ -9716,15 +9745,183 @@ Provide a brief status summary, any missing documents, and next steps.`;
         formulation: z.enum(["wet", "dry"]).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "edit");
         return db.syncRecipeToBom(input.recipeId, input.productId, {
           userId: ctx.user?.id,
           formulation: input.formulation,
         });
       }),
-    // List copackers a recipe is shared with
+    // --- Per-user access grants (recipe owner only) ---
+    // List who currently has access to a recipe (besides the owner).
+    listAccess: protectedProcedure
+      .input(z.object({ recipeId: z.number() }))
+      .query(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "own");
+        return manufacturingDb.listRecipeAccessGrants(input.recipeId);
+      }),
+    // Grant a specific user access to a recipe, identified by email.
+    grant: protectedProcedure
+      .input(z.object({
+        recipeId: z.number(),
+        email: z.string().email(),
+        canEdit: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "own");
+        const target = await db.getUserByEmail(input.email.trim().toLowerCase());
+        if (!target) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: `No user found with email ${input.email}. They must have an account first.`,
+          });
+        }
+        const result = await manufacturingDb.grantRecipeAccess({
+          recipeId: input.recipeId,
+          userId: target.id,
+          canEdit: input.canEdit,
+          grantedBy: ctx.user.id,
+        });
+        await createAuditLog(
+          ctx.user.id,
+          result.created ? "create" : "update",
+          "recipe_access_grant",
+          result.id,
+          `recipe:${input.recipeId} → user:${target.id} (${input.canEdit ? "edit" : "view"})`,
+        );
+        return { ...result, userId: target.id };
+      }),
+    // Revoke a user's access to a recipe.
+    revoke: protectedProcedure
+      .input(z.object({ recipeId: z.number(), userId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "own");
+        await manufacturingDb.revokeRecipeAccess(input.recipeId, input.userId);
+        await createAuditLog(
+          ctx.user.id,
+          "delete",
+          "recipe_access_grant",
+          input.recipeId,
+          `recipe:${input.recipeId} × user:${input.userId}`,
+        );
+        return { success: true };
+      }),
+    // Import recipe formulations from a Google Spreadsheet. Imported recipes are
+    // owned by the importer, so they stay private until access is granted.
+    importFromGoogleSheet: protectedProcedure
+      .input(z.object({
+        spreadsheetId: z.string().min(1),
+        range: z.string().optional(),
+        defaultRecipeName: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: error });
+        }
+        const sheet = await getGoogleSheetValues(
+          accessToken,
+          input.spreadsheetId,
+          input.range || "A1:Z1000",
+        );
+        if (!sheet.success) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: sheet.error || "Failed to read the spreadsheet.",
+          });
+        }
+        const { recipes: parsed, warnings } = parseFormulationSheet(
+          (sheet.values as unknown[][]) || [],
+          { defaultRecipeName: input.defaultRecipeName },
+        );
+        if (parsed.length === 0) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: warnings[0] || "No recipes could be parsed from the spreadsheet.",
+          });
+        }
+
+        // Cache ingredients to avoid repeated lookups across lines.
+        const ingredientCache = new Map<string, number>();
+        const resolveIngredientId = async (name: string, sku?: string): Promise<number> => {
+          const key = (sku?.trim().toLowerCase() || "") + "|" + name.trim().toLowerCase();
+          const cached = ingredientCache.get(key);
+          if (cached) return cached;
+          const existing = await manufacturingDb.findIngredientByNameOrSku(name, sku);
+          if (existing) {
+            ingredientCache.set(key, existing.id);
+            return existing.id;
+          }
+          const generatedSku =
+            sku?.trim() ||
+            `ING-${name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "-").slice(0, 24)}-${Math.floor(Math.random() * 10000)}`;
+          const created = await manufacturingDb.createIngredient({
+            name: name.trim(),
+            sku: generatedSku,
+          });
+          ingredientCache.set(key, created.id);
+          return created.id;
+        };
+
+        let recipesCreated = 0;
+        let linesCreated = 0;
+        let proceduresCreated = 0;
+        let ingredientsCreated = 0;
+        const before = ingredientCache.size;
+
+        for (const rec of parsed) {
+          const recipeId =
+            rec.recipeId?.slice(0, 32) || generateNumber("RCP").slice(0, 32);
+          const createdRecipe = await manufacturingDb.createRecipe({
+            recipeId,
+            name: rec.name.slice(0, 255),
+            category: rec.category,
+            status: "development",
+            createdBy: ctx.user.id,
+          });
+          recipesCreated++;
+
+          let lineNumber = 1;
+          for (const line of rec.lines) {
+            const ingredientId = await resolveIngredientId(line.ingredientName, line.ingredientSku);
+            await manufacturingDb.createRecipeLine({
+              recipeRowId: createdRecipe.id,
+              lineNumber: lineNumber++,
+              ingredientId,
+              quantityGrams: String(line.quantityGrams),
+              quantityGramsDry:
+                line.quantityGramsDry != null ? String(line.quantityGramsDry) : undefined,
+            });
+            linesCreated++;
+          }
+
+          for (const proc of rec.procedures) {
+            await manufacturingDb.createRecipeProcedure({
+              recipeRowId: createdRecipe.id,
+              stepNumber: proc.stepNumber,
+              instruction: proc.instruction,
+            });
+            proceduresCreated++;
+          }
+
+          await createAuditLog(ctx.user.id, "create", "recipe", createdRecipe.id, `imported: ${rec.name}`);
+        }
+        ingredientsCreated = ingredientCache.size - before;
+
+        return {
+          recipesCreated,
+          linesCreated,
+          proceduresCreated,
+          ingredientsCreated,
+          warnings,
+        };
+      }),
+    // List copackers a recipe is shared with (owner only)
     listShares: opsProcedure
       .input(z.object({ recipeId: z.number() }))
-      .query(({ input }) => manufacturingDb.getRecipeShares(input.recipeId)),
+      .query(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "own");
+        return manufacturingDb.getRecipeShares(input.recipeId);
+      }),
     // Share (or update share settings) for a recipe with a copacker warehouse
     share: opsProcedure
       .input(z.object({
@@ -9735,6 +9932,7 @@ Provide a brief status summary, any missing documents, and next steps.`;
         notes: z.string().nullish(),
       }))
       .mutation(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "own");
         const warehouse = await db.getWarehouseById(input.warehouseId);
         if (!warehouse) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Warehouse not found" });
@@ -9765,6 +9963,7 @@ Provide a brief status summary, any missing documents, and next steps.`;
     unshare: opsProcedure
       .input(z.object({ recipeId: z.number(), warehouseId: z.number() }))
       .mutation(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "own");
         const existingShares = await manufacturingDb.getRecipeShares(input.recipeId);
         const shareToRemove = existingShares.find((share) => share.warehouseId === input.warehouseId);
 
@@ -9784,6 +9983,7 @@ Provide a brief status summary, any missing documents, and next steps.`;
     delete: opsProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.id, "own");
         await manufacturingDb.deleteRecipe(input.id);
         await createAuditLog(ctx.user.id, 'delete', 'recipe', input.id);
         return { success: true };
@@ -17901,6 +18101,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         equityOffered: z.string().optional(),
         status: z.enum(["planning", "active", "paused", "closed", "cancelled"]).default("planning"),
         notes: z.string().optional(),
+        companyId: z.number().optional(),
       }))
       .mutation(({ input, ctx }) => {
         const cleaned: Record<string, any> = {
@@ -17908,7 +18109,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           roundType: input.roundType,
           status: input.status,
           createdBy: ctx.user.id,
-          companyId: (ctx.user as any).companyId ?? null,
+          companyId: input.companyId ?? (ctx.user as any).companyId ?? null,
         };
         if (input.description) cleaned.description = input.description;
         if (input.targetAmount) cleaned.targetAmount = input.targetAmount;
@@ -17930,6 +18131,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         equityOffered: z.string().optional(),
         status: z.enum(["planning", "active", "paused", "closed", "cancelled"]).default("planning"),
         notes: z.string().optional(),
+        companyId: z.number().optional(),
       }))
       .mutation(({ input }) => {
         const { id, ...values } = input;
@@ -17944,6 +18146,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         cleaned.valuation = values.valuation || null;
         cleaned.equityOffered = values.equityOffered || null;
         cleaned.notes = values.notes || null;
+        if (values.companyId !== undefined) cleaned.companyId = values.companyId;
         return db.updateFundraisingCampaign(id, cleaned);
       }),
     listInvestments: protectedProcedure

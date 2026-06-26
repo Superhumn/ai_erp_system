@@ -1926,6 +1926,25 @@ export const recipeCopackerShares = mysqlTable("recipe_copacker_shares", {
 export type RecipeCopackerShare = typeof recipeCopackerShares.$inferSelect;
 export type InsertRecipeCopackerShare = typeof recipeCopackerShares.$inferInsert;
 
+// Per-user recipe access grants. Recipes (and their formulations) are private:
+// a recipe is only visible to the user who created it (the owner) and to users
+// who have an explicit grant row here. There is no role-based bypass — even
+// admins must be individually granted access to a recipe they did not create.
+export const recipeAccessGrants = mysqlTable("recipe_access_grants", {
+  id: int("id").autoincrement().primaryKey(),
+  recipeId: int("recipeId").notNull().references(() => recipes.id),
+  userId: int("userId").notNull().references(() => users.id),
+  /** When true the grantee may edit the recipe; otherwise view-only. */
+  canEdit: boolean("canEdit").default(false).notNull(),
+  grantedBy: int("grantedBy").references(() => users.id),
+  grantedAt: timestamp("grantedAt").defaultNow().notNull(),
+}, (table) => ({
+  recipeUserIdx: uniqueIndex("recipe_access_grants_recipe_user_idx").on(table.recipeId, table.userId),
+}));
+
+export type RecipeAccessGrant = typeof recipeAccessGrants.$inferSelect;
+export type InsertRecipeAccessGrant = typeof recipeAccessGrants.$inferInsert;
+
 // ============================================
 // COPACKER PORTAL
 // ============================================
