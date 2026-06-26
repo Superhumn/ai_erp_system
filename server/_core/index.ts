@@ -10,6 +10,7 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import rateLimit from "express-rate-limit";
 import { registerOAuthRoutes } from "./oauth";
 import { registerLocalAuthRoutes } from "./localAuth";
+import { registerAttachmentRoutes } from "./attachmentRoutes";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 // serveStatic is inlined here to avoid importing vite.ts (which pulls in vite devDependencies)
@@ -735,6 +736,7 @@ async function startServer() {
   // Auth routes (login, register)
   registerOAuthRoutes(app);
   registerLocalAuthRoutes(app);
+  registerAttachmentRoutes(app);
 
   // Health check endpoint
   app.get('/api/health', (_req, res) => {

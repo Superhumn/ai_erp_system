@@ -341,8 +341,15 @@
 		{
 			"idx": 48,
 			"version": "5",
-			"when": 1781614433393,
-			"tag": "0048_shipment_raw_material_link",
+			"when": 1781700000000,
+			"tag": "0048_ensure_subsidiary_fundraising_schema",
+			"breakpoints": true
+		},
+		{
+			"idx": 49,
+			"version": "5",
+			"when": 1781700001000,
+			"tag": "0049_shipment_raw_material_link",
 			"breakpoints": true
 		}
 	]
