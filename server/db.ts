@@ -3504,11 +3504,31 @@ export async function createRawMaterial(data: Omit<InsertRawMaterial, 'id' | 'cr
 export async function updateRawMaterial(id: number, data: Partial<InsertRawMaterial>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
+
   await db.update(rawMaterials).set({
     ...data,
     updatedAt: new Date(),
   }).where(eq(rawMaterials.id, id));
+}
+
+// Atomically adjust a raw material's quantity buckets by signed deltas, flooring
+// each at 0. Using SQL-level `col + delta` (rather than read-modify-write) keeps
+// concurrent shipment updates for the same material from clobbering each other.
+export async function adjustRawMaterialInventory(
+  id: number,
+  deltas: { onOrder?: number; inTransit?: number; received?: number },
+  extra?: Partial<InsertRawMaterial>,
+) {
+  const db = await getDb();
+  if (!db) return;
+  const set: Record<string, any> = { ...extra, updatedAt: new Date() };
+  if (deltas.onOrder !== undefined)
+    set.quantityOnOrder = sql`GREATEST(0, COALESCE(${rawMaterials.quantityOnOrder}, 0) + ${deltas.onOrder})`;
+  if (deltas.inTransit !== undefined)
+    set.quantityInTransit = sql`GREATEST(0, COALESCE(${rawMaterials.quantityInTransit}, 0) + ${deltas.inTransit})`;
+  if (deltas.received !== undefined)
+    set.quantityReceived = sql`GREATEST(0, COALESCE(${rawMaterials.quantityReceived}, 0) + ${deltas.received})`;
+  await db.update(rawMaterials).set(set).where(eq(rawMaterials.id, id));
 }
 
 export async function deleteRawMaterial(id: number) {
@@ -9244,6 +9264,23 @@ export async function createWhatsappMessage(data: InsertWhatsappMessage) {
   if (!db) throw new Error("Database not available");
   const result = await db.insert(whatsappMessages).values(data);
   return result[0].insertId;
+}
+
+export async function updateWhatsappMessage(id: number, data: Partial<InsertWhatsappMessage>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(whatsappMessages).set(data).where(eq(whatsappMessages.id, id));
+}
+
+// Look up an outbound WhatsApp message by its provider message id (Twilio SID),
+// used by the delivery-status webhook to attach status updates.
+export async function getWhatsappMessageByMessageId(messageId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(whatsappMessages)
+    .where(eq(whatsappMessages.messageId, messageId))
+    .limit(1);
+  return row;
 }
 
 export async function updateWhatsappMessageStatus(

@@ -598,6 +598,10 @@ export const shipments = mysqlTable("shipments", {
   type: mysqlEnum("type", ["inbound", "outbound"]).notNull(),
   orderId: int("orderId").references(() => orders.id),
   purchaseOrderId: int("purchaseOrderId").references(() => purchaseOrders.id),
+  // Inbound shipments can carry a raw material — links the shipment to inventory
+  // so that delivery moves stock from "in transit" to "received".
+  rawMaterialId: int("rawMaterialId").references(() => rawMaterials.id),
+  quantity: decimal("quantity", { precision: 15, scale: 4 }),
   carrier: varchar("carrier", { length: 128 }),
   trackingNumber: varchar("trackingNumber", { length: 128 }),
   status: mysqlEnum("status", ["pending", "in_transit", "delivered", "returned", "cancelled"]).default("pending").notNull(),
