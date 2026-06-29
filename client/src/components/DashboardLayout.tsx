@@ -254,6 +254,10 @@ function DashboardLayoutContent({
   const [location, setLocation] = useLocation();
   const { state, toggleSidebar } = useSidebar();
   const { theme, toggleTheme } = useTheme();
+  // External/portal roles must not see internal AI tooling (the command bar and
+  // agent bar can read company-wide data). Backend AI endpoints are also gated
+  // (internalProcedure); this hides the entry points.
+  const isExternalRole = !!user && ["copacker", "vendor", "investor", "contractor"].includes(user.role);
   const isCollapsed = state === "collapsed";
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
@@ -499,7 +503,7 @@ function DashboardLayoutContent({
           <div className="flex items-center gap-2 shrink-0">
             {isMobile && <SidebarTrigger className="h-8 w-8 rounded-md" />}
           </div>
-          <AICommandBar />
+          {!isExternalRole && <AICommandBar />}
           <div className="flex items-center gap-2 shrink-0">
             <Tooltip>
               <TooltipTrigger asChild>
@@ -515,7 +519,7 @@ function DashboardLayoutContent({
               </TooltipTrigger>
               <TooltipContent>Quick note (g then n)</TooltipContent>
             </Tooltip>
-            <AutonomousAgentBar />
+            {!isExternalRole && <AutonomousAgentBar />}
             <NotificationCenter />
           </div>
         </header>

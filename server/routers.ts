@@ -122,6 +122,20 @@ const vendorProcedure = protectedProcedure.use(({ ctx, next }) => {
   return next({ ctx });
 });
 
+// External / outside-the-org roles. These users are confined to their portal
+// and must never reach internal-only features (AI assistant, global search,
+// cross-module agent tasks) that read company-wide data.
+const EXTERNAL_ROLES = ['copacker', 'vendor', 'investor', 'contractor'];
+
+// Internal-staff-only. Allows every internal role (including the basic "user"
+// role, which has AI-query access) but blocks the external/portal roles.
+const internalProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (EXTERNAL_ROLES.includes(ctx.user.role)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Not available for external accounts' });
+  }
+  return next({ ctx });
+});
+
 // Plant User can only access Work Orders, Receiving, Inventory, and Transfers
 const plantProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (!['admin', 'ops', 'plant', 'exec'].includes(ctx.user.role)) {
@@ -3698,8 +3712,8 @@ ONLY return the JSON array, no other text.`;
   // DASHBOARD & METRICS
   // ============================================
   dashboard: router({
-    metrics: protectedProcedure.query(() => db.getDashboardMetrics()),
-    search: protectedProcedure
+    metrics: internalProcedure.query(() => db.getDashboardMetrics()),
+    search: internalProcedure
       .input(z.object({ query: z.string().min(1) }))
       .query(({ input }) => db.globalSearch(input.query)),
   }),
@@ -6027,7 +6041,7 @@ const assistantMessage = typeof rawContent === 'string' ? rawContent : 'I apolog
 
         return { message: assistantMessage };
       }),
-    query: protectedProcedure
+    query: internalProcedure
       .input(z.object({ question: z.string().min(1), context: z.record(z.string(), z.unknown()).optional() }))
       .mutation(async ({ input, ctx }) => {
         // Get all relevant data for context
@@ -6211,7 +6225,7 @@ Be concise and helpful. Always give actionable guidance.`;
       
       pendingApprovals: protectedProcedure.query(() => db.getPendingApprovalTasks()),
       
-      create: protectedProcedure
+      create: internalProcedure
         .input(z.object({
           taskType: z.enum(['generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory', 'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials', 'vendor_followup', 'create_work_order', 'query', 'reply_email', 'approve_po', 'approve_invoice', 'create_vendor', 'create_material', 'create_product', 'create_bom', 'create_customer', 'create_crm_deal']),
           priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium'),

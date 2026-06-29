@@ -460,6 +460,55 @@ describe("copackerPortal", () => {
     });
   });
 });
+
+// Internal-only AI / search endpoints must reject external (portal) roles so an
+// outsider can't extract company-wide data, while internal roles keep access.
+describe("internalProcedure gating (AI + global search)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it.each(["copacker", "vendor", "investor", "contractor"])(
+    "blocks %s from dashboard.search",
+    async (role) => {
+      const ctx = createMockContext({ role: role as any, linkedVendorId: undefined });
+      const caller = appRouter.createCaller(ctx);
+      const search = vi.spyOn(db, "globalSearch").mockResolvedValue({} as any);
+
+      await expect(caller.dashboard.search({ query: "anything" })).rejects.toThrow(
+        "Not available for external accounts"
+      );
+      expect(search).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["copacker", "vendor", "investor", "contractor"])(
+    "blocks %s from ai.query",
+    async (role) => {
+      const ctx = createMockContext({ role: role as any, linkedVendorId: undefined });
+      const caller = appRouter.createCaller(ctx);
+
+      await expect(caller.ai.query({ question: "show me all invoices" })).rejects.toThrow(
+        "Not available for external accounts"
+      );
+    },
+  );
+
+  it.each(["admin", "user", "finance", "ops"])(
+    "allows internal role %s through dashboard.search",
+    async (role) => {
+      const ctx = createMockContext({ role: role as any, linkedVendorId: undefined });
+      const caller = appRouter.createCaller(ctx);
+      const search = vi
+        .spyOn(db, "globalSearch")
+        .mockResolvedValue({ customers: [], vendors: [] } as any);
+
+      await caller.dashboard.search({ query: "acme" });
+      expect(search).toHaveBeenCalledWith("acme");
+    },
+  );
+});
+
 describe("customs clearance inventory integration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
