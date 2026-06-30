@@ -138,6 +138,28 @@ export default function IntegrationsPage() {
     },
   });
 
+  // Gmail and Google Workspace share one Google OAuth token, so either
+  // disconnect removes the whole Google connection.
+  const gmailDisconnectMutation = trpc.gmail.disconnect.useMutation({
+    onSuccess: () => {
+      toast.success("Google account disconnected");
+      refetch();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const workspaceDisconnectMutation = trpc.googleWorkspace.disconnect.useMutation({
+    onSuccess: () => {
+      toast.success("Google account disconnected");
+      refetch();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
   // Check for OAuth callback success/error in URL
   React.useEffect(() => {
     if (!searchParams) return;
@@ -736,8 +758,13 @@ export default function IntegrationsPage() {
                             Remove Gmail integration from your account
                           </p>
                         </div>
-                        <Button variant="outline" size="sm">
-                          Disconnect
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => gmailDisconnectMutation.mutate()}
+                          disabled={gmailDisconnectMutation.isPending}
+                        >
+                          {gmailDisconnectMutation.isPending ? "Disconnecting…" : "Disconnect"}
                         </Button>
                       </div>
                     </div>
@@ -883,8 +910,13 @@ export default function IntegrationsPage() {
                             Remove Google Workspace integration from your account
                           </p>
                         </div>
-                        <Button variant="outline" size="sm">
-                          Disconnect
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => workspaceDisconnectMutation.mutate()}
+                          disabled={workspaceDisconnectMutation.isPending}
+                        >
+                          {workspaceDisconnectMutation.isPending ? "Disconnecting…" : "Disconnect"}
                         </Button>
                       </div>
                     </div>
