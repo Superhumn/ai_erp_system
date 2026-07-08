@@ -80,9 +80,12 @@ const EXTERNAL_PORTAL_MENUS: Record<
   copacker: [{ icon: Factory, label: "Copacker Portal", path: "/portal/copacker" }],
   vendor: [{ icon: Truck, label: "Vendor Portal", path: "/portal/vendor" }],
   investor: [{ icon: TrendingUp, label: "Investor Portal", path: "/investor-portal" }],
-  // No dedicated contractor portal exists; scope is "assigned projects and
-  // documents". Least-privilege default: Projects only.
-  contractor: [{ icon: Target, label: "Projects", path: "/projects" }],
+  // Contractor scope is "assigned projects and documents". Documents are
+  // scoped data-room folders (role visibility + individual grants).
+  contractor: [
+    { icon: Target, label: "Projects", path: "/projects" },
+    { icon: FolderLock, label: "Documents", path: "/documents" },
+  ],
 };
 
 export function getMenuGroups(role: string = "user") {

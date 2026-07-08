@@ -158,6 +158,7 @@ const Import = lazy(() => import("./pages/Import"));
 // Portals
 const CopackerPortal = lazy(() => import("./pages/portal/CopackerPortal"));
 const VendorPortal = lazy(() => import("./pages/portal/VendorPortal"));
+const ContractorDocuments = lazy(() => import("./pages/portal/ContractorDocuments"));
 
 // SOPs
 const SOPs = lazy(() => import("./pages/SOPs"));
@@ -239,6 +240,7 @@ function Router() {
         ? [<Route key="ip" path="/investor-portal" component={InvestorPortal} />]
         : role === "contractor"
         ? [
+            <Route key="docs" path="/documents" component={ContractorDocuments} />,
             <Route key="pj" path="/projects" component={Projects} />,
             <Route key="pjai" path="/projects/ai" component={ProjectsAI} />,
           ]
@@ -392,6 +394,7 @@ function Router() {
           {/* Projects */}
           <Route path="/projects" component={Projects} />
           <Route path="/projects/ai" component={ProjectsAI} />
+          <Route path="/documents" component={ContractorDocuments} />
           <Route path="/projects/investment-grants" component={InvestmentGrantChecklist} />
 
           {/* PM module — Market × Function matrix */}

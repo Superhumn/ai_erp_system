@@ -2904,13 +2904,37 @@ export const dataRoomFolders = mysqlTable("data_room_folders", {
   
   // Google Drive sync
   googleDriveFolderId: varchar("googleDriveFolderId", { length: 255 }),
-  
+
+  // Role-wide visibility for logged-in app-role users (e.g. contractors).
+  // JSON array of app roles that may see this folder without an individual
+  // grant. null/empty = not visible to any role by default. Per-user grants
+  // (contractorFolderGrants) layer on top of this.
+  visibleToRoles: json("visibleToRoles"),
+
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
 export type DataRoomFolder = typeof dataRoomFolders.$inferSelect;
 export type InsertDataRoomFolder = typeof dataRoomFolders.$inferInsert;
+
+// Per-user data-room folder grants for logged-in app-role users (contractors).
+// Unlike dataRoomInvitations (email/visitor based), these attach folder access
+// directly to a users row. mode 'allow' grants the folder; 'restrict' hides a
+// folder the user would otherwise see via visibleToRoles.
+export const contractorFolderGrants = mysqlTable("contractor_folder_grants", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  folderId: int("folderId").notNull(),
+  mode: mysqlEnum("mode", ["allow", "restrict"]).default("allow").notNull(),
+  grantedBy: int("grantedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({
+  userFolderIdx: uniqueIndex("contractor_folder_grants_user_folder_idx").on(table.userId, table.folderId),
+}));
+
+export type ContractorFolderGrant = typeof contractorFolderGrants.$inferSelect;
+export type InsertContractorFolderGrant = typeof contractorFolderGrants.$inferInsert;
 
 // Data Room Documents - files within folders
 export const dataRoomDocuments = mysqlTable("data_room_documents", {

@@ -241,20 +241,21 @@ describe("Sidebar navigation structure", () => {
   // internal navigation. These roles are intentionally excluded from the locked
   // 6-section internal structure (product approved 2026-06-16).
   describe("external (outsider) roles", () => {
-    const EXTERNAL_PORTALS: Record<string, string> = {
-      copacker: "Copacker Portal",
-      vendor: "Vendor Portal",
-      investor: "Investor Portal",
-      contractor: "Projects",
+    // Each outsider role's complete allowed menu — nothing else may appear.
+    const EXTERNAL_PORTALS: Record<string, string[]> = {
+      copacker: ["Copacker Portal"],
+      vendor: ["Vendor Portal"],
+      investor: ["Investor Portal"],
+      contractor: ["Projects", "Documents"],
     };
 
     it.each(Object.entries(EXTERNAL_PORTALS))(
-      "%s sees a single Portal section with only its own entry",
-      (role, expectedItem) => {
+      "%s sees a single Portal section with only its own entries",
+      (role, expectedItems) => {
         const groups = getMenuGroups(role);
         expect(groups).toHaveLength(1);
         expect(groups[0].label).toBe("Portal");
-        expect(groups[0].items.map((i) => i.label)).toEqual([expectedItem]);
+        expect(groups[0].items.map((i) => i.label)).toEqual(expectedItems);
       },
     );
 

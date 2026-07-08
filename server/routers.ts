@@ -136,6 +136,15 @@ const internalProcedure = protectedProcedure.use(({ ctx, next }) => {
   return next({ ctx });
 });
 
+// Contractor can access documents (data-room folders) granted to them.
+// admin/ops included so staff can preview/manage the contractor experience.
+const contractorProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (!['admin', 'ops', 'contractor'].includes(ctx.user.role)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Contractor access required' });
+  }
+  return next({ ctx });
+});
+
 // Plant User can only access Work Orders, Receiving, Inventory, and Transfers
 const plantProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (!['admin', 'ops', 'plant', 'exec'].includes(ctx.user.role)) {
@@ -13257,6 +13266,79 @@ Ask if they received the original request and if they can provide a quote.`;
       }),
 
     // Folder operations
+    // Contractor-facing read-only documents. Reuses the data-room folder/doc
+    // tables (and therefore the Google Drive sync), but scopes by the logged-in
+    // user's role + individual grants instead of an email invite / link code.
+    contractor: router({
+      // Folders + documents this contractor may see, across all data rooms.
+      getContent: contractorProcedure.query(async ({ ctx }) => {
+        const folders = await db.getAccessibleDataRoomFoldersForUser(ctx.user.id, ctx.user.role);
+        const folderIds = folders.map((f) => f.id);
+        const documents = (await db.getDataRoomDocumentsInFolders(folderIds)).filter(
+          (d) => !d.isHidden,
+        );
+        return { folders, documents };
+      }),
+
+      // Open one document — verifies it lives in a folder the user may access.
+      getDocument: contractorProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input, ctx }) => {
+          const doc = await db.getDataRoomDocumentById(input.id);
+          if (!doc) throw new TRPCError({ code: 'NOT_FOUND' });
+          const folders = await db.getAccessibleDataRoomFoldersForUser(ctx.user.id, ctx.user.role);
+          const allowed = new Set(folders.map((f) => f.id));
+          if (doc.folderId == null || !allowed.has(doc.folderId)) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this document' });
+          }
+          return doc;
+        }),
+
+      // Admin: list a contractor user's per-folder grants.
+      listGrants: adminProcedure
+        .input(z.object({ userId: z.number() }))
+        .query(async ({ input }) => db.getContractorFolderGrants(input.userId)),
+
+      // Admin: grant or restrict a specific folder for a contractor user.
+      setGrant: adminProcedure
+        .input(z.object({
+          userId: z.number(),
+          folderId: z.number(),
+          mode: z.enum(['allow', 'restrict']),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createContractorFolderGrant({
+            userId: input.userId,
+            folderId: input.folderId,
+            mode: input.mode,
+            grantedBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'contractor_folder_grant', result.id);
+          return result;
+        }),
+
+      // Admin: remove a grant/restriction for a contractor user.
+      removeGrant: adminProcedure
+        .input(z.object({ userId: z.number(), folderId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteContractorFolderGrant(input.userId, input.folderId);
+          await createAuditLog(ctx.user.id, 'delete', 'contractor_folder_grant', input.folderId);
+          return { success: true };
+        }),
+
+      // Admin: set which app roles can see a folder (role-wide visibility).
+      setFolderVisibility: adminProcedure
+        .input(z.object({
+          folderId: z.number(),
+          visibleToRoles: z.array(z.string()),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          await db.updateDataRoomFolder(input.folderId, { visibleToRoles: input.visibleToRoles });
+          await createAuditLog(ctx.user.id, 'update', 'data_room_folder', input.folderId, undefined, undefined, { visibleToRoles: input.visibleToRoles });
+          return { success: true };
+        }),
+    }),
+
     folders: router({
       list: protectedProcedure
         .input(z.object({ dataRoomId: z.number(), parentId: z.number().nullable().optional() }))
