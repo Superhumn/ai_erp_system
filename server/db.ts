@@ -6807,6 +6807,22 @@ export async function getAccessibleDataRoomFoldersForUser(userId: number, role: 
   return filterAccessibleFolders(allFolders, grants, role);
 }
 
+// All folders with their data room name — for the admin access-assignment UI.
+export async function getAllDataRoomFoldersWithRoom() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({
+    id: dataRoomFolders.id,
+    name: dataRoomFolders.name,
+    dataRoomId: dataRoomFolders.dataRoomId,
+    dataRoomName: dataRooms.name,
+    visibleToRoles: dataRoomFolders.visibleToRoles,
+  })
+    .from(dataRoomFolders)
+    .leftJoin(dataRooms, eq(dataRoomFolders.dataRoomId, dataRooms.id))
+    .orderBy(dataRooms.name, dataRoomFolders.sortOrder, dataRoomFolders.name);
+}
+
 // Documents contained in the given set of folder ids (across data rooms).
 export async function getDataRoomDocumentsInFolders(folderIds: number[]) {
   const db = await getDb();

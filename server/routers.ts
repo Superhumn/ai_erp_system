@@ -13299,6 +13299,9 @@ Ask if they received the original request and if they can provide a quote.`;
         .input(z.object({ userId: z.number() }))
         .query(async ({ input }) => db.getContractorFolderGrants(input.userId)),
 
+      // Admin: every folder (with its data room) for the access picker.
+      listAllFolders: adminProcedure.query(async () => db.getAllDataRoomFoldersWithRoom()),
+
       // Admin: grant or restrict a specific folder for a contractor user.
       setGrant: adminProcedure
         .input(z.object({

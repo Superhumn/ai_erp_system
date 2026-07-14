@@ -123,4 +123,37 @@ describe("dataRoom.contractor", () => {
     const result = await caller.dataRoom.contractor.getContent();
     expect(result).toEqual({ folders: [], documents: [] });
   });
+
+  it("blocks a contractor from the admin grant-management endpoints", async () => {
+    const ctx = createMockContext({ role: "contractor" });
+    const caller = appRouter.createCaller(ctx);
+
+    await expect(caller.dataRoom.contractor.listAllFolders()).rejects.toThrow();
+    await expect(
+      caller.dataRoom.contractor.setGrant({ userId: 2, folderId: 1, mode: "allow" }),
+    ).rejects.toThrow();
+    await expect(
+      caller.dataRoom.contractor.setFolderVisibility({ folderId: 1, visibleToRoles: ["contractor"] }),
+    ).rejects.toThrow();
+  });
+
+  it("lets an admin grant a folder to a contractor", async () => {
+    const ctx = createMockContext({ role: "admin" });
+    const caller = appRouter.createCaller(ctx);
+    const create = vi
+      .spyOn(db, "createContractorFolderGrant")
+      .mockResolvedValue({ id: 5 } as any);
+    vi.spyOn(db, "createAuditLog").mockResolvedValue({ id: 1 } as any);
+
+    const result = await caller.dataRoom.contractor.setGrant({
+      userId: 2,
+      folderId: 10,
+      mode: "allow",
+    });
+
+    expect(result.id).toBe(5);
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 2, folderId: 10, mode: "allow", grantedBy: 1 }),
+    );
+  });
 });
