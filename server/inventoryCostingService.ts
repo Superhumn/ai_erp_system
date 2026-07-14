@@ -459,11 +459,16 @@ export async function generateCogsPeriodSummary(params: {
   periodStart: Date;
   periodEnd: Date;
 }) {
+  // Make the end bound inclusive of the entire final day. CoGS records are
+  // stamped with a full timestamp, so a midnight-stamped periodEnd would drop
+  // everything recorded after 00:00:00 on the last day of the period.
+  const inclusiveEnd = new Date(params.periodEnd);
+  inclusiveEnd.setHours(23, 59, 59, 999);
   const records = await db.getCogsRecords({
     companyId: params.companyId,
     productId: params.productId,
     startDate: params.periodStart,
-    endDate: params.periodEnd,
+    endDate: inclusiveEnd,
   });
 
   const totalQuantitySold = records.reduce(

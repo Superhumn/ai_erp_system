@@ -3369,8 +3369,22 @@ ONLY return the JSON array, no other text.`;
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        const { computeQualifiedAmount } = await import("./rdTaxCreditService");
         const { id, ...data } = input;
-        await db.updateRdExpense(id, data);
+        const existing = await db.getRdExpenseById(id);
+        if (!existing) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Expense not found' });
+        }
+        // Recompute the qualified amount server-side from the merged row so an
+        // edit to category / grossAmount / rdPercentage / contractResearchRate
+        // never leaves a stale qualifiedAmount behind (which would corrupt the
+        // aggregated QRE and the credit calculation).
+        const category = data.category ?? (existing.category as "wages" | "supplies" | "contract_research" | "cloud_computing");
+        const gross = parseFloat(data.grossAmount ?? existing.grossAmount ?? "0") || 0;
+        const rdPct = parseFloat(data.rdPercentage ?? existing.rdPercentage ?? "100") || 100;
+        const contractRate = parseFloat(data.contractResearchRate ?? existing.contractResearchRate ?? "65") || 65;
+        const qualifiedAmount = String(computeQualifiedAmount(category, gross, rdPct, contractRate).toFixed(2));
+        await db.updateRdExpense(id, { ...data, qualifiedAmount });
         await createAuditLog(ctx.user.id, 'update', 'rdExpense', id);
         return { success: true };
       }),
@@ -3524,6 +3538,9 @@ ONLY return the JSON array, no other text.`;
           startDate: input.startDate,
           endDate: input.endDate,
         });
+        if (billsResult.error) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: `QuickBooks import failed: ${billsResult.error}` });
+        }
 
         const bills: any[] = billsResult?.data?.QueryResponse?.Bill || [];
         const expensesToCreate: Parameters<typeof db.createRdExpense>[0][] = [];
@@ -17748,6 +17765,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           bodyHtml: z.string(),
           bodyText: z.string().optional(),
           type: z.enum(["newsletter", "drip", "announcement", "follow_up", "custom"]).optional(),
+          status: z.enum(["draft", "scheduled", "sending", "sent", "paused", "cancelled"]).optional(),
           targetTags: z.string().optional(),
           targetContactTypes: z.string().optional(),
           targetPipelineStages: z.string().optional(),
@@ -17769,6 +17787,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           subject: z.string().optional(),
           bodyHtml: z.string().optional(),
           bodyText: z.string().optional(),
+          type: z.enum(["newsletter", "drip", "announcement", "follow_up", "custom"]).optional(),
           status: z.enum(["draft", "scheduled", "sending", "sent", "paused", "cancelled"]).optional(),
           scheduledAt: z.date().optional(),
         }))

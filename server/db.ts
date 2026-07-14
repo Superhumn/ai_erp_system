@@ -11645,6 +11645,13 @@ export async function getRdExpensesByStudy(studyId: number) {
   return db.select().from(rdExpenses).where(eq(rdExpenses.studyId, studyId)).orderBy(rdExpenses.category);
 }
 
+export async function getRdExpenseById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select().from(rdExpenses).where(eq(rdExpenses.id, id)).limit(1);
+  return rows[0];
+}
+
 export async function createRdExpense(data: InsertRdExpense) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");

@@ -370,7 +370,7 @@ export default function InventoryCosting() {
                 toast.success(`Costing method set to ${configMethod.replace('_', ' ')}. Update COSTING_METHOD env var on Railway to persist.`);
                 setConfigDialogOpen(false);
               }}
-              disabled={!configProductId || createConfigMutation.isPending}
+              disabled={createConfigMutation.isPending}
             >
               {createConfigMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Save Configuration
@@ -533,7 +533,7 @@ type CogsPeriodType = "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
 function GenerateSummaryButton({ products }: { products: any[] }) {
   const utils = trpc.useUtils();
   const [open, setOpen] = useState(false);
-  const [productId, setProductId] = useState("");
+  const [productId, setProductId] = useState("all");
   const [periodType, setPeriodType] = useState<CogsPeriodType>("monthly");
   const [periodStart, setPeriodStart] = useState(() => {
     const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10);
@@ -608,7 +608,7 @@ function GenerateSummaryButton({ products }: { products: any[] }) {
               <Select value={productId} onValueChange={setProductId}>
                 <SelectTrigger><SelectValue placeholder="All products" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All products</SelectItem>
+                  <SelectItem value="all">All products</SelectItem>
                   {products?.map((p: any) => (
                     <SelectItem key={p.id} value={String(p.id)}>{p.name} ({p.sku})</SelectItem>
                   ))}
@@ -620,7 +620,7 @@ function GenerateSummaryButton({ products }: { products: any[] }) {
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
             <Button
               onClick={() => generateMutation.mutate({
-                productId: productId ? parseInt(productId) : undefined,
+                productId: productId && productId !== "all" ? parseInt(productId) : undefined,
                 periodType,
                 periodStart: new Date(periodStart),
                 periodEnd: new Date(periodEnd),
