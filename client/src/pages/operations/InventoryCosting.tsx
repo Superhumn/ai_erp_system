@@ -81,6 +81,7 @@ export default function InventoryCosting() {
   const { data: configs, isLoading: configsLoading } = trpc.inventoryCosting.configs.list.useQuery({});
   const { data: costLayers, isLoading: layersLoading } = trpc.inventoryCosting.layers.list.useQuery({});
   const { data: cogsRecords } = trpc.inventoryCosting.cogs.list.useQuery({});
+  const { data: cogsSummaries } = trpc.inventoryCosting.cogs.summary.useQuery({});
   const { data: cogsDashboard } = trpc.inventoryCosting.cogs.dashboard.useQuery({});
   const { data: products } = trpc.products.list.useQuery({});
 
@@ -333,6 +334,51 @@ export default function InventoryCosting() {
         </CardContent>
       </Card>
 
+      {/* CoGS Period Summaries */}
+      <Card>
+        <CardHeader>
+          <CardTitle>CoGS Period Summaries ({cogsSummaries?.length || 0})</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {!cogsSummaries || cogsSummaries.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-2">
+              No period summaries yet. Use “Generate Summary” to aggregate CoGS records for a period.
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Period</TableHead>
+                  <TableHead>Range</TableHead>
+                  <TableHead>Product</TableHead>
+                  <TableHead className="text-right">Qty Sold</TableHead>
+                  <TableHead className="text-right">Total CoGS</TableHead>
+                  <TableHead className="text-right">Revenue</TableHead>
+                  <TableHead className="text-right">Gross Margin</TableHead>
+                  <TableHead className="text-right">Margin %</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(cogsSummaries as any[]).map((s) => (
+                  <TableRow key={s.id}>
+                    <TableCell className="capitalize">{s.periodType}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {new Date(s.periodStart).toLocaleDateString()} – {new Date(s.periodEnd).toLocaleDateString()}
+                    </TableCell>
+                    <TableCell>{s.productId ? getProductName(s.productId) : "All products"}</TableCell>
+                    <TableCell className="text-right">{parseFloat(s.totalQuantitySold).toFixed(2)}</TableCell>
+                    <TableCell className="text-right">${parseFloat(s.totalCogs).toFixed(2)}</TableCell>
+                    <TableCell className="text-right">{s.totalRevenue != null ? `$${parseFloat(s.totalRevenue).toFixed(2)}` : "—"}</TableCell>
+                    <TableCell className="text-right">{s.grossMargin != null ? `$${parseFloat(s.grossMargin).toFixed(2)}` : "—"}</TableCell>
+                    <TableCell className="text-right">{s.grossMarginPercent != null ? `${parseFloat(s.grossMarginPercent).toFixed(2)}%` : "—"}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Configure System-Wide Costing Method Dialog */}
       <Dialog open={configDialogOpen} onOpenChange={setConfigDialogOpen}>
         <DialogContent>
@@ -564,6 +610,7 @@ function GenerateSummaryButton({ products }: { products: any[] }) {
       setOpen(false);
       utils.inventoryCosting.cogs.dashboard.invalidate();
       utils.inventoryCosting.cogs.list.invalidate();
+      utils.inventoryCosting.cogs.summary.invalidate();
     },
     onError: (e: any) => toast.error(e.message),
   });

@@ -2758,6 +2758,17 @@ export async function getInventoryByProductId(productId: number) {
   return result[0];
 }
 
+export async function getInventoryByProductAndWarehouse(productId: number, warehouseId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db
+    .select()
+    .from(inventory)
+    .where(and(eq(inventory.productId, productId), eq(inventory.warehouseId, warehouseId)))
+    .limit(1);
+  return result[0];
+}
+
 export async function updateInventoryQuantity(productId: number, warehouseId: number, quantityChange: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -5282,6 +5293,13 @@ export async function createShopifySkuMapping(data: InsertShopifySkuMapping) {
   if (!db) throw new Error("Database not available");
   const result = await db.insert(shopifySkuMappings).values(data);
   return { id: result[0].insertId };
+}
+
+export async function updateShopifySkuMapping(id: number, data: Partial<InsertShopifySkuMapping>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(shopifySkuMappings).set(data).where(eq(shopifySkuMappings.id, id));
+  return { id };
 }
 
 export async function getProductByShopifySku(storeId: number, shopifyVariantId: string) {

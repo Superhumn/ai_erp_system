@@ -11578,15 +11578,61 @@ Ask if they received the original request and if they can provide a quote.`;
               // Get SKU mappings for this store
               const mappings = await db.getShopifySkuMappings(store.id);
 
+              // Shopify inventory_levels are keyed by inventory_item_id, which is
+              // NOT the variant id we store on the mapping. Backfill each mapping's
+              // inventory_item_id from the Shopify variant (once) so we can match.
+              for (const mapping of mappings) {
+                if (mapping.shopifyInventoryItemId || !mapping.shopifyVariantId) continue;
+                try {
+                  const variantResp = await fetch(`${apiBase}/variants/${mapping.shopifyVariantId}.json`, {
+                    headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+                  });
+                  if (!variantResp.ok) continue;
+                  const variantData = await variantResp.json();
+                  const inventoryItemId = variantData.variant?.inventory_item_id;
+                  if (inventoryItemId != null) {
+                    mapping.shopifyInventoryItemId = inventoryItemId.toString();
+                    await db.updateShopifySkuMapping(mapping.id, { shopifyInventoryItemId: mapping.shopifyInventoryItemId });
+                  }
+                } catch (e) {
+                  console.warn(`[Shopify Sync] Failed to resolve inventory_item_id for variant ${mapping.shopifyVariantId}:`, e);
+                }
+              }
+
+              // Route each level to a warehouse via the store's location mappings.
+              // inventory_levels are per-location, so with location mappings we
+              // update the (product, warehouse) row for the level's location.
+              const locationMappings = await db.getShopifyLocationMappings(store.id);
+              const activeLocationMappings = locationMappings.filter(m => m.isActive !== false);
+              const warehouseByLocationId = new Map(
+                activeLocationMappings.map(m => [m.shopifyLocationId, m.warehouseId] as const)
+              );
+
               for (const level of levels) {
-                const mapping = mappings.find(m => m.shopifyVariantId === level.inventory_item_id.toString());
-                if (mapping) {
-                  // Update local inventory
+                const mapping = mappings.find(m => m.shopifyInventoryItemId === level.inventory_item_id.toString());
+                if (!mapping) continue;
+                const quantity = level.available?.toString() || '0';
+
+                if (activeLocationMappings.length > 0) {
+                  // The store has configured location→warehouse routing.
+                  const warehouseId = warehouseByLocationId.get(level.location_id?.toString());
+                  if (warehouseId == null) {
+                    // Location isn't mapped to a warehouse — don't guess where it lands.
+                    console.warn(`[Shopify Sync] No warehouse mapping for location ${level.location_id} in ${store.storeDomain}, skipping level`);
+                    continue;
+                  }
+                  const inventory = await db.getInventoryByProductAndWarehouse(mapping.productId, warehouseId);
+                  if (inventory) {
+                    await db.updateInventory(inventory.id, { quantity });
+                    totalUpdated++;
+                  } else {
+                    console.warn(`[Shopify Sync] No inventory row for product ${mapping.productId} at warehouse ${warehouseId}, skipping`);
+                  }
+                } else {
+                  // No location mappings configured — fall back to product-level update.
                   const inventory = await db.getInventoryByProductId(mapping.productId);
                   if (inventory) {
-                    await db.updateInventory(inventory.id, {
-                      quantity: level.available?.toString() || '0',
-                    });
+                    await db.updateInventory(inventory.id, { quantity });
                     totalUpdated++;
                   }
                 }

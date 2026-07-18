@@ -323,6 +323,13 @@
                         "when": 1779494400000,
                         "tag": "0045_pricing_tenders_licenses_rounds_ambassadors",
                         "breakpoints": true
+                },
+                {
+                        "idx": 46,
+                        "version": "5",
+                        "when": 1779580800000,
+                        "tag": "0046_shopify_sku_inventory_item_id",
+                        "breakpoints": true
                 }
         ]
 }
