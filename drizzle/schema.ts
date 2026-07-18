@@ -1259,6 +1259,8 @@ export type InsertSentEmail = typeof sentEmails.$inferInsert;
 export const emailThreadFollowups = mysqlTable("email_thread_followups", {
   id: int("id").autoincrement().primaryKey(),
   threadId: varchar("threadId", { length: 255 }).notNull(), // correlation key for the email thread
+  gmailThreadId: varchar("gmailThreadId", { length: 255 }), // Gmail thread id to reply within (true in-thread send)
+  gmailMessageId: varchar("gmailMessageId", { length: 255 }), // Gmail message id of the latest message (In-Reply-To/References)
   subject: varchar("subject", { length: 500 }), // original subject; nudges reply in-thread, never a new subject
   contactEmail: varchar("contactEmail", { length: 320 }).notNull(), // who we are nudging
   contactName: varchar("contactName", { length: 255 }),

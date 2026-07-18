@@ -238,12 +238,21 @@ export function generateNudgeBody(opts: {
 export interface SendThreadReplyInput {
   followupId: number;
   threadId: string;
+  gmailThreadId?: string | null; // present => true in-thread Gmail reply with cc
+  gmailMessageId?: string | null; // latest message in the thread (In-Reply-To/References)
   subject: string | null;
   to: string;
   cc?: string;
   bodyText: string;
   vendorId?: number | null;
   threadOwnerId?: number | null;
+}
+
+/** A send may return the provider message id of the message it just sent, so
+ * the next nudge can reply to the most recent message in the thread. */
+export interface SendThreadReplyResult {
+  providerMessageId?: string;
+  via: "gmail" | "queue";
 }
 
 export interface CreateEscalationTaskInput {
@@ -272,7 +281,7 @@ export interface ThreadFollowUpDeps {
   /** Whether the linked task/PO/deal is closed or cancelled. */
   isLinkedEntityClosed: (thread: EmailThreadFollowup) => Promise<boolean>;
   getUserEmail: (userId: number) => Promise<string | null>;
-  sendThreadReply: (input: SendThreadReplyInput) => Promise<void>;
+  sendThreadReply: (input: SendThreadReplyInput) => Promise<SendThreadReplyResult | void>;
   createEscalationTask: (input: CreateEscalationTaskInput) => Promise<{ id: number } | null>;
 }
 
@@ -465,10 +474,13 @@ async function sendNudge(
     timezone: tz,
   };
 
+  let sendResult: SendThreadReplyResult | void;
   if (!dryRun) {
-    await deps.sendThreadReply({
+    sendResult = await deps.sendThreadReply({
       followupId: thread.id,
       threadId: thread.threadId,
+      gmailThreadId: thread.gmailThreadId,
+      gmailMessageId: thread.gmailMessageId,
       subject: thread.subject,
       to,
       cc,
@@ -485,17 +497,24 @@ async function sendNudge(
     ? computeNextNudgeAt(now, nextStep.gapBusinessDays, tz, thread.country)
     : null;
 
-  await deps.updateThreadFollowup(thread.id, {
+  const stateUpdate: Partial<EmailThreadFollowup> = {
     nudgeCount: newCount,
     lastOutboundAt: now,
     lastNudgeAt: now,
     nextNudgeAt,
-  });
+  };
+  // If we sent a real Gmail reply, the message we just sent becomes the latest
+  // message in the thread — the next nudge replies to it.
+  if (sendResult && sendResult.providerMessageId) {
+    stateUpdate.gmailMessageId = sendResult.providerMessageId;
+  }
+  await deps.updateThreadFollowup(thread.id, stateUpdate);
 
   result.sent++;
   await deps.insertLog({
     followupId: thread.id, threadId: thread.threadId, action: "nudge_sent",
-    nudgeNumber: step.nudgeNumber, dryRun, detail,
+    nudgeNumber: step.nudgeNumber, dryRun,
+    detail: { ...detail, via: (sendResult && sendResult.via) || (dryRun ? null : "queue") },
   });
 }
 
@@ -657,19 +676,48 @@ async function defaultGetUserEmail(userId: number): Promise<string | null> {
 
 /**
  * Send a nudge as a reply inside the existing thread. The original subject is
- * preserved (never a new subject line); threading intent (cc, in-reply-to) is
- * recorded in metadata. queueEmail is the concrete send path today; wiring the
- * Gmail in-thread reply (server/_core/gmail.ts replyToGmailMessage, which
- * supports true References/In-Reply-To + cc) is the natural follow-up.
+ * preserved (never a new subject line).
+ *
+ * Preferred path: when we have the Gmail thread + message ids and the thread
+ * owner has a connected Google account, reply via Gmail — this sets real
+ * In-Reply-To/References headers and delivers cc/alternate recipients natively
+ * (server/_core/gmail.ts replyToGmailMessage). Otherwise fall back to the
+ * transactional email queue, recording cc/threading intent in metadata.
  */
-async function defaultSendThreadReply(input: SendThreadReplyInput): Promise<void> {
+async function defaultSendThreadReply(input: SendThreadReplyInput): Promise<SendThreadReplyResult> {
+  const htmlBody = input.bodyText.replace(/\n/g, "<br>");
+
+  if (input.gmailThreadId && input.gmailMessageId && input.threadOwnerId) {
+    try {
+      const { getValidGoogleAccessToken } = await import("./_core/googleToken");
+      const { accessToken, error } = await getValidGoogleAccessToken(input.threadOwnerId);
+      if (accessToken && !error) {
+        const { replyToGmailMessage } = await import("./_core/gmail");
+        const res = await replyToGmailMessage(accessToken, input.gmailThreadId, input.gmailMessageId, {
+          to: input.to,
+          cc: input.cc,
+          subject: input.subject || "Following up",
+          body: htmlBody,
+          html: true,
+        });
+        if (res.success) return { via: "gmail", providerMessageId: res.messageId };
+        console.warn(`[Thread Follow-Up] Gmail reply failed (${res.error}); falling back to queue`);
+      } else if (error) {
+        console.warn(`[Thread Follow-Up] No Gmail token (${error}); falling back to queue`);
+      }
+    } catch (err) {
+      console.warn("[Thread Follow-Up] Gmail reply errored; falling back to queue:", err);
+    }
+  }
+
+  // Fallback: transactional email queue (no native cc/threading — recorded in metadata).
   const emailService = await import("./_core/emailService");
   await emailService.queueEmail({
     templateName: "GENERAL" as any,
     to: { email: input.to, name: input.threadId },
     subject: input.subject || "Following up",
     payload: {
-      htmlBody: input.bodyText.replace(/\n/g, "<br>"),
+      htmlBody,
       cc: input.cc,
       inThreadReply: true,
       threadId: input.threadId,
@@ -678,6 +726,7 @@ async function defaultSendThreadReply(input: SendThreadReplyInput): Promise<void
     relatedEntityId: input.followupId,
     aiGenerated: true,
   });
+  return { via: "queue" };
 }
 
 async function defaultCreateEscalationTask(
@@ -719,6 +768,8 @@ async function resolveEscalationProjectId(ownerId?: number | null): Promise<numb
 
 export interface EnrollThreadInput {
   threadId: string;
+  gmailThreadId?: string; // enable true in-thread Gmail replies with cc
+  gmailMessageId?: string; // latest message in the thread (In-Reply-To/References)
   contactEmail: string;
   contactName?: string;
   subject?: string;
@@ -756,6 +807,8 @@ export async function enrollThread(input: EnrollThreadInput): Promise<{ id: numb
 
   const values: Partial<EmailThreadFollowup> = {
     threadId: input.threadId,
+    gmailThreadId: input.gmailThreadId ?? null,
+    gmailMessageId: input.gmailMessageId ?? null,
     contactEmail: input.contactEmail,
     contactName: input.contactName ?? null,
     subject: input.subject ?? null,

@@ -93,6 +93,17 @@ A **daily job** scans for `nextNudgeAt <= now` and re-checks all stop conditions
 **at send time**, not schedule time — a thread that got a reply after scheduling
 does not send.
 
+## Sending
+
+Nudges reply inside the existing thread. When the follow-up row has a
+`gmailThreadId` + `gmailMessageId` and the thread owner has a connected Google
+account, the nudge is sent via Gmail (`server/_core/gmail.ts`
+`replyToGmailMessage`) with real `In-Reply-To`/`References` headers and native
+`cc` / alternate-recipient delivery; the id of the sent message is stored back
+as the new `gmailMessageId` so the next nudge replies to it. Without that
+context it falls back to the transactional email queue (`queueEmail`), recording
+cc/threading intent in metadata. Populate the Gmail ids via `enrollThread`.
+
 ## Logging
 
 Every nudge sent, every nudge skipped (with reason), every drop and every

@@ -6,6 +6,8 @@
 CREATE TABLE IF NOT EXISTS `email_thread_followups` (
   `id` int AUTO_INCREMENT NOT NULL,
   `threadId` varchar(255) NOT NULL,
+  `gmailThreadId` varchar(255),
+  `gmailMessageId` varchar(255),
   `subject` varchar(500),
   `contactEmail` varchar(320) NOT NULL,
   `contactName` varchar(255),

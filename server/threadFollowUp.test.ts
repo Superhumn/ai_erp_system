@@ -148,7 +148,8 @@ describe("generateNudgeBody", () => {
 
 function makeThread(over: Partial<EmailThreadFollowup>): EmailThreadFollowup {
   return {
-    id: 1, threadId: "thread-1", subject: "Order 42", contactEmail: "v@acme.com",
+    id: 1, threadId: "thread-1", gmailThreadId: null, gmailMessageId: null,
+    subject: "Order 42", contactEmail: "v@acme.com",
     contactName: "Sam", country: "US", timezone: null, managerEmail: null,
     vendorId: 10, threadOwnerId: 7, relatedEntityType: null, relatedEntityId: null,
     askSummary: "the delivery date", holdingUp: null, isActiveVendor: true,
@@ -226,6 +227,19 @@ describe("runThreadFollowUpJob", () => {
     expect(h.sends).toHaveLength(0);
     expect(thread.nudgeCount).toBe(0); // unchanged
     expect(h.logs.some(l => l.action === "nudge_skipped" && l.reason === "outside_send_window")).toBe(true);
+  });
+
+  it("passes Gmail thread/message ids to the sender for a true in-thread reply", async () => {
+    const thread = makeThread({ nudgeCount: 0, gmailThreadId: "gt-1", gmailMessageId: "gm-1" });
+    const h = harness(thread, IN_WINDOW, {
+      sendThreadReply: async (input) => { h.sends.push(input); return { via: "gmail", providerMessageId: "gm-2" }; },
+    });
+    await runThreadFollowUpJob({ dryRun: false, deps: h.deps });
+
+    expect(h.sends[0].gmailThreadId).toBe("gt-1");
+    expect(h.sends[0].gmailMessageId).toBe("gm-1");
+    // the message we just sent becomes the latest in the thread for the next nudge
+    expect(thread.gmailMessageId).toBe("gm-2");
   });
 
   it("cc's the thread owner on nudge 3", async () => {
