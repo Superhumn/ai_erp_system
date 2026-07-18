@@ -93,7 +93,7 @@ const AI_ACTIONS = [
 type AIAction = typeof AI_ACTIONS[number]["value"];
 
 export default function CodePage() {
-  const codeApi = (trpc as any).code;
+  const codeApi = trpc.code;
   const [code, setCode] = useState("// Start coding here...\nconsole.log('Hello, World!');\n");
   const [language, setLanguage] = useState("typescript");
   const [activeTab, setActiveTab] = useState("editor");
@@ -138,7 +138,7 @@ export default function CodePage() {
 
   const aiMutation = codeApi.aiAction.useMutation({
     onSuccess: (data) => {
-      setAiResult(data);
+      setAiResult({ outputCode: data.outputCode ?? null, explanation: data.explanation ?? "" });
       setActiveTab("ai-result");
       toast.success("AI response received");
     },

@@ -156,6 +156,23 @@ export async function executeCodeSandboxed(code: string, language: string): Prom
 
   const TIMEOUT_MS = 30000; // 30 second timeout
 
+  // Run in an isolated temp directory so executed code can't read or clobber
+  // the app's working tree via relative paths.
+  const os = await import("os");
+  const cwd = os.tmpdir();
+
+  // Do NOT inherit the server's full environment — it holds DB credentials,
+  // API keys, OAuth secrets, etc. Executed code runs on the host, so it must
+  // only see the minimum needed to locate the interpreter. This is not a real
+  // sandbox (no container/jail); it's least-privilege damage limitation.
+  const minimalEnv: NodeJS.ProcessEnv = {
+    PATH: process.env.PATH,
+    HOME: os.homedir(),
+    TMPDIR: cwd,
+    LANG: process.env.LANG,
+    NODE_NO_WARNINGS: "1",
+  };
+
   return new Promise((resolve) => {
     const startTime = Date.now();
     let stdout = "";
@@ -164,7 +181,9 @@ export async function executeCodeSandboxed(code: string, language: string): Prom
 
     const proc = spawn(config.cmd, [...config.args, code], {
       timeout: TIMEOUT_MS,
-      env: { ...process.env, NODE_NO_WARNINGS: "1" },
+      killSignal: "SIGKILL", // ensure runaway/timed-out processes are actually killed
+      cwd,
+      env: minimalEnv,
     });
 
     proc.stdout.on("data", (data: Buffer) => {
