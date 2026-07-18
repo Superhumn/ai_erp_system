@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -208,10 +208,15 @@ const entityConfig: Record<EntityType, {
     icon: <Building className="h-5 w-5" />,
     fields: [
       { name: "name", label: "Vendor Name", type: "text", placeholder: "e.g., Acme Supplies", required: true },
+      { name: "contactName", label: "Contact Name", type: "text", placeholder: "e.g., Jane Doe" },
       { name: "email", label: "Email", type: "email", placeholder: "contact@vendor.com" },
       { name: "phone", label: "Phone", type: "text", placeholder: "+1 (555) 123-4567" },
-      { name: "address", label: "Address", type: "textarea", placeholder: "123 Main St, City, State" },
+      { name: "address", label: "Address", type: "textarea", placeholder: "123 Main St" },
+      { name: "city", label: "City", type: "text", placeholder: "e.g., Dallas" },
+      { name: "state", label: "State / Region", type: "text", placeholder: "e.g., TX" },
+      { name: "country", label: "Country", type: "text", placeholder: "e.g., USA" },
       { name: "defaultLeadTimeDays", label: "Default Lead Time (days)", type: "number", placeholder: "7" },
+      { name: "notes", label: "Notes", type: "textarea", placeholder: "What this vendor supplies..." },
     ],
   },
   material: {
@@ -352,6 +357,17 @@ export function QuickCreateDialog({
   const [formData, setFormData] = useState<Record<string, any>>(defaultValues);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const utils = trpc.useUtils();
+
+  // Re-seed the form with the latest defaultValues each time the dialog opens.
+  // The dialog stays mounted (visibility is toggled via `open`), so without this
+  // any values supplied after the initial mount — e.g. details fetched from an
+  // online lookup — would never appear in the fields.
+  useEffect(() => {
+    if (open) {
+      setFormData(defaultValues || {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const config = entityConfig[entityType];
   
@@ -494,9 +510,15 @@ export function QuickCreateDialog({
         case "vendor":
           await createVendor.mutateAsync({
             name: formData.name,
+            contactName: formData.contactName || undefined,
             email: formData.email || undefined,
             phone: formData.phone || undefined,
             address: formData.address || undefined,
+            city: formData.city || undefined,
+            state: formData.state || undefined,
+            country: formData.country || undefined,
+            type: formData.type || undefined,
+            notes: formData.notes || undefined,
             defaultLeadTimeDays: formData.defaultLeadTimeDays ? parseInt(formData.defaultLeadTimeDays) : undefined,
           });
           break;

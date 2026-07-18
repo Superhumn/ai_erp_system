@@ -695,6 +695,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
   const [editingQuantity, setEditingQuantity] = useState<string>("");
   const [editingDate, setEditingDate] = useState<string>("");
   const [showQuickCreateVendor, setShowQuickCreateVendor] = useState(false);
+  const [enrichedVendorData, setEnrichedVendorData] = useState<Record<string, any> | undefined>(undefined);
   const [showQuickCreateMaterial, setShowQuickCreateMaterial] = useState(false);
   const [showQuickCreateProduct, setShowQuickCreateProduct] = useState(false);
   const [showQuickCreateCustomer, setShowQuickCreateCustomer] = useState(false);
@@ -877,6 +878,50 @@ export function AICommandBar({ context }: AICommandBarProps) {
     },
   });
 
+  // Look up a vendor's real details online from the free-text request, then
+  // open the create dialog pre-filled with what was found. Falls back to a
+  // blank form if the lookup fails or turns up nothing.
+  const enrichVendor = trpc.vendors.enrichFromText.useMutation({
+    onSuccess: (data) => {
+      setIsLoading(false);
+      if (data.found && data.vendor) {
+        const v = data.vendor;
+        setEnrichedVendorData({
+          name: v.name,
+          contactName: v.contactName,
+          email: v.email,
+          phone: v.phone,
+          address: v.address,
+          city: v.city,
+          state: v.state,
+          country: v.country,
+          type: v.type,
+          notes: v.notes,
+        });
+        toast.success(`Found "${v.name}" online`, {
+          description:
+            data.confidence === "low"
+              ? "Low confidence — please double-check the details before saving."
+              : "Review the pre-filled details and save.",
+        });
+      } else {
+        setEnrichedVendorData(undefined);
+        toast.info("Couldn't find that vendor online", {
+          description: "Enter the details manually below.",
+        });
+      }
+      setShowQuickCreateVendor(true);
+    },
+    onError: (error) => {
+      setIsLoading(false);
+      setEnrichedVendorData(undefined);
+      toast.error(`Online lookup failed: ${error.message}`, {
+        description: "Opening a blank form so you can enter the details manually.",
+      });
+      setShowQuickCreateVendor(true);
+    },
+  });
+
   // Query all vendors for manual selection
   const vendorsQuery = trpc.vendors.list.useQuery(
     {},
@@ -993,7 +1038,11 @@ export function AICommandBar({ context }: AICommandBarProps) {
     
     // Handle entity creation tasks - open quick create dialogs
     if (taskType === "create_vendor") {
-      setShowQuickCreateVendor(true);
+      // Look the vendor up online first, then open the dialog pre-filled with
+      // the real details instead of showing a blank form.
+      setIsLoading(true);
+      setEnrichedVendorData(undefined);
+      enrichVendor.mutate({ text: q });
       return;
     }
     if (taskType === "create_material") {
@@ -1084,7 +1133,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
       setShowMaterialDropdown(true);
     }
     setShowDraftPreview(true);
-  }, [context, aiQuery, vendorSuggestion, selectedVendorId, vendorsQuery.data, selectedMaterial]);
+  }, [context, aiQuery, enrichVendor, vendorSuggestion, selectedVendorId, vendorsQuery.data, selectedMaterial]);
 
   // Submit the draft after preview/editing
   const handleSubmitDraft = useCallback(async () => {
@@ -1713,8 +1762,12 @@ export function AICommandBar({ context }: AICommandBarProps) {
     {/* Quick Create Dialogs */}
       <QuickCreateDialog
         open={showQuickCreateVendor}
-        onOpenChange={setShowQuickCreateVendor}
+        onOpenChange={(open) => {
+          setShowQuickCreateVendor(open);
+          if (!open) setEnrichedVendorData(undefined);
+        }}
         entityType="vendor"
+        defaultValues={enrichedVendorData}
         onCreated={(vendor) => {
           // Auto-select the newly created vendor in the draft
           if (draftData) {

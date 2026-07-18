@@ -61,6 +61,11 @@ export type ToolChoice =
   | ToolChoiceByName
   | ToolChoiceExplicit;
 
+export type WebSearchOptions = {
+    /** Max number of web searches the model may run in a single turn (default 5). */
+    maxUses?: number;
+};
+
 export type InvokeParams = {
     messages: Message[];
     tools?: Tool[];
@@ -72,6 +77,13 @@ export type InvokeParams = {
     output_schema?: OutputSchema;
     responseFormat?: ResponseFormat;
     response_format?: ResponseFormat;
+    /**
+     * Enable Anthropic's server-side web search tool so the model can look up
+     * live information online before answering. Pass `true` for defaults or an
+     * options object to tune it. Handled entirely server-side by the provider —
+     * the final response is still plain text/tool_use blocks.
+     */
+    webSearch?: boolean | WebSearchOptions;
 };
 
 export type ToolCall = {
@@ -205,8 +217,12 @@ function resolveAnthropicUrl(): string {
 }
 
 type AnthropicContentBlock =
-    | { type: "text"; text: string }
-  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> };
+    | { type: "text"; text: string; citations?: unknown }
+  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
+  // Server-side tool blocks (e.g. web search). Emitted when webSearch is enabled;
+  // handled by the provider, so we simply skip them when reading the response.
+  | { type: "server_tool_use"; id: string; name: string; input: Record<string, unknown> }
+  | { type: "web_search_tool_result"; tool_use_id: string; content: unknown };
 
 type AnthropicResponse = {
     id: string;
@@ -403,6 +419,7 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
         output_schema,
         responseFormat,
         response_format,
+        webSearch,
   } = params;
 
   const converted = convertMessagesToAnthropic(messages);
@@ -417,8 +434,19 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
         payload.system = converted.system;
   }
 
+  const anthropicTools: unknown[] = [];
   if (tools && tools.length > 0) {
-        payload.tools = convertToolsToAnthropic(tools);
+        anthropicTools.push(...convertToolsToAnthropic(tools));
+  }
+  if (webSearch) {
+        const maxUses =
+              typeof webSearch === "object" && typeof webSearch.maxUses === "number"
+                ? webSearch.maxUses
+                : 5;
+        anthropicTools.push({ type: "web_search_20250305", name: "web_search", max_uses: maxUses });
+  }
+  if (anthropicTools.length > 0) {
+        payload.tools = anthropicTools;
   }
 
   const anthropicToolChoice = convertAnthropicToolChoice(toolChoice || tool_choice, tools);
