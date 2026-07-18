@@ -671,6 +671,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
   const [query, setQuery] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [response, setResponse] = useState<string | null>(null);
+  const [agentActions, setAgentActions] = useState<Array<{ type: string; description?: string; status?: string; error?: string }> | null>(null);
   const [taskCreated, setTaskCreated] = useState<{ id: number; status: string; taskType?: string } | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(true);
   const [vendorSuggestion, setVendorSuggestion] = useState<VendorSuggestion | null>(null);
@@ -700,6 +701,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
   const [showQuickCreateProduct, setShowQuickCreateProduct] = useState(false);
   const [showQuickCreateCustomer, setShowQuickCreateCustomer] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const lastSubmittedQuery = useRef<string>("");
   const [, setLocation] = useLocation();
   const utils = trpc.useUtils();
 
@@ -752,7 +754,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
     setIsListening(false);
   }, []);
 
-  // AI Query mutation for general questions
+  // AI Query mutation — single-shot Q&A, used as a fallback if the agent errors.
   const aiQuery = trpc.ai.query.useMutation({
     onSuccess: (data) => {
       setResponse(data.answer);
@@ -761,6 +763,29 @@ export function AICommandBar({ context }: AICommandBarProps) {
     onError: (error) => {
       toast.error(error.message);
       setIsLoading(false);
+    },
+  });
+
+  // Agentic path — the model reasons over the request, queries the ERP, searches
+  // the live web, and takes actions via tools, then returns a written answer plus
+  // the list of actions it performed. This is what makes the bar actually AI-driven
+  // rather than keyword matching.
+  const agentChat = trpc.ai.agentChat.useMutation({
+    onSuccess: (data) => {
+      setResponse(data.message || "Done.");
+      setAgentActions(
+        Array.isArray(data.actions) && data.actions.length > 0
+          ? (data.actions as Array<{ type: string; description?: string; status?: string; error?: string }>)
+          : null,
+      );
+      setIsLoading(false);
+      // Refresh anything the agent may have changed so the UI reflects new records.
+      utils.invalidate();
+    },
+    onError: (error) => {
+      // Fall back to a plain answer so the user still gets a response.
+      toast.error(`Agent error: ${error.message}`, { description: "Falling back to a direct answer." });
+      aiQuery.mutate({ question: lastSubmittedQuery.current });
     },
   });
 
@@ -1019,20 +1044,25 @@ export function AICommandBar({ context }: AICommandBarProps) {
     if (!q.trim()) return;
     setShowSuggestions(false);
     setResponse(null);
+    setAgentActions(null);
     setTaskCreated(null);
-    
+
     // Parse the intent from the query
     const intent = parseIntent(q);
     const taskType = forceTaskType || intent.taskType;
-    
-    // If it's a general query, use the AI query endpoint
+
+    // General / free-form requests go to the agentic endpoint: the model reasons
+    // over the request, queries the ERP, searches the web, and takes actions via
+    // tools — then answers. (The structured fast-paths below stay for the common
+    // create verbs so they keep their confirm-before-save dialogs.)
     if (taskType === "query") {
       setIsLoading(true);
       let fullQuery = q;
       if (context) {
         fullQuery = `[Context: ${context}]\n\n${q}`;
       }
-      aiQuery.mutate({ question: fullQuery });
+      lastSubmittedQuery.current = fullQuery;
+      agentChat.mutate({ message: fullQuery });
       return;
     }
     
@@ -1133,7 +1163,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
       setShowMaterialDropdown(true);
     }
     setShowDraftPreview(true);
-  }, [context, aiQuery, enrichVendor, vendorSuggestion, selectedVendorId, vendorsQuery.data, selectedMaterial]);
+  }, [context, agentChat, enrichVendor, vendorSuggestion, selectedVendorId, vendorsQuery.data, selectedMaterial]);
 
   // Submit the draft after preview/editing
   const handleSubmitDraft = useCallback(async () => {
@@ -1328,7 +1358,11 @@ export function AICommandBar({ context }: AICommandBarProps) {
           {isLoading && (
             <div className="p-6 flex items-center justify-center">
               <Loader2 className="h-6 w-6 animate-spin text-primary mr-3" />
-              <span className="text-muted-foreground">Processing...</span>
+              <span className="text-muted-foreground">
+                {agentChat.isPending
+                  ? "Working on it — reasoning, checking your data, and searching the web…"
+                  : "Processing…"}
+              </span>
             </div>
           )}
 
@@ -1688,12 +1722,41 @@ export function AICommandBar({ context }: AICommandBarProps) {
               <div className="prose prose-sm dark:prose-invert max-w-none">
                 <Streamdown>{response}</Streamdown>
               </div>
+              {agentActions && agentActions.length > 0 && (
+                <div className="mt-3 rounded-md border border-border/60 bg-muted/40 p-3">
+                  <div className="mb-1.5 text-xs font-medium text-muted-foreground">
+                    Actions taken
+                  </div>
+                  <ul className="space-y-1">
+                    {agentActions.map((action, i) => (
+                      <li key={i} className="flex items-center gap-2 text-sm">
+                        <span
+                          className={
+                            action.status === "failed"
+                              ? "text-red-500"
+                              : "text-green-600 dark:text-green-500"
+                          }
+                        >
+                          {action.status === "failed" ? "✗" : "✓"}
+                        </span>
+                        <span className="text-foreground/90">
+                          {action.description || action.type}
+                        </span>
+                        {action.error && (
+                          <span className="text-xs text-red-500">— {action.error}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <div className="mt-4 flex gap-2">
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => {
                     setResponse(null);
+                    setAgentActions(null);
                     setShowSuggestions(true);
                     setQuery("");
                   }}

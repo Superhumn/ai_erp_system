@@ -1787,10 +1787,11 @@ Your capabilities include:
 11. **Email & Communication**: Send emails to vendors, customers, or team members. Draft professional emails for review. Follow up on outstanding items.
 12. **Reports & Analytics**: Generate business reports, analyze sales trends, forecast demand, detect anomalies, and provide actionable insights.
 13. **Tasks & Approvals**: Create tasks, approve or reject pending items, and manage workflow approvals.
+14. **Web research**: You have a live web_search tool. Use it to look up real-world information that isn't in the ERP — a company's real contact details, address, and website; vendors/suppliers; current market prices; industry data; news. Prefer official sources and don't fabricate details you could verify by searching.
 
 CRITICAL BEHAVIOR RULES:
 1. When a user asks you to create something, DO IT directly. Never tell them to do it manually.
-2. If required data is missing (e.g., no vendor exists), CREATE the missing entity first, then proceed with the original request. Ask the user only for info you truly cannot guess (e.g., "What vendor should I use?" or "What's the unit price?").
+2. If required data is missing (e.g., no vendor exists), CREATE the missing entity first, then proceed with the original request. Ask the user only for info you truly cannot guess (e.g., "What vendor should I use?" or "What's the unit price?"). When a user names a real company (e.g. "add BCW as a warehouse vendor"), FIRST use web_search to find its real details (address, phone, website), then create the record with those details instead of asking the user to type them.
 3. If there are zero vendors/products/customers, that's fine — create them as part of fulfilling the request. For example, if the user says "create a PO for 5000kg mushrooms" and there's no vendor, ask "Which vendor should I create this PO for? And what's the unit price per kg?" Then create the vendor AND the PO.
 4. NEVER list steps for the user to follow. NEVER say "you need to first..." — just do it or ask for the specific missing detail.
 5. Use sensible defaults: auto-generate SKUs, use today's date, set status to "draft", etc.
@@ -1839,17 +1840,40 @@ Examples:
   let finalResponse = "";
   let data: Record<string, any> = {};
   let iterations = 0;
-  const maxIterations = 5;
+  const maxIterations = 8;
+  // Let the agent look things up online (real companies, vendors, prices,
+  // addresses, etc.) in addition to querying the ERP, so requests like
+  // "add BCW as a warehouse vendor" resolve from real public data. If the
+  // configured LLM endpoint doesn't support server-side web search, we disable
+  // it and carry on rather than failing the whole request.
+  let webSearchEnabled = true;
 
   // Iterative tool calling loop
   while (iterations < maxIterations) {
     iterations++;
 
-    const response = await invokeLLM({
-      messages,
-      tools: AI_TOOLS,
-      toolChoice: "auto",
-    });
+    let response;
+    try {
+      response = await invokeLLM({
+        messages,
+        tools: AI_TOOLS,
+        toolChoice: "auto",
+        ...(webSearchEnabled ? { webSearch: true } : {}),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // The endpoint likely rejected the web_search tool — turn it off and retry.
+      if (webSearchEnabled && /web[_ ]?search|tool|400|unsupported|invalid/i.test(msg)) {
+        webSearchEnabled = false;
+        response = await invokeLLM({
+          messages,
+          tools: AI_TOOLS,
+          toolChoice: "auto",
+        });
+      } else {
+        throw err;
+      }
+    }
 
     const choice = response.choices[0];
     const responseMessage = choice.message;

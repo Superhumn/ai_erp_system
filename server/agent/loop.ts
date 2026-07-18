@@ -31,7 +31,15 @@ export async function runAgent(
   options: { maxIterations?: number; userId?: number; companyId?: number } = {},
 ): Promise<AgentRunResult> {
   const maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
-  const tools = getTools();
+  // ERP tools plus Anthropic's server-side web search, so the agent can look up
+  // live public information (companies, vendors, prices, addresses, etc.) online
+  // and reason over it — not just the internal database.
+  const webSearchTool = {
+    type: "web_search_20250305",
+    name: "web_search",
+    max_uses: 8,
+  } as unknown as Anthropic.Tool;
+  const tools = [...getTools(), webSearchTool];
   const history = new MessageHistory();
   const startTime = Date.now();
 
@@ -142,7 +150,28 @@ export async function runAgent(
         }
 
         history.push({ role: "user", content: toolResults });
+        continue;
       }
+
+      // Server-side tools (e.g. web search) can pause a long turn; the assistant
+      // content is already in history, so re-request to let the model continue.
+      if (response.stop_reason === "pause_turn") {
+        logAgent({ level: "debug", runId, iteration: iterations, message: "Turn paused (server tool) — continuing" });
+        continue;
+      }
+
+      // Any other terminal stop reason (max_tokens, stop_sequence, refusal, …):
+      // record it and stop rather than looping until max iterations.
+      logAgent({ level: "info", runId, iteration: iterations, durationMs: iterDuration, message: `Agent stopped (${response.stop_reason})` });
+      await recordAgentStep({
+        runId,
+        iteration: iterations,
+        assistantMessage: textContent,
+        stopReason: response.stop_reason ?? "unknown",
+        tokensUsed,
+        durationMs: iterDuration,
+      });
+      break;
     }
 
     const totalDuration = Date.now() - startTime;
