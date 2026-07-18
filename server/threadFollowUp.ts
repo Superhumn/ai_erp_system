@@ -474,7 +474,7 @@ async function sendNudge(
     timezone: tz,
   };
 
-  let sendResult: SendThreadReplyResult | void;
+  let sendResult: SendThreadReplyResult | void = undefined;
   if (!dryRun) {
     sendResult = await deps.sendThreadReply({
       followupId: thread.id,
