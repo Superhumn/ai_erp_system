@@ -922,6 +922,10 @@ export const projectTasks = mysqlTable("project_tasks", {
   priority: mysqlEnum("priority", ["low", "medium", "high", "critical"]).default("medium").notNull(),
   dueDate: timestamp("dueDate"),
   completedDate: timestamp("completedDate"),
+  // Last time an outstanding-task reminder email was sent for this task. Used by
+  // the daily task-reminder job to avoid re-emailing the assignee more than once
+  // per run window. Cleared implicitly by comparing against a cooldown cutoff.
+  reminderSentAt: timestamp("reminderSentAt"),
   estimatedHours: decimal("estimatedHours", { precision: 10, scale: 2 }),
   actualHours: decimal("actualHours", { precision: 10, scale: 2 }),
   // Lightfield-style CRM linkage + provenance
