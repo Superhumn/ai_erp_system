@@ -1984,6 +1984,45 @@ export async function getAllProjectTasks() {
   }));
 }
 
+/**
+ * Project tasks that need an outstanding-task reminder email.
+ *
+ * A task qualifies when it is still open (not completed/cancelled), is assigned to
+ * a human user who has an email on file, and has a dueDate that is already overdue
+ * or coming due before `dueBefore` (the "due soon" lookahead). `reminderCutoff`
+ * de-dupes repeat sends: a task whose reminder was sent more recently than the
+ * cutoff is skipped, so a still-open task is nudged at most once per run window.
+ * Tasks with no dueDate are excluded (a NULL dueDate never satisfies the `<=` bound).
+ */
+export async function getProjectTasksNeedingReminders(opts: { dueBefore: Date; reminderCutoff: Date }) {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select({
+    task: projectTasks,
+    projectName: projects.name,
+    assigneeName: users.name,
+    assigneeEmail: users.email,
+  })
+    .from(projectTasks)
+    .innerJoin(users, eq(projectTasks.assigneeId, users.id))
+    .leftJoin(projects, eq(projectTasks.projectId, projects.id))
+    .where(and(
+      eq(projectTasks.assigneeType, "human"),
+      inArray(projectTasks.status, ["todo", "in_progress", "review"]),
+      lte(projectTasks.dueDate, opts.dueBefore),
+      sql`${users.email} is not null and ${users.email} != ''`,
+      or(isNull(projectTasks.reminderSentAt), lte(projectTasks.reminderSentAt, opts.reminderCutoff)),
+    ))
+    .orderBy(asc(projectTasks.dueDate));
+
+  return rows.map((row) => ({
+    ...row.task,
+    projectName: row.projectName,
+    assigneeName: row.assigneeName,
+    assigneeEmail: row.assigneeEmail,
+  }));
+}
+
 // ============================================
 // INVESTMENT GRANT CHECKLISTS
 // ============================================
