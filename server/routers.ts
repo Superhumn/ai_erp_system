@@ -41,6 +41,7 @@ import { storagePut, storageDelete } from "./storage";
 import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile, type GmailSendOptions, type GmailDraftOptions } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
+import { parseFormulationSheet } from "./recipeSheetImport";
 import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
 import { getServiceAccountEmail, isServiceAccountConfigured } from "./_core/googleServiceAccount";
 import { getQuickBooksAuthUrl, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems, getProfitAndLoss, parseProfitAndLossReport } from "./_core/quickbooks";
@@ -58,6 +59,19 @@ import { encrypt, decrypt } from "./_core/crypto";
 import { ENV } from "./_core/env";
 import { reassignProjectTaskToHuman } from "./taskAgentBridge";
 import { createDecipheriv, createHash } from "crypto";
+
+/**
+ * Expose a lightweight `hasStoredContent` flag the UI uses to decide whether the
+ * View / Download / Parse actions are available for an email attachment. Content
+ * lives in object storage (R2), keyed by `storageKey`.
+ */
+function sanitizeAttachments(attachments: any[]): any[] {
+  return (attachments || []).map((a) => ({
+    ...a,
+    hasStoredContent: !!a.storageKey,
+  }));
+}
+
 // Decrypts a stored password supporting both the current AES-256-GCM format
 // (iv:authTag:ciphertext) and the legacy AES-256-CBC format (plain hex ciphertext).
 function decryptPassword(encryptedText: string): string {
@@ -222,6 +236,30 @@ async function getValidGoogleToken(userId: number): Promise<{ accessToken: strin
   }
   
   return { accessToken: token.accessToken };
+}
+
+/**
+ * Enforce per-recipe access. Recipes are private: only the creator (owner) or a
+ * user with an explicit grant may view, and edit/manage requires the matching
+ * permission. Throws FORBIDDEN otherwise. Returns the resolved access for reuse.
+ */
+async function requireRecipeAccess(
+  userId: number,
+  recipeId: number,
+  mode: "view" | "edit" | "own" = "view",
+) {
+  const access = await manufacturingDb.getRecipeAccess(userId, recipeId);
+  const ok = mode === "own" ? access.isOwner : mode === "edit" ? access.canEdit : access.canView;
+  if (!ok) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message:
+        mode === "view"
+          ? "You don't have access to this recipe."
+          : "You don't have permission to manage this recipe.",
+    });
+  }
+  return access;
 }
 
 // Helper to generate unique numbers
@@ -2425,6 +2463,8 @@ ONLY return the JSON array, no other text.`;
         type: z.enum(['inbound', 'outbound']),
         orderId: z.number().optional(),
         purchaseOrderId: z.number().optional(),
+        rawMaterialId: z.number().optional(),
+        quantity: z.string().regex(/^\d+(\.\d+)?$/, "quantity must be numeric").optional(),
         carrier: z.string().optional(),
         trackingNumber: z.string().optional(),
         shipDate: z.date().optional(),
@@ -2438,6 +2478,23 @@ ONLY return the JSON array, no other text.`;
         const shipmentNumber = generateNumber('SHIP');
         const result = await db.createShipment({ ...input, shipmentNumber });
         await createAuditLog(ctx.user.id, 'create', 'shipment', result.id, shipmentNumber);
+
+        // ── Inventory link: inbound shipment carrying a raw material reserves
+        // the quantity as "in transit" until it's marked delivered. ──
+        if (input.type === 'inbound' && input.rawMaterialId && input.quantity) {
+          try {
+            const qty = parseFloat(input.quantity);
+            if (qty > 0) {
+              await db.adjustRawMaterialInventory(input.rawMaterialId, { inTransit: qty }, {
+                receivingStatus: 'in_transit',
+                ...(input.shipDate ? { expectedDeliveryDate: input.shipDate } : {}),
+              });
+            }
+          } catch (e) {
+            console.warn('[Shipment] inbound in-transit inventory update failed:', e);
+          }
+        }
+
         return result;
       }),
     update: opsProcedure
@@ -2450,9 +2507,51 @@ ONLY return the JSON array, no other text.`;
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
-        const [oldShipment] = await db.getShipments({ id } as any) || [];
+        const oldShipment = await db.getShipmentById(id);
         await db.updateShipment(id, data);
         await createAuditLog(ctx.user.id, 'update', 'shipment', id);
+
+        // ── Inventory link: keep raw-material stock in sync with shipment status. ──
+        // Delivery moves the carried quantity from "in transit" → "received".
+        // Cancel/return releases the reservation. Guarded on the prior status so
+        // repeated updates can't double-count.
+        if (
+          oldShipment?.type === 'inbound' &&
+          oldShipment.rawMaterialId &&
+          oldShipment.quantity &&
+          data.status &&
+          data.status !== oldShipment.status
+        ) {
+          try {
+            const qty = parseFloat(oldShipment.quantity);
+            const materialId = oldShipment.rawMaterialId;
+            if (qty > 0) {
+              if (data.status === 'delivered') {
+                // Arrived: move the quantity from in-transit into received.
+                await db.adjustRawMaterialInventory(materialId, { inTransit: -qty, received: qty }, {
+                  receivingStatus: 'received',
+                  lastReceivedDate: new Date(),
+                  lastReceivedQty: String(qty),
+                });
+              } else if (oldShipment.status === 'delivered') {
+                // Reversing a previously-delivered shipment: pull the quantity
+                // back out of received so inventory isn't overstated. If it's
+                // going back to a pre-delivery state, restore the reservation.
+                const restoreInTransit = data.status === 'pending' || data.status === 'in_transit';
+                await db.adjustRawMaterialInventory(
+                  materialId,
+                  { received: -qty, ...(restoreInTransit ? { inTransit: qty } : {}) },
+                  { receivingStatus: restoreInTransit ? 'in_transit' : 'none' },
+                );
+              } else if (data.status === 'cancelled' || data.status === 'returned') {
+                // Pre-delivery cancellation: release the in-transit reservation.
+                await db.adjustRawMaterialInventory(materialId, { inTransit: -qty }, { receivingStatus: 'none' });
+              }
+            }
+          } catch (e) {
+            console.warn('[Shipment] inventory sync on status change failed:', e);
+          }
+        }
         
         // Create notification for shipment status changes
         if (data.status && oldShipment?.status !== data.status) {
@@ -9642,7 +9741,7 @@ Provide a brief status summary, any missing documents, and next steps.`;
         status: z.string().optional(),
         isSubRecipe: z.boolean().optional(),
       }).optional())
-      .query(({ input }) => manufacturingDb.getRecipes(input)),
+      .query(({ input, ctx }) => manufacturingDb.getRecipesForUser(ctx.user.id, input)),
     create: protectedProcedure
       .input(z.object({
         recipeId: z.string().min(1),
@@ -9665,19 +9764,23 @@ Provide a brief status summary, any missing documents, and next steps.`;
         scaleFactor: z.number().optional(),
         targetLbs: z.number().optional(),
       }))
-      .query(({ input }) => manufacturingDb.calculateRecipeBatchCost({
-        recipeId: input.id,
-        formulation: input.formulation,
-        batchGrams: input.batchGrams,
-        scaleFactor: input.scaleFactor,
-        targetLbs: input.targetLbs,
-      })),
+      .query(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.id, "view");
+        return manufacturingDb.calculateRecipeBatchCost({
+          recipeId: input.id,
+          formulation: input.formulation,
+          batchGrams: input.batchGrams,
+          scaleFactor: input.scaleFactor,
+          targetLbs: input.targetLbs,
+        });
+      }),
     saveBatchSnapshot: protectedProcedure
       .input(z.object({
         recipeId: z.number(),
         formulationType: z.enum(["wet", "dry"]),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "view");
         const cost = await manufacturingDb.calculateRecipeBatchCost({
           recipeId: input.recipeId,
           formulation: input.formulationType,
@@ -9703,15 +9806,183 @@ Provide a brief status summary, any missing documents, and next steps.`;
         formulation: z.enum(["wet", "dry"]).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "edit");
         return db.syncRecipeToBom(input.recipeId, input.productId, {
           userId: ctx.user?.id,
           formulation: input.formulation,
         });
       }),
-    // List copackers a recipe is shared with
+    // --- Per-user access grants (recipe owner only) ---
+    // List who currently has access to a recipe (besides the owner).
+    listAccess: protectedProcedure
+      .input(z.object({ recipeId: z.number() }))
+      .query(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "own");
+        return manufacturingDb.listRecipeAccessGrants(input.recipeId);
+      }),
+    // Grant a specific user access to a recipe, identified by email.
+    grant: protectedProcedure
+      .input(z.object({
+        recipeId: z.number(),
+        email: z.string().email(),
+        canEdit: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "own");
+        const target = await db.getUserByEmail(input.email.trim().toLowerCase());
+        if (!target) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: `No user found with email ${input.email}. They must have an account first.`,
+          });
+        }
+        const result = await manufacturingDb.grantRecipeAccess({
+          recipeId: input.recipeId,
+          userId: target.id,
+          canEdit: input.canEdit,
+          grantedBy: ctx.user.id,
+        });
+        await createAuditLog(
+          ctx.user.id,
+          result.created ? "create" : "update",
+          "recipe_access_grant",
+          result.id,
+          `recipe:${input.recipeId} → user:${target.id} (${input.canEdit ? "edit" : "view"})`,
+        );
+        return { ...result, userId: target.id };
+      }),
+    // Revoke a user's access to a recipe.
+    revoke: protectedProcedure
+      .input(z.object({ recipeId: z.number(), userId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "own");
+        await manufacturingDb.revokeRecipeAccess(input.recipeId, input.userId);
+        await createAuditLog(
+          ctx.user.id,
+          "delete",
+          "recipe_access_grant",
+          input.recipeId,
+          `recipe:${input.recipeId} × user:${input.userId}`,
+        );
+        return { success: true };
+      }),
+    // Import recipe formulations from a Google Spreadsheet. Imported recipes are
+    // owned by the importer, so they stay private until access is granted.
+    importFromGoogleSheet: protectedProcedure
+      .input(z.object({
+        spreadsheetId: z.string().min(1),
+        range: z.string().optional(),
+        defaultRecipeName: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: error });
+        }
+        const sheet = await getGoogleSheetValues(
+          accessToken,
+          input.spreadsheetId,
+          input.range || "A1:Z1000",
+        );
+        if (!sheet.success) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: sheet.error || "Failed to read the spreadsheet.",
+          });
+        }
+        const { recipes: parsed, warnings } = parseFormulationSheet(
+          (sheet.values as unknown[][]) || [],
+          { defaultRecipeName: input.defaultRecipeName },
+        );
+        if (parsed.length === 0) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: warnings[0] || "No recipes could be parsed from the spreadsheet.",
+          });
+        }
+
+        // Cache ingredients to avoid repeated lookups across lines.
+        const ingredientCache = new Map<string, number>();
+        const resolveIngredientId = async (name: string, sku?: string): Promise<number> => {
+          const key = (sku?.trim().toLowerCase() || "") + "|" + name.trim().toLowerCase();
+          const cached = ingredientCache.get(key);
+          if (cached) return cached;
+          const existing = await manufacturingDb.findIngredientByNameOrSku(name, sku);
+          if (existing) {
+            ingredientCache.set(key, existing.id);
+            return existing.id;
+          }
+          const generatedSku =
+            sku?.trim() ||
+            `ING-${name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "-").slice(0, 24)}-${Math.floor(Math.random() * 10000)}`;
+          const created = await manufacturingDb.createIngredient({
+            name: name.trim(),
+            sku: generatedSku,
+          });
+          ingredientCache.set(key, created.id);
+          return created.id;
+        };
+
+        let recipesCreated = 0;
+        let linesCreated = 0;
+        let proceduresCreated = 0;
+        let ingredientsCreated = 0;
+        const before = ingredientCache.size;
+
+        for (const rec of parsed) {
+          const recipeId =
+            rec.recipeId?.slice(0, 32) || generateNumber("RCP").slice(0, 32);
+          const createdRecipe = await manufacturingDb.createRecipe({
+            recipeId,
+            name: rec.name.slice(0, 255),
+            category: rec.category,
+            status: "development",
+            createdBy: ctx.user.id,
+          });
+          recipesCreated++;
+
+          let lineNumber = 1;
+          for (const line of rec.lines) {
+            const ingredientId = await resolveIngredientId(line.ingredientName, line.ingredientSku);
+            await manufacturingDb.createRecipeLine({
+              recipeRowId: createdRecipe.id,
+              lineNumber: lineNumber++,
+              ingredientId,
+              quantityGrams: String(line.quantityGrams),
+              quantityGramsDry:
+                line.quantityGramsDry != null ? String(line.quantityGramsDry) : undefined,
+            });
+            linesCreated++;
+          }
+
+          for (const proc of rec.procedures) {
+            await manufacturingDb.createRecipeProcedure({
+              recipeRowId: createdRecipe.id,
+              stepNumber: proc.stepNumber,
+              instruction: proc.instruction,
+            });
+            proceduresCreated++;
+          }
+
+          await createAuditLog(ctx.user.id, "create", "recipe", createdRecipe.id, `imported: ${rec.name}`);
+        }
+        ingredientsCreated = ingredientCache.size - before;
+
+        return {
+          recipesCreated,
+          linesCreated,
+          proceduresCreated,
+          ingredientsCreated,
+          warnings,
+        };
+      }),
+    // List copackers a recipe is shared with (owner only)
     listShares: opsProcedure
       .input(z.object({ recipeId: z.number() }))
-      .query(({ input }) => manufacturingDb.getRecipeShares(input.recipeId)),
+      .query(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "own");
+        return manufacturingDb.getRecipeShares(input.recipeId);
+      }),
     // Share (or update share settings) for a recipe with a copacker warehouse
     share: opsProcedure
       .input(z.object({
@@ -9722,6 +9993,7 @@ Provide a brief status summary, any missing documents, and next steps.`;
         notes: z.string().nullish(),
       }))
       .mutation(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "own");
         const warehouse = await db.getWarehouseById(input.warehouseId);
         if (!warehouse) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Warehouse not found" });
@@ -9752,6 +10024,7 @@ Provide a brief status summary, any missing documents, and next steps.`;
     unshare: opsProcedure
       .input(z.object({ recipeId: z.number(), warehouseId: z.number() }))
       .mutation(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "own");
         const existingShares = await manufacturingDb.getRecipeShares(input.recipeId);
         const shareToRemove = existingShares.find((share) => share.warehouseId === input.warehouseId);
 
@@ -9771,6 +10044,7 @@ Provide a brief status summary, any missing documents, and next steps.`;
     delete: opsProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.id, "own");
         await manufacturingDb.deleteRecipe(input.id);
         await createAuditLog(ctx.user.id, 'delete', 'recipe', input.id);
         return { success: true };
@@ -11979,7 +12253,7 @@ Ask if they received the original request and if they can provide a quote.`;
 
             for (const { email } of parsedResults) {
               try {
-                await db.createInboundEmail?.({
+                const { id: emailId } = await db.createInboundEmail({
                   messageId: email.messageId,
                   fromEmail: email.from.address,
                   fromName: email.from.name || "",
@@ -11991,17 +12265,50 @@ Ask if they received the original request and if they can provide a quote.`;
                   category: email.categorization?.category || "other",
                 } as any);
 
-                // Parse attachments and AUTO-IMPORT into correct DB tables
+                // Persist attachment records (so they show in the inbox) and
+                // AUTO-IMPORT each into the correct ERP location.
                 if ((email as any).attachmentContents?.length > 0) {
-                  const { bulkImportDocuments } = await import("./documentImportService");
-                  const docs = (email as any).attachmentContents.map((att: any) => ({
-                    content: `data:${att.contentType};base64,${att.data.toString("base64")}`,
-                    filename: att.filename,
-                  }));
-                  try {
-                    const importResult = await bulkImportDocuments(docs, 1, true);
-                    totalAttachmentsParsed += importResult.successful;
-                  } catch { /* skip */ }
+                  const { importEmailAttachmentToErp } = await import("./documentImportService");
+                  const { storagePut } = await import("./storage");
+                  const existing = await db.getEmailAttachments(emailId);
+                  const existingNames = new Set(existing.map((a: any) => a.filename));
+                  for (const att of (email as any).attachmentContents as Array<{ filename: string; contentType: string; data: Buffer }>) {
+                    if (existingNames.has(att.filename)) continue;
+
+                    // Persist the row, then store the bytes in object storage (R2).
+                    const { id: attachmentId } = await db.createEmailAttachment({
+                      emailId,
+                      filename: att.filename,
+                      mimeType: att.contentType,
+                      size: att.data.length,
+                      isProcessed: false,
+                    } as any);
+
+                    try {
+                      const safeName = att.filename.replace(/[^\w.\-]+/g, "_").slice(0, 120) || "file";
+                      const put = await storagePut(`email-attachments/${emailId}/${attachmentId}-${safeName}`, att.data, att.contentType);
+                      await db.updateEmailAttachment(attachmentId, {
+                        storageKey: put.key,
+                        storageUrl: `/api/attachments/${attachmentId}`,
+                      } as any);
+                    } catch (e: any) {
+                      console.error("[scanNow] attachment upload failed:", e?.message);
+                      continue; // no stored bytes — skip parsing this attachment
+                    }
+
+                    try {
+                      const r = await importEmailAttachmentToErp({
+                        emailId,
+                        attachmentId,
+                        // Parse from the in-memory bytes we just uploaded (no R2 round-trip).
+                        content: `data:${att.contentType};base64,${att.data.toString("base64")}`,
+                        filename: att.filename,
+                        mimeType: att.contentType,
+                        userId: 1,
+                      });
+                      if (r.success) totalAttachmentsParsed++;
+                    } catch { /* skip individual attachment failures */ }
+                  }
                 }
                 totalProcessed++;
               } catch { /* skip */ }
@@ -12048,8 +12355,8 @@ Ask if they received the original request and if they can provide a quote.`;
         
         const attachments = await db.getEmailAttachments(input.id);
         const documents = await db.getParsedDocuments({ emailId: input.id });
-        
-        return { ...email, attachments, documents };
+
+        return { ...email, attachments: sanitizeAttachments(attachments), documents };
       }),
 
     /** Resolve by RFC Message-ID (approval queue source links). */
@@ -12061,7 +12368,67 @@ Ask if they received the original request and if they can provide a quote.`;
         const id = (email as { id: number }).id;
         const attachments = await db.getEmailAttachments(id);
         const documents = await db.getParsedDocuments({ emailId: id });
-        return { ...email, attachments, documents };
+        return { ...email, attachments: sanitizeAttachments(attachments), documents };
+      }),
+
+    // Parse a stored attachment on demand and import its data into the ERP
+    // (purchase order / vendor invoice / freight invoice / customs document).
+    parseAttachment: protectedProcedure
+      .input(z.object({
+        attachmentId: z.number(),
+        hint: z.enum(["purchase_order", "vendor_invoice", "freight_invoice", "customs_document"]).optional(),
+        createMissingVendor: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const attachment = await db.getEmailAttachmentById(input.attachmentId);
+        if (!attachment) throw new TRPCError({ code: "NOT_FOUND", message: "Attachment not found" });
+
+        // Resolve a fetchable source for the bytes from object storage (R2).
+        // parseUploadedDocument fetch()es it, so the presigned/public URL works.
+        if (!attachment.storageKey) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: "Attachment content is not stored. Re-scan the inbox to refetch it.",
+          });
+        }
+        let source: string;
+        try {
+          const { storageGet } = await import("./storage");
+          source = (await storageGet(attachment.storageKey)).url;
+        } catch (e: any) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `Could not load stored attachment: ${e.message}` });
+        }
+
+        const { importEmailAttachmentToErp } = await import("./documentImportService");
+        const result = await importEmailAttachmentToErp({
+          emailId: attachment.emailId,
+          attachmentId: attachment.id,
+          content: source,
+          filename: attachment.filename,
+          mimeType: attachment.mimeType || undefined,
+          userId: (ctx as any)?.user?.id ?? 1,
+          hint: input.hint,
+          createMissingVendor: input.createMissingVendor ?? true,
+        });
+
+        if (!result.success) {
+          return {
+            success: false,
+            documentType: result.documentType,
+            error: result.error || result.importResult?.error || "Could not import document",
+            createdRecords: result.importResult?.createdRecords ?? [],
+            warnings: result.importResult?.warnings ?? [],
+          };
+        }
+
+        return {
+          success: true,
+          documentType: result.documentType,
+          parsedDocumentId: result.parsedDocumentId,
+          createdRecords: result.importResult?.createdRecords ?? [],
+          updatedRecords: result.importResult?.updatedRecords ?? [],
+          warnings: result.importResult?.warnings ?? [],
+        };
       }),
 
     // Submit email for parsing (manual forward)
@@ -16969,16 +17336,50 @@ Ask if they received the original request and if they can provide a quote.`;
           messageType: z.enum(["text", "image", "video", "audio", "document", "location", "contact", "template"]).optional(),
           templateName: z.string().optional(),
           templateParams: z.string().optional(),
+          conversationId: z.string().optional(),
+          // Optional linkage to another record (e.g. a shipment) so supplier
+          // chatter can be tied to the thing it's about.
+          relatedEntityType: z.string().optional(),
+          relatedEntityId: z.number().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          // Create message record (actual sending would be via WhatsApp Business API webhook)
+          const conversationId = input.conversationId || `wa_${input.whatsappNumber}_${Date.now()}`;
+
+          // Record the outbound message immediately (status pending).
           const id = await db.createWhatsappMessage({
             ...input,
             direction: "outbound",
             status: "pending",
             sentBy: ctx.user.id,
-            conversationId: `wa_${input.whatsappNumber}_${Date.now()}`,
+            conversationId,
           });
+
+          // Send for real via the Twilio WhatsApp Business API when configured.
+          // If not configured, the message stays a local "pending" log.
+          let status: "pending" | "sent" | "failed" = "pending";
+          let failedReason: string | undefined;
+          if (ENV.twilioAccountSid && ENV.twilioAuthToken && ENV.twilioWhatsappNumber) {
+            const withChannel = (n: string) =>
+              n.startsWith("whatsapp:") ? n : `whatsapp:${n.startsWith("+") ? n : `+${n.replace(/[^\d]/g, "")}`}`;
+            try {
+              const twilioMod = await import("twilio");
+              const client = twilioMod.default(ENV.twilioAccountSid, ENV.twilioAuthToken);
+              const msg = await client.messages.create({
+                to: withChannel(input.whatsappNumber),
+                from: withChannel(ENV.twilioWhatsappNumber),
+                body: input.content,
+                ...(ENV.publicAppUrl && ENV.publicAppUrl !== "http://localhost:3000"
+                  ? { statusCallback: `${ENV.publicAppUrl.replace(/\/$/, "")}/api/twilio/whatsapp/status` }
+                  : {}),
+              });
+              status = "sent";
+              await db.updateWhatsappMessage(id, { status: "sent", messageId: msg.sid, sentAt: new Date() });
+            } catch (err) {
+              status = "failed";
+              failedReason = (err as Error).message;
+              await db.updateWhatsappMessage(id, { status: "failed", failedReason });
+            }
+          }
 
           // Also create an interaction record
           if (input.contactId) {
@@ -16992,7 +17393,7 @@ Ask if they received the original request and if they can provide a quote.`;
             });
           }
 
-          return { id, status: "pending" };
+          return { id, status, failedReason };
         }),
 
       logInbound: protectedProcedure
@@ -17795,6 +18196,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         equityOffered: z.string().optional(),
         status: z.enum(["planning", "active", "paused", "closed", "cancelled"]).default("planning"),
         notes: z.string().optional(),
+        companyId: z.number().optional(),
       }))
       .mutation(({ input, ctx }) => {
         const cleaned: Record<string, any> = {
@@ -17802,7 +18204,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           roundType: input.roundType,
           status: input.status,
           createdBy: ctx.user.id,
-          companyId: (ctx.user as any).companyId ?? null,
+          companyId: input.companyId ?? (ctx.user as any).companyId ?? null,
         };
         if (input.description) cleaned.description = input.description;
         if (input.targetAmount) cleaned.targetAmount = input.targetAmount;
@@ -17824,6 +18226,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         equityOffered: z.string().optional(),
         status: z.enum(["planning", "active", "paused", "closed", "cancelled"]).default("planning"),
         notes: z.string().optional(),
+        companyId: z.number().optional(),
       }))
       .mutation(({ input }) => {
         const { id, ...values } = input;
@@ -17838,6 +18241,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         cleaned.valuation = values.valuation || null;
         cleaned.equityOffered = values.equityOffered || null;
         cleaned.notes = values.notes || null;
+        if (values.companyId !== undefined) cleaned.companyId = values.companyId;
         return db.updateFundraisingCampaign(id, cleaned);
       }),
     listInvestments: protectedProcedure
