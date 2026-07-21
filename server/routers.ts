@@ -59,6 +59,19 @@ import { encrypt, decrypt } from "./_core/crypto";
 import { ENV } from "./_core/env";
 import { reassignProjectTaskToHuman } from "./taskAgentBridge";
 import { createDecipheriv, createHash } from "crypto";
+
+/**
+ * Expose a lightweight `hasStoredContent` flag the UI uses to decide whether the
+ * View / Download / Parse actions are available for an email attachment. Content
+ * lives in object storage (R2), keyed by `storageKey`.
+ */
+function sanitizeAttachments(attachments: any[]): any[] {
+  return (attachments || []).map((a) => ({
+    ...a,
+    hasStoredContent: !!a.storageKey,
+  }));
+}
+
 // Decrypts a stored password supporting both the current AES-256-GCM format
 // (iv:authTag:ciphertext) and the legacy AES-256-CBC format (plain hex ciphertext).
 function decryptPassword(encryptedText: string): string {
@@ -2450,6 +2463,8 @@ ONLY return the JSON array, no other text.`;
         type: z.enum(['inbound', 'outbound']),
         orderId: z.number().optional(),
         purchaseOrderId: z.number().optional(),
+        rawMaterialId: z.number().optional(),
+        quantity: z.string().regex(/^\d+(\.\d+)?$/, "quantity must be numeric").optional(),
         carrier: z.string().optional(),
         trackingNumber: z.string().optional(),
         shipDate: z.date().optional(),
@@ -2463,6 +2478,23 @@ ONLY return the JSON array, no other text.`;
         const shipmentNumber = generateNumber('SHIP');
         const result = await db.createShipment({ ...input, shipmentNumber });
         await createAuditLog(ctx.user.id, 'create', 'shipment', result.id, shipmentNumber);
+
+        // ── Inventory link: inbound shipment carrying a raw material reserves
+        // the quantity as "in transit" until it's marked delivered. ──
+        if (input.type === 'inbound' && input.rawMaterialId && input.quantity) {
+          try {
+            const qty = parseFloat(input.quantity);
+            if (qty > 0) {
+              await db.adjustRawMaterialInventory(input.rawMaterialId, { inTransit: qty }, {
+                receivingStatus: 'in_transit',
+                ...(input.shipDate ? { expectedDeliveryDate: input.shipDate } : {}),
+              });
+            }
+          } catch (e) {
+            console.warn('[Shipment] inbound in-transit inventory update failed:', e);
+          }
+        }
+
         return result;
       }),
     update: opsProcedure
@@ -2475,9 +2507,51 @@ ONLY return the JSON array, no other text.`;
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
-        const [oldShipment] = await db.getShipments({ id } as any) || [];
+        const oldShipment = await db.getShipmentById(id);
         await db.updateShipment(id, data);
         await createAuditLog(ctx.user.id, 'update', 'shipment', id);
+
+        // ── Inventory link: keep raw-material stock in sync with shipment status. ──
+        // Delivery moves the carried quantity from "in transit" → "received".
+        // Cancel/return releases the reservation. Guarded on the prior status so
+        // repeated updates can't double-count.
+        if (
+          oldShipment?.type === 'inbound' &&
+          oldShipment.rawMaterialId &&
+          oldShipment.quantity &&
+          data.status &&
+          data.status !== oldShipment.status
+        ) {
+          try {
+            const qty = parseFloat(oldShipment.quantity);
+            const materialId = oldShipment.rawMaterialId;
+            if (qty > 0) {
+              if (data.status === 'delivered') {
+                // Arrived: move the quantity from in-transit into received.
+                await db.adjustRawMaterialInventory(materialId, { inTransit: -qty, received: qty }, {
+                  receivingStatus: 'received',
+                  lastReceivedDate: new Date(),
+                  lastReceivedQty: String(qty),
+                });
+              } else if (oldShipment.status === 'delivered') {
+                // Reversing a previously-delivered shipment: pull the quantity
+                // back out of received so inventory isn't overstated. If it's
+                // going back to a pre-delivery state, restore the reservation.
+                const restoreInTransit = data.status === 'pending' || data.status === 'in_transit';
+                await db.adjustRawMaterialInventory(
+                  materialId,
+                  { received: -qty, ...(restoreInTransit ? { inTransit: qty } : {}) },
+                  { receivingStatus: restoreInTransit ? 'in_transit' : 'none' },
+                );
+              } else if (data.status === 'cancelled' || data.status === 'returned') {
+                // Pre-delivery cancellation: release the in-transit reservation.
+                await db.adjustRawMaterialInventory(materialId, { inTransit: -qty }, { receivingStatus: 'none' });
+              }
+            }
+          } catch (e) {
+            console.warn('[Shipment] inventory sync on status change failed:', e);
+          }
+        }
         
         // Create notification for shipment status changes
         if (data.status && oldShipment?.status !== data.status) {
@@ -12368,7 +12442,7 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
 
             for (const { email } of parsedResults) {
               try {
-                await db.createInboundEmail?.({
+                const { id: emailId } = await db.createInboundEmail({
                   messageId: email.messageId,
                   fromEmail: email.from.address,
                   fromName: email.from.name || "",
@@ -12380,17 +12454,50 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
                   category: email.categorization?.category || "other",
                 } as any);
 
-                // Parse attachments and AUTO-IMPORT into correct DB tables
+                // Persist attachment records (so they show in the inbox) and
+                // AUTO-IMPORT each into the correct ERP location.
                 if ((email as any).attachmentContents?.length > 0) {
-                  const { bulkImportDocuments } = await import("./documentImportService");
-                  const docs = (email as any).attachmentContents.map((att: any) => ({
-                    content: `data:${att.contentType};base64,${att.data.toString("base64")}`,
-                    filename: att.filename,
-                  }));
-                  try {
-                    const importResult = await bulkImportDocuments(docs, 1, true);
-                    totalAttachmentsParsed += importResult.successful;
-                  } catch { /* skip */ }
+                  const { importEmailAttachmentToErp } = await import("./documentImportService");
+                  const { storagePut } = await import("./storage");
+                  const existing = await db.getEmailAttachments(emailId);
+                  const existingNames = new Set(existing.map((a: any) => a.filename));
+                  for (const att of (email as any).attachmentContents as Array<{ filename: string; contentType: string; data: Buffer }>) {
+                    if (existingNames.has(att.filename)) continue;
+
+                    // Persist the row, then store the bytes in object storage (R2).
+                    const { id: attachmentId } = await db.createEmailAttachment({
+                      emailId,
+                      filename: att.filename,
+                      mimeType: att.contentType,
+                      size: att.data.length,
+                      isProcessed: false,
+                    } as any);
+
+                    try {
+                      const safeName = att.filename.replace(/[^\w.\-]+/g, "_").slice(0, 120) || "file";
+                      const put = await storagePut(`email-attachments/${emailId}/${attachmentId}-${safeName}`, att.data, att.contentType);
+                      await db.updateEmailAttachment(attachmentId, {
+                        storageKey: put.key,
+                        storageUrl: `/api/attachments/${attachmentId}`,
+                      } as any);
+                    } catch (e: any) {
+                      console.error("[scanNow] attachment upload failed:", e?.message);
+                      continue; // no stored bytes — skip parsing this attachment
+                    }
+
+                    try {
+                      const r = await importEmailAttachmentToErp({
+                        emailId,
+                        attachmentId,
+                        // Parse from the in-memory bytes we just uploaded (no R2 round-trip).
+                        content: `data:${att.contentType};base64,${att.data.toString("base64")}`,
+                        filename: att.filename,
+                        mimeType: att.contentType,
+                        userId: 1,
+                      });
+                      if (r.success) totalAttachmentsParsed++;
+                    } catch { /* skip individual attachment failures */ }
+                  }
                 }
                 totalProcessed++;
               } catch { /* skip */ }
@@ -12437,8 +12544,8 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
         
         const attachments = await db.getEmailAttachments(input.id);
         const documents = await db.getParsedDocuments({ emailId: input.id });
-        
-        return { ...email, attachments, documents };
+
+        return { ...email, attachments: sanitizeAttachments(attachments), documents };
       }),
 
     /** Resolve by RFC Message-ID (approval queue source links). */
@@ -12450,7 +12557,67 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
         const id = (email as { id: number }).id;
         const attachments = await db.getEmailAttachments(id);
         const documents = await db.getParsedDocuments({ emailId: id });
-        return { ...email, attachments, documents };
+        return { ...email, attachments: sanitizeAttachments(attachments), documents };
+      }),
+
+    // Parse a stored attachment on demand and import its data into the ERP
+    // (purchase order / vendor invoice / freight invoice / customs document).
+    parseAttachment: protectedProcedure
+      .input(z.object({
+        attachmentId: z.number(),
+        hint: z.enum(["purchase_order", "vendor_invoice", "freight_invoice", "customs_document"]).optional(),
+        createMissingVendor: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const attachment = await db.getEmailAttachmentById(input.attachmentId);
+        if (!attachment) throw new TRPCError({ code: "NOT_FOUND", message: "Attachment not found" });
+
+        // Resolve a fetchable source for the bytes from object storage (R2).
+        // parseUploadedDocument fetch()es it, so the presigned/public URL works.
+        if (!attachment.storageKey) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: "Attachment content is not stored. Re-scan the inbox to refetch it.",
+          });
+        }
+        let source: string;
+        try {
+          const { storageGet } = await import("./storage");
+          source = (await storageGet(attachment.storageKey)).url;
+        } catch (e: any) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `Could not load stored attachment: ${e.message}` });
+        }
+
+        const { importEmailAttachmentToErp } = await import("./documentImportService");
+        const result = await importEmailAttachmentToErp({
+          emailId: attachment.emailId,
+          attachmentId: attachment.id,
+          content: source,
+          filename: attachment.filename,
+          mimeType: attachment.mimeType || undefined,
+          userId: (ctx as any)?.user?.id ?? 1,
+          hint: input.hint,
+          createMissingVendor: input.createMissingVendor ?? true,
+        });
+
+        if (!result.success) {
+          return {
+            success: false,
+            documentType: result.documentType,
+            error: result.error || result.importResult?.error || "Could not import document",
+            createdRecords: result.importResult?.createdRecords ?? [],
+            warnings: result.importResult?.warnings ?? [],
+          };
+        }
+
+        return {
+          success: true,
+          documentType: result.documentType,
+          parsedDocumentId: result.parsedDocumentId,
+          createdRecords: result.importResult?.createdRecords ?? [],
+          updatedRecords: result.importResult?.updatedRecords ?? [],
+          warnings: result.importResult?.warnings ?? [],
+        };
       }),
 
     // Submit email for parsing (manual forward)
@@ -17358,16 +17525,50 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
           messageType: z.enum(["text", "image", "video", "audio", "document", "location", "contact", "template"]).optional(),
           templateName: z.string().optional(),
           templateParams: z.string().optional(),
+          conversationId: z.string().optional(),
+          // Optional linkage to another record (e.g. a shipment) so supplier
+          // chatter can be tied to the thing it's about.
+          relatedEntityType: z.string().optional(),
+          relatedEntityId: z.number().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          // Create message record (actual sending would be via WhatsApp Business API webhook)
+          const conversationId = input.conversationId || `wa_${input.whatsappNumber}_${Date.now()}`;
+
+          // Record the outbound message immediately (status pending).
           const id = await db.createWhatsappMessage({
             ...input,
             direction: "outbound",
             status: "pending",
             sentBy: ctx.user.id,
-            conversationId: `wa_${input.whatsappNumber}_${Date.now()}`,
+            conversationId,
           });
+
+          // Send for real via the Twilio WhatsApp Business API when configured.
+          // If not configured, the message stays a local "pending" log.
+          let status: "pending" | "sent" | "failed" = "pending";
+          let failedReason: string | undefined;
+          if (ENV.twilioAccountSid && ENV.twilioAuthToken && ENV.twilioWhatsappNumber) {
+            const withChannel = (n: string) =>
+              n.startsWith("whatsapp:") ? n : `whatsapp:${n.startsWith("+") ? n : `+${n.replace(/[^\d]/g, "")}`}`;
+            try {
+              const twilioMod = await import("twilio");
+              const client = twilioMod.default(ENV.twilioAccountSid, ENV.twilioAuthToken);
+              const msg = await client.messages.create({
+                to: withChannel(input.whatsappNumber),
+                from: withChannel(ENV.twilioWhatsappNumber),
+                body: input.content,
+                ...(ENV.publicAppUrl && ENV.publicAppUrl !== "http://localhost:3000"
+                  ? { statusCallback: `${ENV.publicAppUrl.replace(/\/$/, "")}/api/twilio/whatsapp/status` }
+                  : {}),
+              });
+              status = "sent";
+              await db.updateWhatsappMessage(id, { status: "sent", messageId: msg.sid, sentAt: new Date() });
+            } catch (err) {
+              status = "failed";
+              failedReason = (err as Error).message;
+              await db.updateWhatsappMessage(id, { status: "failed", failedReason });
+            }
+          }
 
           // Also create an interaction record
           if (input.contactId) {
@@ -17381,7 +17582,7 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
             });
           }
 
-          return { id, status: "pending" };
+          return { id, status, failedReason };
         }),
 
       logInbound: protectedProcedure
