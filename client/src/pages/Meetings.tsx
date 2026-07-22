@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { trpc } from "@/lib/trpc";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { toast } from "sonner";
 import {
   Mic,
@@ -48,6 +49,42 @@ export default function Meetings() {
   const [existingContactIds, setExistingContactIds] = useState<number[]>([]);
   const [contactSearch, setContactSearch] = useState("");
   const [selectedTaskIndices, setSelectedTaskIndices] = useState<Set<number>>(new Set());
+  // "My tasks" view — hide action items explicitly assigned to other people so
+  // the user only sees their own follow-ups. Persisted so the preference sticks.
+  const [myTasksOnly, setMyTasksOnly] = useState(() => {
+    if (typeof window === "undefined") return true;
+    const saved = window.localStorage.getItem("meetings:myTasksOnly");
+    return saved === null ? true : saved === "true";
+  });
+
+  const { user } = useAuth();
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("meetings:myTasksOnly", String(myTasksOnly));
+    }
+  }, [myTasksOnly]);
+
+  // True when an action item belongs to the current user. Unassigned items are
+  // treated as "mine" — they aren't someone else's. When we can't identify the
+  // user yet, nothing is hidden.
+  const isMyTask = useMemo(() => {
+    const email = (user?.email || "").trim().toLowerCase();
+    const name = (user?.name || "").trim().toLowerCase();
+    const first = name.split(/\s+/)[0] || "";
+    const emailLocal = email.split("@")[0] || "";
+    return (task: { assignee?: string; assigneeEmail?: string }): boolean => {
+      if (!email && !name) return true; // can't tell who I am → don't hide anything
+      const assignee = (task.assignee || "").trim().toLowerCase();
+      const assigneeEmail = (task.assigneeEmail || "").trim().toLowerCase();
+      if (!assignee && !assigneeEmail) return true; // unassigned isn't someone else's
+      if (email && assigneeEmail && assigneeEmail === email) return true;
+      if (email && assignee === email) return true;
+      if (name && (assignee === name || assignee === first)) return true;
+      if (emailLocal && assignee === emailLocal) return true;
+      return false;
+    };
+  }, [user]);
 
   const { data: projectsRaw } = trpc.projects.list.useQuery();
   const availableProjects = (projectsRaw as Array<{ id: number; name: string }> | undefined) || [];
@@ -460,6 +497,16 @@ export default function Meetings() {
               <SelectItem value="error">Error</SelectItem>
             </SelectContent>
           </Select>
+          <div className="flex items-center gap-1.5 rounded-md border px-2 h-7">
+            <Switch
+              id="my-tasks-only"
+              checked={myTasksOnly}
+              onCheckedChange={setMyTasksOnly}
+            />
+            <Label htmlFor="my-tasks-only" className="text-xs text-muted-foreground cursor-pointer whitespace-nowrap">
+              My tasks
+            </Label>
+          </div>
           <Button
             variant="ghost"
             size="sm"
@@ -521,7 +568,8 @@ export default function Meetings() {
           {filtered.map((meeting: any) => {
             const summary = meeting.parsedSummary;
             const bullets = getBullets(meeting);
-            const tasks = ((meeting.parsedActionItems || []) as Array<{ text: string; assignee?: string }>).filter((t) => t.text.trim());
+            const allTasks = ((meeting.parsedActionItems || []) as Array<{ text: string; assignee?: string; assigneeEmail?: string }>).filter((t) => t.text.trim());
+            const tasks = myTasksOnly ? allTasks.filter(isMyTask) : allTasks;
             const previewTasks = tasks.slice(0, 3);
 
             return (
@@ -623,7 +671,9 @@ export default function Meetings() {
           {panelMeeting && (() => {
             const m = panelMeeting;
             const summary = m.parsedSummary;
-            const actionItems = (m.parsedActionItems || []).filter((item: any) => { const t = typeof item === "string" ? item : item.text || item.description || ""; return cleanActionText(t).trim(); });
+            const allActionItems = (m.parsedActionItems || []).filter((item: any) => { const t = typeof item === "string" ? item : item.text || item.description || ""; return cleanActionText(t).trim(); });
+            const actionItems = myTasksOnly ? allActionItems.filter((item: any) => isMyTask(typeof item === "string" ? {} : item)) : allActionItems;
+            const hiddenByMyTasks = myTasksOnly && actionItems.length === 0 && allActionItems.length > 0;
 
             return (
               <>
@@ -677,10 +727,19 @@ export default function Meetings() {
                     </section>
                   ) : (
                     <section className="rounded-lg border border-dashed bg-muted/30 px-3 py-2.5 text-[12px] text-muted-foreground">
-                      <span className="font-medium text-foreground/70">No action items detected.</span>{" "}
-                      {m.processingStatus === "pending"
-                        ? "Process this meeting to extract tasks from the transcript."
-                        : "The transcript may not contain any explicit follow-ups."}
+                      {hiddenByMyTasks ? (
+                        <>
+                          <span className="font-medium text-foreground/70">No tasks assigned to you in this meeting.</span>{" "}
+                          {allActionItems.length} action item{allActionItems.length === 1 ? "" : "s"} assigned to others — turn off “My tasks” to see them.
+                        </>
+                      ) : (
+                        <>
+                          <span className="font-medium text-foreground/70">No action items detected.</span>{" "}
+                          {m.processingStatus === "pending"
+                            ? "Process this meeting to extract tasks from the transcript."
+                            : "The transcript may not contain any explicit follow-ups."}
+                        </>
+                      )}
                     </section>
                   )}
 

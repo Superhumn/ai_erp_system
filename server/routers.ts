@@ -24,6 +24,7 @@ import { agentRouter } from "./agent";
 import { parseNoteWithLLM } from "./notesParser";
 import type { NoteAppliedItem, NoteParseResult, NoteParsedItem } from "@shared/notes";
 import { employeePortalRouter } from "./routers/employeePortal";
+import { codeRouter } from "./routers/code";
 import { parseCopackerInventoryEmail, applyCopackerInventoryUpdate } from "./copackerEmailExtractor";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 import { parseInvoiceText } from "./_core/invoiceTextParser";
@@ -42,7 +43,7 @@ import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile, type GmailSendOptions, type GmailDraftOptions } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
 import { parseFormulationSheet } from "./recipeSheetImport";
-import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
+import { getGoogleFullAccessAuthUrl, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
 import { getServiceAccountEmail, isServiceAccountConfigured } from "./_core/googleServiceAccount";
 import { getQuickBooksAuthUrl, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems, getProfitAndLoss, parseProfitAndLossReport } from "./_core/quickbooks";
 import { listAllTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
@@ -57,7 +58,7 @@ import { planPublish, publishToPlatform, type Platform as SocialPlatform } from 
 import { getYouTubeAuthUrl } from "./_core/youtube";
 import { encrypt, decrypt } from "./_core/crypto";
 import { ENV } from "./_core/env";
-import { reassignProjectTaskToHuman } from "./taskAgentBridge";
+import { reassignProjectTaskToHuman, createProjectTaskFromSource } from "./taskAgentBridge";
 import { createDecipheriv, createHash } from "crypto";
 
 /**
@@ -350,6 +351,16 @@ export const appRouter = router({
 
   // Employee self-service portal
   employeePortal: employeePortalRouter,
+
+  // Material Supply & Reorder — inventory + inbound freight + reorder recommendations.
+  // No caller-supplied companyId: the param would let any ops user scope to an
+  // arbitrary tenant, and there is no per-user company to validate it against.
+  materialSupply: router({
+    overview: opsProcedure.query(() => db.getMaterialSupplyOverview()),
+  }),
+
+  // Admin-only AI code IDE (snippets, sandboxed execution, AI actions)
+  code: codeRouter,
 
   auth: router({
     me: publicProcedure.query(opts => {
@@ -3441,10 +3452,19 @@ ONLY return the JSON array, no other text.`;
         if (!project || project.studyId !== input.studyId) {
           throw new TRPCError({ code: 'BAD_REQUEST', message: 'Project does not belong to the specified study' });
         }
-        // Compute qualified amount server-side
-        const gross = parseFloat(input.grossAmount) || 0;
-        const rdPct = parseFloat(input.rdPercentage || "100") || 100;
-        const contractRate = parseFloat(input.contractResearchRate || "65") || 65;
+        // Compute qualified amount server-side. Hard-fail on non-numeric input
+        // rather than silently coercing to 0/100/65, which would corrupt the
+        // stored qualifiedAmount and the aggregated credit.
+        const parseAmount = (v: string, field: string): number => {
+          // Use Number (not parseFloat) so partially-numeric strings like
+          // "1.2xyz" are rejected rather than silently truncated to 1.2.
+          const n = Number(v);
+          if (v.trim() === '' || !Number.isFinite(n)) throw new TRPCError({ code: 'BAD_REQUEST', message: `Invalid numeric value for ${field}` });
+          return n;
+        };
+        const gross = parseAmount(input.grossAmount, 'grossAmount');
+        const rdPct = input.rdPercentage != null ? parseAmount(input.rdPercentage, 'rdPercentage') : 100;
+        const contractRate = input.contractResearchRate != null ? parseAmount(input.contractResearchRate, 'contractResearchRate') : 65;
         const qualifiedAmount = String(computeQualifiedAmount(input.category, gross, rdPct, contractRate).toFixed(2));
         const result = await db.createRdExpense({ ...input, qualifiedAmount });
         await createAuditLog(ctx.user.id, 'create', 'rdExpense', result.id, input.description || input.category);
@@ -3468,8 +3488,31 @@ ONLY return the JSON array, no other text.`;
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        const { computeQualifiedAmount } = await import("./rdTaxCreditService");
         const { id, ...data } = input;
-        await db.updateRdExpense(id, data);
+        const existing = await db.getRdExpenseById(id);
+        if (!existing) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Expense not found' });
+        }
+        // Recompute the qualified amount server-side from the merged row so an
+        // edit to category / grossAmount / rdPercentage / contractResearchRate
+        // never leaves a stale qualifiedAmount behind (which would corrupt the
+        // aggregated QRE and the credit calculation).
+        // Validate any client-supplied numeric strings; fall back to the
+        // (trusted) stored value when a field isn't being changed.
+        const parseAmount = (v: string, field: string): number => {
+          // Use Number (not parseFloat) so partially-numeric strings like
+          // "1.2xyz" are rejected rather than silently truncated to 1.2.
+          const n = Number(v);
+          if (v.trim() === '' || !Number.isFinite(n)) throw new TRPCError({ code: 'BAD_REQUEST', message: `Invalid numeric value for ${field}` });
+          return n;
+        };
+        const category = data.category ?? (existing.category as "wages" | "supplies" | "contract_research" | "cloud_computing");
+        const gross = data.grossAmount != null ? parseAmount(data.grossAmount, 'grossAmount') : (parseFloat(existing.grossAmount ?? "0") || 0);
+        const rdPct = data.rdPercentage != null ? parseAmount(data.rdPercentage, 'rdPercentage') : (parseFloat(existing.rdPercentage ?? "100") || 100);
+        const contractRate = data.contractResearchRate != null ? parseAmount(data.contractResearchRate, 'contractResearchRate') : (parseFloat(existing.contractResearchRate ?? "65") || 65);
+        const qualifiedAmount = String(computeQualifiedAmount(category, gross, rdPct, contractRate).toFixed(2));
+        await db.updateRdExpense(id, { ...data, qualifiedAmount });
         await createAuditLog(ctx.user.id, 'update', 'rdExpense', id);
         return { success: true };
       }),
@@ -3623,6 +3666,9 @@ ONLY return the JSON array, no other text.`;
           startDate: input.startDate,
           endDate: input.endDate,
         });
+        if (billsResult.error) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: `QuickBooks import failed: ${billsResult.error}` });
+        }
 
         const bills: any[] = billsResult?.data?.QueryResponse?.Bill || [];
         const expensesToCreate: Parameters<typeof db.createRdExpense>[0][] = [];
@@ -5375,6 +5421,14 @@ ONLY return the JSON array, no other text.`;
       return { url, error: null };
     }),
 
+    // Disconnect the connected Google account. Gmail, Workspace, Sheets import
+    // and Drive/data-room all share one Google OAuth token, so this removes the
+    // connection for all of them.
+    disconnect: protectedProcedure.mutation(async ({ ctx }) => {
+      await db.deleteGoogleOAuthToken(ctx.user.id);
+      return { success: true };
+    }),
+
     // Send email via Gmail
     sendEmail: protectedProcedure
       .input(z.object({
@@ -5558,6 +5612,12 @@ ONLY return the JSON array, no other text.`;
 
       const url = getGoogleFullAccessAuthUrl(ctx.user.id, '/settings/integrations');
       return { url, error: null };
+    }),
+
+    // Disconnect the connected Google account (shared with Gmail/Sheets/Drive).
+    disconnect: protectedProcedure.mutation(async ({ ctx }) => {
+      await db.deleteGoogleOAuthToken(ctx.user.id);
+      return { success: true };
     }),
 
     // Create Google Doc
@@ -6877,7 +6937,73 @@ Be concise and helpful. Always give actionable guidance.`;
                 result = { created: true, workOrderId: workOrder.id, workOrderNumber: workOrder.workOrderNumber };
                 break;
               }
-              
+
+              case 'query': {
+                // Generic "query" tasks can carry a structured action. The
+                // meeting extractor uses action=create_project_task to route a
+                // Fireflies action item through the Approval Queue; executing
+                // the approved suggestion creates the real project task here,
+                // preserving the meeting source so it keeps its "Meeting" badge.
+                if (taskData.action === 'create_project_task') {
+                  // taskData is untrusted JSON — validate every field before use.
+                  const toPositiveInt = (v: unknown): number | undefined => {
+                    const n = Number(v);
+                    return Number.isInteger(n) && n > 0 ? n : undefined;
+                  };
+                  const projectId = toPositiveInt(taskData.projectId);
+                  const name = taskData.name ? String(taskData.name).trim() : '';
+                  if (!projectId || !name) {
+                    throw new Error('Project task suggestion missing or invalid projectId or name');
+                  }
+                  const assigneeId = toPositiveInt(taskData.assigneeId);
+                  // Keep the source ref pair consistent: both derive from meetingId
+                  // (an undefined id must not leave a dangling refType).
+                  const meetingRefId = toPositiveInt(taskData.sourceMeeting?.meetingId);
+                  // Validate priority against the allowed set and only accept a
+                  // genuinely parseable dueDate so a malformed value can't insert
+                  // an Invalid Date.
+                  const priority = (['low', 'medium', 'high', 'critical'] as const).includes(taskData.priority)
+                    ? taskData.priority
+                    : 'medium';
+                  let dueDate: Date | undefined;
+                  if (taskData.dueDate) {
+                    const parsed = new Date(taskData.dueDate);
+                    if (!Number.isNaN(parsed.getTime())) dueDate = parsed;
+                  }
+                  // Carry the suggestion's AI reasoning/confidence onto the
+                  // created task so it stays as traceable as a directly
+                  // extracted meeting task.
+                  const aiConfidenceNum = task.aiConfidence != null && Number.isFinite(Number(task.aiConfidence))
+                    ? Number(task.aiConfidence)
+                    : undefined;
+                  const created = await createProjectTaskFromSource({
+                    projectId,
+                    name,
+                    description: taskData.description ? String(taskData.description) : undefined,
+                    assigneeId,
+                    priority,
+                    dueDate,
+                    sourceType: 'meeting',
+                    sourceRefType: meetingRefId ? 'firefliesMeeting' : undefined,
+                    sourceRefId: meetingRefId,
+                    sourceExternalId: taskData.sourceExternalId ? String(taskData.sourceExternalId) : undefined,
+                    aiReasoning: task.aiReasoning ?? undefined,
+                    aiConfidence: aiConfidenceNum,
+                    createdBy: ctx.user.id,
+                  });
+                  result = {
+                    created: true,
+                    action: 'create_project_task',
+                    projectTaskId: created.id,
+                    projectId,
+                    assigneeId: assigneeId ?? null,
+                  };
+                  break;
+                }
+                result = { executed: true, taskType: task.taskType };
+                break;
+              }
+
               default:
                 result = { executed: true, taskType: task.taskType };
             }
@@ -11771,12 +11897,17 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
         }),
     }),
     locationMappings: router({
-      list: protectedProcedure
+      // Admin-only across the board: location→warehouse routing (and the
+      // warehouse ids it exposes) is an admin/Settings concern, so the list
+      // read is gated to match the mutations below.
+      list: adminProcedure
         .input(z.object({ storeId: z.number() }))
         .query(async ({ input }) => {
           return db.getShopifyLocationMappings(input.storeId);
         }),
-      create: protectedProcedure
+      // Location→warehouse routing drives where synced inventory lands, so
+      // restrict mutations to admins (matches Settings being admin-only).
+      create: adminProcedure
         .input(z.object({
           storeId: z.number(),
           shopifyLocationId: z.string(),
@@ -11786,6 +11917,23 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
         }))
         .mutation(async ({ input }) => {
           return db.createShopifyLocationMapping(input);
+        }),
+      update: adminProcedure
+        .input(z.object({
+          id: z.number(),
+          shopifyLocationId: z.string().optional(),
+          shopifyLocationName: z.string().optional(),
+          warehouseId: z.number().optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { id, ...data } = input;
+          return db.updateShopifyLocationMapping(id, data);
+        }),
+      delete: adminProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          return db.deleteShopifyLocationMapping(input.id);
         }),
     }),
     // Sync operations
@@ -11991,33 +12139,117 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
                 continue;
               }
 
-              // Step 2: Fetch inventory levels for those locations
-              const response = await fetch(`${apiBase}/inventory_levels.json?location_ids=${locationIds.join(',')}&limit=250`, {
-                headers: {
-                  'X-Shopify-Access-Token': token,
-                  'Content-Type': 'application/json',
-                },
-              });
+              // Step 2: Fetch inventory levels for those locations, following
+              // Shopify's Link-header cursor pagination so stores with more than
+              // one page (>250) of levels aren't silently truncated.
+              const parseNextLink = (linkHeader: string | null): string | null => {
+                if (!linkHeader) return null;
+                for (const part of linkHeader.split(',')) {
+                  const m = part.match(/<([^>]+)>;\s*rel="next"/);
+                  if (m) return m[1];
+                }
+                return null;
+              };
 
-              if (!response.ok) {
-                throw new Error(`Shopify API error: ${response.status}`);
+              const levels: any[] = [];
+              let nextUrl: string | null = `${apiBase}/inventory_levels.json?location_ids=${locationIds.join(',')}&limit=250`;
+              let pageGuard = 0;
+              while (nextUrl && pageGuard < 100) {
+                pageGuard++;
+                const response = await fetch(nextUrl, {
+                  headers: {
+                    'X-Shopify-Access-Token': token,
+                    'Content-Type': 'application/json',
+                  },
+                });
+                if (!response.ok) {
+                  throw new Error(`Shopify API error: ${response.status}`);
+                }
+                const data = await response.json();
+                levels.push(...(data.inventory_levels || []));
+                nextUrl = parseNextLink(response.headers.get('link'));
               }
-
-              const data = await response.json();
-              const levels = data.inventory_levels || [];
+              if (nextUrl) {
+                console.warn(`[Shopify Sync] inventory_levels pagination hit the ${pageGuard}-page cap for ${store.storeDomain}; inventory sync may be incomplete`);
+              }
 
               // Get SKU mappings for this store
               const mappings = await db.getShopifySkuMappings(store.id);
 
+              // Shopify inventory_levels are keyed by inventory_item_id, which is
+              // NOT the variant id we store on the mapping. Backfill each mapping's
+              // inventory_item_id from the Shopify variant (once) so we can match.
+              for (const mapping of mappings) {
+                if (mapping.shopifyInventoryItemId || !mapping.shopifyVariantId) continue;
+                try {
+                  const variantResp = await fetch(`${apiBase}/variants/${mapping.shopifyVariantId}.json`, {
+                    headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+                  });
+                  if (!variantResp.ok) continue;
+                  const variantData = await variantResp.json();
+                  const inventoryItemId = variantData.variant?.inventory_item_id;
+                  if (inventoryItemId != null) {
+                    mapping.shopifyInventoryItemId = inventoryItemId.toString();
+                    await db.updateShopifySkuMapping(mapping.id, { shopifyInventoryItemId: mapping.shopifyInventoryItemId });
+                  }
+                } catch (e) {
+                  console.warn(`[Shopify Sync] Failed to resolve inventory_item_id for variant ${mapping.shopifyVariantId}:`, e);
+                }
+              }
+
+              // Route each level to a warehouse via the store's location mappings.
+              // inventory_levels are per-location, so with location mappings we
+              // update the (product, warehouse) row for the level's location.
+              const locationMappings = await db.getShopifyLocationMappings(store.id);
+              const activeLocationMappings = locationMappings.filter(m => m.isActive !== false);
+              const warehouseByLocationId = new Map(
+                activeLocationMappings.map(m => [m.shopifyLocationId, m.warehouseId] as const)
+              );
+
+              // Index mappings by inventory_item_id for O(1) lookup per level.
+              const mappingByInventoryItemId = new Map(
+                mappings.filter(m => m.shopifyInventoryItemId).map(m => [m.shopifyInventoryItemId!, m] as const)
+              );
+
+              // Pre-fetch every inventory row for the mapped products in one
+              // query and index it, so the per-level loop below does in-memory
+              // lookups instead of a DB read per inventory level (avoids N+1).
+              const inventoryRows = await db.getInventoryByProductIds(
+                [...new Set(mappings.map(m => m.productId))]
+              );
+              const inventoryByProductWarehouse = new Map(
+                inventoryRows.map(r => [`${r.productId}:${r.warehouseId}`, r] as const)
+              );
+              const inventoryByProduct = new Map<number, typeof inventoryRows[number]>();
+              for (const r of inventoryRows) {
+                if (!inventoryByProduct.has(r.productId)) inventoryByProduct.set(r.productId, r);
+              }
+
               for (const level of levels) {
-                const mapping = mappings.find(m => m.shopifyVariantId === level.inventory_item_id.toString());
-                if (mapping) {
-                  // Update local inventory
-                  const inventory = await db.getInventoryByProductId(mapping.productId);
+                const mapping = mappingByInventoryItemId.get(level.inventory_item_id.toString());
+                if (!mapping) continue;
+                const quantity = level.available?.toString() || '0';
+
+                if (activeLocationMappings.length > 0) {
+                  // The store has configured location→warehouse routing.
+                  const warehouseId = warehouseByLocationId.get(level.location_id?.toString());
+                  if (warehouseId == null) {
+                    // Location isn't mapped to a warehouse — don't guess where it lands.
+                    console.warn(`[Shopify Sync] No warehouse mapping for location ${level.location_id} in ${store.storeDomain}, skipping level`);
+                    continue;
+                  }
+                  const inventory = inventoryByProductWarehouse.get(`${mapping.productId}:${warehouseId}`);
                   if (inventory) {
-                    await db.updateInventory(inventory.id, {
-                      quantity: level.available?.toString() || '0',
-                    });
+                    await db.updateInventory(inventory.id, { quantity });
+                    totalUpdated++;
+                  } else {
+                    console.warn(`[Shopify Sync] No inventory row for product ${mapping.productId} at warehouse ${warehouseId}, skipping`);
+                  }
+                } else {
+                  // No location mappings configured — fall back to product-level update.
+                  const inventory = inventoryByProduct.get(mapping.productId);
+                  if (inventory) {
+                    await db.updateInventory(inventory.id, { quantity });
                     totalUpdated++;
                   }
                 }
@@ -14376,188 +14608,55 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
           throw new TRPCError({ code: 'BAD_REQUEST', message: folderInfo.error || 'Folder not found in Google Drive' });
         }
 
-        // Sync folder structure and files recursively
-        const syncResult = await syncDriveFolder(accessToken, folderId);
-        if (!syncResult.success) {
-          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: syncResult.error || 'Sync failed' });
+        // Reconcile the data room against the Drive tree — create new folders
+        // and files, and (for this user-initiated re-sync) remove Drive-backed
+        // items that were deleted in Drive. Shared with the background auto-sync
+        // scheduler so both behave identically.
+        const { reconcileDataRoomFromDrive } = await import('./googleDriveSyncService');
+        let recon;
+        try {
+          recon = await reconcileDataRoomFromDrive({
+            dataRoomId: input.dataRoomId,
+            rootFolderId: folderId,
+            accessToken,
+            uploadedBy: ctx.user.id,
+            allowDelete: true,
+          });
+        } catch (err: unknown) {
+          // reconcileDataRoomFromDrive only throws curated, user-safe messages
+          // (the Drive-listing hint, or a generic fallback); the full error is
+          // already logged there. Log again with room context and pass it on.
+          console.error(`[DataRoom] syncFromDrive failed for room ${input.dataRoomId}:`, err);
+          const msg = err instanceof Error ? err.message : 'Sync failed';
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: msg });
         }
 
-        // Get existing folders and documents to avoid duplicates
-        const allExistingFolders = await db.getDataRoomFolders(input.dataRoomId);
-        const allExistingDocs = await db.getDataRoomDocuments(input.dataRoomId);
-        const existingFoldersByDriveId = new Map(
-          allExistingFolders
-            .filter(f => f.googleDriveFolderId)
-            .map(f => [f.googleDriveFolderId!, f.id])
-        );
-        const existingDocsByDriveId = new Set(
-          allExistingDocs
-            .filter(d => d.googleDriveFileId)
-            .map(d => d.googleDriveFileId!)
-        );
-
-        // Create folder hierarchy in data room.
-        // syncDriveFolder pushes folders in DFS pre-order, so parents
-        // already precede their children — no sort needed.
-        const folderMap = new Map<string, number>();
-        const results: { name: string; type: string; status: string; error?: string }[] = [];
-        // Human-readable errors surfaced to the caller so a partial/empty sync
-        // reports *why* instead of silently claiming success with 0 files.
-        const syncErrors: string[] = [];
-
-        // Drive metadata occasionally exceeds our column widths (long file names,
-        // very long thumbnail/webView links). Trim defensively so a single
-        // oversized value can't abort the insert (and thus the whole batch).
-        const trunc = (v: string | null | undefined, max: number): string | undefined => {
-          if (v == null) return undefined;
-          return v.length > max ? v.slice(0, max) : v;
-        };
-
-        // Map DB/driver errors to concise, user-safe messages. The full error
-        // object (with driver code + stack) is always logged separately; only
-        // these sanitized strings are returned to the client / shown in toasts,
-        // so raw SQL/driver internals never leak into the UI.
-        const errMessage = (err: unknown): string => {
-          const code = (err as { code?: string })?.code;
-          switch (code) {
-            case 'ER_DATA_TOO_LONG': return 'a field exceeded the maximum length';
-            case 'ER_DUP_ENTRY': return 'a duplicate entry was detected';
-            case 'ER_TRUNCATED_WRONG_VALUE':
-            case 'WARN_DATA_TRUNCATED': return 'an unsupported character or value';
-            case 'ER_NO_REFERENCED_ROW_2':
-            case 'ER_ROW_IS_REFERENCED_2': return 'a related-record constraint failed';
-            case 'ER_BAD_NULL_ERROR': return 'a required field was missing';
-          }
-          // Errors we raise ourselves (no driver code) are already safe/worded
-          // for humans; anything else with an unrecognized driver code is kept
-          // generic so raw driver text can't reach the client.
-          if (err instanceof Error && !code) return err.message;
-          return 'an unexpected database error';
-        };
-
-        // Process folders — isolate each insert so one failure doesn't abort the rest.
-        for (const driveFolder of syncResult.folders) {
-          if (existingFoldersByDriveId.has(driveFolder.id)) {
-            folderMap.set(driveFolder.id, existingFoldersByDriveId.get(driveFolder.id)!);
-            results.push({ name: driveFolder.name, type: 'folder', status: 'exists' });
-            continue;
-          }
-
-          // Parent should already be mapped (DFS pre-order); fall back to any
-          // pre-existing data-room folder carrying the same Drive ID. If a parent
-          // was expected but is unmapped (e.g. its own insert failed earlier),
-          // don't silently root the child — surface it so the orphaning is visible.
-          const parentDriveId = driveFolder.parents?.[0];
-          let parentDataRoomId: number | null = null;
-          if (parentDriveId && parentDriveId !== folderId) {
-            parentDataRoomId = folderMap.get(parentDriveId) ?? existingFoldersByDriveId.get(parentDriveId) ?? null;
-            if (parentDataRoomId === null && syncErrors.length < 5) {
-              syncErrors.push(`Folder "${driveFolder.name}": parent folder could not be resolved; placed at root.`);
-            }
-          }
-
-          try {
-            const { id: newFolderId } = await db.createDataRoomFolder({
-              dataRoomId: input.dataRoomId,
-              parentId: parentDataRoomId,
-              name: trunc(driveFolder.name, 255) || 'Untitled folder',
-              googleDriveFolderId: driveFolder.id,
-            });
-
-            folderMap.set(driveFolder.id, newFolderId);
-            results.push({ name: driveFolder.name, type: 'folder', status: 'created' });
-          } catch (err: unknown) {
-            // Log Drive ID + room only — folder names can be sensitive and
-            // server logs are broadly accessible. The name still goes to the
-            // owner-facing response below, not to logs.
-            console.error(`[DataRoom] Failed to create folder ${driveFolder.id} (room ${input.dataRoomId}):`, err);
-            const msg = errMessage(err);
-            results.push({ name: driveFolder.name, type: 'folder', status: 'error', error: msg });
-            if (syncErrors.length < 5) syncErrors.push(`Folder "${driveFolder.name}": ${msg}`);
-          }
-        }
-
-        // Process files — store by reference in Google Drive (no download).
-        // Each insert is isolated: previously a single failing insert (e.g. an
-        // oversized field) threw out of the loop, leaving folders created but
-        // zero files — the "adds folders but no files" symptom.
-        for (const driveFile of syncResult.files) {
-          if (existingDocsByDriveId.has(driveFile.id)) {
-            results.push({ name: driveFile.name, type: 'file', status: 'exists' });
-            continue;
-          }
-
-          const displayName = driveFile.name;
-          const parentDriveId = driveFile.parents?.[0];
-          let fileFolderId: number | null = null;
-          if (parentDriveId && parentDriveId !== folderId) {
-            fileFolderId = folderMap.get(parentDriveId) ?? existingFoldersByDriveId.get(parentDriveId) ?? null;
-            // Parent expected but unmapped (e.g. its folder insert failed
-            // earlier). Import at root, but surface it like the folder loop
-            // does so the flattened hierarchy isn't silent.
-            if (fileFolderId === null && syncErrors.length < 5) {
-              syncErrors.push(`File "${displayName}": parent folder could not be resolved; placed at root.`);
-            }
-          }
-
-          const fileType = getSimpleFileType(driveFile.mimeType);
-          const fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
-            ? parseInt(driveFile.size)
-            : undefined;
-
-          try {
-            await db.createDataRoomDocument({
-              dataRoomId: input.dataRoomId,
-              folderId: fileFolderId,
-              name: trunc(displayName, 255) || 'Untitled',
-              fileType,
-              mimeType: trunc(driveFile.mimeType, 128),
-              fileSize,
-              storageType: 'google_drive',
-              storageUrl: trunc(driveFile.webViewLink, 512),
-              storageKey: undefined,
-              googleDriveFileId: driveFile.id,
-              googleDriveWebViewLink: trunc(driveFile.webViewLink, 512),
-              thumbnailUrl: trunc(driveFile.thumbnailLink, 512),
-              uploadedBy: ctx.user.id,
-            });
-
-            results.push({ name: displayName, type: 'file', status: 'synced' });
-          } catch (err: unknown) {
-            // Log Drive ID + room only — document names can be confidential.
-            console.error(`[DataRoom] Failed to create document ${driveFile.id} (room ${input.dataRoomId}):`, err);
-            const msg = errMessage(err);
-            results.push({ name: displayName, type: 'file', status: 'error', error: msg });
-            if (syncErrors.length < 5) syncErrors.push(`File "${displayName}": ${msg}`);
-          }
-        }
-
-        // Update data room with Google Drive folder ID and last sync time
+        // Always link the folder; only stamp lastSyncedAt on a complete listing
+        // (a partial sync skipped some sub-tree, so the room isn't fully synced).
         await db.updateDataRoom(input.dataRoomId, {
           googleDriveFolderId: folderId,
-          lastSyncedAt: new Date(),
+          ...(recon.partial ? {} : { lastSyncedAt: new Date() }),
         });
 
-        const filesFound = syncResult.files.length;
-        const foldersFound = syncResult.folders.length;
-        const totalSynced = results.filter(r => r.status === 'synced').length;
-        const totalCreated = results.filter(r => r.status === 'created').length;
-        const filesFailed = results.filter(r => r.type === 'file' && r.status === 'error').length;
-
         console.log(
-          `[DataRoom] Drive sync for room ${input.dataRoomId}: found ${foldersFound} folders / ${filesFound} files; ` +
-          `created ${totalCreated} folders / ${totalSynced} files; ${filesFailed} file errors.`
+          `[DataRoom] Drive sync for room ${input.dataRoomId}: found ${recon.foldersFound} folders / ${recon.filesFound} files; ` +
+          `created ${recon.foldersCreated} folders / ${recon.filesCreated} files; ` +
+          `updated ${recon.foldersUpdated} folders / ${recon.filesUpdated} files; ` +
+          `removed ${recon.foldersRemoved} folders / ${recon.filesRemoved} files; ${recon.filesFailed} file errors.`
         );
 
         return {
-          results,
-          totalSynced,
-          foldersCreated: totalCreated,
-          filesCreated: totalSynced,
-          filesFound,
-          foldersFound,
-          filesFailed,
-          errors: syncErrors,
+          totalSynced: recon.filesCreated,
+          foldersCreated: recon.foldersCreated,
+          foldersUpdated: recon.foldersUpdated,
+          filesCreated: recon.filesCreated,
+          filesUpdated: recon.filesUpdated,
+          filesRemoved: recon.filesRemoved,
+          foldersRemoved: recon.foldersRemoved,
+          filesFound: recon.filesFound,
+          foldersFound: recon.foldersFound,
+          filesFailed: recon.filesFailed,
+          errors: recon.errors,
           folderName: folderInfo.folder.name,
         };
       }),
@@ -17308,6 +17407,46 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
   // CRM MODULE - Contacts, Messaging & Tracking
   // ============================================
   crm: router({
+    // --- B2B ROCKET LEADS ---
+    // Leads pulled in from B2B Rocket via the Zapier webhook
+    // (/webhooks/b2brocket/leads), AI-scored on intake. These are just
+    // crmContacts with source = "b2brocket"; this sub-router exposes a
+    // score-sorted view + a summary for the outreach UI.
+    b2brocketLeads: router({
+      list: protectedProcedure
+        .input(z.object({
+          pipelineStage: z.string().optional(),
+          minScore: z.number().optional(),
+          search: z.string().optional(),
+          limit: z.number().optional(),
+          offset: z.number().optional(),
+        }).optional())
+        .query(async ({ input }) => {
+          const rows = await db.getCrmContacts({
+            source: "b2brocket",
+            pipelineStage: input?.pipelineStage,
+            search: input?.search,
+            limit: input?.limit,
+            offset: input?.offset,
+          });
+          const filtered = typeof input?.minScore === "number"
+            ? rows.filter((r: any) => (r.leadScore ?? 0) >= input.minScore!)
+            : rows;
+          // Highest-intent leads first.
+          return filtered.sort((a: any, b: any) => (b.leadScore ?? 0) - (a.leadScore ?? 0));
+        }),
+
+      stats: protectedProcedure.query(async () => {
+        const rows = await db.getCrmContacts({ source: "b2brocket" });
+        const total = rows.length;
+        const hot = rows.filter((r: any) => (r.leadScore ?? 0) >= 70).length;
+        const avgScore = total
+          ? Math.round(rows.reduce((s: number, r: any) => s + (r.leadScore ?? 0), 0) / total)
+          : 0;
+        return { total, hot, avgScore };
+      }),
+    }),
+
     // --- CONTACTS ---
     contacts: router({
       list: protectedProcedure
@@ -18401,6 +18540,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           bodyHtml: z.string(),
           bodyText: z.string().optional(),
           type: z.enum(["newsletter", "drip", "announcement", "follow_up", "custom"]).optional(),
+          status: z.enum(["draft", "scheduled", "sending", "sent", "paused", "cancelled"]).optional(),
           targetTags: z.string().optional(),
           targetContactTypes: z.string().optional(),
           targetPipelineStages: z.string().optional(),
@@ -18422,6 +18562,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           subject: z.string().optional(),
           bodyHtml: z.string().optional(),
           bodyText: z.string().optional(),
+          type: z.enum(["newsletter", "drip", "announcement", "follow_up", "custom"]).optional(),
           status: z.enum(["draft", "scheduled", "sending", "sent", "paused", "cancelled"]).optional(),
           scheduledAt: z.date().optional(),
         }))
@@ -19460,6 +19601,11 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             firefliesId: t.id,
             actionItems: parseActionItems(actionItems),
             participants,
+            // Respect Settings → Fireflies "Auto-create tasks": only when
+            // explicitly off do we route items to the Approval Queue instead
+            // of creating directly (unset defaults to auto-create, as the UI
+            // does).
+            routeToApproval: config.autoCreateTasks === false,
           });
           tasksSuggested += suggested;
           if (suggested > 0) {

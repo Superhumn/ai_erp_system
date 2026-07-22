@@ -96,7 +96,8 @@ function calculateRegularCredit(input: CreditCalculationInput): CreditCalculatio
 /**
  * Calculate R&D tax credit under Alternative Simplified Credit (ASC) method (IRC §41(c)(5))
  * Credit = 14% × (Current Year QREs - 50% of Average QREs for Prior 3 Years)
- * If no QREs in any of the 3 prior years, credit = 6% of current year QREs
+ * If the taxpayer has no QREs in ANY ONE of the 3 prior years (IRC §41(c)(5)(B)(ii)),
+ * the credit is 6% of current year QREs.
  */
 function calculateASCCredit(input: CreditCalculationInput): CreditCalculationResult {
   const totalQre = input.wageQre + input.supplyQre + input.contractQre;
@@ -104,20 +105,22 @@ function calculateASCCredit(input: CreditCalculationInput): CreditCalculationRes
   const prior2 = input.priorYear2Qre || 0;
   const prior3 = input.priorYear3Qre || 0;
 
-  const hasPriorYearQres = prior1 > 0 || prior2 > 0 || prior3 > 0;
-  const averagePriorQre = hasPriorYearQres ? (prior1 + prior2 + prior3) / 3 : 0;
+  // The 14% rate is only available when all three prior years have QRE. If any
+  // one prior year has no QRE, the 6% special rule applies.
+  const allPriorYearsHaveQre = prior1 > 0 && prior2 > 0 && prior3 > 0;
+  const averagePriorQre = allPriorYearsHaveQre ? (prior1 + prior2 + prior3) / 3 : 0;
 
   let baseAmount: number;
   let creditRate: number;
   let excessQre: number;
 
-  if (hasPriorYearQres) {
+  if (allPriorYearsHaveQre) {
     // Standard ASC: 14% of QREs exceeding 50% of average prior 3 years
     baseAmount = averagePriorQre * 0.5;
     excessQre = Math.max(0, totalQre - baseAmount);
     creditRate = 0.14;
   } else {
-    // No prior year QREs: 6% of current year QREs
+    // No QREs in one or more of the 3 prior years: 6% of current year QREs
     baseAmount = 0;
     excessQre = totalQre;
     creditRate = 0.06;
