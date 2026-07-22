@@ -28,11 +28,16 @@ UI for entity management beyond a minimal admin list.
 
 ## 2. Schema changes (`drizzle/schema.ts`)
 
+> **FK convention:** this codebase declares scope FKs as plain `int(...)` columns **without**
+> Drizzle `.references(...)` — see the existing `companyId` (`:131,152,177`) and `parentCompanyId`
+> (`:209`). The `regionId`/`companyId` columns below follow that same convention, so `// FK -> …`
+> denotes a *logical* foreign key consistent with current code, not a `.references()` call.
+
 ### 2.1 New `regions` table
 ```
 export const regions = mysqlTable("regions", {
   id: int("id").autoincrement().primaryKey(),
-  code: varchar("code", { length: 16 }).notNull(),        // e.g. "EMEA", "APAC", "US"
+  code: varchar("code", { length: 16 }).notNull().unique(),  // natural key; e.g. "EMEA", "APAC", "US"
   name: varchar("name", { length: 128 }).notNull(),
   baseCurrency: varchar("baseCurrency", { length: 3 }).notNull().default("USD"),
   status: mysqlEnum("status", ["active", "inactive"]).default("active").notNull(),
@@ -139,11 +144,17 @@ take `companyId: z.number().optional()` (see §5) drop that input field or repur
 
 ## 5. Migration surface (the audit checklist)
 
-Concrete counts from the live monolith (2026-07-22):
-- **51** DB helpers with an optional `companyId`/`filters.companyId` in `server/db.ts`
-  (e.g. `getCustomers` :557, `getVendors` :631, `getProducts` :723, `getInvoices` :817,
-  `getTransactions` :986, `getOrders` :1043, `getInventory` :1114, `getEmployees` :1477, …).
-- **106** router inputs `companyId: z.number().optional()` in `server/routers.ts`.
+Concrete counts from the live monolith (2026-07-22), each reproducible via grep so they don't
+silently drift:
+- **~51** DB helpers take `companyId` as their **primary** scope argument —
+  `grep -cE 'export async function get[A-Za-z]+\((companyId\?: number|filters\?: \{[^}]*companyId)' server/db.ts`
+  (e.g. `getCustomers` :557, `getVendors` :631, `getInvoices` :817, `getOrders` :1043,
+  `getInventory` :1114, `getEmployees` :1477, …). A looser `get.*companyId` scan returns **57**;
+  the extra ~6 take `companyId` as a **secondary** filter (`getAccountByCode`, `getAccountByName`,
+  `getEmailCredentials`, `getMaterialSupplyOverview`, …) and need the same scoping treatment — so
+  **treat 57 as the audit upper bound**, not 51.
+- **106** router inputs `companyId: z.number().optional()` in `server/routers.ts`
+  (`grep -cE 'companyId: z\.number\(\)\.optional\(\)' server/routers.ts`).
 
 **Process:** generate the full list with
 `grep -nE "export async function get.*companyId" server/db.ts` and
@@ -181,6 +192,6 @@ not a spot-check — track it as a checklist, not a batch edit.
 |------|------|
 | Schema + backfill script | 1 day |
 | `scopedProcedure` + context scope resolution | 0.5 day |
-| Migrate 51 helpers + 106 routes (domain by domain) | 3–4 days |
+| Migrate ~57 helpers + 106 routes (domain by domain) | 3–4 days |
 | Scoping test suite | 1 day |
 | **Total** | **~1 week** |

@@ -28,6 +28,10 @@ per country — one system, region-scoped data, consolidation on top.
 
 ## 2. Current state (grounded in the codebase)
 
+> Line numbers are **approximate** and will drift as `drizzle/schema.ts`, `server/db.ts`, and
+> `server/routers.ts` change — search by the symbol name (function/table/procedure), not the
+> exact line.
+
 | Area | State today | Key references |
 |------|-------------|----------------|
 | Legal entity | `companies` already models `parent`/`subsidiary`/`branch` + `parentCompanyId`, with `country` and `taxId` — but **no** `currency`, `locale`, or `timezone` column yet | `drizzle/schema.ts:203-222` |
