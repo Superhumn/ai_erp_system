@@ -598,6 +598,10 @@ export const shipments = mysqlTable("shipments", {
   type: mysqlEnum("type", ["inbound", "outbound"]).notNull(),
   orderId: int("orderId").references(() => orders.id),
   purchaseOrderId: int("purchaseOrderId").references(() => purchaseOrders.id),
+  // Inbound shipments can carry a raw material — links the shipment to inventory
+  // so that delivery moves stock from "in transit" to "received".
+  rawMaterialId: int("rawMaterialId").references(() => rawMaterials.id),
+  quantity: decimal("quantity", { precision: 15, scale: 4 }),
   carrier: varchar("carrier", { length: 128 }),
   trackingNumber: varchar("trackingNumber", { length: 128 }),
   status: mysqlEnum("status", ["pending", "in_transit", "delivered", "returned", "cancelled"]).default("pending").notNull(),
@@ -918,6 +922,10 @@ export const projectTasks = mysqlTable("project_tasks", {
   priority: mysqlEnum("priority", ["low", "medium", "high", "critical"]).default("medium").notNull(),
   dueDate: timestamp("dueDate"),
   completedDate: timestamp("completedDate"),
+  // Last time an outstanding-task reminder email was sent for this task. Used by
+  // the daily task-reminder job to avoid re-emailing the assignee more than once
+  // per run window. Cleared implicitly by comparing against a cooldown cutoff.
+  reminderSentAt: timestamp("reminderSentAt"),
   estimatedHours: decimal("estimatedHours", { precision: 10, scale: 2 }),
   actualHours: decimal("actualHours", { precision: 10, scale: 2 }),
   // Lightfield-style CRM linkage + provenance
@@ -1925,6 +1933,25 @@ export const recipeCopackerShares = mysqlTable("recipe_copacker_shares", {
 
 export type RecipeCopackerShare = typeof recipeCopackerShares.$inferSelect;
 export type InsertRecipeCopackerShare = typeof recipeCopackerShares.$inferInsert;
+
+// Per-user recipe access grants. Recipes (and their formulations) are private:
+// a recipe is only visible to the user who created it (the owner) and to users
+// who have an explicit grant row here. There is no role-based bypass — even
+// admins must be individually granted access to a recipe they did not create.
+export const recipeAccessGrants = mysqlTable("recipe_access_grants", {
+  id: int("id").autoincrement().primaryKey(),
+  recipeId: int("recipeId").notNull().references(() => recipes.id),
+  userId: int("userId").notNull().references(() => users.id),
+  /** When true the grantee may edit the recipe; otherwise view-only. */
+  canEdit: boolean("canEdit").default(false).notNull(),
+  grantedBy: int("grantedBy").references(() => users.id),
+  grantedAt: timestamp("grantedAt").defaultNow().notNull(),
+}, (table) => ({
+  recipeUserIdx: uniqueIndex("recipe_access_grants_recipe_user_idx").on(table.recipeId, table.userId),
+}));
+
+export type RecipeAccessGrant = typeof recipeAccessGrants.$inferSelect;
+export type InsertRecipeAccessGrant = typeof recipeAccessGrants.$inferInsert;
 
 // ============================================
 // COPACKER PORTAL
@@ -4001,6 +4028,11 @@ export const vendorRfqs = mysqlTable("vendorRfqs", {
   notes: text("notes"),
   internalNotes: text("internalNotes"),
   createdById: int("createdById"),
+
+  // Bid leveling
+  levelingSummary: text("levelingSummary"), // AI award-recommendation narrative comparing leveled bids
+  leveledAt: timestamp("leveledAt"),
+
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -4042,6 +4074,13 @@ export const vendorQuotes = mysqlTable("vendorQuotes", {
   priceComparisonRank: int("priceComparisonRank"), // 1 = best price
   leadTimeComparisonRank: int("leadTimeComparisonRank"), // 1 = fastest
   overallRank: int("overallRank"), // Combined ranking
+
+  // Bid leveling (scope-normalized comparison)
+  leveledTotalCost: decimal("leveledTotalCost", { precision: 15, scale: 2 }), // Normalized total cost adjusted to a common scope baseline
+  leveledRank: int("leveledRank"), // 1 = best leveled value
+  scopeDeviations: text("scopeDeviations"), // JSON array of { requirement, finding, severity }
+  leveledNotes: text("leveledNotes"), // AI rationale for the leveling adjustments on this quote
+  leveledAt: timestamp("leveledAt"),
   
   // Communication
   receivedVia: mysqlEnum("receivedVia", ["email", "portal", "phone", "manual"]).default("email"),

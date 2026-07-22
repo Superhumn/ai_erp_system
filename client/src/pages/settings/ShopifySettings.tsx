@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { trpc } from "@/lib/trpc";
@@ -357,7 +358,6 @@ function AddLocationMappingButton({ storeId }: { storeId: number }) {
   const [open, setOpen] = useState(false);
   const [shopifyLocationId, setShopifyLocationId] = useState("");
   const [warehouseId, setWarehouseId] = useState("");
-  const [locationName, setLocationName] = useState("");
 
   const utils = trpc.useUtils();
   const { data: warehouses } = trpc.warehouses.list.useQuery();
@@ -368,7 +368,6 @@ function AddLocationMappingButton({ storeId }: { storeId: number }) {
       setOpen(false);
       setShopifyLocationId("");
       setWarehouseId("");
-      setLocationName("");
       utils.shopify.locationMappings.list.invalidate({ storeId });
     },
     onError: (error: any) => toast.error(error.message),
@@ -401,14 +400,6 @@ function AddLocationMappingButton({ storeId }: { storeId: number }) {
               </p>
             </div>
             <div className="space-y-2">
-              <Label>Location Name (optional)</Label>
-              <Input
-                placeholder="e.g. Main Warehouse"
-                value={locationName}
-                onChange={(e) => setLocationName(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
               <Label>ERP Warehouse</Label>
               <Select value={warehouseId} onValueChange={setWarehouseId}>
                 <SelectTrigger><SelectValue placeholder="Select warehouse" /></SelectTrigger>
@@ -426,11 +417,11 @@ function AddLocationMappingButton({ storeId }: { storeId: number }) {
               onClick={() => createMapping.mutate({
                 storeId,
                 shopifyLocationId,
-                shopifyLocationName: locationName || undefined,
                 warehouseId: parseInt(warehouseId),
               })}
               disabled={!shopifyLocationId || !warehouseId || createMapping.isPending}
             >
+              {createMapping.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Create Mapping
             </Button>
           </DialogFooter>

@@ -130,10 +130,7 @@ function KpiCard({ icon: Icon, label, value, sub, tone, hint }: KpiCardProps) {
 }
 
 // ── Component ────────────────────────────────────────────────
-export default function CFODashboard() {
-  const [expandedStrategy, setExpandedStrategy] = useState<string | null>(null);
-  const [strategyResults, setStrategyResults] = useState<Record<string, string>>({});
-
+function useCfoMetrics() {
   const { data: bankBalances } = trpc.banking.balances.useQuery();
   const { data: invoicesList } = trpc.invoices.list.useQuery();
   const { data: modelData } = trpc.financialModel.list.useQuery({});
@@ -727,54 +724,39 @@ export default function CFODashboard() {
     return rows;
   }, [cashPosition, estimatedBurn, threeMonthAvgRev]);
 
-  // ── Strategy AI accordion ──────────────────────────────────
-  const strategyMutation = trpc.financialReports.aiAnalysis.useMutation({
-    onSuccess: (data, variables: any) => {
-      const id = variables?.strategyId;
-      if (id) setStrategyResults((p) => ({ ...p, [id]: data.analysis }));
-    },
-  });
-
-  const handleStrategyClick = (id: string, prompt: string) => {
-    if (expandedStrategy === id) { setExpandedStrategy(null); return; }
-    setExpandedStrategy(id);
-    if (!strategyResults[id]) {
-      strategyMutation.mutate({ reportType: "cfo_strategy", reportData: prompt, strategyId: id });
-    }
+  return {
+    cashPosition, estimatedBurn, burnSource, runwayMonths, zeroCashDate, runwayProjection,
+    arr, arrSource, recurring, netNewArr, momGrowth, yoyGrowth, retention,
+    monthlyRevenue, threeMonthAvgRev, arrMovement, cohortHeatmap, pipeline,
+    burnMultiple, rule40, grossMarginPct, marginSource, unitEcon, headcount,
+    revPerFte, burnPerFte, forecastAccuracy, magicNumber, cacReal, closeDays,
+    opexBreakdown, marginTrajectory, dso, dpo, cashGapDays, concentration, arAging, totalAR,
+    lastInvestorUpdate,
   };
+}
 
-  const strategyItems = [
-    { id: "fundraising", icon: Target, label: "Fundraising Readiness Check",
-      prompt: `Series B fundraising readiness. Metrics — cash $${Math.round(cashPosition)}, burn $${Math.round(estimatedBurn)}/mo, runway ${runwayMonths}mo, ARR $${Math.round(arr)}, MoM growth ${momGrowth.toFixed(1)}%, burn multiple ${burnMultiple?.toFixed(2) ?? "n/a"}, Rule of 40 ${rule40.toFixed(0)}. Produce: investor-pitch gap analysis, data-room completeness checklist, fundraise timeline (start-to-close weeks), target investor segments, and 3 must-fix risks before outreach.` },
-    { id: "board_report", icon: Presentation, label: "Board Report Generator",
-      prompt: `Generate a board-quality narrative using: cash $${Math.round(cashPosition)}, ARR $${Math.round(arr)}, MoM ${momGrowth.toFixed(1)}%, burn multiple ${burnMultiple?.toFixed(2) ?? "n/a"}, Rule of 40 ${rule40.toFixed(0)}, runway ${runwayMonths}mo, top-customer concentration ${concentration.topPct.toFixed(0)}%, DSO ${dso ?? "n/a"}d. Sections: highlights, KPI scorecard vs plan, risks, capital plan, asks.` },
-    { id: "scenario", icon: BarChart3, label: "Scenario Planning",
-      prompt: `Build Bear/Base/Bull 18-month scenarios. Anchors: cash $${Math.round(cashPosition)}, burn $${Math.round(estimatedBurn)}/mo, ARR $${Math.round(arr)}. For each: monthly cash path, hiring envelope, required ARR to sustain, decision triggers, and cost levers (rank by reversibility).` },
-    { id: "tax", icon: Calculator, label: "Tax Planning",
-      prompt: `Startup tax strategy given annualized revenue ~$${Math.round(threeMonthAvgRev * 12)}. Cover: §174 R&D capitalization impact, R&D tax credit eligibility + estimated value, quarterly estimated tax liability, state nexus exposure, 83(b)/QSBS posture, and entity-level optimization.` },
-    { id: "compliance", icon: Shield, label: "Compliance Checklist",
-      prompt: `SOX-lite / Series-B-ready controls checklist: revenue recognition (ASC 606), segregation of duties, approval matrix, month-end close calendar, vendor management, data security (SOC 2 readiness). Priority-rank and estimate effort.` },
-    { id: "working_capital", icon: Activity, label: "Working Capital Analysis",
-      prompt: `Analyze working capital: cash $${Math.round(cashPosition)}, DSO ${dso ?? "n/a"}d, AR aging current/30/60/90+ = ${fmtCompact(arAging.current)}/${fmtCompact(arAging.d30)}/${fmtCompact(arAging.d60)}/${fmtCompact(arAging.d90)}. Recommend: collections actions, payment terms, factoring/ABL fit, CCC improvements, and cash-conversion targets for next quarter.` },
-  ];
+// ── CFO Dashboard — Liquidity · Growth · Efficiency · Risk ──────
+export default function CFODashboard() {
+  const {
+    cashPosition, estimatedBurn, burnSource, runwayMonths, zeroCashDate, runwayProjection,
+    arr, arrSource, recurring, netNewArr, momGrowth, yoyGrowth, retention,
+    monthlyRevenue, threeMonthAvgRev, arrMovement, cohortHeatmap, pipeline,
+    burnMultiple, rule40, grossMarginPct, marginSource, unitEcon, headcount,
+    revPerFte, burnPerFte, forecastAccuracy, magicNumber, cacReal, closeDays,
+    opexBreakdown, marginTrajectory, dso, dpo, cashGapDays, concentration, arAging, totalAR,
+  } = useCfoMetrics();
 
   // ── Render ────────────────────────────────────────────────
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between">
-        <div>
-          <h2 className="text-base font-semibold flex items-center gap-2">
-            <Zap className="h-4 w-4 text-primary" />
-            CFO Dashboard
-          </h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Series B operating view — cash, growth, unit economics, and concentration, benchmarked against SaaS peers.
-          </p>
-        </div>
-        <Button variant="outline" size="sm" className="h-8 text-xs"
-                onClick={() => handleStrategyClick("board_report", strategyItems[1].prompt)}>
-          <Download className="h-3 w-3 mr-1" /> Board Pack
-        </Button>
+      <div>
+        <h2 className="text-base font-semibold flex items-center gap-2">
+          <Zap className="h-4 w-4 text-primary" />
+          CFO Dashboard
+        </h2>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Series B operating view — cash, growth, unit economics, and concentration, benchmarked against SaaS peers.
+        </p>
       </div>
 
       {/* Executive summary banner — section health + top concern */}
@@ -1312,10 +1294,65 @@ export default function CFODashboard() {
         </Card>
       </div>
 
-      {/* ── 5 · ACTIONS ─────────────────────────────────────── */}
-      <div className="flex items-baseline gap-2 pt-1">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">5 · Actions</h3>
-        <span className="text-[11px] text-muted-foreground/70">Click a topic to generate analysis grounded in your current metrics.</span>
+    </div>
+  );
+}
+
+// ── Actions · CFO Strategy (AI advisors) ───────────────────────
+export function CFOStrategy() {
+  const [expandedStrategy, setExpandedStrategy] = useState<string | null>(null);
+  const [strategyResults, setStrategyResults] = useState<Record<string, string>>({});
+  const {
+    cashPosition, estimatedBurn, runwayMonths, arr, momGrowth, burnMultiple,
+    rule40, concentration, dso, threeMonthAvgRev, arAging, lastInvestorUpdate,
+  } = useCfoMetrics();
+
+  const strategyMutation = trpc.financialReports.aiAnalysis.useMutation({
+    onSuccess: (data, variables: any) => {
+      const id = variables?.strategyId;
+      if (id) setStrategyResults((p) => ({ ...p, [id]: data.analysis }));
+    },
+  });
+
+  const handleStrategyClick = (id: string, prompt: string) => {
+    if (expandedStrategy === id) { setExpandedStrategy(null); return; }
+    setExpandedStrategy(id);
+    if (!strategyResults[id]) {
+      strategyMutation.mutate({ reportType: "cfo_strategy", reportData: prompt, strategyId: id });
+    }
+  };
+
+  const strategyItems = [
+    { id: "fundraising", icon: Target, label: "Fundraising Readiness Check",
+      prompt: `Series B fundraising readiness. Metrics — cash $${Math.round(cashPosition)}, burn $${Math.round(estimatedBurn)}/mo, runway ${runwayMonths}mo, ARR $${Math.round(arr)}, MoM growth ${momGrowth.toFixed(1)}%, burn multiple ${burnMultiple?.toFixed(2) ?? "n/a"}, Rule of 40 ${rule40.toFixed(0)}. Produce: investor-pitch gap analysis, data-room completeness checklist, fundraise timeline (start-to-close weeks), target investor segments, and 3 must-fix risks before outreach.` },
+    { id: "board_report", icon: Presentation, label: "Board Report Generator",
+      prompt: `Generate a board-quality narrative using: cash $${Math.round(cashPosition)}, ARR $${Math.round(arr)}, MoM ${momGrowth.toFixed(1)}%, burn multiple ${burnMultiple?.toFixed(2) ?? "n/a"}, Rule of 40 ${rule40.toFixed(0)}, runway ${runwayMonths}mo, top-customer concentration ${concentration.topPct.toFixed(0)}%, DSO ${dso ?? "n/a"}d. Sections: highlights, KPI scorecard vs plan, risks, capital plan, asks.` },
+    { id: "scenario", icon: BarChart3, label: "Scenario Planning",
+      prompt: `Build Bear/Base/Bull 18-month scenarios. Anchors: cash $${Math.round(cashPosition)}, burn $${Math.round(estimatedBurn)}/mo, ARR $${Math.round(arr)}. For each: monthly cash path, hiring envelope, required ARR to sustain, decision triggers, and cost levers (rank by reversibility).` },
+    { id: "tax", icon: Calculator, label: "Tax Planning",
+      prompt: `Startup tax strategy given annualized revenue ~$${Math.round(threeMonthAvgRev * 12)}. Cover: §174 R&D capitalization impact, R&D tax credit eligibility + estimated value, quarterly estimated tax liability, state nexus exposure, 83(b)/QSBS posture, and entity-level optimization.` },
+    { id: "compliance", icon: Shield, label: "Compliance Checklist",
+      prompt: `SOX-lite / Series-B-ready controls checklist: revenue recognition (ASC 606), segregation of duties, approval matrix, month-end close calendar, vendor management, data security (SOC 2 readiness). Priority-rank and estimate effort.` },
+    { id: "working_capital", icon: Activity, label: "Working Capital Analysis",
+      prompt: `Analyze working capital: cash $${Math.round(cashPosition)}, DSO ${dso ?? "n/a"}d, AR aging current/30/60/90+ = ${fmtCompact(arAging.current)}/${fmtCompact(arAging.d30)}/${fmtCompact(arAging.d60)}/${fmtCompact(arAging.d90)}. Recommend: collections actions, payment terms, factoring/ABL fit, CCC improvements, and cash-conversion targets for next quarter.` },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between">
+        <div>
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-primary" />
+            Actions · CFO Strategy
+          </h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            What to do about it — AI advisors grounded in your current metrics.
+          </p>
+        </div>
+        <Button variant="outline" size="sm" className="h-8 text-xs"
+                onClick={() => handleStrategyClick("board_report", strategyItems[1].prompt)}>
+          <Download className="h-3 w-3 mr-1" /> Board Pack
+        </Button>
       </div>
 
       <div className="border rounded-lg bg-muted/20 px-3 py-2 flex items-center gap-4 flex-wrap text-xs">

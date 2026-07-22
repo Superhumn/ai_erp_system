@@ -821,10 +821,13 @@ function ImportFromQBButton({ studyId, projects, onRefresh }: {
 }) {
   const [open, setOpen] = useState(false);
   const [projectId, setProjectId] = useState("");
+  // Format in local time — toISOString() is UTC and can shift the date by a day.
+  const toDateInput = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   const [startDate, setStartDate] = useState(() => {
-    const d = new Date(); d.setMonth(0, 1); return d.toISOString().slice(0, 10);
+    const d = new Date(); d.setMonth(0, 1); return toDateInput(d);
   });
-  const [endDate, setEndDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [endDate, setEndDate] = useState(() => toDateInput(new Date()));
   const [category, setCategory] = useState<QBImportCategory>("wages");
 
   const importMutation = trpc.rdTaxCredit.importFromQuickBooks.useMutation({
@@ -881,7 +884,7 @@ function ImportFromQBButton({ studyId, projects, onRefresh }: {
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
             <Button
-              onClick={() => importMutation.mutate({ studyId, projectId: parseInt(projectId), startDate, endDate, category })}
+              onClick={() => importMutation.mutate({ studyId, projectId: parseInt(projectId, 10), startDate, endDate, category })}
               disabled={!projectId || importMutation.isPending}
             >
               {importMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}

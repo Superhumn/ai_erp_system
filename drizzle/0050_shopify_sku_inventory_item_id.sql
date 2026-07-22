@@ -1,4 +1,4 @@
--- Migration 0046: Add shopifyInventoryItemId to shopifySkuMappings.
+-- Migration 0050: Add shopifyInventoryItemId to shopifySkuMappings.
 --
 -- Shopify inventory-level data (inventory_levels REST + inventory_levels/update
 -- webhooks) is keyed by inventory_item_id, NOT the variant id we store on the
