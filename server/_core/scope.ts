@@ -30,10 +30,13 @@ export interface ScopeLookup {
  * sees nothing rather than everything.
  */
 export async function resolveScope(
-  user: { companyId: number | null | undefined; regionScope: ScopeMode },
+  user: { companyId: number | null | undefined; regionScope: ScopeMode | null | undefined },
   lookup: ScopeLookup,
 ): Promise<Scope> {
-  if (user.regionScope === "global") {
+  // An unset regionScope (legacy rows before the migration default lands, or a user object
+  // built without it) is treated as global — matching the schema default and keeping existing
+  // behavior until entities are explicitly assigned.
+  if (user.regionScope == null || user.regionScope === "global") {
     return { mode: "global", companyIds: "all" };
   }
 

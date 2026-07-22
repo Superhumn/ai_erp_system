@@ -19,6 +19,11 @@ describe("resolveScope", () => {
     expect(scope.companyIds).toBe("all");
   });
 
+  it("treats an unset regionScope as global (legacy/pre-migration users keep full access)", async () => {
+    expect((await resolveScope({ companyId: 10, regionScope: undefined }, lookup)).companyIds).toBe("all");
+    expect((await resolveScope({ companyId: null, regionScope: null }, lookup)).companyIds).toBe("all");
+  });
+
   it("entity users see only their home entity", async () => {
     const scope = await resolveScope({ companyId: 10, regionScope: "entity" }, lookup);
     expect(scope).toEqual({ mode: "entity", companyIds: [10] });
