@@ -2769,6 +2769,12 @@ export async function getInventoryByProductAndWarehouse(productId: number, wareh
   return result[0];
 }
 
+export async function getInventoryByProductIds(productIds: number[]) {
+  const db = await getDb();
+  if (!db || productIds.length === 0) return [];
+  return db.select().from(inventory).where(inArray(inventory.productId, productIds));
+}
+
 export async function updateInventoryQuantity(productId: number, warehouseId: number, quantityChange: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");

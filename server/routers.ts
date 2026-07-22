@@ -11652,6 +11652,20 @@ Ask if they received the original request and if they can provide a quote.`;
                 mappings.filter(m => m.shopifyInventoryItemId).map(m => [m.shopifyInventoryItemId!, m] as const)
               );
 
+              // Pre-fetch every inventory row for the mapped products in one
+              // query and index it, so the per-level loop below does in-memory
+              // lookups instead of a DB read per inventory level (avoids N+1).
+              const inventoryRows = await db.getInventoryByProductIds(
+                [...new Set(mappings.map(m => m.productId))]
+              );
+              const inventoryByProductWarehouse = new Map(
+                inventoryRows.map(r => [`${r.productId}:${r.warehouseId}`, r] as const)
+              );
+              const inventoryByProduct = new Map<number, typeof inventoryRows[number]>();
+              for (const r of inventoryRows) {
+                if (!inventoryByProduct.has(r.productId)) inventoryByProduct.set(r.productId, r);
+              }
+
               for (const level of levels) {
                 const mapping = mappingByInventoryItemId.get(level.inventory_item_id.toString());
                 if (!mapping) continue;
@@ -11665,7 +11679,7 @@ Ask if they received the original request and if they can provide a quote.`;
                     console.warn(`[Shopify Sync] No warehouse mapping for location ${level.location_id} in ${store.storeDomain}, skipping level`);
                     continue;
                   }
-                  const inventory = await db.getInventoryByProductAndWarehouse(mapping.productId, warehouseId);
+                  const inventory = inventoryByProductWarehouse.get(`${mapping.productId}:${warehouseId}`);
                   if (inventory) {
                     await db.updateInventory(inventory.id, { quantity });
                     totalUpdated++;
@@ -11674,7 +11688,7 @@ Ask if they received the original request and if they can provide a quote.`;
                   }
                 } else {
                   // No location mappings configured — fall back to product-level update.
-                  const inventory = await db.getInventoryByProductId(mapping.productId);
+                  const inventory = inventoryByProduct.get(mapping.productId);
                   if (inventory) {
                     await db.updateInventory(inventory.id, { quantity });
                     totalUpdated++;
