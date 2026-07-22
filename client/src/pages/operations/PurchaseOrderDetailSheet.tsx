@@ -323,9 +323,20 @@ export default function PurchaseOrderDetailSheet({
           </div>
         </SheetHeader>
 
-        {isLoading || !po ? (
+        {isLoading ? (
           <div className="flex-1 flex items-center justify-center">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : !po ? (
+          // get() returns undefined (no error) for an unknown id — show an
+          // explicit empty state instead of spinning forever.
+          <div className="flex-1 flex flex-col items-center justify-center gap-2 text-center p-6">
+            <FileText className="h-10 w-10 text-muted-foreground/40" />
+            <p className="text-sm font-medium">Purchase order not found</p>
+            <p className="text-xs text-muted-foreground">It may have been deleted.</p>
+            <Button size="sm" variant="outline" className="mt-2" onClick={() => onOpenChange(false)}>
+              Close
+            </Button>
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto">

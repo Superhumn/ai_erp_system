@@ -1340,9 +1340,8 @@ export async function getPurchaseOrderById(id: number) {
 }
 
 export async function getPurchaseOrderWithItems(id: number) {
-  const db = await getDb();
-  if (!db) return undefined;
-
+  // No direct getDb() here — every helper below opens its own connection and
+  // returns empty/undefined when the DB is unavailable.
   const po = await getPurchaseOrderById(id);
   if (!po) return undefined;
 

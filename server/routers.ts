@@ -2766,7 +2766,9 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         id: z.number(),
         items: z.array(z.object({
           productId: z.number().nullable().optional(),
-          description: z.string().min(1),
+          // Trim so a whitespace-only description ("   ") can't pass min(1) and
+          // create a blank line item.
+          description: z.string().trim().min(1),
           quantity: z.string(),
           unitPrice: z.string(),
           // Server recomputes the line total from quantity * unitPrice; a
