@@ -97,12 +97,12 @@ export default function PurchaseOrders() {
   const utils = trpc.useUtils();
 
   const poIds = (purchaseOrders || []).map((po) => po.id);
-  const { data: invoiceCounts } = trpc.purchaseOrders.parsedInvoiceCounts.useQuery(
+  const { data: documentCounts } = trpc.purchaseOrders.documentCounts.useQuery(
     { purchaseOrderIds: poIds },
     { enabled: poIds.length > 0 }
   );
-  const invoiceCountMap = new Map<number, number>(
-    (invoiceCounts || []).map((c) => [c.purchaseOrderId, c.count])
+  const documentCountMap = new Map<number, number>(
+    (documentCounts || []).map((c) => [c.purchaseOrderId, c.count])
   );
 
   const resetForm = () => {
@@ -773,9 +773,9 @@ export default function PurchaseOrders() {
                         {po.expectedDate ? format(new Date(po.expectedDate), "MMM d, yyyy") : "-"}
                       </TableCell>
                       <TableCell className="text-right">
-                        {invoiceCountMap.get(po.id) ? (
+                        {documentCountMap.get(po.id) ? (
                           <Badge variant="outline" className="font-mono">
-                            {invoiceCountMap.get(po.id)}
+                            {documentCountMap.get(po.id)}
                           </Badge>
                         ) : (
                           <span className="text-muted-foreground">-</span>

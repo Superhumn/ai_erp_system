@@ -2379,6 +2379,13 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         const counts = await db.getParsedDocumentCountsByPO(input.purchaseOrderIds);
         return Array.from(counts.entries()).map(([purchaseOrderId, count]) => ({ purchaseOrderId, count }));
       }),
+    // Total document count per PO across all sources (parsed + supplier + operator).
+    documentCounts: opsProcedure
+      .input(z.object({ purchaseOrderIds: z.array(z.number()) }))
+      .query(async ({ input }) => {
+        const counts = await db.getDocumentCountsByPO(input.purchaseOrderIds);
+        return Array.from(counts.entries()).map(([purchaseOrderId, count]) => ({ purchaseOrderId, count }));
+      }),
     create: opsProcedure
       .input(z.object({
         companyId: z.number().optional(),
@@ -2489,7 +2496,12 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         if (po.status !== 'draft') {
           throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Line items can only be edited while the PO is a draft.' });
         }
-        const { subtotal } = await db.replacePurchaseOrderItems(input.id, input.items);
+        let subtotal: number;
+        try {
+          ({ subtotal } = await db.replacePurchaseOrderItems(input.id, input.items));
+        } catch (e: any) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: e?.message || 'Invalid line items.' });
+        }
         const tax = parseFloat(input.taxAmount ?? po.taxAmount ?? '0') || 0;
         const shipping = parseFloat(input.shippingAmount ?? po.shippingAmount ?? '0') || 0;
         await db.updatePurchaseOrder(input.id, {
@@ -2520,7 +2532,12 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
             message: `Cannot receive against a ${po.status} PO. Send it to the supplier first.`,
           });
         }
-        const result = await db.setPurchaseOrderReceivedQuantities(input.id, input.items);
+        let result: { status: string | null };
+        try {
+          result = await db.setPurchaseOrderReceivedQuantities(input.id, input.items);
+        } catch (e: any) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: e?.message || 'Invalid received quantities.' });
+        }
         await createAuditLog(ctx.user.id, 'update', 'purchaseOrder', input.id, po.poNumber, { status: po.status }, { status: result.status });
         return { success: true, status: result.status };
       }),

@@ -1463,6 +1463,45 @@ export async function getPurchaseOrderDocuments(purchaseOrderId: number) {
 }
 
 /**
+ * Total document count per PO across all three sources (parsed inbound,
+ * supplier-portal uploads, operator uploads). Batched to avoid N+1 in the list
+ * view. Returns a Map of purchaseOrderId -> count.
+ */
+export async function getDocumentCountsByPO(purchaseOrderIds: number[]) {
+  const result = new Map<number, number>();
+  const db = await getDb();
+  if (!db || purchaseOrderIds.length === 0) return result;
+
+  const add = (id: number | null, n: number) => {
+    if (id == null) return;
+    result.set(id, (result.get(id) ?? 0) + n);
+  };
+
+  const parsed = await db
+    .select({ id: parsedDocuments.purchaseOrderId, cnt: sql<number>`count(*)`.as("cnt") })
+    .from(parsedDocuments)
+    .where(inArray(parsedDocuments.purchaseOrderId, purchaseOrderIds))
+    .groupBy(parsedDocuments.purchaseOrderId);
+  for (const r of parsed) add(r.id, Number(r.cnt));
+
+  const supplier = await db
+    .select({ id: supplierDocuments.purchaseOrderId, cnt: sql<number>`count(*)`.as("cnt") })
+    .from(supplierDocuments)
+    .where(inArray(supplierDocuments.purchaseOrderId, purchaseOrderIds))
+    .groupBy(supplierDocuments.purchaseOrderId);
+  for (const r of supplier) add(r.id, Number(r.cnt));
+
+  const ops = await db
+    .select({ id: documents.referenceId, cnt: sql<number>`count(*)`.as("cnt") })
+    .from(documents)
+    .where(and(eq(documents.referenceType, "po"), inArray(documents.referenceId, purchaseOrderIds)))
+    .groupBy(documents.referenceId);
+  for (const r of ops) add(r.id, Number(r.cnt));
+
+  return result;
+}
+
+/**
  * Replace all line items on a draft PO in one transaction. Cleans up the
  * raw-material junction rows for the removed items first so the FK to
  * `purchaseOrderItems` never dangles, then reinserts the new set and rebuilds
@@ -1560,10 +1599,21 @@ export async function setPurchaseOrderReceivedQuantities(
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
+  // Validate every received quantity up front — reject non-numeric / negative
+  // values so bad input can't corrupt the stored quantity or the status
+  // recomputation below.
+  const clean = received.map((r) => {
+    const qty = parseFloat(r.receivedQuantity);
+    if (!Number.isFinite(qty) || qty < 0) {
+      throw new Error(`Invalid received quantity for item ${r.purchaseOrderItemId}.`);
+    }
+    return { purchaseOrderItemId: r.purchaseOrderItemId, receivedQuantity: qty.toFixed(4) };
+  });
+
   // Per-item updates + the derived PO status change are one atomic unit so a
   // mid-way failure can't leave quantities updated but the status stale.
   return db.transaction(async (tx) => {
-    for (const r of received) {
+    for (const r of clean) {
       await tx
         .update(purchaseOrderItems)
         .set({ receivedQuantity: r.receivedQuantity })
@@ -1576,11 +1626,17 @@ export async function setPurchaseOrderReceivedQuantities(
       .from(purchaseOrderItems)
       .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
 
+    // Treat any non-numeric stored value as 0 so a stray bad row can never make
+    // a comparison silently no-op and mark the PO fully received by accident.
+    const num = (v: unknown) => {
+      const n = parseFloat(v?.toString() ?? "0");
+      return Number.isFinite(n) ? n : 0;
+    };
     let anyReceived = false;
     let allReceived = items.length > 0;
     for (const it of items) {
-      const ordered = parseFloat(it.quantity?.toString() || "0");
-      const got = parseFloat(it.receivedQuantity?.toString() || "0");
+      const ordered = num(it.quantity);
+      const got = num(it.receivedQuantity);
       if (got > 0) anyReceived = true;
       if (got < ordered) allReceived = false;
     }
