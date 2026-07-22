@@ -6888,16 +6888,32 @@ Be concise and helpful. Always give actionable guidance.`;
                   if (!taskData.projectId || !taskData.name) {
                     throw new Error('Project task suggestion missing projectId or name');
                   }
+                  // taskData is untrusted JSON: validate priority against the
+                  // allowed set and only accept a genuinely parseable dueDate so
+                  // a malformed value can't insert an Invalid Date.
+                  const priority = (['low', 'medium', 'high', 'critical'] as const).includes(taskData.priority)
+                    ? taskData.priority
+                    : 'medium';
+                  let dueDate: Date | undefined;
+                  if (taskData.dueDate) {
+                    const parsed = new Date(taskData.dueDate);
+                    if (!Number.isNaN(parsed.getTime())) dueDate = parsed;
+                  }
+                  // Keep the source ref pair consistent: both derive from
+                  // meetingId (an undefined id must not leave a dangling refType).
+                  const meetingRefId = taskData.sourceMeeting?.meetingId
+                    ? Number(taskData.sourceMeeting.meetingId)
+                    : undefined;
                   const created = await createProjectTaskFromSource({
                     projectId: Number(taskData.projectId),
                     name: String(taskData.name),
                     description: taskData.description ? String(taskData.description) : undefined,
                     assigneeId: taskData.assigneeId ? Number(taskData.assigneeId) : undefined,
-                    priority: (taskData.priority || 'medium') as any,
-                    dueDate: taskData.dueDate ? new Date(taskData.dueDate) : undefined,
+                    priority,
+                    dueDate,
                     sourceType: 'meeting',
-                    sourceRefType: taskData.sourceMeeting?.firefliesId ? 'firefliesMeeting' : undefined,
-                    sourceRefId: taskData.sourceMeeting?.meetingId ? Number(taskData.sourceMeeting.meetingId) : undefined,
+                    sourceRefType: meetingRefId ? 'firefliesMeeting' : undefined,
+                    sourceRefId: meetingRefId,
                     sourceExternalId: taskData.sourceExternalId ? String(taskData.sourceExternalId) : undefined,
                     createdBy: ctx.user.id,
                   });
@@ -19415,9 +19431,11 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             firefliesId: t.id,
             actionItems: parseActionItems(actionItems),
             participants,
-            // Respect Settings → Fireflies "Auto-create tasks": when off,
-            // route items to the Approval Queue instead of creating directly.
-            routeToApproval: !config.autoCreateTasks,
+            // Respect Settings → Fireflies "Auto-create tasks": only when
+            // explicitly off do we route items to the Approval Queue instead
+            // of creating directly (unset defaults to auto-create, as the UI
+            // does).
+            routeToApproval: config.autoCreateTasks === false,
           });
           tasksSuggested += suggested;
           if (suggested > 0) {

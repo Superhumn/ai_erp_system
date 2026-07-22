@@ -8535,8 +8535,16 @@ export async function getPendingApprovalTasks() {
 export async function findMeetingTaskSuggestionByExternalId(externalId: string) {
   const db = await getDb();
   if (!db) return null;
+  // Prefilter in SQL on the raw JSON text so we don't load every "query" task
+  // into memory as the table grows: only rows whose taskData contains the
+  // externalId literal come back. LIKE wildcards in the id can only widen the
+  // match, and the exact-equality check below rejects any false positives.
+  const escaped = externalId.replace(/[\\%_]/g, (c) => `\\${c}`);
   const rows = await db.select().from(aiAgentTasks)
-    .where(eq(aiAgentTasks.taskType, "query" as any));
+    .where(and(
+      eq(aiAgentTasks.taskType, "query" as any),
+      like(aiAgentTasks.taskData, `%${escaped}%`),
+    ));
   for (const row of rows) {
     try {
       const data = JSON.parse(row.taskData || "{}");

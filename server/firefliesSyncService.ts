@@ -123,11 +123,12 @@ export async function syncFirefliesMeetingsForUser(
   apiKey: string,
   opts: { autoCreateTasks?: boolean | null } = {}
 ): Promise<FirefliesSyncResult> {
-  // When "Auto-create tasks" is off (or unset), meeting action items are
+  // When "Auto-create tasks" is explicitly off, meeting action items are
   // surfaced as approval-queue suggestions the user must approve before they
-  // become real tasks. When on, they are created directly (still importance-
-  // gated). This is the toggle at Settings → Fireflies.
-  const routeToApproval = !opts.autoCreateTasks;
+  // become real tasks. When on (or unset — the UI defaults on), they are
+  // created directly (still importance-gated). This is the toggle at
+  // Settings → Fireflies.
+  const routeToApproval = opts.autoCreateTasks === false;
   const result: FirefliesSyncResult = {
     totalSynced: 0,
     totalSkipped: 0,
