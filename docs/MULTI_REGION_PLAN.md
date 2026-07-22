@@ -33,7 +33,7 @@ per country — one system, region-scoped data, consolidation on top.
 | Legal entity | `companies` already models `parent`/`subsidiary`/`branch` + `parentCompanyId`, with `country` and `taxId` — but **no** `currency`, `locale`, or `timezone` column yet | `drizzle/schema.ts:203-222` |
 | Data scoping | **None.** Any logged-in user sees all rows. `getCustomers` returns every row when `companyId` is omitted, and the router passes the *client-supplied* `input?.companyId` — scope is never derived from the user | Live monolith: `server/db.ts:557` (`getCustomers`), `:1043` (`getOrders`); `server/routers.ts:548-549` |
 | User identity | `users` has **no** `companyId`/`region`/`locale` | `drizzle/schema.ts:9` |
-| Roles | Single enum: `user, admin, finance, ops, legal, exec, sales, copacker, vendor, contractor, investor`. `plant`/`procurement` appear **only** in the orphaned `server/routers/middleware.ts:51,59` — the live monolith and the enum don't include them | `drizzle/schema.ts:15` |
+| Roles | `users` enum: `user, admin, finance, ops, legal, exec, sales, copacker, vendor, contractor, investor` — **no `plant`/`procurement`**. Yet **live code gates on those roles** (`server/routers.ts:171-184` define `plantProcedure`/`procurementProcedure`; `server/materialShortageService.ts:207,241` filter on them), so those gates can never match a real user | `drizzle/schema.ts:15`; `server/routers.ts:171-184` |
 | AuthZ | Role-gate only, no scope injection. Base procedures in `server/_core/trpc.ts:29,31`; role gates defined **inline in the live monolith** (`server/routers.ts:110` `financeProcedure`, `:117` `opsProcedure`). The `server/routers/middleware.ts` copy is part of the orphaned tree | `server/_core/trpc.ts:29`; `server/routers.ts:110,117` |
 | Currency | Per-row `varchar(3) default("USD")` on ~30 tables. **No FX/exchange-rate table, no functional/reporting currency.** `customers`/`vendors` have no currency at all | `drizzle/schema.ts:291,315,337,372,395,433` |
 | Tax | Scalar `taxRate`/`taxAmount` per line. **No jurisdiction/rate registry, no VAT/GST typing.** Best existing shape is `product_price_tiers.taxMode` (inclusive/exclusive/exempt) | `drizzle/schema.ts:7247` |
@@ -89,11 +89,13 @@ minimal entity work needed to unblock scoping. The dependency table in §8 refle
 ### Phase 0 — Reconciliation & guardrails (0.5 day)
 Small cleanups that unblock the rest and prevent enum drift.
 
-- Reconcile the `plant`/`procurement` role drift: these roles are referenced **only** in the
-  orphaned `server/routers/middleware.ts:51,59` — the live monolith (`server/routers.ts`) and
-  the `users` enum don't use them. Decide whether they're real (add to the enum at
-  `drizzle/schema.ts:15` + the `teamInvitations` copy at `:67`, and wire live procedures) or
-  dead (drop them) so region-based roles don't inherit the inconsistency.
+- Reconcile the `plant`/`procurement` role drift: **live code gates on these roles**
+  (`server/routers.ts:171-184` `plantProcedure`/`procurementProcedure`;
+  `server/materialShortageService.ts:207,241`; plus the orphaned `server/routers/middleware.ts:51,59`),
+  but the `users` enum (`drizzle/schema.ts:15`) omits them — so no user can ever hold either role
+  and those gates are currently unsatisfiable dead ends. Fix by either adding both to the enum
+  (+ the `teamInvitations` copy at `:67`) or removing the dead gates, so region-based roles don't
+  inherit the inconsistency.
 - Decide canonical country encoding: **ISO 3166-1 alpha-2** everywhere (newer tables already
   do this). Add a `shared/regions.ts` constant with the launch countries + ISO codes,
   currency, default locale, and timezone.
@@ -124,7 +126,7 @@ Turns `companyId` from an optional filter into an enforced security boundary.
 - **Schema:** add `companyId` (FK → `companies`) and optional `regionScope` enum
   (`entity`/`region`/`global`) to `users` (`drizzle/schema.ts:9`). `global` = exec/consolidation.
 - **Context:** load `companyId`/`regionScope` into `ctx.user` in
-  `server/_core/context.ts` / `sdk.ts:79`.
+  `server/_core/context.ts` / `server/_core/sdk.ts:79`.
 - **New procedure (in the live monolith):** add `scopedProcedure` alongside the existing inline
   role gates in `server/routers.ts` (`financeProcedure` :110, `opsProcedure` :117) — or next to
   `protectedProcedure` in `server/_core/trpc.ts:29`. It resolves the caller's visible `companyId`
