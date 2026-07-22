@@ -1305,9 +1305,10 @@ export function AICommandBar({ context }: AICommandBarProps) {
               ? "Shows a plan and asks before making changes"
               : "Acts on your request right away"}
           </span>
-          <div className="flex items-center rounded-md border border-border/60 overflow-hidden text-xs shrink-0">
+          <div className="flex items-center rounded-md border border-border/60 overflow-hidden text-xs shrink-0" role="group" aria-label="Assistant mode">
             <button
               type="button"
+              aria-pressed={agentMode === "plan"}
               onClick={(e) => { e.stopPropagation(); setAgentMode("plan"); }}
               className={`px-2.5 py-1 transition-colors ${agentMode === "plan" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
               title="Plan first — the assistant proposes a plan and waits for your approval before creating, changing, or sending anything."
@@ -1316,6 +1317,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
             </button>
             <button
               type="button"
+              aria-pressed={agentMode === "act"}
               onClick={(e) => { e.stopPropagation(); setAgentMode("act"); }}
               className={`px-2.5 py-1 transition-colors ${agentMode === "act" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
               title="Auto — the assistant acts on your request immediately without asking."

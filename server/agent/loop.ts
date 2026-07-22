@@ -181,6 +181,15 @@ export async function runAgent(
       // content is already in history, so re-request to let the model continue.
       if (response.stop_reason === "pause_turn") {
         logAgent({ level: "debug", runId, iteration: iterations, message: "Turn paused (server tool) — continuing" });
+        // Record the pause so the persisted run timeline has no gaps.
+        await recordAgentStep({
+          runId,
+          iteration: iterations,
+          assistantMessage: textContent,
+          stopReason: "pause_turn",
+          tokensUsed,
+          durationMs: iterDuration,
+        });
         continue;
       }
 
