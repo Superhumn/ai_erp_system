@@ -114,27 +114,36 @@ export const codeRouter = router({
         status: "running",
       });
 
-      // Run the code
-      const result = await executeCodeSandboxed(input.code, input.language);
+      try {
+        // Run the code. executeCodeSandboxed reports an explicit status so we
+        // don't have to infer timeout vs. failure from the exit code.
+        const result = await executeCodeSandboxed(input.code, input.language);
 
-      // Update execution record with results
-      const status = result.exitCode === 0 ? "completed" : result.exitCode === 137 ? "timeout" : "failed";
-      await db.updateCodeExecution(exec.id, {
-        output: result.output,
-        errorOutput: result.errorOutput,
-        exitCode: result.exitCode,
-        executionTimeMs: result.executionTimeMs,
-        status,
-      });
+        await db.updateCodeExecution(exec.id, {
+          output: result.output,
+          errorOutput: result.errorOutput,
+          exitCode: result.exitCode,
+          executionTimeMs: result.executionTimeMs,
+          status: result.status,
+        });
 
-      return {
-        id: exec.id,
-        output: result.output,
-        errorOutput: result.errorOutput,
-        exitCode: result.exitCode,
-        executionTimeMs: result.executionTimeMs,
-        status,
-      };
+        return {
+          id: exec.id,
+          output: result.output,
+          errorOutput: result.errorOutput,
+          exitCode: result.exitCode,
+          executionTimeMs: result.executionTimeMs,
+          status: result.status,
+        };
+      } catch (err) {
+        // Never leave the record stuck in "running" (e.g. temp-dir creation or
+        // interpreter-spawn setup throwing before the run completes).
+        await db.updateCodeExecution(exec.id, {
+          status: "failed",
+          errorOutput: err instanceof Error ? err.message : String(err),
+        }).catch(() => {});
+        throw err;
+      }
     }),
 
   executions: adminProcedure

@@ -170,11 +170,14 @@ async function unshareAvailable(): Promise<boolean> {
   return _unshareAvailable;
 }
 
+export type CodeExecutionStatus = "completed" | "failed" | "timeout";
+
 export async function executeCodeSandboxed(code: string, language: string): Promise<{
   output: string;
   errorOutput: string;
   exitCode: number;
   executionTimeMs: number;
+  status: CodeExecutionStatus;
 }> {
   const { spawn } = await import("child_process");
 
@@ -194,6 +197,7 @@ export async function executeCodeSandboxed(code: string, language: string): Prom
         "Code execution is disabled on this deployment. An administrator must set CODE_EXEC_ENABLED=true to enable it (runs code on the server host).",
       exitCode: 1,
       executionTimeMs: 0,
+      status: "failed",
     };
   }
 
@@ -204,6 +208,7 @@ export async function executeCodeSandboxed(code: string, language: string): Prom
       errorOutput: `Unsupported language for execution: ${language}. Supported: ${Object.keys(langConfig).join(", ")}`,
       exitCode: 1,
       executionTimeMs: 0,
+      status: "failed",
     };
   }
 
@@ -295,11 +300,20 @@ export async function executeCodeSandboxed(code: string, language: string): Prom
         let errorOutput = stderr.slice(0, 100000);
         if (timedOut) errorOutput += `\n[Killed: exceeded ${TIMEOUT_MS / 1000}s time limit]`;
         else if (overflow) errorOutput += "\n[Output truncated]";
+        // Report an explicit status so callers don't have to reverse-engineer
+        // the kill reason from the exit code (timeout vs. output-overflow both
+        // exit 137).
+        const status: CodeExecutionStatus = timedOut
+          ? "timeout"
+          : (overflow || (exitCode ?? 1) !== 0)
+            ? "failed"
+            : "completed";
         resolve({
           output: stdout.slice(0, 100000),
           errorOutput,
           exitCode: (timedOut || overflow) ? 137 : (exitCode ?? 1),
           executionTimeMs,
+          status,
         });
       });
 
@@ -311,6 +325,7 @@ export async function executeCodeSandboxed(code: string, language: string): Prom
           errorOutput: `Failed to execute: ${err.message}`,
           exitCode: 1,
           executionTimeMs,
+          status: "failed",
         });
       });
     });
