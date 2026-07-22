@@ -122,6 +122,15 @@ describe("executeConciergeErrand", () => {
     expect(processAIAgentRequest).not.toHaveBeenCalled();
   });
 
+  it("fails cleanly when taskData is valid JSON but not an object", async () => {
+    for (const raw of ["null", "[]", "42", '"a string"']) {
+      const result = await executeConciergeErrand({ id: 1, taskType: "concierge_errand", taskData: raw } as any);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("expected a JSON object");
+    }
+    expect(processAIAgentRequest).not.toHaveBeenCalled();
+  });
+
   it("refuses to execute an errand with no goal", async () => {
     const { goal, ...noGoal } = validData;
     const result = await executeConciergeErrand(taskWith(noGoal));

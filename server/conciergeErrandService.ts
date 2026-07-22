@@ -50,7 +50,13 @@ export interface ErrandExecutionResult {
 export async function executeConciergeErrand(task: AiAgentTask): Promise<ErrandExecutionResult> {
   let parsed: ConciergeErrandData;
   try {
-    parsed = JSON.parse(task.taskData);
+    const raw = JSON.parse(task.taskData);
+    // JSON.parse can legally return null/array/primitive — guard before
+    // destructuring so a malformed row fails cleanly instead of 500-ing.
+    if (raw == null || typeof raw !== "object" || Array.isArray(raw)) {
+      return { success: false, error: "Invalid errand data: expected a JSON object" };
+    }
+    parsed = raw;
   } catch (e: any) {
     return { success: false, error: `Invalid errand data: ${e.message}` };
   }
