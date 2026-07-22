@@ -153,17 +153,28 @@ function wantsNetworkIsolation(): boolean {
   return ENV.codeExecNetworkIsolation;
 }
 
-let _unshareAvailable: boolean | null = null;
-async function unshareAvailable(): Promise<boolean> {
-  if (_unshareAvailable !== null) return _unshareAvailable;
+// Isolation args used both for the real capability probe and the actual run,
+// so the probe tests exactly what execution will do.
+const NET_ISOLATION_ARGS = ["--net", "--map-root-user"];
+
+let _canNetworkIsolate: boolean | null = null;
+/**
+ * Whether this host can actually create the network-less namespace we use.
+ * `unshare --version` succeeding is not enough — a container/kernel can allow
+ * the binary while forbidding unprivileged `--net --map-root-user`. So probe
+ * with the real flags (running `true` inside the namespace); the result is
+ * cached since kernel capabilities don't change within a process.
+ */
+async function canNetworkIsolate(): Promise<boolean> {
+  if (_canNetworkIsolate !== null) return _canNetworkIsolate;
   try {
     const { spawnSync } = await import("child_process");
-    const res = spawnSync("unshare", ["--version"], { timeout: 2000 });
-    _unshareAvailable = res.status === 0;
+    const res = spawnSync("unshare", [...NET_ISOLATION_ARGS, "--", "true"], { timeout: 2000 });
+    _canNetworkIsolate = res.status === 0;
   } catch {
-    _unshareAvailable = false;
+    _canNetworkIsolate = false;
   }
-  return _unshareAvailable;
+  return _canNetworkIsolate;
 }
 
 export type CodeExecutionStatus = "completed" | "failed" | "timeout";
@@ -273,15 +284,28 @@ export async function executeCodeSandboxed(code: string, language: string): Prom
     };
 
     // Optionally drop the process into its own network namespace so executed
-    // code cannot reach the network. Best-effort: only if the operator opted in
-    // AND `unshare` is present; otherwise run without it.
+    // code cannot reach the network. When the operator has opted in we FAIL
+    // CLOSED: if the host can't actually provide the namespace we refuse to run
+    // rather than silently execute with network access (which would defeat the
+    // point of enabling isolation).
     let cmd = interpreter.cmd;
     let cmdArgs = interpreter.args;
-    if (wantsNetworkIsolation() && (await unshareAvailable())) {
-      // --map-root-user lets this work without host privileges (user namespace);
-      // --net gives an isolated, network-less namespace.
-      cmdArgs = ["--net", "--map-root-user", "--", cmd, ...cmdArgs];
-      cmd = "unshare";
+    if (wantsNetworkIsolation()) {
+      if (await canNetworkIsolate()) {
+        // --map-root-user lets this work without host privileges (user
+        // namespace); --net gives an isolated, network-less namespace.
+        cmdArgs = [...NET_ISOLATION_ARGS, "--", cmd, ...cmdArgs];
+        cmd = "unshare";
+      } else {
+        return {
+          output: "",
+          errorOutput:
+            "Network isolation is enabled (CODE_EXEC_NETWORK_ISOLATION) but this host can't create an unprivileged network namespace (`unshare --net --map-root-user`). Refusing to run without the requested isolation — fix the host/container capabilities or unset the flag.",
+          exitCode: 1,
+          executionTimeMs: 0,
+          status: "failed",
+        };
+      }
     }
 
     return await new Promise((resolve) => {
