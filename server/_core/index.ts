@@ -1723,8 +1723,11 @@ async function startServer() {
                 uploadedBy: room.ownerId,
                 allowDelete: false,
               });
-              if (recon.foldersCreated || recon.filesCreated) {
-                console.log(`[Data Room Sync] Room ${room.id}: +${recon.foldersCreated} folders / +${recon.filesCreated} files`);
+              if (recon.foldersCreated || recon.filesCreated || recon.foldersUpdated || recon.filesUpdated) {
+                console.log(
+                  `[Data Room Sync] Room ${room.id}: +${recon.foldersCreated} folders / +${recon.filesCreated} files, ` +
+                  `~${recon.foldersUpdated} folders / ~${recon.filesUpdated} files updated`,
+                );
               }
               await db.updateDataRoom(room.id, { lastSyncedAt: new Date() });
             } catch (roomErr) {

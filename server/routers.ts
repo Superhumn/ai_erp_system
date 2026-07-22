@@ -14471,13 +14471,16 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
         console.log(
           `[DataRoom] Drive sync for room ${input.dataRoomId}: found ${recon.foldersFound} folders / ${recon.filesFound} files; ` +
           `created ${recon.foldersCreated} folders / ${recon.filesCreated} files; ` +
+          `updated ${recon.foldersUpdated} folders / ${recon.filesUpdated} files; ` +
           `removed ${recon.foldersRemoved} folders / ${recon.filesRemoved} files; ${recon.filesFailed} file errors.`
         );
 
         return {
           totalSynced: recon.filesCreated,
           foldersCreated: recon.foldersCreated,
+          foldersUpdated: recon.foldersUpdated,
           filesCreated: recon.filesCreated,
+          filesUpdated: recon.filesUpdated,
           filesRemoved: recon.filesRemoved,
           foldersRemoved: recon.foldersRemoved,
           filesFound: recon.filesFound,

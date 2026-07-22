@@ -380,7 +380,8 @@ export default function DataRoomDetail() {
       } else {
         toast.success(
           `Synced ${data.filesCreated} files and ${data.foldersCreated} folders from Google Drive${where}` +
-          (data.filesRemoved ? `, removed ${data.filesRemoved} deleted in Drive` : '') +
+          ((data.filesUpdated || data.foldersUpdated) ? `, updated ${(data.filesUpdated ?? 0) + (data.foldersUpdated ?? 0)}` : '') +
+          ((data.filesRemoved || data.foldersRemoved) ? `, removed ${(data.filesRemoved ?? 0) + (data.foldersRemoved ?? 0)} deleted in Drive` : '') +
           (data.filesFailed ? ` (${data.filesFailed} file(s) failed)` : '')
         );
       }
