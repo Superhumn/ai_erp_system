@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -45,6 +45,8 @@ import { formatCurrency } from "@/lib/format";
 import { getStatusColor } from "@/lib/statusColors";
 import WhatsAppDrawer from "@/components/WhatsAppDrawer";
 import LinkContactDialog from "@/components/LinkContactDialog";
+import PurchaseOrderDetailSheet from "./PurchaseOrderDetailSheet";
+import { useSearch, useLocation } from "wouter";
 
 type LineItem = {
   productId?: number;
@@ -62,6 +64,22 @@ export default function PurchaseOrders() {
   const [textInput, setTextInput] = useState("");
   const [activeAction, setActiveAction] = useState<'draft' | 'email' | null>(null);
   const [deletePOId, setDeletePOId] = useState<number | null>(null);
+  const [detailPoId, setDetailPoId] = useState<number | null>(null);
+
+  // Deep-link support: /operations/purchase-orders?po=<id> opens that PO's
+  // detail drawer (used by status-change notifications). Depends on the search
+  // string so it also fires on in-app navigation that only changes the query,
+  // not just on initial mount.
+  const locationSearch = useSearch();
+  const [, navigate] = useLocation();
+  useEffect(() => {
+    // Sync the drawer to the ?po=<id> param: open it for a valid id, and close it
+    // when the param is removed/invalid (e.g. navigating back to the plain list).
+    // Row clicks don't change the query string, so they aren't affected by this.
+    const po = new URLSearchParams(locationSearch).get("po");
+    const id = po ? parseInt(po, 10) : NaN;
+    setDetailPoId(Number.isFinite(id) ? id : null);
+  }, [locationSearch]);
   const [chatTarget, setChatTarget] = useState<{ contactId: number; whatsappNumber: string; contactName?: string; subtitle?: string } | null>(null);
   const [linkTarget, setLinkTarget] = useState<{ vendorId: number; vendorName: string; vendorPhone?: string | null; poNumber: string } | null>(null);
   const [poPreview, setPoPreview] = useState<{
@@ -95,12 +113,12 @@ export default function PurchaseOrders() {
   const utils = trpc.useUtils();
 
   const poIds = (purchaseOrders || []).map((po) => po.id);
-  const { data: invoiceCounts } = trpc.purchaseOrders.parsedInvoiceCounts.useQuery(
+  const { data: documentCounts } = trpc.purchaseOrders.documentCounts.useQuery(
     { purchaseOrderIds: poIds },
     { enabled: poIds.length > 0 }
   );
-  const invoiceCountMap = new Map<number, number>(
-    (invoiceCounts || []).map((c) => [c.purchaseOrderId, c.count])
+  const documentCountMap = new Map<number, number>(
+    (documentCounts || []).map((c) => [c.purchaseOrderId, c.count])
   );
 
   const resetForm = () => {
@@ -487,9 +505,9 @@ export default function PurchaseOrders() {
           <DialogContent>
             <form onSubmit={handleSubmit}>
               <DialogHeader>
-                <DialogTitle>Create PO from Text</DialogTitle>
+                <DialogTitle>Create Purchase Order</DialogTitle>
                 <DialogDescription>
-                  Describe what you want to order in plain text, and we'll create a PO for you.
+                  Select a vendor (or create a new one), add line items, and save. New vendors are created on the fly.
                 </DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">
@@ -706,25 +724,48 @@ export default function PurchaseOrders() {
                   <TableHead>Status</TableHead>
                   <TableHead>Order Date</TableHead>
                   <TableHead>Expected Date</TableHead>
-                  <TableHead className="text-right">Items Count</TableHead>
-                  <TableHead className="text-right">Invoices</TableHead>
+                  <TableHead className="text-right">Documents</TableHead>
                   <TableHead>Notes</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredPOs.map((po) => {
-                  const vendor = vendors?.find((v) => v.id === po.vendorId);
+                  // Prefer the server-joined vendor (always present) and only fall
+                  // back to the client vendor list, then to the id, so the real
+                  // name shows even when the vendor isn't in the loaded list.
+                  const vendor = po.vendor ?? vendors?.find((v) => v.id === po.vendorId);
+                  // Server join makes po.vendor.name essentially always present; if a
+                  // vendor is somehow unresolvable, show a neutral label rather than
+                  // leaking a raw "Vendor #<id>".
+                  const vendorName = vendor?.name || (po.vendorId ? "Unknown vendor" : "-");
                   return (
-                    <TableRow key={po.id}>
-                      <TableCell className="font-mono">{po.poNumber}</TableCell>
-                      <TableCell className="font-medium">
-                        {vendor?.name || (po.vendorId ? `Vendor #${po.vendorId}` : "-")}
+                    <TableRow
+                      key={po.id}
+                      className="cursor-pointer"
+                      onClick={() => setDetailPoId(po.id)}
+                    >
+                      {/* The PO number is a real <button> so keyboard / screen-reader
+                          users get a proper control; the row onClick is just a
+                          mouse convenience. role/tabIndex on the <tr> itself would
+                          break table semantics for assistive tech. */}
+                      <TableCell className="font-mono">
+                        <button
+                          type="button"
+                          className="text-primary underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDetailPoId(po.id);
+                          }}
+                        >
+                          {po.poNumber}
+                        </button>
                       </TableCell>
+                      <TableCell className="font-medium">{vendorName}</TableCell>
                       <TableCell className="text-right font-mono">
                         {formatCurrency(po.totalAmount)}
                       </TableCell>
-                      <TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
                         <Select
                           value={po.status}
                           onValueChange={(value) => {
@@ -755,12 +796,9 @@ export default function PurchaseOrders() {
                         {po.expectedDate ? format(new Date(po.expectedDate), "MMM d, yyyy") : "-"}
                       </TableCell>
                       <TableCell className="text-right">
-                        {(po as any).items?.length ?? "-"}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {invoiceCountMap.get(po.id) ? (
+                        {documentCountMap.get(po.id) ? (
                           <Badge variant="outline" className="font-mono">
-                            {invoiceCountMap.get(po.id)}
+                            {documentCountMap.get(po.id)}
                           </Badge>
                         ) : (
                           <span className="text-muted-foreground">-</span>
@@ -769,7 +807,7 @@ export default function PurchaseOrders() {
                       <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
                         {po.notes || "-"}
                       </TableCell>
-                      <TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center gap-1">
                           <Button
                             variant="ghost"
@@ -829,6 +867,23 @@ export default function PurchaseOrders() {
           )}
         </CardContent>
       </Card>
+
+      {/* PO detail drawer */}
+      <PurchaseOrderDetailSheet
+        poId={detailPoId}
+        open={detailPoId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDetailPoId(null);
+            // Drop the ?po=<id> deep-link param on close so the URL stays in sync
+            // and the drawer doesn't reopen on refresh / when the link is shared.
+            if (new URLSearchParams(locationSearch).has("po")) {
+              navigate(window.location.pathname, { replace: true });
+            }
+          }
+        }}
+        onChanged={() => utils.purchaseOrders.list.invalidate()}
+      />
 
       {/* Delete PO confirmation */}
       <Dialog open={deletePOId !== null} onOpenChange={(open) => { if (!open) setDeletePOId(null); }}>
