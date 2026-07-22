@@ -309,7 +309,7 @@ async function importDriveFiles(opts: {
   forcedTypes: Map<string, string> | null;
   onProgress?: (p: { results: DriveSyncResult[]; totalSheets: number; processedSheets: number; currentFile?: string }) => Promise<void> | void;
 }): Promise<{ results: DriveSyncResult[]; totalSheets: number }> {
-  const { userId, accessToken, forcedTypes, onProgress } = opts;
+  const { accessToken, forcedTypes, onProgress } = opts;
   const results: DriveSyncResult[] = [];
 
   // 1. List all Google Sheets in Drive
