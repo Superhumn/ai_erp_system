@@ -312,7 +312,7 @@ async function createMeetingTaskSuggestion(args: {
   signals: string[];
 }): Promise<MeetingExtractionOutcome> {
   const existing = await db
-    .findMeetingTaskSuggestionByExternalId?.(args.externalId)
+    .findMeetingTaskSuggestionByExternalId(args.externalId)
     .catch(() => null);
   if (existing) return { kind: "deduped", existingTaskId: existing.id };
 

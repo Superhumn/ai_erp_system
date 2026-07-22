@@ -8536,19 +8536,21 @@ export async function findMeetingTaskSuggestionByExternalId(externalId: string) 
   const db = await getDb();
   if (!db) return null;
   // Prefilter in SQL on the raw JSON text so we don't load every "query" task
-  // into memory as the table grows. Match the exact serialized key/value
-  // fragment (`"sourceExternalId":"<id>"`, as JSON.stringify emits it) rather
-  // than a bare substring, so unrelated tasks that merely mention the id
-  // elsewhere don't come back. The exact-equality check below is still the
-  // source of truth and rejects any false positives.
-  const escaped = externalId.replace(/[\\%_]/g, (c) => `\\${c}`);
+  // into memory as the table grows. Build the exact serialized fragment the
+  // same way JSON.stringify wrote it — `"sourceExternalId":<json>` where <json>
+  // is JSON.stringify(externalId) — so an id containing quotes/backslashes
+  // still matches the stored (escaped) text. Then LIKE-escape the whole
+  // fragment. The exact-equality check below is still the source of truth and
+  // rejects any false positives.
+  const fragment = `"sourceExternalId":${JSON.stringify(externalId)}`;
+  const likeEscaped = fragment.replace(/[\\%_]/g, (c) => `\\${c}`);
   // Bound the scan: newest-first + a small limit keeps the lookup cheap even
   // if the fragment somehow appears in several rows. Any match is sufficient
   // for dedup / honoring a prior rejection.
   const rows = await db.select().from(aiAgentTasks)
     .where(and(
-      eq(aiAgentTasks.taskType, "query" as any),
-      like(aiAgentTasks.taskData, `%"sourceExternalId":"${escaped}"%`),
+      eq(aiAgentTasks.taskType, "query"),
+      like(aiAgentTasks.taskData, `%${likeEscaped}%`),
     ))
     .orderBy(desc(aiAgentTasks.createdAt))
     .limit(25);
