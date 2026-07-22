@@ -25,6 +25,7 @@ import { parseNoteWithLLM } from "./notesParser";
 import type { NoteAppliedItem, NoteParseResult, NoteParsedItem } from "@shared/notes";
 import { employeePortalRouter } from "./routers/employeePortal";
 import { parseCopackerInventoryEmail, applyCopackerInventoryUpdate } from "./copackerEmailExtractor";
+import { importCandidateFromLinkedIn, normalizeLinkedInUrl } from "./linkedinCandidateService";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 import { parseInvoiceText } from "./_core/invoiceTextParser";
 import { parseEntityText } from "./_core/universalTextParser";
@@ -6026,6 +6027,36 @@ ONLY return the JSON array, no other text.`;
         const { months, expenseAccounts } = parseProfitAndLossReport(result.data);
 
         return { connected: true, months, expenseAccounts };
+      }),
+  }),
+
+  // ============================================
+  // RECRUITING
+  // ============================================
+  recruiting: router({
+    // Paste a LinkedIn profile URL and pull structured candidate info to
+    // pre-fill the Add Candidate form. Best-effort: LinkedIn frequently walls
+    // anonymous fetches, in which case we recover the name and flag the rest.
+    importFromLinkedIn: protectedProcedure
+      .input(z.object({ url: z.string().min(1) }))
+      .mutation(async ({ input }) => {
+        if (!normalizeLinkedInUrl(input.url)) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Please enter a valid LinkedIn profile URL (linkedin.com).",
+          });
+        }
+        try {
+          return await importCandidateFromLinkedIn(input.url);
+        } catch (err) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message:
+              err instanceof Error
+                ? err.message
+                : "Could not import from LinkedIn.",
+          });
+        }
       }),
   }),
 
