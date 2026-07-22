@@ -766,8 +766,12 @@ const procurementProcessor: WorkflowProcessor = {
                 productId: item.productId,
                 description: rm?.name || `Material #${item.rawMaterialId}`,
                 quantity: item.quantity,
-                unitPrice: item.unitPrice,
-                totalAmount: item.totalAmount,
+                // Coalesce nullable source columns: purchaseOrderItems.unitPrice
+                // and .totalAmount are NOT NULL, but the suggestedPoItems columns
+                // are nullable (e.g. legacy rows predating the totalAmount write
+                // fix). "0" keeps this consistent with the subtotal calc above.
+                unitPrice: item.unitPrice || "0",
+                totalAmount: item.totalAmount || "0",
               })
               .$returningId();
 
