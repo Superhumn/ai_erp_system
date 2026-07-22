@@ -26,6 +26,7 @@ import type { NoteAppliedItem, NoteParseResult, NoteParsedItem } from "@shared/n
 import { employeePortalRouter } from "./routers/employeePortal";
 import { codeRouter } from "./routers/code";
 import { parseCopackerInventoryEmail, applyCopackerInventoryUpdate } from "./copackerEmailExtractor";
+import { importCandidateFromLinkedIn, normalizeLinkedInUrl } from "./linkedinCandidateService";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 import { parseInvoiceText } from "./_core/invoiceTextParser";
 import { parseEntityText } from "./_core/universalTextParser";
@@ -6086,6 +6087,37 @@ ONLY return the JSON array, no other text.`;
         const { months, expenseAccounts } = parseProfitAndLossReport(result.data);
 
         return { connected: true, months, expenseAccounts };
+      }),
+  }),
+
+  // ============================================
+  // RECRUITING
+  // ============================================
+  recruiting: router({
+    // Paste a LinkedIn profile URL and pull structured candidate info to
+    // pre-fill the Add Candidate form. Best-effort: LinkedIn frequently walls
+    // anonymous fetches, in which case we recover the name and flag the rest.
+    importFromLinkedIn: protectedProcedure
+      .input(z.object({ url: z.string().min(1) }))
+      .mutation(async ({ input }) => {
+        const normalized = normalizeLinkedInUrl(input.url);
+        if (!normalized) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Please enter a valid LinkedIn profile URL, e.g. https://www.linkedin.com/in/username.",
+          });
+        }
+        try {
+          return await importCandidateFromLinkedIn(normalized);
+        } catch (err) {
+          // Log the real error server-side; return a generic message so we
+          // don't leak internal/LLM-provider details to the client.
+          console.error("recruiting.importFromLinkedIn failed:", err);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Could not import from LinkedIn right now. Please try again or enter the details manually.",
+          });
+        }
       }),
   }),
 
