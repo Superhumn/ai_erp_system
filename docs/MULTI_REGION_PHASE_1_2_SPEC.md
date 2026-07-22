@@ -28,10 +28,11 @@ UI for entity management beyond a minimal admin list.
 
 ## 2. Schema changes (`drizzle/schema.ts`)
 
-> **FK convention:** this codebase declares scope FKs as plain `int(...)` columns **without**
-> Drizzle `.references(...)` — see the existing `companyId` (`:131,152,177`) and `parentCompanyId`
-> (`:209`). The `regionId`/`companyId` columns below follow that same convention, so `// FK -> …`
-> denotes a *logical* foreign key consistent with current code, not a `.references()` call.
+> **FK convention:** the schema **mixes** two styles — ~57 plain `int("companyId")` columns
+> (e.g. `quickbooksAccounts` :131, `parentCompanyId` :209) and ~20 that add
+> `.references(() => companies.id)`. Crucially, the **core scoped business tables use
+> `.references()`** (`customers` :253, `invoices` :325, `orders`/`inventory` :462). The new scope
+> FKs below therefore adopt that core-table style and include `.references(...)` explicitly.
 
 ### 2.1 New `regions` table
 ```
@@ -50,7 +51,7 @@ export const regions = mysqlTable("regions", {
 `companies` today has `country` + `taxId` but **no** `currency`/`locale`/`timezone`/`regionId`.
 Add:
 ```
-regionId: int("regionId"),                                 // FK -> regions.id
+regionId: int("regionId").references(() => regions.id),    // home region
 functionalCurrency: varchar("functionalCurrency", { length: 3 }).notNull().default("USD"),
 locale: varchar("locale", { length: 10 }).notNull().default("en-US"),
 timezone: varchar("timezone", { length: 64 }).notNull().default("America/New_York"),
@@ -60,7 +61,7 @@ taxRegime: mysqlEnum("taxRegime", ["vat", "gst", "sales_tax", "none"]).default("
 
 ### 2.3 Extend `users` (`drizzle/schema.ts:9`)
 ```
-companyId: int("companyId"),                               // FK -> companies.id (home entity)
+companyId: int("companyId").references(() => companies.id),  // home entity
 regionScope: mysqlEnum("regionScope", ["entity", "region", "global"]).default("entity").notNull(),
 ```
 - `entity` — sees only their home entity.
