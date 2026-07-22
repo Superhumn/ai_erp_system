@@ -128,7 +128,20 @@ Generate a professional, concise email requesting a quote.`;
   });
 
   const content = aiEmail.choices[0].message.content;
-  return JSON.parse(typeof content === "string" ? content : "{}");
+  const parsed = JSON.parse(typeof content === "string" ? content : "{}");
+  // Validate the shape so a malformed/partial model response fails this vendor
+  // (recorded as a per-vendor failure by the caller) rather than queuing an
+  // email with a null/undefined subject or body.
+  if (
+    !parsed ||
+    typeof parsed.subject !== "string" ||
+    !parsed.subject.trim() ||
+    typeof parsed.body !== "string" ||
+    !parsed.body.trim()
+  ) {
+    throw new Error("RFQ email generation returned malformed content (missing subject/body)");
+  }
+  return { subject: parsed.subject, body: parsed.body };
 }
 
 // ============================================
@@ -3092,6 +3105,16 @@ Return vendor IDs in order of preference.`;
           console.error(`[Procurement] Failed to persist RFQ email for vendor ${vendor?.id}:`, err);
           itemsFailed++;
         }
+      }
+
+      // If no emails were successfully generated and queued for any vendor, fail
+      // the step instead of marking the RFQ "sent" with nothing queued (which
+      // would make downstream monitoring report emails that don't exist).
+      if (emailResults.length === 0) {
+        return {
+          success: false,
+          error: "No RFQ emails could be generated or queued for any vendor.",
+        };
       }
 
       // Update RFQ status to sent
