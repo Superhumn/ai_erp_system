@@ -949,7 +949,7 @@ export async function importPurchaseOrder(
     if (markAsReceived) {
       // Batch load all raw materials instead of N+1
       const rmIds = matchedItems.map(i => i.rawMaterialId).filter((id): id is number => id != null);
-      const materialsToUpdate = rmIds.length > 0 ? await Promise.all(rmIds.map(id => db.getRawMaterialById(id))) : [];
+      const materialsToUpdate = rmIds.length > 0 ? await db.getRawMaterialsByIds(rmIds) : [];
       const materialMap = new Map(materialsToUpdate.filter(Boolean).map(m => [m!.id, m!]));
 
       for (const item of matchedItems) {
@@ -1215,7 +1215,7 @@ export async function importVendorInvoice(
     if (markAsReceived) {
       // Batch load all raw materials instead of N+1
       const rmIds = matchedItems.map(i => i.rawMaterialId).filter((id): id is number => id != null);
-      const materialsToUpdate = rmIds.length > 0 ? await Promise.all(rmIds.map(id => db.getRawMaterialById(id))) : [];
+      const materialsToUpdate = rmIds.length > 0 ? await db.getRawMaterialsByIds(rmIds) : [];
       const materialMap = new Map(materialsToUpdate.filter(Boolean).map(m => [m!.id, m!]));
 
       for (const item of matchedItems) {
