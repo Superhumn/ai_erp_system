@@ -626,9 +626,11 @@ export const appRouter = router({
         let skipped = 0;
 
         // Bulk-load existing customers by Shopify ID to avoid a lookup per record.
-        const shopifyIds = shopifyCustomers.map((sc: any) => sc.id.toString());
+        const shopifyIds = [...new Set(shopifyCustomers.map((sc: any) => sc.id.toString()))] as string[];
         const existingByShopifyId = new Map(
-          (await db.getCustomersByShopifyIds(shopifyIds)).map((c) => [c.shopifyCustomerId, c]),
+          (await db.getCustomersByShopifyIds(shopifyIds))
+            .filter((c) => c.shopifyCustomerId != null)
+            .map((c) => [c.shopifyCustomerId, c]),
         );
 
         for (const sc of shopifyCustomers) {
@@ -1941,7 +1943,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
               await db.notifyUsersOfEvent({
                 type: 'inventory_low',
                 title: `Low Stock Alert: ${product?.name || 'Product'}`,
-                message: `Inventory for ${product?.name} is at ${qty} units, below reorder level of ${reorderLevel}`,
+                message: `Inventory for ${product?.name || 'Product'} is at ${qty} units, below reorder level of ${reorderLevel}`,
                 entityType: 'inventory',
                 entityId: item.id,
                 severity: 'warning',
