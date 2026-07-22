@@ -988,8 +988,10 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined;
 
         // Require a real, non-empty string name — reject objects/numbers/blank.
+        // (Guarding `raw` here also narrows it to non-null for the accesses below;
+        // a null `raw` already yields an empty name and returns.)
         const name = clean(raw?.name);
-        if (!name) {
+        if (!raw || !name) {
           return { found: false as const, vendor: null, sources: [] as string[], confidence: "low" as const };
         }
 
