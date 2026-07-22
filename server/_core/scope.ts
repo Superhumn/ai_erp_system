@@ -12,11 +12,12 @@
 
 export type ScopeMode = "entity" | "region" | "global";
 
-export type Scope = {
-  mode: ScopeMode;
-  /** Allow-listed company ids, or "all" for unrestricted (global) access. */
-  companyIds: number[] | "all";
-};
+// Discriminated union so illegal states are unrepresentable: only global scope may be "all",
+// and entity/region scopes always carry a concrete allow-list. This prevents a
+// `{ mode: "entity", companyIds: "all" }` mistake from silently bypassing scoping.
+export type Scope =
+  | { mode: "global"; companyIds: "all" }
+  | { mode: "entity" | "region"; companyIds: number[] };
 
 export interface ScopeLookup {
   /** Region id of a company, or null/undefined if it has no region. */
