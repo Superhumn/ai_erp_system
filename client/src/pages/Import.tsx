@@ -822,6 +822,7 @@ export default function Import() {
   const handleImportSelections = (selections: { fileId: string; type: string }[]) => {
     setSyncState("syncing");
     setSyncResults([]);
+    setTotalSheets(0);
     setProcessedSheets(0);
     setCurrentFile(null);
     startSyncMutation.mutate({ selections } as any);

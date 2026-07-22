@@ -40,6 +40,11 @@ vi.mock("./db", () => ({
   }),
   getSyncLog: vi.fn(async (id: number) => syncLogStore.find((r) => r.id === id) ?? null),
   getSyncHistory: vi.fn(async () => [...syncLogStore].reverse()),
+  getPendingSyncLogs: vi.fn(async (integration: string, limit = 50) =>
+    [...syncLogStore]
+      .reverse()
+      .filter((r) => r.integration === integration && r.status === "pending")
+      .slice(0, limit)),
 }));
 
 function createAdminContext(): TrpcContext {
@@ -343,6 +348,21 @@ describe("Google Drive background import job", () => {
     (otherCtx.user as any).id = 999;
     const otherCaller = appRouter.createCaller(otherCtx);
     expect(await otherCaller.sheetsImport.getSyncStatus({ jobId })).toBeNull();
+  });
+
+  it("getSyncStatus fails closed for logs that aren't the caller's Drive job", async () => {
+    // A log from another integration with no owner in metadata must never leak.
+    syncLogStore.push({
+      id: 7,
+      integration: "shopify",
+      action: "product_sync",
+      status: "success",
+      createdAt: new Date(),
+      metadata: { results: [{ sheet: "secret", type: "products", imported: 5, errors: [] }] },
+    });
+
+    const caller = appRouter.createCaller(createAdminContext());
+    expect(await caller.sheetsImport.getSyncStatus({ jobId: 7 })).toBeNull();
   });
 
   it("getActiveSync reconnects to a still-running job on page load", async () => {

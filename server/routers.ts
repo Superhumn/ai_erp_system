@@ -5506,10 +5506,12 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
       .input(z.object({ jobId: z.number() }))
       .query(async ({ ctx, input }) => {
         const log = await db.getSyncLog(input.jobId);
-        if (!log) return null;
+        // Fail closed: only expose Google Drive import jobs owned by the caller.
+        // syncLogs has no userId column and other integrations write rows without
+        // metadata.userId, so a missing owner must be treated as "not yours".
+        if (!log || log.integration !== 'google_drive') return null;
         const meta = (log.metadata as any) || {};
-        // Only expose the caller's own jobs.
-        if (meta.userId != null && meta.userId !== ctx.user.id) return null;
+        if (meta.userId !== ctx.user.id) return null;
         const state: 'running' | 'done' | 'error' =
           meta.status === 'done' ? 'done'
           : meta.status === 'error' || log.status === 'error' ? 'error'
@@ -5531,10 +5533,12 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
     // reconnect to it on mount (after navigation / reload / tab close). Ignores
     // jobs older than an hour, which are treated as stale/abandoned.
     getActiveSync: protectedProcedure.query(async ({ ctx }) => {
-      const history = await db.getSyncHistory(20);
+      // Query pending google_drive jobs directly rather than scanning a global
+      // recency window — otherwise a burst of other sync logs could push the
+      // caller's running job out of view and break reconnection.
+      const pending = await db.getPendingSyncLogs('google_drive', 50);
       const oneHourAgo = Date.now() - 60 * 60 * 1000;
-      const active = history.find((log: any) => {
-        if (log.integration !== 'google_drive' || log.status !== 'pending') return false;
+      const active = pending.find((log: any) => {
         const meta = (log.metadata as any) || {};
         if (meta.userId !== ctx.user.id) return false;
         return new Date(log.createdAt).getTime() >= oneHourAgo;
@@ -5697,11 +5701,16 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
 
     // Get past Google Drive sync history so results persist across page reloads
     getSyncHistory: protectedProcedure.query(async ({ ctx }) => {
-      const history = await db.getSyncHistory(20);
-      // Filter to completed google_drive syncs only — a "pending" row is a
-      // background job still in progress (surfaced via getSyncStatus instead).
+      // Fetch a wider window then scope to the caller — these logs contain
+      // per-import details/results and must not leak across users. A "pending"
+      // row is a background job still in progress (surfaced via getSyncStatus).
+      const history = await db.getSyncHistory(100);
       return history
-        .filter((log: any) => log.integration === 'google_drive' && log.status !== 'pending')
+        .filter((log: any) =>
+          log.integration === 'google_drive' &&
+          log.status !== 'pending' &&
+          (log.metadata as any)?.userId === ctx.user.id)
+        .slice(0, 20)
         .map((log: any) => ({
           id: log.id,
           status: log.status,
