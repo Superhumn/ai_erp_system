@@ -65,6 +65,15 @@ export async function executeConciergeErrand(task: AiAgentTask): Promise<ErrandE
     return { success: false, error: "Errand is missing the submitting user context; refusing to execute" };
   }
 
+  // Tenancy comes from the immutable aiAgentTasks.companyId column, never the
+  // mutable taskData JSON. If taskData carries a companyId that disagrees with
+  // the row, treat it as tampering and refuse rather than risk cross-company
+  // execution.
+  if (parsed.companyId != null && task.companyId != null && Number(parsed.companyId) !== Number(task.companyId)) {
+    return { success: false, error: "Errand company mismatch between task row and taskData; refusing to execute" };
+  }
+  const companyId = task.companyId ?? parsed.companyId ?? undefined;
+
   // Act on behalf of the user who submitted the errand so user-scoped tools
   // (calendar, Gmail, etc.) resolve the right credentials. `executingErrand`
   // guards against the agent recursively planning a new errand mid-execution.
@@ -78,7 +87,7 @@ export async function executeConciergeErrand(task: AiAgentTask): Promise<ErrandE
     userId: parsed.submittedByUserId,
     userName: sanitizedName || "Concierge",
     userRole: typeof parsed.userRole === "string" && KNOWN_ROLES.has(parsed.userRole) ? parsed.userRole : "user",
-    companyId: parsed.companyId,
+    companyId,
     executingErrand: true,
   };
 

@@ -601,7 +601,7 @@ export default function ApprovalQueue() {
                             {r.summary && <p>{r.summary}</p>}
                             {Array.isArray(r.failedActions) && r.failedActions.length > 0 && (
                               <p className="mt-1 text-orange-700">
-                                {r.failedActions.length} step(s) could not be completed.
+                                {r.failedActions.length} action(s) could not be completed.
                               </p>
                             )}
                           </div>

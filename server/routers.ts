@@ -6458,25 +6458,40 @@ Be concise and helpful. Always give actionable guidance.`;
           if (!task) throw new TRPCError({ code: 'NOT_FOUND', message: 'Task not found' });
           
           // Validate JSON format
+          let parsedTaskData: any;
           try {
-            JSON.parse(input.taskData);
+            parsedTaskData = JSON.parse(input.taskData);
           } catch (e) {
-            throw new TRPCError({ 
-              code: 'BAD_REQUEST', 
-              message: 'Invalid JSON format in taskData' 
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'Invalid JSON format in taskData'
             });
           }
-          
+
           // Only allow updates on pending or approved tasks
           if (!['pending_approval', 'approved'].includes(task.status)) {
-            throw new TRPCError({ 
-              code: 'BAD_REQUEST', 
-              message: 'Can only update pending or approved tasks' 
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'Can only update pending or approved tasks'
             });
           }
-          
+
+          let taskDataToSave = input.taskData;
+          // Concierge errands execute under the original submitter's identity
+          // (stored in taskData). Those fields are immutable — preserve them from
+          // the original task so editing the plan can never change WHO it runs as,
+          // preventing identity spoofing via this admin endpoint.
+          if (task.taskType === 'concierge_errand') {
+            const original = JSON.parse(task.taskData || '{}');
+            parsedTaskData.submittedByUserId = original.submittedByUserId;
+            parsedTaskData.userName = original.userName;
+            parsedTaskData.userRole = original.userRole;
+            parsedTaskData.companyId = original.companyId;
+            taskDataToSave = JSON.stringify(parsedTaskData);
+          }
+
           await db.updateAiAgentTask(input.id, {
-            taskData: input.taskData,
+            taskData: taskDataToSave,
             aiReasoning: input.aiReasoning || task.aiReasoning || undefined,
           });
           

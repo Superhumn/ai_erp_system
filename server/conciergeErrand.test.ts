@@ -22,8 +22,15 @@ const validData = {
   companyId: 7,
 };
 
-const taskWith = (data: Record<string, any>) =>
-  ({ id: 1, taskType: "concierge_errand", taskData: JSON.stringify(data) }) as any;
+// The row's companyId column mirrors taskData by default (as plan_errand writes
+// it); pass a distinct `column` companyId to simulate tampered taskData.
+const taskWith = (data: Record<string, any>, columnCompanyId?: number | null) =>
+  ({
+    id: 1,
+    taskType: "concierge_errand",
+    companyId: columnCompanyId !== undefined ? columnCompanyId : (data.companyId ?? null),
+    taskData: JSON.stringify(data),
+  }) as any;
 
 describe("executeConciergeErrand", () => {
   beforeEach(() => {
@@ -88,6 +95,24 @@ describe("executeConciergeErrand", () => {
     const ctx = processAIAgentRequest.mock.calls[0][2];
     expect(ctx.userRole).toBe("user");
     expect(ctx.userName).not.toContain("\n");
+  });
+
+  it("scopes execution to the task row's companyId column, not taskData", async () => {
+    processAIAgentRequest.mockResolvedValue({ message: "done", actions: [] });
+
+    // taskData has no companyId; the authoritative value is the row column.
+    await executeConciergeErrand(taskWith({ ...validData, companyId: undefined }, 5));
+
+    const ctx = processAIAgentRequest.mock.calls[0][2];
+    expect(ctx.companyId).toBe(5);
+  });
+
+  it("refuses to execute when taskData companyId disagrees with the row (tamper guard)", async () => {
+    // taskData.companyId = 7 (validData) but the row column says 9.
+    const result = await executeConciergeErrand(taskWith(validData, 9));
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("company mismatch");
+    expect(processAIAgentRequest).not.toHaveBeenCalled();
   });
 
   it("fails cleanly when taskData is not valid JSON", async () => {
