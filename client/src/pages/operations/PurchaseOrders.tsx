@@ -46,6 +46,7 @@ import { getStatusColor } from "@/lib/statusColors";
 import WhatsAppDrawer from "@/components/WhatsAppDrawer";
 import LinkContactDialog from "@/components/LinkContactDialog";
 import PurchaseOrderDetailSheet from "./PurchaseOrderDetailSheet";
+import { useSearch } from "wouter";
 
 type LineItem = {
   productId?: number;
@@ -66,15 +67,17 @@ export default function PurchaseOrders() {
   const [detailPoId, setDetailPoId] = useState<number | null>(null);
 
   // Deep-link support: /operations/purchase-orders?po=<id> opens that PO's
-  // detail drawer (used by status-change notifications).
+  // detail drawer (used by status-change notifications). Depends on the search
+  // string so it also fires on in-app navigation that only changes the query,
+  // not just on initial mount.
+  const locationSearch = useSearch();
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const po = params.get("po");
+    const po = new URLSearchParams(locationSearch).get("po");
     if (po) {
       const id = parseInt(po, 10);
       if (Number.isFinite(id)) setDetailPoId(id);
     }
-  }, []);
+  }, [locationSearch]);
   const [chatTarget, setChatTarget] = useState<{ contactId: number; whatsappNumber: string; contactName?: string; subtitle?: string } | null>(null);
   const [linkTarget, setLinkTarget] = useState<{ vendorId: number; vendorName: string; vendorPhone?: string | null; poNumber: string } | null>(null);
   const [poPreview, setPoPreview] = useState<{

@@ -1616,6 +1616,23 @@ export async function setPurchaseOrderReceivedQuantities(
   // Per-item updates + the derived PO status change are one atomic unit so a
   // mid-way failure can't leave quantities updated but the status stale.
   return db.transaction(async (tx) => {
+    // Verify every provided item id actually belongs to this PO — otherwise a
+    // wrong/missing id would update nothing yet the mutation would "succeed",
+    // silently dropping the receipt.
+    const owned = new Set(
+      (
+        await tx
+          .select({ id: purchaseOrderItems.id })
+          .from(purchaseOrderItems)
+          .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId))
+      ).map((r) => r.id),
+    );
+    for (const r of clean) {
+      if (!owned.has(r.purchaseOrderItemId)) {
+        throw new Error(`Item ${r.purchaseOrderItemId} does not belong to this purchase order.`);
+      }
+    }
+
     for (const r of clean) {
       await tx
         .update(purchaseOrderItems)
@@ -1652,8 +1669,11 @@ export async function setPurchaseOrderReceivedQuantities(
     // set to 0) a PO previously marked received/partial must be walked back to
     // "confirmed" so it doesn't stay stuck at received; other statuses (sent /
     // confirmed) are left untouched when nothing has been received yet.
+    // Require at least one unit actually received before marking "received" so a
+    // degenerate line (e.g. ordered quantity 0) can't flip the PO to received
+    // when nothing was delivered.
     let status: string | undefined;
-    if (allReceived) status = "received";
+    if (allReceived && anyReceived) status = "received";
     else if (anyReceived) status = "partial";
     else if (current === "received" || current === "partial") status = "confirmed";
 
