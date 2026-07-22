@@ -61,6 +61,21 @@ function runStrict() {
     if (output.trim()) console.error(output.trim());
     process.exit(2);
   }
+  // A completed strict typecheck reports per-file diagnostics. A global,
+  // non-file diagnostic (e.g. "error TS5083: Cannot read file 'tsconfig.json'"
+  // or a missing type-definitions error) has no `file(line,col):` prefix, so
+  // parseErrors() would not count it — letting a broken config silently pass
+  // the ratchet with an empty counts map. Treat any such diagnostic as fatal.
+  const nonFileDiagnostic = output
+    .split("\n")
+    .find((l) => /error TS\d+/.test(l) && !/^[^()\s][^()]*?\(\d+,\d+\):\s+error\s/.test(l));
+  if (nonFileDiagnostic) {
+    console.error(
+      "Strict typecheck produced a non-file diagnostic, which indicates a tooling/config issue rather than a normal type error:",
+    );
+    console.error(nonFileDiagnostic.trim());
+    process.exit(2);
+  }
   return output;
 }
 
