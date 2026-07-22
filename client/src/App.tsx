@@ -82,6 +82,7 @@ const ReconciliationReport = lazy(() => import("./pages/operations/Reconciliatio
 const InventoryCosting = lazy(() => import("./pages/operations/InventoryCosting"));
 const VendorNegotiations = lazy(() => import("./pages/operations/VendorNegotiations"));
 const SupplierPortal = lazy(() => import("./pages/SupplierPortal"));
+const MaterialSupply = lazy(() => import("./pages/operations/MaterialSupply"));
 
 // EDI
 const EDIDashboard = lazy(() => import("./pages/edi/EDIDashboard"));
@@ -318,6 +319,7 @@ function Router() {
           <Route path="/operations/products/:id" component={ProductDetail} />
           <Route path="/operations/products" component={Products} />
           <Route path="/operations/inventory" component={Inventory} />
+          <Route path="/operations/material-supply" component={MaterialSupply} />
           <Route path="/operations/vendors" component={Vendors} />
           <Route path="/operations/purchase-orders" component={PurchaseOrders} />
           <Route path="/operations/shipments" component={Shipments} />

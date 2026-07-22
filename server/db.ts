@@ -189,6 +189,14 @@ import {
   pmMilestones, InsertPmMilestone,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
+import {
+  SAMPLE_MATERIAL_SUPPLY,
+  DEFAULT_MATERIAL_SUPPLY_PLANNING,
+  type MaterialSupplyOverview,
+  type MaterialSupplyCopacker,
+  type MaterialSupplyMaterial,
+  type MaterialSupplyInventoryLine,
+} from "../shared/materialSupply";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -1284,14 +1292,23 @@ export async function getPurchaseOrders(filters?: { companyId?: number; status?:
   if (filters?.status) conditions.push(eq(purchaseOrders.status, filters.status as any));
   if (filters?.vendorId) conditions.push(eq(purchaseOrders.vendorId, filters.vendorId));
 
+  const base = db
+    .select({ po: purchaseOrders, vendor: vendors })
+    .from(purchaseOrders)
+    .leftJoin(vendors, eq(purchaseOrders.vendorId, vendors.id));
+
   let query = conditions.length > 0
-    ? db.select().from(purchaseOrders).where(and(...conditions)).orderBy(desc(purchaseOrders.createdAt))
-    : db.select().from(purchaseOrders).orderBy(desc(purchaseOrders.createdAt));
+    ? base.where(and(...conditions)).orderBy(desc(purchaseOrders.createdAt))
+    : base.orderBy(desc(purchaseOrders.createdAt));
 
   if (filters?.limit) {
     query = query.limit(filters.limit) as typeof query;
   }
-  return query;
+
+  // Flatten PO columns to the top level (backward compatible) and nest the
+  // joined vendor so the UI can render `row.vendor?.name`.
+  const rows = await query;
+  return rows.map((r) => ({ ...r.po, vendor: r.vendor }));
 }
 
 export async function getPurchaseOrderById(id: number) {
@@ -2799,6 +2816,23 @@ export async function getInventoryByProductId(productId: number) {
   return result[0];
 }
 
+export async function getInventoryByProductAndWarehouse(productId: number, warehouseId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db
+    .select()
+    .from(inventory)
+    .where(and(eq(inventory.productId, productId), eq(inventory.warehouseId, warehouseId)))
+    .limit(1);
+  return result[0];
+}
+
+export async function getInventoryByProductIds(productIds: number[]) {
+  const db = await getDb();
+  if (!db || productIds.length === 0) return [];
+  return db.select().from(inventory).where(inArray(inventory.productId, productIds));
+}
+
 export async function updateInventoryQuantity(productId: number, warehouseId: number, quantityChange: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -4152,7 +4186,54 @@ export async function receivePurchaseOrderItems(
   return receiving;
 }
 
-// Consume materials for a work order
+/**
+ * Receive a purchase order's outstanding line items into raw-material inventory.
+ * Resolves each PO item's linked raw material and a target warehouse, then delegates
+ * to receivePurchaseOrderItems (which upserts inventory, logs transactions, and
+ * updates PO + shipment status). Only the not-yet-received quantity is taken, so this
+ * is safe to call more than once (e.g. on a freight delivery for the same PO).
+ */
+export async function receivePurchaseOrderIntoInventory(
+  purchaseOrderId: number,
+  opts: { warehouseId?: number; receivedBy?: number; shipmentId?: number } = {}
+): Promise<{ received: boolean; reason?: string; warehouseId?: number; itemCount?: number }> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Resolve a warehouse: explicit, else the first active one, else any.
+  let warehouseId = opts.warehouseId;
+  if (!warehouseId) {
+    const active = await getWarehouses({ status: "active" });
+    warehouseId = active[0]?.id ?? (await getWarehouses())[0]?.id;
+  }
+  if (!warehouseId) {
+    return { received: false, reason: "No warehouse configured to receive into" };
+  }
+
+  // getPurchaseOrderItems returns each item with its linked rawMaterial { id, unit }.
+  const items = await getPurchaseOrderItems(purchaseOrderId);
+  const toReceive: Array<{ purchaseOrderItemId: number; rawMaterialId?: number; quantity: number; unit: string }> = [];
+  for (const it of items as Array<any>) {
+    const ordered = parseFloat(it.quantity?.toString() || "0");
+    const already = parseFloat(it.receivedQuantity?.toString() || "0");
+    const outstanding = ordered - already;
+    if (outstanding <= 0) continue;
+    toReceive.push({
+      purchaseOrderItemId: it.id,
+      rawMaterialId: it.rawMaterial?.id ?? undefined,
+      quantity: outstanding,
+      unit: it.rawMaterial?.unit || "EA",
+    });
+  }
+
+  if (toReceive.length === 0) {
+    return { received: false, reason: "PO has no outstanding quantity to receive", warehouseId };
+  }
+
+  await receivePurchaseOrderItems(purchaseOrderId, warehouseId, toReceive, opts.receivedBy, opts.shipmentId);
+  return { received: true, warehouseId, itemCount: toReceive.length };
+}
+
 export async function consumeWorkOrderMaterials(workOrderId: number, performedBy?: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -4213,7 +4294,33 @@ export async function consumeWorkOrderMaterials(workOrderId: number, performedBy
 export async function getPurchaseOrderItems(purchaseOrderId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
+
+  // Resolve the linked raw material (via the purchaseOrderRawMaterials junction)
+  // so the UI can show the material name/unit instead of a bare description.
+  const rows = await db
+    .select({ item: purchaseOrderItems, rawMaterial: rawMaterials })
+    .from(purchaseOrderItems)
+    .leftJoin(purchaseOrderRawMaterials, eq(purchaseOrderRawMaterials.purchaseOrderItemId, purchaseOrderItems.id))
+    .leftJoin(rawMaterials, eq(purchaseOrderRawMaterials.rawMaterialId, rawMaterials.id))
+    .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
+
+  // An item links to at most one raw material in practice; dedupe defensively so
+  // a stray extra junction row can't multiply line items.
+  const seen = new Set<number>();
+  const result: Array<typeof purchaseOrderItems.$inferSelect & {
+    rawMaterial: { id: number; name: string; sku: string | null; unit: string } | null;
+  }> = [];
+  for (const r of rows) {
+    if (seen.has(r.item.id)) continue;
+    seen.add(r.item.id);
+    result.push({
+      ...r.item,
+      rawMaterial: r.rawMaterial
+        ? { id: r.rawMaterial.id, name: r.rawMaterial.name, sku: r.rawMaterial.sku, unit: r.rawMaterial.unit }
+        : null,
+    });
+  }
+  return result;
 }
 
 export async function updatePurchaseOrderItem(id: number, data: Partial<typeof purchaseOrderItems.$inferInsert>) {
@@ -5345,6 +5452,13 @@ export async function createShopifySkuMapping(data: InsertShopifySkuMapping) {
   return { id: result[0].insertId };
 }
 
+export async function updateShopifySkuMapping(id: number, data: Partial<InsertShopifySkuMapping>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(shopifySkuMappings).set(data).where(eq(shopifySkuMappings.id, id));
+  return { id };
+}
+
 export async function getProductByShopifySku(storeId: number, shopifyVariantId: string) {
   const db = await getDb();
   if (!db) return undefined;
@@ -5372,6 +5486,23 @@ export async function createShopifyLocationMapping(data: InsertShopifyLocationMa
   if (!db) throw new Error("Database not available");
   const result = await db.insert(shopifyLocationMappings).values(data);
   return { id: result[0].insertId };
+}
+
+export async function updateShopifyLocationMapping(
+  id: number,
+  data: Partial<InsertShopifyLocationMapping>,
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(shopifyLocationMappings).set(data).where(eq(shopifyLocationMappings.id, id));
+  return { id };
+}
+
+export async function deleteShopifyLocationMapping(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(shopifyLocationMappings).where(eq(shopifyLocationMappings.id, id));
+  return { id };
 }
 
 export async function getWarehouseByShopifyLocation(storeId: number, shopifyLocationId: string) {
@@ -8612,6 +8743,62 @@ export async function getPendingApprovalTasks() {
     .orderBy(desc(aiAgentTasks.priority), desc(aiAgentTasks.createdAt));
 }
 
+// Suggestion states that should block re-queuing the same meeting action
+// item: still-open work (pending_approval / approved / in_progress) and an
+// explicit human rejection (which we honor by not re-creating). Terminal
+// completed / failed / cancelled states are intentionally excluded so a failed
+// execution can be retried and a re-synced item can re-appear if its created
+// task was later deleted — completed suggestions are still guarded against
+// duplicates by the separate getProjectTaskBySourceExternalId check.
+const BLOCKING_SUGGESTION_STATUSES = ["pending_approval", "approved", "in_progress", "rejected"] as const;
+
+/**
+ * Find an existing "create_project_task" suggestion (aiAgentTasks, taskType
+ * "query") whose taskData carries the given sourceExternalId and is still in a
+ * blocking state (see BLOCKING_SUGGESTION_STATUSES). Used by the meeting
+ * extractor to avoid re-queuing a suggestion for the same action item on every
+ * re-sync while still allowing re-processing after a terminal failure. Matched
+ * in JS because the key lives inside the JSON taskData column.
+ */
+export async function findMeetingTaskSuggestionByExternalId(externalId: string) {
+  const db = await getDb();
+  if (!db) return null;
+  // Prefilter in SQL on the raw JSON text so we don't load every "query" task
+  // into memory as the table grows. Match the "sourceExternalId" key and the
+  // JSON-stringified id value as two separate LIKE terms rather than one
+  // adjacent fragment, so the row still matches if taskData was re-saved
+  // pretty-printed (e.g. edited in the Approval Queue) with whitespace between
+  // the key and value. JSON.stringify(id) for the value also matches ids
+  // containing quotes/backslashes against the stored (escaped) text. The
+  // exact-equality check below is still the source of truth.
+  const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+  const keyTerm = `%${likeEscape('"sourceExternalId"')}%`;
+  const valueTerm = `%${likeEscape(JSON.stringify(externalId))}%`;
+  // Bound the scan: newest-first + a small limit keeps the lookup cheap even
+  // if the terms appear in several rows. Any match is sufficient for dedup /
+  // honoring a prior rejection.
+  const rows = await db.select().from(aiAgentTasks)
+    .where(and(
+      eq(aiAgentTasks.taskType, "query"),
+      inArray(aiAgentTasks.status, [...BLOCKING_SUGGESTION_STATUSES]),
+      like(aiAgentTasks.taskData, keyTerm),
+      like(aiAgentTasks.taskData, valueTerm),
+    ))
+    .orderBy(desc(aiAgentTasks.createdAt))
+    .limit(25);
+  for (const row of rows) {
+    try {
+      const data = JSON.parse(row.taskData || "{}");
+      if (data?.action === "create_project_task" && data?.sourceExternalId === externalId) {
+        return row;
+      }
+    } catch {
+      /* ignore malformed taskData */
+    }
+  }
+  return null;
+}
+
 export async function createAiAgentRule(data: InsertAiAgentRule) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -11802,6 +11989,13 @@ export async function getRdExpensesByStudy(studyId: number) {
   return db.select().from(rdExpenses).where(eq(rdExpenses.studyId, studyId)).orderBy(rdExpenses.category);
 }
 
+export async function getRdExpenseById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select().from(rdExpenses).where(eq(rdExpenses.id, id)).limit(1);
+  return rows[0];
+}
+
 export async function createRdExpense(data: InsertRdExpense) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -14247,4 +14441,112 @@ export async function getPmMatrix(filters: { tier?: number; status?: PmProjectFi
   );
 
   return { markets, functions, cells };
+}
+
+// ============================================================================
+// MATERIAL SUPPLY & REORDER
+// ============================================================================
+// Assembles the data contract for the "Material Supply & Reorder" view from
+// live ERP tables: copackers (warehouses where type='copacker'), raw materials
+// (with lead time), and on-hand quantities (rawMaterialInventory). Daily usage
+// is derived from the trailing-30-day consume ledger. When the company has no
+// copacker / material / inventory data yet, the canonical sample dataset is
+// returned so the screen still renders meaningfully.
+//
+// NOTE: inbound sea-freight shipments are not yet modelled per material+copacker
+// in the ERP (the `shipments` table links to POs, not to a material/destination
+// copacker pair), so the live path returns an empty `shipments` array. Wire it
+// up here once ASN / freight-booking data carries material + destination.
+export async function getMaterialSupplyOverview(opts?: { companyId?: number }): Promise<MaterialSupplyOverview> {
+  const db = await getDb();
+  if (!db) return SAMPLE_MATERIAL_SUPPLY;
+
+  const companyId = opts?.companyId;
+
+  // Copacker sites
+  const whConditions = [eq(warehouses.type, "copacker"), eq(warehouses.status, "active")];
+  if (companyId) whConditions.push(eq(warehouses.companyId, companyId));
+  const whRows = await db.select().from(warehouses).where(and(...whConditions)).orderBy(warehouses.name);
+
+  // Active raw materials
+  const rmConditions = [eq(rawMaterials.status, "active")];
+  if (companyId) rmConditions.push(eq(rawMaterials.companyId, companyId));
+  const rmRows = await db.select().from(rawMaterials).where(and(...rmConditions)).orderBy(rawMaterials.name);
+
+  if (whRows.length === 0 || rmRows.length === 0) return SAMPLE_MATERIAL_SUPPLY;
+
+  const whById = new Map<number, typeof whRows[number]>(whRows.map((w) => [w.id, w]));
+  const rmById = new Map<number, typeof rmRows[number]>(rmRows.map((m) => [m.id, m]));
+  const codeFor = (w: typeof whRows[number]) => w.code || `WH${w.id}`;
+
+  // On-hand by material + location, scoped to the copacker sites + active materials
+  const invRows = await db
+    .select()
+    .from(rawMaterialInventory)
+    .where(
+      and(
+        inArray(rawMaterialInventory.warehouseId, whRows.map((w) => w.id)),
+        inArray(rawMaterialInventory.rawMaterialId, rmRows.map((m) => m.id)),
+      ),
+    );
+  if (invRows.length === 0) return SAMPLE_MATERIAL_SUPPLY;
+
+  // Daily usage from the trailing-30-day consume ledger, scoped to the same
+  // copacker warehouses + materials so we never full-scan the ledger.
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const usageRows = await db
+    .select({
+      rawMaterialId: rawMaterialTransactions.rawMaterialId,
+      warehouseId: rawMaterialTransactions.warehouseId,
+      consumed: sql<number>`SUM(ABS(${rawMaterialTransactions.quantity}))`.mapWith(Number),
+    })
+    .from(rawMaterialTransactions)
+    .where(
+      and(
+        eq(rawMaterialTransactions.transactionType, "consume"),
+        gte(rawMaterialTransactions.createdAt, since),
+        inArray(rawMaterialTransactions.warehouseId, whRows.map((w) => w.id)),
+        inArray(rawMaterialTransactions.rawMaterialId, rmRows.map((m) => m.id)),
+      ),
+    )
+    .groupBy(rawMaterialTransactions.rawMaterialId, rawMaterialTransactions.warehouseId);
+  const usageByKey = new Map<string, number>();
+  for (const u of usageRows) usageByKey.set(`${u.rawMaterialId}:${u.warehouseId}`, (u.consumed ?? 0) / 30);
+
+  const copackers: MaterialSupplyCopacker[] = whRows.map((w) => ({
+    code: codeFor(w),
+    name: w.name,
+    short: w.name,
+    location: [w.city, w.state].filter(Boolean).join(", ") || w.country || "",
+  }));
+
+  const materials: MaterialSupplyMaterial[] = rmRows.map((m) => ({
+    id: String(m.id),
+    name: m.name,
+    unit: m.unit || "EA",
+    leadTimeDays: m.leadTimeDays ?? 0,
+  }));
+
+  const inventoryLines: MaterialSupplyInventoryLine[] = invRows
+    .filter((r) => whById.has(r.warehouseId) && rmById.has(r.rawMaterialId))
+    .map((r) => {
+      const onHand = Number(r.quantity) || 0;
+      const usage = usageByKey.get(`${r.rawMaterialId}:${r.warehouseId}`);
+      const dailyUsage = usage && usage > 0 ? usage : Math.max(1, Math.round(onHand / 45));
+      return {
+        copackerCode: codeFor(whById.get(r.warehouseId)!),
+        materialId: String(r.rawMaterialId),
+        onHand,
+        dailyUsage,
+      };
+    });
+
+  return {
+    source: "live",
+    planning: DEFAULT_MATERIAL_SUPPLY_PLANNING,
+    copackers,
+    materials,
+    inventoryLines,
+    shipments: [],
+  };
 }

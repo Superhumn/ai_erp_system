@@ -40,6 +40,9 @@ const baseRouter = router({
 
   // Human <-> AI task assignment bridge (Lightfield-style task lifecycle)
   taskBridge: taskAssignmentSubRouter,
+
+  // Admin-only AI code IDE (snippets, sandboxed execution, AI actions)
+  code: codeRouter,
 });
 
 export const appRouter = mergeRouters(
@@ -62,7 +65,6 @@ export const appRouter = mergeRouters(
   aiRouter,
   boardRouter,
   investorUpdatesRouter,
-  codeRouter,
   marketingRouter,
 );
 

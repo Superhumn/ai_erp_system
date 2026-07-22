@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   Dialog,
   DialogContent,
@@ -208,10 +208,21 @@ const entityConfig: Record<EntityType, {
     icon: <Building className="h-5 w-5" />,
     fields: [
       { name: "name", label: "Vendor Name", type: "text", placeholder: "e.g., Acme Supplies", required: true },
+      { name: "type", label: "Vendor Type", type: "select", options: [
+        { value: "supplier", label: "Supplier" },
+        { value: "contractor", label: "Contractor" },
+        { value: "service", label: "Service" },
+      ]},
+      { name: "contactName", label: "Contact Name", type: "text", placeholder: "e.g., Jane Doe" },
       { name: "email", label: "Email", type: "email", placeholder: "contact@vendor.com" },
       { name: "phone", label: "Phone", type: "text", placeholder: "+1 (555) 123-4567" },
-      { name: "address", label: "Address", type: "textarea", placeholder: "123 Main St, City, State" },
+      { name: "address", label: "Address", type: "textarea", placeholder: "123 Main St" },
+      { name: "city", label: "City", type: "text", placeholder: "e.g., Dallas" },
+      { name: "state", label: "State / Region", type: "text", placeholder: "e.g., TX" },
+      { name: "postalCode", label: "Postal Code", type: "text", placeholder: "e.g., 75201" },
+      { name: "country", label: "Country", type: "text", placeholder: "e.g., USA" },
       { name: "defaultLeadTimeDays", label: "Default Lead Time (days)", type: "number", placeholder: "7" },
+      { name: "notes", label: "Notes", type: "textarea", placeholder: "What this vendor supplies..." },
     ],
   },
   material: {
@@ -352,6 +363,23 @@ export function QuickCreateDialog({
   const [formData, setFormData] = useState<Record<string, any>>(defaultValues);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const utils = trpc.useUtils();
+
+  // Seed the form from defaultValues when the dialog transitions to open. The
+  // dialog stays mounted (visibility is toggled via `open`), so the initial
+  // useState seed alone isn't enough — a subsequent open with fresh prefill
+  // (e.g. from an online lookup) needs to reload the fields. We seed ONLY on the
+  // open transition, never on later prop changes, so an in-flight re-render can't
+  // overwrite what the user has started typing. Callers set defaultValues before
+  // opening the dialog, so the latest prefill is present at that moment.
+  const latestDefaults = useRef(defaultValues);
+  latestDefaults.current = defaultValues;
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (open && !wasOpen.current) {
+      setFormData(latestDefaults.current ? { ...latestDefaults.current } : {});
+    }
+    wasOpen.current = open;
+  }, [open]);
 
   const config = entityConfig[entityType];
   
@@ -494,9 +522,16 @@ export function QuickCreateDialog({
         case "vendor":
           await createVendor.mutateAsync({
             name: formData.name,
+            contactName: formData.contactName || undefined,
             email: formData.email || undefined,
             phone: formData.phone || undefined,
             address: formData.address || undefined,
+            city: formData.city || undefined,
+            state: formData.state || undefined,
+            postalCode: formData.postalCode || undefined,
+            country: formData.country || undefined,
+            type: formData.type || undefined,
+            notes: formData.notes || undefined,
             defaultLeadTimeDays: formData.defaultLeadTimeDays ? parseInt(formData.defaultLeadTimeDays) : undefined,
           });
           break;

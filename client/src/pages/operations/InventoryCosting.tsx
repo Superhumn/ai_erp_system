@@ -60,9 +60,7 @@ export default function InventoryCosting() {
   const [cogsDialogOpen, setCogsDialogOpen] = useState(false);
 
   // Config form state
-  const [configProductId, setConfigProductId] = useState("");
   const [configMethod, setConfigMethod] = useState<CostingMethod>("weighted_average");
-  const [configNotes, setConfigNotes] = useState("");
 
   // Layer form state
   const [layerProductId, setLayerProductId] = useState("");
@@ -81,22 +79,11 @@ export default function InventoryCosting() {
   const { data: configs, isLoading: configsLoading } = trpc.inventoryCosting.configs.list.useQuery({});
   const { data: costLayers, isLoading: layersLoading } = trpc.inventoryCosting.layers.list.useQuery({});
   const { data: cogsRecords } = trpc.inventoryCosting.cogs.list.useQuery({});
+  const { data: cogsSummaries } = trpc.inventoryCosting.cogs.summary.useQuery({});
   const { data: cogsDashboard } = trpc.inventoryCosting.cogs.dashboard.useQuery({});
   const { data: products } = trpc.products.list.useQuery({});
 
   // Mutations
-  const createConfigMutation = trpc.inventoryCosting.configs.create.useMutation({
-    onSuccess: () => {
-      toast.success("Product costing method has been set.");
-      setConfigDialogOpen(false);
-      resetConfigForm();
-      utils.inventoryCosting.configs.list.invalidate();
-    },
-    onError: (error) => {
-      toast.error(error.message);
-    },
-  });
-
   const createLayerMutation = trpc.inventoryCosting.layers.create.useMutation({
     onSuccess: () => {
       toast.success("Inventory cost layer has been recorded.");
@@ -123,11 +110,6 @@ export default function InventoryCosting() {
     },
   });
 
-  function resetConfigForm() {
-    setConfigProductId("");
-    setConfigMethod("weighted_average");
-    setConfigNotes("");
-  }
   function resetLayerForm() {
     setLayerProductId("");
     setLayerQuantity("");
@@ -333,13 +315,58 @@ export default function InventoryCosting() {
         </CardContent>
       </Card>
 
+      {/* CoGS Period Summaries */}
+      <Card>
+        <CardHeader>
+          <CardTitle>CoGS Period Summaries ({cogsSummaries?.length || 0})</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {!cogsSummaries || cogsSummaries.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-2">
+              No period summaries yet. Use “Generate Summary” to aggregate CoGS records for a period.
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Period</TableHead>
+                  <TableHead>Range</TableHead>
+                  <TableHead>Product</TableHead>
+                  <TableHead className="text-right">Qty Sold</TableHead>
+                  <TableHead className="text-right">Total CoGS</TableHead>
+                  <TableHead className="text-right">Revenue</TableHead>
+                  <TableHead className="text-right">Gross Margin</TableHead>
+                  <TableHead className="text-right">Margin %</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(cogsSummaries as any[]).map((s) => (
+                  <TableRow key={s.id}>
+                    <TableCell className="capitalize">{s.periodType}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {new Date(s.periodStart).toLocaleDateString()} – {new Date(s.periodEnd).toLocaleDateString()}
+                    </TableCell>
+                    <TableCell>{s.productId ? getProductName(s.productId) : "All products"}</TableCell>
+                    <TableCell className="text-right">{parseFloat(s.totalQuantitySold).toFixed(2)}</TableCell>
+                    <TableCell className="text-right">${parseFloat(s.totalCogs).toFixed(2)}</TableCell>
+                    <TableCell className="text-right">{s.totalRevenue != null ? `$${parseFloat(s.totalRevenue).toFixed(2)}` : "—"}</TableCell>
+                    <TableCell className="text-right">{s.grossMargin != null ? `$${parseFloat(s.grossMargin).toFixed(2)}` : "—"}</TableCell>
+                    <TableCell className="text-right">{s.grossMarginPercent != null ? `${parseFloat(s.grossMarginPercent).toFixed(2)}%` : "—"}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Configure System-Wide Costing Method Dialog */}
       <Dialog open={configDialogOpen} onOpenChange={setConfigDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Costing Method</DialogTitle>
+            <DialogTitle>Costing Method (informational)</DialogTitle>
             <DialogDescription>
-              Set the costing method used across all products. This determines how COGS is calculated system-wide.
+              The active costing method is controlled by the <code>COSTING_METHOD</code> environment variable and applies to all products. This dialog is read-only — selecting a method here previews how it works but does not change the configured method.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -364,17 +391,7 @@ export default function InventoryCosting() {
             </p>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConfigDialogOpen(false)}>Close</Button>
-            <Button
-              onClick={() => {
-                toast.success(`Costing method set to ${configMethod.replace('_', ' ')}. Update COSTING_METHOD env var on Railway to persist.`);
-                setConfigDialogOpen(false);
-              }}
-              disabled={!configProductId || createConfigMutation.isPending}
-            >
-              {createConfigMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Save Configuration
-            </Button>
+            <Button onClick={() => setConfigDialogOpen(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -533,7 +550,7 @@ type CogsPeriodType = "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
 function GenerateSummaryButton({ products }: { products: any[] }) {
   const utils = trpc.useUtils();
   const [open, setOpen] = useState(false);
-  const [productId, setProductId] = useState("");
+  const [productId, setProductId] = useState("all");
   const [periodType, setPeriodType] = useState<CogsPeriodType>("monthly");
   const [periodStart, setPeriodStart] = useState(() => {
     const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10);
@@ -564,6 +581,7 @@ function GenerateSummaryButton({ products }: { products: any[] }) {
       setOpen(false);
       utils.inventoryCosting.cogs.dashboard.invalidate();
       utils.inventoryCosting.cogs.list.invalidate();
+      utils.inventoryCosting.cogs.summary.invalidate();
     },
     onError: (e: any) => toast.error(e.message),
   });
@@ -608,7 +626,7 @@ function GenerateSummaryButton({ products }: { products: any[] }) {
               <Select value={productId} onValueChange={setProductId}>
                 <SelectTrigger><SelectValue placeholder="All products" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All products</SelectItem>
+                  <SelectItem value="all">All products</SelectItem>
                   {products?.map((p: any) => (
                     <SelectItem key={p.id} value={String(p.id)}>{p.name} ({p.sku})</SelectItem>
                   ))}
@@ -620,7 +638,7 @@ function GenerateSummaryButton({ products }: { products: any[] }) {
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
             <Button
               onClick={() => generateMutation.mutate({
-                productId: productId ? parseInt(productId) : undefined,
+                productId: productId && productId !== "all" ? parseInt(productId) : undefined,
                 periodType,
                 periodStart: new Date(periodStart),
                 periodEnd: new Date(periodEnd),

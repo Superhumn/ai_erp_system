@@ -816,7 +816,7 @@ type QBImportCategory = "wages" | "supplies" | "contract_research" | "cloud_comp
 
 function ImportFromQBButton({ studyId, projects, onRefresh }: {
   studyId: number;
-  projects: Array<{ id?: number | null; projectName?: string | null }>;
+  projects: RdProjectRow[];
   onRefresh: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -858,11 +858,9 @@ function ImportFromQBButton({ studyId, projects, onRefresh }: {
               <Select value={projectId} onValueChange={setProjectId}>
                 <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
                 <SelectContent>
-                  {projects
-                    .filter((p): p is { id: number; projectName?: string | null } => p.id != null)
-                    .map((p) => (
-                      <SelectItem key={p.id} value={String(p.id)}>{p.projectName ?? ""}</SelectItem>
-                    ))}
+                  {projects.filter((p) => p.id != null).map((p) => (
+                    <SelectItem key={p.id!} value={String(p.id!)}>{p.projectName ?? ""}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
