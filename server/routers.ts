@@ -14410,10 +14410,27 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
           return v.length > max ? v.slice(0, max) : v;
         };
 
-        // Extract a concise client-facing message while the full error object
-        // (stack + driver error code) is logged separately for diagnosis.
-        const errMessage = (err: unknown): string =>
-          err instanceof Error ? err.message : String(err);
+        // Map DB/driver errors to concise, user-safe messages. The full error
+        // object (with driver code + stack) is always logged separately; only
+        // these sanitized strings are returned to the client / shown in toasts,
+        // so raw SQL/driver internals never leak into the UI.
+        const errMessage = (err: unknown): string => {
+          const code = (err as { code?: string })?.code;
+          switch (code) {
+            case 'ER_DATA_TOO_LONG': return 'a field exceeded the maximum length';
+            case 'ER_DUP_ENTRY': return 'a duplicate entry was detected';
+            case 'ER_TRUNCATED_WRONG_VALUE':
+            case 'WARN_DATA_TRUNCATED': return 'an unsupported character or value';
+            case 'ER_NO_REFERENCED_ROW_2':
+            case 'ER_ROW_IS_REFERENCED_2': return 'a related-record constraint failed';
+            case 'ER_BAD_NULL_ERROR': return 'a required field was missing';
+          }
+          // Errors we raise ourselves (no driver code) are already safe/worded
+          // for humans; anything else with an unrecognized driver code is kept
+          // generic so raw driver text can't reach the client.
+          if (err instanceof Error && !code) return err.message;
+          return 'an unexpected database error';
+        };
 
         // Process folders — isolate each insert so one failure doesn't abort the rest.
         for (const driveFolder of syncResult.folders) {
@@ -14447,7 +14464,10 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
             folderMap.set(driveFolder.id, newFolderId);
             results.push({ name: driveFolder.name, type: 'folder', status: 'created' });
           } catch (err: unknown) {
-            console.error(`[DataRoom] Failed to create folder "${driveFolder.name}" (${driveFolder.id}):`, err);
+            // Log Drive ID + room only — folder names can be sensitive and
+            // server logs are broadly accessible. The name still goes to the
+            // owner-facing response below, not to logs.
+            console.error(`[DataRoom] Failed to create folder ${driveFolder.id} (room ${input.dataRoomId}):`, err);
             const msg = errMessage(err);
             results.push({ name: driveFolder.name, type: 'folder', status: 'error', error: msg });
             if (syncErrors.length < 5) syncErrors.push(`Folder "${driveFolder.name}": ${msg}`);
@@ -14464,15 +14484,19 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
             continue;
           }
 
+          const displayName = driveFile.name;
           const parentDriveId = driveFile.parents?.[0];
           let fileFolderId: number | null = null;
-          if (parentDriveId === folderId) {
-            fileFolderId = null;
-          } else if (parentDriveId) {
-            fileFolderId = folderMap.get(parentDriveId) || existingFoldersByDriveId.get(parentDriveId) || null;
+          if (parentDriveId && parentDriveId !== folderId) {
+            fileFolderId = folderMap.get(parentDriveId) ?? existingFoldersByDriveId.get(parentDriveId) ?? null;
+            // Parent expected but unmapped (e.g. its folder insert failed
+            // earlier). Import at root, but surface it like the folder loop
+            // does so the flattened hierarchy isn't silent.
+            if (fileFolderId === null && syncErrors.length < 5) {
+              syncErrors.push(`File "${displayName}": parent folder could not be resolved; placed at root.`);
+            }
           }
 
-          const displayName = driveFile.name;
           const fileType = getSimpleFileType(driveFile.mimeType);
           const fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
             ? parseInt(driveFile.size)
@@ -14497,7 +14521,8 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
 
             results.push({ name: displayName, type: 'file', status: 'synced' });
           } catch (err: unknown) {
-            console.error(`[DataRoom] Failed to create document "${displayName}" (${driveFile.id}):`, err);
+            // Log Drive ID + room only — document names can be confidential.
+            console.error(`[DataRoom] Failed to create document ${driveFile.id} (room ${input.dataRoomId}):`, err);
             const msg = errMessage(err);
             results.push({ name: displayName, type: 'file', status: 'error', error: msg });
             if (syncErrors.length < 5) syncErrors.push(`File "${displayName}": ${msg}`);
