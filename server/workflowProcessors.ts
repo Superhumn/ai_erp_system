@@ -70,6 +70,67 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
+/** Generate the AI RFQ email (subject + body) for a single vendor. */
+async function generateRfqEmailContent(
+  vendor: any,
+  ctx: {
+    rfqNumber: string;
+    materialName: string;
+    materialDescription?: string | null;
+    quantity: number | string;
+    unit: string;
+    specifications?: string | null;
+    requiredDeliveryDate?: string | null;
+    deliveryLocation?: string | null;
+  },
+): Promise<{ subject: string; body: string }> {
+  const emailPrompt = `Generate a professional RFQ email to vendor:
+Vendor Name: ${vendor.name}
+Contact Name: ${vendor.contactName || "Procurement Team"}
+
+RFQ Details:
+- RFQ Number: ${ctx.rfqNumber}
+- Material: ${ctx.materialName}
+- Description: ${ctx.materialDescription || "N/A"}
+- Quantity: ${ctx.quantity} ${ctx.unit}
+- Specifications: ${ctx.specifications || "N/A"}
+- Required Delivery Date: ${ctx.requiredDeliveryDate || "ASAP"}
+- Delivery Location: ${ctx.deliveryLocation || "N/A"}
+- Quote Due Date: 7 days from now
+- Validity Period: 30 days
+
+Generate a professional, concise email requesting a quote.`;
+
+  const aiEmail = await invokeLLM({
+    messages: [
+      {
+        role: "system",
+        content: "You are a professional procurement officer writing RFQ emails to vendors.",
+      },
+      { role: "user", content: emailPrompt },
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "rfq_email",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: {
+            subject: { type: "string" },
+            body: { type: "string" },
+          },
+          required: ["subject", "body"],
+          additionalProperties: false,
+        },
+      },
+    },
+  });
+
+  const content = aiEmail.choices[0].message.content;
+  return JSON.parse(typeof content === "string" ? content : "{}");
+}
+
 // ============================================
 // DEMAND FORECASTING WORKFLOW
 // ============================================
@@ -2964,56 +3025,17 @@ Return vendor IDs in order of preference.`;
       // the emails that succeeded (mirrors the original per-vendor resilience).
       const generatedEmails = await mapWithConcurrency(selectedVendors as any[], 5, async (vendor: any) => {
         try {
-        // Generate AI-powered email content
-        const emailPrompt = `Generate a professional RFQ email to vendor:
-Vendor Name: ${vendor.name}
-Contact Name: ${vendor.contactName || "Procurement Team"}
-
-RFQ Details:
-- RFQ Number: ${rfqNumber}
-- Material: ${materialName}
-- Description: ${materialDescription || "N/A"}
-- Quantity: ${quantity} ${unit}
-- Specifications: ${specifications || "N/A"}
-- Required Delivery Date: ${requiredDeliveryDate || "ASAP"}
-- Delivery Location: ${deliveryLocation || "N/A"}
-- Quote Due Date: 7 days from now
-- Validity Period: 30 days
-
-Generate a professional, concise email requesting a quote.`;
-
-        const aiEmail = await invokeLLM({
-          messages: [
-            {
-              role: "system",
-              content: "You are a professional procurement officer writing RFQ emails to vendors.",
-            },
-            {
-              role: "user",
-              content: emailPrompt,
-            },
-          ],
-          response_format: {
-            type: "json_schema",
-            json_schema: {
-              name: "rfq_email",
-              strict: true,
-              schema: {
-                type: "object",
-                properties: {
-                  subject: { type: "string" },
-                  body: { type: "string" },
-                },
-                required: ["subject", "body"],
-                additionalProperties: false,
-              },
-            },
-          },
-        });
-
-        const content = aiEmail.choices[0].message.content;
-        const emailContent = JSON.parse(typeof content === "string" ? content : "{}");
-        return { vendor, emailContent, ok: true as const };
+          const emailContent = await generateRfqEmailContent(vendor, {
+            rfqNumber,
+            materialName,
+            materialDescription,
+            quantity,
+            unit,
+            specifications,
+            requiredDeliveryDate,
+            deliveryLocation,
+          });
+          return { vendor, emailContent, ok: true as const };
         } catch (err) {
           console.error(`[Procurement] Failed to generate RFQ email for vendor ${vendor?.id}:`, err);
           return { vendor, ok: false as const };
@@ -3028,44 +3050,44 @@ Generate a professional, concise email requesting a quote.`;
         }
         const { vendor, emailContent } = result;
         try {
-        // Create invitation record
-        const [invitation] = await db
-          .insert(vendorRfqInvitations)
-          .values({
-            rfqId,
+          // Create invitation record
+          const [invitation] = await db
+            .insert(vendorRfqInvitations)
+            .values({
+              rfqId,
+              vendorId: vendor.id,
+              status: "pending",
+              invitedAt: new Date(),
+            })
+            .$returningId();
+
+          // Create email record
+          const [email] = await db
+            .insert(vendorRfqEmails)
+            .values({
+              rfqId,
+              vendorId: vendor.id,
+              direction: "outbound",
+              emailType: "rfq_request",
+              fromEmail: process.env.PROCUREMENT_EMAIL || "procurement@company.com",
+              toEmail: vendor.email,
+              subject: emailContent.subject,
+              body: emailContent.body,
+              aiGenerated: true,
+              sendStatus: "queued",
+            })
+            .$returningId();
+
+          emailResults.push({
             vendorId: vendor.id,
-            status: "pending",
-            invitedAt: new Date(),
-          })
-          .$returningId();
+            vendorName: vendor.name,
+            email: vendor.email,
+            invitationId: invitation.id,
+            emailId: email.id,
+            status: "queued",
+          });
 
-        // Create email record
-        const [email] = await db
-          .insert(vendorRfqEmails)
-          .values({
-            rfqId,
-            vendorId: vendor.id,
-            direction: "outbound",
-            emailType: "rfq_request",
-            fromEmail: process.env.PROCUREMENT_EMAIL || "procurement@company.com",
-            toEmail: vendor.email,
-            subject: emailContent.subject,
-            body: emailContent.body,
-            aiGenerated: true,
-            sendStatus: "queued",
-          })
-          .$returningId();
-
-        emailResults.push({
-          vendorId: vendor.id,
-          vendorName: vendor.name,
-          email: vendor.email,
-          invitationId: invitation.id,
-          emailId: email.id,
-          status: "queued",
-        });
-
-        itemsSucceeded++;
+          itemsSucceeded++;
         } catch (err) {
           console.error(`[Procurement] Failed to persist RFQ email for vendor ${vendor?.id}:`, err);
           itemsFailed++;
