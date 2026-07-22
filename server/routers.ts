@@ -352,6 +352,13 @@ export const appRouter = router({
   // Employee self-service portal
   employeePortal: employeePortalRouter,
 
+  // Material Supply & Reorder — inventory + inbound freight + reorder recommendations.
+  // No caller-supplied companyId: the param would let any ops user scope to an
+  // arbitrary tenant, and there is no per-user company to validate it against.
+  materialSupply: router({
+    overview: opsProcedure.query(() => db.getMaterialSupplyOverview()),
+  }),
+
   // Admin-only AI code IDE (snippets, sandboxed execution, AI actions)
   code: codeRouter,
 
