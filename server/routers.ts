@@ -12383,19 +12383,25 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
       update: adminProcedure
         .input(z.object({
           id: z.number(),
+          storeId: z.number(),
           shopifyLocationId: z.string().optional(),
           shopifyLocationName: z.string().optional(),
           warehouseId: z.number().optional(),
           isActive: z.boolean().optional(),
-        }))
+        }).refine(
+          (v) => v.shopifyLocationId !== undefined || v.shopifyLocationName !== undefined || v.warehouseId !== undefined || v.isActive !== undefined,
+          { message: "At least one field to update must be provided" },
+        ))
         .mutation(async ({ input }) => {
-          const { id, ...data } = input;
-          return db.updateShopifyLocationMapping(id, data);
+          // Scope the write by (id, storeId) so a mapping can only be mutated
+          // through the store it belongs to.
+          const { id, storeId, ...data } = input;
+          return db.updateShopifyLocationMapping(id, storeId, data);
         }),
       delete: adminProcedure
-        .input(z.object({ id: z.number() }))
+        .input(z.object({ id: z.number(), storeId: z.number() }))
         .mutation(async ({ input }) => {
-          return db.deleteShopifyLocationMapping(input.id);
+          return db.deleteShopifyLocationMapping(input.id, input.storeId);
         }),
     }),
     // Sync operations
