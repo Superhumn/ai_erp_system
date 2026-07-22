@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -23,7 +24,7 @@ import {
 } from "@/components/ui/select";
 import { SpreadsheetTable, Column } from "@/components/SpreadsheetTable";
 import { DetailSheet } from "@/components/DetailSheet";
-import { DollarSign, Plus, Loader2 } from "lucide-react";
+import { DollarSign, Plus, Loader2, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/format";
 
@@ -86,6 +87,42 @@ export default function Accounts() {
     },
     onError: (err: any) => toast.error(err.message),
   });
+
+  const [editOpen, setEditOpen] = useState(false);
+  const [editForm, setEditForm] = useState({ name: "", description: "", isActive: true });
+  const updateAccount = trpc.accounts.update.useMutation({
+    onSuccess: () => {
+      toast.success("Account updated");
+      utils.accounts.list.invalidate();
+      setEditOpen(false);
+      setSelectedAccount(null);
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const openEdit = () => {
+    if (!selectedAccount) return;
+    setEditForm({
+      name: selectedAccount.name ?? "",
+      description: selectedAccount.description ?? "",
+      isActive: selectedAccount.isActive !== false,
+    });
+    setEditOpen(true);
+  };
+
+  const handleUpdate = () => {
+    if (!selectedAccount) return;
+    if (!editForm.name.trim()) {
+      toast.error("Name is required");
+      return;
+    }
+    updateAccount.mutate({
+      id: selectedAccount.id,
+      name: editForm.name.trim(),
+      description: editForm.description || undefined,
+      isActive: editForm.isActive,
+    });
+  };
 
   const columns: Column<any>[] = [
     { key: "code", header: "Code", type: "text", sortable: true },
@@ -248,9 +285,61 @@ export default function Accounts() {
           )
         }
         subtitle={selectedAccount && `Code ${selectedAccount.code}`}
+        actions={
+          selectedAccount && (
+            <Button size="sm" variant="outline" onClick={openEdit}>
+              <Pencil className="h-4 w-4 mr-2" />
+              Edit
+            </Button>
+          )
+        }
       >
         {selectedAccount && <AccountSummaryBody account={selectedAccount} />}
       </DetailSheet>
+
+      {/* Edit Account Dialog */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit account</DialogTitle>
+            <DialogDescription>Update this account's name, description, or active status.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Name *</Label>
+              <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
+            </div>
+            <div>
+              <Label>Description</Label>
+              <Textarea
+                rows={3}
+                value={editForm.description}
+                onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label>Status</Label>
+              <Select
+                value={editForm.isActive ? "active" : "inactive"}
+                onValueChange={(v) => setEditForm({ ...editForm, isActive: v === "active" })}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="inactive">Inactive</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
+            <Button onClick={handleUpdate} disabled={updateAccount.isPending}>
+              {updateAccount.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Save changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

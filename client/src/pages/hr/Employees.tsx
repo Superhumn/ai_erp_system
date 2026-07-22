@@ -1872,6 +1872,42 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
     });
   };
 
+  const [payOpen, setPayOpen] = useState(false);
+  const [payForm, setPayForm] = useState({
+    paymentDate: "",
+    type: "salary" as "salary" | "bonus" | "commission" | "reimbursement" | "other",
+    amount: "",
+    paymentMethod: "direct_deposit" as "check" | "direct_deposit" | "wire" | "other",
+    notes: "",
+  });
+  const addPayment = trpc.employeePayments.create.useMutation({
+    onSuccess: () => {
+      toast.success("Payment recorded");
+      if (person.employeeId) utils.employeePayments.list.invalidate({ employeeId: person.employeeId });
+      setPayOpen(false);
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const handleAddPayment = () => {
+    if (!person.employeeId) return;
+    if (!payForm.paymentDate) {
+      toast.error("Payment date is required");
+      return;
+    }
+    if (!payForm.amount.trim()) {
+      toast.error("Amount is required");
+      return;
+    }
+    addPayment.mutate({
+      employeeId: person.employeeId,
+      paymentDate: new Date(payForm.paymentDate),
+      type: payForm.type,
+      amount: payForm.amount.trim(),
+      paymentMethod: payForm.paymentMethod,
+      notes: payForm.notes || undefined,
+    });
+  };
+
   return (
                 <div className="space-y-5">
                   {/* Personal Information */}
@@ -2007,7 +2043,16 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
                   {/* Payments */}
                   {person.employeeId && (
                     <div>
-                      <h4 className="text-sm font-semibold text-muted-foreground mb-2">Payments</h4>
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-sm font-semibold text-muted-foreground">Payments</h4>
+                        <Button size="sm" variant="outline" onClick={() => {
+                          setPayForm({ paymentDate: "", type: "salary", amount: "", paymentMethod: "direct_deposit", notes: "" });
+                          setPayOpen(true);
+                        }}>
+                          <Plus className="h-3.5 w-3.5 mr-1.5" />
+                          Add payment
+                        </Button>
+                      </div>
                       {payments && (payments as any[]).length > 0 ? (
                         <div className="border rounded-lg overflow-hidden">
                           <Table className="text-sm">
@@ -2034,6 +2079,76 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
                       ) : (
                         <p className="text-sm text-muted-foreground italic">No payment records.</p>
                       )}
+                      <Dialog open={payOpen} onOpenChange={setPayOpen}>
+                        <DialogContent className="max-w-md">
+                          <DialogHeader>
+                            <DialogTitle>Record payment</DialogTitle>
+                            <DialogDescription>Log a payment to {person.name}.</DialogDescription>
+                          </DialogHeader>
+                          <div className="space-y-4">
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <Label>Payment date *</Label>
+                                <Input
+                                  type="date"
+                                  value={payForm.paymentDate}
+                                  onChange={(e) => setPayForm({ ...payForm, paymentDate: e.target.value })}
+                                />
+                              </div>
+                              <div>
+                                <Label>Type</Label>
+                                <Select value={payForm.type} onValueChange={(v) => setPayForm({ ...payForm, type: v as typeof payForm.type })}>
+                                  <SelectTrigger><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="salary">Salary</SelectItem>
+                                    <SelectItem value="bonus">Bonus</SelectItem>
+                                    <SelectItem value="commission">Commission</SelectItem>
+                                    <SelectItem value="reimbursement">Reimbursement</SelectItem>
+                                    <SelectItem value="other">Other</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <Label>Amount *</Label>
+                                <Input
+                                  value={payForm.amount}
+                                  onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })}
+                                  placeholder="e.g. 5000"
+                                />
+                              </div>
+                              <div>
+                                <Label>Method</Label>
+                                <Select value={payForm.paymentMethod} onValueChange={(v) => setPayForm({ ...payForm, paymentMethod: v as typeof payForm.paymentMethod })}>
+                                  <SelectTrigger><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="direct_deposit">Direct deposit</SelectItem>
+                                    <SelectItem value="check">Check</SelectItem>
+                                    <SelectItem value="wire">Wire</SelectItem>
+                                    <SelectItem value="other">Other</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+                            <div>
+                              <Label>Notes</Label>
+                              <Textarea
+                                rows={2}
+                                value={payForm.notes}
+                                onChange={(e) => setPayForm({ ...payForm, notes: e.target.value })}
+                              />
+                            </div>
+                          </div>
+                          <DialogFooter>
+                            <Button variant="outline" onClick={() => setPayOpen(false)}>Cancel</Button>
+                            <Button onClick={handleAddPayment} disabled={addPayment.isPending}>
+                              {addPayment.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                              Record payment
+                            </Button>
+                          </DialogFooter>
+                        </DialogContent>
+                      </Dialog>
                     </div>
                   )}
 
