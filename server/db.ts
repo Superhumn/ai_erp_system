@@ -1522,10 +1522,19 @@ export async function replacePurchaseOrderItems(
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  // Validate + recompute every line before touching the DB.
+  // Strict numeric parse: unlike parseFloat, rejects partially-numeric strings
+  // like "10abc" (which would otherwise be silently coerced/truncated by the
+  // DECIMAL column). Returns NaN for anything that isn't a plain number.
+  const strictNum = (v: string): number => {
+    const t = String(v ?? "").trim();
+    return /^-?\d+(\.\d+)?$/.test(t) ? Number(t) : NaN;
+  };
+
+  // Validate + recompute every line before touching the DB. Stored strings are
+  // normalized from the parsed numbers so no malformed text reaches the columns.
   const normalized = items.map((item, idx) => {
-    const quantity = parseFloat(item.quantity);
-    const unitPrice = parseFloat(item.unitPrice);
+    const quantity = strictNum(item.quantity);
+    const unitPrice = strictNum(item.unitPrice);
     if (!Number.isFinite(quantity) || quantity <= 0) {
       throw new Error(`Line item #${idx + 1} has an invalid quantity.`);
     }
@@ -1535,8 +1544,8 @@ export async function replacePurchaseOrderItems(
     return {
       productId: item.productId ?? null,
       description: item.description,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
+      quantity: String(quantity),
+      unitPrice: unitPrice.toFixed(2),
       totalAmount: (quantity * unitPrice).toFixed(2),
     };
   });

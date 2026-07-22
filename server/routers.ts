@@ -2769,7 +2769,9 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           description: z.string().min(1),
           quantity: z.string(),
           unitPrice: z.string(),
-          totalAmount: z.string(),
+          // Server recomputes the line total from quantity * unitPrice; a
+          // caller-supplied total is ignored, so it's optional.
+          totalAmount: z.string().optional(),
         })).min(1),
         taxAmount: z.string().optional(),
         shippingAmount: z.string().optional(),
@@ -2789,8 +2791,11 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         // Validate tax/shipping as finite, non-negative numbers rather than
         // silently coercing bad input to 0 (which could hide client bugs or
         // produce a negative total).
+        // Strict parse (not parseFloat, which accepts "10abc" -> 10) so malformed
+        // money strings are rejected rather than silently coerced.
         const parseMoney = (v: string | null | undefined, label: string): number => {
-          const n = parseFloat(v ?? '0');
+          const t = String(v ?? '0').trim();
+          const n = /^-?\d+(\.\d+)?$/.test(t) ? Number(t) : NaN;
           if (!Number.isFinite(n) || n < 0) {
             throw new TRPCError({ code: 'BAD_REQUEST', message: `Invalid ${label}.` });
           }

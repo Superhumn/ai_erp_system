@@ -275,8 +275,11 @@ export default function PurchaseOrderDetailSheet({
     updatePO.mutate({
       id: po!.id,
       expectedDate: header.expectedDate ? new Date(header.expectedDate) : null,
-      shippingAddress: header.shippingAddress || undefined,
-      notes: header.notes || undefined,
+      // Send the strings through (even when empty) so an existing shipping
+      // address / notes value can actually be cleared — `undefined` would be
+      // treated as "no change" by the server.
+      shippingAddress: header.shippingAddress,
+      notes: header.notes,
     });
   };
 

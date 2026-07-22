@@ -72,11 +72,12 @@ export default function PurchaseOrders() {
   // not just on initial mount.
   const locationSearch = useSearch();
   useEffect(() => {
+    // Sync the drawer to the ?po=<id> param: open it for a valid id, and close it
+    // when the param is removed/invalid (e.g. navigating back to the plain list).
+    // Row clicks don't change the query string, so they aren't affected by this.
     const po = new URLSearchParams(locationSearch).get("po");
-    if (po) {
-      const id = parseInt(po, 10);
-      if (Number.isFinite(id)) setDetailPoId(id);
-    }
+    const id = po ? parseInt(po, 10) : NaN;
+    setDetailPoId(Number.isFinite(id) ? id : null);
   }, [locationSearch]);
   const [chatTarget, setChatTarget] = useState<{ contactId: number; whatsappNumber: string; contactName?: string; subtitle?: string } | null>(null);
   const [linkTarget, setLinkTarget] = useState<{ vendorId: number; vendorName: string; vendorPhone?: string | null; poNumber: string } | null>(null);
@@ -741,22 +742,23 @@ export default function PurchaseOrders() {
                     <TableRow
                       key={po.id}
                       className="cursor-pointer"
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`Open purchase order ${po.poNumber}`}
                       onClick={() => setDetailPoId(po.id)}
-                      onKeyDown={(e) => {
-                        // Only act when the row itself is focused — not when the
-                        // event bubbles up from the status Select or action buttons.
-                        if (e.currentTarget !== e.target) return;
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          setDetailPoId(po.id);
-                        }
-                      }}
                     >
-                      <TableCell className="font-mono text-primary underline-offset-2 hover:underline">
-                        {po.poNumber}
+                      {/* The PO number is a real <button> so keyboard / screen-reader
+                          users get a proper control; the row onClick is just a
+                          mouse convenience. role/tabIndex on the <tr> itself would
+                          break table semantics for assistive tech. */}
+                      <TableCell className="font-mono">
+                        <button
+                          type="button"
+                          className="text-primary underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDetailPoId(po.id);
+                          }}
+                        >
+                          {po.poNumber}
+                        </button>
                       </TableCell>
                       <TableCell className="font-medium">{vendorName}</TableCell>
                       <TableCell className="text-right font-mono">
