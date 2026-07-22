@@ -24,6 +24,7 @@ import { agentRouter } from "./agent";
 import { parseNoteWithLLM } from "./notesParser";
 import type { NoteAppliedItem, NoteParseResult, NoteParsedItem } from "@shared/notes";
 import { employeePortalRouter } from "./routers/employeePortal";
+import { codeRouter } from "./routers/code";
 import { parseCopackerInventoryEmail, applyCopackerInventoryUpdate } from "./copackerEmailExtractor";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 import { parseInvoiceText } from "./_core/invoiceTextParser";
@@ -350,6 +351,9 @@ export const appRouter = router({
 
   // Employee self-service portal
   employeePortal: employeePortalRouter,
+
+  // Admin-only AI code IDE (snippets, sandboxed execution, AI actions)
+  code: codeRouter,
 
   auth: router({
     me: publicProcedure.query(opts => {
