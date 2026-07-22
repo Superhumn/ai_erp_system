@@ -34,7 +34,7 @@ export default function AutonomousDashboard() {
 
   // Queries
   const statusQuery = trpc.autonomousWorkflows.orchestrator.status.useQuery(undefined, {
-    refetchInterval: 5000,
+    refetchInterval: 15000,
   });
   const workflowsQuery = trpc.autonomousWorkflows.workflows.list.useQuery();
   const runsQuery = trpc.autonomousWorkflows.runs.list.useQuery({ limit: 20 });
