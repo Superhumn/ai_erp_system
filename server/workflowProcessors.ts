@@ -621,7 +621,7 @@ const materialRequirementsProcessor: WorkflowProcessor = {
             rawMaterialId: item.materialId,
             quantity: item.shortage.toString(),
             unitPrice: (item.cost / item.shortage).toString(),
-            totalPrice: item.cost.toString(),
+            totalAmount: item.cost.toString(),
           });
         }
 
@@ -708,14 +708,10 @@ const procurementProcessor: WorkflowProcessor = {
         : [];
       const vendorById = new Map(vendorRows.map((v) => [v.id, v] as const));
 
-      // Left as `any[]` (not $inferSelect) to preserve the existing runtime
-      // behavior of the loop below, which reads item.totalPrice — a field not on
-      // the suggestedPoItems row type. Typing it would surface that pre-existing
-      // mismatch as a compile error; that's a separate bug, out of scope here.
-      const allSpoItems: any[] = spoIds.length
+      const allSpoItems: (typeof suggestedPoItems.$inferSelect)[] = spoIds.length
         ? await db.select().from(suggestedPoItems).where(inArray(suggestedPoItems.suggestedPoId, spoIds))
         : [];
-      const itemsBySpoId = new Map<number, any[]>();
+      const itemsBySpoId = new Map<number, (typeof suggestedPoItems.$inferSelect)[]>();
       for (const it of allSpoItems) {
         const list = itemsBySpoId.get(it.suggestedPoId) ?? [];
         list.push(it);
@@ -737,7 +733,7 @@ const procurementProcessor: WorkflowProcessor = {
           const items = itemsBySpoId.get(spo.id) ?? [];
 
           // Calculate totals
-          const subtotal = items.reduce((sum, item) => sum + parseFloat(item.totalPrice || "0"), 0);
+          const subtotal = items.reduce((sum, item) => sum + parseFloat(item.totalAmount || "0"), 0);
 
           // Create PO
           const poNumber = `PO-${Date.now().toString(36).toUpperCase()}`;
@@ -771,7 +767,7 @@ const procurementProcessor: WorkflowProcessor = {
                 description: rm?.name || `Material #${item.rawMaterialId}`,
                 quantity: item.quantity,
                 unitPrice: item.unitPrice,
-                totalAmount: item.totalPrice,
+                totalAmount: item.totalAmount,
               })
               .$returningId();
 
