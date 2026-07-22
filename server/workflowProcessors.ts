@@ -70,6 +70,43 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
+/**
+ * Derive numerically-consistent line amounts for a suggested-PO item. Legacy
+ * rows (created before totalAmount was written) may have a NULL unitPrice or
+ * totalAmount; rather than zeroing them, fill each missing value from the others
+ * (totalAmount = unitPrice x quantity, unitPrice = totalAmount / quantity) so
+ * converted POs keep correct totals. Falls back to 0 only when nothing is known.
+ */
+function deriveSuggestedPoItemAmounts(item: {
+  quantity: string;
+  unitPrice: string | null;
+  totalAmount: string | null;
+}): { unitPrice: string; totalAmount: string; lineTotal: number } {
+  const quantity = parseFloat(item.quantity || "0");
+  const rawUnit = item.unitPrice != null ? parseFloat(item.unitPrice) : NaN;
+  const rawTotal = item.totalAmount != null ? parseFloat(item.totalAmount) : NaN;
+
+  let lineTotal: number;
+  if (!Number.isNaN(rawTotal)) {
+    lineTotal = rawTotal;
+  } else if (!Number.isNaN(rawUnit)) {
+    lineTotal = rawUnit * quantity;
+  } else {
+    lineTotal = 0;
+  }
+
+  let unitPrice: number;
+  if (!Number.isNaN(rawUnit)) {
+    unitPrice = rawUnit;
+  } else if (quantity > 0) {
+    unitPrice = lineTotal / quantity;
+  } else {
+    unitPrice = 0;
+  }
+
+  return { unitPrice: unitPrice.toString(), totalAmount: lineTotal.toString(), lineTotal };
+}
+
 /** Generate the AI RFQ email (subject + body) for a single vendor. */
 async function generateRfqEmailContent(
   vendor: typeof vendors.$inferSelect,
@@ -732,8 +769,9 @@ const procurementProcessor: WorkflowProcessor = {
           // Line items (pre-loaded)
           const items = itemsBySpoId.get(spo.id) ?? [];
 
-          // Calculate totals
-          const subtotal = items.reduce((sum, item) => sum + parseFloat(item.totalAmount || "0"), 0);
+          // Calculate totals (derive missing line amounts from the other fields
+          // so legacy rows with a NULL totalAmount don't zero out the PO total).
+          const subtotal = items.reduce((sum, item) => sum + deriveSuggestedPoItemAmounts(item).lineTotal, 0);
 
           // Create PO
           const poNumber = `PO-${Date.now().toString(36).toUpperCase()}`;
@@ -758,6 +796,9 @@ const procurementProcessor: WorkflowProcessor = {
           // Create line items
           for (const item of items) {
             const rm = rawMaterialById.get(item.rawMaterialId);
+            // purchaseOrderItems.unitPrice/.totalAmount are NOT NULL; derive any
+            // missing value (legacy rows) from the others instead of zeroing.
+            const amounts = deriveSuggestedPoItemAmounts(item);
 
             const [poItem] = await db
               .insert(purchaseOrderItems)
@@ -766,12 +807,8 @@ const procurementProcessor: WorkflowProcessor = {
                 productId: item.productId,
                 description: rm?.name || `Material #${item.rawMaterialId}`,
                 quantity: item.quantity,
-                // Coalesce nullable source columns: purchaseOrderItems.unitPrice
-                // and .totalAmount are NOT NULL, but the suggestedPoItems columns
-                // are nullable (e.g. legacy rows predating the totalAmount write
-                // fix). "0" keeps this consistent with the subtotal calc above.
-                unitPrice: item.unitPrice || "0",
-                totalAmount: item.totalAmount || "0",
+                unitPrice: amounts.unitPrice,
+                totalAmount: amounts.totalAmount,
               })
               .$returningId();
 
