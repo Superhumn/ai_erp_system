@@ -295,6 +295,287 @@ export function detectSheetType(headers: string[]): string {
   return 'unknown';
 }
 
+export type DriveSyncResult = { sheet: string; type: string; imported: number; errors: string[] };
+
+// Read every (selected) spreadsheet from the user's Google Drive and import its
+// rows into the matching ERP tables. Extracted from the syncGoogleDrive mutation
+// so it can run either inline (awaited) or detached as a background job. The
+// optional onProgress callback is invoked after each sheet so a background runner
+// can persist partial progress — letting the client reconnect to a running import
+// after navigating away from the Import page.
+async function importDriveFiles(opts: {
+  userId: number;
+  accessToken: string;
+  forcedTypes: Map<string, string> | null;
+  onProgress?: (p: { results: DriveSyncResult[]; totalSheets: number; processedSheets: number; currentFile?: string }) => Promise<void> | void;
+}): Promise<{ results: DriveSyncResult[]; totalSheets: number }> {
+  const { userId, accessToken, forcedTypes, onProgress } = opts;
+  const results: DriveSyncResult[] = [];
+
+  // 1. List all Google Sheets in Drive
+  const sheetsResponse = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q=(mimeType='application/vnd.google-apps.spreadsheet' or mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or mimeType='text/csv')&fields=files(id,name,modifiedTime,mimeType)&orderBy=modifiedTime desc&pageSize=100`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (!sheetsResponse.ok) {
+    throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list Google Sheets from Drive' });
+  }
+  const sheetsData = await sheetsResponse.json();
+  let files = sheetsData.files || [];
+  // Only import the confirmed files when selections were supplied.
+  if (forcedTypes) files = files.filter((f: any) => forcedTypes.has(f.id));
+
+  const totalSheets = files.length;
+
+  // 2. For each spreadsheet, read the first sheet, detect type, and import
+  for (const file of files) {
+    try {
+      const dataResponse = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${file.id}/values/Sheet1?majorDimension=ROWS`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      let data: any;
+      if (!dataResponse.ok) {
+        // Try without sheet name (default first sheet)
+        const fallbackResponse = await fetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${file.id}/values/A:ZZ?majorDimension=ROWS`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+        if (!fallbackResponse.ok) {
+          results.push({ sheet: file.name, type: 'error', imported: 0, errors: ['Could not read sheet data'] });
+          await onProgress?.({ results, totalSheets, processedSheets: results.length, currentFile: file.name });
+          continue;
+        }
+        data = await fallbackResponse.json();
+      } else {
+        data = await dataResponse.json();
+      }
+
+      const rows = data.values || [];
+      if (rows.length < 2) {
+        results.push({ sheet: file.name, type: 'skipped', imported: 0, errors: ['No data rows found'] });
+        await onProgress?.({ results, totalSheets, processedSheets: results.length, currentFile: file.name });
+        continue;
+      }
+
+      const headers: string[] = rows[0].map((h: string) => h.toLowerCase().trim());
+      const dataRows: string[][] = rows.slice(1);
+
+      // Use the user-confirmed type when supplied, else auto-detect.
+      const type = forcedTypes?.get(file.id) ?? detectSheetType(headers);
+
+      if (!(DRIVE_SUPPORTED_TYPES as readonly string[]).includes(type)) {
+        results.push({ sheet: file.name, type, imported: 0, errors: type === 'unknown' ? ['Could not detect data type from headers'] : ['Auto-import not supported for this type'] });
+        await onProgress?.({ results, totalSheets, processedSheets: results.length, currentFile: file.name });
+        continue;
+      }
+
+      let imported = 0;
+      const errors: string[] = [];
+
+      for (const row of dataRows) {
+        try {
+          const record: Record<string, string> = {};
+          headers.forEach((h: string, i: number) => { record[h] = row[i] || ''; });
+
+          switch (type) {
+            case 'vendors': {
+              const name = record.name || record.vendor || record.company || record['vendor name'];
+              if (!name) { errors.push(`Row ${imported + 1}: Missing vendor name`); continue; }
+              await db.createVendor({
+                name,
+                email: record.email || record['email address'] || null,
+                phone: record.phone || record.telephone || null,
+                address: record.address || null,
+                city: record.city || null,
+                state: record.state || null,
+                country: record.country || null,
+              });
+              imported++;
+              break;
+            }
+            case 'customers': {
+              const name = record.name || record.customer || record.company || record['customer name'];
+              if (!name) { errors.push(`Row ${imported + 1}: Missing customer name`); continue; }
+              await db.createCustomer({
+                name,
+                email: record.email || null,
+                phone: record.phone || null,
+                address: record.address || null,
+                city: record.city || null,
+                state: record.state || null,
+              });
+              imported++;
+              break;
+            }
+            case 'products': {
+              const name = record.name || record.product || record.item || record.description;
+              if (!name) { errors.push(`Row ${imported + 1}: Missing product name`); continue; }
+              const sku = record.sku || record['product code'] || record.code || generateNumber('PROD');
+              await db.createProduct({
+                name,
+                sku,
+                unitPrice: record.price || record['unit price'] || record.cost || record.rate || '0',
+                category: record.category || record.type || null,
+                description: record.description || record.notes || null,
+              });
+              imported++;
+              break;
+            }
+            case 'employees': {
+              const firstName = record['first name'] || record.firstname || record['first'];
+              const lastName = record['last name'] || record.lastname || record['last'];
+              if (!firstName || !lastName) { errors.push(`Row ${imported + 1}: Missing first/last name`); continue; }
+              const employeeNumber = generateNumber('EMP');
+              await db.createEmployee({
+                employeeNumber,
+                firstName,
+                lastName,
+                email: record.email || null,
+                phone: record.phone || null,
+                jobTitle: record.title || record.position || record['job title'] || null,
+              });
+              imported++;
+              break;
+            }
+            case 'raw_materials': {
+              const name = record.name || record.ingredient || record.material || record['material name'];
+              if (!name) { errors.push(`Row ${imported + 1}: Missing material name`); continue; }
+              await db.createRawMaterial({
+                name,
+                sku: record.sku || record.code || `RM-${Date.now().toString(36)}-${imported}`,
+                unit: record.unit || record.uom || 'kg',
+                unitCost: record.cost || record['unit cost'] || record.price || '0',
+              });
+              imported++;
+              break;
+            }
+            case 'crm_contacts': {
+              const name = record.name || record.contact || record['contact name'] || record['full name'] || record.company || `Contact ${imported + 1}`;
+              const firstName = name.split(' ')[0] || name;
+              const lastName = name.split(' ').slice(1).join(' ') || '';
+              const { created } = await db.findOrCreateCrmContact({
+                firstName,
+                lastName,
+                fullName: name,
+                email: record.email || record['email address'] || undefined,
+                phone: record.phone || record.mobile || undefined,
+                organization: record.company || record.organization || record.firm || undefined,
+                jobTitle: record.title || record.position || record.role || undefined,
+                source: 'import',
+                notes: record.notes || record.comments || undefined,
+                status: (record.status === 'active' || record.status === 'inactive') ? record.status as any : 'active',
+              });
+              if (created) imported++;
+              break;
+            }
+            case 'crm_deals': {
+              // Find or create default pipeline
+              let pipelineId = 1;
+              try {
+                const pipelines = await db.getCrmPipelines();
+                if (!pipelines || pipelines.length === 0) {
+                  pipelineId = await db.createCrmPipeline({ name: 'Sales Pipeline', stages: JSON.stringify(['discovery','qualified','proposal','negotiation','closed_won','closed_lost']) });
+                } else {
+                  pipelineId = pipelines[0].id;
+                }
+              } catch {}
+
+              // Resolve company name — that's the deal title.
+              const company = (record.company || record.organization || record.account || record.client || record.name || record.deal || record.opportunity || '').toString().trim();
+              if (!company) { imported++; break; }
+
+              // Skip duplicates — by existing deal or already-pending approval task.
+              if (await db.findCrmDealByCompany(company)) { imported++; break; }
+              if (await db.hasPendingDealApprovalForCompany(company)) { imported++; break; }
+
+              // Create a placeholder contact tied to that company.
+              let contactId: number;
+              try {
+                const { id } = await db.findOrCreateCrmContact({
+                  firstName: company,
+                  lastName: '',
+                  fullName: company,
+                  organization: company,
+                  source: 'import',
+                  contactType: 'lead',
+                });
+                contactId = id;
+              } catch {
+                contactId = 1;
+              }
+
+              const taskData = {
+                pipelineId,
+                contactId,
+                company,
+                stage: record.stage || record.status || 'discovery',
+                amount: record.amount || record.value || record['deal size'] || undefined,
+                source: 'google_sheets',
+                notes: record.notes || undefined,
+              };
+              await db.createAiAgentTask({
+                taskType: 'create_crm_deal',
+                priority: 'medium',
+                status: 'pending_approval',
+                taskData: JSON.stringify(taskData),
+                aiReasoning: `Imported CRM deal for "${company}" from Google Sheets — pending approval.`,
+                aiConfidence: '90.00',
+              });
+              imported++;
+              break;
+            }
+            case 'fundraising': {
+              // Create investor stakeholder
+              const investorName = record.name || record.investor || record['investor name'] || record.fund || `Investor ${imported + 1}`;
+              await db.createStakeholder({
+                name: investorName,
+                email: record.email || undefined,
+                type: 'investor',
+                relationship: record.fund || record.firm || record.company || undefined,
+                notes: record.notes || record.status || undefined,
+                accreditedInvestor: true,
+              });
+
+              // If there's an amount, also create an investment commitment
+              const rawAmount = record.amount || record.commitment || record['investment amount'] || record.invested;
+              if (rawAmount) {
+                try {
+                  const cleanAmount = String(rawAmount).replace(/[$,]/g, '');
+                  const instrumentRaw = (record.instrument || record.type || record['security type'] || 'safe').toLowerCase();
+                  await db.createInvestmentCommitment({
+                    investorName,
+                    investorEmail: record.email || '',
+                    investorCompany: record.fund || record.firm || record.company || undefined,
+                    investmentAmount: cleanAmount,
+                    instrumentType: instrumentRaw.includes('safe') ? 'safe' : 'equity',
+                    status: (record.status || '').toLowerCase().includes('close') || (record.status || '').toLowerCase().includes('fund') ? 'funded' : 'interested',
+                    notes: record.notes || undefined,
+                  });
+                } catch {}
+              }
+              imported++;
+              break;
+            }
+            default:
+              break;
+          }
+        } catch (e: any) {
+          errors.push(`Row ${imported + 1}: ${e.message}`);
+        }
+      }
+
+      results.push({ sheet: file.name, type, imported, errors });
+      await onProgress?.({ results, totalSheets, processedSheets: results.length, currentFile: file.name });
+    } catch (e: any) {
+      results.push({ sheet: file.name, type: 'error', imported: 0, errors: [e.message] });
+      await onProgress?.({ results, totalSheets, processedSheets: results.length, currentFile: file.name });
+    }
+  }
+
+  return { results, totalSheets };
+}
+
 /**
  * Enforce per-recipe access. Recipes are private: only the creator (owner) or a
  * user with an explicit grant may view, and edit/manage requires the matching
@@ -5112,8 +5393,6 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         })).optional(),
       }).optional())
       .mutation(async ({ ctx, input }) => {
-        const results: { sheet: string; type: string; imported: number; errors: string[] }[] = [];
-
         // 1. Get valid Google OAuth token
         const { accessToken, error: tokenError } = await getValidGoogleToken(ctx.user.id);
         if (tokenError || !accessToken) {
@@ -5124,276 +5403,154 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           ? new Map(input.selections.map((s) => [s.fileId, s.type as string]))
           : null;
 
-        // 2. List all Google Sheets in Drive
-        const sheetsResponse = await fetch(
-          `https://www.googleapis.com/drive/v3/files?q=(mimeType='application/vnd.google-apps.spreadsheet' or mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or mimeType='text/csv')&fields=files(id,name,modifiedTime,mimeType)&orderBy=modifiedTime desc&pageSize=100`,
-          { headers: { Authorization: `Bearer ${accessToken}` } },
-        );
-        if (!sheetsResponse.ok) {
-          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list Google Sheets from Drive' });
-        }
-        const sheetsData = await sheetsResponse.json();
-        let files = sheetsData.files || [];
-        // Only import the confirmed files when selections were supplied.
-        if (forcedTypes) files = files.filter((f: any) => forcedTypes.has(f.id));
+        // 2. Read + import every (selected) spreadsheet
+        const { results, totalSheets } = await importDriveFiles({ userId: ctx.user.id, accessToken, forcedTypes });
 
-        // 3. For each spreadsheet, read the first sheet, detect type, and import
-        for (const file of files) {
-          try {
-            const dataResponse = await fetch(
-              `https://sheets.googleapis.com/v4/spreadsheets/${file.id}/values/Sheet1?majorDimension=ROWS`,
-              { headers: { Authorization: `Bearer ${accessToken}` } },
-            );
-            if (!dataResponse.ok) {
-              // Try without sheet name (default first sheet)
-              const fallbackResponse = await fetch(
-                `https://sheets.googleapis.com/v4/spreadsheets/${file.id}/values/A:ZZ?majorDimension=ROWS`,
-                { headers: { Authorization: `Bearer ${accessToken}` } },
-              );
-              if (!fallbackResponse.ok) {
-                results.push({ sheet: file.name, type: 'error', imported: 0, errors: ['Could not read sheet data'] });
-                continue;
-              }
-              var data = await fallbackResponse.json();
-            } else {
-              var data = await dataResponse.json();
-            }
-
-            const rows = data.values || [];
-            if (rows.length < 2) {
-              results.push({ sheet: file.name, type: 'skipped', imported: 0, errors: ['No data rows found'] });
-              continue;
-            }
-
-            const headers: string[] = rows[0].map((h: string) => h.toLowerCase().trim());
-            const dataRows: string[][] = rows.slice(1);
-
-            // Use the user-confirmed type when supplied, else auto-detect.
-            const type = forcedTypes?.get(file.id) ?? detectSheetType(headers);
-
-            if (!(DRIVE_SUPPORTED_TYPES as readonly string[]).includes(type)) {
-              results.push({ sheet: file.name, type, imported: 0, errors: type === 'unknown' ? ['Could not detect data type from headers'] : ['Auto-import not supported for this type'] });
-              continue;
-            }
-
-            let imported = 0;
-            const errors: string[] = [];
-
-            for (const row of dataRows) {
-              try {
-                const record: Record<string, string> = {};
-                headers.forEach((h: string, i: number) => { record[h] = row[i] || ''; });
-
-                switch (type) {
-                  case 'vendors': {
-                    const name = record.name || record.vendor || record.company || record['vendor name'];
-                    if (!name) { errors.push(`Row ${imported + 1}: Missing vendor name`); continue; }
-                    await db.createVendor({
-                      name,
-                      email: record.email || record['email address'] || null,
-                      phone: record.phone || record.telephone || null,
-                      address: record.address || null,
-                      city: record.city || null,
-                      state: record.state || null,
-                      country: record.country || null,
-                    });
-                    imported++;
-                    break;
-                  }
-                  case 'customers': {
-                    const name = record.name || record.customer || record.company || record['customer name'];
-                    if (!name) { errors.push(`Row ${imported + 1}: Missing customer name`); continue; }
-                    await db.createCustomer({
-                      name,
-                      email: record.email || null,
-                      phone: record.phone || null,
-                      address: record.address || null,
-                      city: record.city || null,
-                      state: record.state || null,
-                    });
-                    imported++;
-                    break;
-                  }
-                  case 'products': {
-                    const name = record.name || record.product || record.item || record.description;
-                    if (!name) { errors.push(`Row ${imported + 1}: Missing product name`); continue; }
-                    const sku = record.sku || record['product code'] || record.code || generateNumber('PROD');
-                    await db.createProduct({
-                      name,
-                      sku,
-                      unitPrice: record.price || record['unit price'] || record.cost || record.rate || '0',
-                      category: record.category || record.type || null,
-                      description: record.description || record.notes || null,
-                    });
-                    imported++;
-                    break;
-                  }
-                  case 'employees': {
-                    const firstName = record['first name'] || record.firstname || record['first'];
-                    const lastName = record['last name'] || record.lastname || record['last'];
-                    if (!firstName || !lastName) { errors.push(`Row ${imported + 1}: Missing first/last name`); continue; }
-                    const employeeNumber = generateNumber('EMP');
-                    await db.createEmployee({
-                      employeeNumber,
-                      firstName,
-                      lastName,
-                      email: record.email || null,
-                      phone: record.phone || null,
-                      jobTitle: record.title || record.position || record['job title'] || null,
-                    });
-                    imported++;
-                    break;
-                  }
-                  case 'raw_materials': {
-                    const name = record.name || record.ingredient || record.material || record['material name'];
-                    if (!name) { errors.push(`Row ${imported + 1}: Missing material name`); continue; }
-                    await db.createRawMaterial({
-                      name,
-                      sku: record.sku || record.code || `RM-${Date.now().toString(36)}-${imported}`,
-                      unit: record.unit || record.uom || 'kg',
-                      unitCost: record.cost || record['unit cost'] || record.price || '0',
-                    });
-                    imported++;
-                    break;
-                  }
-                  case 'crm_contacts': {
-                    const name = record.name || record.contact || record['contact name'] || record['full name'] || record.company || `Contact ${imported + 1}`;
-                    const firstName = name.split(' ')[0] || name;
-                    const lastName = name.split(' ').slice(1).join(' ') || '';
-                    const { created } = await db.findOrCreateCrmContact({
-                      firstName,
-                      lastName,
-                      fullName: name,
-                      email: record.email || record['email address'] || undefined,
-                      phone: record.phone || record.mobile || undefined,
-                      organization: record.company || record.organization || record.firm || undefined,
-                      jobTitle: record.title || record.position || record.role || undefined,
-                      source: 'import',
-                      notes: record.notes || record.comments || undefined,
-                      status: (record.status === 'active' || record.status === 'inactive') ? record.status as any : 'active',
-                    });
-                    if (created) imported++;
-                    break;
-                  }
-                  case 'crm_deals': {
-                    // Find or create default pipeline
-                    let pipelineId = 1;
-                    try {
-                      const pipelines = await db.getCrmPipelines();
-                      if (!pipelines || pipelines.length === 0) {
-                        pipelineId = await db.createCrmPipeline({ name: 'Sales Pipeline', stages: JSON.stringify(['discovery','qualified','proposal','negotiation','closed_won','closed_lost']) });
-                      } else {
-                        pipelineId = pipelines[0].id;
-                      }
-                    } catch {}
-
-                    // Resolve company name — that's the deal title.
-                    const company = (record.company || record.organization || record.account || record.client || record.name || record.deal || record.opportunity || '').toString().trim();
-                    if (!company) { imported++; break; }
-
-                    // Skip duplicates — by existing deal or already-pending approval task.
-                    if (await db.findCrmDealByCompany(company)) { imported++; break; }
-                    if (await db.hasPendingDealApprovalForCompany(company)) { imported++; break; }
-
-                    // Create a placeholder contact tied to that company.
-                    let contactId: number;
-                    try {
-                      const { id } = await db.findOrCreateCrmContact({
-                        firstName: company,
-                        lastName: '',
-                        fullName: company,
-                        organization: company,
-                        source: 'import',
-                        contactType: 'lead',
-                      });
-                      contactId = id;
-                    } catch {
-                      contactId = 1;
-                    }
-
-                    const taskData = {
-                      pipelineId,
-                      contactId,
-                      company,
-                      stage: record.stage || record.status || 'discovery',
-                      amount: record.amount || record.value || record['deal size'] || undefined,
-                      source: 'google_sheets',
-                      notes: record.notes || undefined,
-                    };
-                    await db.createAiAgentTask({
-                      taskType: 'create_crm_deal',
-                      priority: 'medium',
-                      status: 'pending_approval',
-                      taskData: JSON.stringify(taskData),
-                      aiReasoning: `Imported CRM deal for "${company}" from Google Sheets — pending approval.`,
-                      aiConfidence: '90.00',
-                    });
-                    imported++;
-                    break;
-                  }
-                  case 'fundraising': {
-                    // Create investor stakeholder
-                    const investorName = record.name || record.investor || record['investor name'] || record.fund || `Investor ${imported + 1}`;
-                    await db.createStakeholder({
-                      name: investorName,
-                      email: record.email || undefined,
-                      type: 'investor',
-                      relationship: record.fund || record.firm || record.company || undefined,
-                      notes: record.notes || record.status || undefined,
-                      accreditedInvestor: true,
-                    });
-
-                    // If there's an amount, also create an investment commitment
-                    const rawAmount = record.amount || record.commitment || record['investment amount'] || record.invested;
-                    if (rawAmount) {
-                      try {
-                        const cleanAmount = String(rawAmount).replace(/[$,]/g, '');
-                        const instrumentRaw = (record.instrument || record.type || record['security type'] || 'safe').toLowerCase();
-                        await db.createInvestmentCommitment({
-                          investorName,
-                          investorEmail: record.email || '',
-                          investorCompany: record.fund || record.firm || record.company || undefined,
-                          investmentAmount: cleanAmount,
-                          instrumentType: instrumentRaw.includes('safe') ? 'safe' : 'equity',
-                          status: (record.status || '').toLowerCase().includes('close') || (record.status || '').toLowerCase().includes('fund') ? 'funded' : 'interested',
-                          notes: record.notes || undefined,
-                        });
-                      } catch {}
-                    }
-                    imported++;
-                    break;
-                  }
-                  default:
-                    break;
-                }
-              } catch (e: any) {
-                errors.push(`Row ${imported + 1}: ${e.message}`);
-              }
-            }
-
-            results.push({ sheet: file.name, type, imported, errors });
-          } catch (e: any) {
-            results.push({ sheet: file.name, type: 'error', imported: 0, errors: [e.message] });
-          }
-        }
-
-        // Create audit log
+        // 3. Audit log
         const totalImported = results.reduce((sum, r) => sum + r.imported, 0);
-        await createAuditLog(ctx.user.id, 'create', 'google_drive_sync', 0, `Synced ${totalImported} records from ${files.length} sheets`);
+        await createAuditLog(ctx.user.id, 'create', 'google_drive_sync', 0, `Synced ${totalImported} records from ${totalSheets} sheets`);
 
         // Persist detailed sync results to syncLogs so they survive page reload
         await db.createSyncLog({
           integration: 'google_drive',
           action: 'full_sync',
           status: totalImported > 0 ? 'success' : 'warning',
-          details: `Synced ${totalImported} records from ${files.length} sheets`,
+          details: `Synced ${totalImported} records from ${totalSheets} sheets`,
           recordsProcessed: totalImported,
           recordsFailed: results.reduce((sum, r) => sum + r.errors.length, 0),
-          metadata: { results, totalSheets: files.length, userId: ctx.user.id },
+          metadata: { results, totalSheets, userId: ctx.user.id },
         });
 
-        return { results, totalSheets: files.length };
+        return { results, totalSheets };
       }),
+
+    // Kick off a Google Drive import that runs in the BACKGROUND on the server.
+    // Unlike syncGoogleDrive (which imports inline and only returns when done),
+    // this creates a "pending" syncLog job row, returns its id immediately, and
+    // continues the import detached from the request. The client polls
+    // getSyncStatus and can reconnect to a running job via getActiveSync — so
+    // navigating away from the Import page no longer stops the import.
+    startSyncGoogleDrive: protectedProcedure
+      .input(z.object({
+        selections: z.array(z.object({
+          fileId: z.string(),
+          type: z.enum(DRIVE_SUPPORTED_TYPES),
+        })).optional(),
+      }).optional())
+      .mutation(async ({ ctx, input }) => {
+        // Validate the token up front so connection problems surface immediately
+        // (before we tell the client the job is running).
+        const { accessToken, error: tokenError } = await getValidGoogleToken(ctx.user.id);
+        if (tokenError || !accessToken) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: tokenError || 'Google not connected. Go to Settings to connect your Google account.' });
+        }
+
+        const forcedTypes = input?.selections && input.selections.length > 0
+          ? new Map(input.selections.map((s) => [s.fileId, s.type as string]))
+          : null;
+        const userId = ctx.user.id;
+
+        // Create the job row up front so the client (and getActiveSync) can find it.
+        const { id: jobId } = await db.createSyncLog({
+          integration: 'google_drive',
+          action: 'full_sync',
+          status: 'pending',
+          details: 'Import in progress…',
+          recordsProcessed: 0,
+          recordsFailed: 0,
+          metadata: { status: 'running', results: [], totalSheets: 0, processedSheets: 0, userId, startedAt: new Date().toISOString() },
+        });
+
+        // Detached background runner — intentionally not awaited. The Express
+        // server is long-lived, so this keeps running after the response is sent
+        // and after the client navigates away.
+        void (async () => {
+          try {
+            const { results, totalSheets } = await importDriveFiles({
+              userId,
+              accessToken,
+              forcedTypes,
+              onProgress: async ({ results, totalSheets, processedSheets, currentFile }) => {
+                await db.updateSyncLog(jobId, {
+                  recordsProcessed: results.reduce((sum, r) => sum + r.imported, 0),
+                  recordsFailed: results.reduce((sum, r) => sum + r.errors.length, 0),
+                  metadata: { status: 'running', results, totalSheets, processedSheets, currentFile, userId },
+                }).catch(() => { /* best-effort progress */ });
+              },
+            });
+
+            const totalImported = results.reduce((sum, r) => sum + r.imported, 0);
+            await createAuditLog(userId, 'create', 'google_drive_sync', 0, `Synced ${totalImported} records from ${totalSheets} sheets`);
+            await db.updateSyncLog(jobId, {
+              status: totalImported > 0 ? 'success' : 'warning',
+              details: `Synced ${totalImported} records from ${totalSheets} sheets`,
+              recordsProcessed: totalImported,
+              recordsFailed: results.reduce((sum, r) => sum + r.errors.length, 0),
+              metadata: { status: 'done', results, totalSheets, processedSheets: results.length, userId },
+            });
+          } catch (e: any) {
+            await db.updateSyncLog(jobId, {
+              status: 'error',
+              details: 'Import failed',
+              errorMessage: e?.message ?? 'Unknown error',
+              metadata: { status: 'error', error: e?.message ?? 'Unknown error', results: [], totalSheets: 0, processedSheets: 0, userId },
+            }).catch(() => { /* nothing more we can do */ });
+          }
+        })();
+
+        return { jobId };
+      }),
+
+    // Poll the status of a background import job started by startSyncGoogleDrive.
+    getSyncStatus: protectedProcedure
+      .input(z.object({ jobId: z.number() }))
+      .query(async ({ ctx, input }) => {
+        const log = await db.getSyncLog(input.jobId);
+        if (!log) return null;
+        const meta = (log.metadata as any) || {};
+        // Only expose the caller's own jobs.
+        if (meta.userId != null && meta.userId !== ctx.user.id) return null;
+        const state: 'running' | 'done' | 'error' =
+          meta.status === 'done' ? 'done'
+          : meta.status === 'error' || log.status === 'error' ? 'error'
+          : log.status === 'pending' ? 'running'
+          : 'done';
+        return {
+          jobId: log.id,
+          state,
+          results: (meta.results as DriveSyncResult[]) || [],
+          totalSheets: meta.totalSheets || 0,
+          processedSheets: meta.processedSheets || 0,
+          currentFile: meta.currentFile || null,
+          error: meta.error || log.errorMessage || null,
+          syncedAt: log.createdAt,
+        };
+      }),
+
+    // Find the caller's most recent still-running import so the Import page can
+    // reconnect to it on mount (after navigation / reload / tab close). Ignores
+    // jobs older than an hour, which are treated as stale/abandoned.
+    getActiveSync: protectedProcedure.query(async ({ ctx }) => {
+      const history = await db.getSyncHistory(20);
+      const oneHourAgo = Date.now() - 60 * 60 * 1000;
+      const active = history.find((log: any) => {
+        if (log.integration !== 'google_drive' || log.status !== 'pending') return false;
+        const meta = (log.metadata as any) || {};
+        if (meta.userId !== ctx.user.id) return false;
+        return new Date(log.createdAt).getTime() >= oneHourAgo;
+      });
+      if (!active) return null;
+      const meta = (active.metadata as any) || {};
+      return {
+        jobId: active.id,
+        state: 'running' as const,
+        results: (meta.results as DriveSyncResult[]) || [],
+        totalSheets: meta.totalSheets || 0,
+        processedSheets: meta.processedSheets || 0,
+        currentFile: meta.currentFile || null,
+        syncedAt: active.createdAt,
+      };
+    }),
 
     // List files from Google Drive (all types, not just spreadsheets)
     listDriveFiles: protectedProcedure
@@ -5541,9 +5698,10 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
     // Get past Google Drive sync history so results persist across page reloads
     getSyncHistory: protectedProcedure.query(async ({ ctx }) => {
       const history = await db.getSyncHistory(20);
-      // Filter to only google_drive syncs and include the current user's syncs
+      // Filter to completed google_drive syncs only — a "pending" row is a
+      // background job still in progress (surfaced via getSyncStatus instead).
       return history
-        .filter((log: any) => log.integration === 'google_drive')
+        .filter((log: any) => log.integration === 'google_drive' && log.status !== 'pending')
         .map((log: any) => ({
           id: log.id,
           status: log.status,
