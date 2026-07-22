@@ -1603,16 +1603,27 @@ export async function importWhatsappDocumentToErp(opts: {
   const markPOsAsReceived = opts.markPOsAsReceived ?? true;
   const createMissingVendor = opts.createMissingVendor ?? true;
 
-  const parseResult = await parseUploadedDocument(opts.content, opts.filename, undefined, opts.mimeType);
-  if (!parseResult.success) {
-    return { success: false, documentType: "unknown", error: parseResult.error || "Failed to parse document" };
+  // Parse + route are wrapped so this function honors its "never throws"
+  // contract for webhook/background callers; the later persistence steps are
+  // already individually best-effort.
+  let parseResult: DocumentParseResult;
+  let importResult: ImportResult;
+  let parsedType: "receipt" | "invoice" | "purchase_order" | "customs_document" | "other";
+  let summary: NormalizedDocSummary;
+  try {
+    parseResult = await parseUploadedDocument(opts.content, opts.filename, undefined, opts.mimeType);
+    if (!parseResult.success) {
+      return { success: false, documentType: "unknown", error: parseResult.error || "Failed to parse document" };
+    }
+    ({ importResult, parsedType, summary } = await routeParsedDocumentToErp(
+      parseResult,
+      userId,
+      { markPOsAsReceived, createMissingVendor },
+    ));
+  } catch (err: any) {
+    console.error("[ImportWhatsappDoc] parse/route failed:", err?.message);
+    return { success: false, documentType: "unknown", error: err?.message || "Failed to import document" };
   }
-
-  const { importResult, parsedType, summary } = await routeParsedDocumentToErp(
-    parseResult,
-    userId,
-    { markPOsAsReceived, createMissingVendor },
-  );
 
   // Link to an existing shipment when the document carries a known tracking
   // number, so it surfaces on Logistics next to that shipment.

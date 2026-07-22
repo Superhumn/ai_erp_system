@@ -13521,6 +13521,9 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
 
               if (!withBytes) continue;
 
+              // Persist to object storage for later viewing. A storage failure
+              // must NOT skip parsing — we hold the bytes in memory, so the doc
+              // can still be extracted/imported (just not re-viewable later).
               try {
                 const { storagePut } = await import("./storage");
                 const safeName = attachment.filename.replace(/[^\w.\-]+/g, "_").slice(0, 120) || "file";
@@ -13530,8 +13533,7 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
                   storageUrl: `/api/attachments/${attachmentId}`,
                 });
               } catch (e: any) {
-                console.error("[scanInbox] attachment upload failed:", e?.message);
-                continue; // no stored bytes — skip parsing this attachment
+                console.error("[scanInbox] attachment upload failed (parsing from memory anyway):", e?.message);
               }
 
               try {
