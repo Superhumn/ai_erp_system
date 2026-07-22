@@ -3,7 +3,8 @@
  * Provides email/password authentication as a replacement for manus.ai OAuth
  */
 
-import { pbkdf2Sync, randomBytes, timingSafeEqual } from "crypto";
+import { pbkdf2, randomBytes, timingSafeEqual } from "crypto";
+import { promisify } from "util";
 import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import type { Express, Request, Response } from "express";
 import rateLimit from "express-rate-limit";
@@ -12,6 +13,10 @@ import { getSessionCookieOptions } from "./cookies";
 import { sdk } from "./sdk";
 import { ENV } from "./env";
 import { isEmailConfigured, sendEmail } from "./email";
+
+// Async PBKDF2 so the 600k-iteration hash runs on libuv's threadpool instead of
+// blocking the event loop (and all concurrent requests) on every auth call.
+const pbkdf2Async = promisify(pbkdf2);
 
 const SALT_LENGTH = 32;
 const HASH_ITERATIONS = 600000;
@@ -98,14 +103,19 @@ function getClientIp(req: Request): string {
 /**
  * Hash a password using PBKDF2 with a given iteration count.
  */
-function hashPasswordWithIterations(password: string, salt: string, iterations: number): string {
-  return pbkdf2Sync(password, salt, iterations, KEY_LENGTH, DIGEST).toString("hex");
+/** Derive the raw PBKDF2 key bytes. */
+function deriveKey(password: string, salt: string, iterations: number): Promise<Buffer> {
+  return pbkdf2Async(password, salt, iterations, KEY_LENGTH, DIGEST);
+}
+
+async function hashPasswordWithIterations(password: string, salt: string, iterations: number): Promise<string> {
+  return (await deriveKey(password, salt, iterations)).toString("hex");
 }
 
 /**
  * Hash a password using PBKDF2 (current iteration count)
  */
-function hashPassword(password: string, salt: string): string {
+function hashPassword(password: string, salt: string): Promise<string> {
   return hashPasswordWithIterations(password, salt, HASH_ITERATIONS);
 }
 
@@ -118,16 +128,24 @@ function generateSalt(): string {
  * Returns { valid, needsUpgrade } where needsUpgrade is true when the stored
  * hash was produced with the legacy iteration count and should be re-hashed.
  */
-function verifyPassword(password: string, salt: string, hash: string): { valid: boolean; needsUpgrade: boolean } {
-  const passwordHash = hashPasswordWithIterations(password, salt, HASH_ITERATIONS);
-  if (passwordHash.length === hash.length && timingSafeEqual(Buffer.from(passwordHash), Buffer.from(hash))) {
+async function verifyPassword(password: string, salt: string, hash: string): Promise<{ valid: boolean; needsUpgrade: boolean }> {
+  // Compare the derived key bytes directly against the decoded stored hash. A
+  // malformed stored hash (non-hex / odd length) decodes to a different byte
+  // length and fails the length guard below — returning "invalid" without
+  // throwing — so no try/catch is needed for that case. Genuine hashing failures
+  // (e.g. a PBKDF2/openssl error) are intentionally left to propagate so the
+  // caller surfaces them as a 500 rather than masking them as a 401.
+  const stored = Buffer.from(hash, "hex");
+
+  const candidate = await deriveKey(password, salt, HASH_ITERATIONS);
+  if (candidate.length === stored.length && timingSafeEqual(candidate, stored)) {
     return { valid: true, needsUpgrade: false };
   }
 
   // Fallback: try the legacy iteration count for accounts created before the
   // HASH_ITERATIONS increase (100k → 600k, April 2026).
-  const legacyHash = hashPasswordWithIterations(password, salt, HASH_ITERATIONS_LEGACY);
-  if (legacyHash.length === hash.length && timingSafeEqual(Buffer.from(legacyHash), Buffer.from(hash))) {
+  const legacy = await deriveKey(password, salt, HASH_ITERATIONS_LEGACY);
+  if (legacy.length === stored.length && timingSafeEqual(legacy, stored)) {
     return { valid: true, needsUpgrade: true };
   }
 
@@ -213,7 +231,7 @@ export function registerLocalAuthRoutes(app: Express) {
 
       // Generate salt and hash password
       const salt = generateSalt();
-      const passwordHash = hashPassword(password, salt);
+      const passwordHash = await hashPassword(password, salt);
       const openId = await generateLocalOpenId();
 
       // Store credentials
@@ -397,13 +415,13 @@ export function registerLocalAuthRoutes(app: Express) {
       const credentials = await db.getLocalAuthCredentialByEmail(email.toLowerCase());
       if (!credentials) {
         // Run a dummy hash to prevent timing-based email enumeration
-        hashPassword(password, "0".repeat(SALT_LENGTH * 2));
+        await hashPassword(password, "0".repeat(SALT_LENGTH * 2));
         await logAuthEvent("view", "auth_login_failed", undefined, clientIp, email.toLowerCase());
         return res.status(401).json({ error: "Invalid email or password" });
       }
 
       // Verify password
-      const { valid: isValid, needsUpgrade } = verifyPassword(password, credentials.salt, credentials.passwordHash);
+      const { valid: isValid, needsUpgrade } = await verifyPassword(password, credentials.salt, credentials.passwordHash);
       if (!isValid) {
         const failedUser = await db.getUserByOpenId(credentials.openId);
         await logAuthEvent("view", "auth_login_failed", failedUser?.id, clientIp, email.toLowerCase());
@@ -413,7 +431,7 @@ export function registerLocalAuthRoutes(app: Express) {
       // Transparently upgrade legacy hashes (100k → 600k iterations)
       if (needsUpgrade) {
         const newSalt = generateSalt();
-        const newHash = hashPassword(password, newSalt);
+        const newHash = await hashPassword(password, newSalt);
         await db.updateLocalAuthCredential(credentials.openId, { passwordHash: newHash, salt: newSalt }).catch((err) => {
           console.error("[Local Auth] Failed to upgrade password hash for openId=%s: %s", credentials.openId, err?.message || err);
         });
@@ -485,14 +503,14 @@ export function registerLocalAuthRoutes(app: Express) {
       }
 
       // Verify current password
-      const { valid: isValid } = verifyPassword(currentPassword, credentials.salt, credentials.passwordHash);
+      const { valid: isValid } = await verifyPassword(currentPassword, credentials.salt, credentials.passwordHash);
       if (!isValid) {
         return res.status(401).json({ error: "Current password is incorrect" });
       }
 
       // Generate new salt and hash
       const newSalt = generateSalt();
-      const newPasswordHash = hashPassword(newPassword, newSalt);
+      const newPasswordHash = await hashPassword(newPassword, newSalt);
 
       // Update credentials
       await db.updateLocalAuthCredential(user.openId, {
@@ -640,7 +658,7 @@ export function registerLocalAuthRoutes(app: Express) {
 
       // Hash the new password with a new salt
       const newSalt = generateSalt();
-      const newPasswordHash = hashPassword(newPassword, newSalt);
+      const newPasswordHash = await hashPassword(newPassword, newSalt);
 
       // Update the credential record
       await db.updateLocalAuthCredential(credentials.openId, {
@@ -704,7 +722,7 @@ export function registerLocalAuthRoutes(app: Express) {
       }
 
       const salt = generateSalt();
-      const passwordHash = hashPassword(newPassword, salt);
+      const passwordHash = await hashPassword(newPassword, salt);
 
       const existing = await db.getLocalAuthCredentialByOpenId(user.openId);
       if (existing) {

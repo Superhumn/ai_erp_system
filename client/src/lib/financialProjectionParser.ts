@@ -179,6 +179,17 @@ const MONTH_NAMES = [
   "jul", "aug", "sep", "oct", "nov", "dec",
 ];
 
+// Synthetic base year for relative "Year 1", "Y2" labels. Only the *deltas*
+// between periods matter for sorting and annualized growth/CAGR, so any fixed
+// base inside the supported range works — we keep the human label intact.
+const RELATIVE_YEAR_BASE = 2000;
+
+// Optional trailing projection/actual qualifier on a period label, e.g.
+// "2026E" (estimate), "2027A" (actual), "FY26F" (forecast), "2028 Proj".
+// Embedded (no capture) so it can be appended to the year regexes below.
+const PROJ_SUFFIX =
+  "(?:\\s*(?:e|a|f|p|est\\.?|actual|forecast(?:ed)?|proj(?:ected)?|budget|plan(?:ned)?))?";
+
 /** Parse one cell into a Period, or null if it isn't period-like. */
 export function parsePeriod(cell: unknown): Period | null {
   // Numeric year (most common)
@@ -208,23 +219,24 @@ export function parsePeriod(cell: unknown): Period | null {
   const s = cell.trim();
   if (!s) return null;
 
-  // "FY26", "FY 2026", "FY-26"
-  const fy = /^(?:FY|fy|Fy)[\s-]*(\d{2,4})$/.exec(s);
+  // "FY26", "FY 2026", "FY-26", "FY26E", "FY2026 Proj"
+  const fy = new RegExp(`^FY[\\s-]*(\\d{2,4})${PROJ_SUFFIX}$`, "i").exec(s);
   if (fy) {
     let y = parseInt(fy[1], 10);
     if (y < 100) y += 2000;
     if (y >= 1990 && y <= 2100) return { label: s, year: y, sortKey: y * 100 };
   }
 
-  // Plain 4-digit year
-  const yOnly = /^(\d{4})$/.exec(s);
+  // Plain 4-digit year, optionally with a projection qualifier: "2026", "2026E",
+  // "2027A", "2028 Proj".
+  const yOnly = new RegExp(`^(\\d{4})${PROJ_SUFFIX}$`, "i").exec(s);
   if (yOnly) {
     const y = parseInt(yOnly[1], 10);
     if (y >= 1990 && y <= 2100) return { label: s, year: y, sortKey: y * 100 };
   }
 
-  // "Jan 2026", "January 2026", "Jan-26"
-  const monthYear = /^([A-Za-z]{3,9})[\s-]+(\d{2,4})$/.exec(s);
+  // "Jan 2026", "January 2026", "Jan-26", "Jan'26"
+  const monthYear = /^([A-Za-z]{3,9})[\s\-']+(\d{2,4})$/.exec(s);
   if (monthYear) {
     const name = monthYear[1].toLowerCase();
     const mi = MONTH_NAMES.findIndex((m) => name.startsWith(m));
@@ -237,8 +249,11 @@ export function parsePeriod(cell: unknown): Period | null {
     }
   }
 
-  // "Q1 2026", "Q1 FY26"
-  const quarter = /^(Q[1-4])[\s-]*(?:FY\s*)?(\d{2,4})$/i.exec(s);
+  // "Q1 2026", "Q1 FY26", "Q1'26", "Q3 2026E"
+  const quarter = new RegExp(
+    `^(Q[1-4])[\\s\\-']*(?:FY\\s*)?'?(\\d{2,4})${PROJ_SUFFIX}$`,
+    "i",
+  ).exec(s);
   if (quarter) {
     let y = parseInt(quarter[2], 10);
     if (y < 100) y += 2000;
@@ -246,6 +261,19 @@ export function parsePeriod(cell: unknown): Period | null {
       const qIndex = parseInt(quarter[1][1], 10);
       const month = (qIndex - 1) * 3 + 1;
       return { label: s, year: y, month, sortKey: y * 100 + month };
+    }
+  }
+
+  // Relative years: "Year 1", "Yr 2", "Y3". Common in early-stage models that
+  // don't commit to calendar years. Mapped onto a synthetic base year so the
+  // sort order and annualized growth math (which depend only on the deltas
+  // between periods) stay correct; the original label is preserved for display.
+  const relYear = /^(?:year|yr|y)[\s-]*(\d{1,2})$/i.exec(s);
+  if (relYear) {
+    const n = parseInt(relYear[1], 10);
+    if (n >= 1 && n <= 30) {
+      const y = RELATIVE_YEAR_BASE + n;
+      return { label: s, year: y, sortKey: y * 100 };
     }
   }
 
@@ -485,7 +513,10 @@ export function parseWorkbook(wb: XLSX.WorkBook): ParseResult {
 
   if (candidates.length === 0) {
     throw new Error(
-      "No projection table detected. We look for at least two year or date columns (or rows) with labeled metric rows (or columns) nearby.",
+      "No projection table detected. We look for a header with at least two " +
+        "time periods — e.g. 2026, 2026E, FY26, Q1 2026, Jan 2026, or Year 1 / " +
+        "Year 2 — across the top (or down the side), with labeled metric rows " +
+        "(Revenue, COGS, Cash Balance, …) nearby.",
     );
   }
 

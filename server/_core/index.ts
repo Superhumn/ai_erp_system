@@ -887,6 +887,65 @@ async function startServer() {
   });
 
   // ============================================
+  // B2B ROCKET WEBHOOK ENDPOINT (lead intake via Zapier)
+  // ============================================
+  // B2B Rocket has no usable REST API; its only outbound hook is the Zapier
+  // "New Lead" trigger. Point a "Webhooks by Zapier" POST action at
+  //   /webhooks/b2brocket/leads?secret=<B2BROCKET_WEBHOOK_SECRET>
+  // Each lead is AI-scored and upserted into crmContacts (source: b2brocket).
+
+  // Shared-secret auth (header or query param — Zapier can set either).
+  app.use("/webhooks/b2brocket", (req, res, next) => {
+    const provided =
+      (req.headers["x-webhook-secret"] as string) ||
+      (req.headers["authorization"] as string)?.replace(/^Bearer\s+/i, "") ||
+      (req.query.secret as string);
+    const expected = ENV.b2brocketWebhookSecret;
+
+    if (!expected) {
+      // No secret configured — allow in development, block in production.
+      if (ENV.isProduction) {
+        return res.status(403).json({ error: "B2B Rocket webhook secret not configured" });
+      }
+      return next();
+    }
+    if (provided !== expected) {
+      return res.status(401).json({ error: "Invalid webhook secret" });
+    }
+    next();
+  });
+
+  app.post(
+    "/webhooks/b2brocket/leads",
+    express.raw({ type: ["application/json", "text/plain", "*/*"] }),
+    async (req, res) => {
+      try {
+        const rawBody = Buffer.isBuffer(req.body) ? req.body.toString() : JSON.stringify(req.body);
+        let payload: any;
+        try {
+          payload = rawBody ? JSON.parse(rawBody) : {};
+        } catch {
+          return res.status(400).json({ error: "Invalid JSON body" });
+        }
+        if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+          return res.status(400).json({ error: "Expected a JSON object" });
+        }
+
+        const { ingestB2BRocketLead } = await import("./b2brocket");
+        const result = await ingestB2BRocketLead(payload);
+        console.log(
+          `[B2B Rocket Webhook] ${result.created ? "Created" : "Merged"} lead ` +
+            `#${result.contactId} (score ${result.score}, stage ${result.pipelineStage})`,
+        );
+        res.status(200).json({ success: true, ...result });
+      } catch (error) {
+        console.error("[B2B Rocket Webhook] Error:", error);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    },
+  );
+
+  // ============================================
   // TWILIO WEBHOOK ENDPOINTS (voice + SMS)
   // ============================================
   registerTwilioWebhooks(app);
@@ -1623,6 +1682,39 @@ async function startServer() {
       }
     })();
 
+    // ── Thread Follow-Up workflow (daily scan) ──
+    // Scans for follow-up threads whose nextNudgeAt is due and drives automated
+    // nudges (active vendors: up to 4 then a human; others: one nudge then drop).
+    // Dry-run is DEFAULT ON: set THREAD_FOLLOWUP_DRY_RUN="false" to actually send.
+    // The job itself re-checks the Tue–Thu 09:00–16:00 recipient-local send
+    // window per thread, so a coarse daily interval is fine.
+    (async () => {
+      try {
+        const TF_INTERVAL = 24 * 60 * 60 * 1000; // Daily
+        console.log("[Thread Follow-Up] Starting daily scan scheduler");
+        setInterval(async () => {
+          try {
+            const { runThreadFollowUpJob } = await import("../threadFollowUp");
+            const r = await runThreadFollowUpJob();
+            console.log(`[Thread Follow-Up]${r.dryRun ? " [dry-run]" : ""} scanned=${r.scanned} ` +
+              `sent=${r.sent} skipped=${r.skipped} dropped=${r.dropped} escalated=${r.escalated} ` +
+              `stopped=${r.stopped} errors=${r.errors}`);
+          } catch (e) {
+            console.warn("[Thread Follow-Up] Scan failed:", e);
+          }
+        }, TF_INTERVAL);
+        // Initial scan after 10 minutes.
+        setTimeout(async () => {
+          try {
+            const { runThreadFollowUpJob } = await import("../threadFollowUp");
+            await runThreadFollowUpJob();
+          } catch {}
+        }, 10 * 60 * 1000);
+      } catch (e) {
+        console.warn("[Thread Follow-Up] Could not initialize:", e);
+      }
+    })();
+
     // ── Task reminder emails for outstanding tasks (daily check) ──
     (async () => {
       try {
@@ -1698,64 +1790,52 @@ async function startServer() {
       })();
     }
 
-    // Data Room Google Drive auto-sync (hourly)
+    // Data Room Google Drive auto-sync (daily). Re-syncs every data room that
+    // has a linked Drive folder using the SAME reconcile logic as the manual
+    // one-click sync, so new folders and files (incl. nested sub-folders) are
+    // picked up automatically. Deletions are NOT propagated here (allowDelete
+    // is false): unattended destructive removal is deliberately left to a
+    // user-initiated re-sync, which runs with the owner watching.
     (async () => {
       try {
         const SYNC_INTERVAL = 24 * 60 * 60 * 1000; // Daily
         console.log("[Data Room Sync] Starting daily auto-sync");
-        setInterval(async () => {
-          try {
-            const { syncDriveFolder, getSimpleFileType } = await import("../routers").then(() => import("./googleDrive"));
-            const rooms = await db.getDataRooms();
-            for (const room of rooms) {
-              if (room.googleDriveFolderId) {
-                const { accessToken: roomAccessToken, error: tokenErr } = await getValidGoogleToken(room.ownerId);
-                if (roomAccessToken && !tokenErr) {
-                  try {
-                    const syncResult = await syncDriveFolder(roomAccessToken, room.googleDriveFolderId);
-                    if (syncResult.success && syncResult.files.length > 0) {
-                      const existingDocs = await db.getDataRoomDocuments(room.id);
-                      const existingDriveIds = new Set(
-                        existingDocs.filter(d => d.googleDriveFileId).map(d => d.googleDriveFileId!)
-                      );
-
-                      let newFilesCount = 0;
-                      for (const driveFile of syncResult.files) {
-                        if (existingDriveIds.has(driveFile.id)) continue;
-
-                        // Metadata-only record. Content stays in Drive and is
-                        // streamed on demand via /api/drive/proxy/:documentId.
-                        await db.createDataRoomDocument({
-                          dataRoomId: room.id,
-                          folderId: null,
-                          name: driveFile.name,
-                          fileType: getSimpleFileType(driveFile.mimeType),
-                          mimeType: driveFile.mimeType,
-                          fileSize: driveFile.size ? parseInt(driveFile.size) : undefined,
-                          storageType: 'google_drive',
-                          googleDriveFileId: driveFile.id,
-                          googleDriveWebViewLink: driveFile.webViewLink,
-                          thumbnailUrl: driveFile.thumbnailLink,
-                          uploadedBy: room.ownerId,
-                        });
-                        newFilesCount++;
-                      }
-
-                      if (newFilesCount > 0) {
-                        console.log(`[Data Room Sync] Synced room ${room.id}: ${newFilesCount} new files added`);
-                        await db.updateDataRoom(room.id, { lastSyncedAt: new Date() });
-                      }
-                    }
-                  } catch (roomErr) {
-                    console.warn(`[Data Room Sync] Failed to sync room ${room.id}:`, roomErr);
-                  }
-                }
+        const runAutoSync = async () => {
+          const { reconcileDataRoomFromDrive } = await import("../googleDriveSyncService");
+          const rooms = await db.getDataRooms();
+          for (const room of rooms) {
+            if (!room.googleDriveFolderId) continue;
+            try {
+              const { accessToken: roomAccessToken, error: tokenErr } = await getValidGoogleToken(room.ownerId);
+              if (!roomAccessToken || tokenErr) continue;
+              const recon = await reconcileDataRoomFromDrive({
+                dataRoomId: room.id,
+                rootFolderId: room.googleDriveFolderId,
+                accessToken: roomAccessToken,
+                uploadedBy: room.ownerId,
+                allowDelete: false,
+              });
+              if (recon.foldersCreated || recon.filesCreated || recon.foldersUpdated || recon.filesUpdated) {
+                console.log(
+                  `[Data Room Sync] Room ${room.id}: +${recon.foldersCreated} folders / +${recon.filesCreated} files, ` +
+                  `~${recon.foldersUpdated} folders / ~${recon.filesUpdated} files updated`,
+                );
               }
+              // Only stamp lastSyncedAt on a complete listing — a partial sync
+              // skipped some sub-tree(s), so the room isn't actually up to date.
+              if (recon.partial) {
+                console.warn(`[Data Room Sync] Room ${room.id}: partial listing — some sub-folders were not read; leaving lastSyncedAt unchanged.`);
+              } else {
+                await db.updateDataRoom(room.id, { lastSyncedAt: new Date() });
+              }
+            } catch (roomErr) {
+              console.warn(`[Data Room Sync] Failed to sync room ${room.id}:`, roomErr);
             }
-          } catch (e) {
-            console.warn("[Data Room Sync] Failed:", e);
           }
-        }, SYNC_INTERVAL);
+        };
+        setInterval(() => { runAutoSync().catch((e) => console.warn("[Data Room Sync] Failed:", e)); }, SYNC_INTERVAL);
+        // Initial run shortly after startup so a fresh deploy doesn't wait a day.
+        setTimeout(() => { runAutoSync().catch((e) => console.warn("[Data Room Sync] Failed:", e)); }, 10 * 60 * 1000);
       } catch (e) {
         console.warn("[Data Room Sync] Could not initialize:", e);
       }
