@@ -847,9 +847,9 @@ export const appRouter = router({
     // Scope is derived server-side from the caller's identity (ctx.scope), never from client input.
     list: scopedProcedure
       .query(({ ctx }) => db.getCustomers(ctx.scope)),
-    get: protectedProcedure
+    get: scopedProcedure
       .input(z.object({ id: z.number() }))
-      .query(({ input }) => db.getCustomerById(input.id)),
+      .query(({ input, ctx }) => db.getCustomerById(input.id, ctx.scope)),
     create: protectedProcedure
       .input(z.object({
         name: z.string().min(1),
@@ -968,8 +968,8 @@ export const appRouter = router({
       }),
     
     // Get sync status
-    getSyncStatus: protectedProcedure.query(async () => {
-      const customers = await db.getCustomers();
+    getSyncStatus: scopedProcedure.query(async ({ ctx }) => {
+      const customers = await db.getCustomers(ctx.scope);
       const shopifyCount = customers.filter(c => c.shopifyCustomerId).length;
       const manualCount = customers.filter(c => !c.shopifyCustomerId).length;
 

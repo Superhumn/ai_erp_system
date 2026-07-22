@@ -1,6 +1,6 @@
 import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray, ne, sum, max, min } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { scopeCompanyIds, type Scope } from "./_core/scope";
+import { scopeAllows, scopeCompanyIds, type Scope } from "./_core/scope";
 import {
   InsertUser, users, authTokens, InsertAuthToken, localAuthCredentials, InsertLocalAuthCredential, companies, customers, vendors, products,
   accounts, invoices, invoiceItems, payments, transactions, transactionLines,
@@ -576,11 +576,19 @@ export async function getCustomers(scope?: Scope) {
   return db.select().from(customers).orderBy(desc(customers.createdAt));
 }
 
-export async function getCustomerById(id: number) {
+// Pass a request's `ctx.scope` to enforce entity visibility: a customer outside the caller's
+// scope is reported as not found (undefined) so cross-entity existence isn't leaked. Omit `scope`
+// for trusted internal callers.
+export async function getCustomerById(id: number, scope?: Scope) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(customers).where(eq(customers.id, id)).limit(1);
-  return result[0];
+  const customer = result[0];
+  if (!customer) return undefined;
+  if (scope && !scopeAllows(scope, customer.companyId)) {
+    return undefined; // outside the caller's entity scope
+  }
+  return customer;
 }
 
 export async function getCustomerByShopifyId(shopifyId: string) {

@@ -66,3 +66,13 @@ export async function resolveScope(
 export function scopeCompanyIds(scope: Scope): number[] | null {
   return scope.companyIds === "all" ? null : scope.companyIds;
 }
+
+/**
+ * Whether a single record belonging to `companyId` is visible under `scope`.
+ * Used for by-id reads: a record outside scope (or with no company) should be treated as
+ * not found. Global scope sees everything.
+ */
+export function scopeAllows(scope: Scope, companyId: number | null | undefined): boolean {
+  if (scope.companyIds === "all") return true;
+  return companyId != null && scope.companyIds.includes(companyId);
+}

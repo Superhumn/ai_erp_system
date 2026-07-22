@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { resolveScope, scopeCompanyIds, type ScopeLookup } from "./_core/scope";
+import { resolveScope, scopeAllows, scopeCompanyIds, type ScopeLookup } from "./_core/scope";
 
 // A user in region 1 (companies 10, 11); a lone company 20 in region 2.
 const lookup: ScopeLookup = {
@@ -71,5 +71,25 @@ describe("scopeCompanyIds", () => {
   it("returns an empty allow-list (not null) for a scoped user with no entities", () => {
     // Critical: [] must NOT collapse to null, or a no-scope user would see everything.
     expect(scopeCompanyIds({ mode: "entity", companyIds: [] })).toEqual([]);
+  });
+});
+
+describe("scopeAllows (by-id visibility)", () => {
+  const entity: Parameters<typeof scopeAllows>[0] = { mode: "entity", companyIds: [10, 11] };
+
+  it("global scope allows any record", () => {
+    expect(scopeAllows({ mode: "global", companyIds: "all" }, 999)).toBe(true);
+    expect(scopeAllows({ mode: "global", companyIds: "all" }, null)).toBe(true);
+  });
+
+  it("allows records within the entity allow-list", () => {
+    expect(scopeAllows(entity, 10)).toBe(true);
+    expect(scopeAllows(entity, 11)).toBe(true);
+  });
+
+  it("denies records outside the allow-list or with no company", () => {
+    expect(scopeAllows(entity, 20)).toBe(false);
+    expect(scopeAllows(entity, null)).toBe(false);
+    expect(scopeAllows(entity, undefined)).toBe(false);
   });
 });

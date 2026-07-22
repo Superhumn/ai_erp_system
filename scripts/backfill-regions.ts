@@ -9,27 +9,30 @@
  * See docs/MULTI_REGION_PHASE_1_2_SPEC.md §2.4.
  */
 import "dotenv/config";
-import { eq, isNull } from "drizzle-orm";
+import { asc, eq, isNull } from "drizzle-orm";
 import { getDb } from "../server/db";
 import { regions, companies, users, customers } from "../drizzle/schema";
+
+const DEFAULT_REGION_CODE = "HQ";
 
 async function main() {
   const db = await getDb();
   if (!db) throw new Error("DATABASE_URL not set — cannot run backfill");
 
-  // 1. Ensure a default region.
-  let region = (await db.select().from(regions).limit(1))[0];
+  // 1. Ensure a default region, selected by its stable natural key (idempotent across re-runs).
+  let region = (await db.select().from(regions).where(eq(regions.code, DEFAULT_REGION_CODE)).limit(1))[0];
   if (!region) {
-    await db.insert(regions).values({ code: "HQ", name: "Headquarters", baseCurrency: "USD" });
-    region = (await db.select().from(regions).limit(1))[0];
+    await db.insert(regions).values({ code: DEFAULT_REGION_CODE, name: "Headquarters", baseCurrency: "USD" });
+    region = (await db.select().from(regions).where(eq(regions.code, DEFAULT_REGION_CODE)).limit(1))[0];
     console.log(`Created default region "${region.code}" (#${region.id}).`);
   }
 
-  // 2. Ensure a default company (legal entity) assigned to that region.
-  let company = (await db.select().from(companies).limit(1))[0];
+  // 2. Ensure a default company (legal entity) assigned to that region. Pick deterministically
+  //    (lowest id) so a re-run never selects a different existing entity.
+  let company = (await db.select().from(companies).orderBy(asc(companies.id)).limit(1))[0];
   if (!company) {
     await db.insert(companies).values({ name: "Default Entity", regionId: region.id });
-    company = (await db.select().from(companies).limit(1))[0];
+    company = (await db.select().from(companies).orderBy(asc(companies.id)).limit(1))[0];
     console.log(`Created default company "${company.name}" (#${company.id}).`);
   } else if (company.regionId == null) {
     await db.update(companies).set({ regionId: region.id }).where(eq(companies.id, company.id));
