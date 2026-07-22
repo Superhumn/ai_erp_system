@@ -30,7 +30,7 @@ per country — one system, region-scoped data, consolidation on top.
 
 | Area | State today | Key references |
 |------|-------------|----------------|
-| Legal entity | `companies` already models `parent`/`subsidiary`/`branch` + `parentCompanyId`, with `country`, `currency`, `taxId` | `drizzle/schema.ts:203` |
+| Legal entity | `companies` already models `parent`/`subsidiary`/`branch` + `parentCompanyId`, with `country` and `taxId` — but **no** `currency`, `locale`, or `timezone` column yet | `drizzle/schema.ts:203-222` |
 | Data scoping | **None.** Any logged-in user sees all rows. `getCustomers` returns every row when `companyId` is omitted, and the router passes the *client-supplied* `input?.companyId` — scope is never derived from the user | Live monolith: `server/db.ts:557` (`getCustomers`), `:1043` (`getOrders`); `server/routers.ts:548-549` |
 | User identity | `users` has **no** `companyId`/`region`/`locale` | `drizzle/schema.ts:9` |
 | Roles | Single enum: `user, admin, finance, ops, legal, exec, sales, copacker, vendor, contractor, investor`. `plant`/`procurement` appear **only** in the orphaned `server/routers/middleware.ts:51,59` — the live monolith and the enum don't include them | `drizzle/schema.ts:15` |
@@ -105,7 +105,8 @@ The legal-entity foundation. Reuse `companies`; add a light `regions` grouping.
 - **Schema (`drizzle/schema.ts`):**
   - Extend `companies` with: `functionalCurrency varchar(3)`, `locale varchar(10)`,
     `timezone varchar(64)`, `regionId` (FK → new `regions`), `taxRegime` enum
-    (`vat`/`gst`/`sales_tax`/`none`). (`companies` already has `country`, `currency`, `taxId`.)
+    (`vat`/`gst`/`sales_tax`/`none`). (`companies` already has `country` and `taxId` but **no**
+    `currency` column today — `functionalCurrency` is a genuinely new field, not a rename.)
   - New `regions` table: `id`, `code` (e.g. `EMEA`, `APAC`, or per-country), `name`,
     `baseCurrency`, `status`. Generalizes the module-scoped `pmMarkets` (`:7115`).
   - New `entity_tax_registrations` table (used in Phase 4): `companyId`, `country`,
