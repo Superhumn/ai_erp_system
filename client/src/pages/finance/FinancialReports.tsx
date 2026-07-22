@@ -2,14 +2,12 @@ import { useState, useMemo } from "react";
 import { trpc } from "../../lib/trpc";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  BarChart, Bar, Legend, LineChart, Line, ComposedChart, Cell,
+  BarChart, Bar, Legend, LineChart, Line, Cell,
   TooltipProps,
 } from "recharts";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
-import { Calendar } from "../../components/ui/calendar";
-import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import { Badge } from "../../components/ui/badge";
 import {
   Select,
@@ -19,14 +17,12 @@ import {
   SelectValue,
 } from "../../components/ui/select";
 import {
-  CalendarIcon,
   Download,
   FileText,
   Sparkles,
   Loader2,
   BarChart3,
   TrendingUp,
-  TrendingDown,
   Target,
   ArrowUpRight,
   ArrowDownRight,
@@ -35,7 +31,6 @@ import {
   Plus,
   DollarSign,
 } from "lucide-react";
-import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
 
 const reportTypes = [
@@ -134,7 +129,7 @@ function downloadPDF(report: ReportData) {
   URL.revokeObjectURL(url);
 }
 
-// ── Model vs Actual helpers ────────────────────────────────────
+// ── Shared helpers ─────────────────────────────────────────────
 function fmtCompact(value: string | number | null | undefined): string {
   if (value === null || value === undefined) return "-";
   const num = typeof value === "string" ? parseFloat(value) : value;
@@ -144,7 +139,6 @@ function fmtCompact(value: string | number | null | undefined): string {
   return `$${num.toFixed(0)}`;
 }
 
-// ── Chart helpers ────────────────────────────────────────────
 const CHART_COLORS = {
   revenue: "#3b82f6",    // blue-500
   cogs: "#f97316",       // orange-500
@@ -313,52 +307,13 @@ function KpiGoalCreator({ year, onCreated }: { year: number; onCreated: () => vo
   );
 }
 
-// ── Component ──────────────────────────────────────────────────
-
-export default function FinancialReports() {
-  const [dateRange, setDateRange] = useState<{ from: Date | undefined; to: Date | undefined }>({
-    from: new Date(new Date().getFullYear(), 0, 1),
-    to: new Date(),
-  });
-  const [selectedReport, setSelectedReport] = useState<string | null>(null);
-  const [reportData, setReportData] = useState<ReportData | null>(null);
-  const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
-  const [expandedReport, setExpandedReport] = useState<string | null>(null);
-  const [modelYear, setModelYear] = useState(new Date().getFullYear());
-  const [modelCategory, setModelCategory] = useState<string>("all");
-  const [kpiYear, setKpiYear] = useState(new Date().getFullYear());
-
-  // Banking data (shown in the Banking card at the bottom)
-  const { data: bankBalances } = trpc.banking.balances.useQuery();
-
-  const generateMutation = trpc.financialReports.generate.useMutation({
-    onSuccess: (data) => {
-      setReportData(data as ReportData);
-      setAiAnalysis(null);
-    },
-  });
-
-  const aiMutation = trpc.financialReports.aiAnalysis.useMutation({
-    onSuccess: (data) => {
-      setAiAnalysis(data.analysis);
-    },
-  });
-
-  const autoCategorize = trpc.banking.autoCategorize.useMutation();
-
-  // Financial Model vs Actual queries
-  const financialModelQuery = trpc.financialModel.list.useQuery({
-    year: modelYear,
-    ...(modelCategory !== "all" ? { category: modelCategory } : {}),
-  });
-  const modelCategories = trpc.financialModel.categories.useQuery();
-  const modelData = financialModelQuery.data ?? [];
-
-  // All-years query for charts (unfiltered by year)
+// ══════════════════════════════════════════════════════════════
+// Financials · 5-year projections + margin trends
+// ══════════════════════════════════════════════════════════════
+export function FinancialsCharts() {
   const allModelQuery = trpc.financialModel.list.useQuery({});
   const allModelData = allModelQuery.data ?? [];
 
-  // ── Prepare chart data from financial model ──────────────────
   const revenueCogsChartData = useMemo(() => {
     const byYear: Record<number, { revenue: number; cogs: number; grossProfit: number; ebitda: number; cash: number }> = {};
     for (const row of allModelData) {
@@ -387,7 +342,6 @@ export default function FinancialReports() {
       }));
   }, [allModelData]);
 
-  // ── Waterfall chart data (Year 1 breakdown) ──────────────────
   const waterfallData = useMemo(() => {
     const y1 = revenueCogsChartData.find((d) => d.year === "Year 1");
     if (!y1) return [];
@@ -401,16 +355,133 @@ export default function FinancialReports() {
     ];
   }, [revenueCogsChartData]);
 
-  // Group model data by category
-  const groupedModelData = useMemo(() => {
-    const groups: Record<string, typeof modelData> = {};
-    for (const row of modelData) {
-      const cat = row.category || "Uncategorized";
-      if (!groups[cat]) groups[cat] = [];
-      groups[cat].push(row);
-    }
-    return groups;
-  }, [modelData]);
+  return (
+    <div className="space-y-3">
+      <div>
+        <h2 className="text-base font-semibold flex items-center gap-2">
+          <BarChart3 className="h-4 w-4 text-blue-600" />
+          Financials · 5-Year Projections
+        </h2>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Forward-looking trajectory from the imported financial model — revenue, margins, and cash.
+        </p>
+      </div>
+
+      {revenueCogsChartData.length === 0 ? (
+        <Card>
+          <CardContent className="py-8 text-center text-sm text-muted-foreground">
+            No financial model data yet.
+            <Button variant="outline" size="sm" className="mt-2 ml-2" onClick={() => window.location.href = "/import"}>
+              <Upload className="h-3 w-3 mr-1" /> Import Financial Model
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {/* Revenue vs COGS Area Chart */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">Revenue vs COGS</CardTitle>
+              <CardDescription className="text-xs">5-year projected trajectory</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={240}>
+                <AreaChart data={revenueCogsChartData}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <XAxis dataKey="year" tick={{ fontSize: 11 }} />
+                  <YAxis tickFormatter={fmtChartAxis} tick={{ fontSize: 11 }} width={60} />
+                  <Tooltip content={<ChartTooltipContent />} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Area type="monotone" dataKey="Revenue" stackId="1" stroke={CHART_COLORS.revenue} fill={CHART_COLORS.revenue} fillOpacity={0.3} />
+                  <Area type="monotone" dataKey="COGS" stackId="2" stroke={CHART_COLORS.cogs} fill={CHART_COLORS.cogs} fillOpacity={0.3} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          {/* Gross Margin & EBITDA Margin Line Chart */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">Margin Trends</CardTitle>
+              <CardDescription className="text-xs">Gross margin and EBITDA margin %</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={240}>
+                <LineChart data={revenueCogsChartData}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <XAxis dataKey="year" tick={{ fontSize: 11 }} />
+                  <YAxis tickFormatter={(v: number) => `${v.toFixed(0)}%`} tick={{ fontSize: 11 }} width={45} />
+                  <Tooltip content={<ChartTooltipContent />} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Line type="monotone" dataKey="Gross Margin %" stroke={CHART_COLORS.grossProfit} strokeWidth={2} dot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="EBITDA Margin %" stroke={CHART_COLORS.ebitda} strokeWidth={2} dot={{ r: 3 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          {/* Cash Position Bar Chart */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">Cash Position</CardTitle>
+              <CardDescription className="text-xs">Ending cash balance by year</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart data={revenueCogsChartData}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <XAxis dataKey="year" tick={{ fontSize: 11 }} />
+                  <YAxis tickFormatter={fmtChartAxis} tick={{ fontSize: 11 }} width={60} />
+                  <Tooltip content={<ChartTooltipContent />} />
+                  <Bar dataKey="Ending Cash" fill={CHART_COLORS.cash} radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          {/* Waterfall Chart — Year 1 */}
+          {waterfallData.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Year 1 Waterfall</CardTitle>
+                <CardDescription className="text-xs">Revenue to EBITDA breakdown</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={240}>
+                  <BarChart data={waterfallData}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                    <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                    <YAxis tickFormatter={fmtChartAxis} tick={{ fontSize: 11 }} width={60} />
+                    <Tooltip content={<ChartTooltipContent />} />
+                    <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                      {waterfallData.map((entry, idx) => (
+                        <Cell key={idx} fill={entry.fill} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
+// Model vs Actual
+// ══════════════════════════════════════════════════════════════
+export function ModelVsActual() {
+  const [modelYear, setModelYear] = useState(new Date().getFullYear());
+  const [modelCategory, setModelCategory] = useState<string>("all");
+
+  const financialModelQuery = trpc.financialModel.list.useQuery({
+    year: modelYear,
+    ...(modelCategory !== "all" ? { category: modelCategory } : {}),
+  });
+  const modelCategories = trpc.financialModel.categories.useQuery();
+  const modelData = financialModelQuery.data ?? [];
 
   // Aggregate model data by metric (sum months for annual view)
   const aggregatedModelData = useMemo(() => {
@@ -445,7 +516,6 @@ export default function FinancialReports() {
         byMetric[key].hasActual = true;
       }
     }
-    // Group by category
     const groups: Record<string, Array<typeof byMetric[string]>> = {};
     for (const item of Object.values(byMetric)) {
       if (!groups[item.category]) groups[item.category] = [];
@@ -454,19 +524,150 @@ export default function FinancialReports() {
     return groups;
   }, [modelData]);
 
-  // KPI Goals queries
-  const kpiGoalsQuery = trpc.kpiGoals.list.useQuery({ year: kpiYear });
-  const kpiGoals = kpiGoalsQuery.data ?? [];
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="h-5 w-5 text-indigo-600" />
+            <div>
+              <CardTitle className="text-base">Model vs Actual</CardTitle>
+              <CardDescription className="text-sm">
+                Financial model projections compared with actual performance
+              </CardDescription>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Select value={modelCategory} onValueChange={setModelCategory}>
+              <SelectTrigger className="w-[150px] h-8 text-xs">
+                <SelectValue placeholder="Category" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Categories</SelectItem>
+                {(modelCategories.data ?? []).map((cat: string) => (
+                  <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={String(modelYear)} onValueChange={(v) => setModelYear(Number(v))}>
+              <SelectTrigger className="w-[100px] h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[2024, 2025, 2026, 2027].map((y) => (
+                  <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {financialModelQuery.isLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            <span className="ml-2 text-sm text-muted-foreground">Loading financial model...</span>
+          </div>
+        ) : Object.keys(aggregatedModelData).length === 0 ? (
+          <div className="text-center py-8 text-sm text-muted-foreground">
+            No financial model data found for {modelYear}.
+            <Button variant="outline" size="sm" className="mt-2" onClick={() => window.location.href = "/import"}>
+              <Upload className="h-3 w-3 mr-1" /> Import Financial Model
+            </Button>
+          </div>
+        ) : (
+          <div className="border rounded-md overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[250px]">Metric</TableHead>
+                  <TableHead className="text-right">Y{modelYear % 100} Projected</TableHead>
+                  <TableHead className="text-right">Y{modelYear % 100} Actual</TableHead>
+                  <TableHead className="text-right">Variance</TableHead>
+                  <TableHead className="text-right">Variance %</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {Object.entries(aggregatedModelData).map(([category, metrics]) => (
+                  <>
+                    <TableRow key={`cat-${category}`} className="bg-muted/60">
+                      <TableCell colSpan={5} className="font-semibold text-primary text-sm py-2">
+                        {category}
+                      </TableCell>
+                    </TableRow>
+                    {metrics.map((m, idx) => {
+                      const variance = m.hasProjected && m.hasActual
+                        ? m.actualTotal - m.projectedTotal
+                        : null;
+                      const variancePctVal = variance !== null && m.projectedTotal !== 0
+                        ? (variance / Math.abs(m.projectedTotal)) * 100
+                        : null;
 
-  const groupedKpis = useMemo(() => {
-    const groups: Record<string, typeof kpiGoals> = {};
-    for (const kpi of kpiGoals) {
-      const cat = kpi.category || "Uncategorized";
-      if (!groups[cat]) groups[cat] = [];
-      groups[cat].push(kpi);
-    }
-    return groups;
-  }, [kpiGoals]);
+                      return (
+                        <TableRow key={`${category}-${idx}`}>
+                          <TableCell className="text-sm">{m.metricName}</TableCell>
+                          <TableCell className="text-right text-sm font-medium">
+                            {m.hasProjected ? fmtCompact(m.projectedTotal) : "-"}
+                          </TableCell>
+                          <TableCell className="text-right text-sm font-medium">
+                            {m.hasActual ? fmtCompact(m.actualTotal) : "-"}
+                          </TableCell>
+                          <TableCell className={`text-right text-sm font-medium ${varianceColor(variance)}`}>
+                            {variance !== null ? (
+                              <span className="flex items-center justify-end gap-1">
+                                {variance >= 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                                {fmtCompact(Math.abs(variance))}
+                              </span>
+                            ) : (
+                              <Minus className="h-3 w-3 inline text-muted-foreground" />
+                            )}
+                          </TableCell>
+                          <TableCell className={`text-right text-sm font-medium ${varianceColor(variancePctVal)}`}>
+                            {variancePctVal !== null
+                              ? `${variancePctVal >= 0 ? "+" : ""}${variancePctVal.toFixed(1)}%`
+                              : "-"}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
+// Reports — on-demand P&L, balance sheet, cash flow, etc.
+// ══════════════════════════════════════════════════════════════
+export function ReportsSection() {
+  const [dateRange] = useState<{ from: Date | undefined; to: Date | undefined }>({
+    from: new Date(new Date().getFullYear(), 0, 1),
+    to: new Date(),
+  });
+  const [selectedReport, setSelectedReport] = useState<string | null>(null);
+  const [reportData, setReportData] = useState<ReportData | null>(null);
+  const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
+  const [expandedReport, setExpandedReport] = useState<string | null>(null);
+
+  const generateMutation = trpc.financialReports.generate.useMutation({
+    onSuccess: (data) => {
+      setReportData(data as ReportData);
+      setAiAnalysis(null);
+    },
+  });
+
+  const aiMutation = trpc.financialReports.aiAnalysis.useMutation({
+    onSuccess: (data) => {
+      setAiAnalysis(data.analysis);
+    },
+  });
+
+  const autoCategorize = trpc.banking.autoCategorize.useMutation();
 
   const handleGenerate = (reportId: string) => {
     setSelectedReport(reportId);
@@ -487,12 +688,6 @@ export default function FinancialReports() {
   };
 
   const renderReportTable = (report: ReportData) => {
-    const hasExtraColumns =
-      report.rows.some((r) => r.pct !== undefined) ||
-      report.rows.some((r) => r.count !== undefined) ||
-      report.rows.some((r) => r.quantity !== undefined) ||
-      report.rows.some((r) => r.revenue !== undefined);
-
     return (
       <Table>
         <TableHeader>
@@ -610,21 +805,15 @@ export default function FinancialReports() {
 
   return (
     <div className="space-y-3">
-      {/* Header */}
-      <div className="flex justify-between items-center">
-        <h1 className="text-lg font-semibold">Financials</h1>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <p className="text-xs text-muted-foreground">
+          On-demand deep dives. Pick a report to generate it from your QuickBooks ledger.
+        </p>
         <Button variant="outline" size="sm" onClick={() => autoCategorize.mutate()} disabled={autoCategorize.isPending}>
           {autoCategorize.isPending ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Sparkles className="mr-1 h-3 w-3" />}
           Auto-Categorize
         </Button>
       </div>
-
-      {/* 2-column layout: dashboard left, reports menu right */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px] gap-3">
-        {/* Left: Dashboard content (rendered below) */}
-        <div className="space-y-3">
-
-      {/* Reports side menu - rendered in right column via CSS order */}
 
       {/* Auto-Categorize result */}
       {autoCategorize.data && (
@@ -638,7 +827,35 @@ export default function FinancialReports() {
         </Card>
       )}
 
-      {/* Generated Report (shows when a report is selected from dropdown) */}
+      {/* Report picker */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+        {reportTypes.map((report) => (
+          <button
+            key={report.id}
+            onClick={() => handleGenerate(report.id)}
+            className={`flex items-start gap-2 text-left px-3 py-2 rounded-lg border transition-colors ${
+              expandedReport === report.id
+                ? "border-primary bg-primary/10"
+                : "border-border hover:bg-muted/50"
+            }`}
+          >
+            <FileText className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <div className="text-sm font-medium truncate">{report.name}</div>
+              <div className="text-[11px] text-muted-foreground line-clamp-2">{report.description}</div>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {generateMutation.isPending && (
+        <div className="flex items-center justify-center py-6">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          <span className="ml-2 text-sm text-muted-foreground">Generating report...</span>
+        </div>
+      )}
+
+      {/* Generated Report */}
       {expandedReport && reportData && (
         <Card className="border-primary/30">
           <CardHeader className="pb-2">
@@ -673,459 +890,246 @@ export default function FinancialReports() {
           </CardContent>
         </Card>
       )}
-      {generateMutation.isPending && (
-        <div className="flex items-center justify-center py-6">
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-          <span className="ml-2 text-sm text-muted-foreground">Generating report...</span>
-        </div>
-      )}
+    </div>
+  );
+}
 
-      {/* ── Financial Charts ─────────────────────────────────── */}
-      {revenueCogsChartData.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {/* Revenue vs COGS Area Chart */}
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">Revenue vs COGS</CardTitle>
-              <CardDescription className="text-xs">5-year projected trajectory</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={240}>
-                <AreaChart data={revenueCogsChartData}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                  <XAxis dataKey="year" tick={{ fontSize: 11 }} />
-                  <YAxis tickFormatter={fmtChartAxis} tick={{ fontSize: 11 }} width={60} />
-                  <Tooltip content={<ChartTooltipContent />} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Area type="monotone" dataKey="Revenue" stackId="1" stroke={CHART_COLORS.revenue} fill={CHART_COLORS.revenue} fillOpacity={0.3} />
-                  <Area type="monotone" dataKey="COGS" stackId="2" stroke={CHART_COLORS.cogs} fill={CHART_COLORS.cogs} fillOpacity={0.3} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
+// ══════════════════════════════════════════════════════════════
+// KPI Goals
+// ══════════════════════════════════════════════════════════════
+export function KpiGoalsSection() {
+  const [kpiYear, setKpiYear] = useState(new Date().getFullYear());
+  const kpiGoalsQuery = trpc.kpiGoals.list.useQuery({ year: kpiYear });
+  const kpiGoals = kpiGoalsQuery.data ?? [];
 
-          {/* Gross Margin & EBITDA Margin Line Chart */}
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">Margin Trends</CardTitle>
-              <CardDescription className="text-xs">Gross margin and EBITDA margin %</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={240}>
-                <LineChart data={revenueCogsChartData}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                  <XAxis dataKey="year" tick={{ fontSize: 11 }} />
-                  <YAxis tickFormatter={(v: number) => `${v.toFixed(0)}%`} tick={{ fontSize: 11 }} width={45} />
-                  <Tooltip content={<ChartTooltipContent />} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Line type="monotone" dataKey="Gross Margin %" stroke={CHART_COLORS.grossProfit} strokeWidth={2} dot={{ r: 3 }} />
-                  <Line type="monotone" dataKey="EBITDA Margin %" stroke={CHART_COLORS.ebitda} strokeWidth={2} dot={{ r: 3 }} />
-                </LineChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
+  const groupedKpis = useMemo(() => {
+    const groups: Record<string, typeof kpiGoals> = {};
+    for (const kpi of kpiGoals) {
+      const cat = kpi.category || "Uncategorized";
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(kpi);
+    }
+    return groups;
+  }, [kpiGoals]);
 
-          {/* Cash Position Bar Chart */}
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">Cash Position</CardTitle>
-              <CardDescription className="text-xs">Ending cash balance by year</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={240}>
-                <BarChart data={revenueCogsChartData}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                  <XAxis dataKey="year" tick={{ fontSize: 11 }} />
-                  <YAxis tickFormatter={fmtChartAxis} tick={{ fontSize: 11 }} width={60} />
-                  <Tooltip content={<ChartTooltipContent />} />
-                  <Bar dataKey="Ending Cash" fill={CHART_COLORS.cash} radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-
-          {/* Waterfall Chart — Year 1 */}
-          {waterfallData.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">Year 1 Waterfall</CardTitle>
-                <CardDescription className="text-xs">Revenue to EBITDA breakdown</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={240}>
-                  <BarChart data={waterfallData}>
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                    <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                    <YAxis tickFormatter={fmtChartAxis} tick={{ fontSize: 11 }} width={60} />
-                    <Tooltip content={<ChartTooltipContent />} />
-                    <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                      {waterfallData.map((entry, idx) => (
-                        <Cell key={idx} fill={entry.fill} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      )}
-
-      {/* ── Model vs Actual Comparison ────────────────────────── */}
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <TrendingUp className="h-5 w-5 text-indigo-600" />
-              <div>
-                <CardTitle className="text-base">Model vs Actual</CardTitle>
-                <CardDescription className="text-sm">
-                  Financial model projections compared with actual performance
-                </CardDescription>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Select value={modelCategory} onValueChange={setModelCategory}>
-                <SelectTrigger className="w-[150px] h-8 text-xs">
-                  <SelectValue placeholder="Category" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Categories</SelectItem>
-                  {(modelCategories.data ?? []).map((cat: string) => (
-                    <SelectItem key={cat} value={cat}>{cat}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={String(modelYear)} onValueChange={(v) => setModelYear(Number(v))}>
-                <SelectTrigger className="w-[100px] h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {[2024, 2025, 2026, 2027].map((y) => (
-                    <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Target className="h-5 w-5 text-emerald-600" />
+            <div>
+              <CardTitle className="text-base">KPI Goals</CardTitle>
+              <CardDescription className="text-sm">
+                Track progress against key performance targets
+              </CardDescription>
             </div>
           </div>
-        </CardHeader>
-        <CardContent>
-          {financialModelQuery.isLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-              <span className="ml-2 text-sm text-muted-foreground">Loading financial model...</span>
-            </div>
-          ) : Object.keys(aggregatedModelData).length === 0 ? (
-            <div className="text-center py-8 text-sm text-muted-foreground">
-              No financial model data found for {modelYear}.
-              <Button variant="outline" size="sm" className="mt-2" onClick={() => window.location.href = "/import"}>
-                <Upload className="h-3 w-3 mr-1" /> Import Financial Model
-              </Button>
-            </div>
-          ) : (
-            <div className="border rounded-md overflow-hidden">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[250px]">Metric</TableHead>
-                    <TableHead className="text-right">Y{modelYear % 100} Projected</TableHead>
-                    <TableHead className="text-right">Y{modelYear % 100} Actual</TableHead>
-                    <TableHead className="text-right">Variance</TableHead>
-                    <TableHead className="text-right">Variance %</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {Object.entries(aggregatedModelData).map(([category, metrics]) => (
-                    <>
-                      <TableRow key={`cat-${category}`} className="bg-muted/60">
-                        <TableCell colSpan={5} className="font-semibold text-primary text-sm py-2">
-                          {category}
-                        </TableCell>
-                      </TableRow>
-                      {metrics.map((m, idx) => {
-                        const variance = m.hasProjected && m.hasActual
-                          ? m.actualTotal - m.projectedTotal
-                          : null;
-                        const variancePctVal = variance !== null && m.projectedTotal !== 0
-                          ? (variance / Math.abs(m.projectedTotal)) * 100
-                          : null;
-
-                        return (
-                          <TableRow key={`${category}-${idx}`}>
-                            <TableCell className="text-sm">{m.metricName}</TableCell>
-                            <TableCell className="text-right text-sm font-medium">
-                              {m.hasProjected ? fmtCompact(m.projectedTotal) : "-"}
-                            </TableCell>
-                            <TableCell className="text-right text-sm font-medium">
-                              {m.hasActual ? fmtCompact(m.actualTotal) : "-"}
-                            </TableCell>
-                            <TableCell className={`text-right text-sm font-medium ${varianceColor(variance)}`}>
-                              {variance !== null ? (
-                                <span className="flex items-center justify-end gap-1">
-                                  {variance >= 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                                  {fmtCompact(Math.abs(variance))}
-                                </span>
-                              ) : (
-                                <Minus className="h-3 w-3 inline text-muted-foreground" />
-                              )}
-                            </TableCell>
-                            <TableCell className={`text-right text-sm font-medium ${varianceColor(variancePctVal)}`}>
-                              {variancePctVal !== null
-                                ? `${variancePctVal >= 0 ? "+" : ""}${variancePctVal.toFixed(1)}%`
-                                : "-"}
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* ── KPI Dashboard ─────────────────────────────────────── */}
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Target className="h-5 w-5 text-emerald-600" />
-              <div>
-                <CardTitle className="text-base">KPI Goals</CardTitle>
-                <CardDescription className="text-sm">
-                  Track progress against key performance targets
-                </CardDescription>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Select value={String(kpiYear)} onValueChange={(v) => setKpiYear(Number(v))}>
-                <SelectTrigger className="w-[100px] h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {[2024, 2025, 2026, 2027].map((y) => (
-                    <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => window.location.href = "/import"}>
-                <Upload className="h-3 w-3 mr-1" /> Import
-              </Button>
-              <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => {
-                // Reset KPI goals to show creator again by clearing and refetching
-                kpiGoalsQuery.refetch();
-              }}>
-                <Plus className="h-3 w-3 mr-1" /> Add KPI
-              </Button>
-            </div>
+          <div className="flex items-center gap-2">
+            <Select value={String(kpiYear)} onValueChange={(v) => setKpiYear(Number(v))}>
+              <SelectTrigger className="w-[100px] h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[2024, 2025, 2026, 2027].map((y) => (
+                  <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => window.location.href = "/import"}>
+              <Upload className="h-3 w-3 mr-1" /> Import
+            </Button>
+            <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => {
+              kpiGoalsQuery.refetch();
+            }}>
+              <Plus className="h-3 w-3 mr-1" /> Add KPI
+            </Button>
           </div>
-        </CardHeader>
-        <CardContent>
-          {kpiGoalsQuery.isLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-              <span className="ml-2 text-sm text-muted-foreground">Loading KPI goals...</span>
-            </div>
-          ) : kpiGoals.length === 0 ? (
-            <KpiGoalCreator year={kpiYear} onCreated={() => kpiGoalsQuery.refetch()} />
-          ) : (
-            <div className="space-y-6">
-              {Object.entries(groupedKpis).map(([category, kpis]) => (
-                <div key={category}>
-                  <h3 className="text-sm font-semibold text-muted-foreground mb-3 uppercase tracking-wide">
-                    {category}
-                  </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {kpis.map((kpi: any) => {
-                      const pct = progressPct(kpi.actualValue, kpi.targetValue);
-                      const actual = kpi.actualValue ? parseFloat(kpi.actualValue) : 0;
-                      const target = kpi.targetValue ? parseFloat(kpi.targetValue) : 0;
-                      const isOverTarget = actual >= target && target > 0;
+        </div>
+      </CardHeader>
+      <CardContent>
+        {kpiGoalsQuery.isLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            <span className="ml-2 text-sm text-muted-foreground">Loading KPI goals...</span>
+          </div>
+        ) : kpiGoals.length === 0 ? (
+          <KpiGoalCreator year={kpiYear} onCreated={() => kpiGoalsQuery.refetch()} />
+        ) : (
+          <div className="space-y-6">
+            {Object.entries(groupedKpis).map(([category, kpis]) => (
+              <div key={category}>
+                <h3 className="text-sm font-semibold text-muted-foreground mb-3 uppercase tracking-wide">
+                  {category}
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {kpis.map((kpi: any) => {
+                    const pct = progressPct(kpi.actualValue, kpi.targetValue);
+                    const actual = kpi.actualValue ? parseFloat(kpi.actualValue) : 0;
+                    const target = kpi.targetValue ? parseFloat(kpi.targetValue) : 0;
+                    const isOverTarget = actual >= target && target > 0;
 
-                      return (
-                        <div
-                          key={kpi.id}
-                          className="border rounded-lg p-3 space-y-2 hover:bg-muted/30 transition-colors"
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm font-medium truncate">{kpi.metricName}</span>
-                            <Badge
-                              variant="secondary"
-                              className={`text-xs shrink-0 ${kpiStatusBadge(kpi.status)}`}
-                            >
-                              {(kpi.status || "not_started").replace("_", " ")}
-                            </Badge>
-                          </div>
-                          <div className="flex items-end justify-between">
-                            <div>
-                              <span className="text-lg font-bold">
-                                {kpi.unit === "USD" || kpi.unit === "$"
-                                  ? fmtCompact(actual)
-                                  : `${actual.toLocaleString()}${kpi.unit === "%" ? "%" : ""}`}
-                              </span>
-                              <span className="text-xs text-muted-foreground ml-1">
-                                / {kpi.unit === "USD" || kpi.unit === "$"
-                                  ? fmtCompact(target)
-                                  : `${target.toLocaleString()}${kpi.unit === "%" ? "%" : ""}`}
-                              </span>
-                            </div>
-                            <span className={`text-xs font-medium ${isOverTarget ? "text-green-600" : pct >= 70 ? "text-yellow-600" : "text-red-600"}`}>
-                              {pct}%
+                    return (
+                      <div
+                        key={kpi.id}
+                        className="border rounded-lg p-3 space-y-2 hover:bg-muted/30 transition-colors"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium truncate">{kpi.metricName}</span>
+                          <Badge
+                            variant="secondary"
+                            className={`text-xs shrink-0 ${kpiStatusBadge(kpi.status)}`}
+                          >
+                            {(kpi.status || "not_started").replace("_", " ")}
+                          </Badge>
+                        </div>
+                        <div className="flex items-end justify-between">
+                          <div>
+                            <span className="text-lg font-bold">
+                              {kpi.unit === "USD" || kpi.unit === "$"
+                                ? fmtCompact(actual)
+                                : `${actual.toLocaleString()}${kpi.unit === "%" ? "%" : ""}`}
+                            </span>
+                            <span className="text-xs text-muted-foreground ml-1">
+                              / {kpi.unit === "USD" || kpi.unit === "$"
+                                ? fmtCompact(target)
+                                : `${target.toLocaleString()}${kpi.unit === "%" ? "%" : ""}`}
                             </span>
                           </div>
-                          {/* Progress bar */}
-                          <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                            <div
-                              className={`h-2 rounded-full transition-all ${
-                                isOverTarget
-                                  ? "bg-green-500"
-                                  : pct >= 70
-                                    ? "bg-yellow-500"
-                                    : "bg-red-500"
-                              }`}
-                              style={{ width: `${Math.min(pct, 100)}%` }}
-                            />
-                          </div>
-                          {/* Sparkline — 12-month target trajectory */}
-                          <div className="flex items-center justify-between">
-                            <div style={{ width: 80, height: 30 }}>
-                              <ResponsiveContainer width="100%" height="100%">
-                                <LineChart data={Array.from({ length: 12 }, (_, i) => ({
-                                  m: i + 1,
-                                  v: target > 0 ? (target / 12) * (i + 1) : 0,
-                                  a: i < (kpi.month || 1) ? (actual / (kpi.month || 1)) * (i + 1) : undefined,
-                                }))}>
-                                  <Line type="monotone" dataKey="v" stroke={CHART_COLORS.muted} strokeWidth={1} dot={false} strokeDasharray="2 2" />
-                                  <Line type="monotone" dataKey="a" stroke={isOverTarget ? CHART_COLORS.grossProfit : CHART_COLORS.revenue} strokeWidth={1.5} dot={false} connectNulls />
-                                </LineChart>
-                              </ResponsiveContainer>
-                            </div>
-                            {kpi.month && (
-                              <span className="text-[10px] text-muted-foreground">
-                                Mo {kpi.month}
-                              </span>
-                            )}
-                          </div>
+                          <span className={`text-xs font-medium ${isOverTarget ? "text-green-600" : pct >= 70 ? "text-yellow-600" : "text-red-600"}`}>
+                            {pct}%
+                          </span>
                         </div>
-                      );
-                    })}
-                  </div>
+                        {/* Progress bar */}
+                        <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                          <div
+                            className={`h-2 rounded-full transition-all ${
+                              isOverTarget
+                                ? "bg-green-500"
+                                : pct >= 70
+                                  ? "bg-yellow-500"
+                                  : "bg-red-500"
+                            }`}
+                            style={{ width: `${Math.min(pct, 100)}%` }}
+                          />
+                        </div>
+                        {/* Sparkline — 12-month target trajectory */}
+                        <div className="flex items-center justify-between">
+                          <div style={{ width: 80, height: 30 }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                              <LineChart data={Array.from({ length: 12 }, (_, i) => ({
+                                m: i + 1,
+                                v: target > 0 ? (target / 12) * (i + 1) : 0,
+                                a: i < (kpi.month || 1) ? (actual / (kpi.month || 1)) * (i + 1) : undefined,
+                              }))}>
+                                <Line type="monotone" dataKey="v" stroke={CHART_COLORS.muted} strokeWidth={1} dot={false} strokeDasharray="2 2" />
+                                <Line type="monotone" dataKey="a" stroke={isOverTarget ? CHART_COLORS.grossProfit : CHART_COLORS.revenue} strokeWidth={1.5} dot={false} connectNulls />
+                              </LineChart>
+                            </ResponsiveContainer>
+                          </div>
+                          {kpi.month && (
+                            <span className="text-[10px] text-muted-foreground">
+                              Mo {kpi.month}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
+// Banking
+// ══════════════════════════════════════════════════════════════
+export function BankingSection() {
+  const { data: bankBalances } = trpc.banking.balances.useQuery();
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <DollarSign className="h-4 w-4 text-blue-600" /> Banking
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {bankBalances?.accounts && bankBalances.accounts.length > 0 ? (
+            bankBalances.accounts.map((acct: any) => (
+              <div key={acct.id} className="border rounded-lg p-4">
+                <div className="text-sm text-muted-foreground font-medium">
+                  {acct.name || acct.nickname || "Account"}
+                </div>
+                <div className="text-2xl font-bold mt-1">
+                  {fmtCompact(acct.currentBalance ?? acct.availableBalance ?? 0)}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {acct.kind || acct.type || "Checking"} &middot; ****{acct.accountNumber?.slice(-4) || acct.id?.slice(-4)}
+                </p>
+              </div>
+            ))
+          ) : (
+            <div className="col-span-full text-sm text-muted-foreground py-4 text-center">
+              No bank accounts connected. Connect Mercury or Amex below.
             </div>
           )}
-        </CardContent>
-      </Card>
-
-      {/* ── Banking ─────────────────────────────── */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <DollarSign className="h-4 w-4 text-blue-600" /> Banking
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {bankBalances?.accounts && bankBalances.accounts.length > 0 ? (
-              bankBalances.accounts.map((acct: any) => (
-                <div key={acct.id} className="border rounded-lg p-4">
-                  <div className="text-sm text-muted-foreground font-medium">
-                    {acct.name || acct.nickname || "Account"}
-                  </div>
-                  <div className="text-2xl font-bold mt-1">
-                    {fmtCompact(acct.currentBalance ?? acct.availableBalance ?? 0)}
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {acct.kind || acct.type || "Checking"} &middot; ****{acct.accountNumber?.slice(-4) || acct.id?.slice(-4)}
-                  </p>
-                </div>
-              ))
-            ) : (
-              <div className="col-span-full text-sm text-muted-foreground py-4 text-center">
-                No bank accounts connected. Connect Mercury or Amex below.
-              </div>
-            )}
-          </div>
-
-          {/* Connect accounts section */}
-          <div className="mt-4 border-t pt-4">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">Connect Accounts</p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <a
-                href="/settings"
-                className="flex items-center gap-3 p-3 border rounded-lg hover:bg-muted/50 transition-colors"
-              >
-                <div className="h-8 w-8 rounded-full bg-gradient-to-r from-gray-800 to-gray-600 flex items-center justify-center text-white text-xs font-bold">M</div>
-                <div>
-                  <div className="text-sm font-medium">Mercury</div>
-                  <div className="text-xs text-muted-foreground">Business checking &middot; API key in Settings</div>
-                </div>
-              </a>
-              <a
-                href="https://www.americanexpress.com/en-us/business/trends-and-insights/articles/how-to-connect-your-amex-account-to-accounting-software/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-3 p-3 border rounded-lg hover:bg-muted/50 transition-colors"
-              >
-                <div className="h-8 w-8 rounded-full bg-gradient-to-r from-blue-700 to-blue-500 flex items-center justify-center text-white text-xs font-bold">AX</div>
-                <div>
-                  <div className="text-sm font-medium">American Express</div>
-                  <div className="text-xs text-muted-foreground">Connect via Plaid or CSV import &middot; Use QuickBooks sync</div>
-                </div>
-              </a>
-            </div>
-            <p className="text-[11px] text-muted-foreground mt-2">
-              To connect Amex: Go to Settings &gt; QuickBooks and sync your accounts. Amex integrates via QuickBooks Online or you can export transactions as CSV from americanexpress.com and import via the Import Data page.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-        </div>{/* end left column */}
-
-        {/* Right sidebar: reports menu */}
-        <div className="space-y-2 hidden lg:block">
-          <Card className="py-2">
-            <CardHeader className="pb-1 px-3">
-              <CardTitle className="text-xs text-muted-foreground uppercase tracking-wider">Reports</CardTitle>
-            </CardHeader>
-            <CardContent className="px-2 py-0">
-              <div className="space-y-0.5">
-                {reportTypes.map((report) => (
-                  <button
-                    key={report.id}
-                    className={`w-full text-left px-2 py-1.5 text-xs rounded-lg hover:bg-muted transition-colors ${expandedReport === report.id ? "bg-primary/10 text-primary font-medium" : ""}`}
-                    onClick={() => {
-                      handleGenerate(report.id);
-                      setExpandedReport(report.id);
-                    }}
-                  >
-                    {report.name}
-                  </button>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="py-2">
-            <CardHeader className="pb-1 px-3">
-              <CardTitle className="text-xs text-muted-foreground uppercase tracking-wider">Actions</CardTitle>
-            </CardHeader>
-            <CardContent className="px-2 py-0 space-y-0.5">
-              <button className="w-full text-left px-2 py-1.5 text-xs rounded-lg hover:bg-muted transition-colors" onClick={() => autoCategorize.mutate()}>
-                Auto-Categorize
-              </button>
-              <button className="w-full text-left px-2 py-1.5 text-xs rounded-lg hover:bg-muted transition-colors" onClick={() => window.location.href = "/import"}>
-                Import Data
-              </button>
-              <button className="w-full text-left px-2 py-1.5 text-xs rounded-lg hover:bg-muted transition-colors" onClick={() => window.location.href = "/settings/integrations"}>
-                QuickBooks
-              </button>
-            </CardContent>
-          </Card>
         </div>
-      </div>{/* end grid */}
+
+        {/* Connect accounts section */}
+        <div className="mt-4 border-t pt-4">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">Connect Accounts</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <a
+              href="/settings"
+              className="flex items-center gap-3 p-3 border rounded-lg hover:bg-muted/50 transition-colors"
+            >
+              <div className="h-8 w-8 rounded-full bg-gradient-to-r from-gray-800 to-gray-600 flex items-center justify-center text-white text-xs font-bold">M</div>
+              <div>
+                <div className="text-sm font-medium">Mercury</div>
+                <div className="text-xs text-muted-foreground">Business checking &middot; API key in Settings</div>
+              </div>
+            </a>
+            <a
+              href="https://www.americanexpress.com/en-us/business/trends-and-insights/articles/how-to-connect-your-amex-account-to-accounting-software/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-3 p-3 border rounded-lg hover:bg-muted/50 transition-colors"
+            >
+              <div className="h-8 w-8 rounded-full bg-gradient-to-r from-blue-700 to-blue-500 flex items-center justify-center text-white text-xs font-bold">AX</div>
+              <div>
+                <div className="text-sm font-medium">American Express</div>
+                <div className="text-xs text-muted-foreground">Connect via Plaid or CSV import &middot; Use QuickBooks sync</div>
+              </div>
+            </a>
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-2">
+            To connect Amex: Go to Settings &gt; QuickBooks and sync your accounts. Amex integrates via QuickBooks Online or you can export transactions as CSV from americanexpress.com and import via the Import Data page.
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
+// Standalone Financials page (/finance/reports) — composes sections
+// ══════════════════════════════════════════════════════════════
+export default function FinancialReports() {
+  return (
+    <div className="space-y-6">
+      <h1 className="text-lg font-semibold">Financials</h1>
+      <FinancialsCharts />
+      <ModelVsActual />
+      <ReportsSection />
+      <KpiGoalsSection />
+      <BankingSection />
     </div>
   );
 }
