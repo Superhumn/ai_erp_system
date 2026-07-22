@@ -828,7 +828,7 @@ ONLY return the JSON array, no other text.`;
     // a pre-filled draft for the user to review — it does NOT create the vendor,
     // keeping a human in the loop before a record is written.
     enrichFromText: opsProcedure
-      .input(z.object({ text: z.string().min(1) }))
+      .input(z.object({ text: z.string().min(1).max(2000) }))
       .mutation(async ({ input }) => {
         const prompt = `A user wants to add a vendor (supplier) to their ERP system. Their request:
 "${input.text}"
@@ -939,7 +939,12 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         return {
           found: true as const,
           vendor,
-          sources: Array.isArray(raw.sources) ? (raw.sources as string[]).filter(s => typeof s === "string") : [],
+          sources: Array.isArray(raw.sources)
+            ? (raw.sources as unknown[])
+                .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+                .map(s => s.trim())
+                .slice(0, 10)
+            : [],
           confidence,
         };
       }),
