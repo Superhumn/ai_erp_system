@@ -8524,6 +8524,32 @@ export async function getPendingApprovalTasks() {
     .orderBy(desc(aiAgentTasks.priority), desc(aiAgentTasks.createdAt));
 }
 
+/**
+ * Find an existing "create_project_task" suggestion (aiAgentTasks, taskType
+ * "query") whose taskData carries the given sourceExternalId, regardless of
+ * status. Used by the meeting extractor to avoid re-queuing a suggestion for
+ * the same action item on every re-sync — and to honor a prior rejection
+ * (a rejected suggestion is not re-created). Matched in JS because the key
+ * lives inside the JSON taskData column.
+ */
+export async function findMeetingTaskSuggestionByExternalId(externalId: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(aiAgentTasks)
+    .where(eq(aiAgentTasks.taskType, "query" as any));
+  for (const row of rows) {
+    try {
+      const data = JSON.parse(row.taskData || "{}");
+      if (data?.action === "create_project_task" && data?.sourceExternalId === externalId) {
+        return row;
+      }
+    } catch {
+      /* ignore malformed taskData */
+    }
+  }
+  return null;
+}
+
 export async function createAiAgentRule(data: InsertAiAgentRule) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");

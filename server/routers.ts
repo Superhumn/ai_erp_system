@@ -57,7 +57,7 @@ import { planPublish, publishToPlatform, type Platform as SocialPlatform } from 
 import { getYouTubeAuthUrl } from "./_core/youtube";
 import { encrypt, decrypt } from "./_core/crypto";
 import { ENV } from "./_core/env";
-import { reassignProjectTaskToHuman } from "./taskAgentBridge";
+import { reassignProjectTaskToHuman, createProjectTaskFromSource } from "./taskAgentBridge";
 import { createDecipheriv, createHash } from "crypto";
 
 /**
@@ -6877,7 +6877,43 @@ Be concise and helpful. Always give actionable guidance.`;
                 result = { created: true, workOrderId: workOrder.id, workOrderNumber: workOrder.workOrderNumber };
                 break;
               }
-              
+
+              case 'query': {
+                // Generic "query" tasks can carry a structured action. The
+                // meeting extractor uses action=create_project_task to route a
+                // Fireflies action item through the Approval Queue; executing
+                // the approved suggestion creates the real project task here,
+                // preserving the meeting source so it keeps its "Meeting" badge.
+                if (taskData.action === 'create_project_task') {
+                  if (!taskData.projectId || !taskData.name) {
+                    throw new Error('Project task suggestion missing projectId or name');
+                  }
+                  const created = await createProjectTaskFromSource({
+                    projectId: Number(taskData.projectId),
+                    name: String(taskData.name),
+                    description: taskData.description ? String(taskData.description) : undefined,
+                    assigneeId: taskData.assigneeId ? Number(taskData.assigneeId) : undefined,
+                    priority: (taskData.priority || 'medium') as any,
+                    dueDate: taskData.dueDate ? new Date(taskData.dueDate) : undefined,
+                    sourceType: 'meeting',
+                    sourceRefType: taskData.sourceMeeting?.firefliesId ? 'firefliesMeeting' : undefined,
+                    sourceRefId: taskData.sourceMeeting?.meetingId ? Number(taskData.sourceMeeting.meetingId) : undefined,
+                    sourceExternalId: taskData.sourceExternalId ? String(taskData.sourceExternalId) : undefined,
+                    createdBy: ctx.user.id,
+                  });
+                  result = {
+                    created: true,
+                    action: 'create_project_task',
+                    projectTaskId: created.id,
+                    projectId: Number(taskData.projectId),
+                    assigneeId: taskData.assigneeId ? Number(taskData.assigneeId) : null,
+                  };
+                  break;
+                }
+                result = { executed: true, taskType: task.taskType };
+                break;
+              }
+
               default:
                 result = { executed: true, taskType: task.taskType };
             }
@@ -19379,6 +19415,9 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             firefliesId: t.id,
             actionItems: parseActionItems(actionItems),
             participants,
+            // Respect Settings → Fireflies "Auto-create tasks": when off,
+            // route items to the Approval Queue instead of creating directly.
+            routeToApproval: !config.autoCreateTasks,
           });
           tasksSuggested += suggested;
           if (suggested > 0) {

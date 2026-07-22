@@ -51,6 +51,7 @@ export async function extractFirefliesActionItems(params: {
   actionItems: FirefliesActionItem[];
   participants: Array<{ name?: string; email?: string }>;
   forceCreate?: boolean;
+  routeToApproval?: boolean;
   preferredProjectId?: number;
   preferredAssigneeId?: number;
   stableIndices?: number[];
@@ -66,6 +67,7 @@ export async function extractFirefliesActionItems(params: {
     },
     {
       forceCreate: params.forceCreate,
+      routeToApproval: params.routeToApproval,
       preferredProjectId: params.preferredProjectId,
       preferredAssigneeId: params.preferredAssigneeId,
       stableIndices: params.stableIndices,
@@ -94,6 +96,7 @@ export async function queueFirefliesActionItemsForApproval(params: {
   preferredProjectId?: number;
   preferredAssigneeId?: number;
   forceCreate?: boolean;
+  routeToApproval?: boolean;
   stableIndices?: number[];
 }): Promise<number> {
   if (!params.meetingId) return 0;
@@ -104,6 +107,7 @@ export async function queueFirefliesActionItemsForApproval(params: {
     actionItems: params.actionItems,
     participants: params.participants,
     forceCreate: params.forceCreate,
+    routeToApproval: params.routeToApproval,
     preferredProjectId: params.preferredProjectId,
     preferredAssigneeId: params.preferredAssigneeId,
     stableIndices: params.stableIndices,
@@ -116,8 +120,14 @@ export async function queueFirefliesActionItemsForApproval(params: {
  */
 export async function syncFirefliesMeetingsForUser(
   userId: number,
-  apiKey: string
+  apiKey: string,
+  opts: { autoCreateTasks?: boolean | null } = {}
 ): Promise<FirefliesSyncResult> {
+  // When "Auto-create tasks" is off (or unset), meeting action items are
+  // surfaced as approval-queue suggestions the user must approve before they
+  // become real tasks. When on, they are created directly (still importance-
+  // gated). This is the toggle at Settings → Fireflies.
+  const routeToApproval = !opts.autoCreateTasks;
   const result: FirefliesSyncResult = {
     totalSynced: 0,
     totalSkipped: 0,
@@ -266,6 +276,7 @@ export async function syncFirefliesMeetingsForUser(
           meetingDate: t.date ? new Date(t.date) : undefined,
           actionItems: parseActionItems(actionItems),
           participants,
+          routeToApproval,
         });
         const suggested = extractResult.created;
         result.tasksSuggested += suggested;
@@ -314,7 +325,8 @@ export async function syncAllFirefliesMeetings(): Promise<FirefliesSyncResult> {
       try {
         const result = await syncFirefliesMeetingsForUser(
           config.userId,
-          config.apiKey
+          config.apiKey,
+          { autoCreateTasks: config.autoCreateTasks }
         );
         aggregate.totalSynced += result.totalSynced;
         aggregate.totalSkipped += result.totalSkipped;

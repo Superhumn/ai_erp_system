@@ -32,12 +32,23 @@ export type MeetingExtractionConfig = {
   llmFallbackHigh: number;
 };
 
-// Fireflies already filters its summary down to action items, so we don't
-// run a second importance/confidence gate over what it returns. preFilter
-// still drops genuinely empty / FYI / passive lines. The deterministic
-// scorer is kept so we can set task priority from it.
+// Fireflies filters its summary down to "action items", but many are still
+// low-value minute chatter ("John will think about pricing"). We keep a
+// deterministic importance gate so only substantive items — those with an
+// owner, due date, dollar amount, request verb, or urgency phrase — become
+// tasks or approval suggestions. Items below `importanceThreshold` are dropped
+// from task creation but remain visible on the meeting itself; an explicit
+// "Process Meeting" (forceCreate) still bypasses the gate. confidenceThreshold
+// stays 0 because confidence here is derived from importance, not gated
+// separately.
+//
+// Scoring reference (see deterministicScore): base 30, +15 due date,
+// +20 resolved assignee / +5 named assignee, +15 urgency, +10 request verb,
+// +8 dollar amount. A threshold of 50 requires ~20 points of real signal
+// beyond the base, which drops single-weak-signal lines while keeping
+// genuinely actionable ones.
 export const DEFAULT_MEETING_CONFIG: MeetingExtractionConfig = {
-  importanceThreshold: 0,
+  importanceThreshold: 50,
   confidenceThreshold: 0,
   minTextLength: 8,
   llmFallbackLow: 0,
@@ -160,6 +171,11 @@ export async function extractActionItemToTask(
     forceCreate?: boolean;
     preferredProjectId?: number;
     preferredAssigneeId?: number;
+    /** When true, create a pending_approval suggestion in the AI Approval
+     * Queue instead of a project task directly. The user approves it before it
+     * becomes a real task. Ignored when forceCreate is set (an explicit
+     * "Process Meeting" always creates directly). */
+    routeToApproval?: boolean;
     /** Stable index used for externalId so dedup survives re-processing with
      * different selections. Falls back to the loop index. */
     stableIndex?: number;
@@ -182,13 +198,25 @@ export async function extractActionItemToTask(
   const existing = await getProjectTaskBySourceExternalId("meeting", externalId).catch(() => undefined);
   if (existing) return { kind: "deduped", existingTaskId: existing.id };
 
-  // Deterministic score is used to assign priority on the created task —
-  // not to gate creation. Fireflies has already filtered for actionability.
+  // Deterministic score sets task priority AND gates creation: low-value
+  // minute chatter (below importanceThreshold) is dropped so the Tasks list /
+  // Approval Queue isn't flooded. An explicit Process Meeting (forceCreate)
+  // still bypasses the gate.
   const det = deterministicScore(item, ctx);
   const importance = det.importance;
   const confidence = importance >= 60 ? 90 : 70;
   const cleanedName = item.text.trim();
   const reasoning = `signals: ${det.signals.join(", ") || "none"}`;
+
+  if (!opts.forceCreate && importance < cfg.importanceThreshold) {
+    await logExtraction(ctx, index, item, {
+      stage: "rejected_low_importance",
+      importance,
+      confidence,
+      signals: det.signals,
+    }).catch(() => {});
+    return { kind: "rejected", reason: "below importance threshold", importance, confidence };
+  }
 
   let project: { id: number; name: string } | null = null;
   if (opts.preferredProjectId) {
@@ -203,17 +231,40 @@ export async function extractActionItemToTask(
 
   const assigneeId = opts.preferredAssigneeId ?? (await resolveAssigneeUserId(item, ctx));
   const dueDate = parseDueHint(item.dueDate, ctx.date);
+  const description = `From Fireflies meeting: ${ctx.title}${item.assignee ? `\nAssigned to: ${item.assignee}` : ""}`;
+  const priority = pickPriority(importance);
+
+  // Approval mode: surface as a pending suggestion the user must approve
+  // before it becomes a real task. forceCreate always creates directly.
+  if (opts.routeToApproval && !opts.forceCreate) {
+    return await createMeetingTaskSuggestion({
+      ctx,
+      index,
+      item,
+      projectId: project.id,
+      name: cleanedName,
+      description,
+      assigneeId,
+      dueDate,
+      priority,
+      externalId,
+      importance,
+      confidence,
+      reasoning,
+      signals: det.signals,
+    });
+  }
 
   const created = await createProjectTaskFromSource({
     projectId: project.id,
     name: cleanedName,
-    description: `From Fireflies meeting: ${ctx.title}${item.assignee ? `\nAssigned to: ${item.assignee}` : ""}`,
+    description,
     assigneeId,
     sourceType: "meeting",
     sourceRefType: "firefliesMeeting",
     sourceRefId: ctx.meetingId,
     sourceExternalId: externalId,
-    priority: pickPriority(importance),
+    priority,
     dueDate,
     aiReasoning: `${reasoning} [importance=${importance}, confidence=${confidence}${opts.forceCreate ? ", forced" : ""}]`,
     aiConfidence: confidence,
@@ -229,6 +280,83 @@ function pickPriority(importance: number): "low" | "medium" | "high" | "critical
   if (importance >= 75) return "high";
   if (importance >= 50) return "medium";
   return "low";
+}
+
+// aiAgentTasks uses "urgent" where project tasks use "critical".
+function toAgentPriority(p: "low" | "medium" | "high" | "critical"): "low" | "medium" | "high" | "urgent" {
+  return p === "critical" ? "urgent" : p;
+}
+
+/**
+ * Create a pending_approval suggestion in the AI Approval Queue instead of a
+ * project task directly. Rendered as a "Suggested Project Task" card
+ * (client/src/pages/ai/ApprovalQueue.tsx); approving + executing it creates the
+ * real project task via the `create_project_task` executor. Deduped by the
+ * meeting action item's stable externalId so re-syncs don't stack duplicates
+ * (and a previously rejected suggestion is not re-queued).
+ */
+async function createMeetingTaskSuggestion(args: {
+  ctx: MeetingContext;
+  index: number;
+  item: FirefliesActionItem;
+  projectId: number;
+  name: string;
+  description: string;
+  assigneeId?: number;
+  dueDate?: Date;
+  priority: "low" | "medium" | "high" | "critical";
+  externalId: string;
+  importance: number;
+  confidence: number;
+  reasoning: string;
+  signals: string[];
+}): Promise<MeetingExtractionOutcome> {
+  const existing = await db
+    .findMeetingTaskSuggestionByExternalId?.(args.externalId)
+    .catch(() => null);
+  if (existing) return { kind: "deduped", existingTaskId: existing.id };
+
+  const taskData = {
+    action: "create_project_task",
+    projectId: args.projectId,
+    name: args.name,
+    description: args.description,
+    priority: args.priority,
+    assigneeId: args.assigneeId,
+    dueDate: args.dueDate ? args.dueDate.toISOString() : undefined,
+    source: "fireflies",
+    sourceExternalId: args.externalId,
+    sourceMeeting: {
+      meetingId: args.ctx.meetingId,
+      firefliesId: args.ctx.firefliesId,
+      title: args.ctx.title,
+    },
+  };
+
+  const task = await db.createAiAgentTask({
+    taskType: "query",
+    priority: toAgentPriority(args.priority),
+    status: "pending_approval",
+    taskData: JSON.stringify(taskData),
+    aiReasoning: `${args.reasoning} [importance=${args.importance}, confidence=${args.confidence}]`,
+    aiConfidence: args.confidence.toFixed(2),
+  } as any);
+
+  await logExtraction(args.ctx, args.index, args.item, {
+    stage: "suggested_for_approval",
+    importance: args.importance,
+    confidence: args.confidence,
+    taskId: task.id,
+    signals: args.signals,
+  }).catch(() => {});
+
+  return {
+    kind: "created",
+    taskId: task.id,
+    importance: args.importance,
+    confidence: args.confidence,
+    signals: args.signals,
+  };
 }
 
 function parseDueHint(hint: string | undefined, meetingDate: Date | undefined): Date | undefined {
@@ -260,6 +388,7 @@ export async function extractMeetingActionItems(
   ctx: MeetingContext,
   opts: {
     forceCreate?: boolean;
+    routeToApproval?: boolean;
     preferredProjectId?: number;
     preferredAssigneeId?: number;
     /** Optional stable indices parallel to `items`. Used to keep externalIds
