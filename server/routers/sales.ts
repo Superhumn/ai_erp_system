@@ -543,12 +543,27 @@ export const salesRouter = router({
           for (const store of activeStores) {
             if (!store) continue;
             try {
-              // Get inventory levels from Shopify
-              const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/inventory_levels.json?limit=100`, {
-                headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
-                  'Content-Type': 'application/json',
-                },
+              const apiBase = `https://${store.storeDomain}/admin/api/2024-01`;
+
+              // Step 1: Fetch active locations (inventory_levels requires location_ids)
+              const locResp = await fetch(`${apiBase}/locations.json`, {
+                headers: { 'X-Shopify-Access-Token': store.accessToken!, 'Content-Type': 'application/json' },
+              });
+              if (!locResp.ok) throw new Error(`Shopify locations API error: ${locResp.status}`);
+              const locData = await locResp.json();
+              const locationIds: number[] = (locData.locations || [])
+                .filter((l: any) => l.active)
+                .map((l: any) => l.id);
+
+              if (locationIds.length === 0) {
+                console.warn(`[Shopify Sync] No active locations for ${store.storeDomain}, skipping inventory sync`);
+                await db.updateShopifyStore(store.id, { lastSyncAt: new Date() });
+                continue;
+              }
+
+              // Step 2: Fetch inventory levels for those locations
+              const response = await fetch(`${apiBase}/inventory_levels.json?location_ids=${locationIds.join(',')}&limit=250`, {
+                headers: { 'X-Shopify-Access-Token': store.accessToken!, 'Content-Type': 'application/json' },
               });
 
               if (!response.ok) {
@@ -561,15 +576,56 @@ export const salesRouter = router({
               // Get SKU mappings for this store
               const mappings = await db.getShopifySkuMappings(store.id);
 
+              // Shopify inventory_levels are keyed by inventory_item_id, NOT the
+              // variant id we store on the mapping. Backfill each mapping's
+              // inventory_item_id from the Shopify variant (once) so we can match.
+              for (const mapping of mappings) {
+                if (mapping.shopifyInventoryItemId || !mapping.shopifyVariantId) continue;
+                try {
+                  const variantResp = await fetch(`${apiBase}/variants/${mapping.shopifyVariantId}.json`, {
+                    headers: { 'X-Shopify-Access-Token': store.accessToken!, 'Content-Type': 'application/json' },
+                  });
+                  if (!variantResp.ok) continue;
+                  const variantData = await variantResp.json();
+                  const inventoryItemId = variantData.variant?.inventory_item_id;
+                  if (inventoryItemId != null) {
+                    mapping.shopifyInventoryItemId = inventoryItemId.toString();
+                    await db.updateShopifySkuMapping(mapping.id, { shopifyInventoryItemId: mapping.shopifyInventoryItemId });
+                  }
+                } catch (e) {
+                  console.warn(`[Shopify Sync] Failed to resolve inventory_item_id for variant ${mapping.shopifyVariantId}:`, e);
+                }
+              }
+
+              // Route each level to a warehouse via the store's location mappings.
+              const locationMappings = await db.getShopifyLocationMappings(store.id);
+              const activeLocationMappings = locationMappings.filter(m => m.isActive !== false);
+              const warehouseByLocationId = new Map(
+                activeLocationMappings.map(m => [m.shopifyLocationId, m.warehouseId] as const)
+              );
+
               for (const level of levels) {
-                const mapping = mappings.find(m => m.shopifyVariantId === level.inventory_item_id.toString());
-                if (mapping) {
-                  // Update local inventory
+                const mapping = mappings.find(m => m.shopifyInventoryItemId === level.inventory_item_id.toString());
+                if (!mapping) continue;
+                const quantity = level.available?.toString() || '0';
+
+                if (activeLocationMappings.length > 0) {
+                  const warehouseId = warehouseByLocationId.get(level.location_id?.toString());
+                  if (warehouseId == null) {
+                    console.warn(`[Shopify Sync] No warehouse mapping for location ${level.location_id} in ${store.storeDomain}, skipping level`);
+                    continue;
+                  }
+                  const inventory = await db.getInventoryByProductAndWarehouse(mapping.productId, warehouseId);
+                  if (inventory) {
+                    await db.updateInventory(inventory.id, { quantity });
+                    totalUpdated++;
+                  } else {
+                    console.warn(`[Shopify Sync] No inventory row for product ${mapping.productId} at warehouse ${warehouseId}, skipping`);
+                  }
+                } else {
                   const inventory = await db.getInventoryByProductId(mapping.productId);
                   if (inventory) {
-                    await db.updateInventory(inventory.id, {
-                      quantity: level.available?.toString() || '0',
-                    });
+                    await db.updateInventory(inventory.id, { quantity });
                     totalUpdated++;
                   }
                 }
