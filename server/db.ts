@@ -187,6 +187,14 @@ import {
   pmMilestones, InsertPmMilestone,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
+import {
+  SAMPLE_MATERIAL_SUPPLY,
+  DEFAULT_MATERIAL_SUPPLY_PLANNING,
+  type MaterialSupplyOverview,
+  type MaterialSupplyCopacker,
+  type MaterialSupplyMaterial,
+  type MaterialSupplyInventoryLine,
+} from "../shared/materialSupply";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -8565,6 +8573,62 @@ export async function getPendingApprovalTasks() {
     .orderBy(desc(aiAgentTasks.priority), desc(aiAgentTasks.createdAt));
 }
 
+// Suggestion states that should block re-queuing the same meeting action
+// item: still-open work (pending_approval / approved / in_progress) and an
+// explicit human rejection (which we honor by not re-creating). Terminal
+// completed / failed / cancelled states are intentionally excluded so a failed
+// execution can be retried and a re-synced item can re-appear if its created
+// task was later deleted — completed suggestions are still guarded against
+// duplicates by the separate getProjectTaskBySourceExternalId check.
+const BLOCKING_SUGGESTION_STATUSES = ["pending_approval", "approved", "in_progress", "rejected"] as const;
+
+/**
+ * Find an existing "create_project_task" suggestion (aiAgentTasks, taskType
+ * "query") whose taskData carries the given sourceExternalId and is still in a
+ * blocking state (see BLOCKING_SUGGESTION_STATUSES). Used by the meeting
+ * extractor to avoid re-queuing a suggestion for the same action item on every
+ * re-sync while still allowing re-processing after a terminal failure. Matched
+ * in JS because the key lives inside the JSON taskData column.
+ */
+export async function findMeetingTaskSuggestionByExternalId(externalId: string) {
+  const db = await getDb();
+  if (!db) return null;
+  // Prefilter in SQL on the raw JSON text so we don't load every "query" task
+  // into memory as the table grows. Match the "sourceExternalId" key and the
+  // JSON-stringified id value as two separate LIKE terms rather than one
+  // adjacent fragment, so the row still matches if taskData was re-saved
+  // pretty-printed (e.g. edited in the Approval Queue) with whitespace between
+  // the key and value. JSON.stringify(id) for the value also matches ids
+  // containing quotes/backslashes against the stored (escaped) text. The
+  // exact-equality check below is still the source of truth.
+  const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+  const keyTerm = `%${likeEscape('"sourceExternalId"')}%`;
+  const valueTerm = `%${likeEscape(JSON.stringify(externalId))}%`;
+  // Bound the scan: newest-first + a small limit keeps the lookup cheap even
+  // if the terms appear in several rows. Any match is sufficient for dedup /
+  // honoring a prior rejection.
+  const rows = await db.select().from(aiAgentTasks)
+    .where(and(
+      eq(aiAgentTasks.taskType, "query"),
+      inArray(aiAgentTasks.status, [...BLOCKING_SUGGESTION_STATUSES]),
+      like(aiAgentTasks.taskData, keyTerm),
+      like(aiAgentTasks.taskData, valueTerm),
+    ))
+    .orderBy(desc(aiAgentTasks.createdAt))
+    .limit(25);
+  for (const row of rows) {
+    try {
+      const data = JSON.parse(row.taskData || "{}");
+      if (data?.action === "create_project_task" && data?.sourceExternalId === externalId) {
+        return row;
+      }
+    } catch {
+      /* ignore malformed taskData */
+    }
+  }
+  return null;
+}
+
 export async function createAiAgentRule(data: InsertAiAgentRule) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -14207,4 +14271,112 @@ export async function getPmMatrix(filters: { tier?: number; status?: PmProjectFi
   );
 
   return { markets, functions, cells };
+}
+
+// ============================================================================
+// MATERIAL SUPPLY & REORDER
+// ============================================================================
+// Assembles the data contract for the "Material Supply & Reorder" view from
+// live ERP tables: copackers (warehouses where type='copacker'), raw materials
+// (with lead time), and on-hand quantities (rawMaterialInventory). Daily usage
+// is derived from the trailing-30-day consume ledger. When the company has no
+// copacker / material / inventory data yet, the canonical sample dataset is
+// returned so the screen still renders meaningfully.
+//
+// NOTE: inbound sea-freight shipments are not yet modelled per material+copacker
+// in the ERP (the `shipments` table links to POs, not to a material/destination
+// copacker pair), so the live path returns an empty `shipments` array. Wire it
+// up here once ASN / freight-booking data carries material + destination.
+export async function getMaterialSupplyOverview(opts?: { companyId?: number }): Promise<MaterialSupplyOverview> {
+  const db = await getDb();
+  if (!db) return SAMPLE_MATERIAL_SUPPLY;
+
+  const companyId = opts?.companyId;
+
+  // Copacker sites
+  const whConditions = [eq(warehouses.type, "copacker"), eq(warehouses.status, "active")];
+  if (companyId) whConditions.push(eq(warehouses.companyId, companyId));
+  const whRows = await db.select().from(warehouses).where(and(...whConditions)).orderBy(warehouses.name);
+
+  // Active raw materials
+  const rmConditions = [eq(rawMaterials.status, "active")];
+  if (companyId) rmConditions.push(eq(rawMaterials.companyId, companyId));
+  const rmRows = await db.select().from(rawMaterials).where(and(...rmConditions)).orderBy(rawMaterials.name);
+
+  if (whRows.length === 0 || rmRows.length === 0) return SAMPLE_MATERIAL_SUPPLY;
+
+  const whById = new Map<number, typeof whRows[number]>(whRows.map((w) => [w.id, w]));
+  const rmById = new Map<number, typeof rmRows[number]>(rmRows.map((m) => [m.id, m]));
+  const codeFor = (w: typeof whRows[number]) => w.code || `WH${w.id}`;
+
+  // On-hand by material + location, scoped to the copacker sites + active materials
+  const invRows = await db
+    .select()
+    .from(rawMaterialInventory)
+    .where(
+      and(
+        inArray(rawMaterialInventory.warehouseId, whRows.map((w) => w.id)),
+        inArray(rawMaterialInventory.rawMaterialId, rmRows.map((m) => m.id)),
+      ),
+    );
+  if (invRows.length === 0) return SAMPLE_MATERIAL_SUPPLY;
+
+  // Daily usage from the trailing-30-day consume ledger, scoped to the same
+  // copacker warehouses + materials so we never full-scan the ledger.
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const usageRows = await db
+    .select({
+      rawMaterialId: rawMaterialTransactions.rawMaterialId,
+      warehouseId: rawMaterialTransactions.warehouseId,
+      consumed: sql<number>`SUM(ABS(${rawMaterialTransactions.quantity}))`.mapWith(Number),
+    })
+    .from(rawMaterialTransactions)
+    .where(
+      and(
+        eq(rawMaterialTransactions.transactionType, "consume"),
+        gte(rawMaterialTransactions.createdAt, since),
+        inArray(rawMaterialTransactions.warehouseId, whRows.map((w) => w.id)),
+        inArray(rawMaterialTransactions.rawMaterialId, rmRows.map((m) => m.id)),
+      ),
+    )
+    .groupBy(rawMaterialTransactions.rawMaterialId, rawMaterialTransactions.warehouseId);
+  const usageByKey = new Map<string, number>();
+  for (const u of usageRows) usageByKey.set(`${u.rawMaterialId}:${u.warehouseId}`, (u.consumed ?? 0) / 30);
+
+  const copackers: MaterialSupplyCopacker[] = whRows.map((w) => ({
+    code: codeFor(w),
+    name: w.name,
+    short: w.name,
+    location: [w.city, w.state].filter(Boolean).join(", ") || w.country || "",
+  }));
+
+  const materials: MaterialSupplyMaterial[] = rmRows.map((m) => ({
+    id: String(m.id),
+    name: m.name,
+    unit: m.unit || "EA",
+    leadTimeDays: m.leadTimeDays ?? 0,
+  }));
+
+  const inventoryLines: MaterialSupplyInventoryLine[] = invRows
+    .filter((r) => whById.has(r.warehouseId) && rmById.has(r.rawMaterialId))
+    .map((r) => {
+      const onHand = Number(r.quantity) || 0;
+      const usage = usageByKey.get(`${r.rawMaterialId}:${r.warehouseId}`);
+      const dailyUsage = usage && usage > 0 ? usage : Math.max(1, Math.round(onHand / 45));
+      return {
+        copackerCode: codeFor(whById.get(r.warehouseId)!),
+        materialId: String(r.rawMaterialId),
+        onHand,
+        dailyUsage,
+      };
+    });
+
+  return {
+    source: "live",
+    planning: DEFAULT_MATERIAL_SUPPLY_PLANNING,
+    copackers,
+    materials,
+    inventoryLines,
+    shipments: [],
+  };
 }

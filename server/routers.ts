@@ -24,6 +24,7 @@ import { agentRouter } from "./agent";
 import { parseNoteWithLLM } from "./notesParser";
 import type { NoteAppliedItem, NoteParseResult, NoteParsedItem } from "@shared/notes";
 import { employeePortalRouter } from "./routers/employeePortal";
+import { codeRouter } from "./routers/code";
 import { parseCopackerInventoryEmail, applyCopackerInventoryUpdate } from "./copackerEmailExtractor";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 import { parseInvoiceText } from "./_core/invoiceTextParser";
@@ -42,7 +43,7 @@ import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile, type GmailSendOptions, type GmailDraftOptions } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
 import { parseFormulationSheet } from "./recipeSheetImport";
-import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
+import { getGoogleFullAccessAuthUrl, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
 import { getServiceAccountEmail, isServiceAccountConfigured } from "./_core/googleServiceAccount";
 import { getQuickBooksAuthUrl, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems, getProfitAndLoss, parseProfitAndLossReport } from "./_core/quickbooks";
 import { listAllTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
@@ -57,7 +58,7 @@ import { planPublish, publishToPlatform, type Platform as SocialPlatform } from 
 import { getYouTubeAuthUrl } from "./_core/youtube";
 import { encrypt, decrypt } from "./_core/crypto";
 import { ENV } from "./_core/env";
-import { reassignProjectTaskToHuman } from "./taskAgentBridge";
+import { reassignProjectTaskToHuman, createProjectTaskFromSource } from "./taskAgentBridge";
 import { createDecipheriv, createHash } from "crypto";
 
 /**
@@ -350,6 +351,16 @@ export const appRouter = router({
 
   // Employee self-service portal
   employeePortal: employeePortalRouter,
+
+  // Material Supply & Reorder — inventory + inbound freight + reorder recommendations.
+  // No caller-supplied companyId: the param would let any ops user scope to an
+  // arbitrary tenant, and there is no per-user company to validate it against.
+  materialSupply: router({
+    overview: opsProcedure.query(() => db.getMaterialSupplyOverview()),
+  }),
+
+  // Admin-only AI code IDE (snippets, sandboxed execution, AI actions)
+  code: codeRouter,
 
   auth: router({
     me: publicProcedure.query(opts => {
@@ -6912,7 +6923,73 @@ Be concise and helpful. Always give actionable guidance.`;
                 result = { created: true, workOrderId: workOrder.id, workOrderNumber: workOrder.workOrderNumber };
                 break;
               }
-              
+
+              case 'query': {
+                // Generic "query" tasks can carry a structured action. The
+                // meeting extractor uses action=create_project_task to route a
+                // Fireflies action item through the Approval Queue; executing
+                // the approved suggestion creates the real project task here,
+                // preserving the meeting source so it keeps its "Meeting" badge.
+                if (taskData.action === 'create_project_task') {
+                  // taskData is untrusted JSON — validate every field before use.
+                  const toPositiveInt = (v: unknown): number | undefined => {
+                    const n = Number(v);
+                    return Number.isInteger(n) && n > 0 ? n : undefined;
+                  };
+                  const projectId = toPositiveInt(taskData.projectId);
+                  const name = taskData.name ? String(taskData.name).trim() : '';
+                  if (!projectId || !name) {
+                    throw new Error('Project task suggestion missing or invalid projectId or name');
+                  }
+                  const assigneeId = toPositiveInt(taskData.assigneeId);
+                  // Keep the source ref pair consistent: both derive from meetingId
+                  // (an undefined id must not leave a dangling refType).
+                  const meetingRefId = toPositiveInt(taskData.sourceMeeting?.meetingId);
+                  // Validate priority against the allowed set and only accept a
+                  // genuinely parseable dueDate so a malformed value can't insert
+                  // an Invalid Date.
+                  const priority = (['low', 'medium', 'high', 'critical'] as const).includes(taskData.priority)
+                    ? taskData.priority
+                    : 'medium';
+                  let dueDate: Date | undefined;
+                  if (taskData.dueDate) {
+                    const parsed = new Date(taskData.dueDate);
+                    if (!Number.isNaN(parsed.getTime())) dueDate = parsed;
+                  }
+                  // Carry the suggestion's AI reasoning/confidence onto the
+                  // created task so it stays as traceable as a directly
+                  // extracted meeting task.
+                  const aiConfidenceNum = task.aiConfidence != null && Number.isFinite(Number(task.aiConfidence))
+                    ? Number(task.aiConfidence)
+                    : undefined;
+                  const created = await createProjectTaskFromSource({
+                    projectId,
+                    name,
+                    description: taskData.description ? String(taskData.description) : undefined,
+                    assigneeId,
+                    priority,
+                    dueDate,
+                    sourceType: 'meeting',
+                    sourceRefType: meetingRefId ? 'firefliesMeeting' : undefined,
+                    sourceRefId: meetingRefId,
+                    sourceExternalId: taskData.sourceExternalId ? String(taskData.sourceExternalId) : undefined,
+                    aiReasoning: task.aiReasoning ?? undefined,
+                    aiConfidence: aiConfidenceNum,
+                    createdBy: ctx.user.id,
+                  });
+                  result = {
+                    created: true,
+                    action: 'create_project_task',
+                    projectTaskId: created.id,
+                    projectId,
+                    assigneeId: assigneeId ?? null,
+                  };
+                  break;
+                }
+                result = { executed: true, taskType: task.taskType };
+                break;
+              }
+
               default:
                 result = { executed: true, taskType: task.taskType };
             }
@@ -14514,188 +14591,55 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
           throw new TRPCError({ code: 'BAD_REQUEST', message: folderInfo.error || 'Folder not found in Google Drive' });
         }
 
-        // Sync folder structure and files recursively
-        const syncResult = await syncDriveFolder(accessToken, folderId);
-        if (!syncResult.success) {
-          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: syncResult.error || 'Sync failed' });
+        // Reconcile the data room against the Drive tree — create new folders
+        // and files, and (for this user-initiated re-sync) remove Drive-backed
+        // items that were deleted in Drive. Shared with the background auto-sync
+        // scheduler so both behave identically.
+        const { reconcileDataRoomFromDrive } = await import('./googleDriveSyncService');
+        let recon;
+        try {
+          recon = await reconcileDataRoomFromDrive({
+            dataRoomId: input.dataRoomId,
+            rootFolderId: folderId,
+            accessToken,
+            uploadedBy: ctx.user.id,
+            allowDelete: true,
+          });
+        } catch (err: unknown) {
+          // reconcileDataRoomFromDrive only throws curated, user-safe messages
+          // (the Drive-listing hint, or a generic fallback); the full error is
+          // already logged there. Log again with room context and pass it on.
+          console.error(`[DataRoom] syncFromDrive failed for room ${input.dataRoomId}:`, err);
+          const msg = err instanceof Error ? err.message : 'Sync failed';
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: msg });
         }
 
-        // Get existing folders and documents to avoid duplicates
-        const allExistingFolders = await db.getDataRoomFolders(input.dataRoomId);
-        const allExistingDocs = await db.getDataRoomDocuments(input.dataRoomId);
-        const existingFoldersByDriveId = new Map(
-          allExistingFolders
-            .filter(f => f.googleDriveFolderId)
-            .map(f => [f.googleDriveFolderId!, f.id])
-        );
-        const existingDocsByDriveId = new Set(
-          allExistingDocs
-            .filter(d => d.googleDriveFileId)
-            .map(d => d.googleDriveFileId!)
-        );
-
-        // Create folder hierarchy in data room.
-        // syncDriveFolder pushes folders in DFS pre-order, so parents
-        // already precede their children — no sort needed.
-        const folderMap = new Map<string, number>();
-        const results: { name: string; type: string; status: string; error?: string }[] = [];
-        // Human-readable errors surfaced to the caller so a partial/empty sync
-        // reports *why* instead of silently claiming success with 0 files.
-        const syncErrors: string[] = [];
-
-        // Drive metadata occasionally exceeds our column widths (long file names,
-        // very long thumbnail/webView links). Trim defensively so a single
-        // oversized value can't abort the insert (and thus the whole batch).
-        const trunc = (v: string | null | undefined, max: number): string | undefined => {
-          if (v == null) return undefined;
-          return v.length > max ? v.slice(0, max) : v;
-        };
-
-        // Map DB/driver errors to concise, user-safe messages. The full error
-        // object (with driver code + stack) is always logged separately; only
-        // these sanitized strings are returned to the client / shown in toasts,
-        // so raw SQL/driver internals never leak into the UI.
-        const errMessage = (err: unknown): string => {
-          const code = (err as { code?: string })?.code;
-          switch (code) {
-            case 'ER_DATA_TOO_LONG': return 'a field exceeded the maximum length';
-            case 'ER_DUP_ENTRY': return 'a duplicate entry was detected';
-            case 'ER_TRUNCATED_WRONG_VALUE':
-            case 'WARN_DATA_TRUNCATED': return 'an unsupported character or value';
-            case 'ER_NO_REFERENCED_ROW_2':
-            case 'ER_ROW_IS_REFERENCED_2': return 'a related-record constraint failed';
-            case 'ER_BAD_NULL_ERROR': return 'a required field was missing';
-          }
-          // Errors we raise ourselves (no driver code) are already safe/worded
-          // for humans; anything else with an unrecognized driver code is kept
-          // generic so raw driver text can't reach the client.
-          if (err instanceof Error && !code) return err.message;
-          return 'an unexpected database error';
-        };
-
-        // Process folders — isolate each insert so one failure doesn't abort the rest.
-        for (const driveFolder of syncResult.folders) {
-          if (existingFoldersByDriveId.has(driveFolder.id)) {
-            folderMap.set(driveFolder.id, existingFoldersByDriveId.get(driveFolder.id)!);
-            results.push({ name: driveFolder.name, type: 'folder', status: 'exists' });
-            continue;
-          }
-
-          // Parent should already be mapped (DFS pre-order); fall back to any
-          // pre-existing data-room folder carrying the same Drive ID. If a parent
-          // was expected but is unmapped (e.g. its own insert failed earlier),
-          // don't silently root the child — surface it so the orphaning is visible.
-          const parentDriveId = driveFolder.parents?.[0];
-          let parentDataRoomId: number | null = null;
-          if (parentDriveId && parentDriveId !== folderId) {
-            parentDataRoomId = folderMap.get(parentDriveId) ?? existingFoldersByDriveId.get(parentDriveId) ?? null;
-            if (parentDataRoomId === null && syncErrors.length < 5) {
-              syncErrors.push(`Folder "${driveFolder.name}": parent folder could not be resolved; placed at root.`);
-            }
-          }
-
-          try {
-            const { id: newFolderId } = await db.createDataRoomFolder({
-              dataRoomId: input.dataRoomId,
-              parentId: parentDataRoomId,
-              name: trunc(driveFolder.name, 255) || 'Untitled folder',
-              googleDriveFolderId: driveFolder.id,
-            });
-
-            folderMap.set(driveFolder.id, newFolderId);
-            results.push({ name: driveFolder.name, type: 'folder', status: 'created' });
-          } catch (err: unknown) {
-            // Log Drive ID + room only — folder names can be sensitive and
-            // server logs are broadly accessible. The name still goes to the
-            // owner-facing response below, not to logs.
-            console.error(`[DataRoom] Failed to create folder ${driveFolder.id} (room ${input.dataRoomId}):`, err);
-            const msg = errMessage(err);
-            results.push({ name: driveFolder.name, type: 'folder', status: 'error', error: msg });
-            if (syncErrors.length < 5) syncErrors.push(`Folder "${driveFolder.name}": ${msg}`);
-          }
-        }
-
-        // Process files — store by reference in Google Drive (no download).
-        // Each insert is isolated: previously a single failing insert (e.g. an
-        // oversized field) threw out of the loop, leaving folders created but
-        // zero files — the "adds folders but no files" symptom.
-        for (const driveFile of syncResult.files) {
-          if (existingDocsByDriveId.has(driveFile.id)) {
-            results.push({ name: driveFile.name, type: 'file', status: 'exists' });
-            continue;
-          }
-
-          const displayName = driveFile.name;
-          const parentDriveId = driveFile.parents?.[0];
-          let fileFolderId: number | null = null;
-          if (parentDriveId && parentDriveId !== folderId) {
-            fileFolderId = folderMap.get(parentDriveId) ?? existingFoldersByDriveId.get(parentDriveId) ?? null;
-            // Parent expected but unmapped (e.g. its folder insert failed
-            // earlier). Import at root, but surface it like the folder loop
-            // does so the flattened hierarchy isn't silent.
-            if (fileFolderId === null && syncErrors.length < 5) {
-              syncErrors.push(`File "${displayName}": parent folder could not be resolved; placed at root.`);
-            }
-          }
-
-          const fileType = getSimpleFileType(driveFile.mimeType);
-          const fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
-            ? parseInt(driveFile.size)
-            : undefined;
-
-          try {
-            await db.createDataRoomDocument({
-              dataRoomId: input.dataRoomId,
-              folderId: fileFolderId,
-              name: trunc(displayName, 255) || 'Untitled',
-              fileType,
-              mimeType: trunc(driveFile.mimeType, 128),
-              fileSize,
-              storageType: 'google_drive',
-              storageUrl: trunc(driveFile.webViewLink, 512),
-              storageKey: undefined,
-              googleDriveFileId: driveFile.id,
-              googleDriveWebViewLink: trunc(driveFile.webViewLink, 512),
-              thumbnailUrl: trunc(driveFile.thumbnailLink, 512),
-              uploadedBy: ctx.user.id,
-            });
-
-            results.push({ name: displayName, type: 'file', status: 'synced' });
-          } catch (err: unknown) {
-            // Log Drive ID + room only — document names can be confidential.
-            console.error(`[DataRoom] Failed to create document ${driveFile.id} (room ${input.dataRoomId}):`, err);
-            const msg = errMessage(err);
-            results.push({ name: displayName, type: 'file', status: 'error', error: msg });
-            if (syncErrors.length < 5) syncErrors.push(`File "${displayName}": ${msg}`);
-          }
-        }
-
-        // Update data room with Google Drive folder ID and last sync time
+        // Always link the folder; only stamp lastSyncedAt on a complete listing
+        // (a partial sync skipped some sub-tree, so the room isn't fully synced).
         await db.updateDataRoom(input.dataRoomId, {
           googleDriveFolderId: folderId,
-          lastSyncedAt: new Date(),
+          ...(recon.partial ? {} : { lastSyncedAt: new Date() }),
         });
 
-        const filesFound = syncResult.files.length;
-        const foldersFound = syncResult.folders.length;
-        const totalSynced = results.filter(r => r.status === 'synced').length;
-        const totalCreated = results.filter(r => r.status === 'created').length;
-        const filesFailed = results.filter(r => r.type === 'file' && r.status === 'error').length;
-
         console.log(
-          `[DataRoom] Drive sync for room ${input.dataRoomId}: found ${foldersFound} folders / ${filesFound} files; ` +
-          `created ${totalCreated} folders / ${totalSynced} files; ${filesFailed} file errors.`
+          `[DataRoom] Drive sync for room ${input.dataRoomId}: found ${recon.foldersFound} folders / ${recon.filesFound} files; ` +
+          `created ${recon.foldersCreated} folders / ${recon.filesCreated} files; ` +
+          `updated ${recon.foldersUpdated} folders / ${recon.filesUpdated} files; ` +
+          `removed ${recon.foldersRemoved} folders / ${recon.filesRemoved} files; ${recon.filesFailed} file errors.`
         );
 
         return {
-          results,
-          totalSynced,
-          foldersCreated: totalCreated,
-          filesCreated: totalSynced,
-          filesFound,
-          foldersFound,
-          filesFailed,
-          errors: syncErrors,
+          totalSynced: recon.filesCreated,
+          foldersCreated: recon.foldersCreated,
+          foldersUpdated: recon.foldersUpdated,
+          filesCreated: recon.filesCreated,
+          filesUpdated: recon.filesUpdated,
+          filesRemoved: recon.filesRemoved,
+          foldersRemoved: recon.foldersRemoved,
+          filesFound: recon.filesFound,
+          foldersFound: recon.foldersFound,
+          filesFailed: recon.filesFailed,
+          errors: recon.errors,
           folderName: folderInfo.folder.name,
         };
       }),
@@ -19600,6 +19544,11 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             firefliesId: t.id,
             actionItems: parseActionItems(actionItems),
             participants,
+            // Respect Settings → Fireflies "Auto-create tasks": only when
+            // explicitly off do we route items to the Approval Queue instead
+            // of creating directly (unset defaults to auto-create, as the UI
+            // does).
+            routeToApproval: config.autoCreateTasks === false,
           });
           tasksSuggested += suggested;
           if (suggested > 0) {

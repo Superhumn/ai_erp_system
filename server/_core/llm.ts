@@ -61,6 +61,33 @@ export type ToolChoice =
   | ToolChoiceByName
   | ToolChoiceExplicit;
 
+// Prompt caching (Anthropic ephemeral cache).
+//
+// Cache writes happen only at a cache breakpoint, and the cache is a prefix
+// match — render order is `tools` → `system` → `messages`. The stable,
+// reusable prefix for this codebase is the system prompt (and tool
+// definitions); the incoming user message varies per request. So we place the
+// breakpoint at the end of the system prompt and on the last tool, NOT on the
+// trailing message. Marking the volatile final message (what top-level
+// "automatic" caching would do) writes a fresh entry every request and never
+// reads — see the prompt-caching docs' "common mistake".
+//
+// Caching is opt-in per call: pass `cache: true` (or a CacheOptions object).
+// The 5-minute cache refreshes for free on each hit; use `ttl: "1h"` for
+// prefixes reused less often than every 5 minutes (2x the write cost).
+export type CacheTtl = "5m" | "1h";
+
+export type CacheOptions = {
+    // Cache the system prompt prefix (caches preceding tools too). Default true.
+    system?: boolean;
+    // Cache the tool definitions block. Default true when tools are present.
+    tools?: boolean;
+    // Cache lifetime. Default "5m".
+    ttl?: CacheTtl;
+};
+
+export type CacheControlOption = boolean | CacheOptions;
+
 export type InvokeParams = {
     messages: Message[];
     tools?: Tool[];
@@ -72,6 +99,8 @@ export type InvokeParams = {
     output_schema?: OutputSchema;
     responseFormat?: ResponseFormat;
     response_format?: ResponseFormat;
+    cache?: CacheControlOption;
+    cache_control?: CacheControlOption;
 };
 
 export type ToolCall = {
@@ -100,6 +129,12 @@ export type InvokeResult = {
       prompt_tokens: number;
       completion_tokens: number;
       total_tokens: number;
+      // Anthropic prompt-caching breakdown (0 when caching is not in effect).
+      // `prompt_tokens` above is the full input count
+      // (uncached + cache reads + cache writes), so existing cost math stays
+      // correct; these fields let callers track cache hit rates.
+      cache_creation_input_tokens?: number;
+      cache_read_input_tokens?: number;
     };
 };
 
@@ -216,8 +251,29 @@ type AnthropicResponse = {
     usage: {
       input_tokens: number;
       output_tokens: number;
+      cache_creation_input_tokens?: number;
+      cache_read_input_tokens?: number;
     };
 };
+
+type CacheControl = { type: "ephemeral"; ttl?: "1h" };
+
+// Resolve the user-supplied cache option into a concrete config, or null when
+// caching is disabled.
+function resolveCacheOptions(
+    option: CacheControlOption | undefined,
+  ): { system: boolean; tools: boolean; control: CacheControl } | null {
+    if (!option) return null;
+    const opts: CacheOptions = option === true ? {} : option;
+    const ttl = opts.ttl ?? "5m";
+    const control: CacheControl =
+          ttl === "1h" ? { type: "ephemeral", ttl: "1h" } : { type: "ephemeral" };
+    return {
+          system: opts.system ?? true,
+          tools: opts.tools ?? true,
+          control,
+    };
+}
 
 function convertContentToAnthropic(content: MessageContent | MessageContent[]): unknown {
     const parts = ensureArray(content);
@@ -305,12 +361,21 @@ function convertMessagesToAnthropic(messages: Message[]): { system: string | und
   return { system, messages: anthropicMessages };
 }
 
-function convertToolsToAnthropic(tools: Tool[]): unknown[] {
-    return tools.map(t => ({
+function convertToolsToAnthropic(
+    tools: Tool[],
+    cacheControl?: CacheControl,
+  ): unknown[] {
+    const converted = tools.map(t => ({
           name: t.function.name,
           description: t.function.description ?? "",
           input_schema: t.function.parameters ?? { type: "object", properties: {} },
     }));
+    // A single breakpoint on the last tool caches every preceding tool too.
+    if (cacheControl && converted.length > 0) {
+          (converted[converted.length - 1] as Record<string, unknown>).cache_control =
+                  cacheControl;
+    }
+    return converted;
 }
 
 function convertAnthropicToolChoice(
@@ -376,13 +441,25 @@ function convertAnthropicResponse(anthropicResp: AnthropicResponse): InvokeResul
                       ? "tool_calls"
                               : anthropicResp.stop_reason,
         }],
-        usage: {
-                prompt_tokens: anthropicResp.usage.input_tokens,
-                completion_tokens: anthropicResp.usage.output_tokens,
-                total_tokens:
-                          anthropicResp.usage.input_tokens + anthropicResp.usage.output_tokens,
-        },
+        usage: buildUsage(anthropicResp.usage),
   };
+}
+
+function buildUsage(
+    usage: AnthropicResponse["usage"],
+  ): NonNullable<InvokeResult["usage"]> {
+    const cacheCreation = usage.cache_creation_input_tokens ?? 0;
+    const cacheRead = usage.cache_read_input_tokens ?? 0;
+    // `input_tokens` only counts tokens after the last cache breakpoint, so the
+    // full prompt size is the sum of uncached + cache writes + cache reads.
+    const promptTokens = usage.input_tokens + cacheCreation + cacheRead;
+    return {
+          prompt_tokens: promptTokens,
+          completion_tokens: usage.output_tokens,
+          total_tokens: promptTokens + usage.output_tokens,
+          ...(cacheCreation > 0 ? { cache_creation_input_tokens: cacheCreation } : {}),
+          ...(cacheRead > 0 ? { cache_read_input_tokens: cacheRead } : {}),
+    };
 }
 
 // ============================================
@@ -403,7 +480,11 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
         output_schema,
         responseFormat,
         response_format,
+        cache,
+        cache_control,
   } = params;
+
+  const cacheConfig = resolveCacheOptions(cache ?? cache_control);
 
   const converted = convertMessagesToAnthropic(messages);
 
@@ -418,7 +499,10 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
   }
 
   if (tools && tools.length > 0) {
-        payload.tools = convertToolsToAnthropic(tools);
+        payload.tools = convertToolsToAnthropic(
+                tools,
+                cacheConfig?.tools ? cacheConfig.control : undefined,
+        );
   }
 
   const anthropicToolChoice = convertAnthropicToolChoice(toolChoice || tool_choice, tools);
@@ -441,6 +525,19 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
   } else if (normalizedResponseFormat && normalizedResponseFormat.type === "json_object") {
         const jsonInstruction = `\n\nYou MUST respond with valid JSON. Respond ONLY with the JSON object, no other text.`;
         payload.system = (converted.system ?? "") + jsonInstruction;
+  }
+
+  // Place the cache breakpoint at the end of the (now fully assembled) system
+  // prompt. Done last so the cached prefix includes any appended JSON-schema
+  // instruction; a breakpoint here also caches the preceding tools block.
+  if (cacheConfig?.system && typeof payload.system === "string" && payload.system.length > 0) {
+        payload.system = [
+                {
+                          type: "text",
+                          text: payload.system,
+                          cache_control: cacheConfig.control,
+                },
+        ];
   }
 
   const response = await fetch(resolveAnthropicUrl(), {
