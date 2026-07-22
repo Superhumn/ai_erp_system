@@ -35,13 +35,13 @@ export function AutonomousAgentBar() {
 
   // Fetch orchestrator status
   const statusQuery = trpc.autonomousWorkflows.orchestrator.status.useQuery(undefined, {
-    refetchInterval: 10000, // Refresh every 10 seconds
+    refetchInterval: 30000, // Refresh every 30 seconds
     retry: false,
   });
 
   // Fetch pending approvals count
   const approvalsQuery = trpc.autonomousWorkflows.approvals.pending.useQuery(undefined, {
-    refetchInterval: 30000,
+    refetchInterval: 60000,
     retry: false,
   });
 
