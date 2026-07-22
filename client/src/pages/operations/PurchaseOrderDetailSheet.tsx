@@ -69,10 +69,14 @@ const STATUS_OPTIONS = ["draft", "sent", "confirmed", "partial", "received", "ca
 function safeHref(url: string | null | undefined): string | undefined {
   if (!url) return undefined;
   const trimmed = url.trim();
-  if (trimmed.startsWith("/") && !trimmed.startsWith("//")) return trimmed;
+  // Reject protocol-relative ("//host") URLs — they resolve to an external host.
+  if (trimmed.startsWith("//")) return undefined;
+  // App-relative path.
+  if (trimmed.startsWith("/")) return trimmed;
   try {
     const u = new URL(trimmed, window.location.origin);
-    if (u.protocol === "http:" || u.protocol === "https:") return trimmed;
+    // Return the normalized href (not the raw input) for absolute http(s) URLs.
+    if (u.protocol === "http:" || u.protocol === "https:") return u.href;
   } catch {
     /* not a parseable URL */
   }

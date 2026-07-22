@@ -2539,11 +2539,11 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
       .mutation(async ({ input, ctx }) => {
         const po = await db.getPurchaseOrderById(input.id);
         if (!po) throw new TRPCError({ code: 'NOT_FOUND', message: 'Purchase order not found' });
-        if (po.status === 'draft' || po.status === 'cancelled') {
-          throw new TRPCError({
-            code: 'PRECONDITION_FAILED',
-            message: `Cannot receive against a ${po.status} PO. Send it to the supplier first.`,
-          });
+        if (po.status === 'cancelled') {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'This PO has been cancelled and cannot receive items.' });
+        }
+        if (po.status === 'draft') {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Send this draft PO to the supplier before receiving items.' });
         }
         let result: { status: string | null };
         try {
