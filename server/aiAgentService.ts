@@ -1791,8 +1791,14 @@ User's role: ${ctx.userRole}. User: ${ctx.userName}.`;
     const response = await invokeLLM({ messages, webSearch: true, maxTokens: 1500 });
     const content = response.choices?.[0]?.message?.content;
     plan = typeof content === "string" ? content : "";
-  } catch {
-    // If web search isn't supported by the endpoint, retry plain.
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Only retry without web search when the endpoint rejected the web_search
+    // tool. For real failures (auth, rate limits, network) rethrow — retrying
+    // would mask the error and waste another call.
+    if (!/web[_ ]?search|tool|400|unsupported|invalid/i.test(msg)) {
+      throw err;
+    }
     const response = await invokeLLM({ messages, maxTokens: 1500 });
     const content = response.choices?.[0]?.message?.content;
     plan = typeof content === "string" ? content : "";

@@ -947,6 +947,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
           address: v.address,
           city: v.city,
           state: v.state,
+          postalCode: v.postalCode,
           country: v.country,
           type: v.type,
           notes: v.notes,
