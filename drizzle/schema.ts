@@ -2699,6 +2699,10 @@ export const shopifySkuMappings = mysqlTable("shopifySkuMappings", {
   storeId: int("storeId").notNull(),
   shopifyProductId: varchar("shopifyProductId", { length: 64 }).notNull(),
   shopifyVariantId: varchar("shopifyVariantId", { length: 64 }).notNull(),
+  // Shopify InventoryItem id for this variant. Inventory-level webhooks/REST
+  // report inventory_item_id (NOT the variant id), so this is what inventory
+  // sync matches against. Backfilled lazily from the Shopify API during sync.
+  shopifyInventoryItemId: varchar("shopifyInventoryItemId", { length: 64 }),
   shopifySku: varchar("shopifySku", { length: 128 }),
   productId: int("productId").notNull(),
   isActive: boolean("isActive").default(true),
@@ -4261,7 +4265,7 @@ export const crmContacts = mysqlTable("crm_contacts", {
 
   // CRM classification
   contactType: mysqlEnum("contactType", ["lead", "prospect", "customer", "partner", "investor", "donor", "vendor", "other"]).default("lead").notNull(),
-  source: mysqlEnum("source", ["iphone_bump", "whatsapp", "linkedin_scan", "business_card", "website", "referral", "event", "cold_outreach", "import", "manual", "fireflies"]).default("manual").notNull(),
+  source: mysqlEnum("source", ["iphone_bump", "whatsapp", "linkedin_scan", "business_card", "website", "referral", "event", "cold_outreach", "import", "manual", "fireflies", "b2brocket"]).default("manual").notNull(),
   status: mysqlEnum("status", ["active", "inactive", "unsubscribed", "bounced"]).default("active").notNull(),
 
   // Sales/Fundraising context
