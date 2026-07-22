@@ -901,18 +901,21 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           });
         }
 
-        if (!raw || !raw.name) {
+        const clean = (v: unknown): string | undefined =>
+          typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined;
+
+        // Require a real, non-empty string name — reject objects/numbers/blank.
+        const name = clean(raw?.name);
+        if (!name) {
           return { found: false as const, vendor: null, sources: [] as string[], confidence: "low" as const };
         }
 
-        const clean = (v: unknown): string | undefined =>
-          typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined;
         const vendorType = clean(raw.type)?.toLowerCase();
         const rawConfidence = clean(raw.confidence)?.toLowerCase();
         const confidence: "high" | "medium" | "low" =
           rawConfidence === "high" || rawConfidence === "low" ? rawConfidence : "medium";
         const vendor = {
-          name: raw.name as string,
+          name,
           contactName: clean(raw.contactName),
           email: clean(raw.email),
           phone: clean(raw.phone),

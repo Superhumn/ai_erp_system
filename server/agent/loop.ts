@@ -39,7 +39,10 @@ export async function runAgent(
     name: "web_search",
     max_uses: 8,
   } as unknown as Anthropic.Tool;
-  const tools = [...getTools(), webSearchTool];
+  const baseTools = getTools();
+  // Enabled by default; disabled at runtime if the model/account rejects the
+  // web_search server tool, so a run degrades to ERP-only instead of hard-failing.
+  let webSearchEnabled = true;
   const history = new MessageHistory();
   const startTime = Date.now();
 
@@ -68,13 +71,34 @@ export async function runAgent(
 
       logAgent({ level: "debug", runId, iteration: iterations, message: "Sending request to Claude" });
 
-      const response = await client.messages.create({
-        model: AGENT_MODEL,
-        max_tokens: 4096,
-        system: buildSystemPrompt(context),
-        tools,
-        messages: history.getMessages(),
-      });
+      const requestTools = webSearchEnabled ? [...baseTools, webSearchTool] : baseTools;
+      let response;
+      try {
+        response = await client.messages.create({
+          model: AGENT_MODEL,
+          max_tokens: 4096,
+          system: buildSystemPrompt(context),
+          tools: requestTools,
+          messages: history.getMessages(),
+        });
+      } catch (err) {
+        const msg = (err as Error).message || "";
+        // If the endpoint rejected the web_search server tool, drop it and retry
+        // ERP-only rather than failing the whole run. Other errors propagate.
+        if (webSearchEnabled && /web[_ ]?search/i.test(msg)) {
+          logAgent({ level: "warn", runId, iteration: iterations, message: "web_search unsupported — retrying without it" });
+          webSearchEnabled = false;
+          response = await client.messages.create({
+            model: AGENT_MODEL,
+            max_tokens: 4096,
+            system: buildSystemPrompt(context),
+            tools: baseTools,
+            messages: history.getMessages(),
+          });
+        } else {
+          throw err;
+        }
+      }
 
       const iterDuration = Date.now() - iterStart;
       const tokensUsed = (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0);
