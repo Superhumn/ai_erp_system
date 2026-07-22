@@ -5,6 +5,10 @@ import type { TrpcContext } from "./_core/context";
 
 type AuthenticatedUser = NonNullable<TrpcContext["user"]>;
 
+// In-memory store backing the mocked syncLog helpers so the background-job
+// procedures (create → update → poll) behave end-to-end in tests.
+const { syncLogStore } = vi.hoisted(() => ({ syncLogStore: [] as any[] }));
+
 // Mock the database module
 vi.mock("./db", () => ({
   getDb: vi.fn().mockResolvedValue({}),
@@ -18,6 +22,29 @@ vi.mock("./db", () => ({
   createContract: vi.fn().mockResolvedValue({ id: 1 }),
   createProject: vi.fn().mockResolvedValue({ id: 1 }),
   createAuditLog: vi.fn().mockResolvedValue({ id: 1 }),
+  // Google Drive background-sync helpers
+  getGoogleOAuthToken: vi.fn().mockResolvedValue({
+    accessToken: "tok",
+    refreshToken: "refresh",
+    expiresAt: new Date(Date.now() + 3_600_000),
+    googleEmail: "admin@example.com",
+  }),
+  createSyncLog: vi.fn(async (data: any) => {
+    const id = syncLogStore.length + 1;
+    syncLogStore.push({ id, createdAt: new Date(), ...data });
+    return { id };
+  }),
+  updateSyncLog: vi.fn(async (id: number, data: any) => {
+    const row = syncLogStore.find((r) => r.id === id);
+    if (row) Object.assign(row, data);
+  }),
+  getSyncLog: vi.fn(async (id: number) => syncLogStore.find((r) => r.id === id) ?? null),
+  getSyncHistory: vi.fn(async () => [...syncLogStore].reverse()),
+  getPendingSyncLogs: vi.fn(async (integration: string, limit = 50) =>
+    [...syncLogStore]
+      .reverse()
+      .filter((r) => r.integration === integration && r.status === "pending")
+      .slice(0, limit)),
 }));
 
 function createAdminContext(): TrpcContext {
@@ -278,5 +305,81 @@ describe("Google Sheets Import - Data Import", () => {
 
     expect(result.imported).toBe(0);
     expect(result.failed).toBe(1);
+  });
+});
+
+describe("Google Drive background import job", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    syncLogStore.length = 0;
+    // Drive file-listing returns no spreadsheets, so the job finishes quickly.
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ files: [] }),
+    }) as any;
+  });
+
+  it("starts a job that runs to completion detached from the request", async () => {
+    const caller = appRouter.createCaller(createAdminContext());
+
+    const { jobId } = await caller.sheetsImport.startSyncGoogleDrive({});
+    expect(typeof jobId).toBe("number");
+    // A job row is created up front — this is what the client polls / reconnects to.
+    expect(syncLogStore.find((r) => r.id === jobId)).toBeTruthy();
+
+    // The detached runner eventually flips it to a terminal state.
+    await vi.waitFor(() => {
+      expect(syncLogStore.find((r) => r.id === jobId)?.status).not.toBe("pending");
+    });
+
+    const status = await caller.sheetsImport.getSyncStatus({ jobId });
+    expect(status?.state).toBe("done");
+  });
+
+  it("does not leak another user's job through getSyncStatus", async () => {
+    const caller = appRouter.createCaller(createAdminContext());
+    const { jobId } = await caller.sheetsImport.startSyncGoogleDrive({});
+    await vi.waitFor(() => {
+      expect(syncLogStore.find((r) => r.id === jobId)?.status).not.toBe("pending");
+    });
+
+    // Same procedure, different user id → should not see job owned by user 1.
+    const otherCtx = createAdminContext();
+    (otherCtx.user as any).id = 999;
+    const otherCaller = appRouter.createCaller(otherCtx);
+    expect(await otherCaller.sheetsImport.getSyncStatus({ jobId })).toBeNull();
+  });
+
+  it("getSyncStatus fails closed for logs that aren't the caller's Drive job", async () => {
+    // A log from another integration with no owner in metadata must never leak.
+    syncLogStore.push({
+      id: 7,
+      integration: "shopify",
+      action: "product_sync",
+      status: "success",
+      createdAt: new Date(),
+      metadata: { results: [{ sheet: "secret", type: "products", imported: 5, errors: [] }] },
+    });
+
+    const caller = appRouter.createCaller(createAdminContext());
+    expect(await caller.sheetsImport.getSyncStatus({ jobId: 7 })).toBeNull();
+  });
+
+  it("getActiveSync reconnects to a still-running job on page load", async () => {
+    // Seed a running job for user 1 (as startSyncGoogleDrive would leave it mid-run).
+    syncLogStore.push({
+      id: 42,
+      integration: "google_drive",
+      action: "full_sync",
+      status: "pending",
+      createdAt: new Date(),
+      metadata: { status: "running", userId: 1, results: [], totalSheets: 3, processedSheets: 1, currentFile: "Vendors.csv" },
+    });
+
+    const caller = appRouter.createCaller(createAdminContext());
+    const active = await caller.sheetsImport.getActiveSync();
+    expect(active?.jobId).toBe(42);
+    expect(active?.totalSheets).toBe(3);
+    expect(active?.currentFile).toBe("Vendors.csv");
   });
 });

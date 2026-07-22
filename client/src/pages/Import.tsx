@@ -680,6 +680,10 @@ export default function Import() {
   const [syncState, setSyncState] = useState<SyncState>("idle");
   const [syncResults, setSyncResults] = useState<SyncResult[]>([]);
   const [totalSheets, setTotalSheets] = useState(0);
+  // Id of the background import job we're currently tracking (null = none).
+  const [activeJobId, setActiveJobId] = useState<number | null>(null);
+  const [processedSheets, setProcessedSheets] = useState(0);
+  const [currentFile, setCurrentFile] = useState<string | null>(null);
 
   // CSV upload state
   const [csvFile, setCsvFile] = useState<File | null>(null);
@@ -717,25 +721,71 @@ export default function Import() {
     enabled: isAuthenticated && !!isGoogleConnected,
   });
 
-  // Sync mutation
-  const syncMutation = trpc.sheetsImport.syncGoogleDrive.useMutation({
-    onSuccess: (data) => {
-      setSyncResults(data.results);
-      setTotalSheets(data.totalSheets);
-      setSyncState("done");
-      refetchSyncHistory();
-      const totalImported = data.results.reduce((sum: number, r: SyncResult) => sum + r.imported, 0);
-      if (totalImported > 0) {
-        toast.success(`Imported ${totalImported} records from ${data.totalSheets} spreadsheets`);
-      } else {
-        toast.info("Sync complete. No new records were imported.");
-      }
+  // Kick off a background import. The mutation returns immediately with a jobId;
+  // the import itself keeps running server-side even if we leave the page.
+  const startSyncMutation = trpc.sheetsImport.startSyncGoogleDrive.useMutation({
+    onSuccess: ({ jobId }) => {
+      setActiveJobId(jobId);
+      setSyncState("syncing");
     },
     onError: (error) => {
       setSyncState("idle");
       toast.error(error.message);
     },
   });
+
+  // On mount, reconnect to any import that's still running server-side so
+  // leaving and returning to the page picks the progress back up.
+  trpc.sheetsImport.getActiveSync.useQuery(undefined, {
+    enabled: isAuthenticated && !!isGoogleConnected && activeJobId == null && syncState === "idle",
+    refetchOnWindowFocus: false,
+    onSuccess: (data: any) => {
+      if (data?.jobId) {
+        setActiveJobId(data.jobId);
+        setSyncResults(data.results || []);
+        setTotalSheets(data.totalSheets || 0);
+        setProcessedSheets(data.processedSheets || 0);
+        setCurrentFile(data.currentFile || null);
+        setSyncState("syncing");
+      }
+    },
+  } as any);
+
+  // Poll the tracked job until it finishes. refetchInterval stops once the job
+  // reaches a terminal state.
+  const { data: jobStatus } = trpc.sheetsImport.getSyncStatus.useQuery(
+    { jobId: activeJobId as number },
+    {
+      enabled: activeJobId != null,
+      refetchInterval: (data: any) => (data && data.state !== "running" ? false : 2000),
+    } as any,
+  );
+
+  // React to job-status updates: live progress while running, results on finish.
+  useEffect(() => {
+    if (!jobStatus) return;
+    setSyncResults(jobStatus.results || []);
+    setTotalSheets(jobStatus.totalSheets || 0);
+    setProcessedSheets(jobStatus.processedSheets || 0);
+    setCurrentFile(jobStatus.currentFile || null);
+    if (jobStatus.state === "done" || jobStatus.state === "error") {
+      setSyncState("done");
+      setActiveJobId(null);
+      refetchSyncHistory();
+      const totalImported = (jobStatus.results || []).reduce(
+        (sum: number, r: SyncResult) => sum + r.imported,
+        0,
+      );
+      if (jobStatus.state === "error") {
+        toast.error(jobStatus.error || "Import failed");
+      } else if (totalImported > 0) {
+        toast.success(`Imported ${totalImported} records from ${jobStatus.totalSheets} spreadsheets`);
+      } else {
+        toast.info("Sync complete. No new records were imported.");
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobStatus]);
 
   // Disconnect mutation
   const disconnectMutation = trpc.sheetsImport.disconnect.useMutation({
@@ -772,13 +822,19 @@ export default function Import() {
   const handleImportSelections = (selections: { fileId: string; type: string }[]) => {
     setSyncState("syncing");
     setSyncResults([]);
-    syncMutation.mutate({ selections } as any);
+    setTotalSheets(0);
+    setProcessedSheets(0);
+    setCurrentFile(null);
+    startSyncMutation.mutate({ selections } as any);
   };
 
   const handleReset = () => {
     setSyncState("idle");
     setSyncResults([]);
     setTotalSheets(0);
+    setActiveJobId(null);
+    setProcessedSheets(0);
+    setCurrentFile(null);
   };
 
   // CSV drag-and-drop handlers
@@ -1016,6 +1072,23 @@ export default function Import() {
               <h3 className="text-lg font-medium">Syncing from Google Drive...</h3>
               <p className="text-sm text-muted-foreground mt-1">
                 Reading spreadsheets, detecting data types, and importing records
+              </p>
+              {totalSheets > 0 && (
+                <div className="w-full max-w-xs mt-4">
+                  <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                    <div
+                      className="h-full bg-primary transition-all"
+                      style={{ width: `${Math.min(100, Math.round((processedSheets / totalSheets) * 100))}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2 text-center">
+                    {processedSheets} of {totalSheets} sheet{totalSheets === 1 ? "" : "s"}
+                    {currentFile ? ` · ${currentFile}` : ""}
+                  </p>
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground mt-4 text-center max-w-sm">
+                This runs in the background — you can leave this page and it will keep importing.
               </p>
             </div>
           ) : (
