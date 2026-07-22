@@ -229,7 +229,7 @@ export default function PurchaseOrderDetailSheet({
     );
   };
   const pickProduct = (i: number, productIdStr: string) => {
-    const id = parseInt(productIdStr);
+    const id = parseInt(productIdStr, 10);
     const product = products?.find((p: any) => p.id === id);
     setItems((p) =>
       p.map((it, idx) => {

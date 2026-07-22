@@ -46,7 +46,7 @@ import { getStatusColor } from "@/lib/statusColors";
 import WhatsAppDrawer from "@/components/WhatsAppDrawer";
 import LinkContactDialog from "@/components/LinkContactDialog";
 import PurchaseOrderDetailSheet from "./PurchaseOrderDetailSheet";
-import { useSearch } from "wouter";
+import { useSearch, useLocation } from "wouter";
 
 type LineItem = {
   productId?: number;
@@ -71,6 +71,7 @@ export default function PurchaseOrders() {
   // string so it also fires on in-app navigation that only changes the query,
   // not just on initial mount.
   const locationSearch = useSearch();
+  const [, navigate] = useLocation();
   useEffect(() => {
     // Sync the drawer to the ?po=<id> param: open it for a valid id, and close it
     // when the param is removed/invalid (e.g. navigating back to the plain list).
@@ -871,7 +872,16 @@ export default function PurchaseOrders() {
       <PurchaseOrderDetailSheet
         poId={detailPoId}
         open={detailPoId !== null}
-        onOpenChange={(open) => { if (!open) setDetailPoId(null); }}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDetailPoId(null);
+            // Drop the ?po=<id> deep-link param on close so the URL stays in sync
+            // and the drawer doesn't reopen on refresh / when the link is shared.
+            if (new URLSearchParams(locationSearch).has("po")) {
+              navigate(window.location.pathname, { replace: true });
+            }
+          }
+        }}
         onChanged={() => utils.purchaseOrders.list.invalidate()}
       />
 
