@@ -6709,6 +6709,11 @@ Be concise and helpful. Always give actionable guidance.`;
       
       create: internalProcedure
         .input(z.object({
+          // NOTE: 'concierge_errand' is intentionally NOT creatable here. Errands
+          // carry the submitting user's identity in taskData, which the executor
+          // trusts to choose the execution context; allowing arbitrary clients to
+          // POST that taskData would enable identity spoofing. Errands are created
+          // server-side only, via the plan_errand agent tool.
           taskType: z.enum(['generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory', 'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials', 'vendor_followup', 'create_work_order', 'query', 'reply_email', 'approve_po', 'approve_invoice', 'create_vendor', 'create_material', 'create_product', 'create_bom', 'create_customer', 'create_crm_deal']),
           priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium'),
           taskData: z.string(), // JSON string with task-specific data
@@ -6850,25 +6855,50 @@ Be concise and helpful. Always give actionable guidance.`;
           if (!task) throw new TRPCError({ code: 'NOT_FOUND', message: 'Task not found' });
           
           // Validate JSON format
+          let parsedTaskData: any;
           try {
-            JSON.parse(input.taskData);
+            parsedTaskData = JSON.parse(input.taskData);
           } catch (e) {
-            throw new TRPCError({ 
-              code: 'BAD_REQUEST', 
-              message: 'Invalid JSON format in taskData' 
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'Invalid JSON format in taskData'
             });
           }
-          
+
           // Only allow updates on pending or approved tasks
           if (!['pending_approval', 'approved'].includes(task.status)) {
-            throw new TRPCError({ 
-              code: 'BAD_REQUEST', 
-              message: 'Can only update pending or approved tasks' 
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'Can only update pending or approved tasks'
             });
           }
-          
+
+          let taskDataToSave = input.taskData;
+          // Concierge errands execute under the original submitter's identity
+          // (stored in taskData). Those fields are immutable — preserve them from
+          // the original task so editing the plan can never change WHO it runs as,
+          // preventing identity spoofing via this admin endpoint.
+          if (task.taskType === 'concierge_errand') {
+            // Parse defensively so a malformed stored row or a valid-but-non-object
+            // payload (null/array) can't turn a recoverable bad edit into a 500.
+            const isPlainObject = (v: any) => v != null && typeof v === 'object' && !Array.isArray(v);
+            if (!isPlainObject(parsedTaskData)) {
+              throw new TRPCError({ code: 'BAD_REQUEST', message: 'Errand taskData must be a JSON object' });
+            }
+            let original: any = {};
+            try { original = JSON.parse(task.taskData || '{}'); } catch { original = {}; }
+            if (!isPlainObject(original)) original = {};
+            parsedTaskData.submittedByUserId = original.submittedByUserId;
+            parsedTaskData.userName = original.userName;
+            parsedTaskData.userRole = original.userRole;
+            // Keep taskData.companyId in sync with the authoritative row column
+            // (not the old JSON) so an edit can't persist a tenancy mismatch.
+            parsedTaskData.companyId = task.companyId ?? undefined;
+            taskDataToSave = JSON.stringify(parsedTaskData);
+          }
+
           await db.updateAiAgentTask(input.id, {
-            taskData: input.taskData,
+            taskData: taskDataToSave,
             aiReasoning: input.aiReasoning || task.aiReasoning || undefined,
           });
           
@@ -7272,6 +7302,15 @@ Be concise and helpful. Always give actionable guidance.`;
                 });
                 
                 result = { created: true, workOrderId: workOrder.id, workOrderNumber: workOrder.workOrderNumber };
+                break;
+              }
+
+              case 'concierge_errand': {
+                // Replay the approved plan through the main AI agent loop.
+                const { executeConciergeErrand } = await import('./conciergeErrandService');
+                const errandResult = await executeConciergeErrand(task);
+                if (!errandResult.success) throw new Error(errandResult.error || 'Errand execution failed');
+                result = errandResult.data;
                 break;
               }
 
@@ -14006,15 +14045,69 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
               }
             }
 
-            // Create attachment records
+            // Persist attachment records and, when the scanner downloaded the
+            // bytes, store them and AUTO-IMPORT each into the correct ERP
+            // location (same path as the env-configured "Scan inbox"). Falls
+            // back to a metadata-only row when no content is available.
+            const attachmentContents: Array<{ filename: string; contentType: string; data: Buffer }> =
+              (email as any).attachmentContents || [];
+            // Pair each attachment row with a downloaded buffer, consuming each
+            // buffer at most once (a per-filename queue) so multiple attachments
+            // sharing a filename each get distinct bytes rather than all
+            // resolving to the last one. Empty-filename parts aren't byte-matched.
+            const contentQueue = new Map<string, Array<{ filename: string; contentType: string; data: Buffer }>>();
+            for (const a of attachmentContents) {
+              if (!a.filename) continue;
+              const q = contentQueue.get(a.filename) ?? [];
+              q.push(a);
+              contentQueue.set(a.filename, q);
+            }
             for (const attachment of email.attachments) {
-              await db.createEmailAttachment({
+              const queue = attachment.filename ? contentQueue.get(attachment.filename) : undefined;
+              const withBytes = queue && queue.length ? queue.shift() : undefined;
+              const { id: attachmentId } = await db.createEmailAttachment({
                 emailId,
                 filename: attachment.filename,
-                mimeType: attachment.contentType,
-                size: attachment.size,
-                storageUrl: null, // Attachments not downloaded in scan
+                // Prefer the real downloaded content-type/size for stored bytes;
+                // IMAP metadata can be missing/approximate, and mimeType drives
+                // the Content-Type when serving /api/attachments/:id later.
+                mimeType: withBytes ? withBytes.contentType : attachment.contentType,
+                size: withBytes ? withBytes.data.length : attachment.size,
+                storageUrl: null,
               });
+
+              if (!withBytes) continue;
+
+              // Persist to object storage for later viewing. A storage failure
+              // must NOT skip parsing — we hold the bytes in memory, so the doc
+              // can still be extracted/imported (just not re-viewable later).
+              try {
+                const { storagePut } = await import("./storage");
+                const safeName = attachment.filename.replace(/[^\w.\-]+/g, "_").slice(0, 120) || "file";
+                const put = await storagePut(`email-attachments/${emailId}/${attachmentId}-${safeName}`, withBytes.data, withBytes.contentType);
+                await db.updateEmailAttachment(attachmentId, {
+                  storageKey: put.key,
+                  storageUrl: `/api/attachments/${attachmentId}`,
+                });
+              } catch (e: any) {
+                console.error("[scanInbox] attachment upload failed (parsing from memory anyway):", e?.message);
+              }
+
+              try {
+                const { importEmailAttachmentToErp } = await import("./documentImportService");
+                await importEmailAttachmentToErp({
+                  emailId,
+                  attachmentId,
+                  content: `data:${withBytes.contentType};base64,${withBytes.data.toString("base64")}`,
+                  filename: attachment.filename,
+                  mimeType: withBytes.contentType,
+                  userId: ctx.user.id,
+                });
+              } catch (e: any) {
+                // Skip individual attachment failures, but log so they're
+                // diagnosable rather than silently dropped.
+                console.error(`[scanInbox] attachment import failed (${attachment.filename}):`, e?.message);
+              }
             }
 
             // ── IMAP Automation #6: Auto-run email document linker ──

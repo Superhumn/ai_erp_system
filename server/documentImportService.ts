@@ -1488,6 +1488,95 @@ export async function bulkImportDocuments(
   };
 }
 
+/** Normalized summary of a parsed document, used to persist a parsedDocument row. */
+interface NormalizedDocSummary {
+  documentNumber?: string | null;
+  vendorName?: string | null;
+  vendorEmail?: string | null;
+  documentDate?: string | null;
+  dueDate?: string | null;
+  subtotal?: number | null;
+  taxAmount?: number | null;
+  shippingAmount?: number | null;
+  totalAmount?: number | null;
+  currency?: string | null;
+  trackingNumber?: string | null;
+  carrierName?: string | null;
+  confidence?: number | null;
+  lineItems?: any[] | null;
+}
+
+/**
+ * Route a parsed document to the correct ERP importer (purchase order / vendor
+ * invoice / freight invoice / customs doc) and return the import result plus a
+ * normalized summary for persisting a parsedDocument row.
+ *
+ * Shared by the email-attachment and WhatsApp intake paths so a supplier
+ * invoice or shipping doc is filed identically no matter how it arrived.
+ */
+async function routeParsedDocumentToErp(
+  parseResult: DocumentParseResult,
+  userId: number,
+  opts: { markPOsAsReceived: boolean; createMissingVendor: boolean },
+): Promise<{
+  importResult: ImportResult;
+  parsedType: "receipt" | "invoice" | "purchase_order" | "customs_document" | "other";
+  summary: NormalizedDocSummary;
+}> {
+  const { markPOsAsReceived, createMissingVendor } = opts;
+  let importResult: ImportResult;
+  let parsedType: "receipt" | "invoice" | "purchase_order" | "customs_document" | "other" = "other";
+  let summary: NormalizedDocSummary = {};
+
+  if (parseResult.documentType === "purchase_order" && parseResult.purchaseOrder) {
+    const po = parseResult.purchaseOrder;
+    importResult = await importPurchaseOrder(po, userId, markPOsAsReceived, createMissingVendor);
+    parsedType = "purchase_order";
+    summary = {
+      documentNumber: po.poNumber, vendorName: po.vendorName, vendorEmail: po.vendorEmail,
+      documentDate: po.orderDate, subtotal: po.subtotal, taxAmount: po.taxAmount,
+      shippingAmount: po.shippingAmount, totalAmount: po.totalAmount, currency: po.currency,
+      confidence: po.confidence, lineItems: po.lineItems,
+    };
+  } else if (parseResult.documentType === "vendor_invoice" && parseResult.vendorInvoice) {
+    const inv = parseResult.vendorInvoice;
+    importResult = await importVendorInvoice(inv, userId, markPOsAsReceived, createMissingVendor);
+    parsedType = "invoice";
+    summary = {
+      documentNumber: inv.invoiceNumber, vendorName: inv.vendorName, vendorEmail: inv.vendorEmail,
+      documentDate: inv.invoiceDate, dueDate: inv.dueDate, subtotal: inv.subtotal,
+      taxAmount: inv.taxAmount, shippingAmount: inv.shippingAmount, totalAmount: inv.totalAmount,
+      currency: inv.currency, confidence: inv.confidence, lineItems: inv.lineItems,
+    };
+  } else if (parseResult.documentType === "freight_invoice" && parseResult.freightInvoice) {
+    const fr = parseResult.freightInvoice;
+    importResult = await importFreightInvoice(fr, userId, createMissingVendor);
+    parsedType = "invoice";
+    summary = {
+      documentNumber: fr.invoiceNumber, vendorName: fr.carrierName, vendorEmail: fr.carrierEmail,
+      documentDate: fr.invoiceDate, totalAmount: fr.totalAmount, currency: fr.currency,
+      trackingNumber: fr.trackingNumber, carrierName: fr.carrierName, confidence: fr.confidence,
+    };
+  } else if (parseResult.documentType === "customs_document" && parseResult.customsDocument) {
+    const cd = parseResult.customsDocument;
+    importResult = await importCustomsDocument(cd, userId, createMissingVendor);
+    parsedType = "customs_document";
+    summary = {
+      documentNumber: cd.documentNumber, vendorName: cd.shipperName,
+      documentDate: cd.entryDate, totalAmount: cd.totalCharges, currency: cd.currency,
+      trackingNumber: cd.trackingNumber, confidence: cd.confidence,
+      lineItems: cd.lineItems,
+    };
+  } else {
+    importResult = {
+      success: false, documentType: parseResult.documentType, createdRecords: [],
+      updatedRecords: [], warnings: [], error: "Unrecognized document type",
+    };
+  }
+
+  return { importResult, parsedType, summary };
+}
+
 /**
  * Parse a single email attachment and import its data into the relevant ERP
  * location (purchase order / vendor invoice / freight invoice / customs doc).
@@ -1535,72 +1624,13 @@ export async function importEmailAttachmentToErp(opts: {
     return { success: false, documentType: "unknown", error: parseResult.error || "Failed to parse document" };
   }
 
-  // Route to the correct ERP importer (mirrors bulkImportDocuments) and collect
-  // a normalized summary for the parsedDocument record.
-  let importResult: ImportResult;
-  let parsedType: "receipt" | "invoice" | "purchase_order" | "customs_document" | "other" = "other";
-  let summary: {
-    documentNumber?: string | null;
-    vendorName?: string | null;
-    vendorEmail?: string | null;
-    documentDate?: string | null;
-    dueDate?: string | null;
-    subtotal?: number | null;
-    taxAmount?: number | null;
-    shippingAmount?: number | null;
-    totalAmount?: number | null;
-    currency?: string | null;
-    trackingNumber?: string | null;
-    carrierName?: string | null;
-    confidence?: number | null;
-    lineItems?: any[] | null;
-  } = {};
-
-  if (parseResult.documentType === "purchase_order" && parseResult.purchaseOrder) {
-    const po = parseResult.purchaseOrder;
-    importResult = await importPurchaseOrder(po, opts.userId, markPOsAsReceived, createMissingVendor);
-    parsedType = "purchase_order";
-    summary = {
-      documentNumber: po.poNumber, vendorName: po.vendorName, vendorEmail: po.vendorEmail,
-      documentDate: po.orderDate, subtotal: po.subtotal, taxAmount: po.taxAmount,
-      shippingAmount: po.shippingAmount, totalAmount: po.totalAmount, currency: po.currency,
-      confidence: po.confidence, lineItems: po.lineItems,
-    };
-  } else if (parseResult.documentType === "vendor_invoice" && parseResult.vendorInvoice) {
-    const inv = parseResult.vendorInvoice;
-    importResult = await importVendorInvoice(inv, opts.userId, markPOsAsReceived, createMissingVendor);
-    parsedType = "invoice";
-    summary = {
-      documentNumber: inv.invoiceNumber, vendorName: inv.vendorName, vendorEmail: inv.vendorEmail,
-      documentDate: inv.invoiceDate, dueDate: inv.dueDate, subtotal: inv.subtotal,
-      taxAmount: inv.taxAmount, shippingAmount: inv.shippingAmount, totalAmount: inv.totalAmount,
-      currency: inv.currency, confidence: inv.confidence, lineItems: inv.lineItems,
-    };
-  } else if (parseResult.documentType === "freight_invoice" && parseResult.freightInvoice) {
-    const fr = parseResult.freightInvoice;
-    importResult = await importFreightInvoice(fr, opts.userId, createMissingVendor);
-    parsedType = "invoice";
-    summary = {
-      documentNumber: fr.invoiceNumber, vendorName: fr.carrierName, vendorEmail: fr.carrierEmail,
-      documentDate: fr.invoiceDate, totalAmount: fr.totalAmount, currency: fr.currency,
-      trackingNumber: fr.trackingNumber, carrierName: fr.carrierName, confidence: fr.confidence,
-    };
-  } else if (parseResult.documentType === "customs_document" && parseResult.customsDocument) {
-    const cd = parseResult.customsDocument;
-    importResult = await importCustomsDocument(cd, opts.userId, createMissingVendor);
-    parsedType = "customs_document";
-    summary = {
-      documentNumber: cd.documentNumber, vendorName: cd.shipperName,
-      documentDate: cd.entryDate, totalAmount: cd.totalCharges, currency: cd.currency,
-      trackingNumber: cd.trackingNumber, confidence: cd.confidence,
-      lineItems: cd.lineItems,
-    };
-  } else {
-    importResult = {
-      success: false, documentType: parseResult.documentType, createdRecords: [],
-      updatedRecords: [], warnings: [], error: "Unrecognized document type",
-    };
-  }
+  // Route to the correct ERP importer and collect a normalized summary for the
+  // parsedDocument record (shared with the WhatsApp intake path).
+  const { importResult, parsedType, summary } = await routeParsedDocumentToErp(
+    parseResult,
+    opts.userId,
+    { markPOsAsReceived, createMissingVendor },
+  );
 
   // Persist a parsedDocument record linked to the email + attachment.
   let parsedDocumentId: number | undefined;
@@ -1666,6 +1696,156 @@ export async function importEmailAttachmentToErp(opts: {
       error: importResult.error,
     },
   });
+
+  return {
+    success: importResult.success,
+    documentType: parseResult.documentType,
+    parsedDocumentId,
+    importResult,
+  };
+}
+
+// Document-like MIME types the parser can extract structured data from.
+// Images are limited to jpeg/png (photographed/scanned docs); animated and
+// sticker formats (webp/gif) are deliberately excluded — WhatsApp stickers are
+// image/webp and would otherwise burn an LLM call.
+const PARSEABLE_DOCUMENT_MIME = /pdf|png|jpe?g|msword|word|spreadsheet|excel|sheet|csv/i;
+
+/**
+ * True when a WhatsApp/media attachment of the given MIME type is worth sending
+ * through the document parser. Skips audio, video, vcards, stickers, etc. so we
+ * don't burn an LLM call on something that can never be an invoice/shipping doc.
+ */
+export function isParseableDocumentMime(mimeType: string | undefined): boolean {
+  if (!mimeType) return false;
+  return PARSEABLE_DOCUMENT_MIME.test(mimeType);
+}
+
+/**
+ * Parse a document received over WhatsApp and import it into the relevant ERP
+ * location — the WhatsApp analogue of `importEmailAttachmentToErp`.
+ *
+ * Runs the same LLM parser and the same per-type ERP importers used for email
+ * attachments, so a supplier invoice or bill of lading sent over WhatsApp is
+ * classified and filed identically to one sent by email (draft bill on Finance,
+ * freight history on Logistics, etc.). It also persists a parsedDocument row so
+ * the extraction is reviewable, links it to an existing shipment when the doc
+ * carries a matching tracking number, and never throws — a parse failure must
+ * not disrupt inbound-message capture.
+ */
+export async function importWhatsappDocumentToErp(opts: {
+  whatsappMessageId: number;
+  content: string; // data URL: data:<mime>;base64,<...>
+  filename: string;
+  mimeType?: string;
+  fromNumber?: string;
+  userId?: number;
+  markPOsAsReceived?: boolean;
+  createMissingVendor?: boolean;
+}): Promise<{
+  success: boolean;
+  documentType: string;
+  parsedDocumentId?: number;
+  importResult?: ImportResult;
+  error?: string;
+}> {
+  const userId = opts.userId ?? 1;
+  const markPOsAsReceived = opts.markPOsAsReceived ?? true;
+  const createMissingVendor = opts.createMissingVendor ?? true;
+
+  // Enforce the cost-control guard locally so the "no LLM call on non-document
+  // media" guarantee holds for every call site, not just the Twilio webhook.
+  if (!isParseableDocumentMime(opts.mimeType)) {
+    return { success: false, documentType: "unknown", error: `Unsupported media type for document parsing: ${opts.mimeType ?? "unknown"}` };
+  }
+
+  // Parse + route are wrapped so this function honors its "never throws"
+  // contract for webhook/background callers; the later persistence steps are
+  // already individually best-effort.
+  let parseResult: DocumentParseResult;
+  let importResult: ImportResult;
+  let parsedType: "receipt" | "invoice" | "purchase_order" | "customs_document" | "other";
+  let summary: NormalizedDocSummary;
+  try {
+    parseResult = await parseUploadedDocument(opts.content, opts.filename, undefined, opts.mimeType);
+    if (!parseResult.success) {
+      return { success: false, documentType: "unknown", error: parseResult.error || "Failed to parse document" };
+    }
+    ({ importResult, parsedType, summary } = await routeParsedDocumentToErp(
+      parseResult,
+      userId,
+      { markPOsAsReceived, createMissingVendor },
+    ));
+  } catch (err: any) {
+    console.error("[ImportWhatsappDoc] parse/route failed:", err?.message);
+    return { success: false, documentType: "unknown", error: err?.message || "Failed to import document" };
+  }
+
+  // Link to an existing shipment when the document carries a known tracking
+  // number, so it surfaces on Logistics next to that shipment.
+  let shipmentId: number | null = null;
+  if (summary.trackingNumber) {
+    try {
+      const shipment = await db.findShipmentByTracking(summary.trackingNumber);
+      if (shipment) shipmentId = shipment.id;
+    } catch { /* best-effort linkage */ }
+  }
+
+  // Persist a parsedDocument row. Unlike the email path there is no
+  // email/attachment FK — the source of record is the whatsapp_messages row
+  // (and the `documents` entry created on media capture), noted below.
+  let parsedDocumentId: number | undefined;
+  try {
+    const importedSummary = importResult.success
+      ? `Imported: ${importResult.createdRecords.map(r => `${r.type} ${r.name}`).join(", ") || "none"}`
+      : importResult.error || "";
+    const { id } = await db.createParsedDocument({
+      emailId: null,
+      attachmentId: null,
+      documentType: parsedType as any,
+      confidence: summary.confidence != null ? summary.confidence.toString() : null,
+      vendorName: summary.vendorName ?? null,
+      vendorEmail: summary.vendorEmail ?? null,
+      vendorId: importResult.createdRecords.find(r => r.type === "vendor")?.id
+        ?? importResult.updatedRecords.find(r => r.type === "vendor")?.id ?? null,
+      documentNumber: summary.documentNumber ?? null,
+      documentDate: summary.documentDate ? new Date(summary.documentDate) : null,
+      dueDate: summary.dueDate ? new Date(summary.dueDate) : null,
+      subtotal: summary.subtotal != null ? summary.subtotal.toString() : null,
+      taxAmount: summary.taxAmount != null ? summary.taxAmount.toString() : null,
+      shippingAmount: summary.shippingAmount != null ? summary.shippingAmount.toString() : null,
+      totalAmount: summary.totalAmount != null ? summary.totalAmount.toString() : null,
+      currency: summary.currency ?? "USD",
+      trackingNumber: summary.trackingNumber ?? null,
+      carrierName: summary.carrierName ?? null,
+      shipmentId,
+      purchaseOrderId: importResult.createdRecords.find(r => r.type === "purchase_order")?.id
+        ?? importResult.updatedRecords.find(r => r.type === "purchase_order")?.id ?? null,
+      lineItems: summary.lineItems ?? null,
+      isApproved: importResult.success,
+      rawExtractedData: { source: "whatsapp", whatsappMessageId: opts.whatsappMessageId, ...(parseResult as any) },
+      notes: `Received via WhatsApp${opts.fromNumber ? ` from ${opts.fromNumber}` : ""}.${importedSummary ? ` ${importedSummary}` : ""}`,
+    } as any);
+    parsedDocumentId = id;
+
+    if (summary.lineItems && summary.lineItems.length > 0) {
+      for (let i = 0; i < summary.lineItems.length; i++) {
+        const item: any = summary.lineItems[i];
+        await db.createParsedDocumentLineItem({
+          documentId: id,
+          lineNumber: i + 1,
+          description: item.description || null,
+          sku: item.sku || null,
+          quantity: item.quantity != null ? item.quantity.toString() : null,
+          unit: item.unit || null,
+          unitPrice: item.unitPrice != null ? item.unitPrice.toString() : null,
+          totalPrice: (item.totalPrice ?? item.declaredValue) != null ? (item.totalPrice ?? item.declaredValue).toString() : null,
+        } as any);
+      }
+    }
+  } catch (e: any) {
+    console.error("[ImportWhatsappDoc] Failed to persist parsedDocument:", e?.message);
+  }
 
   return {
     success: importResult.success,
