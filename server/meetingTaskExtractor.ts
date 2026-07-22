@@ -38,9 +38,10 @@ export type MeetingExtractionConfig = {
 // owner, due date, dollar amount, request verb, or urgency phrase — become
 // tasks or approval suggestions. Items below `importanceThreshold` are dropped
 // from task creation but remain visible on the meeting itself; an explicit
-// "Process Meeting" (forceCreate) still bypasses the gate. confidenceThreshold
-// stays 0 because confidence here is derived from importance, not gated
-// separately.
+// "Process Meeting" (forceCreate) still bypasses the gate. Importance is the
+// only gate — `confidence` is computed purely as metadata (stored on the task
+// as aiConfidence) and never gates creation, so `confidenceThreshold` is left
+// at 0.
 //
 // Scoring reference (see deterministicScore): base 30, +15 due date,
 // +20 resolved assignee / +5 named assignee, +15 urgency, +10 request verb,

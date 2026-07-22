@@ -8545,22 +8545,25 @@ export async function findMeetingTaskSuggestionByExternalId(externalId: string) 
   const db = await getDb();
   if (!db) return null;
   // Prefilter in SQL on the raw JSON text so we don't load every "query" task
-  // into memory as the table grows. Build the exact serialized fragment the
-  // same way JSON.stringify wrote it — `"sourceExternalId":<json>` where <json>
-  // is JSON.stringify(externalId) — so an id containing quotes/backslashes
-  // still matches the stored (escaped) text. Then LIKE-escape the whole
-  // fragment. The exact-equality check below is still the source of truth and
-  // rejects any false positives.
-  const fragment = `"sourceExternalId":${JSON.stringify(externalId)}`;
-  const likeEscaped = fragment.replace(/[\\%_]/g, (c) => `\\${c}`);
+  // into memory as the table grows. Match the "sourceExternalId" key and the
+  // JSON-stringified id value as two separate LIKE terms rather than one
+  // adjacent fragment, so the row still matches if taskData was re-saved
+  // pretty-printed (e.g. edited in the Approval Queue) with whitespace between
+  // the key and value. JSON.stringify(id) for the value also matches ids
+  // containing quotes/backslashes against the stored (escaped) text. The
+  // exact-equality check below is still the source of truth.
+  const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+  const keyTerm = `%${likeEscape('"sourceExternalId"')}%`;
+  const valueTerm = `%${likeEscape(JSON.stringify(externalId))}%`;
   // Bound the scan: newest-first + a small limit keeps the lookup cheap even
-  // if the fragment somehow appears in several rows. Any match is sufficient
-  // for dedup / honoring a prior rejection.
+  // if the terms appear in several rows. Any match is sufficient for dedup /
+  // honoring a prior rejection.
   const rows = await db.select().from(aiAgentTasks)
     .where(and(
       eq(aiAgentTasks.taskType, "query"),
       inArray(aiAgentTasks.status, [...BLOCKING_SUGGESTION_STATUSES]),
-      like(aiAgentTasks.taskData, `%${likeEscaped}%`),
+      like(aiAgentTasks.taskData, keyTerm),
+      like(aiAgentTasks.taskData, valueTerm),
     ))
     .orderBy(desc(aiAgentTasks.createdAt))
     .limit(25);

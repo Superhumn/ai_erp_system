@@ -385,13 +385,6 @@ describe("AI Agent System", () => {
       expect(toPositiveInt(-4)).toBeUndefined();
       expect(toPositiveInt("15")).toBe(15);
     });
-
-    it("dedup blocks still-open/rejected suggestions but allows re-queue after terminal states", () => {
-      const blocking = ["pending_approval", "approved", "in_progress", "rejected"];
-      const requeueable = ["completed", "failed", "cancelled"];
-      for (const s of blocking) expect(blocking.includes(s)).toBe(true);
-      for (const s of requeueable) expect(blocking.includes(s)).toBe(false);
-    });
   });
 
   describe("Task Data Validation", () => {
