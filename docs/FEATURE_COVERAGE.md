@@ -14,10 +14,10 @@ node scripts/feature-coverage.mjs
 ## Summary
 
 - Top-level routers: **118**
-- Procedures (live `appRouter`): **1139**, reached from client: **776** (68%)
-- 🔴 **ORPHANED** (0 procedures reached — real backend with no frontend): **14**
+- Procedures (live `appRouter`): **1139**, reached from client: **825** (72%)
+- 🔴 **ORPHANED** (0 procedures reached — real backend with no frontend): **1**
 - 🟡 **PARTIAL** (<50% of procedures reached): **10**
-- 🟢 **COVERED** (≥50% reached): **89**
+- 🟢 **COVERED** (≥50% reached): **102**
 - ⚪ **HEADLESS** (0 reached, but expected — stubs/helpers/plumbing): **5**
 
 ## Caveats
@@ -31,35 +31,9 @@ node scripts/feature-coverage.mjs
 
 | Router | Procedures | queries | mutations |
 |---|---|---|---|
-| `emailCredentials` | 11 | 4 | 7 |
 | `code` | 10 | 5 | 5 |
-| `cogs` | 6 | 3 | 3 |
-| `offerLetters` | 6 | 2 | 4 |
-| `freightQuotes` | 5 | 2 | 3 |
-| `imapCredentials` | 5 | 2 | 3 |
-| `allocations` | 3 | 1 | 2 |
-| `calendar` | 3 | 1 | 2 |
-| `ingredients` | 3 | 1 | 2 |
-| `productionBatches` | 3 | 1 | 2 |
-| `recommendations` | 3 | 1 | 2 |
-| `departments` | 2 | 1 | 1 |
-| `ediAi` | 2 | 0 | 2 |
-| `inventoryManagement` | 2 | 1 | 1 |
 
 ### Unreached procedures per orphaned router
-
-#### `emailCredentials` — 11 procedures, 0 reached
-- `emailCredentials.create` _(mutation)_
-- `emailCredentials.delete` _(mutation)_
-- `emailCredentials.getById` _(query)_
-- `emailCredentials.list` _(query)_
-- `emailCredentials.logs.list` _(query)_
-- `emailCredentials.schedules.create` _(mutation)_
-- `emailCredentials.schedules.delete` _(mutation)_
-- `emailCredentials.schedules.list` _(query)_
-- `emailCredentials.schedules.update` _(mutation)_
-- `emailCredentials.testConnection` _(mutation)_
-- `emailCredentials.update` _(mutation)_
 
 #### `code` — 10 procedures, 0 reached
 - `code.aiAction` _(mutation)_
@@ -72,73 +46,6 @@ node scripts/feature-coverage.mjs
 - `code.searchSnippets` _(query)_
 - `code.snippets` _(query)_
 - `code.updateSnippet` _(mutation)_
-
-#### `cogs` — 6 procedures, 0 reached
-- `cogs.allocateFreight` _(mutation)_
-- `cogs.getTransactions` _(query)_
-- `cogs.profitability` _(query)_
-- `cogs.recordSale` _(mutation)_
-- `cogs.updateCostBasis` _(mutation)_
-- `cogs.valuation` _(query)_
-
-#### `offerLetters` — 6 procedures, 0 reached
-- `offerLetters.create` _(mutation)_
-- `offerLetters.delete` _(mutation)_
-- `offerLetters.generate` _(mutation)_
-- `offerLetters.get` _(query)_
-- `offerLetters.list` _(query)_
-- `offerLetters.update` _(mutation)_
-
-#### `freightQuotes` — 5 procedures, 0 reached
-- `freightQuotes.compare` _(query)_
-- `freightQuotes.create` _(mutation)_
-- `freightQuotes.list` _(query)_
-- `freightQuotes.sendRfq` _(mutation)_
-- `freightQuotes.update` _(mutation)_
-
-#### `imapCredentials` — 5 procedures, 0 reached
-- `imapCredentials.create` _(mutation)_
-- `imapCredentials.delete` _(mutation)_
-- `imapCredentials.getDecrypted` _(query)_
-- `imapCredentials.list` _(query)_
-- `imapCredentials.update` _(mutation)_
-
-#### `allocations` — 3 procedures, 0 reached
-- `allocations.create` _(mutation)_
-- `allocations.list` _(query)_
-- `allocations.update` _(mutation)_
-
-#### `calendar` — 3 procedures, 0 reached
-- `calendar.create` _(mutation)_
-- `calendar.delete` _(mutation)_
-- `calendar.events` _(query)_
-
-#### `ingredients` — 3 procedures, 0 reached
-- `ingredients.addCost` _(mutation)_
-- `ingredients.create` _(mutation)_
-- `ingredients.list` _(query)_
-
-#### `productionBatches` — 3 procedures, 0 reached
-- `productionBatches.create` _(mutation)_
-- `productionBatches.list` _(query)_
-- `productionBatches.update` _(mutation)_
-
-#### `recommendations` — 3 procedures, 0 reached
-- `recommendations.approve` _(mutation)_
-- `recommendations.list` _(query)_
-- `recommendations.reject` _(mutation)_
-
-#### `departments` — 2 procedures, 0 reached
-- `departments.create` _(mutation)_
-- `departments.list` _(query)_
-
-#### `ediAi` — 2 procedures, 0 reached
-- `ediAi.detectAnomalies` _(mutation)_
-- `ediAi.predictErrors` _(mutation)_
-
-#### `inventoryManagement` — 2 procedures, 0 reached
-- `inventoryManagement.list` _(query)_
-- `inventoryManagement.update` _(mutation)_
 
 ## 🟡 Partial routers — page exists, capabilities under-wired
 
@@ -262,4 +169,4 @@ node scripts/feature-coverage.mjs
 
 ## 🟢 Covered routers
 
-`accounts` (50%) · `aiAgent` (86%) · `alerts` (71%) · `auditLogs` (100%) · `auth` (100%) · `autonomousWorkflows` (62%) · `bom` (100%) · `brandAmbassadors` (100%) · `capTable` (87%) · `companies` (50%) · `contracts` (83%) · `crm` (57%) · `customers` (86%) · `customs` (78%) · `dashboard` (50%) · `dataRoom` (70%) · `disputes` (50%) · `documentImport` (100%) · `documents` (100%) · `edi` (82%) · `emailCannedResponses` (100%) · `emailScanning` (52%) · `emailSequences` (100%) · `employeePayments` (50%) · `employeePortal` (86%) · `employees` (57%) · `exerciseRequests` (100%) · `financeAi` (75%) · `financialReports` (100%) · `fireflies` (100%) · `forecasting` (75%) · `freight` (73%) · `governmentTenders` (100%) · `grantBid` (80%) · `hrAi` (100%) · `integrations` (70%) · `inventory` (100%) · `inventoryCosting` (62%) · `investmentGrants` (86%) · `investorPortal` (100%) · `investorUpdates` (80%) · `invitations` (60%) · `invoices` (91%) · `kpiGoals` (50%) · `legalAi` (100%) · `legalCases` (67%) · `manufacturingAi` (100%) · `marketing` (91%) · `materialSupply` (100%) · `nda` (73%) · `notes` (75%) · `notifications` (100%) · `orderItems` (50%) · `orders` (100%) · `payments` (80%) · `priceBook` (83%) · `products` (100%) · `projects` (73%) · `projectsAi` (100%) · `purchaseOrders` (88%) · `quickbooks` (91%) · `rawMaterials` (83%) · `rdTaxCredit` (82%) · `recipes` (100%) · `reconciliation` (100%) · `recruiting` (100%) · `recurringInvoices` (57%) · `regionalSkus` (67%) · `regulatoryLicenses` (100%) · `salesOrders` (50%) · `sheetsImport` (87%) · `shipments` (100%) · `shopify` (86%) · `subsidiaryFundraising` (100%) · `supplierPortal` (100%) · `supplierScoring` (100%) · `team` (50%) · `teamInvites` (100%) · `timeTracking` (90%) · `transactionalEmail` (50%) · `transactions` (100%) · `transfers` (100%) · `users` (80%) · `vendorNegotiations` (78%) · `vendorPortal` (75%) · `vendorQuotes` (58%) · `vendors` (80%) · `warehouses` (83%) · `workOrders` (100%)
+`accounts` (50%) · `aiAgent` (86%) · `alerts` (71%) · `allocations` (100%) · `auditLogs` (100%) · `auth` (100%) · `autonomousWorkflows` (62%) · `bom` (100%) · `brandAmbassadors` (100%) · `calendar` (100%) · `capTable` (87%) · `cogs` (83%) · `companies` (50%) · `contracts` (83%) · `crm` (57%) · `customers` (86%) · `customs` (78%) · `dashboard` (50%) · `dataRoom` (70%) · `departments` (100%) · `disputes` (50%) · `documentImport` (100%) · `documents` (100%) · `edi` (82%) · `ediAi` (100%) · `emailCannedResponses` (100%) · `emailCredentials` (91%) · `emailScanning` (52%) · `emailSequences` (100%) · `employeePayments` (50%) · `employeePortal` (86%) · `employees` (57%) · `exerciseRequests` (100%) · `financeAi` (75%) · `financialReports` (100%) · `fireflies` (100%) · `forecasting` (75%) · `freight` (73%) · `freightQuotes` (80%) · `governmentTenders` (100%) · `grantBid` (80%) · `hrAi` (100%) · `imapCredentials` (80%) · `ingredients` (100%) · `integrations` (70%) · `inventory` (100%) · `inventoryCosting` (62%) · `inventoryManagement` (100%) · `investmentGrants` (86%) · `investorPortal` (100%) · `investorUpdates` (80%) · `invitations` (60%) · `invoices` (91%) · `kpiGoals` (50%) · `legalAi` (100%) · `legalCases` (67%) · `manufacturingAi` (100%) · `marketing` (91%) · `materialSupply` (100%) · `nda` (73%) · `notes` (75%) · `notifications` (100%) · `offerLetters` (83%) · `orderItems` (50%) · `orders` (100%) · `payments` (80%) · `priceBook` (83%) · `productionBatches` (100%) · `products` (100%) · `projects` (73%) · `projectsAi` (100%) · `purchaseOrders` (88%) · `quickbooks` (91%) · `rawMaterials` (83%) · `rdTaxCredit` (82%) · `recipes` (100%) · `recommendations` (100%) · `reconciliation` (100%) · `recruiting` (100%) · `recurringInvoices` (57%) · `regionalSkus` (67%) · `regulatoryLicenses` (100%) · `salesOrders` (50%) · `sheetsImport` (87%) · `shipments` (100%) · `shopify` (86%) · `subsidiaryFundraising` (100%) · `supplierPortal` (100%) · `supplierScoring` (100%) · `team` (50%) · `teamInvites` (100%) · `timeTracking` (90%) · `transactionalEmail` (50%) · `transactions` (100%) · `transfers` (100%) · `users` (80%) · `vendorNegotiations` (78%) · `vendorPortal` (75%) · `vendorQuotes` (58%) · `vendors` (80%) · `warehouses` (83%) · `workOrders` (100%)
