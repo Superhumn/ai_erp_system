@@ -600,6 +600,95 @@ async function requireRecipeAccess(
   return access;
 }
 
+// Shared persistence for recipe formulation imports. Parses a 2D sheet
+// (header row + one row per line) into grouped recipes and writes them to the
+// DB, owned by `userId` so they stay private until access is granted. Used by
+// both the Google Sheet importer and the CSV/XLSX file-upload importer, so the
+// two paths always create recipes, lines, procedures and ingredients the same
+// way.
+async function importFormulationRows(
+  values: unknown[][],
+  userId: number,
+  opts?: { defaultRecipeName?: string },
+) {
+  const { recipes: parsed, warnings } = parseFormulationSheet(values || [], {
+    defaultRecipeName: opts?.defaultRecipeName,
+  });
+  if (parsed.length === 0) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: warnings[0] || "No recipes could be parsed from the spreadsheet.",
+    });
+  }
+
+  // Cache ingredients to avoid repeated lookups across lines.
+  const ingredientCache = new Map<string, number>();
+  let ingredientsCreated = 0;
+  const resolveIngredientId = async (name: string, sku?: string): Promise<number> => {
+    const key = (sku?.trim().toLowerCase() || "") + "|" + name.trim().toLowerCase();
+    const cached = ingredientCache.get(key);
+    if (cached) return cached;
+    const existing = await manufacturingDb.findIngredientByNameOrSku(name, sku);
+    if (existing) {
+      ingredientCache.set(key, existing.id);
+      return existing.id;
+    }
+    const generatedSku =
+      sku?.trim() ||
+      `ING-${name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "-").slice(0, 24)}-${Math.floor(Math.random() * 10000)}`;
+    const created = await manufacturingDb.createIngredient({
+      name: name.trim(),
+      sku: generatedSku,
+    });
+    ingredientCache.set(key, created.id);
+    ingredientsCreated++;
+    return created.id;
+  };
+
+  let recipesCreated = 0;
+  let linesCreated = 0;
+  let proceduresCreated = 0;
+
+  for (const rec of parsed) {
+    const recipeId = rec.recipeId?.slice(0, 32) || generateNumber("RCP").slice(0, 32);
+    const createdRecipe = await manufacturingDb.createRecipe({
+      recipeId,
+      name: rec.name.slice(0, 255),
+      category: rec.category,
+      status: "development",
+      createdBy: userId,
+    });
+    recipesCreated++;
+
+    let lineNumber = 1;
+    for (const line of rec.lines) {
+      const ingredientId = await resolveIngredientId(line.ingredientName, line.ingredientSku);
+      await manufacturingDb.createRecipeLine({
+        recipeRowId: createdRecipe.id,
+        lineNumber: lineNumber++,
+        ingredientId,
+        quantityGrams: String(line.quantityGrams),
+        quantityGramsDry:
+          line.quantityGramsDry != null ? String(line.quantityGramsDry) : undefined,
+      });
+      linesCreated++;
+    }
+
+    for (const proc of rec.procedures) {
+      await manufacturingDb.createRecipeProcedure({
+        recipeRowId: createdRecipe.id,
+        stepNumber: proc.stepNumber,
+        instruction: proc.instruction,
+      });
+      proceduresCreated++;
+    }
+
+    await createAuditLog(userId, "create", "recipe", createdRecipe.id, `imported: ${rec.name}`);
+  }
+
+  return { recipesCreated, linesCreated, proceduresCreated, ingredientsCreated, warnings };
+}
+
 // Helper to generate unique reference numbers (e.g. EMP-2606-1234). Uses a
 // CSPRNG for the suffix — not because these are secrets, but to satisfy static
 // analysis and avoid Math.random()'s modulo bias.
@@ -10583,91 +10672,25 @@ Provide a brief status summary, any missing documents, and next steps.`;
             message: sheet.error || "Failed to read the spreadsheet.",
           });
         }
-        const { recipes: parsed, warnings } = parseFormulationSheet(
+        return importFormulationRows(
           (sheet.values as unknown[][]) || [],
+          ctx.user.id,
           { defaultRecipeName: input.defaultRecipeName },
         );
-        if (parsed.length === 0) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: warnings[0] || "No recipes could be parsed from the spreadsheet.",
-          });
-        }
-
-        // Cache ingredients to avoid repeated lookups across lines.
-        const ingredientCache = new Map<string, number>();
-        let ingredientsCreated = 0;
-        const resolveIngredientId = async (name: string, sku?: string): Promise<number> => {
-          const key = (sku?.trim().toLowerCase() || "") + "|" + name.trim().toLowerCase();
-          const cached = ingredientCache.get(key);
-          if (cached) return cached;
-          const existing = await manufacturingDb.findIngredientByNameOrSku(name, sku);
-          if (existing) {
-            ingredientCache.set(key, existing.id);
-            return existing.id;
-          }
-          const generatedSku =
-            sku?.trim() ||
-            `ING-${name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "-").slice(0, 24)}-${Math.floor(Math.random() * 10000)}`;
-          const created = await manufacturingDb.createIngredient({
-            name: name.trim(),
-            sku: generatedSku,
-          });
-          ingredientCache.set(key, created.id);
-          ingredientsCreated++;
-          return created.id;
-        };
-
-        let recipesCreated = 0;
-        let linesCreated = 0;
-        let proceduresCreated = 0;
-
-        for (const rec of parsed) {
-          const recipeId =
-            rec.recipeId?.slice(0, 32) || generateNumber("RCP").slice(0, 32);
-          const createdRecipe = await manufacturingDb.createRecipe({
-            recipeId,
-            name: rec.name.slice(0, 255),
-            category: rec.category,
-            status: "development",
-            createdBy: ctx.user.id,
-          });
-          recipesCreated++;
-
-          let lineNumber = 1;
-          for (const line of rec.lines) {
-            const ingredientId = await resolveIngredientId(line.ingredientName, line.ingredientSku);
-            await manufacturingDb.createRecipeLine({
-              recipeRowId: createdRecipe.id,
-              lineNumber: lineNumber++,
-              ingredientId,
-              quantityGrams: String(line.quantityGrams),
-              quantityGramsDry:
-                line.quantityGramsDry != null ? String(line.quantityGramsDry) : undefined,
-            });
-            linesCreated++;
-          }
-
-          for (const proc of rec.procedures) {
-            await manufacturingDb.createRecipeProcedure({
-              recipeRowId: createdRecipe.id,
-              stepNumber: proc.stepNumber,
-              instruction: proc.instruction,
-            });
-            proceduresCreated++;
-          }
-
-          await createAuditLog(ctx.user.id, "create", "recipe", createdRecipe.id, `imported: ${rec.name}`);
-        }
-
-        return {
-          recipesCreated,
-          linesCreated,
-          proceduresCreated,
-          ingredientsCreated,
-          warnings,
-        };
       }),
+    // Import recipe formulations from an uploaded CSV/XLSX file. The client
+    // parses the file into a 2D array of rows (header row first) and sends it
+    // here, so no Google account or hosted sheet is required. Same parsing and
+    // ownership rules as importFromGoogleSheet.
+    importFromRows: protectedProcedure
+      .input(z.object({
+        rows: z.array(z.array(z.any())).max(10000),
+        defaultRecipeName: z.string().optional(),
+      }))
+      .mutation(({ input, ctx }) =>
+        importFormulationRows(input.rows as unknown[][], ctx.user.id, {
+          defaultRecipeName: input.defaultRecipeName,
+        })),
     // List copackers a recipe is shared with (owner only)
     listShares: opsProcedure
       .input(z.object({ recipeId: z.number() }))
