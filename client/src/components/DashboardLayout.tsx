@@ -277,7 +277,7 @@ function DashboardLayoutContent({
       if (e.key === '?') {
         toast.info(
           'Keyboard Shortcuts:\n' +
-          'âK - AI Command Bar\n' +
+          '⌘K - AI Command Bar\n' +
           'g d - Dashboard\n' +
           'g e - Email Inbox\n' +
           'g v - Vendors\n' +

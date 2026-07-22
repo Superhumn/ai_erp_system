@@ -98,6 +98,27 @@ describe("R&D Tax Credit Calculation Engine", () => {
       expect(result.netCredit).toBe(12000);
     });
 
+    it("should use the 6% rate when any one prior year has no QRE (IRC §41(c)(5)(B)(ii))", () => {
+      const result = calculateRdTaxCredit({
+        calculationMethod: "asc",
+        wageQre: 400000,
+        supplyQre: 0,
+        contractQre: 0,
+        // Only one of the three prior years has QRE — the 14% method is NOT available.
+        priorYear1Qre: 100000,
+        priorYear2Qre: 0,
+        priorYear3Qre: 0,
+      });
+
+      expect(result.totalQre).toBe(400000);
+      expect(result.creditRate).toBe(0.06);
+      // 6% of the full current-year QRE, with no base reduction.
+      expect(result.averagePriorQre).toBe(0);
+      expect(result.baseAmount).toBe(0);
+      expect(result.excessQre).toBe(400000);
+      expect(result.grossCredit).toBe(24000);
+    });
+
     it("should handle excess QRE floor (cannot go negative)", () => {
       const result = calculateRdTaxCredit({
         calculationMethod: "asc",
