@@ -17,6 +17,14 @@
 import type { AiAgentTask } from "../drizzle/schema";
 import { processAIAgentRequest, type AIAgentContext } from "./aiAgentService";
 
+// Valid user roles (mirrors the `users.role` enum in drizzle/schema.ts). Used to
+// clamp the role read from persisted errand data so a malformed task can't
+// introduce an unexpected role string into the execution context.
+const KNOWN_ROLES = new Set([
+  "user", "admin", "finance", "ops", "legal", "exec",
+  "sales", "copacker", "vendor", "contractor", "investor",
+]);
+
 export interface ConciergeErrandData {
   title: string;
   goal: string;
@@ -60,12 +68,16 @@ export async function executeConciergeErrand(task: AiAgentTask): Promise<ErrandE
   // Act on behalf of the user who submitted the errand so user-scoped tools
   // (calendar, Gmail, etc.) resolve the right credentials. `executingErrand`
   // guards against the agent recursively planning a new errand mid-execution.
+  // Sanitize identity fields read from persisted JSON: collapse whitespace /
+  // newlines in the name (avoid injecting extra lines into the directive) and
+  // clamp the role to a known enum value, defaulting to lowest-privilege "user".
+  const sanitizedName = typeof parsed.userName === "string"
+    ? parsed.userName.replace(/\s+/g, " ").trim().slice(0, 120)
+    : "";
   const ctx: AIAgentContext = {
     userId: parsed.submittedByUserId,
-    userName: parsed.userName ?? "Concierge",
-    // "user" is the schema's default (lowest-privilege) role — never fabricate a
-    // higher-privileged role when the stored role is missing.
-    userRole: parsed.userRole ?? "user",
+    userName: sanitizedName || "Concierge",
+    userRole: typeof parsed.userRole === "string" && KNOWN_ROLES.has(parsed.userRole) ? parsed.userRole : "user",
     companyId: parsed.companyId,
     executingErrand: true,
   };

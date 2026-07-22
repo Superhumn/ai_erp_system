@@ -1452,6 +1452,7 @@ async function executePlanErrand(params: any, ctx: AIAgentContext): Promise<any>
   };
 
   const task = await db.insert(aiAgentTasks).values({
+    companyId: ctx.companyId ?? null,
     taskType: "concierge_errand",
     status: requiresApproval ? "pending_approval" : "approved",
     priority,
