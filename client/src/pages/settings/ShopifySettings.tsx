@@ -512,12 +512,16 @@ function LocationMappingRow({ mapping, warehouses, warehouseName, updateMapping,
   };
 
   const save = () => {
-    updateMapping.mutate({
-      id: mapping.id,
-      shopifyLocationName: name || undefined,
-      warehouseId: parseInt(warehouseId),
-    });
-    setEditing(false);
+    updateMapping.mutate(
+      {
+        id: mapping.id,
+        shopifyLocationName: name || undefined,
+        warehouseId: parseInt(warehouseId),
+      },
+      // Only leave edit mode once the update actually succeeds — otherwise a
+      // failed mutation would discard the user's edits.
+      { onSuccess: () => setEditing(false) },
+    );
   };
 
   if (editing) {

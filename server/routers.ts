@@ -3342,10 +3342,17 @@ ONLY return the JSON array, no other text.`;
         if (!project || project.studyId !== input.studyId) {
           throw new TRPCError({ code: 'BAD_REQUEST', message: 'Project does not belong to the specified study' });
         }
-        // Compute qualified amount server-side
-        const gross = parseFloat(input.grossAmount) || 0;
-        const rdPct = parseFloat(input.rdPercentage || "100") || 100;
-        const contractRate = parseFloat(input.contractResearchRate || "65") || 65;
+        // Compute qualified amount server-side. Hard-fail on non-numeric input
+        // rather than silently coercing to 0/100/65, which would corrupt the
+        // stored qualifiedAmount and the aggregated credit.
+        const parseAmount = (v: string, field: string): number => {
+          const n = parseFloat(v);
+          if (!Number.isFinite(n)) throw new TRPCError({ code: 'BAD_REQUEST', message: `Invalid numeric value for ${field}` });
+          return n;
+        };
+        const gross = parseAmount(input.grossAmount, 'grossAmount');
+        const rdPct = input.rdPercentage != null ? parseAmount(input.rdPercentage, 'rdPercentage') : 100;
+        const contractRate = input.contractResearchRate != null ? parseAmount(input.contractResearchRate, 'contractResearchRate') : 65;
         const qualifiedAmount = String(computeQualifiedAmount(input.category, gross, rdPct, contractRate).toFixed(2));
         const result = await db.createRdExpense({ ...input, qualifiedAmount });
         await createAuditLog(ctx.user.id, 'create', 'rdExpense', result.id, input.description || input.category);
@@ -3379,10 +3386,17 @@ ONLY return the JSON array, no other text.`;
         // edit to category / grossAmount / rdPercentage / contractResearchRate
         // never leaves a stale qualifiedAmount behind (which would corrupt the
         // aggregated QRE and the credit calculation).
+        // Validate any client-supplied numeric strings; fall back to the
+        // (trusted) stored value when a field isn't being changed.
+        const parseAmount = (v: string, field: string): number => {
+          const n = parseFloat(v);
+          if (!Number.isFinite(n)) throw new TRPCError({ code: 'BAD_REQUEST', message: `Invalid numeric value for ${field}` });
+          return n;
+        };
         const category = data.category ?? (existing.category as "wages" | "supplies" | "contract_research" | "cloud_computing");
-        const gross = parseFloat(data.grossAmount ?? existing.grossAmount ?? "0") || 0;
-        const rdPct = parseFloat(data.rdPercentage ?? existing.rdPercentage ?? "100") || 100;
-        const contractRate = parseFloat(data.contractResearchRate ?? existing.contractResearchRate ?? "65") || 65;
+        const gross = data.grossAmount != null ? parseAmount(data.grossAmount, 'grossAmount') : (parseFloat(existing.grossAmount ?? "0") || 0);
+        const rdPct = data.rdPercentage != null ? parseAmount(data.rdPercentage, 'rdPercentage') : (parseFloat(existing.rdPercentage ?? "100") || 100);
+        const contractRate = data.contractResearchRate != null ? parseAmount(data.contractResearchRate, 'contractResearchRate') : (parseFloat(existing.contractResearchRate ?? "65") || 65);
         const qualifiedAmount = String(computeQualifiedAmount(category, gross, rdPct, contractRate).toFixed(2));
         await db.updateRdExpense(id, { ...data, qualifiedAmount });
         await createAuditLog(ctx.user.id, 'update', 'rdExpense', id);
@@ -11608,8 +11622,13 @@ Ask if they received the original request and if they can provide a quote.`;
                 activeLocationMappings.map(m => [m.shopifyLocationId, m.warehouseId] as const)
               );
 
+              // Index mappings by inventory_item_id for O(1) lookup per level.
+              const mappingByInventoryItemId = new Map(
+                mappings.filter(m => m.shopifyInventoryItemId).map(m => [m.shopifyInventoryItemId!, m] as const)
+              );
+
               for (const level of levels) {
-                const mapping = mappings.find(m => m.shopifyInventoryItemId === level.inventory_item_id.toString());
+                const mapping = mappingByInventoryItemId.get(level.inventory_item_id.toString());
                 if (!mapping) continue;
                 const quantity = level.available?.toString() || '0';
 

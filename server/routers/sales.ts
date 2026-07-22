@@ -604,8 +604,13 @@ export const salesRouter = router({
                 activeLocationMappings.map(m => [m.shopifyLocationId, m.warehouseId] as const)
               );
 
+              // Index mappings by inventory_item_id for O(1) lookup per level.
+              const mappingByInventoryItemId = new Map(
+                mappings.filter(m => m.shopifyInventoryItemId).map(m => [m.shopifyInventoryItemId!, m] as const)
+              );
+
               for (const level of levels) {
-                const mapping = mappings.find(m => m.shopifyInventoryItemId === level.inventory_item_id.toString());
+                const mapping = mappingByInventoryItemId.get(level.inventory_item_id.toString());
                 if (!mapping) continue;
                 const quantity = level.available?.toString() || '0';
 
