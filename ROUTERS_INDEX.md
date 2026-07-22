@@ -14,7 +14,7 @@ Source: `server/routers.ts` (appRouter L343–L24813, 116 top-level keys).
 | `autonomousWorkflows` | L347–L349 | 3 | ✓ `server/routers/index.ts` |
 | `agent` | L350–L352 | 3 | ✓ `server/routers/index.ts` |
 | `employeePortal` | L353–L355 | 3 | ✓ `server/routers/index.ts` |
-| `code` | L356–L357 | 2 | ✗ legacy-only |
+| `code` | L356–L357 | 2 | ✓ `server/routers/index.ts` |
 | `auth` | L358–L372 | 15 | ✓ `server/routers/auth.ts` |
 | `users` | L373–L412 | 40 | ✓ `server/routers/auth.ts` |
 | `companies` | L413–L480 | 68 | ✓ `server/routers/auth.ts` |
@@ -127,11 +127,10 @@ Source: `server/routers.ts` (appRouter L343–L24813, 116 top-level keys).
 | `subsidiaryFundraising` | L24575–L24685 | 111 | ✗ legacy-only |
 | `brandAmbassadors` | L24686–L24812 | 127 | ✗ legacy-only |
 
-## Legacy-only (47)
+## Legacy-only (46)
 
 These exist only in `server/routers.ts` — the extracted `server/routers/` tree does not cover them.
 
-- `code` — L356–L357 (2 lines)
 - `bills` — L1355–L1369 (15 lines)
 - `orders` — L1498–L1605 (108 lines)
 - `orderItems` — L1606–L1617 (12 lines)
@@ -179,7 +178,7 @@ These exist only in `server/routers.ts` — the extracted `server/routers/` tree
 - `subsidiaryFundraising` — L24575–L24685 (111 lines)
 - `brandAmbassadors` — L24686–L24812 (127 lines)
 
-## Also in extracted tree (69)
+## Also in extracted tree (70)
 
 Top-level key exists in both. **Route-level parity is not guaranteed** — spot checks have found legacy-only procedures inside several of these (e.g. `crm` has ~7 legacy-only procedures, `invoices` has 2). If you need completeness, diff the specific sub-router.
 
@@ -187,6 +186,7 @@ Top-level key exists in both. **Route-level parity is not guaranteed** — spot 
 - `autonomousWorkflows` — legacy L347–L349 · extracted in `server/routers/index.ts`
 - `agent` — legacy L350–L352 · extracted in `server/routers/index.ts`
 - `employeePortal` — legacy L353–L355 · extracted in `server/routers/index.ts`
+- `code` — legacy L356–L357 · extracted in `server/routers/index.ts`
 - `auth` — legacy L358–L372 · extracted in `server/routers/auth.ts`
 - `users` — legacy L373–L412 · extracted in `server/routers/auth.ts`
 - `companies` — legacy L413–L480 · extracted in `server/routers/auth.ts`

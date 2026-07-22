@@ -223,7 +223,9 @@ export async function executeCodeSandboxed(code: string, language: string): Prom
   // only see the minimum needed to locate the interpreter. This is
   // least-privilege damage limitation, not a real jail.
   const minimalEnv: NodeJS.ProcessEnv = {
-    PATH: process.env.PATH,
+    // Fall back to a conservative default so interpreters resolve even on
+    // minimal images where the server process has no PATH set.
+    PATH: process.env.PATH || "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     HOME: cwd,
     TMPDIR: cwd,
     LANG: process.env.LANG,
@@ -249,42 +251,60 @@ export async function executeCodeSandboxed(code: string, language: string): Prom
       const startTime = Date.now();
       let stdout = "";
       let stderr = "";
-      let killed = false;
+      let overflow = false;
+      let timedOut = false;
 
+      // detached:true makes the child a process-group leader so we can signal
+      // the whole tree. `npx tsx` and the `unshare` wrapper spawn grandchildren
+      // that a plain proc.kill() would orphan; killing the group reaps them.
       const proc = spawn(cmd, cmdArgs, {
-        timeout: TIMEOUT_MS,
-        killSignal: "SIGKILL", // ensure runaway/timed-out processes are actually killed
         cwd,
         env: minimalEnv,
+        detached: true,
       });
+
+      const killTree = (signal: NodeJS.Signals) => {
+        try {
+          if (proc.pid !== undefined) process.kill(-proc.pid, signal);
+          else proc.kill(signal);
+        } catch {
+          try { proc.kill(signal); } catch { /* already exited */ }
+        }
+      };
+
+      // Enforce the wall-clock limit ourselves so we can kill the whole group
+      // (spawn's own `timeout` only signals the direct child).
+      const timer = setTimeout(() => {
+        timedOut = true;
+        killTree("SIGKILL");
+      }, TIMEOUT_MS);
 
       proc.stdout.on("data", (data: Buffer) => {
         stdout += data.toString();
-        if (stdout.length > 100000) {
-          proc.kill("SIGKILL");
-          killed = true;
-        }
+        if (stdout.length > 100000) { overflow = true; killTree("SIGKILL"); }
       });
 
       proc.stderr.on("data", (data: Buffer) => {
         stderr += data.toString();
-        if (stderr.length > 100000) {
-          proc.kill("SIGKILL");
-          killed = true;
-        }
+        if (stderr.length > 100000) { overflow = true; killTree("SIGKILL"); }
       });
 
       proc.on("close", (exitCode: number | null) => {
+        clearTimeout(timer);
         const executionTimeMs = Date.now() - startTime;
+        let errorOutput = stderr.slice(0, 100000);
+        if (timedOut) errorOutput += `\n[Killed: exceeded ${TIMEOUT_MS / 1000}s time limit]`;
+        else if (overflow) errorOutput += "\n[Output truncated]";
         resolve({
           output: stdout.slice(0, 100000),
-          errorOutput: killed ? stderr.slice(0, 100000) + "\n[Output truncated]" : stderr.slice(0, 100000),
-          exitCode: killed ? 137 : (exitCode ?? 1),
+          errorOutput,
+          exitCode: (timedOut || overflow) ? 137 : (exitCode ?? 1),
           executionTimeMs,
         });
       });
 
       proc.on("error", (err: Error) => {
+        clearTimeout(timer);
         const executionTimeMs = Date.now() - startTime;
         resolve({
           output: "",

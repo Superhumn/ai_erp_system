@@ -20,7 +20,14 @@ export const codeRouter = router({
 
   getSnippet: adminProcedure
     .input(z.object({ id: z.number() }))
-    .query(({ input }) => db.getCodeSnippetById(input.id)),
+    .query(async ({ input, ctx }) => {
+      // Same visibility rule as the list/search: owner-or-public only.
+      const snippet = await db.getCodeSnippetById(input.id);
+      if (!snippet || (snippet.userId !== ctx.user.id && !snippet.isPublic)) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Snippet not found" });
+      }
+      return snippet;
+    }),
 
   searchSnippets: adminProcedure
     .input(z.object({ query: z.string().min(1) }))
@@ -57,14 +64,26 @@ export const codeRouter = router({
       tags: z.string().optional(),
       isPublic: z.boolean().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const { id, ...data } = input;
+      // Only the owner may modify a snippet, even for admins.
+      const existing = await db.getCodeSnippetById(id);
+      if (!existing || existing.userId !== ctx.user.id) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Snippet not found" });
+      }
       return db.updateCodeSnippet(id, data);
     }),
 
   deleteSnippet: adminProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(({ input }) => db.deleteCodeSnippet(input.id)),
+    .mutation(async ({ input, ctx }) => {
+      // Only the owner may delete a snippet, even for admins.
+      const existing = await db.getCodeSnippetById(input.id);
+      if (!existing || existing.userId !== ctx.user.id) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Snippet not found" });
+      }
+      return db.deleteCodeSnippet(input.id);
+    }),
 
   // ============================================
   // CODE EXECUTION
