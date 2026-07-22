@@ -103,9 +103,13 @@ function getClientIp(req: Request): string {
 /**
  * Hash a password using PBKDF2 with a given iteration count.
  */
+/** Derive the raw PBKDF2 key bytes. */
+function deriveKey(password: string, salt: string, iterations: number): Promise<Buffer> {
+  return pbkdf2Async(password, salt, iterations, KEY_LENGTH, DIGEST);
+}
+
 async function hashPasswordWithIterations(password: string, salt: string, iterations: number): Promise<string> {
-  const derived = await pbkdf2Async(password, salt, iterations, KEY_LENGTH, DIGEST);
-  return derived.toString("hex");
+  return (await deriveKey(password, salt, iterations)).toString("hex");
 }
 
 /**
@@ -125,26 +129,24 @@ function generateSalt(): string {
  * hash was produced with the legacy iteration count and should be re-hashed.
  */
 async function verifyPassword(password: string, salt: string, hash: string): Promise<{ valid: boolean; needsUpgrade: boolean }> {
-  try {
-    // Decode the stored hash once and compare fixed-length buffers. The length
-    // is checked before timingSafeEqual (which requires equal-length inputs),
-    // and the surrounding try/catch defensively treats any malformed stored
-    // hash as an authentication failure rather than surfacing a 500.
-    const stored = Buffer.from(hash, "hex");
+  // Compare the derived key bytes directly against the decoded stored hash. A
+  // malformed stored hash (non-hex / odd length) decodes to a different byte
+  // length and fails the length guard below — returning "invalid" without
+  // throwing — so no try/catch is needed for that case. Genuine hashing failures
+  // (e.g. a PBKDF2/openssl error) are intentionally left to propagate so the
+  // caller surfaces them as a 500 rather than masking them as a 401.
+  const stored = Buffer.from(hash, "hex");
 
-    const candidate = Buffer.from(await hashPasswordWithIterations(password, salt, HASH_ITERATIONS), "hex");
-    if (candidate.length === stored.length && timingSafeEqual(candidate, stored)) {
-      return { valid: true, needsUpgrade: false };
-    }
+  const candidate = await deriveKey(password, salt, HASH_ITERATIONS);
+  if (candidate.length === stored.length && timingSafeEqual(candidate, stored)) {
+    return { valid: true, needsUpgrade: false };
+  }
 
-    // Fallback: try the legacy iteration count for accounts created before the
-    // HASH_ITERATIONS increase (100k → 600k, April 2026).
-    const legacy = Buffer.from(await hashPasswordWithIterations(password, salt, HASH_ITERATIONS_LEGACY), "hex");
-    if (legacy.length === stored.length && timingSafeEqual(legacy, stored)) {
-      return { valid: true, needsUpgrade: true };
-    }
-  } catch {
-    // Malformed stored hash — treat as an authentication failure, not an error.
+  // Fallback: try the legacy iteration count for accounts created before the
+  // HASH_ITERATIONS increase (100k → 600k, April 2026).
+  const legacy = await deriveKey(password, salt, HASH_ITERATIONS_LEGACY);
+  if (legacy.length === stored.length && timingSafeEqual(legacy, stored)) {
+    return { valid: true, needsUpgrade: true };
   }
 
   return { valid: false, needsUpgrade: false };

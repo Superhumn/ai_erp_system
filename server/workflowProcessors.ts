@@ -58,7 +58,10 @@ async function mapWithConcurrency<T, R>(
 ): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let cursor = 0;
-  const workerCount = Math.max(1, Math.min(limit, items.length));
+  // Normalize limit to a finite positive integer so a non-finite value (e.g. NaN)
+  // can't collapse workerCount to NaN and silently run zero workers.
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : 1;
+  const workerCount = Math.max(1, Math.min(safeLimit, items.length));
   const workers = Array.from({ length: workerCount }, async () => {
     while (true) {
       const index = cursor++;
@@ -104,7 +107,15 @@ function deriveSuggestedPoItemAmounts(item: {
     unitPrice = 0;
   }
 
-  return { unitPrice: unitPrice.toString(), totalAmount: lineTotal.toString(), lineTotal };
+  // Round to cents so the stored DECIMAL(_,2) values and the in-memory totals
+  // agree (avoids float artifacts like 0.30000000000000004).
+  const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+  const roundedTotal = round2(lineTotal);
+  return {
+    unitPrice: round2(unitPrice).toFixed(2),
+    totalAmount: roundedTotal.toFixed(2),
+    lineTotal: roundedTotal,
+  };
 }
 
 /** Generate the AI RFQ email (subject + body) for a single vendor. */
@@ -786,8 +797,8 @@ const procurementProcessor: WorkflowProcessor = {
               status: "draft",
               orderDate: new Date(),
               expectedDate,
-              subtotal: subtotal.toString(),
-              totalAmount: subtotal.toString(),
+              subtotal: subtotal.toFixed(2),
+              totalAmount: subtotal.toFixed(2),
               currency: spo.currency || "USD",
               notes: `Auto-generated from suggested PO ${spo.suggestedPoNumber}`,
             })
