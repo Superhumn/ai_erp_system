@@ -887,6 +887,65 @@ async function startServer() {
   });
 
   // ============================================
+  // B2B ROCKET WEBHOOK ENDPOINT (lead intake via Zapier)
+  // ============================================
+  // B2B Rocket has no usable REST API; its only outbound hook is the Zapier
+  // "New Lead" trigger. Point a "Webhooks by Zapier" POST action at
+  //   /webhooks/b2brocket/leads?secret=<B2BROCKET_WEBHOOK_SECRET>
+  // Each lead is AI-scored and upserted into crmContacts (source: b2brocket).
+
+  // Shared-secret auth (header or query param — Zapier can set either).
+  app.use("/webhooks/b2brocket", (req, res, next) => {
+    const provided =
+      (req.headers["x-webhook-secret"] as string) ||
+      (req.headers["authorization"] as string)?.replace(/^Bearer\s+/i, "") ||
+      (req.query.secret as string);
+    const expected = ENV.b2brocketWebhookSecret;
+
+    if (!expected) {
+      // No secret configured — allow in development, block in production.
+      if (ENV.isProduction) {
+        return res.status(403).json({ error: "B2B Rocket webhook secret not configured" });
+      }
+      return next();
+    }
+    if (provided !== expected) {
+      return res.status(401).json({ error: "Invalid webhook secret" });
+    }
+    next();
+  });
+
+  app.post(
+    "/webhooks/b2brocket/leads",
+    express.raw({ type: ["application/json", "text/plain", "*/*"] }),
+    async (req, res) => {
+      try {
+        const rawBody = Buffer.isBuffer(req.body) ? req.body.toString() : JSON.stringify(req.body);
+        let payload: any;
+        try {
+          payload = rawBody ? JSON.parse(rawBody) : {};
+        } catch {
+          return res.status(400).json({ error: "Invalid JSON body" });
+        }
+        if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+          return res.status(400).json({ error: "Expected a JSON object" });
+        }
+
+        const { ingestB2BRocketLead } = await import("./b2brocket");
+        const result = await ingestB2BRocketLead(payload);
+        console.log(
+          `[B2B Rocket Webhook] ${result.created ? "Created" : "Merged"} lead ` +
+            `#${result.contactId} (score ${result.score}, stage ${result.pipelineStage})`,
+        );
+        res.status(200).json({ success: true, ...result });
+      } catch (error) {
+        console.error("[B2B Rocket Webhook] Error:", error);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    },
+  );
+
+  // ============================================
   // TWILIO WEBHOOK ENDPOINTS (voice + SMS)
   // ============================================
   registerTwilioWebhooks(app);

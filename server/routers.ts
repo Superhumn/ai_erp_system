@@ -17390,6 +17390,46 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
   // CRM MODULE - Contacts, Messaging & Tracking
   // ============================================
   crm: router({
+    // --- B2B ROCKET LEADS ---
+    // Leads pulled in from B2B Rocket via the Zapier webhook
+    // (/webhooks/b2brocket/leads), AI-scored on intake. These are just
+    // crmContacts with source = "b2brocket"; this sub-router exposes a
+    // score-sorted view + a summary for the outreach UI.
+    b2brocketLeads: router({
+      list: protectedProcedure
+        .input(z.object({
+          pipelineStage: z.string().optional(),
+          minScore: z.number().optional(),
+          search: z.string().optional(),
+          limit: z.number().optional(),
+          offset: z.number().optional(),
+        }).optional())
+        .query(async ({ input }) => {
+          const rows = await db.getCrmContacts({
+            source: "b2brocket",
+            pipelineStage: input?.pipelineStage,
+            search: input?.search,
+            limit: input?.limit,
+            offset: input?.offset,
+          });
+          const filtered = typeof input?.minScore === "number"
+            ? rows.filter((r: any) => (r.leadScore ?? 0) >= input.minScore!)
+            : rows;
+          // Highest-intent leads first.
+          return filtered.sort((a: any, b: any) => (b.leadScore ?? 0) - (a.leadScore ?? 0));
+        }),
+
+      stats: protectedProcedure.query(async () => {
+        const rows = await db.getCrmContacts({ source: "b2brocket" });
+        const total = rows.length;
+        const hot = rows.filter((r: any) => (r.leadScore ?? 0) >= 70).length;
+        const avgScore = total
+          ? Math.round(rows.reduce((s: number, r: any) => s + (r.leadScore ?? 0), 0) / total)
+          : 0;
+        return { total, hot, avgScore };
+      }),
+    }),
+
     // --- CONTACTS ---
     contacts: router({
       list: protectedProcedure
