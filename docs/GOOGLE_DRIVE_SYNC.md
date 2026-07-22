@@ -113,6 +113,19 @@ To update the data room with new files from Google Drive:
 - Only the data room owner can sync folders
 - Admins can also perform syncs
 
+**Folders sync but no files appear**
+- If the folder lives in a **Shared Drive (Team Drive)**, the listing now
+  requests `corpora=allDrives` so Shared Drive files are included. Make sure the
+  connected Google account (or the service account) is a member of the Shared
+  Drive.
+- The sync no longer reports a green "success" when zero files come back — it now
+  tells you whether **no files were found** in Drive vs. **files were found but
+  failed to import** (with the first error). Individual file failures no longer
+  abort the whole sync; other files still import and the count of failures is
+  shown.
+- Confirm the folder actually contains files (not just empty subfolders) and that
+  they are within 5 levels of nesting.
+
 ## Example Use Cases
 
 1. **Due Diligence**: Sync a folder containing confidential company documents with NDA requirement
