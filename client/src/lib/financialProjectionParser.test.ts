@@ -66,9 +66,33 @@ describe("parsePeriod", () => {
     expect(p?.year).toBe(2026);
     expect(p?.month).toBe(7);
   });
+  it("parses years with a projection/actual qualifier", () => {
+    expect(parsePeriod("2026E")?.year).toBe(2026);
+    expect(parsePeriod("2027A")?.year).toBe(2027);
+    expect(parsePeriod("2028 Proj")?.year).toBe(2028);
+    expect(parsePeriod("FY26E")?.year).toBe(2026);
+    // Label is preserved for display.
+    expect(parsePeriod("2026E")?.label).toBe("2026E");
+  });
+  it("parses quarter and month labels with apostrophes", () => {
+    expect(parsePeriod("Q1'26")).toMatchObject({ year: 2026, month: 1 });
+    expect(parsePeriod("Jan'26")).toMatchObject({ year: 2026, month: 1 });
+  });
+  it("parses relative 'Year N' / 'YN' labels onto a synthetic base", () => {
+    const y1 = parsePeriod("Year 1");
+    const y2 = parsePeriod("Year 2");
+    expect(y1?.label).toBe("Year 1");
+    expect(y2?.label).toBe("Year 2");
+    // One calendar year apart, in order, so growth/CAGR annualization holds.
+    expect((y2?.year ?? 0) - (y1?.year ?? 0)).toBe(1);
+    expect((y2?.sortKey ?? 0) > (y1?.sortKey ?? 0)).toBe(true);
+    expect(parsePeriod("Y3")?.label).toBe("Y3");
+  });
   it("rejects random strings", () => {
     expect(parsePeriod("Revenue")).toBeNull();
     expect(parsePeriod("Total")).toBeNull();
+    // A 4-digit year followed by a non-qualifier word is not a period.
+    expect(parsePeriod("2026 Revenue")).toBeNull();
   });
 });
 
@@ -131,6 +155,32 @@ describe("parseWorkbook — columns-as-periods layout", () => {
     });
     const { model } = parseWorkbook(wb);
     expect(model.metrics.revenue).toEqual([150, 300]);
+  });
+
+  it("parses headers with 'Year N' columns and estimate suffixes", () => {
+    const wb = buildWorkbook({
+      Projections: [
+        ["Metric", "Year 1", "Year 2", "Year 3"],
+        ["Revenue", 500_000, 1_500_000, 4_000_000],
+        ["Cash Balance", 3_000_000, 2_500_000, 1_500_000],
+      ],
+    });
+    const { model } = parseWorkbook(wb);
+    expect(model.meta.layout).toBe("columns");
+    expect(model.periods.map((p) => p.label)).toEqual(["Year 1", "Year 2", "Year 3"]);
+    expect(model.metrics.revenue).toEqual([500_000, 1_500_000, 4_000_000]);
+  });
+
+  it("parses headers with estimate/actual year suffixes", () => {
+    const wb = buildWorkbook({
+      Model: [
+        ["", "2026A", "2027E", "2028E"],
+        ["Revenue", 100, 200, 400],
+      ],
+    });
+    const { model } = parseWorkbook(wb);
+    expect(model.periods.map((p) => p.year)).toEqual([2026, 2027, 2028]);
+    expect(model.metrics.revenue).toEqual([100, 200, 400]);
   });
 
   it("sorts out-of-order period columns", () => {

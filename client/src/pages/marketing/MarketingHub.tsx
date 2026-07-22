@@ -199,16 +199,16 @@ function ComposerTab({ onSaved }: { onSaved?: () => void }) {
       utils.marketing.overview.invalidate();
       onSaved?.();
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err: any) => toast.error(err.message),
   });
 
   const publish = m.marketing.posts.publish.useMutation({
-    onSuccess: (r) => {
+    onSuccess: (r: any) => {
       toast.success(r.simulated ? "Published (simulated)" : "Published");
       utils.marketing.posts.list.invalidate();
       utils.marketing.overview.invalidate();
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err: any) => toast.error(err.message),
   });
 
   const togglePlatform = (p: Platform) => {
@@ -228,7 +228,7 @@ function ComposerTab({ onSaved }: { onSaved?: () => void }) {
         campaignId: campaignId ? Number(campaignId) : undefined,
       },
       {
-        onSuccess: async ({ id }) => {
+        onSuccess: async ({ id }: any) => {
           if (publishNow) publish.mutate({ id });
         },
       },
@@ -377,7 +377,7 @@ function EngagementTab() {
   const { data: engagements, refetch } = m.marketing.engagement.list.useQuery({ unlinkedOnly });
   const linkMutation = m.marketing.engagement.linkContact.useMutation({
     onSuccess: () => { toast.success("Linked to contact"); refetch(); },
-    onError: (err) => toast.error(err.message),
+    onError: (err: any) => toast.error(err.message),
   });
   const replyMutation = m.marketing.engagement.markReplied.useMutation({
     onSuccess: () => { refetch(); },
@@ -516,7 +516,7 @@ function CampaignsTab() {
       setNewName(""); setNewBudget("");
       utils.marketing.campaigns.list.invalidate();
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err: any) => toast.error(err.message),
   });
 
   return (
@@ -649,19 +649,19 @@ function PostsTab() {
   const { data: posts } = m.marketing.posts.list.useQuery({});
   const utils = m.useUtils();
   const publish = m.marketing.posts.publish.useMutation({
-    onSuccess: (r) => {
+    onSuccess: (r: any) => {
       toast.success(r.simulated ? "Published (simulated)" : "Published");
       utils.marketing.posts.list.invalidate();
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err: any) => toast.error(err.message),
   });
   const syncEngagement = m.marketing.engagement.sync.useMutation({
-    onSuccess: (r) => toast.success(`Imported ${r.imported} engagements${r.simulated ? " (simulated)" : ""}`),
-    onError: (err) => toast.error(err.message),
+    onSuccess: (r: any) => toast.success(`Imported ${r.imported} engagements${r.simulated ? " (simulated)" : ""}`),
+    onError: (err: any) => toast.error(err.message),
   });
   const syncMetrics = m.marketing.metrics.syncForPost.useMutation({
-    onSuccess: (r) => toast.success(`Recorded ${r.recorded} metric snapshot(s)`),
-    onError: (err) => toast.error(err.message),
+    onSuccess: (r: any) => toast.success(`Recorded ${r.recorded} metric snapshot(s)`),
+    onError: (err: any) => toast.error(err.message),
   });
   const del = m.marketing.posts.delete.useMutation({
     onSuccess: () => { toast.success("Deleted"); utils.marketing.posts.list.invalidate(); },

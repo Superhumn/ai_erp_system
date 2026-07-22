@@ -72,6 +72,7 @@ export const agentRouter = router({
     )
     .query(async ({ input }) => {
       const db = await getDb();
+      if (!db) throw new Error("Database connection unavailable");
       const limit = input?.limit ?? 20;
       const offset = input?.offset ?? 0;
 

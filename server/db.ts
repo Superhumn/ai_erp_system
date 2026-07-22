@@ -44,6 +44,7 @@ import {
   inboundEmails, emailAttachments, parsedDocuments, parsedDocumentLineItems, autoReplyRules, sentEmails,
   // Data room
   dataRooms, dataRoomFolders, dataRoomDocuments, dataRoomLinks, dataRoomVisitors, documentViews, dataRoomInvitations,
+  contractorFolderGrants,
   // Data room enhanced tracking
   documentPageViews, dataRoomDriveSyncConfig, dataRoomDriveSyncLogs, dataRoomEmailAccessRules, dataRoomVisitorSessions,
   // NDA e-signatures
@@ -83,6 +84,7 @@ import {
   InsertInboundEmail, InsertEmailAttachment, InsertParsedDocument, InsertParsedDocumentLineItem,
   // Data room types
   InsertDataRoom, InsertDataRoomFolder, InsertDataRoomDocument, InsertDataRoomLink, InsertDataRoomVisitor, InsertDocumentView, InsertDataRoomInvitation,
+  InsertContractorFolderGrant,
   // Data room enhanced tracking types
   InsertDocumentPageView, InsertDataRoomDriveSyncConfig, InsertDataRoomDriveSyncLog, InsertDataRoomEmailAccessRule, InsertDataRoomVisitorSession,
   // NDA types
@@ -187,6 +189,14 @@ import {
   pmMilestones, InsertPmMilestone,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
+import {
+  SAMPLE_MATERIAL_SUPPLY,
+  DEFAULT_MATERIAL_SUPPLY_PLANNING,
+  type MaterialSupplyOverview,
+  type MaterialSupplyCopacker,
+  type MaterialSupplyMaterial,
+  type MaterialSupplyInventoryLine,
+} from "../shared/materialSupply";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -459,6 +469,13 @@ export async function getCompanyById(id: number) {
   return result[0];
 }
 
+export async function getCompaniesByIds(ids: number[]) {
+  const db = await getDb();
+  if (!db) return [];
+  if (ids.length === 0) return [];
+  return db.select().from(companies).where(inArray(companies.id, ids));
+}
+
 export async function createCompany(data: InsertCompany) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -558,6 +575,13 @@ export async function getCustomerByShopifyId(shopifyId: string) {
   if (!db) return undefined;
   const result = await db.select().from(customers).where(eq(customers.shopifyCustomerId, shopifyId)).limit(1);
   return result[0];
+}
+
+export async function getCustomersByShopifyIds(shopifyIds: string[]) {
+  const db = await getDb();
+  if (!db) return [];
+  if (shopifyIds.length === 0) return [];
+  return db.select().from(customers).where(inArray(customers.shopifyCustomerId, shopifyIds));
 }
 
 export async function getCustomerByHubspotId(hubspotId: string) {
@@ -718,6 +742,13 @@ export async function getProductById(id: number) {
   if (!db) return undefined;
   const result = await db.select().from(products).where(eq(products.id, id)).limit(1);
   return result[0];
+}
+
+export async function getProductsByIds(ids: number[]) {
+  const db = await getDb();
+  if (!db) return [];
+  if (ids.length === 0) return [];
+  return db.select().from(products).where(inArray(products.id, ids));
 }
 
 export async function getProductBySku(sku: string) {
@@ -1282,14 +1313,23 @@ export async function getPurchaseOrders(filters?: { companyId?: number; status?:
   if (filters?.status) conditions.push(eq(purchaseOrders.status, filters.status as any));
   if (filters?.vendorId) conditions.push(eq(purchaseOrders.vendorId, filters.vendorId));
 
+  const base = db
+    .select({ po: purchaseOrders, vendor: vendors })
+    .from(purchaseOrders)
+    .leftJoin(vendors, eq(purchaseOrders.vendorId, vendors.id));
+
   let query = conditions.length > 0
-    ? db.select().from(purchaseOrders).where(and(...conditions)).orderBy(desc(purchaseOrders.createdAt))
-    : db.select().from(purchaseOrders).orderBy(desc(purchaseOrders.createdAt));
+    ? base.where(and(...conditions)).orderBy(desc(purchaseOrders.createdAt))
+    : base.orderBy(desc(purchaseOrders.createdAt));
 
   if (filters?.limit) {
     query = query.limit(filters.limit) as typeof query;
   }
-  return query;
+
+  // Flatten PO columns to the top level (backward compatible) and nest the
+  // joined vendor so the UI can render `row.vendor?.name`.
+  const rows = await query;
+  return rows.map((r) => ({ ...r.po, vendor: r.vendor }));
 }
 
 export async function getPurchaseOrderById(id: number) {
@@ -2402,6 +2442,13 @@ export async function getFreightCarrierById(id: number) {
   return result[0];
 }
 
+export async function getFreightCarriersByIds(ids: number[]) {
+  const db = await getDb();
+  if (!db) return [];
+  if (ids.length === 0) return [];
+  return db.select().from(freightCarriers).where(inArray(freightCarriers.id, ids));
+}
+
 export async function createFreightCarrier(data: InsertFreightCarrier) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -2795,6 +2842,23 @@ export async function getInventoryByProductId(productId: number) {
   if (!db) return undefined;
   const result = await db.select().from(inventory).where(eq(inventory.productId, productId)).limit(1);
   return result[0];
+}
+
+export async function getInventoryByProductAndWarehouse(productId: number, warehouseId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db
+    .select()
+    .from(inventory)
+    .where(and(eq(inventory.productId, productId), eq(inventory.warehouseId, warehouseId)))
+    .limit(1);
+  return result[0];
+}
+
+export async function getInventoryByProductIds(productIds: number[]) {
+  const db = await getDb();
+  if (!db || productIds.length === 0) return [];
+  return db.select().from(inventory).where(inArray(inventory.productId, productIds));
 }
 
 export async function updateInventoryQuantity(productId: number, warehouseId: number, quantityChange: number) {
@@ -3498,6 +3562,13 @@ export async function getRawMaterialById(id: number) {
   return result[0];
 }
 
+export async function getRawMaterialsByIds(ids: number[]) {
+  const db = await getDb();
+  if (!db) return [];
+  if (ids.length === 0) return [];
+  return db.select().from(rawMaterials).where(inArray(rawMaterials.id, ids));
+}
+
 export async function getRawMaterialByNameOrSku(name: string, sku: string) {
   const db = await getDb();
   if (!db) return undefined;
@@ -4150,7 +4221,54 @@ export async function receivePurchaseOrderItems(
   return receiving;
 }
 
-// Consume materials for a work order
+/**
+ * Receive a purchase order's outstanding line items into raw-material inventory.
+ * Resolves each PO item's linked raw material and a target warehouse, then delegates
+ * to receivePurchaseOrderItems (which upserts inventory, logs transactions, and
+ * updates PO + shipment status). Only the not-yet-received quantity is taken, so this
+ * is safe to call more than once (e.g. on a freight delivery for the same PO).
+ */
+export async function receivePurchaseOrderIntoInventory(
+  purchaseOrderId: number,
+  opts: { warehouseId?: number; receivedBy?: number; shipmentId?: number } = {}
+): Promise<{ received: boolean; reason?: string; warehouseId?: number; itemCount?: number }> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Resolve a warehouse: explicit, else the first active one, else any.
+  let warehouseId = opts.warehouseId;
+  if (!warehouseId) {
+    const active = await getWarehouses({ status: "active" });
+    warehouseId = active[0]?.id ?? (await getWarehouses())[0]?.id;
+  }
+  if (!warehouseId) {
+    return { received: false, reason: "No warehouse configured to receive into" };
+  }
+
+  // getPurchaseOrderItems returns each item with its linked rawMaterial { id, unit }.
+  const items = await getPurchaseOrderItems(purchaseOrderId);
+  const toReceive: Array<{ purchaseOrderItemId: number; rawMaterialId?: number; quantity: number; unit: string }> = [];
+  for (const it of items as Array<any>) {
+    const ordered = parseFloat(it.quantity?.toString() || "0");
+    const already = parseFloat(it.receivedQuantity?.toString() || "0");
+    const outstanding = ordered - already;
+    if (outstanding <= 0) continue;
+    toReceive.push({
+      purchaseOrderItemId: it.id,
+      rawMaterialId: it.rawMaterial?.id ?? undefined,
+      quantity: outstanding,
+      unit: it.rawMaterial?.unit || "EA",
+    });
+  }
+
+  if (toReceive.length === 0) {
+    return { received: false, reason: "PO has no outstanding quantity to receive", warehouseId };
+  }
+
+  await receivePurchaseOrderItems(purchaseOrderId, warehouseId, toReceive, opts.receivedBy, opts.shipmentId);
+  return { received: true, warehouseId, itemCount: toReceive.length };
+}
+
 export async function consumeWorkOrderMaterials(workOrderId: number, performedBy?: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -4211,7 +4329,33 @@ export async function consumeWorkOrderMaterials(workOrderId: number, performedBy
 export async function getPurchaseOrderItems(purchaseOrderId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
+
+  // Resolve the linked raw material (via the purchaseOrderRawMaterials junction)
+  // so the UI can show the material name/unit instead of a bare description.
+  const rows = await db
+    .select({ item: purchaseOrderItems, rawMaterial: rawMaterials })
+    .from(purchaseOrderItems)
+    .leftJoin(purchaseOrderRawMaterials, eq(purchaseOrderRawMaterials.purchaseOrderItemId, purchaseOrderItems.id))
+    .leftJoin(rawMaterials, eq(purchaseOrderRawMaterials.rawMaterialId, rawMaterials.id))
+    .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
+
+  // An item links to at most one raw material in practice; dedupe defensively so
+  // a stray extra junction row can't multiply line items.
+  const seen = new Set<number>();
+  const result: Array<typeof purchaseOrderItems.$inferSelect & {
+    rawMaterial: { id: number; name: string; sku: string | null; unit: string } | null;
+  }> = [];
+  for (const r of rows) {
+    if (seen.has(r.item.id)) continue;
+    seen.add(r.item.id);
+    result.push({
+      ...r.item,
+      rawMaterial: r.rawMaterial
+        ? { id: r.rawMaterial.id, name: r.rawMaterial.name, sku: r.rawMaterial.sku, unit: r.rawMaterial.unit }
+        : null,
+    });
+  }
+  return result;
 }
 
 export async function updatePurchaseOrderItem(id: number, data: Partial<typeof purchaseOrderItems.$inferInsert>) {
@@ -5343,6 +5487,13 @@ export async function createShopifySkuMapping(data: InsertShopifySkuMapping) {
   return { id: result[0].insertId };
 }
 
+export async function updateShopifySkuMapping(id: number, data: Partial<InsertShopifySkuMapping>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(shopifySkuMappings).set(data).where(eq(shopifySkuMappings.id, id));
+  return { id };
+}
+
 export async function getProductByShopifySku(storeId: number, shopifyVariantId: string) {
   const db = await getDb();
   if (!db) return undefined;
@@ -5370,6 +5521,23 @@ export async function createShopifyLocationMapping(data: InsertShopifyLocationMa
   if (!db) throw new Error("Database not available");
   const result = await db.insert(shopifyLocationMappings).values(data);
   return { id: result[0].insertId };
+}
+
+export async function updateShopifyLocationMapping(
+  id: number,
+  data: Partial<InsertShopifyLocationMapping>,
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(shopifyLocationMappings).set(data).where(eq(shopifyLocationMappings.id, id));
+  return { id };
+}
+
+export async function deleteShopifyLocationMapping(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(shopifyLocationMappings).where(eq(shopifyLocationMappings.id, id));
+  return { id };
 }
 
 export async function getWarehouseByShopifyLocation(storeId: number, shopifyLocationId: string) {
@@ -6809,6 +6977,92 @@ export async function deleteDataRoomFolder(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.delete(dataRoomFolders).where(eq(dataRoomFolders.id, id));
+}
+
+// ── Contractor folder grants (per-user data-room folder access) ──
+
+export async function getContractorFolderGrants(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(contractorFolderGrants).where(eq(contractorFolderGrants.userId, userId));
+}
+
+export async function createContractorFolderGrant(data: InsertContractorFolderGrant) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  // Idempotent per (userId, folderId): drop any prior grant first so re-granting
+  // with a different mode replaces rather than collides with the unique index.
+  await db.delete(contractorFolderGrants).where(
+    and(eq(contractorFolderGrants.userId, data.userId), eq(contractorFolderGrants.folderId, data.folderId)),
+  );
+  const result = await db.insert(contractorFolderGrants).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function deleteContractorFolderGrant(userId: number, folderId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(contractorFolderGrants).where(
+    and(eq(contractorFolderGrants.userId, userId), eq(contractorFolderGrants.folderId, folderId)),
+  );
+}
+
+// Pure access decision (no DB) so it can be unit-tested directly: a folder is
+// accessible if it's individually granted (mode 'allow') or its visibleToRoles
+// includes the role, and it is not individually restricted (mode 'restrict',
+// which wins over role-wide visibility).
+export function filterAccessibleFolders<T extends { id: number; visibleToRoles?: unknown }>(
+  allFolders: T[],
+  grants: Array<{ folderId: number; mode: string }>,
+  role: string,
+): T[] {
+  const allowIds = new Set(grants.filter((g) => g.mode === "allow").map((g) => g.folderId));
+  const restrictIds = new Set(grants.filter((g) => g.mode === "restrict").map((g) => g.folderId));
+  return allFolders.filter((f) => {
+    if (restrictIds.has(f.id)) return false;
+    if (allowIds.has(f.id)) return true;
+    const roles = f.visibleToRoles;
+    return Array.isArray(roles) && roles.includes(role);
+  });
+}
+
+// Resolve the data-room folders a logged-in app-role user (e.g. a contractor)
+// may access, across all data rooms. See filterAccessibleFolders for the rule.
+export async function getAccessibleDataRoomFoldersForUser(userId: number, role: string) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const [allFolders, grants] = await Promise.all([
+    db.select().from(dataRoomFolders),
+    getContractorFolderGrants(userId),
+  ]);
+
+  return filterAccessibleFolders(allFolders, grants, role);
+}
+
+// All folders with their data room name — for the admin access-assignment UI.
+export async function getAllDataRoomFoldersWithRoom() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({
+    id: dataRoomFolders.id,
+    name: dataRoomFolders.name,
+    dataRoomId: dataRoomFolders.dataRoomId,
+    dataRoomName: dataRooms.name,
+    visibleToRoles: dataRoomFolders.visibleToRoles,
+  })
+    .from(dataRoomFolders)
+    .leftJoin(dataRooms, eq(dataRoomFolders.dataRoomId, dataRooms.id))
+    .orderBy(dataRooms.name, dataRoomFolders.sortOrder, dataRoomFolders.name);
+}
+
+// Documents contained in the given set of folder ids (across data rooms).
+export async function getDataRoomDocumentsInFolders(folderIds: number[]) {
+  const db = await getDb();
+  if (!db || folderIds.length === 0) return [];
+  return db.select().from(dataRoomDocuments)
+    .where(inArray(dataRoomDocuments.folderId, folderIds))
+    .orderBy(dataRoomDocuments.sortOrder, dataRoomDocuments.name);
 }
 
 // Data Room Documents
@@ -11770,6 +12024,13 @@ export async function getRdExpensesByStudy(studyId: number) {
   return db.select().from(rdExpenses).where(eq(rdExpenses.studyId, studyId)).orderBy(rdExpenses.category);
 }
 
+export async function getRdExpenseById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select().from(rdExpenses).where(eq(rdExpenses.id, id)).limit(1);
+  return rows[0];
+}
+
 export async function createRdExpense(data: InsertRdExpense) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -14215,4 +14476,112 @@ export async function getPmMatrix(filters: { tier?: number; status?: PmProjectFi
   );
 
   return { markets, functions, cells };
+}
+
+// ============================================================================
+// MATERIAL SUPPLY & REORDER
+// ============================================================================
+// Assembles the data contract for the "Material Supply & Reorder" view from
+// live ERP tables: copackers (warehouses where type='copacker'), raw materials
+// (with lead time), and on-hand quantities (rawMaterialInventory). Daily usage
+// is derived from the trailing-30-day consume ledger. When the company has no
+// copacker / material / inventory data yet, the canonical sample dataset is
+// returned so the screen still renders meaningfully.
+//
+// NOTE: inbound sea-freight shipments are not yet modelled per material+copacker
+// in the ERP (the `shipments` table links to POs, not to a material/destination
+// copacker pair), so the live path returns an empty `shipments` array. Wire it
+// up here once ASN / freight-booking data carries material + destination.
+export async function getMaterialSupplyOverview(opts?: { companyId?: number }): Promise<MaterialSupplyOverview> {
+  const db = await getDb();
+  if (!db) return SAMPLE_MATERIAL_SUPPLY;
+
+  const companyId = opts?.companyId;
+
+  // Copacker sites
+  const whConditions = [eq(warehouses.type, "copacker"), eq(warehouses.status, "active")];
+  if (companyId) whConditions.push(eq(warehouses.companyId, companyId));
+  const whRows = await db.select().from(warehouses).where(and(...whConditions)).orderBy(warehouses.name);
+
+  // Active raw materials
+  const rmConditions = [eq(rawMaterials.status, "active")];
+  if (companyId) rmConditions.push(eq(rawMaterials.companyId, companyId));
+  const rmRows = await db.select().from(rawMaterials).where(and(...rmConditions)).orderBy(rawMaterials.name);
+
+  if (whRows.length === 0 || rmRows.length === 0) return SAMPLE_MATERIAL_SUPPLY;
+
+  const whById = new Map<number, typeof whRows[number]>(whRows.map((w) => [w.id, w]));
+  const rmById = new Map<number, typeof rmRows[number]>(rmRows.map((m) => [m.id, m]));
+  const codeFor = (w: typeof whRows[number]) => w.code || `WH${w.id}`;
+
+  // On-hand by material + location, scoped to the copacker sites + active materials
+  const invRows = await db
+    .select()
+    .from(rawMaterialInventory)
+    .where(
+      and(
+        inArray(rawMaterialInventory.warehouseId, whRows.map((w) => w.id)),
+        inArray(rawMaterialInventory.rawMaterialId, rmRows.map((m) => m.id)),
+      ),
+    );
+  if (invRows.length === 0) return SAMPLE_MATERIAL_SUPPLY;
+
+  // Daily usage from the trailing-30-day consume ledger, scoped to the same
+  // copacker warehouses + materials so we never full-scan the ledger.
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const usageRows = await db
+    .select({
+      rawMaterialId: rawMaterialTransactions.rawMaterialId,
+      warehouseId: rawMaterialTransactions.warehouseId,
+      consumed: sql<number>`SUM(ABS(${rawMaterialTransactions.quantity}))`.mapWith(Number),
+    })
+    .from(rawMaterialTransactions)
+    .where(
+      and(
+        eq(rawMaterialTransactions.transactionType, "consume"),
+        gte(rawMaterialTransactions.createdAt, since),
+        inArray(rawMaterialTransactions.warehouseId, whRows.map((w) => w.id)),
+        inArray(rawMaterialTransactions.rawMaterialId, rmRows.map((m) => m.id)),
+      ),
+    )
+    .groupBy(rawMaterialTransactions.rawMaterialId, rawMaterialTransactions.warehouseId);
+  const usageByKey = new Map<string, number>();
+  for (const u of usageRows) usageByKey.set(`${u.rawMaterialId}:${u.warehouseId}`, (u.consumed ?? 0) / 30);
+
+  const copackers: MaterialSupplyCopacker[] = whRows.map((w) => ({
+    code: codeFor(w),
+    name: w.name,
+    short: w.name,
+    location: [w.city, w.state].filter(Boolean).join(", ") || w.country || "",
+  }));
+
+  const materials: MaterialSupplyMaterial[] = rmRows.map((m) => ({
+    id: String(m.id),
+    name: m.name,
+    unit: m.unit || "EA",
+    leadTimeDays: m.leadTimeDays ?? 0,
+  }));
+
+  const inventoryLines: MaterialSupplyInventoryLine[] = invRows
+    .filter((r) => whById.has(r.warehouseId) && rmById.has(r.rawMaterialId))
+    .map((r) => {
+      const onHand = Number(r.quantity) || 0;
+      const usage = usageByKey.get(`${r.rawMaterialId}:${r.warehouseId}`);
+      const dailyUsage = usage && usage > 0 ? usage : Math.max(1, Math.round(onHand / 45));
+      return {
+        copackerCode: codeFor(whById.get(r.warehouseId)!),
+        materialId: String(r.rawMaterialId),
+        onHand,
+        dailyUsage,
+      };
+    });
+
+  return {
+    source: "live",
+    planning: DEFAULT_MATERIAL_SUPPLY_PLANNING,
+    copackers,
+    materials,
+    inventoryLines,
+    shipments: [],
+  };
 }

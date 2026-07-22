@@ -234,7 +234,7 @@ export async function ensureValidToken(storeId: number): Promise<string> {
     return refreshShopifyToken(storeId);
   }
 
-  return safeDecryptToken(store.accessToken);
+  return safeDecryptToken(store.accessToken ?? "");
 }
 
 // ============================================
