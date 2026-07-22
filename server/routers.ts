@@ -14410,6 +14410,11 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
           return v.length > max ? v.slice(0, max) : v;
         };
 
+        // Extract a concise client-facing message while the full error object
+        // (stack + driver error code) is logged separately for diagnosis.
+        const errMessage = (err: unknown): string =>
+          err instanceof Error ? err.message : String(err);
+
         // Process folders — isolate each insert so one failure doesn't abort the rest.
         for (const driveFolder of syncResult.folders) {
           if (existingFoldersByDriveId.has(driveFolder.id)) {
@@ -14418,10 +14423,18 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
             continue;
           }
 
+          // Parent should already be mapped (DFS pre-order); fall back to any
+          // pre-existing data-room folder carrying the same Drive ID. If a parent
+          // was expected but is unmapped (e.g. its own insert failed earlier),
+          // don't silently root the child — surface it so the orphaning is visible.
           const parentDriveId = driveFolder.parents?.[0];
-          const parentDataRoomId = parentDriveId && parentDriveId !== folderId
-            ? folderMap.get(parentDriveId)
-            : null;
+          let parentDataRoomId: number | null = null;
+          if (parentDriveId && parentDriveId !== folderId) {
+            parentDataRoomId = folderMap.get(parentDriveId) ?? existingFoldersByDriveId.get(parentDriveId) ?? null;
+            if (parentDataRoomId === null && syncErrors.length < 5) {
+              syncErrors.push(`Folder "${driveFolder.name}": parent folder could not be resolved; placed at root.`);
+            }
+          }
 
           try {
             const { id: newFolderId } = await db.createDataRoomFolder({
@@ -14433,9 +14446,9 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
 
             folderMap.set(driveFolder.id, newFolderId);
             results.push({ name: driveFolder.name, type: 'folder', status: 'created' });
-          } catch (err: any) {
-            const msg = err?.message || String(err);
-            console.error(`[DataRoom] Failed to create folder "${driveFolder.name}" (${driveFolder.id}):`, msg);
+          } catch (err: unknown) {
+            console.error(`[DataRoom] Failed to create folder "${driveFolder.name}" (${driveFolder.id}):`, err);
+            const msg = errMessage(err);
             results.push({ name: driveFolder.name, type: 'folder', status: 'error', error: msg });
             if (syncErrors.length < 5) syncErrors.push(`Folder "${driveFolder.name}": ${msg}`);
           }
@@ -14483,9 +14496,9 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
             });
 
             results.push({ name: displayName, type: 'file', status: 'synced' });
-          } catch (err: any) {
-            const msg = err?.message || String(err);
-            console.error(`[DataRoom] Failed to create document "${displayName}" (${driveFile.id}):`, msg);
+          } catch (err: unknown) {
+            console.error(`[DataRoom] Failed to create document "${displayName}" (${driveFile.id}):`, err);
+            const msg = errMessage(err);
             results.push({ name: displayName, type: 'file', status: 'error', error: msg });
             if (syncErrors.length < 5) syncErrors.push(`File "${displayName}": ${msg}`);
           }
