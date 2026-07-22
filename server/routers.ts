@@ -23,6 +23,7 @@ import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import { agentRouter } from "./agent";
 import { parseNoteWithLLM } from "./notesParser";
 import type { NoteAppliedItem, NoteParseResult, NoteParsedItem } from "@shared/notes";
+import { buildImportRecord } from "@shared/importFields";
 import { employeePortalRouter } from "./routers/employeePortal";
 import { codeRouter } from "./routers/code";
 import { parseCopackerInventoryEmail, applyCopackerInventoryUpdate } from "./copackerEmailExtractor";
@@ -263,6 +264,32 @@ async function getValidGoogleToken(userId: number): Promise<{ accessToken: strin
   return { accessToken: token.accessToken };
 }
 
+// Data types the Google Drive auto-sync importer knows how to write. Anything
+// else (unknown / invoices / purchase_orders) is surfaced in the preview but
+// cannot be imported without manual handling.
+const DRIVE_SUPPORTED_TYPES = [
+  'vendors', 'customers', 'products', 'employees',
+  'raw_materials', 'crm_contacts', 'crm_deals', 'fundraising',
+] as const;
+
+// Detect the destination type for a sheet from its (lowercased) header row.
+// Shared by previewGoogleDrive (detect-only) and syncGoogleDrive (detect+import)
+// so the suggestion the user confirms is exactly what gets imported.
+export function detectSheetType(headers: string[]): string {
+  if (headers.some((h) => h.includes('vendor') || h.includes('supplier'))) return 'vendors';
+  if (headers.some((h) => h.includes('customer') || h.includes('client') || h.includes('buyer'))) return 'customers';
+  if (headers.some((h) => h.includes('sku') || h.includes('product') || h.includes('item'))) return 'products';
+  if (headers.some((h) => h.includes('invoice') || h.includes('bill'))) return 'invoices';
+  if (headers.some((h) => h.includes('employee') || h.includes('team') || h.includes('staff'))) return 'employees';
+  if (headers.some((h) => h.includes('ingredient') || h.includes('raw material') || h.includes('material'))) return 'raw_materials';
+  if (headers.some((h) => h.includes('order') || h.includes('po') || h.includes('purchase'))) return 'purchase_orders';
+  if (headers.some((h) => h.includes('price') || h.includes('cost') || h.includes('rate'))) return 'products';
+  if (headers.some((h) => h.includes('contact') || h.includes('lead') || h.includes('prospect') || h.includes('pipeline'))) return 'crm_contacts';
+  if (headers.some((h) => h.includes('investor') || h.includes('fund') || h.includes('commitment') || h.includes('round') || h.includes('series'))) return 'fundraising';
+  if (headers.some((h) => h.includes('deal') || h.includes('opportunity') || h.includes('stage'))) return 'crm_deals';
+  return 'unknown';
+}
+
 /**
  * Enforce per-recipe access. Recipes are private: only the creator (owner) or a
  * user with an explicit grant may view, and edit/manage requires the matching
@@ -287,12 +314,15 @@ async function requireRecipeAccess(
   return access;
 }
 
-// Helper to generate unique numbers
+// Helper to generate unique reference numbers (e.g. EMP-2606-1234). Uses a
+// CSPRNG for the suffix — not because these are secrets, but to satisfy static
+// analysis and avoid Math.random()'s modulo bias.
 export function generateNumber(prefix: string) {
   const date = new Date();
   const year = date.getFullYear().toString().slice(-2);
   const month = (date.getMonth() + 1).toString().padStart(2, '0');
-  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+  const crypto = require('crypto');
+  const random = crypto.randomInt(10000).toString().padStart(4, '0');
   return `${prefix}-${year}${month}-${random}`;
 }
 // Secure password hashing helpers using scrypt
@@ -4913,136 +4943,70 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         
         for (const row of data) {
           try {
-            // Map the row data to the target fields
-            const mappedData: Record<string, any> = {};
-            for (const [sheetCol, erpField] of Object.entries(columnMapping)) {
-              if (row[sheetCol] !== undefined && row[sheetCol] !== '') {
-                mappedData[erpField] = row[sheetCol];
-              }
+            // Coerce + validate the row against the destination's field catalogue.
+            // What the UI advertises == what we persist (see shared/importFields.ts).
+            const { record, errors: rowErrors } = buildImportRecord(row, columnMapping, targetModule);
+            if (rowErrors.length > 0) {
+              results.errors.push(rowErrors[0]);
+              results.failed++;
+              continue;
             }
-            
-            // Import based on target module
+
+            // Per-module glue: generated numbers + synthetic/derived columns.
             switch (targetModule) {
               case 'customers':
-                if (!mappedData.name) {
-                  results.errors.push(`Row missing required field: name`);
-                  results.failed++;
-                  continue;
-                }
-                await db.createCustomer({ 
-                  name: mappedData.name,
-                  email: mappedData.email || null,
-                  phone: mappedData.phone || null,
-                  address: mappedData.address || null,
-                  city: mappedData.city || null,
-                  state: mappedData.state || null,
-                  country: mappedData.country || null,
-                  postalCode: mappedData.postalCode || null,
-                  notes: mappedData.notes || null,
-                });
+                await db.createCustomer(record as any);
                 break;
-                
+
               case 'vendors':
-                if (!mappedData.name) {
-                  results.errors.push(`Row missing required field: name`);
-                  results.failed++;
-                  continue;
-                }
-                await db.createVendor({ 
-                  name: mappedData.name,
-                  email: mappedData.email || null,
-                  phone: mappedData.phone || null,
-                  address: mappedData.address || null,
-                  city: mappedData.city || null,
-                  state: mappedData.state || null,
-                  country: mappedData.country || null,
-                  postalCode: mappedData.postalCode || null,
-                  paymentTerms: mappedData.paymentTerms ? parseInt(mappedData.paymentTerms) : null,
-                  notes: mappedData.notes || null,
-                });
+                await db.createVendor(record as any);
                 break;
-                
+
               case 'products':
-                if (!mappedData.name) {
-                  results.errors.push(`Row missing required field: name`);
-                  results.failed++;
-                  continue;
-                }
-                const sku = mappedData.sku || generateNumber('PROD');
-                await db.createProduct({ 
-                  name: mappedData.name,
-                  sku,
-                  unitPrice: mappedData.price || mappedData.unitPrice || '0',
-                  description: mappedData.description || null,
-                  category: mappedData.category || null,
-                  costPrice: mappedData.cost || mappedData.costPrice || null,
-                });
+                await db.createProduct({
+                  ...record,
+                  sku: record.sku || generateNumber('PROD'),
+                  unitPrice: record.unitPrice ?? '0', // NOT NULL on the table
+                } as any);
                 break;
-                
+
               case 'employees':
-                if (!mappedData.firstName || !mappedData.lastName) {
-                  results.errors.push(`Row missing required fields: firstName, lastName`);
-                  results.failed++;
-                  continue;
-                }
-                const employeeNumber = generateNumber('EMP');
-                await db.createEmployee({ 
-                  ...mappedData, 
-                  employeeNumber,
-                  firstName: mappedData.firstName,
-                  lastName: mappedData.lastName,
-                });
+                await db.createEmployee({
+                  ...record,
+                  employeeNumber: generateNumber('EMP'),
+                } as any);
                 break;
-                
-              case 'invoices':
-                if (!mappedData.customerId || !mappedData.amount) {
-                  results.errors.push(`Row missing required fields: customerId, amount`);
-                  results.failed++;
-                  continue;
-                }
-                const invoiceNumber = generateNumber('INV');
-                const amount = mappedData.amount || '0';
-                await db.createInvoice({ 
-                  ...mappedData, 
-                  invoiceNumber,
-                  customerId: parseInt(mappedData.customerId) || 0,
+
+              case 'invoices': {
+                const amount = record.amount ?? '0';
+                delete record.amount; // synthetic -> subtotal/total below
+                await db.createInvoice({
+                  ...record,
+                  invoiceNumber: generateNumber('INV'),
                   issueDate: new Date(),
-                  dueDate: mappedData.dueDate ? new Date(mappedData.dueDate) : new Date(),
+                  dueDate: record.dueDate ?? new Date(),
                   subtotal: amount,
                   totalAmount: amount,
-                });
+                } as any);
                 break;
-                
+              }
+
               case 'contracts':
-                if (!mappedData.title) {
-                  results.errors.push(`Row missing required field: title`);
-                  results.failed++;
-                  continue;
-                }
-                const contractNumber = generateNumber('CON');
-                await db.createContract({ 
-                  ...mappedData, 
-                  contractNumber,
-                  title: mappedData.title,
-                  type: (mappedData.type as any) || 'service',
-                });
+                await db.createContract({
+                  ...record,
+                  contractNumber: generateNumber('CON'),
+                  type: record.type || 'service', // NOT NULL, no default
+                } as any);
                 break;
-                
+
               case 'projects':
-                if (!mappedData.name) {
-                  results.errors.push(`Row missing required field: name`);
-                  results.failed++;
-                  continue;
-                }
-                const projectNumber = generateNumber('PROJ');
-                await db.createProject({ 
-                  ...mappedData, 
-                  projectNumber,
-                  name: mappedData.name,
-                });
+                await db.createProject({
+                  ...record,
+                  projectNumber: generateNumber('PROJ'),
+                } as any);
                 break;
             }
-            
+
             results.imported++;
           } catch (error: any) {
             results.errors.push(`Import error: ${error.message}`);
@@ -5057,8 +5021,80 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
       }),
 
     // Sync all Google Drive spreadsheets automatically
+    // Detect the destination type of each spreadsheet WITHOUT importing, so the
+    // UI can let the user confirm or override the target before any write.
+    previewGoogleDrive: protectedProcedure
+      .input(z.object({ fileIds: z.array(z.string()).optional() }).optional())
+      .query(async ({ input, ctx }) => {
+        const { accessToken, error: tokenError } = await getValidGoogleToken(ctx.user.id);
+        if (tokenError || !accessToken) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: tokenError || 'Google not connected. Go to Settings to connect your Google account.' });
+        }
+
+        const sheetsResponse = await fetch(
+          `https://www.googleapis.com/drive/v3/files?q=(mimeType='application/vnd.google-apps.spreadsheet' or mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or mimeType='text/csv')&fields=files(id,name,modifiedTime,mimeType)&orderBy=modifiedTime desc&pageSize=100`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+        if (!sheetsResponse.ok) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list Google Sheets from Drive' });
+        }
+        const sheetsData = await sheetsResponse.json();
+        let files = sheetsData.files || [];
+        const wanted = input?.fileIds && input.fileIds.length > 0 ? new Set(input.fileIds) : null;
+        if (wanted) files = files.filter((f: any) => wanted.has(f.id));
+
+        const previews: { fileId: string; fileName: string; detectedType: string; rowCount: number; supported: boolean }[] = [];
+        for (const file of files) {
+          try {
+            let data: any;
+            const dataResponse = await fetch(
+              `https://sheets.googleapis.com/v4/spreadsheets/${file.id}/values/Sheet1?majorDimension=ROWS`,
+              { headers: { Authorization: `Bearer ${accessToken}` } },
+            );
+            if (dataResponse.ok) {
+              data = await dataResponse.json();
+            } else {
+              const fallback = await fetch(
+                `https://sheets.googleapis.com/v4/spreadsheets/${file.id}/values/A:ZZ?majorDimension=ROWS`,
+                { headers: { Authorization: `Bearer ${accessToken}` } },
+              );
+              if (!fallback.ok) {
+                previews.push({ fileId: file.id, fileName: file.name, detectedType: 'error', rowCount: 0, supported: false });
+                continue;
+              }
+              data = await fallback.json();
+            }
+            const rows = data.values || [];
+            if (rows.length < 2) {
+              previews.push({ fileId: file.id, fileName: file.name, detectedType: 'skipped', rowCount: 0, supported: false });
+              continue;
+            }
+            const headers: string[] = rows[0].map((h: string) => h.toLowerCase().trim());
+            const detectedType = detectSheetType(headers);
+            previews.push({
+              fileId: file.id,
+              fileName: file.name,
+              detectedType,
+              rowCount: rows.length - 1,
+              supported: (DRIVE_SUPPORTED_TYPES as readonly string[]).includes(detectedType),
+            });
+          } catch (e: any) {
+            previews.push({ fileId: file.id, fileName: file.name, detectedType: 'error', rowCount: 0, supported: false });
+          }
+        }
+        return { previews };
+      }),
+
     syncGoogleDrive: protectedProcedure
-      .mutation(async ({ ctx }) => {
+      .input(z.object({
+        // When provided, import ONLY these files using the user-confirmed type
+        // (overriding auto-detection). Omitted = legacy "detect & import all".
+        selections: z.array(z.object({
+          fileId: z.string(),
+          type: z.enum(DRIVE_SUPPORTED_TYPES),
+        })).optional(),
+      }).optional())
+      .mutation(async ({ ctx, input }) => {
         const results: { sheet: string; type: string; imported: number; errors: string[] }[] = [];
 
         // 1. Get valid Google OAuth token
@@ -5066,6 +5102,10 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         if (tokenError || !accessToken) {
           throw new TRPCError({ code: 'PRECONDITION_FAILED', message: tokenError || 'Google not connected. Go to Settings to connect your Google account.' });
         }
+
+        const forcedTypes = input?.selections && input.selections.length > 0
+          ? new Map(input.selections.map((s) => [s.fileId, s.type as string]))
+          : null;
 
         // 2. List all Google Sheets in Drive
         const sheetsResponse = await fetch(
@@ -5076,7 +5116,9 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list Google Sheets from Drive' });
         }
         const sheetsData = await sheetsResponse.json();
-        const files = sheetsData.files || [];
+        let files = sheetsData.files || [];
+        // Only import the confirmed files when selections were supplied.
+        if (forcedTypes) files = files.filter((f: any) => forcedTypes.has(f.id));
 
         // 3. For each spreadsheet, read the first sheet, detect type, and import
         for (const file of files) {
@@ -5109,21 +5151,10 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
             const headers: string[] = rows[0].map((h: string) => h.toLowerCase().trim());
             const dataRows: string[][] = rows.slice(1);
 
-            // Auto-detect type based on column headers
-            let type = 'unknown';
-            if (headers.some((h: string) => h.includes('vendor') || h.includes('supplier'))) type = 'vendors';
-            else if (headers.some((h: string) => h.includes('customer') || h.includes('client') || h.includes('buyer'))) type = 'customers';
-            else if (headers.some((h: string) => h.includes('sku') || h.includes('product') || h.includes('item'))) type = 'products';
-            else if (headers.some((h: string) => h.includes('invoice') || h.includes('bill'))) type = 'invoices';
-            else if (headers.some((h: string) => h.includes('employee') || h.includes('team') || h.includes('staff'))) type = 'employees';
-            else if (headers.some((h: string) => h.includes('ingredient') || h.includes('raw material') || h.includes('material'))) type = 'raw_materials';
-            else if (headers.some((h: string) => h.includes('order') || h.includes('po') || h.includes('purchase'))) type = 'purchase_orders';
-            else if (headers.some((h: string) => h.includes('price') || h.includes('cost') || h.includes('rate'))) type = 'products';
-            else if (headers.some((h: string) => h.includes('contact') || h.includes('lead') || h.includes('prospect') || h.includes('pipeline'))) type = 'crm_contacts';
-            else if (headers.some((h: string) => h.includes('investor') || h.includes('fund') || h.includes('commitment') || h.includes('round') || h.includes('series'))) type = 'fundraising';
-            else if (headers.some((h: string) => h.includes('deal') || h.includes('opportunity') || h.includes('stage'))) type = 'crm_deals';
+            // Use the user-confirmed type when supplied, else auto-detect.
+            const type = forcedTypes?.get(file.id) ?? detectSheetType(headers);
 
-            if (type === 'unknown' || type === 'invoices' || type === 'purchase_orders') {
+            if (!(DRIVE_SUPPORTED_TYPES as readonly string[]).includes(type)) {
               results.push({ sheet: file.name, type, imported: 0, errors: type === 'unknown' ? ['Could not detect data type from headers'] : ['Auto-import not supported for this type'] });
               continue;
             }
