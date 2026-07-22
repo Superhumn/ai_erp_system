@@ -58,6 +58,11 @@ export default function FreightDashboard() {
               FDA Notice
             </Button>
           </Link>
+          <Link href="/freight/carrier-quotes">
+            <Button variant="outline">
+              Carrier Quotes
+            </Button>
+          </Link>
           <Link href="/freight/rfqs">
             <Button>
               <Plus className="h-4 w-4 mr-2" />

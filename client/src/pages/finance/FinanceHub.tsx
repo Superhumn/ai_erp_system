@@ -36,6 +36,8 @@ const BankingSection = lazy(() =>
 );
 // ── 9 · R&D Tax Credit (collapsible) ───────────────────────────
 const RdTaxCredit = lazy(() => import("./RdTaxCredit"));
+// ── 10 · Product Costing & COGS (collapsible) ──────────────────
+const Costing = lazy(() => import("./Costing"));
 
 const fallback = (
   <div className="flex items-center justify-center py-12">
@@ -153,6 +155,16 @@ export default function FinanceHub() {
         subtitle="Specialized — calculate eligible credits"
       >
         <RdTaxCredit />
+      </CollapsibleSection>
+
+      {divider}
+
+      {/* 10 · Product Costing & COGS — profitability, valuation, COGS */}
+      <CollapsibleSection
+        title="Product Costing & COGS"
+        subtitle="Profitability, inventory valuation, landed-cost allocation"
+      >
+        <Costing />
       </CollapsibleSection>
     </div>
   );

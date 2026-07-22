@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Settings as SettingsIcon, User, Shield, Bell, Link, ExternalLink, Globe, Users, Lock, Loader2, Eye, EyeOff } from "lucide-react";
+import { Settings as SettingsIcon, User, Shield, Bell, Link, ExternalLink, Globe, Users, Lock, Loader2, Eye, EyeOff, Mail } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
@@ -166,6 +166,19 @@ export default function Settings() {
                 <Badge variant={i.connected ? "default" : "secondary"}>{i.connected ? "Connected" : "Not Connected"}</Badge>
               </div>
             ))}
+          </CardContent>
+        </Card>
+
+        {/* Email Scanning — inline */}
+        <Card className="cursor-pointer hover:border-primary/30 transition-colors" onClick={() => navigate("/settings/email-scanning")}>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Mail className="h-4 w-4" /> Email Scanning
+              <ExternalLink className="h-3.5 w-3.5 ml-auto text-muted-foreground" />
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">Connect email accounts, schedule inbox scans, and view scan logs.</p>
           </CardContent>
         </Card>
 
