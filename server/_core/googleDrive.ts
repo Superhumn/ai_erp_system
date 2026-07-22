@@ -73,6 +73,10 @@ export interface DriveSyncResult {
   folders: DriveFolder[];
   files: DriveFile[];
   error?: string;
+  // True when the root listed OK but one or more nested sub-folders failed to
+  // list (tolerated). Callers must NOT delete-propagate on a partial tree — a
+  // "missing" file may simply be under an unlisted sub-folder.
+  partial?: boolean;
 }
 
 const GOOGLE_DRIVE_API = "https://www.googleapis.com/drive/v3";
@@ -295,12 +299,28 @@ async function listDriveItems(
 }
 
 /**
+ * Folders that must never be pulled into a data room, matching the security
+ * promise shown in the import dialog: anything named "private"/"confidential"
+ * (case-insensitive) or whose name starts with "_". Applied to NESTED folders
+ * only — the root folder the user explicitly selects is always synced (so a
+ * root like "_Data Room" still works).
+ */
+export function isConfidentialFolderName(name: string): boolean {
+  const n = (name || "").trim().toLowerCase();
+  return n.startsWith("_") || n === "private" || n === "confidential";
+}
+
+/**
  * Recursively sync a Google Drive folder structure.
  *
  * Uses a single `listDriveItems` call per folder (no mimeType filter in the
  * query) and splits results client-side. This avoids the `mimeType!=` operator
  * which is unreliable for certain Google Drive account types and Shared Drives,
  * and also cuts the number of API round-trips in half.
+ *
+ * Nested folders whose names match `isConfidentialFolderName` are skipped
+ * entirely (not listed, not recursed into), so confidential content never
+ * enters the data room.
  */
 export async function syncDriveFolder(
   accessToken: string,
@@ -311,8 +331,10 @@ export async function syncDriveFolder(
   const allFiles: DriveFile[] = [];
   // A failure to list the ROOT folder means the sync produced nothing usable,
   // so it must be surfaced to the caller. Failures inside nested subfolders are
-  // tolerated (one inaccessible subfolder shouldn't abort the whole sync).
+  // tolerated (one inaccessible subfolder shouldn't abort the whole sync) but
+  // are recorded via `partial` so callers can refuse destructive reconciliation.
   let rootError: string | undefined;
+  let partial = false;
 
   async function syncRecursive(currentFolderId: string, depth: number) {
     if (depth > maxDepth) return;
@@ -325,15 +347,22 @@ export async function syncDriveFolder(
       // nothing synced (e.g. the folder isn't shared / token lacks Drive scope).
       if (depth === 1) rootError = error;
       // Nested folders: do not abort the whole sync — other folders that were
-      // already discovered may still be processed by the caller.
+      // already discovered may still be processed by the caller — but mark the
+      // tree as partial so delete-propagation is skipped.
+      else partial = true;
       return;
     }
 
-    allFolders.push(...folders);
+    // Drop confidential sub-folders before recording or recursing so neither
+    // they nor their contents ever enter the data room. The root (depth 1) is
+    // the folder the user explicitly chose, so it is never filtered here.
+    const visibleFolders = folders.filter((f) => !isConfidentialFolderName(f.name));
+
+    allFolders.push(...visibleFolders);
     allFiles.push(...files);
 
-    // Recurse into sub-folders found in this directory.
-    for (const folder of folders) {
+    // Recurse into the surviving sub-folders found in this directory.
+    for (const folder of visibleFolders) {
       await syncRecursive(folder.id, depth + 1);
     }
   }
@@ -355,6 +384,7 @@ export async function syncDriveFolder(
       success: true,
       folders: allFolders,
       files: allFiles,
+      partial,
     };
   } catch (error: any) {
     console.error("[GoogleDrive] Sync error:", error);

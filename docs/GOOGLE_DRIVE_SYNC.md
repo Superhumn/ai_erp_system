@@ -28,15 +28,13 @@ The Google Drive sync feature allows you to sync existing Google Drive folders t
 ### Syncing a Folder
 
 1. Navigate to your data room
-2. Go to the **Settings** tab
-3. Find the **Google Drive Sync** section
-4. Click **Connect** (or **Re-sync** if already connected)
-5. Enter the Google Drive Folder ID:
+2. Click **Sync from Google Drive** in the header
+3. If no folder is linked yet, enter the Google Drive Folder ID in the import dialog:
    - Open the folder in Google Drive
    - Copy the folder ID from the URL (the part after `/folders/`)
    - Example: If URL is `https://drive.google.com/drive/folders/1ABC123xyz`, the ID is `1ABC123xyz`
-6. Review the security controls that will apply
-7. Click **Sync Folder**
+4. Click **Sync Folder**. Once a folder is linked, the same button re-syncs it,
+   and a daily background job keeps it up to date automatically.
 
 ### What Gets Synced
 
@@ -76,17 +74,34 @@ All synced files and folders are subject to the data room's security settings:
 
 ### Re-syncing
 
-To update the data room with new files from Google Drive:
+To update the data room with the latest state of Google Drive:
 
-1. Go to Settings > Google Drive Sync
-2. Click **Re-sync**
-3. Use the same folder ID
-4. Only new files and folders will be added (duplicates are detected and skipped)
+1. Open the data room and click **Sync from Google Drive** (or **Re-sync**)
+2. New files and folders are added; existing ones are detected by their Google
+   Drive IDs and skipped
+3. **Files and folders deleted in Google Drive are removed from the data room**
+   (delete-propagation). Only items that originated from Drive are removed —
+   documents you uploaded directly are never touched. As a safety measure,
+   removal is skipped if any sub-folder failed to list or the folder came back
+   empty, so a transient Drive error can't wipe your documents.
+
+### Automatic sync
+
+A background job re-syncs every data room that has a linked Drive folder **once
+per day**, picking up new files and folders (including nested sub-folders)
+automatically. Automatic runs are **add/update-only** — they never delete, so
+unattended removal only ever happens from a manual re-sync you initiate.
 
 ## Important Notes
 
-- **One-Way Sync**: Changes in Google Drive are not automatically reflected in the data room. You must manually re-sync to add new files.
-- **Duplicate Detection**: When re-syncing, existing files and folders are detected by their Google Drive IDs and skipped.
+- **Near One-Way Sync**: Drive is the source of truth. Automatic daily sync adds
+  new content; deletions propagate only on a manual re-sync.
+- **Duplicate Detection**: Existing files and folders are detected by their
+  Google Drive IDs and skipped.
+- **Confidential folders are skipped**: nested folders named `private`,
+  `confidential`, or starting with `_` (and everything inside them) are never
+  imported. The root folder you explicitly select is always synced, so a root
+  named e.g. `_Data Room` still works.
 - **Permissions**: Synced files use the data room's security controls, not Google Drive's permissions
 - **File Limits**: Syncing stops at 5 levels of folder depth to prevent excessive recursion
 - **Google Workspace Files**: Google Docs, Sheets, and Presentations are linked and can be viewed in Google Drive

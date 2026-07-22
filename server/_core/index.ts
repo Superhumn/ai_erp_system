@@ -1698,64 +1698,43 @@ async function startServer() {
       })();
     }
 
-    // Data Room Google Drive auto-sync (hourly)
+    // Data Room Google Drive auto-sync (daily). Re-syncs every data room that
+    // has a linked Drive folder using the SAME reconcile logic as the manual
+    // one-click sync, so new folders and files (incl. nested sub-folders) are
+    // picked up automatically. Deletions are NOT propagated here (allowDelete
+    // is false): unattended destructive removal is deliberately left to a
+    // user-initiated re-sync, which runs with the owner watching.
     (async () => {
       try {
         const SYNC_INTERVAL = 24 * 60 * 60 * 1000; // Daily
         console.log("[Data Room Sync] Starting daily auto-sync");
-        setInterval(async () => {
-          try {
-            const { syncDriveFolder, getSimpleFileType } = await import("../routers").then(() => import("./googleDrive"));
-            const rooms = await db.getDataRooms();
-            for (const room of rooms) {
-              if (room.googleDriveFolderId) {
-                const { accessToken: roomAccessToken, error: tokenErr } = await getValidGoogleToken(room.ownerId);
-                if (roomAccessToken && !tokenErr) {
-                  try {
-                    const syncResult = await syncDriveFolder(roomAccessToken, room.googleDriveFolderId);
-                    if (syncResult.success && syncResult.files.length > 0) {
-                      const existingDocs = await db.getDataRoomDocuments(room.id);
-                      const existingDriveIds = new Set(
-                        existingDocs.filter(d => d.googleDriveFileId).map(d => d.googleDriveFileId!)
-                      );
-
-                      let newFilesCount = 0;
-                      for (const driveFile of syncResult.files) {
-                        if (existingDriveIds.has(driveFile.id)) continue;
-
-                        // Metadata-only record. Content stays in Drive and is
-                        // streamed on demand via /api/drive/proxy/:documentId.
-                        await db.createDataRoomDocument({
-                          dataRoomId: room.id,
-                          folderId: null,
-                          name: driveFile.name,
-                          fileType: getSimpleFileType(driveFile.mimeType),
-                          mimeType: driveFile.mimeType,
-                          fileSize: driveFile.size ? parseInt(driveFile.size) : undefined,
-                          storageType: 'google_drive',
-                          googleDriveFileId: driveFile.id,
-                          googleDriveWebViewLink: driveFile.webViewLink,
-                          thumbnailUrl: driveFile.thumbnailLink,
-                          uploadedBy: room.ownerId,
-                        });
-                        newFilesCount++;
-                      }
-
-                      if (newFilesCount > 0) {
-                        console.log(`[Data Room Sync] Synced room ${room.id}: ${newFilesCount} new files added`);
-                        await db.updateDataRoom(room.id, { lastSyncedAt: new Date() });
-                      }
-                    }
-                  } catch (roomErr) {
-                    console.warn(`[Data Room Sync] Failed to sync room ${room.id}:`, roomErr);
-                  }
-                }
+        const runAutoSync = async () => {
+          const { reconcileDataRoomFromDrive } = await import("../googleDriveSyncService");
+          const rooms = await db.getDataRooms();
+          for (const room of rooms) {
+            if (!room.googleDriveFolderId) continue;
+            try {
+              const { accessToken: roomAccessToken, error: tokenErr } = await getValidGoogleToken(room.ownerId);
+              if (!roomAccessToken || tokenErr) continue;
+              const recon = await reconcileDataRoomFromDrive({
+                dataRoomId: room.id,
+                rootFolderId: room.googleDriveFolderId,
+                accessToken: roomAccessToken,
+                uploadedBy: room.ownerId,
+                allowDelete: false,
+              });
+              if (recon.foldersCreated || recon.filesCreated) {
+                console.log(`[Data Room Sync] Room ${room.id}: +${recon.foldersCreated} folders / +${recon.filesCreated} files`);
               }
+              await db.updateDataRoom(room.id, { lastSyncedAt: new Date() });
+            } catch (roomErr) {
+              console.warn(`[Data Room Sync] Failed to sync room ${room.id}:`, roomErr);
             }
-          } catch (e) {
-            console.warn("[Data Room Sync] Failed:", e);
           }
-        }, SYNC_INTERVAL);
+        };
+        setInterval(() => { runAutoSync().catch((e) => console.warn("[Data Room Sync] Failed:", e)); }, SYNC_INTERVAL);
+        // Initial run shortly after startup so a fresh deploy doesn't wait a day.
+        setTimeout(() => { runAutoSync().catch((e) => console.warn("[Data Room Sync] Failed:", e)); }, 10 * 60 * 1000);
       } catch (e) {
         console.warn("[Data Room Sync] Could not initialize:", e);
       }

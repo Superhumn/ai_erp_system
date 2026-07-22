@@ -94,7 +94,7 @@ export default function DataRooms() {
       } else if (data.filesCreated === 0 && filesFound > 0) {
         toast.error(`Found ${filesFound} file(s) but none could be imported.${firstError ? ` First error: ${firstError}` : ''}`);
       } else {
-        toast.success(`Synced ${data.filesCreated} files and ${data.foldersCreated} folders from Google Drive${data.filesFailed ? ` (${data.filesFailed} file(s) failed)` : ''}`);
+        toast.success(`Synced ${data.filesCreated} files and ${data.foldersCreated} folders from Google Drive${data.filesRemoved ? `, removed ${data.filesRemoved} deleted in Drive` : ''}${data.filesFailed ? ` (${data.filesFailed} file(s) failed)` : ''}`);
       }
       setSyncingRoomId(null);
       utils.dataRoom.list.invalidate();

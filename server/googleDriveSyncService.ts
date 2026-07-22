@@ -232,6 +232,199 @@ export async function syncGoogleDriveFolder(options: SyncOptions): Promise<SyncR
   }
 }
 
+export interface ReconcileResult {
+  foldersFound: number;
+  filesFound: number;
+  foldersCreated: number;
+  filesCreated: number;
+  filesRemoved: number;
+  foldersRemoved: number;
+  filesFailed: number;
+  partial: boolean;
+  errors: string[];
+}
+
+// Trim values to their DB column widths so one oversized field can't abort an
+// insert (and, before per-item isolation, the whole batch).
+function trunc(v: string | null | undefined, max: number): string | undefined {
+  if (v == null) return undefined;
+  return v.length > max ? v.slice(0, max) : v;
+}
+
+// Concise, user-safe message. Full error objects are logged separately; raw
+// SQL/driver text never reaches callers/UI.
+function errMessage(err: unknown): string {
+  const code = (err as { code?: string })?.code;
+  switch (code) {
+    case 'ER_DATA_TOO_LONG': return 'a field exceeded the maximum length';
+    case 'ER_DUP_ENTRY': return 'a duplicate entry was detected';
+    case 'ER_TRUNCATED_WRONG_VALUE':
+    case 'WARN_DATA_TRUNCATED': return 'an unsupported character or value';
+    case 'ER_NO_REFERENCED_ROW_2':
+    case 'ER_ROW_IS_REFERENCED_2': return 'a related-record constraint failed';
+    case 'ER_BAD_NULL_ERROR': return 'a required field was missing';
+  }
+  if (err instanceof Error && !code) return err.message;
+  return 'an unexpected database error';
+}
+
+/**
+ * Reconcile a data room against a Google Drive folder tree: create new folders
+ * and documents (as metadata-only Drive references), and — only when
+ * `allowDelete` is set and the tree listed completely — remove data-room items
+ * whose Drive counterparts no longer exist.
+ *
+ * Shared by the one-click `dataRoom.syncFromDrive` route and the background
+ * auto-sync scheduler so both behave identically. Per-item inserts/deletes are
+ * isolated so a single failure can't abort the batch; over-length fields are
+ * truncated; client-facing errors are sanitized.
+ *
+ * Delete-propagation safety: it is skipped when the Drive listing was `partial`
+ * (a sub-folder failed to list) or returned an empty tree, since a "missing"
+ * item may simply be unlisted — deleting then would be data loss. Only
+ * Drive-originated items (those carrying a googleDriveFileId / FolderId) are
+ * ever removed; manually uploaded S3 documents are untouched.
+ */
+export async function reconcileDataRoomFromDrive(params: {
+  dataRoomId: number;
+  rootFolderId: string;
+  accessToken: string;
+  uploadedBy?: number;
+  allowDelete?: boolean;
+}): Promise<ReconcileResult> {
+  const { dataRoomId, rootFolderId, accessToken, uploadedBy, allowDelete } = params;
+
+  const sync = await syncDriveFolder(accessToken, rootFolderId);
+  if (!sync.success) {
+    throw new Error(sync.error || 'Failed to list the Google Drive folder');
+  }
+
+  const existingFolders = await db.getDataRoomFolders(dataRoomId);
+  const existingDocs = await db.getDataRoomDocuments(dataRoomId);
+  const existingFoldersByDriveId = new Map<string, number>(
+    existingFolders.filter(f => f.googleDriveFolderId).map(f => [f.googleDriveFolderId!, f.id]),
+  );
+  const existingDocsByDriveId = new Map<string, number>(
+    existingDocs.filter(d => d.googleDriveFileId).map(d => [d.googleDriveFileId!, d.id]),
+  );
+
+  const folderMap = new Map<string, number>();
+  const errors: string[] = [];
+  let foldersCreated = 0;
+  let filesCreated = 0;
+  let filesFailed = 0;
+
+  // Create folder hierarchy (DFS pre-order → parents precede children).
+  for (const driveFolder of sync.folders) {
+    const existing = existingFoldersByDriveId.get(driveFolder.id);
+    if (existing !== undefined) {
+      folderMap.set(driveFolder.id, existing);
+      continue;
+    }
+
+    const parentDriveId = driveFolder.parents?.[0];
+    let parentId: number | null = null;
+    if (parentDriveId && parentDriveId !== rootFolderId) {
+      parentId = folderMap.get(parentDriveId) ?? existingFoldersByDriveId.get(parentDriveId) ?? null;
+      if (parentId === null && errors.length < 5) {
+        errors.push(`Folder "${driveFolder.name}": parent folder could not be resolved; placed at root.`);
+      }
+    }
+
+    try {
+      const { id } = await db.createDataRoomFolder({
+        dataRoomId,
+        parentId,
+        name: trunc(driveFolder.name, 255) || 'Untitled folder',
+        googleDriveFolderId: driveFolder.id,
+      } as any);
+      folderMap.set(driveFolder.id, id);
+      foldersCreated++;
+    } catch (err: unknown) {
+      console.error(`[DataRoom] Failed to create folder ${driveFolder.id} (room ${dataRoomId}):`, err);
+      if (errors.length < 5) errors.push(`Folder "${driveFolder.name}": ${errMessage(err)}`);
+    }
+  }
+
+  // Create documents (metadata-only Drive references).
+  for (const driveFile of sync.files) {
+    if (existingDocsByDriveId.has(driveFile.id)) continue;
+
+    const parentDriveId = driveFile.parents?.[0];
+    let folderId: number | null = null;
+    if (parentDriveId && parentDriveId !== rootFolderId) {
+      folderId = folderMap.get(parentDriveId) ?? existingFoldersByDriveId.get(parentDriveId) ?? null;
+      if (folderId === null && errors.length < 5) {
+        errors.push(`File "${driveFile.name}": parent folder could not be resolved; placed at root.`);
+      }
+    }
+
+    try {
+      await db.createDataRoomDocument({
+        dataRoomId,
+        folderId,
+        name: trunc(driveFile.name, 255) || 'Untitled',
+        fileType: getSimpleFileType(driveFile.mimeType),
+        mimeType: trunc(driveFile.mimeType, 128),
+        fileSize: driveFile.size && !isNaN(parseInt(driveFile.size)) ? parseInt(driveFile.size) : undefined,
+        storageType: 'google_drive',
+        storageUrl: trunc(driveFile.webViewLink, 512),
+        googleDriveFileId: driveFile.id,
+        googleDriveWebViewLink: trunc(driveFile.webViewLink, 512),
+        thumbnailUrl: trunc(driveFile.thumbnailLink, 512),
+        uploadedBy,
+      } as any);
+      filesCreated++;
+    } catch (err: unknown) {
+      console.error(`[DataRoom] Failed to create document ${driveFile.id} (room ${dataRoomId}):`, err);
+      filesFailed++;
+      if (errors.length < 5) errors.push(`File "${driveFile.name}": ${errMessage(err)}`);
+    }
+  }
+
+  // Delete-propagation — remove Drive-originated items no longer in Drive.
+  let filesRemoved = 0;
+  let foldersRemoved = 0;
+  const treeIsEmpty = sync.folders.length === 0 && sync.files.length === 0;
+  if (allowDelete && !sync.partial && !treeIsEmpty) {
+    const seenFileIds = new Set(sync.files.map(f => f.id));
+    const seenFolderIds = new Set(sync.folders.map(f => f.id));
+
+    for (const [driveId, docId] of existingDocsByDriveId) {
+      if (!seenFileIds.has(driveId)) {
+        try {
+          await db.deleteDataRoomDocument(docId);
+          filesRemoved++;
+        } catch (err: unknown) {
+          console.error(`[DataRoom] Failed to remove document ${docId} (room ${dataRoomId}):`, err);
+        }
+      }
+    }
+    for (const [driveId, folderIdVal] of existingFoldersByDriveId) {
+      if (!seenFolderIds.has(driveId)) {
+        try {
+          await db.deleteDataRoomFolder(folderIdVal);
+          foldersRemoved++;
+        } catch (err: unknown) {
+          console.error(`[DataRoom] Failed to remove folder ${folderIdVal} (room ${dataRoomId}):`, err);
+        }
+      }
+    }
+  }
+
+  return {
+    foldersFound: sync.folders.length,
+    filesFound: sync.files.length,
+    foldersCreated,
+    filesCreated,
+    filesRemoved,
+    foldersRemoved,
+    filesFailed,
+    partial: !!sync.partial,
+    errors,
+  };
+}
+
 /**
  * Get sync status summary for a data room
  */
