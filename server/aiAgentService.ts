@@ -43,6 +43,8 @@ export interface AIAgentResponse {
   actions?: AIAgentAction[];
   data?: Record<string, any>;
   suggestions?: string[];
+  /** True when `message` is a proposed plan awaiting user approval (plan-first mode). */
+  isPlan?: boolean;
 }
 
 export interface AIAgentAction {
@@ -1752,6 +1754,55 @@ async function executeRunAiAnalytics(params: any, ctx: AIAgentContext): Promise<
 // ============================================
 // MAIN AI AGENT FUNCTION
 // ============================================
+
+/**
+ * Plan-first mode: produce a concrete, human-readable plan of what the agent
+ * WOULD do to fulfill the request — without taking any action. The user reviews
+ * it and, if they approve, the plan is passed back to processAIAgentRequest to
+ * execute. Web search is allowed (read-only) so the plan can name real details
+ * (e.g. a vendor's actual address); no ERP write tools are exposed here, so
+ * nothing can be created, changed, or sent during planning.
+ */
+export async function planAIAgentRequest(
+  message: string,
+  conversationHistory: Message[],
+  ctx: AIAgentContext
+): Promise<AIAgentResponse> {
+  const systemPrompt = `You are the planning half of an AI assistant for the Superhumn ERP system. The user has made a request. Your job is to lay out EXACTLY what you would do to fulfill it, so the user can approve before anything happens.
+
+Rules:
+- Do NOT take any action. This is a preview only — nothing you describe has happened yet.
+- You may use the web_search tool to ground the plan in real facts (e.g. a real company's name, address, phone, website). Use it when the request references a real-world entity.
+- Produce a short, concrete, numbered plan. For each step, say specifically what record you would create/update/delete or what message you would send, with the actual values you'd use (names, addresses, amounts, recipients) wherever you can determine them.
+- Call out anything that changes data or contacts a real person (creating records, sending emails/SMS, placing orders) clearly.
+- If you're missing a detail you genuinely cannot determine, list it under "I'll need from you:".
+- Keep it tight. End with one line: "Approve to run this, or tell me what to change."
+
+User's role: ${ctx.userRole}. User: ${ctx.userName}.`;
+
+  const messages: Message[] = [
+    { role: "system", content: systemPrompt },
+    ...conversationHistory,
+    { role: "user", content: message },
+  ];
+
+  let plan = "";
+  try {
+    const response = await invokeLLM({ messages, webSearch: true, maxTokens: 1500 });
+    const content = response.choices?.[0]?.message?.content;
+    plan = typeof content === "string" ? content : "";
+  } catch {
+    // If web search isn't supported by the endpoint, retry plain.
+    const response = await invokeLLM({ messages, maxTokens: 1500 });
+    const content = response.choices?.[0]?.message?.content;
+    plan = typeof content === "string" ? content : "";
+  }
+
+  return {
+    message: plan || "I couldn't draft a plan for that. Try rephrasing the request.",
+    isPlan: true,
+  };
+}
 
 export async function processAIAgentRequest(
   message: string,

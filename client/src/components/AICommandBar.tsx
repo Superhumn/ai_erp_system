@@ -672,6 +672,15 @@ export function AICommandBar({ context }: AICommandBarProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [response, setResponse] = useState<string | null>(null);
   const [agentActions, setAgentActions] = useState<Array<{ type: string; description?: string; status?: string; error?: string }> | null>(null);
+  // "plan" = propose a plan and wait for approval before acting; "act" = do it directly.
+  const [agentMode, setAgentMode] = useState<"plan" | "act">(() => {
+    if (typeof window !== "undefined") {
+      const saved = window.localStorage.getItem("aiBarMode");
+      if (saved === "act" || saved === "plan") return saved;
+    }
+    return "plan";
+  });
+  const [pendingPlan, setPendingPlan] = useState<string | null>(null);
   const [taskCreated, setTaskCreated] = useState<{ id: number; status: string; taskType?: string } | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(true);
   const [vendorSuggestion, setVendorSuggestion] = useState<VendorSuggestion | null>(null);
@@ -772,13 +781,18 @@ export function AICommandBar({ context }: AICommandBarProps) {
   // rather than keyword matching.
   const agentChat = trpc.ai.agentChat.useMutation({
     onSuccess: (data) => {
+      setIsLoading(false);
+      // Plan-first mode: the model returned a plan to approve, not a result.
+      if ((data as { isPlan?: boolean }).isPlan) {
+        setPendingPlan(data.message || "");
+        return;
+      }
       setResponse(data.message || "Done.");
       setAgentActions(
         Array.isArray(data.actions) && data.actions.length > 0
           ? (data.actions as Array<{ type: string; description?: string; status?: string; error?: string }>)
           : null,
       );
-      setIsLoading(false);
       // Refresh anything the agent may have changed so the UI reflects new records.
       utils.invalidate();
     },
@@ -788,6 +802,20 @@ export function AICommandBar({ context }: AICommandBarProps) {
       aiQuery.mutate({ question: lastSubmittedQuery.current });
     },
   });
+
+  // Persist the chosen mode so it sticks across sessions.
+  useEffect(() => {
+    try { window.localStorage.setItem("aiBarMode", agentMode); } catch { /* ignore */ }
+  }, [agentMode]);
+
+  // Execute a plan the user just approved.
+  const runApprovedPlan = useCallback(() => {
+    if (!pendingPlan) return;
+    const plan = pendingPlan;
+    setPendingPlan(null);
+    setIsLoading(true);
+    agentChat.mutate({ message: lastSubmittedQuery.current, mode: "act", approvedPlan: plan });
+  }, [pendingPlan, agentChat]);
 
   // AI Agent task creation mutation
   const createTask = trpc.aiAgent.tasks.create.useMutation({
@@ -1045,6 +1073,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
     setShowSuggestions(false);
     setResponse(null);
     setAgentActions(null);
+    setPendingPlan(null);
     setTaskCreated(null);
 
     // Parse the intent from the query
@@ -1053,8 +1082,9 @@ export function AICommandBar({ context }: AICommandBarProps) {
 
     // General / free-form requests go to the agentic endpoint: the model reasons
     // over the request, queries the ERP, searches the web, and takes actions via
-    // tools — then answers. (The structured fast-paths below stay for the common
-    // create verbs so they keep their confirm-before-save dialogs.)
+    // tools — then answers. In "plan" mode it returns a plan to approve first;
+    // in "act" mode it does it directly. (The structured fast-paths below stay
+    // for the common create verbs so they keep their confirm-before-save dialogs.)
     if (taskType === "query") {
       setIsLoading(true);
       let fullQuery = q;
@@ -1062,7 +1092,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
         fullQuery = `[Context: ${context}]\n\n${q}`;
       }
       lastSubmittedQuery.current = fullQuery;
-      agentChat.mutate({ message: fullQuery });
+      agentChat.mutate({ message: fullQuery, mode: agentMode });
       return;
     }
     
@@ -1163,7 +1193,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
       setShowMaterialDropdown(true);
     }
     setShowDraftPreview(true);
-  }, [context, agentChat, enrichVendor, vendorSuggestion, selectedVendorId, vendorsQuery.data, selectedMaterial]);
+  }, [context, agentChat, agentMode, enrichVendor, vendorSuggestion, selectedVendorId, vendorsQuery.data, selectedMaterial]);
 
   // Submit the draft after preview/editing
   const handleSubmitDraft = useCallback(async () => {
@@ -1264,6 +1294,33 @@ export function AICommandBar({ context }: AICommandBarProps) {
       {isExpanded && (
         <div className="absolute top-full left-0 right-0 mt-1 z-50 rounded-lg border border-border bg-card shadow-xl max-h-[500px] overflow-hidden">
 
+        {/* Mode toggle: plan-first vs. act-directly */}
+        <div className="flex items-center justify-between px-3 py-2 border-b border-border/60 bg-muted/30">
+          <span className="text-xs text-muted-foreground">
+            {agentMode === "plan"
+              ? "Shows a plan and asks before making changes"
+              : "Acts on your request right away"}
+          </span>
+          <div className="flex items-center rounded-md border border-border/60 overflow-hidden text-xs shrink-0">
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setAgentMode("plan"); }}
+              className={`px-2.5 py-1 transition-colors ${agentMode === "plan" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              title="Plan first — the assistant proposes a plan and waits for your approval before creating, changing, or sending anything."
+            >
+              Plan first
+            </button>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setAgentMode("act"); }}
+              className={`px-2.5 py-1 transition-colors ${agentMode === "act" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              title="Auto — the assistant acts on your request immediately without asking."
+            >
+              Auto
+            </button>
+          </div>
+        </div>
+
         {/* Vendor Suggestion Display */}
         {vendorSuggestion?.material && !isLoading && !taskCreated && !response && (
           <div className="px-4 py-3 bg-blue-50 border-b border-blue-100">
@@ -1360,7 +1417,9 @@ export function AICommandBar({ context }: AICommandBarProps) {
               <Loader2 className="h-6 w-6 animate-spin text-primary mr-3" />
               <span className="text-muted-foreground">
                 {agentChat.isPending
-                  ? "Working on it — reasoning, checking your data, and searching the web…"
+                  ? agentMode === "plan" && !pendingPlan
+                    ? "Drafting a plan — checking your data and searching the web…"
+                    : "Working on it — reasoning, checking your data, and searching the web…"
                   : "Processing…"}
               </span>
             </div>
@@ -1717,6 +1776,45 @@ export function AICommandBar({ context }: AICommandBarProps) {
             </div>
           )}
 
+          {pendingPlan && !isLoading && !taskCreated && (
+            <div className="p-4">
+              <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                <Sparkles className="h-3.5 w-3.5 text-primary" />
+                Proposed plan — nothing has happened yet
+              </div>
+              <div className="prose prose-sm dark:prose-invert max-w-none rounded-md border border-border/60 bg-muted/30 p-3">
+                <Streamdown>{pendingPlan}</Streamdown>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button size="sm" onClick={runApprovedPlan}>
+                  <ArrowRight className="h-4 w-4 mr-1" /> Approve &amp; run
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setPendingPlan(null);
+                    setShowSuggestions(true);
+                    inputRef.current?.focus();
+                  }}
+                >
+                  Edit request
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setPendingPlan(null);
+                    setShowSuggestions(true);
+                    setQuery("");
+                  }}
+                >
+                  <X className="h-4 w-4 mr-1" /> Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+
           {response && !isLoading && !taskCreated && (
             <div className="p-4">
               <div className="prose prose-sm dark:prose-invert max-w-none">
@@ -1777,7 +1875,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
             </div>
           )}
 
-          {showSuggestions && !isLoading && !response && !taskCreated && (
+          {showSuggestions && !isLoading && !response && !taskCreated && !pendingPlan && (
             <div className="p-4">
               <p className="text-xs text-muted-foreground uppercase tracking-wide mb-3">
                 <Sparkles className="h-3 w-3 inline mr-1" />

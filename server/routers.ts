@@ -16,7 +16,7 @@ import { detectMaterialShortages, detectAnomalies, runShortageCheckAndNotify, ru
 import { linkParsedEmailToEntities } from "./emailDocumentLinker";
 import { trackShipment, getFreightRates, getShippingLines, getVesselSchedules } from "./searatesService";
 import { generateVendorEmail, sendVendorEmail, sendBulkEmail, checkAndSendPoFollowups } from "./vendorEmailAutomation";
-import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
+import { processAIAgentRequest, planAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
@@ -6288,6 +6288,11 @@ Be concise and helpful. Always give actionable guidance.`;
           role: z.enum(['system', 'user', 'assistant']),
           content: z.string(),
         })).optional(),
+        // "act" (default): the agent executes immediately.
+        // "plan": the agent returns a plan for the user to approve; nothing runs.
+        mode: z.enum(['act', 'plan']).optional(),
+        // When executing an approved plan, pass its text so the agent follows it.
+        approvedPlan: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const agentContext: AIAgentContext = {
@@ -6297,11 +6302,20 @@ Be concise and helpful. Always give actionable guidance.`;
           companyId: (ctx.user as any).companyId,
         };
 
-        const result = await processAIAgentRequest(
-          input.message,
-          input.conversationHistory || [],
-          agentContext
-        );
+        const history = input.conversationHistory || [];
+
+        // Plan-first mode: describe what would happen, take no action.
+        if (input.mode === 'plan') {
+          return planAIAgentRequest(input.message, history, agentContext);
+        }
+
+        // Execute. If an approved plan was supplied, hand it to the agent so it
+        // carries out exactly what the user signed off on.
+        const message = input.approvedPlan
+          ? `${input.message}\n\nThe user reviewed and APPROVED this plan — carry it out now:\n${input.approvedPlan}`
+          : input.message;
+
+        const result = await processAIAgentRequest(message, history, agentContext);
 
         return result;
       }),
