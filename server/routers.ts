@@ -61,7 +61,12 @@ import { getYouTubeAuthUrl } from "./_core/youtube";
 import { encrypt, decrypt } from "./_core/crypto";
 import { ENV } from "./_core/env";
 import { reassignProjectTaskToHuman, createProjectTaskFromSource } from "./taskAgentBridge";
-import { createDecipheriv, createHash } from "crypto";
+import { createDecipheriv, createHash, scrypt, randomBytes, timingSafeEqual } from "crypto";
+import { promisify } from "util";
+
+// Promisified scrypt, created once at module scope so the (hot) share-link auth
+// helpers below don't re-require modules or re-wrap scrypt on every call.
+const scryptAsync = promisify(scrypt);
 
 /**
  * Expose a lightweight `hasStoredContent` flag the UI uses to decide whether the
@@ -328,23 +333,17 @@ export function generateNumber(prefix: string) {
 // Secure password hashing helpers using scrypt. Async so the (deliberately slow)
 // scrypt work runs on libuv's threadpool instead of blocking the event loop.
 async function hashPassword(password: string): Promise<string> {
-  const crypto = require('crypto');
-  const { promisify } = require('util');
-  const scryptAsync = promisify(crypto.scrypt);
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = (await scryptAsync(password, salt, 64)).toString('hex');
+  const salt = randomBytes(16).toString('hex');
+  const hash = (await scryptAsync(password, salt, 64) as Buffer).toString('hex');
   return `${salt}:${hash}`;
 }
 
 async function verifyPassword(password: string, stored: string): Promise<{ valid: boolean; needsUpgrade: boolean }> {
-  const crypto = require('crypto');
-  const { promisify } = require('util');
-  const scryptAsync = promisify(crypto.scrypt);
   const [salt, hash] = stored.split(':');
   if (!salt || !hash) return { valid: false, needsUpgrade: false };
-  const computed = await scryptAsync(password, salt, 64);
+  const computed = await scryptAsync(password, salt, 64) as Buffer;
   const storedBuf = Buffer.from(hash, 'hex');
-  const valid = computed.length === storedBuf.length && crypto.timingSafeEqual(computed, storedBuf);
+  const valid = computed.length === storedBuf.length && timingSafeEqual(computed, storedBuf);
   return { valid, needsUpgrade: false };
 }
 
@@ -22696,7 +22695,7 @@ Return JSON array only. No markdown.`;
           const c = companyById.get(s.companyId);
           return c ? { id: c.id, name: c.name, type: c.type, country: c.country } : null;
         })
-        .filter((r) => r !== null);
+        .filter((r): r is NonNullable<typeof r> => r !== null);
 
       const totalShares = allGrants.reduce(
         (s: number, g: { shares?: string | number | null }) =>
