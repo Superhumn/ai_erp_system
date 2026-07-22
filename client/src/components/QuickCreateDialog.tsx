@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   Dialog,
   DialogContent,
@@ -364,16 +364,20 @@ export function QuickCreateDialog({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const utils = trpc.useUtils();
 
-  // Re-seed the form with the latest defaultValues each time the dialog opens.
-  // The dialog stays mounted (visibility is toggled via `open`), so without this
-  // any values supplied after the initial mount — e.g. details fetched from an
-  // online lookup — would never appear in the fields.
+  // Re-seed the form from defaultValues when the dialog opens, and also if the
+  // defaults' *contents* change while it's open (e.g. an online lookup resolves
+  // after the dialog is already showing). The dialog stays mounted (visibility
+  // is toggled via `open`), so the initial useState seed alone isn't enough.
+  // Keying on the serialized contents (not object identity) means a parent
+  // re-render that produces an equal object won't clobber what the user typed.
+  const defaultsKey = JSON.stringify(defaultValues ?? {});
+  const latestDefaults = useRef(defaultValues);
+  latestDefaults.current = defaultValues;
   useEffect(() => {
     if (open) {
-      setFormData(defaultValues || {});
+      setFormData(latestDefaults.current ? { ...latestDefaults.current } : {});
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, defaultsKey]);
 
   const config = entityConfig[entityType];
   

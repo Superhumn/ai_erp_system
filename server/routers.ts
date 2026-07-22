@@ -882,6 +882,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
               { role: "user", content: prompt },
             ],
             webSearch: { maxUses: 5 },
+            toolChoice: "auto",
             maxTokens: 2000,
             response_format: {
               type: "json_schema",

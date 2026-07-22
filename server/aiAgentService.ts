@@ -1788,15 +1788,15 @@ User's role: ${ctx.userRole}. User: ${ctx.userName}.`;
 
   let plan = "";
   try {
-    const response = await invokeLLM({ messages, webSearch: true, maxTokens: 1500 });
+    const response = await invokeLLM({ messages, webSearch: true, toolChoice: "auto", maxTokens: 1500 });
     const content = response.choices?.[0]?.message?.content;
     plan = typeof content === "string" ? content : "";
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    // Only retry without web search when the endpoint rejected the web_search
-    // tool. For real failures (auth, rate limits, network) rethrow — retrying
-    // would mask the error and waste another call.
-    if (!/web[_ ]?search|tool|400|unsupported|invalid/i.test(msg)) {
+    // Only retry without web search when the endpoint specifically rejected the
+    // web_search tool. For any other failure (auth, rate limits, bad payload,
+    // network) rethrow — retrying would mask the real error.
+    if (!/web[_ ]?search/i.test(msg)) {
       throw err;
     }
     const response = await invokeLLM({ messages, maxTokens: 1500 });
@@ -1919,8 +1919,10 @@ Examples:
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      // The endpoint likely rejected the web_search tool — turn it off and retry.
-      if (webSearchEnabled && /web[_ ]?search|tool|400|unsupported|invalid/i.test(msg)) {
+      // Only disable web search when the endpoint specifically rejected the
+      // web_search tool; other failures (invalid payload, bad model, auth, rate
+      // limits) should surface, not be masked by a silent retry.
+      if (webSearchEnabled && /web[_ ]?search/i.test(msg)) {
         webSearchEnabled = false;
         response = await invokeLLM({
           messages,
