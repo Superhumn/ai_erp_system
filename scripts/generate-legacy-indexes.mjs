@@ -45,7 +45,8 @@ function parseRouters() {
 
 function extractedRouterKeys() {
   // Mirror server/routers/index.ts shape: baseRouter keys + keys from each merged router.
-  const baseKeys = ['system', 'autonomousWorkflows', 'agent', 'employeePortal', 'taskBridge'];
+  // `code` is mounted as a baseRouter key (a flat router), like `employeePortal`.
+  const baseKeys = ['system', 'autonomousWorkflows', 'agent', 'employeePortal', 'taskBridge', 'code'];
   const sources = [
     'auth', 'finance', 'sales', 'crm', 'operations', 'procurement',
     'manufacturing', 'freight', 'edi', 'email', 'hr', 'legal', 'projects',
