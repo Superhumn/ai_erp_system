@@ -59,17 +59,22 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
-      - name: Deploy to Staging
-        # Tolerate transient Railway deploy hiccups without failing the run.
-        # The migrate step above is strict, so a failed migration fails the job
-        # and this deploy step never runs.
-        continue-on-error: true
+      - name: Deploy to Staging (Railway CLI, optional)
+        # App deploys are handled by Railway's native GitHub integration.
+        # This CLI step is a best-effort fallback: it runs only if a token is
+        # present, and never fails the run (a bad/absent token just logs a
+        # warning and defers to the GitHub integration). Migrations above are
+        # strict and still gate the deploy.
         run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "No RAILWAY_TOKEN set — skipping CLI deploy; Railway's GitHub integration handles deploys."
+            exit 0
+          fi
           if [ -n "$RAILWAY_SERVICE_ID" ]; then
             railway up --service "$RAILWAY_SERVICE_ID"
           else
             railway up
-          fi
+          fi || echo "::warning::railway up failed (token invalid or lacks access). Deferring to Railway's GitHub integration."
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
@@ -116,17 +121,22 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
-      - name: Deploy to Production
-        # Tolerate transient Railway deploy hiccups without failing the run.
-        # The migrate step above is strict, so a failed migration fails the job
-        # and this deploy step never runs.
-        continue-on-error: true
+      - name: Deploy to Production (Railway CLI, optional)
+        # App deploys are handled by Railway's native GitHub integration.
+        # This CLI step is a best-effort fallback: it runs only if a token is
+        # present, and never fails the run (a bad/absent token just logs a
+        # warning and defers to the GitHub integration). Migrations above are
+        # strict and still gate the deploy.
         run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "No RAILWAY_TOKEN set — skipping CLI deploy; Railway's GitHub integration handles deploys."
+            exit 0
+          fi
           if [ -n "$RAILWAY_SERVICE_ID" ]; then
             railway up --service "$RAILWAY_SERVICE_ID"
           else
             railway up
-          fi
+          fi || echo "::warning::railway up failed (token invalid or lacks access). Deferring to Railway's GitHub integration."
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
