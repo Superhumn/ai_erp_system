@@ -891,9 +891,16 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           });
 
           const content = response.choices?.[0]?.message?.content;
-          const textOut = typeof content === "string" ? content : "";
-          const jsonMatch = textOut.match(/\{[\s\S]*\}/);
-          raw = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+          const textOut = typeof content === "string" ? content.trim() : "";
+          try {
+            // The model is instructed to return only a JSON object, so parse the
+            // whole payload first (handles braces inside string fields correctly).
+            raw = textOut ? JSON.parse(textOut) : null;
+          } catch {
+            // Fallback: pull out the outermost {...} if the model added any prose.
+            const jsonMatch = textOut.match(/\{[\s\S]*\}/);
+            raw = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+          }
         } catch (error) {
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
@@ -6322,9 +6329,16 @@ Be concise and helpful. Always give actionable guidance.`;
         // Execute. If an approved plan was supplied, include it as guidance for
         // the agent. Note this steers the model via the prompt — it's not a hard
         // constraint, so the agent should follow the plan but may adapt if
-        // reality differs from what the plan assumed.
-        const message = input.approvedPlan
-          ? `${input.message}\n\nThe user reviewed and approved the following plan. Follow it as closely as possible, adjusting only where necessary:\n${input.approvedPlan}`
+        // reality differs from what the plan assumed. Cap the plan portion so the
+        // combined prompt stays bounded regardless of the per-field input limits.
+        const MAX_PLAN_CHARS = 8000;
+        const planText = input.approvedPlan
+          ? (input.approvedPlan.length > MAX_PLAN_CHARS
+              ? `${input.approvedPlan.slice(0, MAX_PLAN_CHARS)}…`
+              : input.approvedPlan)
+          : undefined;
+        const message = planText
+          ? `${input.message}\n\nThe user reviewed and approved the following plan. Follow it as closely as possible, adjusting only where necessary:\n${planText}`
           : input.message;
 
         const result = await processAIAgentRequest(message, history, agentContext);
