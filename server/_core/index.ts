@@ -1656,6 +1656,37 @@ async function startServer() {
       }
     })();
 
+    // ── Task reminder emails for outstanding tasks (daily check) ──
+    (async () => {
+      try {
+        const TASK_REMINDER_INTERVAL = 24 * 60 * 60 * 1000; // Daily
+        console.log("[Task Reminder] Starting daily outstanding-task reminder scheduler");
+        setInterval(async () => {
+          try {
+            const { sendTaskReminders } = await import("../taskReminders");
+            const result = await sendTaskReminders();
+            if (result.sent > 0) {
+              console.log(`[Task Reminder] Sent ${result.sent} task reminder emails`);
+            }
+            if (result.failed > 0) {
+              console.warn(`[Task Reminder] ${result.failed} reminder emails failed to send`);
+            }
+          } catch (e) {
+            console.warn("[Task Reminder] Failed:", e);
+          }
+        }, TASK_REMINDER_INTERVAL);
+        // Initial check after 10 minutes
+        setTimeout(async () => {
+          try {
+            const { sendTaskReminders } = await import("../taskReminders");
+            await sendTaskReminders();
+          } catch {}
+        }, 10 * 60 * 1000);
+      } catch (e) {
+        console.warn("[Task Reminder] Could not initialize:", e);
+      }
+    })();
+
     // ── Automation #8: Mercury transaction sync (every 15 minutes) ──
     if (process.env.MERCURY_API_TOKEN) {
       (async () => {

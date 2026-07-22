@@ -11511,8 +11511,196 @@ Ask if they received the original request and if they can provide a quote.`;
           await createAuditLog(ctx.user.id, 'update', 'vendor_rfq', input.rfqId, 'AI analyzed and ranked quotes');
           return { success: true };
         }),
+
+      // AI bid leveling: normalize quotes to a common scope baseline, detect
+      // scope deviations vs the RFQ requirements, and re-rank on leveled cost.
+      levelBids: opsProcedure
+        .input(z.object({ rfqId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const rfq = await db.getVendorRfqById(input.rfqId);
+          if (!rfq) throw new TRPCError({ code: 'NOT_FOUND', message: 'RFQ not found' });
+
+          const allQuotes = await db.getVendorQuotes({ rfqId: input.rfqId });
+          const quotes = allQuotes.filter(q => ['received', 'under_review'].includes(q.status));
+          if (quotes.length === 0) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'No received quotes to level for this RFQ' });
+          }
+
+          // Batch-load vendors (avoid an N+1 per-quote lookup).
+          const uniqueVendorIds = Array.from(new Set(quotes.map(q => q.vendorId)));
+          const vendorList = await db.getVendorsByIds(uniqueVendorIds);
+          const vendorNames = new Map<number, string>(uniqueVendorIds.map(id => [id, `Vendor ${id}`]));
+          for (const v of vendorList) vendorNames.set(v.id, v.name || `Vendor ${v.id}`);
+
+          const requirementBlock = `RFQ ${rfq.rfqNumber}
+Material: ${rfq.materialName}${rfq.materialDescription ? ` — ${rfq.materialDescription}` : ''}
+Required quantity: ${rfq.quantity} ${rfq.unit}
+Specifications: ${rfq.specifications || 'Standard'}
+Required delivery date: ${rfq.requiredDeliveryDate ? new Date(rfq.requiredDeliveryDate).toLocaleDateString() : 'Flexible'}
+Delivery location: ${rfq.deliveryLocation || 'TBD'}
+Incoterms requested: ${rfq.incoterms || 'Not specified'}`;
+
+          const quoteBlocks = quotes.map(q => `Quote id ${q.id} — ${vendorNames.get(q.vendorId)}
+  Unit price: ${q.unitPrice ?? 'n/a'} ${q.currency || 'USD'}
+  Quantity quoted: ${q.quantity ?? 'n/a'}
+  Total price: ${q.totalPrice ?? 'n/a'}
+  Shipping: ${q.shippingCost ?? '0'}, Handling: ${q.handlingFee ?? '0'}, Tax: ${q.taxAmount ?? '0'}, Other: ${q.otherCharges ?? '0'}
+  Total with charges: ${q.totalWithCharges ?? 'n/a'}
+  Lead time: ${q.leadTimeDays ?? 'n/a'} days
+  Minimum order qty: ${q.minimumOrderQty ?? 'n/a'}
+  Payment terms: ${q.paymentTerms || 'n/a'}
+  Valid until: ${q.validUntil ? new Date(q.validUntil).toLocaleDateString() : 'n/a'}
+  Vendor notes: ${q.notes || 'none'}`).join('\n\n');
+
+          const prompt = `You are a procurement analyst performing BID LEVELING for a single-material RFQ.
+Bid leveling means adjusting each vendor's quote to a common scope baseline so prices are compared on equal terms, surfacing hidden assumptions and scope gaps.
+
+RFQ REQUIREMENTS:
+${requirementBlock}
+
+VENDOR QUOTES:
+${quoteBlocks}
+
+For EACH quote:
+1. Compute a "leveledTotalCost": the total all-in cost normalized to the RFQ's requested quantity and scope. Include shipping/handling/tax/other charges. If the vendor quoted a different quantity than requested, pro-rate to the requested quantity (${rfq.quantity}). If freight/incoterms differ from what was requested and the vendor's price excludes delivery, add a reasonable allowance and note it as a deviation.
+2. Identify scopeDeviations: each is { requirement, finding, severity } where requirement is the specific RFQ requirement (e.g. "delivery date", "incoterms", "quantity", "specifications", "payment terms"), finding describes how this quote diverges, and severity is "low" | "medium" | "high". Return an empty array if fully compliant.
+3. Write a one-to-two sentence rationale explaining the leveling adjustments.
+4. Give a score 0-100 (higher = better leveled value, balancing cost, lead time, compliance).
+
+Then rank all quotes by best leveled value (1 = best), recommend one quoteId to award, and write a short award-recommendation summary a procurement manager could defend to an auditor.`;
+
+          const response = await invokeLLM({
+            messages: [
+              { role: 'system', content: 'You are a procurement bid-leveling analyst. Always respond with valid JSON matching the schema. Be conservative and explicit about assumptions.' },
+              { role: 'user', content: prompt },
+            ],
+            response_format: {
+              type: 'json_schema',
+              json_schema: {
+                name: 'bid_leveling',
+                strict: true,
+                schema: {
+                  type: 'object',
+                  properties: {
+                    quotes: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          quoteId: { type: 'number' },
+                          leveledTotalCost: { type: 'number' },
+                          leveledRank: { type: 'number' },
+                          score: { type: 'number' },
+                          rationale: { type: 'string' },
+                          scopeDeviations: {
+                            type: 'array',
+                            items: {
+                              type: 'object',
+                              properties: {
+                                requirement: { type: 'string' },
+                                finding: { type: 'string' },
+                                severity: { type: 'string', enum: ['low', 'medium', 'high'] },
+                              },
+                              required: ['requirement', 'finding', 'severity'],
+                              additionalProperties: false,
+                            },
+                          },
+                        },
+                        required: ['quoteId', 'leveledTotalCost', 'leveledRank', 'score', 'rationale', 'scopeDeviations'],
+                        additionalProperties: false,
+                      },
+                    },
+                    recommendedQuoteId: { type: 'number' },
+                    summary: { type: 'string' },
+                  },
+                  required: ['quotes', 'recommendedQuoteId', 'summary'],
+                  additionalProperties: false,
+                },
+              },
+            },
+          });
+
+          const raw = response.choices[0]?.message?.content;
+          const content = typeof raw === 'string' ? raw : JSON.stringify(raw);
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, ''));
+          } catch {
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to parse bid-leveling response' });
+          }
+
+          // `response_format: json_schema` is only a prompt hint here (see
+          // server/_core/llm.ts) — nothing enforces the shape — so validate at
+          // runtime. The overall structure must match; per-quote field fuzz the
+          // model may emit (bad severity casing, missing numbers) falls back
+          // rather than failing the whole leveling pass.
+          const deviationSchema = z.object({
+            requirement: z.string().catch(''),
+            finding: z.string().catch(''),
+            severity: z
+              .preprocess(v => (typeof v === 'string' ? v.toLowerCase() : v), z.enum(['low', 'medium', 'high']))
+              .catch('medium'),
+          });
+          const leveledQuoteSchema = z.object({
+            quoteId: z.number(),
+            leveledTotalCost: z.number().nullable().catch(null),
+            leveledRank: z.number().nullable().catch(null),
+            score: z.number().nullable().catch(null),
+            rationale: z.string().nullable().catch(null),
+            scopeDeviations: z.array(deviationSchema).catch([]),
+          });
+          const responseSchema = z.object({
+            quotes: z.array(leveledQuoteSchema),
+            recommendedQuoteId: z.number().nullable().catch(null),
+            summary: z.string(),
+          });
+          const validation = responseSchema.safeParse(parsed);
+          if (!validation.success) {
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message: 'Bid-leveling response did not match the expected shape',
+            });
+          }
+          const leveled = validation.data;
+
+          const now = new Date();
+          const validIds = new Set(quotes.map(q => q.id));
+          for (const item of leveled.quotes) {
+            if (!validIds.has(item.quoteId)) continue;
+            await db.updateVendorQuote(item.quoteId, {
+              leveledTotalCost: item.leveledTotalCost != null ? item.leveledTotalCost.toFixed(2) : null,
+              leveledRank: item.leveledRank,
+              scopeDeviations: JSON.stringify(item.scopeDeviations),
+              leveledNotes: item.rationale,
+              leveledAt: now,
+              // Only set aiScore when the model returned a number, so a missing
+              // score leaves the existing column value untouched.
+              ...(item.score != null ? { aiScore: Math.round(item.score) } : {}),
+            });
+          }
+
+          await db.updateVendorRfq(input.rfqId, {
+            levelingSummary: leveled.summary || null,
+            leveledAt: now,
+          });
+
+          // Only surface a recommendation that maps to a real quote on this RFQ;
+          // ignore a hallucinated id.
+          const recommendedQuoteId =
+            leveled.recommendedQuoteId != null && validIds.has(leveled.recommendedQuoteId)
+              ? leveled.recommendedQuoteId
+              : null;
+
+          await createAuditLog(ctx.user.id, 'update', 'vendor_rfq', input.rfqId, `AI bid leveling across ${quotes.length} quotes`);
+          return {
+            success: true,
+            leveledCount: quotes.length,
+            recommendedQuoteId,
+            summary: leveled.summary,
+          };
+        }),
     }),
-    
+
     // Emails
     emails: router({
       list: protectedProcedure
@@ -11589,6 +11777,7 @@ Ask if they received the original request and if they can provide a quote.`;
         .input(z.object({
           storeId: z.number(),
           shopifyLocationId: z.string(),
+          shopifyLocationName: z.string().optional(),
           warehouseId: z.number(),
           isActive: z.boolean().default(true),
         }))
@@ -14208,9 +14397,42 @@ Ask if they received the original request and if they can provide a quote.`;
         // syncDriveFolder pushes folders in DFS pre-order, so parents
         // already precede their children — no sort needed.
         const folderMap = new Map<string, number>();
-        const results: { name: string; type: string; status: string }[] = [];
+        const results: { name: string; type: string; status: string; error?: string }[] = [];
+        // Human-readable errors surfaced to the caller so a partial/empty sync
+        // reports *why* instead of silently claiming success with 0 files.
+        const syncErrors: string[] = [];
 
-        // Process folders
+        // Drive metadata occasionally exceeds our column widths (long file names,
+        // very long thumbnail/webView links). Trim defensively so a single
+        // oversized value can't abort the insert (and thus the whole batch).
+        const trunc = (v: string | null | undefined, max: number): string | undefined => {
+          if (v == null) return undefined;
+          return v.length > max ? v.slice(0, max) : v;
+        };
+
+        // Map DB/driver errors to concise, user-safe messages. The full error
+        // object (with driver code + stack) is always logged separately; only
+        // these sanitized strings are returned to the client / shown in toasts,
+        // so raw SQL/driver internals never leak into the UI.
+        const errMessage = (err: unknown): string => {
+          const code = (err as { code?: string })?.code;
+          switch (code) {
+            case 'ER_DATA_TOO_LONG': return 'a field exceeded the maximum length';
+            case 'ER_DUP_ENTRY': return 'a duplicate entry was detected';
+            case 'ER_TRUNCATED_WRONG_VALUE':
+            case 'WARN_DATA_TRUNCATED': return 'an unsupported character or value';
+            case 'ER_NO_REFERENCED_ROW_2':
+            case 'ER_ROW_IS_REFERENCED_2': return 'a related-record constraint failed';
+            case 'ER_BAD_NULL_ERROR': return 'a required field was missing';
+          }
+          // Errors we raise ourselves (no driver code) are already safe/worded
+          // for humans; anything else with an unrecognized driver code is kept
+          // generic so raw driver text can't reach the client.
+          if (err instanceof Error && !code) return err.message;
+          return 'an unexpected database error';
+        };
+
+        // Process folders — isolate each insert so one failure doesn't abort the rest.
         for (const driveFolder of syncResult.folders) {
           if (existingFoldersByDriveId.has(driveFolder.id)) {
             folderMap.set(driveFolder.id, existingFoldersByDriveId.get(driveFolder.id)!);
@@ -14218,60 +14440,93 @@ Ask if they received the original request and if they can provide a quote.`;
             continue;
           }
 
+          // Parent should already be mapped (DFS pre-order); fall back to any
+          // pre-existing data-room folder carrying the same Drive ID. If a parent
+          // was expected but is unmapped (e.g. its own insert failed earlier),
+          // don't silently root the child — surface it so the orphaning is visible.
           const parentDriveId = driveFolder.parents?.[0];
-          const parentDataRoomId = parentDriveId && parentDriveId !== folderId
-            ? folderMap.get(parentDriveId)
-            : null;
+          let parentDataRoomId: number | null = null;
+          if (parentDriveId && parentDriveId !== folderId) {
+            parentDataRoomId = folderMap.get(parentDriveId) ?? existingFoldersByDriveId.get(parentDriveId) ?? null;
+            if (parentDataRoomId === null && syncErrors.length < 5) {
+              syncErrors.push(`Folder "${driveFolder.name}": parent folder could not be resolved; placed at root.`);
+            }
+          }
 
-          const { id: newFolderId } = await db.createDataRoomFolder({
-            dataRoomId: input.dataRoomId,
-            parentId: parentDataRoomId,
-            name: driveFolder.name,
-            googleDriveFolderId: driveFolder.id,
-          });
+          try {
+            const { id: newFolderId } = await db.createDataRoomFolder({
+              dataRoomId: input.dataRoomId,
+              parentId: parentDataRoomId,
+              name: trunc(driveFolder.name, 255) || 'Untitled folder',
+              googleDriveFolderId: driveFolder.id,
+            });
 
-          folderMap.set(driveFolder.id, newFolderId);
-          results.push({ name: driveFolder.name, type: 'folder', status: 'created' });
+            folderMap.set(driveFolder.id, newFolderId);
+            results.push({ name: driveFolder.name, type: 'folder', status: 'created' });
+          } catch (err: unknown) {
+            // Log Drive ID + room only — folder names can be sensitive and
+            // server logs are broadly accessible. The name still goes to the
+            // owner-facing response below, not to logs.
+            console.error(`[DataRoom] Failed to create folder ${driveFolder.id} (room ${input.dataRoomId}):`, err);
+            const msg = errMessage(err);
+            results.push({ name: driveFolder.name, type: 'folder', status: 'error', error: msg });
+            if (syncErrors.length < 5) syncErrors.push(`Folder "${driveFolder.name}": ${msg}`);
+          }
         }
 
-        // Process files — store by reference in Google Drive (no download)
+        // Process files — store by reference in Google Drive (no download).
+        // Each insert is isolated: previously a single failing insert (e.g. an
+        // oversized field) threw out of the loop, leaving folders created but
+        // zero files — the "adds folders but no files" symptom.
         for (const driveFile of syncResult.files) {
           if (existingDocsByDriveId.has(driveFile.id)) {
             results.push({ name: driveFile.name, type: 'file', status: 'exists' });
             continue;
           }
 
+          const displayName = driveFile.name;
           const parentDriveId = driveFile.parents?.[0];
           let fileFolderId: number | null = null;
-          if (parentDriveId === folderId) {
-            fileFolderId = null;
-          } else if (parentDriveId) {
-            fileFolderId = folderMap.get(parentDriveId) || existingFoldersByDriveId.get(parentDriveId) || null;
+          if (parentDriveId && parentDriveId !== folderId) {
+            fileFolderId = folderMap.get(parentDriveId) ?? existingFoldersByDriveId.get(parentDriveId) ?? null;
+            // Parent expected but unmapped (e.g. its folder insert failed
+            // earlier). Import at root, but surface it like the folder loop
+            // does so the flattened hierarchy isn't silent.
+            if (fileFolderId === null && syncErrors.length < 5) {
+              syncErrors.push(`File "${displayName}": parent folder could not be resolved; placed at root.`);
+            }
           }
 
-          const displayName = driveFile.name;
           const fileType = getSimpleFileType(driveFile.mimeType);
           const fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
             ? parseInt(driveFile.size)
             : undefined;
 
-          await db.createDataRoomDocument({
-            dataRoomId: input.dataRoomId,
-            folderId: fileFolderId,
-            name: displayName,
-            fileType,
-            mimeType: driveFile.mimeType,
-            fileSize,
-            storageType: 'google_drive',
-            storageUrl: driveFile.webViewLink || undefined,
-            storageKey: undefined,
-            googleDriveFileId: driveFile.id,
-            googleDriveWebViewLink: driveFile.webViewLink,
-            thumbnailUrl: driveFile.thumbnailLink,
-            uploadedBy: ctx.user.id,
-          });
+          try {
+            await db.createDataRoomDocument({
+              dataRoomId: input.dataRoomId,
+              folderId: fileFolderId,
+              name: trunc(displayName, 255) || 'Untitled',
+              fileType,
+              mimeType: trunc(driveFile.mimeType, 128),
+              fileSize,
+              storageType: 'google_drive',
+              storageUrl: trunc(driveFile.webViewLink, 512),
+              storageKey: undefined,
+              googleDriveFileId: driveFile.id,
+              googleDriveWebViewLink: trunc(driveFile.webViewLink, 512),
+              thumbnailUrl: trunc(driveFile.thumbnailLink, 512),
+              uploadedBy: ctx.user.id,
+            });
 
-          results.push({ name: displayName, type: 'file', status: 'synced' });
+            results.push({ name: displayName, type: 'file', status: 'synced' });
+          } catch (err: unknown) {
+            // Log Drive ID + room only — document names can be confidential.
+            console.error(`[DataRoom] Failed to create document ${driveFile.id} (room ${input.dataRoomId}):`, err);
+            const msg = errMessage(err);
+            results.push({ name: displayName, type: 'file', status: 'error', error: msg });
+            if (syncErrors.length < 5) syncErrors.push(`File "${displayName}": ${msg}`);
+          }
         }
 
         // Update data room with Google Drive folder ID and last sync time
@@ -14280,14 +14535,26 @@ Ask if they received the original request and if they can provide a quote.`;
           lastSyncedAt: new Date(),
         });
 
+        const filesFound = syncResult.files.length;
+        const foldersFound = syncResult.folders.length;
         const totalSynced = results.filter(r => r.status === 'synced').length;
         const totalCreated = results.filter(r => r.status === 'created').length;
+        const filesFailed = results.filter(r => r.type === 'file' && r.status === 'error').length;
+
+        console.log(
+          `[DataRoom] Drive sync for room ${input.dataRoomId}: found ${foldersFound} folders / ${filesFound} files; ` +
+          `created ${totalCreated} folders / ${totalSynced} files; ${filesFailed} file errors.`
+        );
 
         return {
           results,
           totalSynced,
           foldersCreated: totalCreated,
           filesCreated: totalSynced,
+          filesFound,
+          foldersFound,
+          filesFailed,
+          errors: syncErrors,
           folderName: folderInfo.folder.name,
         };
       }),
