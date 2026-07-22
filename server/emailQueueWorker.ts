@@ -120,7 +120,7 @@ async function processQueuedEmails(): Promise<void> {
       const batch = queuedMessages.slice(i, i + config.maxConcurrent);
 
       const batchResults = await Promise.all(
-        batch.map(async (message) => {
+        batch.map(async (message: any) => {
           const result = await emailService.sendQueuedEmail(message.id);
           return {
             id: message.id,
@@ -179,7 +179,7 @@ export async function triggerProcessing(): Promise<{
     for (let i = 0; i < queuedMessages.length; i += config.maxConcurrent) {
       const batch = queuedMessages.slice(i, i + config.maxConcurrent);
       const batchResults = await Promise.all(
-        batch.map(async (message) => {
+        batch.map(async (message: any) => {
           const result = await emailService.sendQueuedEmail(message.id);
           return { success: result.success };
         })

@@ -238,6 +238,30 @@ async function importWhatsappMedia(
       description: `Document received via WhatsApp from ${fromNumber}`,
     } as any);
 
+    // Auto-extract & file the document into the ERP (invoice / shipment / PO /
+    // customs) using the same parser+importers as the email intake path, so
+    // supplier docs sent over WhatsApp get sorted rather than just stored.
+    // Detached on purpose: parsing is an LLM call, and storage has already
+    // succeeded — the caller repoints the message at the durable URL as soon as
+    // this returns, so the parse must not delay that. Best-effort, gated to
+    // parseable types, and never throws out of importWhatsappMedia.
+    void (async () => {
+      try {
+        const { importWhatsappDocumentToErp, isParseableDocumentMime } = await import("../documentImportService");
+        if (!isParseableDocumentMime(mime)) return;
+        const dataUrl = `data:${mime};base64,${buffer.toString("base64")}`;
+        await importWhatsappDocumentToErp({
+          whatsappMessageId: waMsgId,
+          content: dataUrl,
+          filename,
+          mimeType: mime,
+          fromNumber,
+        });
+      } catch (parseErr) {
+        console.warn(`[Twilio Webhook] document auto-parse failed for msg ${waMsgId}:`, parseErr);
+      }
+    })();
+
     return fileUrl;
   } catch (err) {
     console.warn(`[Twilio Webhook] media import failed for msg ${waMsgId}:`, err);
@@ -264,6 +288,7 @@ export function registerTwilioWebhooks(app: Express): void {
       }
 
       const db = await getDb();
+      if (!db) throw new Error("Database connection unavailable");
       const update: Record<string, unknown> = {};
       if (callStatus) update.status = callStatus;
       if (duration !== undefined) update.duration = duration;
@@ -295,6 +320,7 @@ export function registerTwilioWebhooks(app: Express): void {
       }
 
       const db = await getDb();
+      if (!db) throw new Error("Database connection unavailable");
       const update: Record<string, unknown> = {};
       if (status) update.status = status;
       if (errorCode) update.errorCode = errorCode;
@@ -323,6 +349,7 @@ export function registerTwilioWebhooks(app: Express): void {
       const numSegments = params.NumSegments ? Number(params.NumSegments) : undefined;
 
       const db = await getDb();
+      if (!db) throw new Error("Database connection unavailable");
 
       if (messageSid) {
         const [dup] = await db.select().from(agentSmsLogs)
@@ -506,6 +533,7 @@ export function registerTwilioWebhooks(app: Express): void {
       const callSid = params.CallSid;
 
       const db = await getDb();
+      if (!db) throw new Error("Database connection unavailable");
 
       if (callSid) {
         const [dup] = await db.select().from(agentCallLogs)
@@ -573,6 +601,7 @@ export function registerTwilioWebhooks(app: Express): void {
       }
 
       const db = await getDb();
+      if (!db) throw new Error("Database connection unavailable");
       const update: Record<string, unknown> = { status: "completed" };
       if (recordingUrl) update.recordingUrl = recordingUrl;
       if (recordingDuration !== undefined) update.duration = recordingDuration;

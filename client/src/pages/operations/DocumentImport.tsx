@@ -146,6 +146,7 @@ export default function DocumentImport() {
   const [markAsReceived, setMarkAsReceived] = useState(true);
   const [updateInventory, setUpdateInventory] = useState(true);
   const [linkToPO, setLinkToPO] = useState(true);
+  const [receiveFreightInventory, setReceiveFreightInventory] = useState(false);
   const [createMissingVendor, setCreateMissingVendor] = useState(false);
   const [editingLineItem, setEditingLineItem] = useState<number | null>(null);
   
@@ -341,6 +342,7 @@ export default function DocumentImport() {
         invoiceData: parsedFreight,
         linkToPO,
         createMissingVendor,
+        receiveInventory: receiveFreightInventory,
       });
 
       if (!result.success) {
@@ -1271,6 +1273,16 @@ export default function DocumentImport() {
                   />
                   <label htmlFor="linkToPO" className="text-sm">
                     Link to related purchase order (if found)
+                  </label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="receiveFreightInventory"
+                    checked={receiveFreightInventory}
+                    onCheckedChange={(checked) => setReceiveFreightInventory(!!checked)}
+                  />
+                  <label htmlFor="receiveFreightInventory" className="text-sm">
+                    Receive the linked PO's goods into inventory (treat freight as delivered)
                   </label>
                 </div>
                 <div className="flex items-center gap-2">

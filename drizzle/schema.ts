@@ -1250,6 +1250,75 @@ export const sentEmails = mysqlTable("sent_emails", {
 export type SentEmail = typeof sentEmails.$inferSelect;
 export type InsertSentEmail = typeof sentEmails.$inferInsert;
 
+// ── Thread Follow-Up workflow ──────────────────────────────────────────────
+// One row per outbound "ask" that is awaiting a reply. A daily job scans for
+// nextNudgeAt <= now and drives automated nudges. Behavior differs for active
+// vendors (never drop; up to 4 nudges then hand to a human) vs. non-vendors
+// (one nudge, then drop). See server/threadFollowUp.ts.
+//
+// Column-name note: the workflow spec names columns in snake_case
+// (is_active_vendor, nudge_count, next_nudge_at, status, paused_until,
+// last_inbound_at, last_outbound_at). The rest of this schema is camelCase, so
+// the Drizzle/SQL column names below stay camelCase; the mapping is 1:1.
+export const emailThreadFollowups = mysqlTable("email_thread_followups", {
+  id: int("id").autoincrement().primaryKey(),
+  threadId: varchar("threadId", { length: 255 }).notNull(), // correlation key for the email thread
+  gmailThreadId: varchar("gmailThreadId", { length: 255 }), // Gmail thread id to reply within (true in-thread send)
+  gmailMessageId: varchar("gmailMessageId", { length: 255 }), // Gmail message id of the latest message (In-Reply-To/References)
+  subject: varchar("subject", { length: 500 }), // original subject; nudges reply in-thread, never a new subject
+  contactEmail: varchar("contactEmail", { length: 320 }).notNull(), // who we are nudging
+  contactName: varchar("contactName", { length: 255 }),
+  country: varchar("country", { length: 64 }), // recipient country -> holiday calendar (US/IN/ZA/CO)
+  timezone: varchar("timezone", { length: 64 }), // recipient IANA tz -> send window; overrides country default
+  managerEmail: varchar("managerEmail", { length: 320 }), // alternate/manager contact for nudge 4
+  vendorId: int("vendorId"), // linked vendor if matched from our records
+  threadOwnerId: int("threadOwnerId"), // our user who owns the thread (cc'd on nudge 3; escalation task owner)
+  relatedEntityType: varchar("relatedEntityType", { length: 50 }), // 'purchase_order' | 'deal' | 'task' | ...
+  relatedEntityId: int("relatedEntityId"), // stop-condition: linked task/PO/deal closed or cancelled
+  askSummary: varchar("askSummary", { length: 500 }), // one-line restatement of what we are waiting on
+  holdingUp: varchar("holdingUp", { length: 500 }), // what the outstanding item is holding up (later nudges name it)
+  isActiveVendor: boolean("isActiveVendor").default(false).notNull(), // looked up from vendor records, not the email
+  nudgeCount: int("nudgeCount").default(0).notNull(), // automated emails sent so far (max 4)
+  nextNudgeAt: timestamp("nextNudgeAt"), // when the daily job should next act; null = nothing scheduled
+  status: mysqlEnum("status", ["active", "dropped_no_response", "escalated_to_human", "resolved"]).default("active").notNull(),
+  pausedUntil: timestamp("pausedUntil"), // OOO: clock paused, resume on/after this date
+  lastInboundAt: timestamp("lastInboundAt"), // last reply received from them
+  lastOutboundAt: timestamp("lastOutboundAt"), // our last message (the original ask or a nudge) — cadence anchor
+  lastNudgeAt: timestamp("lastNudgeAt"),
+  optedOut: boolean("optedOut").default(false).notNull(), // they asked us not to follow up
+  manualReplyAt: timestamp("manualReplyAt"), // a human on our side sent a manual reply
+  escalatedTaskId: int("escalatedTaskId"), // project_tasks.id created on escalation
+  resolvedReason: varchar("resolvedReason", { length: 64 }), // why the workflow stopped
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  threadIdIdx: uniqueIndex("email_thread_followups_threadId_idx").on(t.threadId),
+}));
+
+export type EmailThreadFollowup = typeof emailThreadFollowups.$inferSelect;
+export type InsertEmailThreadFollowup = typeof emailThreadFollowups.$inferInsert;
+
+// Structured, reviewable audit log for the Thread Follow-Up workflow.
+// Every nudge sent, every nudge skipped (with reason), every drop and every
+// escalation is recorded here so a week of dry-run output can be reviewed.
+export const threadFollowupLogs = mysqlTable("thread_followup_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  followupId: int("followupId"),
+  threadId: varchar("threadId", { length: 255 }),
+  action: mysqlEnum("action", [
+    "enrolled", "nudge_sent", "nudge_skipped", "dropped", "escalated",
+    "paused", "resumed", "resolved", "error",
+  ]).notNull(),
+  reason: varchar("reason", { length: 128 }), // e.g. 'outside_send_window', 'reply_received', 'paused_ooo'
+  nudgeNumber: int("nudgeNumber"),
+  dryRun: boolean("dryRun").default(false).notNull(),
+  detail: json("detail"), // what was (or would be) sent: { to, cc, subject, bodyPreview, ... }
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ThreadFollowupLog = typeof threadFollowupLogs.$inferSelect;
+export type InsertThreadFollowupLog = typeof threadFollowupLogs.$inferInsert;
+
 export const parsedDocumentLineItems = mysqlTable("parsed_document_line_items", {
   id: int("id").autoincrement().primaryKey(),
   documentId: int("documentId").notNull(),
@@ -2630,6 +2699,10 @@ export const shopifySkuMappings = mysqlTable("shopifySkuMappings", {
   storeId: int("storeId").notNull(),
   shopifyProductId: varchar("shopifyProductId", { length: 64 }).notNull(),
   shopifyVariantId: varchar("shopifyVariantId", { length: 64 }).notNull(),
+  // Shopify InventoryItem id for this variant. Inventory-level webhooks/REST
+  // report inventory_item_id (NOT the variant id), so this is what inventory
+  // sync matches against. Backfilled lazily from the Shopify API during sync.
+  shopifyInventoryItemId: varchar("shopifyInventoryItemId", { length: 64 }),
   shopifySku: varchar("shopifySku", { length: 128 }),
   productId: int("productId").notNull(),
   isActive: boolean("isActive").default(true),
@@ -2931,13 +3004,37 @@ export const dataRoomFolders = mysqlTable("data_room_folders", {
   
   // Google Drive sync
   googleDriveFolderId: varchar("googleDriveFolderId", { length: 255 }),
-  
+
+  // Role-wide visibility for logged-in app-role users (e.g. contractors).
+  // JSON array of app roles that may see this folder without an individual
+  // grant. null/empty = not visible to any role by default. Per-user grants
+  // (contractorFolderGrants) layer on top of this.
+  visibleToRoles: json("visibleToRoles"),
+
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
 export type DataRoomFolder = typeof dataRoomFolders.$inferSelect;
 export type InsertDataRoomFolder = typeof dataRoomFolders.$inferInsert;
+
+// Per-user data-room folder grants for logged-in app-role users (contractors).
+// Unlike dataRoomInvitations (email/visitor based), these attach folder access
+// directly to a users row. mode 'allow' grants the folder; 'restrict' hides a
+// folder the user would otherwise see via visibleToRoles.
+export const contractorFolderGrants = mysqlTable("contractor_folder_grants", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  folderId: int("folderId").notNull(),
+  mode: mysqlEnum("mode", ["allow", "restrict"]).default("allow").notNull(),
+  grantedBy: int("grantedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({
+  userFolderIdx: uniqueIndex("contractor_folder_grants_user_folder_idx").on(table.userId, table.folderId),
+}));
+
+export type ContractorFolderGrant = typeof contractorFolderGrants.$inferSelect;
+export type InsertContractorFolderGrant = typeof contractorFolderGrants.$inferInsert;
 
 // Data Room Documents - files within folders
 export const dataRoomDocuments = mysqlTable("data_room_documents", {
@@ -4193,7 +4290,7 @@ export const crmContacts = mysqlTable("crm_contacts", {
 
   // CRM classification
   contactType: mysqlEnum("contactType", ["lead", "prospect", "customer", "partner", "investor", "donor", "vendor", "other"]).default("lead").notNull(),
-  source: mysqlEnum("source", ["iphone_bump", "whatsapp", "linkedin_scan", "business_card", "website", "referral", "event", "cold_outreach", "import", "manual", "fireflies"]).default("manual").notNull(),
+  source: mysqlEnum("source", ["iphone_bump", "whatsapp", "linkedin_scan", "business_card", "website", "referral", "event", "cold_outreach", "import", "manual", "fireflies", "b2brocket"]).default("manual").notNull(),
   status: mysqlEnum("status", ["active", "inactive", "unsubscribed", "bounced"]).default("active").notNull(),
 
   // Sales/Fundraising context

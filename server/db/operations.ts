@@ -62,7 +62,7 @@ export async function deleteProduct(id: number) {
 // OPERATIONS - INVENTORY
 // ============================================
 
-export async function getInventory(filters?: { companyId?: number; warehouseId?: number; productId?: number }) {
+export async function getInventory(filters?: { companyId?: number; warehouseId?: number; productId?: number; limit?: number }) {
   const db = await getDb();
   if (!db) return [];
 
@@ -71,10 +71,12 @@ export async function getInventory(filters?: { companyId?: number; warehouseId?:
   if (filters?.warehouseId) conditions.push(eq(inventory.warehouseId, filters.warehouseId));
   if (filters?.productId) conditions.push(eq(inventory.productId, filters.productId));
 
+  const rowLimit = filters?.limit ?? 500; // Default limit to prevent unbounded queries
+
   if (conditions.length > 0) {
-    return db.select().from(inventory).where(and(...conditions)).orderBy(desc(inventory.updatedAt));
+    return db.select().from(inventory).where(and(...conditions)).orderBy(desc(inventory.updatedAt)).limit(rowLimit);
   }
-  return db.select().from(inventory).orderBy(desc(inventory.updatedAt));
+  return db.select().from(inventory).orderBy(desc(inventory.updatedAt)).limit(rowLimit);
 }
 
 export async function createInventory(data: InsertInventory) {

@@ -188,10 +188,12 @@ export function AIAgentProvider({ children }: AIAgentProviderProps) {
 
     try {
       // Build conversation history for context
-      const conversationHistory = state.currentConversation?.messages.map(m => ({
-        role: m.role as 'system' | 'user' | 'assistant',
-        content: m.content,
-      })) || [];
+      const conversationHistory = (state.currentConversation?.messages || [])
+        .filter(m => m.role === 'user' || m.role === 'assistant')
+        .map(m => ({
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+        }));
 
       // Call the AI agent
       const response = await agentChatMutation.mutateAsync({

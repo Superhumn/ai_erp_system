@@ -361,7 +361,30 @@ export default function DataRoomDetail() {
 
   const syncFromDriveMutation = trpc.dataRoom.syncFromDrive.useMutation({
     onSuccess: (data) => {
-      toast.success(`Synced ${data.filesCreated} files and ${data.foldersCreated} folders from Google Drive${data.folderName ? ` (${data.folderName})` : ''}`);
+      const where = data.folderName ? ` (${data.folderName})` : '';
+      const filesFound = data.filesFound ?? data.filesCreated;
+      const firstError = data.errors?.[0];
+      if (data.filesCreated === 0 && filesFound === 0) {
+        // Drive returned no files at all — usually a permissions/scope issue or
+        // an empty folder, not a successful sync. Don't show a green toast.
+        toast.error(
+          `No files found in the Google Drive folder${where}. ` +
+          `Check that the folder contains files and is shared with the connected account.`
+        );
+      } else if (data.filesCreated === 0 && filesFound > 0) {
+        // Files were found but none could be imported — surface the real reason.
+        toast.error(
+          `Found ${filesFound} file(s) but none could be imported${where}.` +
+          (firstError ? ` First error: ${firstError}` : '')
+        );
+      } else {
+        toast.success(
+          `Synced ${data.filesCreated} files and ${data.foldersCreated} folders from Google Drive${where}` +
+          ((data.filesUpdated || data.foldersUpdated) ? `, updated ${(data.filesUpdated ?? 0) + (data.foldersUpdated ?? 0)}` : '') +
+          ((data.filesRemoved || data.foldersRemoved) ? `, removed ${(data.filesRemoved ?? 0) + (data.foldersRemoved ?? 0)} deleted in Drive` : '') +
+          (data.filesFailed ? ` (${data.filesFailed} file(s) failed)` : '')
+        );
+      }
       setGoogleDriveSyncOpen(false);
       setSelectedDriveFolderId("");
       refetchFolders();
@@ -885,7 +908,7 @@ export default function DataRoomDetail() {
                   <>
                     {/* Viewer toolbar */}
                     <div className="px-5 py-3 border-b flex items-center gap-3 shrink-0 bg-muted/10">
-                      <span className="shrink-0">{getFileIcon(selectedDoc.fileType)}</span>
+                      <span className="shrink-0">{getFileIcon(selectedDoc.fileType ?? "")}</span>
                       <span className="text-sm font-medium truncate flex-1">{selectedDoc.name}</span>
                       {selectedDoc.fileSize && (
                         <span className="text-xs text-muted-foreground shrink-0">
@@ -2861,286 +2884,6 @@ function DetailedAnalytics({ dataRoomId }: { dataRoomId: number }) {
   );
 }
 
-// Google Drive Sync Settings Component
-function GoogleDriveSyncSettings({ dataRoomId }: { dataRoomId: number }) {
-  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
-  const [selectedFolderId, setSelectedFolderId] = useState<string>('');
-  const [selectedFolderName, setSelectedFolderName] = useState<string>('');
-  const [currentParentId, setCurrentParentId] = useState<string | undefined>(undefined);
-  const [folderPath, setFolderPath] = useState<{ id: string; name: string }[]>([]);
-
-  const { data: syncConfig, refetch: refetchConfig } = trpc.dataRoom.driveSync.getConfig.useQuery({ dataRoomId });
-  const { data: syncLogs, refetch: refetchLogs } = trpc.dataRoom.driveSync.getLogs.useQuery({ dataRoomId, limit: 10 });
-  const { data: driveFolders, isLoading: foldersLoading } = trpc.dataRoom.driveSync.listDriveFolders.useQuery(
-    { parentId: currentParentId },
-    { enabled: folderPickerOpen }
-  );
-
-  const saveConfigMutation = trpc.dataRoom.driveSync.saveConfig.useMutation({
-    onSuccess: () => {
-      toast.success("Sync configuration saved");
-      refetchConfig();
-      setFolderPickerOpen(false);
-    },
-    onError: (error) => {
-      toast.error(error.message);
-    },
-  });
-
-  const syncNowMutation = trpc.dataRoom.driveSync.syncNow.useMutation({
-    onSuccess: (result) => {
-      toast.success(`Sync completed: ${result.filesAdded} added, ${result.filesUpdated} updated`);
-      refetchConfig();
-      refetchLogs();
-    },
-    onError: (error) => {
-      toast.error(error.message);
-    },
-  });
-
-  const deleteConfigMutation = trpc.dataRoom.driveSync.deleteConfig.useMutation({
-    onSuccess: () => {
-      toast.success("Sync configuration removed");
-      refetchConfig();
-    },
-  });
-
-  const handleSaveConfig = () => {
-    if (!selectedFolderId) {
-      toast.error("Please select a Google Drive folder");
-      return;
-    }
-    saveConfigMutation.mutate({
-      dataRoomId,
-      googleDriveFolderId: selectedFolderId,
-      googleDriveFolderName: selectedFolderName,
-      syncEnabled: true,
-      syncSubfolders: true,
-    });
-  };
-
-  const navigateToFolder = (folderId: string, folderName: string) => {
-    setFolderPath([...folderPath, { id: folderId, name: folderName }]);
-    setCurrentParentId(folderId);
-  };
-
-  const navigateBack = () => {
-    if (folderPath.length > 0) {
-      const newPath = [...folderPath];
-      const parent = newPath.pop();
-      setFolderPath(newPath);
-      setCurrentParentId(parent?.id === 'root' ? undefined : parent?.id);
-    }
-  };
-
-  return (
-    <div className="space-y-6">
-      {/* Current Sync Status */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <HardDrive className="h-5 w-5" />
-            Google Drive Sync
-          </CardTitle>
-          <CardDescription>
-            Automatically sync documents from a Google Drive folder
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {syncConfig ? (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between p-4 border rounded-lg">
-                <div className="flex items-center gap-4">
-                  <div className="h-12 w-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                    <HardDrive className="h-6 w-6 text-blue-600" />
-                  </div>
-                  <div>
-                    <div className="font-medium">{syncConfig.googleDriveFolderName || 'Connected Folder'}</div>
-                    <div className="text-sm text-muted-foreground">
-                      Last sync: {syncConfig.lastSyncAt ? new Date(syncConfig.lastSyncAt).toLocaleString() : 'Never'}
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  {syncConfig.lastSyncStatus === 'success' && (
-                    <Badge className="bg-emerald-500/8 text-emerald-600 dark:text-emerald-400">
-                      <CheckCircle2 className="h-3 w-3 mr-1" />
-                      Synced
-                    </Badge>
-                  )}
-                  {syncConfig.lastSyncStatus === 'failed' && (
-                    <Badge variant="destructive">
-                      <XCircle className="h-3 w-3 mr-1" />
-                      Failed
-                    </Badge>
-                  )}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => syncNowMutation.mutate({ dataRoomId })}
-                    disabled={syncNowMutation.isPending}
-                  >
-                    <RefreshCw className={`h-4 w-4 mr-2 ${syncNowMutation.isPending ? 'animate-spin' : ''}`} />
-                    {syncNowMutation.isPending ? 'Syncing...' : 'Sync Now'}
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={() => {
-                      if (confirm('Remove sync configuration?')) {
-                        deleteConfigMutation.mutate({ dataRoomId });
-                      }
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-              {syncConfig.lastSyncError && (
-                <div className="p-3 bg-destructive/10 text-destructive rounded-lg text-sm flex items-start gap-2">
-                  <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-                  {syncConfig.lastSyncError}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="text-center py-8">
-              <HardDrive className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
-              <p className="text-muted-foreground mb-4">No Google Drive folder connected</p>
-              <Button onClick={() => setFolderPickerOpen(true)}>
-                <Plus className="h-4 w-4 mr-2" />
-                Connect Google Drive Folder
-              </Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Sync History */}
-      {syncLogs && syncLogs.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Sync History</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Files Added</TableHead>
-                  <TableHead>Files Updated</TableHead>
-                  <TableHead>Duration</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {syncLogs.map((log) => (
-                  <TableRow key={log.id}>
-                    <TableCell>{new Date(log.startedAt).toLocaleString()}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{log.syncType}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={log.status === 'completed' ? 'default' : log.status === 'failed' ? 'destructive' : 'secondary'}>
-                        {log.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{log.filesAdded}</TableCell>
-                    <TableCell>{log.filesUpdated}</TableCell>
-                    <TableCell>{log.durationMs ? `${(log.durationMs / 1000).toFixed(1)}s` : '-'}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Folder Picker Dialog */}
-      <Dialog open={folderPickerOpen} onOpenChange={setFolderPickerOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Select Google Drive Folder</DialogTitle>
-            <DialogDescription>
-              Choose a folder to sync with this data room
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            {/* Breadcrumb */}
-            <div className="flex items-center gap-2 text-sm">
-              {folderPath.length > 0 && (
-                <Button variant="ghost" size="sm" onClick={navigateBack}>
-                  <ArrowLeft className="h-4 w-4 mr-1" />
-                  Back
-                </Button>
-              )}
-              <span className="text-muted-foreground">
-                {folderPath.map(f => f.name).join(' / ') || 'My Drive'}
-              </span>
-            </div>
-
-            {/* Folder List */}
-            <ScrollArea className="h-64 border rounded-lg">
-              {foldersLoading ? (
-                <div className="p-4 text-center text-muted-foreground">Loading folders...</div>
-              ) : driveFolders?.length === 0 ? (
-                <div className="p-4 text-center text-muted-foreground">No folders found</div>
-              ) : (
-                <div className="p-2 space-y-1">
-                  {driveFolders?.map((folder) => (
-                    <div
-                      key={folder.id}
-                      className={`flex items-center justify-between p-2 rounded-lg hover:bg-muted cursor-pointer ${selectedFolderId === folder.id ? 'bg-primary/10 border border-primary' : ''}`}
-                      onClick={() => {
-                        setSelectedFolderId(folder.id);
-                        setSelectedFolderName(folder.name);
-                      }}
-                      onDoubleClick={() => navigateToFolder(folder.id, folder.name)}
-                    >
-                      <div className="flex items-center gap-2">
-                        <Folder className="h-5 w-5 text-blue-500" />
-                        <span>{folder.name}</span>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigateToFolder(folder.id, folder.name);
-                        }}
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </ScrollArea>
-
-            {selectedFolderId && (
-              <div className="p-2 bg-muted rounded-lg text-sm">
-                Selected: <strong>{selectedFolderName}</strong>
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setFolderPickerOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleSaveConfig}
-              disabled={!selectedFolderId || saveConfigMutation.isPending}
-            >
-              {saveConfigMutation.isPending ? 'Saving...' : 'Connect Folder'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
-
 // Email Access Rules Manager Component
 function EmailAccessRulesManager({ dataRoomId }: { dataRoomId: number }) {
   const [createOpen, setCreateOpen] = useState(false);
@@ -3477,7 +3220,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
   // Expand all categories by default when data loads
   useEffect(() => {
     if (checklistData?.categories && expandedCategories.size === 0) {
-      setExpandedCategories(new Set(checklistData.categories.map(c => c.name)));
+      setExpandedCategories(new Set(checklistData.categories.map((c: any) => c.name)));
     }
   }, [checklistData]);
 
@@ -3595,7 +3338,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
   }
 
   // Collect all missing items across categories for the missing panel
-  const allItems = checklistData?.categories.flatMap(c => c.items) || [];
+  const allItems = checklistData?.categories.flatMap((c: any) => c.items) || [];
   const missingItems = allItems.filter((i: any) => i.status === 'missing');
   const completeItems = allItems.filter((i: any) => i.status === 'complete');
 
@@ -3744,7 +3487,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
       )}
 
       {/* Checklist Items by Category */}
-      {!showMissingOnly && checklistData?.categories.map((category) => {
+      {!showMissingOnly && checklistData?.categories.map((category: any) => {
         const catComplete = category.items.filter((i: any) => i.status === 'complete').length;
         const catTotal = category.items.length;
         const catPct = Math.round((catComplete / catTotal) * 100);
@@ -3933,7 +3676,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
                 placeholder="e.g. Corporate Documents"
               />
               <datalist id="dd-category-options">
-                {(checklistData?.categories || []).map((c) => (
+                {(checklistData?.categories || []).map((c: any) => (
                   <option key={c.name} value={c.name} />
                 ))}
               </datalist>

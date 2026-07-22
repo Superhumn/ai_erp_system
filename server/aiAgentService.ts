@@ -1,5 +1,5 @@
 import { invokeLLM, Tool, Message } from "./_core/llm";
-import { getDb } from "./db";
+import { getDb, createWorkOrder, createFreightRfq } from "./db";
 import { sendEmail, formatEmailHtml } from "./_core/email";
 import { getValidGoogleToken } from "./routers/middleware";
 import {
@@ -27,6 +27,17 @@ import {
 } from "../drizzle/schema";
 import { eq, and, like, desc, sql, gte, lte, or, isNull, isNotNull, count, sum, lt, inArray } from "drizzle-orm";
 
+// Roles allowed to have the agent MUTATE ERP data (create POs, change inventory,
+// send email, etc.) — mirrors opsProcedure. Reads/Q&A stay open to all roles.
+// Because the chat's mode is client-controlled, this server-side check is what
+// actually prevents a non-ops user (or scripted client) from driving writes.
+const MUTATION_ROLES = ["admin", "ops", "exec"];
+function assertCanMutate(ctx: AIAgentContext, action: string): void {
+  if (!MUTATION_ROLES.includes(ctx.userRole)) {
+    throw new Error(`Not authorized: "${action}" requires an operations, admin, or executive role.`);
+  }
+}
+
 // ============================================
 // AI AGENT SERVICE - Comprehensive ERP Integration
 // ============================================
@@ -46,6 +57,8 @@ export interface AIAgentResponse {
   actions?: AIAgentAction[];
   data?: Record<string, any>;
   suggestions?: string[];
+  /** True when `message` is a proposed plan awaiting user approval (plan-first mode). */
+  isPlan?: boolean;
 }
 
 export interface AIAgentAction {
@@ -767,6 +780,7 @@ async function executeAnalyzeData(params: any, ctx: AIAgentContext): Promise<any
 }
 
 async function executeSendEmail(params: any, ctx: AIAgentContext): Promise<any> {
+  assertCanMutate(ctx, "send email");
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
@@ -919,35 +933,76 @@ async function executeTrackItems(params: any, ctx: AIAgentContext): Promise<any>
 }
 
 async function executeUpdateInventory(params: any, ctx: AIAgentContext): Promise<any> {
+  assertCanMutate(ctx, "update inventory");
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
   const { productId, warehouseId, quantity, action, reason, targetWarehouseId } = params;
 
-  // This creates a task for approval rather than executing directly
-  const task = await db.insert(aiAgentTasks).values({
-    taskType: "update_inventory",
-    status: "pending_approval",
-    priority: "medium",
-    taskData: JSON.stringify({
-      productId,
-      warehouseId,
-      quantity,
+  // Validate inputs before touching inventory — the model can pass junk.
+  const pId = Number(productId);
+  const wId = Number(warehouseId);
+  const qty = Number(quantity);
+  if (!Number.isFinite(pId)) throw new Error("A valid productId is required");
+  if (!Number.isFinite(wId)) throw new Error("A valid warehouseId is required");
+  if (!Number.isFinite(qty) || qty <= 0) throw new Error("A positive numeric quantity is required");
+
+  // Apply a signed delta to one (product, warehouse) cell within a transaction.
+  // Rejects any move that would drop a location below zero on-hand.
+  const applyDelta = async (tx: any, product: number, warehouse: number, change: number) => {
+    // Lock the (product, warehouse) row for the duration of the transaction so
+    // concurrent adjustments can't both read the same value and lose an update
+    // (or slip past the non-negative check).
+    const existing = await tx.select().from(inventory)
+      .where(and(eq(inventory.productId, product), eq(inventory.warehouseId, warehouse))).limit(1).for("update");
+    if (existing.length > 0) {
+      const current = parseFloat(existing[0].quantity as string) || 0;
+      const next = current + change;
+      if (next < 0) {
+        throw new Error(`Insufficient stock: product ${product} at warehouse ${warehouse} has ${current}, cannot apply ${change}`);
+      }
+      await tx.update(inventory).set({ quantity: next.toString() })
+        .where(and(eq(inventory.productId, product), eq(inventory.warehouseId, warehouse)));
+    } else {
+      if (change < 0) {
+        throw new Error(`No stock of product ${product} at warehouse ${warehouse} to remove`);
+      }
+      await tx.insert(inventory).values({ companyId: ctx.companyId, productId: product, warehouseId: warehouse, quantity: change.toString() });
+    }
+  };
+
+  // Execute the change directly (live). The approval gate is Plan-first mode.
+  if (action === "transfer") {
+    const targetId = Number(targetWarehouseId);
+    if (!Number.isFinite(targetId)) throw new Error("A valid targetWarehouseId is required for a transfer");
+    if (targetId === wId) throw new Error("Source and target warehouses must differ");
+    // Both legs in one transaction so a failure can't leave stock decremented
+    // at the source without the matching increment at the target.
+    await db.transaction(async (tx) => {
+      await applyDelta(tx, pId, wId, -qty);
+      await applyDelta(tx, pId, targetId, qty);
+    });
+    return {
+      executed: true,
       action,
-      reason,
-      targetWarehouseId,
-    }),
-    aiReasoning: `Inventory ${action} requested: ${quantity} units. Reason: ${reason || "No reason provided"}`,
-    aiConfidence: "0.85",
-    relatedEntityType: "inventory",
-    requiresApproval: true,
-  }).$returningId();
+      message: `Transferred ${qty} units of product ${pId} from warehouse ${wId} to ${targetId}.`,
+      details: { productId: pId, fromWarehouseId: wId, toWarehouseId: targetId, quantity: qty },
+    };
+  }
+
+  // Adjustment: negative for removals, positive otherwise. Same guarded path so
+  // it can't drive a location below zero and stamps companyId on new rows.
+  const isRemoval = ["remove", "decrease", "subtract", "out", "consume"].includes(String(action).toLowerCase());
+  const delta = isRemoval ? -qty : qty;
+  await db.transaction(async (tx) => {
+    await applyDelta(tx, pId, wId, delta);
+  });
 
   return {
-    taskCreated: true,
-    taskId: task[0].id,
-    message: `Inventory ${action} task created and pending approval`,
-    details: { productId, warehouseId, quantity, action },
+    executed: true,
+    action,
+    message: `Adjusted inventory for product ${pId} at warehouse ${wId} by ${delta} units${reason ? ` (${reason})` : ""}.`,
+    details: { productId: pId, warehouseId: wId, delta },
   };
 }
 
@@ -984,6 +1039,7 @@ async function executeManageVendor(params: any, ctx: AIAgentContext): Promise<an
     }
 
     case "create": {
+      assertCanMutate(ctx, "create vendor");
       if (!data?.name) throw new Error("Vendor name required");
       const newVendor = await db.insert(vendors).values({
         name: data.name,
@@ -996,6 +1052,7 @@ async function executeManageVendor(params: any, ctx: AIAgentContext): Promise<an
     }
 
     case "update": {
+      assertCanMutate(ctx, "update vendor");
       if (!vendorId) throw new Error("Vendor ID required");
       await db.update(vendors).set(data).where(eq(vendors.id, vendorId));
       return { updated: true, vendorId };
@@ -1028,6 +1085,7 @@ async function executeManageVendor(params: any, ctx: AIAgentContext): Promise<an
 }
 
 async function executeCreatePurchaseOrder(params: any, ctx: AIAgentContext): Promise<any> {
+  assertCanMutate(ctx, "create purchase order");
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
@@ -1037,42 +1095,74 @@ async function executeCreatePurchaseOrder(params: any, ctx: AIAgentContext): Pro
   const vendor = await db.select().from(vendors).where(eq(vendors.id, vendorId)).limit(1);
   if (!vendor[0]) throw new Error("Vendor not found");
 
-  // Calculate totals
-  const subtotal = items.reduce((sum: number, item: any) => {
-    return sum + (item.quantity * item.unitPrice);
-  }, 0);
+  // Normalize + validate line items before writing anything — the model can
+  // pass missing/non-numeric values, which must not become "NaN" in the DB.
+  const normalizedItems = (Array.isArray(items) ? items : []).map((item: any, idx: number) => {
+    const qty = Number(item.quantity);
+    const price = Number(item.unitPrice);
+    if (!Number.isFinite(qty) || qty <= 0) throw new Error(`Line item ${idx + 1} has an invalid quantity`);
+    if (!Number.isFinite(price) || price < 0) throw new Error(`Line item ${idx + 1} has an invalid unit price`);
+    return {
+      productId: item.productId,
+      description: item.description || item.name || "Item",
+      qty,
+      price,
+      lineTotal: qty * price,
+    };
+  });
+  if (normalizedItems.length === 0) throw new Error("A purchase order needs at least one valid line item");
 
-  // Generate PO number
+  const subtotal = normalizedItems.reduce((sum, i) => sum + i.lineTotal, 0);
+  if (!Number.isFinite(subtotal)) throw new Error("Could not compute a valid order total");
+
   const poNumber = `PO-${Date.now().toString(36).toUpperCase()}`;
 
-  // Create task for approval
-  const task = await db.insert(aiAgentTasks).values({
-    taskType: "generate_po",
-    status: "pending_approval",
-    priority: "medium",
-    taskData: JSON.stringify({
-      vendorId,
-      vendorName: vendor[0].name,
+  // Parse the optional expected date; ignore anything unparseable.
+  let expected: Date | undefined;
+  if (expectedDate) {
+    const d = new Date(expectedDate);
+    if (!isNaN(d.getTime())) expected = d;
+  }
+
+  // Create the PO header + line items atomically, as a draft (the live approval
+  // gate is the assistant's Plan-first mode, not a separate approval queue).
+  const poId = await db.transaction(async (tx) => {
+    const [po] = await tx.insert(purchaseOrders).values({
       poNumber,
-      items,
+      companyId: ctx.companyId,
+      vendorId,
+      status: "draft",
+      orderDate: new Date(),
+      expectedDate: expected,
       subtotal: subtotal.toFixed(2),
-      notes,
-      expectedDate,
-    }),
-    aiReasoning: `PO for ${vendor[0].name} with ${items.length} line items totaling $${subtotal.toFixed(2)}`,
-    aiConfidence: "0.90",
-    relatedEntityType: "purchase_order",
-    requiresApproval: true,
-  }).$returningId();
+      totalAmount: subtotal.toFixed(2),
+      currency: "USD",
+      notes: notes || "Created by AI assistant",
+      createdBy: ctx.userId,
+    }).$returningId();
+
+    for (const i of normalizedItems) {
+      await tx.insert(purchaseOrderItems).values({
+        purchaseOrderId: po.id,
+        productId: i.productId,
+        description: i.description,
+        quantity: i.qty.toString(),
+        unitPrice: i.price.toString(),
+        totalAmount: i.lineTotal.toFixed(2),
+      });
+    }
+    return po.id;
+  });
 
   return {
-    taskCreated: true,
-    taskId: task[0].id,
+    created: true,
+    purchaseOrderId: poId,
     poNumber,
     vendorName: vendor[0].name,
     subtotal: subtotal.toFixed(2),
-    itemCount: items.length,
-    message: "Purchase order task created and pending approval",
+    itemCount: normalizedItems.length,
+    status: "draft",
+    message: `Created draft purchase order ${poNumber} for ${vendor[0].name} — ${normalizedItems.length} item(s), $${subtotal.toFixed(2)}.`,
   };
 }
 
@@ -1100,26 +1190,41 @@ async function executeManageCopacker(params: any, ctx: AIAgentContext): Promise<
     }
 
     case "create_work_order": {
+      assertCanMutate(ctx, "create work order");
       if (!workOrderData) throw new Error("Work order data required");
+      const { bomId, productId, quantity, unit, priority, dueDate, notes } = workOrderData;
+      if (!bomId || !productId || quantity == null) {
+        throw new Error("Work order requires bomId, productId, and quantity");
+      }
 
-      const task = await db.insert(aiAgentTasks).values({
-        taskType: "create_work_order",
-        status: "pending_approval",
-        priority: "medium",
-        taskData: JSON.stringify({
-          copackerId,
-          ...workOrderData,
-        }),
-        aiReasoning: `Work order for copacker: ${workOrderData.quantity} units`,
-        aiConfidence: "0.85",
-        relatedEntityType: "work_order",
-        requiresApproval: true,
-      }).$returningId();
+      // Parse an optional due date into scheduledEndDate; ignore if unparseable.
+      let scheduledEndDate: Date | undefined;
+      if (dueDate) {
+        const d = new Date(dueDate);
+        if (!isNaN(d.getTime())) scheduledEndDate = d;
+      }
+
+      // Create the work order for real, as a draft. Live approval is handled by
+      // the assistant's Plan-first mode rather than a separate approval queue.
+      const wo = await createWorkOrder({
+        companyId: ctx.companyId,
+        bomId,
+        productId,
+        quantity: String(quantity),
+        unit: unit || "EA",
+        status: "draft",
+        priority: priority || "normal",
+        scheduledEndDate,
+        notes: notes || undefined,
+        createdBy: ctx.userId,
+      });
 
       return {
-        taskCreated: true,
-        taskId: task[0].id,
-        message: "Work order task created and pending approval",
+        created: true,
+        workOrderId: wo.id,
+        workOrderNumber: wo.workOrderNumber,
+        copackerId: copackerId ?? null,
+        message: `Created work order ${wo.workOrderNumber} (draft) for ${quantity} units.`,
       };
     }
 
@@ -1231,21 +1336,15 @@ async function executeManageFreight(params: any, ctx: AIAgentContext): Promise<a
     }
 
     case "create_rfq": {
-      const task = await db.insert(aiAgentTasks).values({
-        taskType: "send_rfq",
-        status: "pending_approval",
-        priority: "medium",
-        taskData: JSON.stringify(rfqData),
-        aiReasoning: "Freight RFQ creation requested",
-        aiConfidence: "0.85",
-        relatedEntityType: "freight_rfq",
-        requiresApproval: true,
-      }).$returningId();
-
+      assertCanMutate(ctx, "create freight RFQ");
+      if (!rfqData?.title) throw new Error("Freight RFQ requires a title");
+      // Create the RFQ for real (draft). Live approval is Plan-first mode.
+      const rfq = await createFreightRfq({ ...rfqData, status: rfqData.status || "draft", createdById: ctx.userId });
       return {
-        taskCreated: true,
-        taskId: task[0].id,
-        message: "Freight RFQ task created and pending approval",
+        created: true,
+        freightRfqId: rfq.id,
+        rfqNumber: rfq.rfqNumber,
+        message: `Created freight RFQ ${rfq.rfqNumber} (${rfqData.status || "draft"}).`,
       };
     }
 
@@ -1870,6 +1969,61 @@ async function executeRunAiAnalytics(params: any, ctx: AIAgentContext): Promise<
 // MAIN AI AGENT FUNCTION
 // ============================================
 
+/**
+ * Plan-first mode: produce a concrete, human-readable plan of what the agent
+ * WOULD do to fulfill the request — without taking any action. The user reviews
+ * it and, if they approve, the plan is passed back to processAIAgentRequest to
+ * execute. Web search is allowed (read-only) so the plan can name real details
+ * (e.g. a vendor's actual address); no ERP write tools are exposed here, so
+ * nothing can be created, changed, or sent during planning.
+ */
+export async function planAIAgentRequest(
+  message: string,
+  conversationHistory: Message[],
+  ctx: AIAgentContext
+): Promise<AIAgentResponse> {
+  const systemPrompt = `You are the planning half of an AI assistant for the Superhumn ERP system. The user has made a request. Your job is to lay out EXACTLY what you would do to fulfill it, so the user can approve before anything happens.
+
+Rules:
+- Do NOT take any action. This is a preview only — nothing you describe has happened yet.
+- You may use the web_search tool to ground the plan in real facts (e.g. a real company's name, address, phone, website). Use it when the request references a real-world entity.
+- Produce a short, concrete, numbered plan. For each step, say specifically what record you would create/update/delete or what message you would send, with the actual values you'd use (names, addresses, amounts, recipients) wherever you can determine them.
+- Call out anything that changes data or contacts a real person (creating records, sending emails/SMS, placing orders) clearly.
+- If you're missing a detail you genuinely cannot determine, list it under "I'll need from you:".
+- Keep it tight. End with one line: "Approve to run this, or tell me what to change."
+
+User's role: ${ctx.userRole}. User: ${ctx.userName}.`;
+
+  const messages: Message[] = [
+    { role: "system", content: systemPrompt },
+    ...conversationHistory,
+    { role: "user", content: message },
+  ];
+
+  let plan = "";
+  try {
+    const response = await invokeLLM({ messages, webSearch: true, toolChoice: "auto", maxTokens: 1500 });
+    const content = response.choices?.[0]?.message?.content;
+    plan = typeof content === "string" ? content : "";
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Only retry without web search when the endpoint specifically rejected the
+    // web_search tool. For any other failure (auth, rate limits, bad payload,
+    // network) rethrow — retrying would mask the real error.
+    if (!/web[_ ]?search/i.test(msg)) {
+      throw err;
+    }
+    const response = await invokeLLM({ messages, maxTokens: 1500 });
+    const content = response.choices?.[0]?.message?.content;
+    plan = typeof content === "string" ? content : "";
+  }
+
+  return {
+    message: plan || "I couldn't draft a plan for that. Try rephrasing the request.",
+    isPlan: true,
+  };
+}
+
 export async function processAIAgentRequest(
   message: string,
   conversationHistory: Message[],
@@ -1904,10 +2058,11 @@ Your capabilities include:
 11. **Email & Communication**: Send emails to vendors, customers, or team members. Draft professional emails for review. Follow up on outstanding items.
 12. **Reports & Analytics**: Generate business reports, analyze sales trends, forecast demand, detect anomalies, and provide actionable insights.
 13. **Tasks & Approvals**: Create tasks, approve or reject pending items, and manage workflow approvals.
+14. **Web research**: You have a live web_search tool. Use it to look up real-world information that isn't in the ERP — a company's real contact details, address, and website; vendors/suppliers; current market prices; industry data; news. Prefer official sources and don't fabricate details you could verify by searching.
 
 CRITICAL BEHAVIOR RULES:
 1. When a user asks you to create something, DO IT directly. Never tell them to do it manually.
-2. If required data is missing (e.g., no vendor exists), CREATE the missing entity first, then proceed with the original request. Ask the user only for info you truly cannot guess (e.g., "What vendor should I use?" or "What's the unit price?").
+2. If required data is missing (e.g., no vendor exists), CREATE the missing entity first, then proceed with the original request. Ask the user only for info you truly cannot guess (e.g., "What vendor should I use?" or "What's the unit price?"). When a user names a real company (e.g. "add BCW as a warehouse vendor"), FIRST use web_search to find its real details (address, phone, website), then create the record with those details instead of asking the user to type them.
 3. If there are zero vendors/products/customers, that's fine — create them as part of fulfilling the request. For example, if the user says "create a PO for 5000kg mushrooms" and there's no vendor, ask "Which vendor should I create this PO for? And what's the unit price per kg?" Then create the vendor AND the PO.
 4. NEVER list steps for the user to follow. NEVER say "you need to first..." — just do it or ask for the specific missing detail.
 5. Use sensible defaults: auto-generate SKUs, use today's date, set status to "draft", etc.
@@ -1961,17 +2116,42 @@ Examples:
   let finalResponse = "";
   let data: Record<string, any> = {};
   let iterations = 0;
-  const maxIterations = 5;
+  const maxIterations = 8;
+  // Let the agent look things up online (real companies, vendors, prices,
+  // addresses, etc.) in addition to querying the ERP, so requests like
+  // "add BCW as a warehouse vendor" resolve from real public data. If the
+  // configured LLM endpoint doesn't support server-side web search, we disable
+  // it and carry on rather than failing the whole request.
+  let webSearchEnabled = true;
 
   // Iterative tool calling loop
   while (iterations < maxIterations) {
     iterations++;
 
-    const response = await invokeLLM({
-      messages,
-      tools: AI_TOOLS,
-      toolChoice: "auto",
-    });
+    let response;
+    try {
+      response = await invokeLLM({
+        messages,
+        tools: AI_TOOLS,
+        toolChoice: "auto",
+        ...(webSearchEnabled ? { webSearch: true } : {}),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Only disable web search when the endpoint specifically rejected the
+      // web_search tool; other failures (invalid payload, bad model, auth, rate
+      // limits) should surface, not be masked by a silent retry.
+      if (webSearchEnabled && /web[_ ]?search/i.test(msg)) {
+        webSearchEnabled = false;
+        response = await invokeLLM({
+          messages,
+          tools: AI_TOOLS,
+          toolChoice: "auto",
+        });
+      } else {
+        throw err;
+      }
+    }
 
     const choice = response.choices[0];
     const responseMessage = choice.message;

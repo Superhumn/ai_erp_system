@@ -1098,7 +1098,7 @@ export default function PeopleAndEquity() {
       })()}
 
       {/* Cap Table Visual — moved to Investors page */}
-      {false && grants && grants.length > 0 && (
+      {false && (grants?.length ?? 0) > 0 && (
         <Card>
           <CardContent className="py-4">
             <div className="flex items-center gap-8">

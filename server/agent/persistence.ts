@@ -15,6 +15,7 @@ export async function createAgentRun(params: {
   context: Record<string, unknown>;
 }): Promise<number> {
   const db = await getDb();
+  if (!db) throw new Error("Database connection unavailable");
   const [result] = await db.insert(agentRuns).values({
     userId: params.userId,
     companyId: params.companyId,
@@ -43,6 +44,7 @@ export async function recordAgentStep(params: {
   isError?: boolean;
 }): Promise<void> {
   const db = await getDb();
+  if (!db) throw new Error("Database connection unavailable");
   await db.insert(agentRunSteps).values({
     runId: params.runId,
     iteration: params.iteration,
@@ -72,6 +74,7 @@ export async function completeAgentRun(params: {
   messageHistory?: string;
 }): Promise<void> {
   const db = await getDb();
+  if (!db) throw new Error("Database connection unavailable");
   await db
     .update(agentRuns)
     .set({
@@ -93,6 +96,7 @@ export async function completeAgentRun(params: {
  */
 export async function getAgentRunWithSteps(runId: number) {
   const db = await getDb();
+  if (!db) throw new Error("Database connection unavailable");
 
   const [run] = await db
     .select()

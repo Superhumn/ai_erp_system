@@ -33,6 +33,9 @@ export const ENV = {
     sendgridReplyTo: process.env.SENDGRID_REPLY_TO ?? "",      // REPLY_TO - optional reply-to address
     sendgridWebhookSecret: process.env.SENDGRID_WEBHOOK_SECRET ?? "", // For webhook signature verification
 
+    // B2B Rocket lead-intake webhook (via Zapier "New Lead" trigger)
+    b2brocketWebhookSecret: process.env.B2BROCKET_WEBHOOK_SECRET ?? "", // Shared secret sent by Zapier as ?secret= or x-webhook-secret header
+
     // Public app URL for email links
     publicAppUrl: process.env.PUBLIC_APP_URL ?? process.env.APP_URL ?? "http://localhost:3000",
 
@@ -100,6 +103,23 @@ export const ENV = {
 
     // Ayrshare social media aggregator
     ayrshareApiKey: process.env.AYRSHARE_API_KEY ?? "",
+
+    // Code module (admin-only /code IDE) — server-side code execution.
+    // `execute` runs arbitrary code on the app host and there is no true
+    // sandbox in this stack, so it is disabled unless explicitly opted in.
+    //   CODE_EXEC_ENABLED=true|1  → force on   (accept host-level RCE risk)
+    //   CODE_EXEC_ENABLED=false|0 → force off
+    //   unset                     → on ONLY for explicit NODE_ENV dev/test,
+    //                               off everywhere else (staging, prod, unset).
+    codeExecEnabled: (() => {
+        const flag = process.env.CODE_EXEC_ENABLED;
+        if (flag === "true" || flag === "1") return true;
+        if (flag === "false" || flag === "0") return false;
+        return process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
+    })(),
+    // Best-effort network isolation for executed code via util-linux `unshare`.
+    codeExecNetworkIsolation:
+        process.env.CODE_EXEC_NETWORK_ISOLATION === "true" || process.env.CODE_EXEC_NETWORK_ISOLATION === "1",
 };
 
 /**

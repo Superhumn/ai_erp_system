@@ -1015,7 +1015,9 @@ export async function getRecipeAccess(
 ): Promise<{ canView: boolean; canEdit: boolean; isOwner: boolean }> {
   const db = await getDb();
   if (!db) return { canView: false, canEdit: false, isOwner: false };
-  const recipe = await getRecipeById(recipeId);
+  const recipe = (
+    await db.select({ createdBy: recipes.createdBy }).from(recipes).where(eq(recipes.id, recipeId)).limit(1)
+  )[0];
   if (!recipe) return { canView: false, canEdit: false, isOwner: false };
   if (recipe.createdBy === userId) return { canView: true, canEdit: true, isOwner: true };
   const grant = (
@@ -1064,9 +1066,14 @@ export async function grantRecipeAccess(data: {
       .limit(1)
   )[0];
   if (existing) {
+    // Refresh audit fields so the grant reflects who last changed it and when.
     await db
       .update(recipeAccessGrants)
-      .set({ canEdit: data.canEdit ?? existing.canEdit })
+      .set({
+        canEdit: data.canEdit ?? existing.canEdit,
+        grantedBy: data.grantedBy ?? existing.grantedBy,
+        grantedAt: new Date(),
+      })
       .where(eq(recipeAccessGrants.id, existing.id));
     return { id: existing.id, created: false };
   }

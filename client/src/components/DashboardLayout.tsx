@@ -70,7 +70,31 @@ import {
   TooltipTrigger,
 } from "./ui/tooltip";
 
+// External / outside-the-org roles. These users must only ever see a menu
+// containing the surface they actually have access to — never internal
+// navigation (Command Center, People, Tools, Finance, Operations, etc.).
+const EXTERNAL_PORTAL_MENUS: Record<
+  string,
+  Array<{ icon: typeof LayoutDashboard; label: string; path: string }>
+> = {
+  copacker: [{ icon: Factory, label: "Copacker Portal", path: "/portal/copacker" }],
+  vendor: [{ icon: Truck, label: "Vendor Portal", path: "/portal/vendor" }],
+  investor: [{ icon: TrendingUp, label: "Investor Portal", path: "/investor-portal" }],
+  // Contractor scope is "assigned projects and documents". Documents are
+  // scoped data-room folders (role visibility + individual grants).
+  contractor: [
+    { icon: Target, label: "Projects", path: "/projects" },
+    { icon: FolderLock, label: "Documents", path: "/documents" },
+  ],
+};
+
 export function getMenuGroups(role: string = "user") {
+  // Outsiders get a portal-only menu and nothing else.
+  const portalItems = EXTERNAL_PORTAL_MENUS[role];
+  if (portalItems) {
+    return [{ label: "Portal", items: portalItems }];
+  }
+
   const isAdmin = ["admin", "exec"].includes(role);
   const hasFinance = ["admin", "exec", "finance"].includes(role);
   const hasOps = ["admin", "exec", "ops"].includes(role);
@@ -233,6 +257,10 @@ function DashboardLayoutContent({
   const [location, setLocation] = useLocation();
   const { state, toggleSidebar } = useSidebar();
   const { theme, toggleTheme } = useTheme();
+  // External/portal roles must not see internal AI tooling (the command bar and
+  // agent bar can read company-wide data). Backend AI endpoints are also gated
+  // (internalProcedure); this hides the entry points.
+  const isExternalRole = !!user && ["copacker", "vendor", "investor", "contractor"].includes(user.role);
   const isCollapsed = state === "collapsed";
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
@@ -277,7 +305,7 @@ function DashboardLayoutContent({
       if (e.key === '?') {
         toast.info(
           'Keyboard Shortcuts:\n' +
-          'âK - AI Command Bar\n' +
+          '⌘K - AI Command Bar\n' +
           'g d - Dashboard\n' +
           'g e - Email Inbox\n' +
           'g v - Vendors\n' +
@@ -368,7 +396,7 @@ function DashboardLayoutContent({
 
           {/* Flat navigation - all items visible, no dropdowns */}
           <SidebarContent className="overflow-y-auto p-0 gap-0">
-            <nav className="flex flex-col">
+            <nav className="flex flex-col m-px">
               {getMenuGroups(user?.role).map((group, gi) => (
                 <div key={group.label}>
                   {gi > 0 && !isCollapsed && <div className="border-t border-border/30" />}
@@ -478,7 +506,7 @@ function DashboardLayoutContent({
           <div className="flex items-center gap-2 shrink-0">
             {isMobile && <SidebarTrigger className="h-8 w-8 rounded-md" />}
           </div>
-          <AICommandBar />
+          {!isExternalRole && <AICommandBar />}
           <div className="flex items-center gap-2 shrink-0">
             <Tooltip>
               <TooltipTrigger asChild>
@@ -494,7 +522,7 @@ function DashboardLayoutContent({
               </TooltipTrigger>
               <TooltipContent>Quick note (g then n)</TooltipContent>
             </Tooltip>
-            <AutonomousAgentBar />
+            {!isExternalRole && <AutonomousAgentBar />}
             <NotificationCenter />
           </div>
         </header>

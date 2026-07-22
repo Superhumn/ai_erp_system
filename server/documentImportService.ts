@@ -697,7 +697,7 @@ If document type is unknown, return all as null.`;
     const parsed = JSON.parse(jsonText);
     console.log("[DocumentImport] Parsed result:", JSON.stringify(parsed, null, 2).substring(0, 1000));
     
-    return {
+    return reclassifyFreightDocument({
       success: true,
       documentType: parsed.documentType,
       purchaseOrder: parsed.purchaseOrder,
@@ -705,7 +705,7 @@ If document type is unknown, return all as null.`;
       freightInvoice: parsed.freightInvoice,
       customsDocument: parsed.customsDocument,
       rawText: `Document parsed from: ${fileUrl}`
-    };
+    });
   } catch (error) {
     console.error("Document parse error:", error);
     return {
@@ -719,6 +719,126 @@ If document type is unknown, return all as null.`;
 /**
  * Match line items to existing raw materials
  */
+/**
+ * Line items on imported documents that must NOT be promoted into the raw-materials
+ * catalog: freight/logistics charges, taxes & fees, and SaaS/usage/subscription
+ * billing. Vendor invoices and POs routinely include these alongside (or instead of)
+ * physical goods, and auto-creating a "material" for each was polluting the materials
+ * list with entries like "OCEAN FREIGHT...", "Build Minutes", and "Max plan".
+ *
+ * Conservative by design: only skips line items that clearly match a non-material
+ * signal, so genuine goods are still catalogued.
+ */
+const NON_MATERIAL_DESCRIPTION_PATTERNS: RegExp[] = [
+  // Freight / logistics services
+  /\bfreight\b/i, /\bshipping\b/i, /\bcourier\b/i, /\bdrayage\b/i, /\bdemurrage\b/i,
+  /\bdetention\b/i, /\bhandling\b/i, /\blogistics\b/i, /\bport\b/i, /\bvessel\b/i,
+  /\bcustoms\b/i, /\bbroker(age)?\b/i, /\bclearance\b/i,
+  // Taxes / fees / surcharges
+  /\bdut(y|ies)\b/i, /\btariff\b/i, /\b(vat|gst)\b/i, /\bsales tax\b/i,
+  /\bsurcharge\b/i, /\bfuel\b/i, /\bservice fee\b/i, /\bprocessing fee\b/i,
+  // SaaS / usage / subscription billing
+  /\bsubscription\b/i, /\bseat[s]?\b/i, /\blicen[sc]e\b/i, /\busage\b/i,
+  /\bcredit[s]?\s+purchase\b/i, /\bper\s+(gb|mb|kb|tb|min|minute|hour|hr)\b/i,
+  /\b(api\s+calls?|compute|hosting|bandwidth|build\s+minutes?)\b/i,
+  /\b(hobby|pro|max|team|enterprise|starter|business)\s+plan\b/i,
+  // Billing-period suffix, e.g. "Apr 1 - Apr 30, 2026" — a SaaS metering signal,
+  // not something a physical material name carries.
+  /\b[A-Za-z]{3,9}\s+\d{1,2}\s*[-–]\s*[A-Za-z]{3,9}\s+\d{1,2},?\s*\d{4}\b/,
+];
+
+const NON_MATERIAL_UNITS = new Set([
+  "min", "mins", "minute", "minutes", "hr", "hour", "hours",
+  "gb", "mb", "kb", "tb", "seat", "seats", "license", "licenses",
+  "month", "months", "mo", "subscription",
+]);
+
+/**
+ * Returns true when an imported line item is a service/charge/billing line rather
+ * than a physical material, so callers can skip creating a raw-material record for it.
+ * The underlying invoice/PO line is still recorded — only the materials-catalog
+ * pollution is prevented.
+ */
+export function isNonMaterialLineItem(item: { description?: string | null; unit?: string | null }): boolean {
+  const description = (item.description ?? "").trim();
+  // No usable description → don't fabricate a material from it.
+  if (!description) return true;
+  if (NON_MATERIAL_DESCRIPTION_PATTERNS.some((re) => re.test(description))) return true;
+  const unit = (item.unit ?? "").trim().toLowerCase();
+  if (unit && NON_MATERIAL_UNITS.has(unit)) return true;
+  return false;
+}
+
+/**
+ * Strong freight/logistics signals (on a line-item description or a vendor name).
+ * Used to recognise freight bills that the AI parser mislabels as vendor invoices
+ * or purchase orders.
+ */
+const FREIGHT_SIGNAL_PATTERNS: RegExp[] = [
+  /\bfreight\b/i, /\bocean\s*freight\b/i, /\bair\s*freight\b/i, /\bsea\s*freight\b/i,
+  /\bshipping\b/i, /\bdrayage\b/i, /\bdemurrage\b/i, /\bdetention\b/i,
+  /\bhaulage\b/i, /\bcartage\b/i, /\bforward(?:er|ing)\b/i, /\blogistics\b/i,
+  /\bbill\s*of\s*lading\b/i, /\bcontainer\b/i, /\bport\b/i, /\bterminal handling\b/i,
+  /\bthc\b/i, /\bbaf\b/i, /\bcustoms\b/i, /\bbroker(?:age)?\b/i,
+  /\b(fcl|lcl|cfs)\b/i, /\bvessel\b/i, /\bvoyage\b/i,
+];
+const hasFreightSignal = (text: string | null | undefined) =>
+  FREIGHT_SIGNAL_PATTERNS.some((re) => re.test(text ?? ""));
+
+/**
+ * Decide whether a parsed vendor-invoice / purchase-order is really a freight bill.
+ * True when the vendor is clearly a carrier/forwarder, or freight charges make up at
+ * least half the line items. Conservative so ordinary goods invoices (which may carry
+ * a single "shipping" line) are not reclassified.
+ */
+export function looksLikeFreightInvoice(
+  vendorName: string | null | undefined,
+  lineItems: Array<{ description?: string | null }>,
+): boolean {
+  if (hasFreightSignal(vendorName)) return true;
+  if (!lineItems.length) return false;
+  const freightLines = lineItems.filter((li) => hasFreightSignal(li.description)).length;
+  return freightLines / lineItems.length >= 0.5;
+}
+
+function toFreightInvoice(src: ImportedVendorInvoice | ImportedPurchaseOrder): ImportedFreightInvoice {
+  const isInvoice = "invoiceNumber" in src;
+  const charges = src.lineItems.map((li) => li.description).filter(Boolean).join("; ");
+  return {
+    invoiceNumber: isInvoice ? (src as ImportedVendorInvoice).invoiceNumber : (src as ImportedPurchaseOrder).poNumber,
+    carrierName: src.vendorName,
+    carrierEmail: src.vendorEmail,
+    invoiceDate: isInvoice ? (src as ImportedVendorInvoice).invoiceDate : (src as ImportedPurchaseOrder).orderDate,
+    deliveryDate: "deliveryDate" in src ? (src as ImportedPurchaseOrder).deliveryDate : undefined,
+    freightCharges: src.subtotal ?? src.totalAmount,
+    totalAmount: src.totalAmount,
+    currency: src.currency,
+    relatedPoNumber: isInvoice ? (src as ImportedVendorInvoice).relatedPoNumber : (src as ImportedPurchaseOrder).poNumber,
+    notes: [src.notes, charges && `Charges: ${charges}`].filter(Boolean).join(" | ") || undefined,
+    confidence: src.confidence,
+  };
+}
+
+/**
+ * Deterministic safety net for parse results: freight/logistics bills are routinely
+ * misclassified as vendor invoices or POs, which sends them through the materials-
+ * creating import path instead of the freight path. Reclassify clear freight bills to
+ * `freight_invoice` so the existing routing imports them via importFreightInvoice
+ * (freight-history record, no materials).
+ */
+export function reclassifyFreightDocument(result: DocumentParseResult): DocumentParseResult {
+  if (!result.success) return result;
+  if (result.documentType === "vendor_invoice" && result.vendorInvoice
+      && looksLikeFreightInvoice(result.vendorInvoice.vendorName, result.vendorInvoice.lineItems)) {
+    return { ...result, documentType: "freight_invoice", freightInvoice: toFreightInvoice(result.vendorInvoice), vendorInvoice: undefined };
+  }
+  if (result.documentType === "purchase_order" && result.purchaseOrder
+      && looksLikeFreightInvoice(result.purchaseOrder.vendorName, result.purchaseOrder.lineItems)) {
+    return { ...result, documentType: "freight_invoice", freightInvoice: toFreightInvoice(result.purchaseOrder), purchaseOrder: undefined };
+  }
+  return result;
+}
+
 export async function matchLineItemsToMaterials(
   lineItems: ImportedLineItem[]
 ): Promise<ImportedLineItem[]> {
@@ -780,9 +900,13 @@ export async function importPurchaseOrder(
     // 2. Match line items to raw materials
     const matchedItems = await matchLineItemsToMaterials(po.lineItems);
     
-    // 3. Create raw materials for unmatched items
+    // 3. Create raw materials for unmatched items (skip services/charges/SaaS lines)
     for (const item of matchedItems) {
       if (!item.rawMaterialId) {
+        if (isNonMaterialLineItem(item)) {
+          warnings.push(`Skipped non-material line item "${item.description}" — recorded on the order but not added to materials.`);
+          continue;
+        }
         const materialResult = await db.createRawMaterial({
           name: item.description,
           sku: item.sku || `RM-${Date.now()}`,
@@ -825,7 +949,7 @@ export async function importPurchaseOrder(
     if (markAsReceived) {
       // Batch load all raw materials instead of N+1
       const rmIds = matchedItems.map(i => i.rawMaterialId).filter((id): id is number => id != null);
-      const materialsToUpdate = rmIds.length > 0 ? await Promise.all(rmIds.map(id => db.getRawMaterialById(id))) : [];
+      const materialsToUpdate = rmIds.length > 0 ? await db.getRawMaterialsByIds(rmIds) : [];
       const materialMap = new Map(materialsToUpdate.filter(Boolean).map(m => [m!.id, m!]));
 
       for (const item of matchedItems) {
@@ -876,7 +1000,9 @@ export async function importPurchaseOrder(
 export async function importFreightInvoice(
   invoice: ImportedFreightInvoice,
   userId: number,
-  createMissingVendor: boolean = false
+  createMissingVendor: boolean = false,
+  receiveInventory: boolean = false,
+  warehouseId?: number
 ): Promise<ImportResult> {
   const createdRecords: ImportResult["createdRecords"] = [];
   const updatedRecords: ImportResult["updatedRecords"] = [];
@@ -949,6 +1075,25 @@ export async function importFreightInvoice(
         name: invoice.relatedPoNumber!,
         changes: `Freight cost added: $${invoice.totalAmount}`
       });
+
+      // 5. Optionally receive the carried goods into inventory. A freight invoice
+      // typically arrives on/after delivery, so this lets freight drive inventory
+      // for the linked PO. Only outstanding quantities are received.
+      if (receiveInventory) {
+        const result = await db.receivePurchaseOrderIntoInventory(relatedPoId, { warehouseId, receivedBy: userId });
+        if (result.received) {
+          updatedRecords.push({
+            type: "purchase_order",
+            id: relatedPoId,
+            name: invoice.relatedPoNumber!,
+            changes: `Received ${result.itemCount} line item(s) into inventory (warehouse #${result.warehouseId})`
+          });
+        } else {
+          warnings.push(`Goods not received into inventory: ${result.reason}`);
+        }
+      }
+    } else if (receiveInventory) {
+      warnings.push("Could not receive goods into inventory: freight invoice is not linked to a purchase order.");
     }
 
     return {
@@ -1021,9 +1166,13 @@ export async function importVendorInvoice(
       }
     }
 
-    // 4. Create raw materials for unmatched items
+    // 4. Create raw materials for unmatched items (skip services/charges/SaaS lines)
     for (const item of matchedItems) {
       if (!item.rawMaterialId) {
+        if (isNonMaterialLineItem(item)) {
+          warnings.push(`Skipped non-material line item "${item.description}" — recorded on the invoice but not added to materials.`);
+          continue;
+        }
         const materialResult = await db.createRawMaterial({
           name: item.description,
           sku: item.sku || `RM-${Date.now()}`,
@@ -1066,7 +1215,7 @@ export async function importVendorInvoice(
     if (markAsReceived) {
       // Batch load all raw materials instead of N+1
       const rmIds = matchedItems.map(i => i.rawMaterialId).filter((id): id is number => id != null);
-      const materialsToUpdate = rmIds.length > 0 ? await Promise.all(rmIds.map(id => db.getRawMaterialById(id))) : [];
+      const materialsToUpdate = rmIds.length > 0 ? await db.getRawMaterialsByIds(rmIds) : [];
       const materialMap = new Map(materialsToUpdate.filter(Boolean).map(m => [m!.id, m!]));
 
       for (const item of matchedItems) {
@@ -1219,6 +1368,8 @@ export async function importCustomsDocument(
               changes: `Added HS Code: ${item.hsCode}`
             });
           }
+        } else if (isNonMaterialLineItem(item)) {
+          warnings.push(`Skipped non-material line item "${item.description}" — recorded on the customs document but not added to materials.`);
         } else {
           // Create new material with HS code
           const materialResult = await db.createRawMaterial({
@@ -1337,6 +1488,95 @@ export async function bulkImportDocuments(
   };
 }
 
+/** Normalized summary of a parsed document, used to persist a parsedDocument row. */
+interface NormalizedDocSummary {
+  documentNumber?: string | null;
+  vendorName?: string | null;
+  vendorEmail?: string | null;
+  documentDate?: string | null;
+  dueDate?: string | null;
+  subtotal?: number | null;
+  taxAmount?: number | null;
+  shippingAmount?: number | null;
+  totalAmount?: number | null;
+  currency?: string | null;
+  trackingNumber?: string | null;
+  carrierName?: string | null;
+  confidence?: number | null;
+  lineItems?: any[] | null;
+}
+
+/**
+ * Route a parsed document to the correct ERP importer (purchase order / vendor
+ * invoice / freight invoice / customs doc) and return the import result plus a
+ * normalized summary for persisting a parsedDocument row.
+ *
+ * Shared by the email-attachment and WhatsApp intake paths so a supplier
+ * invoice or shipping doc is filed identically no matter how it arrived.
+ */
+async function routeParsedDocumentToErp(
+  parseResult: DocumentParseResult,
+  userId: number,
+  opts: { markPOsAsReceived: boolean; createMissingVendor: boolean },
+): Promise<{
+  importResult: ImportResult;
+  parsedType: "receipt" | "invoice" | "purchase_order" | "customs_document" | "other";
+  summary: NormalizedDocSummary;
+}> {
+  const { markPOsAsReceived, createMissingVendor } = opts;
+  let importResult: ImportResult;
+  let parsedType: "receipt" | "invoice" | "purchase_order" | "customs_document" | "other" = "other";
+  let summary: NormalizedDocSummary = {};
+
+  if (parseResult.documentType === "purchase_order" && parseResult.purchaseOrder) {
+    const po = parseResult.purchaseOrder;
+    importResult = await importPurchaseOrder(po, userId, markPOsAsReceived, createMissingVendor);
+    parsedType = "purchase_order";
+    summary = {
+      documentNumber: po.poNumber, vendorName: po.vendorName, vendorEmail: po.vendorEmail,
+      documentDate: po.orderDate, subtotal: po.subtotal, taxAmount: po.taxAmount,
+      shippingAmount: po.shippingAmount, totalAmount: po.totalAmount, currency: po.currency,
+      confidence: po.confidence, lineItems: po.lineItems,
+    };
+  } else if (parseResult.documentType === "vendor_invoice" && parseResult.vendorInvoice) {
+    const inv = parseResult.vendorInvoice;
+    importResult = await importVendorInvoice(inv, userId, markPOsAsReceived, createMissingVendor);
+    parsedType = "invoice";
+    summary = {
+      documentNumber: inv.invoiceNumber, vendorName: inv.vendorName, vendorEmail: inv.vendorEmail,
+      documentDate: inv.invoiceDate, dueDate: inv.dueDate, subtotal: inv.subtotal,
+      taxAmount: inv.taxAmount, shippingAmount: inv.shippingAmount, totalAmount: inv.totalAmount,
+      currency: inv.currency, confidence: inv.confidence, lineItems: inv.lineItems,
+    };
+  } else if (parseResult.documentType === "freight_invoice" && parseResult.freightInvoice) {
+    const fr = parseResult.freightInvoice;
+    importResult = await importFreightInvoice(fr, userId, createMissingVendor);
+    parsedType = "invoice";
+    summary = {
+      documentNumber: fr.invoiceNumber, vendorName: fr.carrierName, vendorEmail: fr.carrierEmail,
+      documentDate: fr.invoiceDate, totalAmount: fr.totalAmount, currency: fr.currency,
+      trackingNumber: fr.trackingNumber, carrierName: fr.carrierName, confidence: fr.confidence,
+    };
+  } else if (parseResult.documentType === "customs_document" && parseResult.customsDocument) {
+    const cd = parseResult.customsDocument;
+    importResult = await importCustomsDocument(cd, userId, createMissingVendor);
+    parsedType = "customs_document";
+    summary = {
+      documentNumber: cd.documentNumber, vendorName: cd.shipperName,
+      documentDate: cd.entryDate, totalAmount: cd.totalCharges, currency: cd.currency,
+      trackingNumber: cd.trackingNumber, confidence: cd.confidence,
+      lineItems: cd.lineItems,
+    };
+  } else {
+    importResult = {
+      success: false, documentType: parseResult.documentType, createdRecords: [],
+      updatedRecords: [], warnings: [], error: "Unrecognized document type",
+    };
+  }
+
+  return { importResult, parsedType, summary };
+}
+
 /**
  * Parse a single email attachment and import its data into the relevant ERP
  * location (purchase order / vendor invoice / freight invoice / customs doc).
@@ -1384,72 +1624,13 @@ export async function importEmailAttachmentToErp(opts: {
     return { success: false, documentType: "unknown", error: parseResult.error || "Failed to parse document" };
   }
 
-  // Route to the correct ERP importer (mirrors bulkImportDocuments) and collect
-  // a normalized summary for the parsedDocument record.
-  let importResult: ImportResult;
-  let parsedType: "receipt" | "invoice" | "purchase_order" | "customs_document" | "other" = "other";
-  let summary: {
-    documentNumber?: string | null;
-    vendorName?: string | null;
-    vendorEmail?: string | null;
-    documentDate?: string | null;
-    dueDate?: string | null;
-    subtotal?: number | null;
-    taxAmount?: number | null;
-    shippingAmount?: number | null;
-    totalAmount?: number | null;
-    currency?: string | null;
-    trackingNumber?: string | null;
-    carrierName?: string | null;
-    confidence?: number | null;
-    lineItems?: any[] | null;
-  } = {};
-
-  if (parseResult.documentType === "purchase_order" && parseResult.purchaseOrder) {
-    const po = parseResult.purchaseOrder;
-    importResult = await importPurchaseOrder(po, opts.userId, markPOsAsReceived, createMissingVendor);
-    parsedType = "purchase_order";
-    summary = {
-      documentNumber: po.poNumber, vendorName: po.vendorName, vendorEmail: po.vendorEmail,
-      documentDate: po.orderDate, subtotal: po.subtotal, taxAmount: po.taxAmount,
-      shippingAmount: po.shippingAmount, totalAmount: po.totalAmount, currency: po.currency,
-      confidence: po.confidence, lineItems: po.lineItems,
-    };
-  } else if (parseResult.documentType === "vendor_invoice" && parseResult.vendorInvoice) {
-    const inv = parseResult.vendorInvoice;
-    importResult = await importVendorInvoice(inv, opts.userId, markPOsAsReceived, createMissingVendor);
-    parsedType = "invoice";
-    summary = {
-      documentNumber: inv.invoiceNumber, vendorName: inv.vendorName, vendorEmail: inv.vendorEmail,
-      documentDate: inv.invoiceDate, dueDate: inv.dueDate, subtotal: inv.subtotal,
-      taxAmount: inv.taxAmount, shippingAmount: inv.shippingAmount, totalAmount: inv.totalAmount,
-      currency: inv.currency, confidence: inv.confidence, lineItems: inv.lineItems,
-    };
-  } else if (parseResult.documentType === "freight_invoice" && parseResult.freightInvoice) {
-    const fr = parseResult.freightInvoice;
-    importResult = await importFreightInvoice(fr, opts.userId, createMissingVendor);
-    parsedType = "invoice";
-    summary = {
-      documentNumber: fr.invoiceNumber, vendorName: fr.carrierName, vendorEmail: fr.carrierEmail,
-      documentDate: fr.invoiceDate, totalAmount: fr.totalAmount, currency: fr.currency,
-      trackingNumber: fr.trackingNumber, carrierName: fr.carrierName, confidence: fr.confidence,
-    };
-  } else if (parseResult.documentType === "customs_document" && parseResult.customsDocument) {
-    const cd = parseResult.customsDocument;
-    importResult = await importCustomsDocument(cd, opts.userId, createMissingVendor);
-    parsedType = "customs_document";
-    summary = {
-      documentNumber: cd.documentNumber, vendorName: cd.shipperName,
-      documentDate: cd.entryDate, totalAmount: cd.totalCharges, currency: cd.currency,
-      trackingNumber: cd.trackingNumber, confidence: cd.confidence,
-      lineItems: cd.lineItems,
-    };
-  } else {
-    importResult = {
-      success: false, documentType: parseResult.documentType, createdRecords: [],
-      updatedRecords: [], warnings: [], error: "Unrecognized document type",
-    };
-  }
+  // Route to the correct ERP importer and collect a normalized summary for the
+  // parsedDocument record (shared with the WhatsApp intake path).
+  const { importResult, parsedType, summary } = await routeParsedDocumentToErp(
+    parseResult,
+    opts.userId,
+    { markPOsAsReceived, createMissingVendor },
+  );
 
   // Persist a parsedDocument record linked to the email + attachment.
   let parsedDocumentId: number | undefined;
@@ -1515,6 +1696,156 @@ export async function importEmailAttachmentToErp(opts: {
       error: importResult.error,
     },
   });
+
+  return {
+    success: importResult.success,
+    documentType: parseResult.documentType,
+    parsedDocumentId,
+    importResult,
+  };
+}
+
+// Document-like MIME types the parser can extract structured data from.
+// Images are limited to jpeg/png (photographed/scanned docs); animated and
+// sticker formats (webp/gif) are deliberately excluded — WhatsApp stickers are
+// image/webp and would otherwise burn an LLM call.
+const PARSEABLE_DOCUMENT_MIME = /pdf|png|jpe?g|msword|word|spreadsheet|excel|sheet|csv/i;
+
+/**
+ * True when a WhatsApp/media attachment of the given MIME type is worth sending
+ * through the document parser. Skips audio, video, vcards, stickers, etc. so we
+ * don't burn an LLM call on something that can never be an invoice/shipping doc.
+ */
+export function isParseableDocumentMime(mimeType: string | undefined): boolean {
+  if (!mimeType) return false;
+  return PARSEABLE_DOCUMENT_MIME.test(mimeType);
+}
+
+/**
+ * Parse a document received over WhatsApp and import it into the relevant ERP
+ * location — the WhatsApp analogue of `importEmailAttachmentToErp`.
+ *
+ * Runs the same LLM parser and the same per-type ERP importers used for email
+ * attachments, so a supplier invoice or bill of lading sent over WhatsApp is
+ * classified and filed identically to one sent by email (draft bill on Finance,
+ * freight history on Logistics, etc.). It also persists a parsedDocument row so
+ * the extraction is reviewable, links it to an existing shipment when the doc
+ * carries a matching tracking number, and never throws — a parse failure must
+ * not disrupt inbound-message capture.
+ */
+export async function importWhatsappDocumentToErp(opts: {
+  whatsappMessageId: number;
+  content: string; // data URL: data:<mime>;base64,<...>
+  filename: string;
+  mimeType?: string;
+  fromNumber?: string;
+  userId?: number;
+  markPOsAsReceived?: boolean;
+  createMissingVendor?: boolean;
+}): Promise<{
+  success: boolean;
+  documentType: string;
+  parsedDocumentId?: number;
+  importResult?: ImportResult;
+  error?: string;
+}> {
+  const userId = opts.userId ?? 1;
+  const markPOsAsReceived = opts.markPOsAsReceived ?? true;
+  const createMissingVendor = opts.createMissingVendor ?? true;
+
+  // Enforce the cost-control guard locally so the "no LLM call on non-document
+  // media" guarantee holds for every call site, not just the Twilio webhook.
+  if (!isParseableDocumentMime(opts.mimeType)) {
+    return { success: false, documentType: "unknown", error: `Unsupported media type for document parsing: ${opts.mimeType ?? "unknown"}` };
+  }
+
+  // Parse + route are wrapped so this function honors its "never throws"
+  // contract for webhook/background callers; the later persistence steps are
+  // already individually best-effort.
+  let parseResult: DocumentParseResult;
+  let importResult: ImportResult;
+  let parsedType: "receipt" | "invoice" | "purchase_order" | "customs_document" | "other";
+  let summary: NormalizedDocSummary;
+  try {
+    parseResult = await parseUploadedDocument(opts.content, opts.filename, undefined, opts.mimeType);
+    if (!parseResult.success) {
+      return { success: false, documentType: "unknown", error: parseResult.error || "Failed to parse document" };
+    }
+    ({ importResult, parsedType, summary } = await routeParsedDocumentToErp(
+      parseResult,
+      userId,
+      { markPOsAsReceived, createMissingVendor },
+    ));
+  } catch (err: any) {
+    console.error("[ImportWhatsappDoc] parse/route failed:", err?.message);
+    return { success: false, documentType: "unknown", error: err?.message || "Failed to import document" };
+  }
+
+  // Link to an existing shipment when the document carries a known tracking
+  // number, so it surfaces on Logistics next to that shipment.
+  let shipmentId: number | null = null;
+  if (summary.trackingNumber) {
+    try {
+      const shipment = await db.findShipmentByTracking(summary.trackingNumber);
+      if (shipment) shipmentId = shipment.id;
+    } catch { /* best-effort linkage */ }
+  }
+
+  // Persist a parsedDocument row. Unlike the email path there is no
+  // email/attachment FK — the source of record is the whatsapp_messages row
+  // (and the `documents` entry created on media capture), noted below.
+  let parsedDocumentId: number | undefined;
+  try {
+    const importedSummary = importResult.success
+      ? `Imported: ${importResult.createdRecords.map(r => `${r.type} ${r.name}`).join(", ") || "none"}`
+      : importResult.error || "";
+    const { id } = await db.createParsedDocument({
+      emailId: null,
+      attachmentId: null,
+      documentType: parsedType as any,
+      confidence: summary.confidence != null ? summary.confidence.toString() : null,
+      vendorName: summary.vendorName ?? null,
+      vendorEmail: summary.vendorEmail ?? null,
+      vendorId: importResult.createdRecords.find(r => r.type === "vendor")?.id
+        ?? importResult.updatedRecords.find(r => r.type === "vendor")?.id ?? null,
+      documentNumber: summary.documentNumber ?? null,
+      documentDate: summary.documentDate ? new Date(summary.documentDate) : null,
+      dueDate: summary.dueDate ? new Date(summary.dueDate) : null,
+      subtotal: summary.subtotal != null ? summary.subtotal.toString() : null,
+      taxAmount: summary.taxAmount != null ? summary.taxAmount.toString() : null,
+      shippingAmount: summary.shippingAmount != null ? summary.shippingAmount.toString() : null,
+      totalAmount: summary.totalAmount != null ? summary.totalAmount.toString() : null,
+      currency: summary.currency ?? "USD",
+      trackingNumber: summary.trackingNumber ?? null,
+      carrierName: summary.carrierName ?? null,
+      shipmentId,
+      purchaseOrderId: importResult.createdRecords.find(r => r.type === "purchase_order")?.id
+        ?? importResult.updatedRecords.find(r => r.type === "purchase_order")?.id ?? null,
+      lineItems: summary.lineItems ?? null,
+      isApproved: importResult.success,
+      rawExtractedData: { source: "whatsapp", whatsappMessageId: opts.whatsappMessageId, ...(parseResult as any) },
+      notes: `Received via WhatsApp${opts.fromNumber ? ` from ${opts.fromNumber}` : ""}.${importedSummary ? ` ${importedSummary}` : ""}`,
+    } as any);
+    parsedDocumentId = id;
+
+    if (summary.lineItems && summary.lineItems.length > 0) {
+      for (let i = 0; i < summary.lineItems.length; i++) {
+        const item: any = summary.lineItems[i];
+        await db.createParsedDocumentLineItem({
+          documentId: id,
+          lineNumber: i + 1,
+          description: item.description || null,
+          sku: item.sku || null,
+          quantity: item.quantity != null ? item.quantity.toString() : null,
+          unit: item.unit || null,
+          unitPrice: item.unitPrice != null ? item.unitPrice.toString() : null,
+          totalPrice: (item.totalPrice ?? item.declaredValue) != null ? (item.totalPrice ?? item.declaredValue).toString() : null,
+        } as any);
+      }
+    }
+  } catch (e: any) {
+    console.error("[ImportWhatsappDoc] Failed to persist parsedDocument:", e?.message);
+  }
 
   return {
     success: importResult.success,
