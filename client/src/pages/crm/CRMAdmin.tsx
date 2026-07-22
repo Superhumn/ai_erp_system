@@ -79,12 +79,11 @@ function CampaignsSection() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState({
     name: "",
-    description: "",
-    status: "draft" as "draft" | "active" | "paused" | "completed",
-    type: "email" as "email" | "sms" | "whatsapp" | "call",
-    targetAudience: "",
-    startDate: "",
-    endDate: "",
+    subject: "",
+    bodyHtml: "",
+    type: "custom" as "newsletter" | "drip" | "announcement" | "follow_up" | "custom",
+    status: "draft" as "draft" | "scheduled" | "sending" | "sent" | "paused" | "cancelled",
+    scheduledAt: "",
   });
 
   const { data: campaigns, isLoading } = trpc.crm.campaigns.list.useQuery({});
@@ -109,10 +108,19 @@ function CampaignsSection() {
     onError: (e: any) => toast.error(e.message),
   });
 
-  const resetForm = () => setForm({ name: "", description: "", status: "draft", type: "email", targetAudience: "", startDate: "", endDate: "" });
+  const resetForm = () => setForm({ name: "", subject: "", bodyHtml: "", type: "custom", status: "draft", scheduledAt: "" });
 
   const openEdit = (c: any) => {
-    setForm({ name: c.name || "", description: c.description || "", status: c.status || "draft", type: c.type || "email", targetAudience: c.targetAudience || "", startDate: c.startDate?.slice(0, 10) || "", endDate: c.endDate?.slice(0, 10) || "" });
+    setForm({
+      name: c.name || "",
+      subject: c.subject || "",
+      bodyHtml: c.bodyHtml || "",
+      type: c.type || "custom",
+      status: c.status || "draft",
+      // Format as local YYYY-MM-DD (en-CA) so the date shown in the date input
+      // doesn't shift for users outside UTC.
+      scheduledAt: c.scheduledAt ? new Date(c.scheduledAt).toLocaleDateString("en-CA") : "",
+    });
     setEditingId(c.id);
   };
 
@@ -144,8 +152,7 @@ function CampaignsSection() {
                 <TableHead>Name</TableHead>
                 <TableHead>Type</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Start</TableHead>
-                <TableHead>End</TableHead>
+                <TableHead>Scheduled</TableHead>
                 <TableHead></TableHead>
               </TableRow>
             </TableHeader>
@@ -153,17 +160,18 @@ function CampaignsSection() {
               {(campaigns as any[]).map((c) => (
                 <TableRow key={c.id}>
                   <TableCell className="font-medium">{c.name}</TableCell>
-                  <TableCell><Badge variant="outline" className="capitalize">{c.type || "email"}</Badge></TableCell>
+                  <TableCell><Badge variant="outline" className="capitalize">{c.type || "custom"}</Badge></TableCell>
                   <TableCell>
                     <Badge className={
-                      c.status === "active" ? "bg-green-100 text-green-700" :
-                      c.status === "completed" ? "bg-blue-100 text-blue-700" :
+                      c.status === "sent" ? "bg-green-100 text-green-700" :
+                      c.status === "sending" ? "bg-blue-100 text-blue-700" :
+                      c.status === "scheduled" ? "bg-indigo-100 text-indigo-700" :
                       c.status === "paused" ? "bg-yellow-100 text-yellow-700" :
+                      c.status === "cancelled" ? "bg-red-100 text-red-700" :
                       "bg-gray-100 text-gray-700"
                     }>{c.status || "draft"}</Badge>
                   </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{c.startDate ? new Date(c.startDate).toLocaleDateString() : "—"}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{c.endDate ? new Date(c.endDate).toLocaleDateString() : "—"}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{c.scheduledAt ? new Date(c.scheduledAt).toLocaleDateString() : "—"}</TableCell>
                   <TableCell>
                     <Button variant="ghost" size="sm" onClick={() => openEdit(c)}>
                       <Edit className="h-4 w-4" />
@@ -184,17 +192,19 @@ function CampaignsSection() {
           </DialogHeader>
           <div className="space-y-4">
             <div><Label>Name</Label><Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Campaign name" /></div>
-            <div><Label>Description</Label><Textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2} /></div>
+            <div><Label>Subject</Label><Input value={form.subject} onChange={e => setForm(f => ({ ...f, subject: e.target.value }))} placeholder="Email subject line" /></div>
+            <div><Label>Body</Label><Textarea value={form.bodyHtml} onChange={e => setForm(f => ({ ...f, bodyHtml: e.target.value }))} rows={4} placeholder="Email body (HTML allowed)" /></div>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label>Type</Label>
                 <Select value={form.type} onValueChange={(v) => setForm(f => ({ ...f, type: v as any }))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="email">Email</SelectItem>
-                    <SelectItem value="sms">SMS</SelectItem>
-                    <SelectItem value="whatsapp">WhatsApp</SelectItem>
-                    <SelectItem value="call">Call</SelectItem>
+                    <SelectItem value="newsletter">Newsletter</SelectItem>
+                    <SelectItem value="drip">Drip</SelectItem>
+                    <SelectItem value="announcement">Announcement</SelectItem>
+                    <SelectItem value="follow_up">Follow-up</SelectItem>
+                    <SelectItem value="custom">Custom</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -204,27 +214,37 @@ function CampaignsSection() {
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="draft">Draft</SelectItem>
-                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="scheduled">Scheduled</SelectItem>
+                    <SelectItem value="sending">Sending</SelectItem>
+                    <SelectItem value="sent">Sent</SelectItem>
                     <SelectItem value="paused">Paused</SelectItem>
-                    <SelectItem value="completed">Completed</SelectItem>
+                    <SelectItem value="cancelled">Cancelled</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div><Label>Start Date</Label><Input type="date" value={form.startDate} onChange={e => setForm(f => ({ ...f, startDate: e.target.value }))} /></div>
-              <div><Label>End Date</Label><Input type="date" value={form.endDate} onChange={e => setForm(f => ({ ...f, endDate: e.target.value }))} /></div>
-            </div>
+            <div><Label>Scheduled At</Label><Input type="date" value={form.scheduledAt} onChange={e => setForm(f => ({ ...f, scheduledAt: e.target.value }))} /></div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setShowNew(false); setEditingId(null); resetForm(); }}>Cancel</Button>
             <Button
-              disabled={!form.name || createCampaign.isPending || updateCampaign.isPending}
+              disabled={!form.name || !form.subject || createCampaign.isPending || updateCampaign.isPending}
               onClick={() => {
+                // Parse the date-only value as local time (no timezone suffix)
+                // so the intended day isn't shifted by UTC interpretation.
+                const scheduledAt = form.scheduledAt ? new Date(`${form.scheduledAt}T00:00:00`) : undefined;
+                const payload = {
+                  name: form.name,
+                  subject: form.subject,
+                  bodyHtml: form.bodyHtml,
+                  type: form.type,
+                  status: form.status,
+                  scheduledAt,
+                };
                 if (editingId) {
-                  updateCampaign.mutate({ id: editingId, name: form.name, scheduledAt: form.startDate ? new Date(form.startDate) : undefined });
+                  updateCampaign.mutate({ id: editingId, ...payload });
                 } else {
-                  createCampaign.mutate({ name: form.name, subject: form.name, bodyHtml: form.description || "", scheduledAt: form.startDate ? new Date(form.startDate) : undefined });
+                  createCampaign.mutate(payload);
                 }
               }}
             >
@@ -319,7 +339,7 @@ function TagsSection() {
 export function ContactTagsPicker({ contactId }: { contactId: number }) {
   const utils = trpc.useUtils();
   const { data: allTags } = trpc.crm.tags.list.useQuery({});
-  const { data: contactTags } = trpc.crm.tags.getForContact.useQuery({ contactId }) ?? { data: [] };
+  const { data: contactTags } = trpc.crm.tags.getForContact.useQuery({ contactId });
 
   const addTag = trpc.crm.tags.addToContact.useMutation({
     onSuccess: () => { toast.success("Tag added"); utils.crm.tags.invalidate(); },
