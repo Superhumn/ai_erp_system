@@ -14462,10 +14462,11 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
           throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: msg });
         }
 
-        // Link the folder + record last sync time.
+        // Always link the folder; only stamp lastSyncedAt on a complete listing
+        // (a partial sync skipped some sub-tree, so the room isn't fully synced).
         await db.updateDataRoom(input.dataRoomId, {
           googleDriveFolderId: folderId,
-          lastSyncedAt: new Date(),
+          ...(recon.partial ? {} : { lastSyncedAt: new Date() }),
         });
 
         console.log(

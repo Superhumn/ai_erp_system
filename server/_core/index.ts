@@ -1729,7 +1729,13 @@ async function startServer() {
                   `~${recon.foldersUpdated} folders / ~${recon.filesUpdated} files updated`,
                 );
               }
-              await db.updateDataRoom(room.id, { lastSyncedAt: new Date() });
+              // Only stamp lastSyncedAt on a complete listing — a partial sync
+              // skipped some sub-tree(s), so the room isn't actually up to date.
+              if (recon.partial) {
+                console.warn(`[Data Room Sync] Room ${room.id}: partial listing — some sub-folders were not read; leaving lastSyncedAt unchanged.`);
+              } else {
+                await db.updateDataRoom(room.id, { lastSyncedAt: new Date() });
+              }
             } catch (roomErr) {
               console.warn(`[Data Room Sync] Failed to sync room ${room.id}:`, roomErr);
             }
