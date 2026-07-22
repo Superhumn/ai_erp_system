@@ -14397,9 +14397,20 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
         // syncDriveFolder pushes folders in DFS pre-order, so parents
         // already precede their children — no sort needed.
         const folderMap = new Map<string, number>();
-        const results: { name: string; type: string; status: string }[] = [];
+        const results: { name: string; type: string; status: string; error?: string }[] = [];
+        // Human-readable errors surfaced to the caller so a partial/empty sync
+        // reports *why* instead of silently claiming success with 0 files.
+        const syncErrors: string[] = [];
 
-        // Process folders
+        // Drive metadata occasionally exceeds our column widths (long file names,
+        // very long thumbnail/webView links). Trim defensively so a single
+        // oversized value can't abort the insert (and thus the whole batch).
+        const trunc = (v: string | null | undefined, max: number): string | undefined => {
+          if (v == null) return undefined;
+          return v.length > max ? v.slice(0, max) : v;
+        };
+
+        // Process folders — isolate each insert so one failure doesn't abort the rest.
         for (const driveFolder of syncResult.folders) {
           if (existingFoldersByDriveId.has(driveFolder.id)) {
             folderMap.set(driveFolder.id, existingFoldersByDriveId.get(driveFolder.id)!);
@@ -14412,18 +14423,28 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
             ? folderMap.get(parentDriveId)
             : null;
 
-          const { id: newFolderId } = await db.createDataRoomFolder({
-            dataRoomId: input.dataRoomId,
-            parentId: parentDataRoomId,
-            name: driveFolder.name,
-            googleDriveFolderId: driveFolder.id,
-          });
+          try {
+            const { id: newFolderId } = await db.createDataRoomFolder({
+              dataRoomId: input.dataRoomId,
+              parentId: parentDataRoomId,
+              name: trunc(driveFolder.name, 255) || 'Untitled folder',
+              googleDriveFolderId: driveFolder.id,
+            });
 
-          folderMap.set(driveFolder.id, newFolderId);
-          results.push({ name: driveFolder.name, type: 'folder', status: 'created' });
+            folderMap.set(driveFolder.id, newFolderId);
+            results.push({ name: driveFolder.name, type: 'folder', status: 'created' });
+          } catch (err: any) {
+            const msg = err?.message || String(err);
+            console.error(`[DataRoom] Failed to create folder "${driveFolder.name}" (${driveFolder.id}):`, msg);
+            results.push({ name: driveFolder.name, type: 'folder', status: 'error', error: msg });
+            if (syncErrors.length < 5) syncErrors.push(`Folder "${driveFolder.name}": ${msg}`);
+          }
         }
 
-        // Process files — store by reference in Google Drive (no download)
+        // Process files — store by reference in Google Drive (no download).
+        // Each insert is isolated: previously a single failing insert (e.g. an
+        // oversized field) threw out of the loop, leaving folders created but
+        // zero files — the "adds folders but no files" symptom.
         for (const driveFile of syncResult.files) {
           if (existingDocsByDriveId.has(driveFile.id)) {
             results.push({ name: driveFile.name, type: 'file', status: 'exists' });
@@ -14444,23 +14465,30 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
             ? parseInt(driveFile.size)
             : undefined;
 
-          await db.createDataRoomDocument({
-            dataRoomId: input.dataRoomId,
-            folderId: fileFolderId,
-            name: displayName,
-            fileType,
-            mimeType: driveFile.mimeType,
-            fileSize,
-            storageType: 'google_drive',
-            storageUrl: driveFile.webViewLink || undefined,
-            storageKey: undefined,
-            googleDriveFileId: driveFile.id,
-            googleDriveWebViewLink: driveFile.webViewLink,
-            thumbnailUrl: driveFile.thumbnailLink,
-            uploadedBy: ctx.user.id,
-          });
+          try {
+            await db.createDataRoomDocument({
+              dataRoomId: input.dataRoomId,
+              folderId: fileFolderId,
+              name: trunc(displayName, 255) || 'Untitled',
+              fileType,
+              mimeType: trunc(driveFile.mimeType, 128),
+              fileSize,
+              storageType: 'google_drive',
+              storageUrl: trunc(driveFile.webViewLink, 512),
+              storageKey: undefined,
+              googleDriveFileId: driveFile.id,
+              googleDriveWebViewLink: trunc(driveFile.webViewLink, 512),
+              thumbnailUrl: trunc(driveFile.thumbnailLink, 512),
+              uploadedBy: ctx.user.id,
+            });
 
-          results.push({ name: displayName, type: 'file', status: 'synced' });
+            results.push({ name: displayName, type: 'file', status: 'synced' });
+          } catch (err: any) {
+            const msg = err?.message || String(err);
+            console.error(`[DataRoom] Failed to create document "${displayName}" (${driveFile.id}):`, msg);
+            results.push({ name: displayName, type: 'file', status: 'error', error: msg });
+            if (syncErrors.length < 5) syncErrors.push(`File "${displayName}": ${msg}`);
+          }
         }
 
         // Update data room with Google Drive folder ID and last sync time
@@ -14469,14 +14497,26 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
           lastSyncedAt: new Date(),
         });
 
+        const filesFound = syncResult.files.length;
+        const foldersFound = syncResult.folders.length;
         const totalSynced = results.filter(r => r.status === 'synced').length;
         const totalCreated = results.filter(r => r.status === 'created').length;
+        const filesFailed = results.filter(r => r.type === 'file' && r.status === 'error').length;
+
+        console.log(
+          `[DataRoom] Drive sync for room ${input.dataRoomId}: found ${foldersFound} folders / ${filesFound} files; ` +
+          `created ${totalCreated} folders / ${totalSynced} files; ${filesFailed} file errors.`
+        );
 
         return {
           results,
           totalSynced,
           foldersCreated: totalCreated,
           filesCreated: totalSynced,
+          filesFound,
+          foldersFound,
+          filesFailed,
+          errors: syncErrors,
           folderName: folderInfo.folder.name,
         };
       }),
