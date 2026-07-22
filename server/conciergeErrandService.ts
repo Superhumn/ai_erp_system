@@ -47,18 +47,23 @@ export async function executeConciergeErrand(task: AiAgentTask): Promise<ErrandE
     return { success: false, error: `Invalid errand data: ${e.message}` };
   }
 
-  const { title, goal, steps = [], riskLevel } = parsed;
-  if (!goal) {
+  const { title, goal, steps = [] } = parsed;
+  if (!goal || typeof goal !== "string") {
     return { success: false, error: "Errand has no goal to execute" };
+  }
+  // Refuse to run an errand with no submitting user rather than silently
+  // executing under a fabricated (and potentially over-privileged) identity.
+  if (parsed.submittedByUserId == null) {
+    return { success: false, error: "Errand is missing the submitting user context; refusing to execute" };
   }
 
   // Act on behalf of the user who submitted the errand so user-scoped tools
   // (calendar, Gmail, etc.) resolve the right credentials. `executingErrand`
   // guards against the agent recursively planning a new errand mid-execution.
   const ctx: AIAgentContext = {
-    userId: parsed.submittedByUserId ?? 0,
+    userId: parsed.submittedByUserId,
     userName: parsed.userName ?? "Concierge",
-    userRole: parsed.userRole ?? "admin",
+    userRole: parsed.userRole ?? "member",
     companyId: parsed.companyId,
     executingErrand: true,
   };

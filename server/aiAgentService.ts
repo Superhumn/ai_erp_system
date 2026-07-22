@@ -1415,16 +1415,26 @@ async function executePlanErrand(params: any, ctx: AIAgentContext): Promise<any>
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const { title, goal, steps } = params;
+  // Validate/sanitize inputs so we never queue an un-executable errand (empty
+  // goal, non-string steps) that would only fail later, after approval.
+  const goal = typeof params.goal === "string" ? params.goal.trim() : "";
+  if (!goal) {
+    return { error: "Cannot plan an errand without a goal — restate the user's request as the goal and try again." };
+  }
+  const title = typeof params.title === "string" && params.title.trim() ? params.title.trim() : goal;
+  const steps = Array.isArray(params.steps)
+    ? params.steps.filter((s: any) => typeof s === "string" && s.trim()).map((s: string) => s.trim())
+    : [];
+
   const normalizedRisk = ["low", "medium", "high"].includes(params.riskLevel) ? params.riskLevel : "medium";
   // Low-risk errands run automatically; medium/high-risk wait for plan approval.
   const requiresApproval = normalizedRisk !== "low";
   const priority = normalizedRisk === "high" ? "high" : normalizedRisk === "low" ? "low" : "medium";
 
   const taskData = {
-    title: title || goal,
+    title,
     goal,
-    steps: Array.isArray(steps) ? steps : [],
+    steps,
     riskLevel: normalizedRisk,
     // Carried through so the executor can act on behalf of the submitting user.
     submittedByUserId: ctx.userId,
