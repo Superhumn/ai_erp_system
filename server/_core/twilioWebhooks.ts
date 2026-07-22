@@ -2,12 +2,14 @@ import type { Express, Request, Response, NextFunction } from "express";
 import twilio from "twilio";
 import { eq, or } from "drizzle-orm";
 import { ENV } from "./env";
-import { getDb } from "../db";
+import { getDb, createDocument } from "../db";
+import { storagePut } from "../storage";
 import {
   agentCallLogs,
   agentSmsLogs,
   crmContacts,
   crmInteractions,
+  whatsappMessages,
 } from "../../drizzle/schema";
 import { mapTwilioSmsStatus } from "../agent/tools/adapters/sms";
 
@@ -68,6 +70,33 @@ function mapTwilioCallStatus(status: string | undefined):
   }
 }
 
+function mapTwilioWhatsappStatus(status: string | undefined):
+  | "pending" | "sent" | "delivered" | "read" | "failed" | null {
+  if (!status) return null;
+  switch (status) {
+    case "accepted":
+    case "queued":
+    case "sending":
+      return "pending";
+    case "sent":
+      return "sent";
+    case "delivered":
+      return "delivered";
+    case "read":
+      return "read";
+    case "undelivered":
+    case "failed":
+      return "failed";
+    default:
+      return null;
+  }
+}
+
+// Twilio WhatsApp From/To arrive channel-prefixed, e.g. "whatsapp:+15551234567".
+function stripWhatsappPrefix(value: string): string {
+  return value.replace(/^whatsapp:/i, "");
+}
+
 // Twilio always delivers `From`/`To` in E.164. CRM data may have been entered
 // with formatting (parens, spaces, dashes). Match both representations.
 function normalizeToE164(phone: string): string | null {
@@ -103,6 +132,117 @@ async function findOrCreateInboundCrmContact(db: any, phone: string): Promise<nu
     source: "manual",
   }).$returningId();
   return created.id;
+}
+
+async function findOrCreateWhatsappContact(db: any, waNumber: string): Promise<number | undefined> {
+  if (!waNumber) return undefined;
+  const e164 = normalizeToE164(waNumber);
+  const match = e164 && e164 !== waNumber
+    ? or(eq(crmContacts.whatsappNumber, waNumber), eq(crmContacts.whatsappNumber, e164), eq(crmContacts.phone, waNumber), eq(crmContacts.phone, e164))
+    : or(eq(crmContacts.whatsappNumber, waNumber), eq(crmContacts.phone, waNumber));
+  const [existing] = await db.select().from(crmContacts).where(match).limit(1);
+  if (existing) {
+    // Backfill the WhatsApp number if we matched on phone only.
+    if (!existing.whatsappNumber) {
+      await db.update(crmContacts).set({ whatsappNumber: e164 ?? waNumber }).where(eq(crmContacts.id, existing.id));
+    }
+    return existing.id;
+  }
+  const [created] = await db.insert(crmContacts).values({
+    firstName: "Unknown",
+    lastName: waNumber,
+    fullName: `Unknown (${waNumber})`,
+    phone: e164 ?? waNumber,
+    whatsappNumber: e164 ?? waNumber,
+    contactType: "lead",
+    source: "manual",
+  }).$returningId();
+  return created.id;
+}
+
+function extFromMime(mime: string | undefined): string {
+  if (!mime) return "bin";
+  if (mime.includes("pdf")) return "pdf";
+  if (mime.includes("jpeg") || mime.includes("jpg")) return "jpg";
+  if (mime.includes("png")) return "png";
+  if (mime.includes("spreadsheet") || mime.includes("excel") || mime.includes("sheet")) return "xlsx";
+  const slash = mime.split("/")[1];
+  return slash ? slash.replace(/[^a-z0-9]/gi, "").slice(0, 8) || "bin" : "bin";
+}
+
+// Download a WhatsApp media attachment from Twilio (auth-protected) and file it
+// in the ERP documents store so it outlives Twilio's short-lived media URLs.
+// Returns the durable stored URL (or undefined on failure). Best-effort: never
+// throws — a media failure must not break inbound message capture.
+//
+// The media is resolved via the Twilio API (by the signature-verified message
+// SID) rather than by fetching the webhook-supplied media URL: the download
+// target is derived from the API response, not from request input, so there is
+// no SSRF surface.
+async function importWhatsappMedia(
+  waMsgId: number,
+  messageSid: string,
+  mediaTypeHint: string | undefined,
+  fromNumber: string,
+): Promise<string | undefined> {
+  try {
+    if (!ENV.twilioAccountSid || !ENV.twilioAuthToken) return undefined;
+    // Validate the SID shape before handing it to the Twilio SDK.
+    if (!/^(?:MM|SM)[0-9a-zA-Z]+$/.test(messageSid)) {
+      console.warn(`[Twilio Webhook] invalid message SID for msg ${waMsgId}`);
+      return undefined;
+    }
+
+    const twilioMod = await import("twilio");
+    const client = twilioMod.default(ENV.twilioAccountSid, ENV.twilioAuthToken);
+
+    // Look up the message's media via the API. The returned uri/contentType are
+    // response-derived (not attacker-controlled).
+    const mediaList = await client.messages(messageSid).media.list({ limit: 1 });
+    const media = mediaList[0];
+    if (!media) return undefined;
+
+    const mime = media.contentType || mediaTypeHint || "application/octet-stream";
+    const downloadUrl = `https://api.twilio.com${media.uri.replace(/\.json$/, "")}`;
+    const auth = Buffer.from(`${ENV.twilioAccountSid}:${ENV.twilioAuthToken}`).toString("base64");
+    const resp = await fetch(downloadUrl, { headers: { Authorization: `Basic ${auth}` } });
+    if (!resp.ok) {
+      console.warn(`[Twilio Webhook] media fetch failed (${resp.status}) for msg ${waMsgId}`);
+      return undefined;
+    }
+    const buffer = Buffer.from(await resp.arrayBuffer());
+    const filename = `whatsapp-${waMsgId}.${extFromMime(mime)}`;
+    const fileKey = `documents/whatsapp/${waMsgId}-${filename}`;
+
+    let fileUrl: string;
+    try {
+      fileUrl = (await storagePut(fileKey, buffer, mime)).url;
+    } catch {
+      // No object storage configured — skip persisting a document rather than
+      // stuff a base64 data: URL into the TEXT `fileUrl` column (which would
+      // overflow) with a fileKey pointing at a non-existent object. The Twilio
+      // media URL stays on the message for reference.
+      console.warn(`[Twilio Webhook] storage not configured; skipping stored document for msg ${waMsgId}`);
+      return undefined;
+    }
+
+    await createDocument({
+      name: filename,
+      type: "other",
+      referenceType: "whatsapp",
+      referenceId: waMsgId,
+      fileUrl,
+      fileKey,
+      fileSize: buffer.length,
+      mimeType: mime,
+      description: `Document received via WhatsApp from ${fromNumber}`,
+    } as any);
+
+    return fileUrl;
+  } catch (err) {
+    console.warn(`[Twilio Webhook] media import failed for msg ${waMsgId}:`, err);
+    return undefined;
+  }
 }
 
 const EMPTY_TWIML = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response/>";
@@ -239,6 +379,124 @@ export function registerTwilioWebhooks(app: Express): void {
       res.status(200).send(EMPTY_TWIML);
     } catch (err) {
       console.error("[Twilio Webhook] sms/inbound error:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Inbound WhatsApp — idempotent on Twilio's MessageSid. Mirrors the SMS handler
+  // but writes to whatsapp_messages and links the supplier/contact by number.
+  app.post("/api/twilio/whatsapp/inbound", verify, async (req: Request, res: Response) => {
+    try {
+      const params = (req.body ?? {}) as TwilioParams;
+      const from = stripWhatsappPrefix(params.From ?? "");
+      const body = params.Body ?? "";
+      const messageSid = params.MessageSid || params.SmsSid;
+      const numMedia = params.NumMedia ? Number(params.NumMedia) : 0;
+      const mediaUrl = numMedia > 0 ? params.MediaUrl0 : undefined;
+      const mediaType = numMedia > 0 ? params.MediaContentType0 : undefined;
+
+      const db = await getDb();
+      if (!db) {
+        res.set("Content-Type", "text/xml");
+        return res.status(200).send(EMPTY_TWIML);
+      }
+
+      if (messageSid) {
+        const [dup] = await db.select().from(whatsappMessages)
+          .where(eq(whatsappMessages.messageId, messageSid))
+          .limit(1);
+        if (dup) {
+          res.set("Content-Type", "text/xml");
+          return res.status(200).send(EMPTY_TWIML);
+        }
+      }
+
+      const contactId = await findOrCreateWhatsappContact(db, from);
+      let contactName: string | undefined;
+      if (contactId) {
+        const [contact] = await db.select().from(crmContacts).where(eq(crmContacts.id, contactId)).limit(1);
+        if (contact) contactName = contact.fullName ?? contact.firstName ?? undefined;
+      }
+
+      const [waMsg] = await db.insert(whatsappMessages).values({
+        contactId,
+        messageId: messageSid,
+        conversationId: `wa_${from}`,
+        whatsappNumber: from,
+        contactName,
+        direction: "inbound",
+        messageType: mediaUrl ? "document" : "text",
+        content: body,
+        mediaUrl,
+        mediaType,
+        status: "delivered",
+        sentAt: new Date(),
+      }).$returningId();
+
+      if (contactId) {
+        await db.insert(crmInteractions).values({
+          contactId,
+          channel: "whatsapp",
+          interactionType: "received",
+          subject: "Inbound WhatsApp",
+          content: body,
+          whatsappMessageId: waMsg.id,
+        });
+        await db.update(crmContacts)
+          .set({ lastRepliedAt: new Date() })
+          .where(eq(crmContacts.id, contactId));
+      }
+
+      // File any attached document into the ERP store in the background so the
+      // webhook responds quickly. Repoints the message at the durable URL.
+      if (mediaUrl && messageSid) {
+        void importWhatsappMedia(waMsg.id, messageSid, mediaType, from)
+          .then((durable) => {
+            if (durable) {
+              return db.update(whatsappMessages)
+                .set({ mediaUrl: durable })
+                .where(eq(whatsappMessages.id, waMsg.id));
+            }
+          })
+          .catch((e) => console.warn("[Twilio Webhook] media post-process failed:", e));
+      }
+
+      res.set("Content-Type", "text/xml");
+      res.status(200).send(EMPTY_TWIML);
+    } catch (err) {
+      console.error("[Twilio Webhook] whatsapp/inbound error:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Outbound WhatsApp status callback — attaches delivery/read state by MessageSid.
+  app.post("/api/twilio/whatsapp/status", verify, async (req: Request, res: Response) => {
+    try {
+      const params = (req.body ?? {}) as TwilioParams;
+      const messageSid = params.MessageSid || params.SmsSid;
+      const status = mapTwilioWhatsappStatus(params.MessageStatus || params.SmsStatus);
+      const errorMessage = params.ErrorMessage;
+
+      if (!messageSid) {
+        return res.status(400).json({ error: "Missing MessageSid" });
+      }
+
+      const db = await getDb();
+      if (db && status) {
+        const update: Record<string, unknown> = { status };
+        const now = new Date();
+        if (status === "sent") update.sentAt = now;
+        if (status === "delivered") update.deliveredAt = now;
+        if (status === "read") update.readAt = now;
+        if (status === "failed" && errorMessage) update.failedReason = errorMessage;
+        await db.update(whatsappMessages)
+          .set(update)
+          .where(eq(whatsappMessages.messageId, messageSid));
+      }
+
+      res.status(200).json({ received: true });
+    } catch (err) {
+      console.error("[Twilio Webhook] whatsapp/status error:", err);
       res.status(500).json({ error: "Internal server error" });
     }
   });
