@@ -6312,7 +6312,7 @@ Be concise and helpful. Always give actionable guidance.`;
       
       create: protectedProcedure
         .input(z.object({
-          taskType: z.enum(['generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory', 'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials', 'vendor_followup', 'create_work_order', 'query', 'reply_email', 'approve_po', 'approve_invoice', 'create_vendor', 'create_material', 'create_product', 'create_bom', 'create_customer', 'create_crm_deal']),
+          taskType: z.enum(['generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory', 'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials', 'vendor_followup', 'create_work_order', 'query', 'reply_email', 'approve_po', 'approve_invoice', 'create_vendor', 'create_material', 'create_product', 'create_bom', 'create_customer', 'create_crm_deal', 'concierge_errand']),
           priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium'),
           taskData: z.string(), // JSON string with task-specific data
           aiReasoning: z.string().optional(),
@@ -6878,6 +6878,15 @@ Be concise and helpful. Always give actionable guidance.`;
                 break;
               }
               
+              case 'concierge_errand': {
+                // Replay the approved plan through the main AI agent loop.
+                const { executeConciergeErrand } = await import('./conciergeErrandService');
+                const errandResult = await executeConciergeErrand(task);
+                if (!errandResult.success) throw new Error(errandResult.error || 'Errand execution failed');
+                result = errandResult.data;
+                break;
+              }
+
               default:
                 result = { executed: true, taskType: task.taskType };
             }

@@ -53,6 +53,7 @@ import {
   Settings,
   Trash2,
   Plus,
+  ListChecks,
 } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
@@ -352,6 +353,7 @@ const taskTypeIcons: Record<string, any> = {
   reorder_materials: Package,
   vendor_followup: Mail,
   create_crm_deal: Building2,
+  concierge_errand: ListChecks,
 };
 
 const taskTypeLabels: Record<string, string> = {
@@ -367,6 +369,7 @@ const taskTypeLabels: Record<string, string> = {
   vendor_followup: "Vendor Follow-up",
   query: "Suggested Task",
   create_crm_deal: "Create CRM Deal",
+  concierge_errand: "Errand",
 };
 
 const priorityColors: Record<string, string> = {
@@ -564,7 +567,52 @@ export default function ApprovalQueue() {
                     )}
                   </div>
                 )}
-                
+
+                {task.taskType === "concierge_errand" && (
+                  <div className="text-sm text-muted-foreground space-y-2">
+                    {taskData.goal && (
+                      <p><strong>Goal:</strong> {taskData.goal}</p>
+                    )}
+                    {taskData.riskLevel && (
+                      <p>
+                        <strong>Risk:</strong>{" "}
+                        <Badge className={priorityColors[taskData.riskLevel === "high" ? "high" : taskData.riskLevel === "low" ? "low" : "medium"]}>
+                          {taskData.riskLevel}
+                        </Badge>
+                      </p>
+                    )}
+                    {Array.isArray(taskData.steps) && taskData.steps.length > 0 && (
+                      <div>
+                        <p className="font-medium text-foreground mb-1 flex items-center gap-1">
+                          <ListChecks className="h-4 w-4" /> Plan
+                        </p>
+                        <ol className="list-decimal list-inside space-y-0.5">
+                          {taskData.steps.map((step: string, i: number) => (
+                            <li key={i}>{step}</li>
+                          ))}
+                        </ol>
+                      </div>
+                    )}
+                    {task.executionResult && (() => {
+                      try {
+                        const r = JSON.parse(task.executionResult);
+                        return (
+                          <div className="mt-2 p-2 bg-green-50 rounded border border-green-200 text-foreground">
+                            {r.summary && <p>{r.summary}</p>}
+                            {Array.isArray(r.failedActions) && r.failedActions.length > 0 && (
+                              <p className="mt-1 text-orange-700">
+                                {r.failedActions.length} step(s) could not be completed.
+                              </p>
+                            )}
+                          </div>
+                        );
+                      } catch {
+                        return null;
+                      }
+                    })()}
+                  </div>
+                )}
+
                 {task.taskType === "send_rfq" && (
                   <div className="text-sm text-muted-foreground space-y-1">
                     <p><strong>Material:</strong> {taskData.materialId ? (

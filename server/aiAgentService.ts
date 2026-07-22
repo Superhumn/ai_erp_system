@@ -36,6 +36,9 @@ export interface AIAgentContext {
   userName: string;
   userRole: string;
   companyId?: number;
+  // Set when the agent is replaying an already-approved concierge errand, so it
+  // executes the plan directly instead of planning (and queuing) a new errand.
+  executingErrand?: boolean;
 }
 
 export interface AIAgentResponse {
@@ -419,6 +422,32 @@ const AI_TOOLS: Tool[] = [
           requiresApproval: { type: "boolean" },
         },
         required: ["taskType", "description", "taskData"],
+      },
+    },
+  },
+  // Concierge Errand Delegation
+  {
+    type: "function",
+    function: {
+      name: "plan_errand",
+      description: "Delegate a multi-step chore/errand the user wants DONE (not a question to answer). Use this when the user asks you to carry out a task that takes several actions or has real-world consequences — e.g. 'chase the overdue invoice from Acme', 'onboard this new vendor and email them the forms', 'follow up with everyone who didn't reply'. Produce a short title, restate the goal, list the concrete steps you'll take, and set a risk level. Low-risk errands run automatically; medium/high-risk errands are sent to the user's approval queue and only run after they approve the plan. Do NOT use this for simple questions or a single trivial action — answer or do those directly.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Short human-readable title for the errand" },
+          goal: { type: "string", description: "The user's original request, restated clearly" },
+          steps: {
+            type: "array",
+            items: { type: "string" },
+            description: "Ordered list of the concrete steps you will take to complete the errand",
+          },
+          riskLevel: {
+            type: "string",
+            enum: ["low", "medium", "high"],
+            description: "low = safe/reversible, runs automatically; medium/high = needs the user to approve the plan first (money movement, external emails, bulk changes, deletes)",
+          },
+        },
+        required: ["title", "goal", "steps", "riskLevel"],
       },
     },
   },
@@ -1370,6 +1399,73 @@ async function executeCreateTask(params: any, ctx: AIAgentContext): Promise<any>
 }
 
 // ============================================
+// CONCIERGE ERRAND PLANNING
+// ============================================
+
+// Turn a user chore into a tracked, plan-based errand. Low-risk errands are
+// auto-approved (the background scheduler runs them); medium/high-risk errands
+// land in the Approval Queue as a plan the user reviews before anything runs.
+async function executePlanErrand(params: any, ctx: AIAgentContext): Promise<any> {
+  if (ctx.executingErrand) {
+    return {
+      error: "You are already executing an approved errand. Perform the steps directly with your action tools instead of creating a new errand.",
+    };
+  }
+
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const { title, goal, steps } = params;
+  const normalizedRisk = ["low", "medium", "high"].includes(params.riskLevel) ? params.riskLevel : "medium";
+  // Low-risk errands run automatically; medium/high-risk wait for plan approval.
+  const requiresApproval = normalizedRisk !== "low";
+  const priority = normalizedRisk === "high" ? "high" : normalizedRisk === "low" ? "low" : "medium";
+
+  const taskData = {
+    title: title || goal,
+    goal,
+    steps: Array.isArray(steps) ? steps : [],
+    riskLevel: normalizedRisk,
+    // Carried through so the executor can act on behalf of the submitting user.
+    submittedByUserId: ctx.userId,
+    userName: ctx.userName,
+    userRole: ctx.userRole,
+    companyId: ctx.companyId,
+  };
+
+  const task = await db.insert(aiAgentTasks).values({
+    taskType: "concierge_errand",
+    status: requiresApproval ? "pending_approval" : "approved",
+    priority,
+    taskData: JSON.stringify(taskData),
+    aiReasoning: title || goal,
+    aiConfidence: "0.85",
+    requiresApproval,
+  }).$returningId();
+
+  await db.insert(aiAgentLogs).values({
+    taskId: task[0].id,
+    action: "errand_planned",
+    status: "info",
+    message: `Concierge errand ${requiresApproval ? "queued for approval" : "auto-approved (low risk)"} for ${ctx.userName}`,
+    details: JSON.stringify({ title: taskData.title, riskLevel: normalizedRisk, steps: taskData.steps }),
+  });
+
+  return {
+    errandCreated: true,
+    taskId: task[0].id,
+    title: taskData.title,
+    riskLevel: normalizedRisk,
+    steps: taskData.steps,
+    requiresApproval,
+    status: requiresApproval ? "pending_approval" : "approved",
+    message: requiresApproval
+      ? "Errand planned and sent to the approval queue — it will run once you approve the plan."
+      : "Low-risk errand — approved automatically and queued to run.",
+  };
+}
+
+// ============================================
 // CALENDAR TOOL EXECUTION
 // ============================================
 
@@ -1644,6 +1740,8 @@ async function executeTool(toolName: string, params: any, ctx: AIAgentContext): 
       return executeGenerateReport(params, ctx);
     case "create_task":
       return executeCreateTask(params, ctx);
+    case "plan_errand":
+      return executePlanErrand(params, ctx);
     case "run_ai_analytics":
       return executeRunAiAnalytics(params, ctx);
     case "manage_calendar":
@@ -1795,6 +1893,11 @@ CRITICAL BEHAVIOR RULES:
 4. NEVER list steps for the user to follow. NEVER say "you need to first..." — just do it or ask for the specific missing detail.
 5. Use sensible defaults: auto-generate SKUs, use today's date, set status to "draft", etc.
 6. Be concise. Don't explain what you're doing — just do it and confirm the result.
+
+DELEGATED ERRANDS (concierge mode):
+- Tell apart a QUESTION or single trivial action ("how many orders shipped today?", "mark PO-123 approved") from a CHORE the user wants carried out for them ("chase the overdue invoice from Acme", "onboard this vendor and email them the forms", "follow up with everyone who hasn't replied"). Answer questions and do single trivial actions directly, as above.
+- For a multi-step chore with real-world side effects, call plan_errand with a title, the restated goal, an ordered list of concrete steps, and a riskLevel. Low-risk (safe/reversible) errands run automatically; medium/high-risk errands (money movement, outbound emails, bulk changes, deletes) go to the user's approval queue and run only after they approve the plan.
+- After calling plan_errand, just tell the user whether the errand is running or waiting for their approval — do NOT perform the steps yourself in that same turn; execution happens separately once the plan is approved.
 
 Current System Status:
 - Vendors: ${vendorCount[0]?.count || 0}
