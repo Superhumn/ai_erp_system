@@ -1342,12 +1342,208 @@ export async function getPurchaseOrderById(id: number) {
 export async function getPurchaseOrderWithItems(id: number) {
   const db = await getDb();
   if (!db) return undefined;
-  
+
   const po = await getPurchaseOrderById(id);
   if (!po) return undefined;
-  
-  const items = await db.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, id));
-  return { ...po, items };
+
+  // Rich items (include the linked raw material name/unit) so the detail view
+  // can show a proper description instead of a bare id.
+  const items = await getPurchaseOrderItems(id);
+
+  // Join the vendor so callers never have to re-derive the name client-side.
+  const vendor = po.vendorId ? await getVendorById(po.vendorId) : null;
+
+  // Best-effort resolve the human names behind createdBy / approvedBy so the
+  // detail view can show "Created by Jane" instead of a bare user id. These are
+  // cosmetic — never fail the whole load if a lookup errors.
+  let createdByName: string | null = null;
+  let approvedByName: string | null = null;
+  try {
+    if (po.createdBy) createdByName = (await getUserById(po.createdBy))?.name ?? null;
+    if (po.approvedBy) approvedByName = (await getUserById(po.approvedBy))?.name ?? null;
+  } catch {
+    /* names are cosmetic; ignore lookup failures */
+  }
+
+  return { ...po, items, vendor: vendor ?? null, createdByName, approvedByName };
+}
+
+/**
+ * All documents attached to a purchase order, normalized across the three
+ * places they can live:
+ *   - `parsedDocuments`  — inbound vendor emails (invoices / order confirmations)
+ *     auto-parsed by the document-import pipeline; the original file bytes live on
+ *     the linked `emailAttachments` row and are served by `/api/attachments/:id`.
+ *   - `supplierDocuments` — files uploaded by the vendor through the supplier portal.
+ *   - `documents`         — operator-uploaded files tagged to this PO.
+ *
+ * Returns a single flat, view-ready list so the UI can render "Documents" without
+ * knowing where each file came from.
+ */
+export async function getPurchaseOrderDocuments(purchaseOrderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const out: Array<{
+    id: string;
+    source: "parsed" | "supplier" | "document";
+    kind: string;
+    name: string;
+    date: Date | null;
+    mimeType: string | null;
+    viewUrl: string | null;
+    downloadUrl: string | null;
+    status: string | null;
+  }> = [];
+
+  // 1) Parsed inbound documents (invoices / order confirmations from the vendor).
+  const parsed = await db
+    .select()
+    .from(parsedDocuments)
+    .where(eq(parsedDocuments.purchaseOrderId, purchaseOrderId))
+    .orderBy(desc(parsedDocuments.documentDate));
+  for (const p of parsed) {
+    const viewUrl = p.attachmentId ? `/api/attachments/${p.attachmentId}` : null;
+    out.push({
+      id: `parsed-${p.id}`,
+      source: "parsed",
+      kind: p.documentType || "document",
+      name: p.documentNumber
+        ? `${String(p.documentType || "Document").replace(/_/g, " ")} ${p.documentNumber}`
+        : `${String(p.documentType || "Document").replace(/_/g, " ")}`,
+      date: p.documentDate ?? p.createdAt ?? null,
+      mimeType: null,
+      viewUrl,
+      downloadUrl: viewUrl ? `${viewUrl}?download=1` : null,
+      status: p.isApproved ? "approved" : p.isReviewed ? "reviewed" : "pending",
+    });
+  }
+
+  // 2) Supplier-portal uploads (commercial invoice, packing list, HS codes, ...).
+  const supplier = await db
+    .select()
+    .from(supplierDocuments)
+    .where(eq(supplierDocuments.purchaseOrderId, purchaseOrderId))
+    .orderBy(desc(supplierDocuments.createdAt));
+  for (const s of supplier) {
+    out.push({
+      id: `supplier-${s.id}`,
+      source: "supplier",
+      kind: s.documentType || "other",
+      name: s.fileName || String(s.documentType || "Document").replace(/_/g, " "),
+      date: s.createdAt ?? null,
+      mimeType: s.mimeType ?? null,
+      viewUrl: s.fileUrl || null,
+      downloadUrl: s.fileUrl || null,
+      status: s.status ?? null,
+    });
+  }
+
+  // 3) Operator-uploaded documents tagged to this PO.
+  const docs = await db
+    .select()
+    .from(documents)
+    .where(and(eq(documents.referenceType, "po"), eq(documents.referenceId, purchaseOrderId)))
+    .orderBy(desc(documents.createdAt));
+  for (const d of docs) {
+    out.push({
+      id: `document-${d.id}`,
+      source: "document",
+      kind: d.type || "other",
+      name: d.name || "Document",
+      date: d.createdAt ?? null,
+      mimeType: d.mimeType ?? null,
+      viewUrl: d.fileUrl || null,
+      downloadUrl: d.fileUrl || null,
+      status: null,
+    });
+  }
+
+  return out;
+}
+
+/**
+ * Replace all line items on a draft PO in one transaction. Cleans up the
+ * raw-material junction rows for the removed items first so the FK to
+ * `purchaseOrderItems` never dangles, then reinserts the new set.
+ * Returns the recomputed subtotal.
+ */
+export async function replacePurchaseOrderItems(
+  purchaseOrderId: number,
+  items: Array<{ productId?: number | null; description: string; quantity: string; unitPrice: string; totalAmount: string }>,
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db.transaction(async (tx) => {
+    const existing = await tx
+      .select({ id: purchaseOrderItems.id })
+      .from(purchaseOrderItems)
+      .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
+    const ids = existing.map((r) => r.id);
+    if (ids.length > 0) {
+      await tx.delete(purchaseOrderRawMaterials).where(inArray(purchaseOrderRawMaterials.purchaseOrderItemId, ids));
+      await tx.delete(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
+    }
+    for (const item of items) {
+      await tx.insert(purchaseOrderItems).values({
+        purchaseOrderId,
+        productId: item.productId ?? null,
+        description: item.description,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        totalAmount: item.totalAmount,
+      });
+    }
+  });
+
+  const subtotal = items.reduce((sum, i) => sum + (parseFloat(i.totalAmount) || 0), 0);
+  return { subtotal };
+}
+
+/**
+ * Record received quantities against a PO's line items and roll the PO status
+ * forward to `partial` or `received` based on whether every line is fully in.
+ * Lightweight counterpart to `receivePurchaseOrderItems` — updates the PO's own
+ * bookkeeping without requiring a warehouse / inventory posting.
+ */
+export async function setPurchaseOrderReceivedQuantities(
+  purchaseOrderId: number,
+  received: Array<{ purchaseOrderItemId: number; receivedQuantity: string }>,
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  for (const r of received) {
+    await db
+      .update(purchaseOrderItems)
+      .set({ receivedQuantity: r.receivedQuantity })
+      .where(and(eq(purchaseOrderItems.id, r.purchaseOrderItemId), eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId)));
+  }
+
+  // Recompute status from the full item set.
+  const items = await db
+    .select({ quantity: purchaseOrderItems.quantity, receivedQuantity: purchaseOrderItems.receivedQuantity })
+    .from(purchaseOrderItems)
+    .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
+
+  let anyReceived = false;
+  let allReceived = items.length > 0;
+  for (const it of items) {
+    const ordered = parseFloat(it.quantity?.toString() || "0");
+    const got = parseFloat(it.receivedQuantity?.toString() || "0");
+    if (got > 0) anyReceived = true;
+    if (got < ordered) allReceived = false;
+  }
+
+  const status = allReceived ? "received" : anyReceived ? "partial" : undefined;
+  if (status) {
+    await db
+      .update(purchaseOrders)
+      .set({ status: status as any, ...(status === "received" ? { receivedDate: new Date() } : {}) })
+      .where(eq(purchaseOrders.id, purchaseOrderId));
+  }
+  return { status: status ?? null };
 }
 
 export async function createPurchaseOrder(data: InsertPurchaseOrder) {

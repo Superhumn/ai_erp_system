@@ -45,6 +45,7 @@ import { formatCurrency } from "@/lib/format";
 import { getStatusColor } from "@/lib/statusColors";
 import WhatsAppDrawer from "@/components/WhatsAppDrawer";
 import LinkContactDialog from "@/components/LinkContactDialog";
+import PurchaseOrderDetailSheet from "./PurchaseOrderDetailSheet";
 
 type LineItem = {
   productId?: number;
@@ -62,6 +63,7 @@ export default function PurchaseOrders() {
   const [textInput, setTextInput] = useState("");
   const [activeAction, setActiveAction] = useState<'draft' | 'email' | null>(null);
   const [deletePOId, setDeletePOId] = useState<number | null>(null);
+  const [detailPoId, setDetailPoId] = useState<number | null>(null);
   const [chatTarget, setChatTarget] = useState<{ contactId: number; whatsappNumber: string; contactName?: string; subtitle?: string } | null>(null);
   const [linkTarget, setLinkTarget] = useState<{ vendorId: number; vendorName: string; vendorPhone?: string | null; poNumber: string } | null>(null);
   const [poPreview, setPoPreview] = useState<{
@@ -487,9 +489,9 @@ export default function PurchaseOrders() {
           <DialogContent>
             <form onSubmit={handleSubmit}>
               <DialogHeader>
-                <DialogTitle>Create PO from Text</DialogTitle>
+                <DialogTitle>Create Purchase Order</DialogTitle>
                 <DialogDescription>
-                  Describe what you want to order in plain text, and we'll create a PO for you.
+                  Select a vendor (or create a new one), add line items, and save. New vendors are created on the fly.
                 </DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">
@@ -706,25 +708,32 @@ export default function PurchaseOrders() {
                   <TableHead>Status</TableHead>
                   <TableHead>Order Date</TableHead>
                   <TableHead>Expected Date</TableHead>
-                  <TableHead className="text-right">Items Count</TableHead>
-                  <TableHead className="text-right">Invoices</TableHead>
+                  <TableHead className="text-right">Documents</TableHead>
                   <TableHead>Notes</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredPOs.map((po) => {
-                  const vendor = vendors?.find((v) => v.id === po.vendorId);
+                  // Prefer the server-joined vendor (always present) and only fall
+                  // back to the client vendor list, then to the id, so the real
+                  // name shows even when the vendor isn't in the loaded list.
+                  const vendor = (po as any).vendor || vendors?.find((v) => v.id === po.vendorId);
+                  const vendorName = vendor?.name || (po.vendorId ? `Vendor #${po.vendorId}` : "-");
                   return (
-                    <TableRow key={po.id}>
-                      <TableCell className="font-mono">{po.poNumber}</TableCell>
-                      <TableCell className="font-medium">
-                        {vendor?.name || (po.vendorId ? `Vendor #${po.vendorId}` : "-")}
+                    <TableRow
+                      key={po.id}
+                      className="cursor-pointer"
+                      onClick={() => setDetailPoId(po.id)}
+                    >
+                      <TableCell className="font-mono text-primary underline-offset-2 hover:underline">
+                        {po.poNumber}
                       </TableCell>
+                      <TableCell className="font-medium">{vendorName}</TableCell>
                       <TableCell className="text-right font-mono">
                         {formatCurrency(po.totalAmount)}
                       </TableCell>
-                      <TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
                         <Select
                           value={po.status}
                           onValueChange={(value) => {
@@ -755,9 +764,6 @@ export default function PurchaseOrders() {
                         {po.expectedDate ? format(new Date(po.expectedDate), "MMM d, yyyy") : "-"}
                       </TableCell>
                       <TableCell className="text-right">
-                        {(po as any).items?.length ?? "-"}
-                      </TableCell>
-                      <TableCell className="text-right">
                         {invoiceCountMap.get(po.id) ? (
                           <Badge variant="outline" className="font-mono">
                             {invoiceCountMap.get(po.id)}
@@ -769,7 +775,7 @@ export default function PurchaseOrders() {
                       <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
                         {po.notes || "-"}
                       </TableCell>
-                      <TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center gap-1">
                           <Button
                             variant="ghost"
@@ -829,6 +835,14 @@ export default function PurchaseOrders() {
           )}
         </CardContent>
       </Card>
+
+      {/* PO detail drawer */}
+      <PurchaseOrderDetailSheet
+        poId={detailPoId}
+        open={detailPoId !== null}
+        onOpenChange={(open) => { if (!open) setDetailPoId(null); }}
+        onChanged={() => utils.purchaseOrders.list.invalidate()}
+      />
 
       {/* Delete PO confirmation */}
       <Dialog open={deletePOId !== null} onOpenChange={(open) => { if (!open) setDeletePOId(null); }}>

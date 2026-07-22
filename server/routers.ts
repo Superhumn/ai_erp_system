@@ -2368,6 +2368,11 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
     parsedInvoices: opsProcedure
       .input(z.object({ purchaseOrderId: z.number() }))
       .query(({ input }) => db.getParsedDocumentsForPO(input.purchaseOrderId)),
+    // All documents attached to a PO (parsed inbound + supplier-portal uploads +
+    // operator uploads), normalized into a single view-ready list.
+    documents: opsProcedure
+      .input(z.object({ purchaseOrderId: z.number() }))
+      .query(({ input }) => db.getPurchaseOrderDocuments(input.purchaseOrderId)),
     parsedInvoiceCounts: opsProcedure
       .input(z.object({ purchaseOrderIds: z.array(z.number()) }))
       .query(async ({ input }) => {
@@ -2431,12 +2436,15 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         id: z.number(),
         status: z.enum(['draft', 'sent', 'confirmed', 'partial', 'received', 'cancelled']).optional(),
         receivedDate: z.date().optional(),
+        expectedDate: z.date().nullable().optional(),
+        orderDate: z.date().optional(),
+        shippingAddress: z.string().optional(),
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
         const oldPO = await db.getPurchaseOrderById(id);
-        await db.updatePurchaseOrder(id, data);
+        await db.updatePurchaseOrder(id, data as any);
         await createAuditLog(ctx.user.id, 'update', 'purchaseOrder', id, oldPO?.poNumber, oldPO, data);
         
         // Create notification for PO status changes
@@ -2459,6 +2467,56 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         }
         
         return { success: true };
+      }),
+    // Replace the line items on a PO and recompute its totals. Editing items is
+    // only allowed while the PO is still a draft (nothing has been sent/received).
+    updateItems: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        items: z.array(z.object({
+          productId: z.number().nullable().optional(),
+          description: z.string().min(1),
+          quantity: z.string(),
+          unitPrice: z.string(),
+          totalAmount: z.string(),
+        })).min(1),
+        taxAmount: z.string().optional(),
+        shippingAmount: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const po = await db.getPurchaseOrderById(input.id);
+        if (!po) throw new TRPCError({ code: 'NOT_FOUND', message: 'Purchase order not found' });
+        if (po.status !== 'draft') {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Line items can only be edited while the PO is a draft.' });
+        }
+        const { subtotal } = await db.replacePurchaseOrderItems(input.id, input.items);
+        const tax = parseFloat(input.taxAmount ?? po.taxAmount ?? '0') || 0;
+        const shipping = parseFloat(input.shippingAmount ?? po.shippingAmount ?? '0') || 0;
+        await db.updatePurchaseOrder(input.id, {
+          subtotal: subtotal.toFixed(2),
+          taxAmount: tax.toFixed(2),
+          shippingAmount: shipping.toFixed(2),
+          totalAmount: (subtotal + tax + shipping).toFixed(2),
+        } as any);
+        await createAuditLog(ctx.user.id, 'update', 'purchaseOrder', input.id, po.poNumber);
+        return { success: true };
+      }),
+    // Record received quantities against line items and advance the PO status
+    // to partial / received accordingly.
+    receiveItems: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        items: z.array(z.object({
+          purchaseOrderItemId: z.number(),
+          receivedQuantity: z.string(),
+        })).min(1),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const po = await db.getPurchaseOrderById(input.id);
+        if (!po) throw new TRPCError({ code: 'NOT_FOUND', message: 'Purchase order not found' });
+        const result = await db.setPurchaseOrderReceivedQuantities(input.id, input.items);
+        await createAuditLog(ctx.user.id, 'update', 'purchaseOrder', input.id, po.poNumber, { status: po.status }, { status: result.status });
+        return { success: true, status: result.status };
       }),
     approve: opsProcedure
       .input(z.object({ id: z.number() }))
