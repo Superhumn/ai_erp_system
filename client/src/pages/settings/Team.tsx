@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ContractorDocumentAccessDialog } from "@/components/ContractorDocumentAccessDialog";
 import { toast } from "sonner";
 import { UserPlus, Mail, Shield, Building2, Warehouse, Copy, Users, Clock, CheckCircle, XCircle, AlertCircle, Send, RefreshCw } from "lucide-react";
 
@@ -48,6 +49,9 @@ export default function Team() {
   const [inviteRole, setInviteRole] = useState<string>("user");
   const [linkedVendorId, setLinkedVendorId] = useState<number | null>(null);
   const [linkedWarehouseId, setLinkedWarehouseId] = useState<number | null>(null);
+
+  // Contractor document-access dialog
+  const [docAccessMember, setDocAccessMember] = useState<{ id: number; name: string } | null>(null);
 
   // Form state for email invite
   const [emailInviteEmail, setEmailInviteEmail] = useState("");
@@ -458,6 +462,20 @@ export default function Team() {
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">
+                              {member.role === "contractor" && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() =>
+                                    setDocAccessMember({
+                                      id: member.id,
+                                      name: member.name || member.email || "Contractor",
+                                    })
+                                  }
+                                >
+                                  Documents
+                                </Button>
+                              )}
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -890,6 +908,13 @@ export default function Team() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        <ContractorDocumentAccessDialog
+          userId={docAccessMember?.id ?? null}
+          userName={docAccessMember?.name ?? ""}
+          open={!!docAccessMember}
+          onOpenChange={(o) => !o && setDocAccessMember(null)}
+        />
       </div>
   );
 }

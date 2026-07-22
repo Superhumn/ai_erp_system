@@ -236,4 +236,47 @@ describe("Sidebar navigation structure", () => {
       expect(people.items.map((i) => i.label)).not.toContain("Legal");
     });
   });
+
+  // External / outside-the-org roles must only see their own portal — never any
+  // internal navigation. These roles are intentionally excluded from the locked
+  // 6-section internal structure (product approved 2026-06-16).
+  describe("external (outsider) roles", () => {
+    // Each outsider role's complete allowed menu — nothing else may appear.
+    const EXTERNAL_PORTALS: Record<string, string[]> = {
+      copacker: ["Copacker Portal"],
+      vendor: ["Vendor Portal"],
+      investor: ["Investor Portal"],
+      contractor: ["Projects", "Documents"],
+    };
+
+    it.each(Object.entries(EXTERNAL_PORTALS))(
+      "%s sees a single Portal section with only its own entries",
+      (role, expectedItems) => {
+        const groups = getMenuGroups(role);
+        expect(groups).toHaveLength(1);
+        expect(groups[0].label).toBe("Portal");
+        expect(groups[0].items.map((i) => i.label)).toEqual(expectedItems);
+      },
+    );
+
+    it.each(Object.keys(EXTERNAL_PORTALS))(
+      "%s never sees any internal section",
+      (role) => {
+        const sections = getMenuGroups(role).map((g) => g.label);
+        for (const internal of CANONICAL_SECTIONS) {
+          expect(sections).not.toContain(internal);
+        }
+      },
+    );
+
+    it.each(Object.keys(EXTERNAL_PORTALS))(
+      "%s never sees internal items like Email Inbox, HR, SOPs, Finance",
+      (role) => {
+        const labels = labelsOf(role);
+        for (const internal of ["Email Inbox", "HR", "Recruiting", "SOPs", "Finance", "Messaging", "Meetings"]) {
+          expect(labels).not.toContain(internal);
+        }
+      },
+    );
+  });
 });

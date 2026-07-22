@@ -44,6 +44,7 @@ import {
   inboundEmails, emailAttachments, parsedDocuments, parsedDocumentLineItems, autoReplyRules, sentEmails,
   // Data room
   dataRooms, dataRoomFolders, dataRoomDocuments, dataRoomLinks, dataRoomVisitors, documentViews, dataRoomInvitations,
+  contractorFolderGrants,
   // Data room enhanced tracking
   documentPageViews, dataRoomDriveSyncConfig, dataRoomDriveSyncLogs, dataRoomEmailAccessRules, dataRoomVisitorSessions,
   // NDA e-signatures
@@ -83,6 +84,7 @@ import {
   InsertInboundEmail, InsertEmailAttachment, InsertParsedDocument, InsertParsedDocumentLineItem,
   // Data room types
   InsertDataRoom, InsertDataRoomFolder, InsertDataRoomDocument, InsertDataRoomLink, InsertDataRoomVisitor, InsertDocumentView, InsertDataRoomInvitation,
+  InsertContractorFolderGrant,
   // Data room enhanced tracking types
   InsertDocumentPageView, InsertDataRoomDriveSyncConfig, InsertDataRoomDriveSyncLog, InsertDataRoomEmailAccessRule, InsertDataRoomVisitorSession,
   // NDA types
@@ -6940,6 +6942,92 @@ export async function deleteDataRoomFolder(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.delete(dataRoomFolders).where(eq(dataRoomFolders.id, id));
+}
+
+// ── Contractor folder grants (per-user data-room folder access) ──
+
+export async function getContractorFolderGrants(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(contractorFolderGrants).where(eq(contractorFolderGrants.userId, userId));
+}
+
+export async function createContractorFolderGrant(data: InsertContractorFolderGrant) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  // Idempotent per (userId, folderId): drop any prior grant first so re-granting
+  // with a different mode replaces rather than collides with the unique index.
+  await db.delete(contractorFolderGrants).where(
+    and(eq(contractorFolderGrants.userId, data.userId), eq(contractorFolderGrants.folderId, data.folderId)),
+  );
+  const result = await db.insert(contractorFolderGrants).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function deleteContractorFolderGrant(userId: number, folderId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(contractorFolderGrants).where(
+    and(eq(contractorFolderGrants.userId, userId), eq(contractorFolderGrants.folderId, folderId)),
+  );
+}
+
+// Pure access decision (no DB) so it can be unit-tested directly: a folder is
+// accessible if it's individually granted (mode 'allow') or its visibleToRoles
+// includes the role, and it is not individually restricted (mode 'restrict',
+// which wins over role-wide visibility).
+export function filterAccessibleFolders<T extends { id: number; visibleToRoles?: unknown }>(
+  allFolders: T[],
+  grants: Array<{ folderId: number; mode: string }>,
+  role: string,
+): T[] {
+  const allowIds = new Set(grants.filter((g) => g.mode === "allow").map((g) => g.folderId));
+  const restrictIds = new Set(grants.filter((g) => g.mode === "restrict").map((g) => g.folderId));
+  return allFolders.filter((f) => {
+    if (restrictIds.has(f.id)) return false;
+    if (allowIds.has(f.id)) return true;
+    const roles = f.visibleToRoles;
+    return Array.isArray(roles) && roles.includes(role);
+  });
+}
+
+// Resolve the data-room folders a logged-in app-role user (e.g. a contractor)
+// may access, across all data rooms. See filterAccessibleFolders for the rule.
+export async function getAccessibleDataRoomFoldersForUser(userId: number, role: string) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const [allFolders, grants] = await Promise.all([
+    db.select().from(dataRoomFolders),
+    getContractorFolderGrants(userId),
+  ]);
+
+  return filterAccessibleFolders(allFolders, grants, role);
+}
+
+// All folders with their data room name — for the admin access-assignment UI.
+export async function getAllDataRoomFoldersWithRoom() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({
+    id: dataRoomFolders.id,
+    name: dataRoomFolders.name,
+    dataRoomId: dataRoomFolders.dataRoomId,
+    dataRoomName: dataRooms.name,
+    visibleToRoles: dataRoomFolders.visibleToRoles,
+  })
+    .from(dataRoomFolders)
+    .leftJoin(dataRooms, eq(dataRoomFolders.dataRoomId, dataRooms.id))
+    .orderBy(dataRooms.name, dataRoomFolders.sortOrder, dataRoomFolders.name);
+}
+
+// Documents contained in the given set of folder ids (across data rooms).
+export async function getDataRoomDocumentsInFolders(folderIds: number[]) {
+  const db = await getDb();
+  if (!db || folderIds.length === 0) return [];
+  return db.select().from(dataRoomDocuments)
+    .where(inArray(dataRoomDocuments.folderId, folderIds))
+    .orderBy(dataRoomDocuments.sortOrder, dataRoomDocuments.name);
 }
 
 // Data Room Documents

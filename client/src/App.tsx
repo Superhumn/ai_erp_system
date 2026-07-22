@@ -8,6 +8,7 @@ import { AIAgentProvider } from "./contexts/AIAgentContext";
 import DashboardLayout from "./components/DashboardLayout";
 import { ModuleErrorBoundary } from "./components/ModuleErrorBoundary";
 import { OfflineIndicator } from "@/components/OfflineIndicator";
+import { useAuth } from "@/_core/hooks/useAuth";
 
 // Eagerly loaded pages (high-traffic, first paint)
 import Home from "./pages/Home";
@@ -158,6 +159,7 @@ const Import = lazy(() => import("./pages/Import"));
 // Portals
 const CopackerPortal = lazy(() => import("./pages/portal/CopackerPortal"));
 const VendorPortal = lazy(() => import("./pages/portal/VendorPortal"));
+const ContractorDocuments = lazy(() => import("./pages/portal/ContractorDocuments"));
 
 // SOPs
 const SOPs = lazy(() => import("./pages/SOPs"));
@@ -211,7 +213,55 @@ function PageLoader() {
   );
 }
 
+// External / outside-the-org roles are confined to their own portal. Their
+// landing route, and the only routes they may reach — any other path redirects
+// back to this home. This is the enforcement layer behind the portal-only menu
+// in getMenuGroups(); hiding nav is not access control on its own.
+const EXTERNAL_ROLE_HOME: Record<string, string> = {
+  copacker: "/portal/copacker",
+  vendor: "/portal/vendor",
+  investor: "/investor-portal",
+  contractor: "/projects",
+};
+
 function Router() {
+  const { user } = useAuth();
+  const role = user?.role;
+  const externalHome = role ? EXTERNAL_ROLE_HOME[role] : undefined;
+
+  // Outsiders: render only the routes their role is allowed to reach; redirect
+  // everything else (including direct-URL attempts at internal pages) home.
+  if (user && externalHome) {
+    const allowed =
+      role === "copacker"
+        ? [<Route key="cp" path="/portal/copacker" component={CopackerPortal} />]
+        : role === "vendor"
+        ? [<Route key="vp" path="/portal/vendor" component={VendorPortal} />]
+        : role === "investor"
+        ? [<Route key="ip" path="/investor-portal" component={InvestorPortal} />]
+        : role === "contractor"
+        ? [
+            <Route key="docs" path="/documents" component={ContractorDocuments} />,
+            <Route key="pj" path="/projects" component={Projects} />,
+            <Route key="pjai" path="/projects/ai" component={ProjectsAI} />,
+          ]
+        : [];
+    return (
+      <DashboardLayout>
+        <ModuleErrorBoundary>
+          <Suspense fallback={<PageLoader />}>
+            <Switch>
+              {allowed}
+              <Route>
+                <Redirect to={externalHome} />
+              </Route>
+            </Switch>
+          </Suspense>
+        </ModuleErrorBoundary>
+      </DashboardLayout>
+    );
+  }
+
   return (
     <DashboardLayout>
       <ModuleErrorBoundary>
@@ -346,6 +396,7 @@ function Router() {
           {/* Projects */}
           <Route path="/projects" component={Projects} />
           <Route path="/projects/ai" component={ProjectsAI} />
+          <Route path="/documents" component={ContractorDocuments} />
           <Route path="/projects/investment-grants" component={InvestmentGrantChecklist} />
 
           {/* PM module — Market × Function matrix */}
