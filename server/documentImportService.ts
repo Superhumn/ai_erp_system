@@ -697,7 +697,7 @@ If document type is unknown, return all as null.`;
     const parsed = JSON.parse(jsonText);
     console.log("[DocumentImport] Parsed result:", JSON.stringify(parsed, null, 2).substring(0, 1000));
     
-    return {
+    return reclassifyFreightDocument({
       success: true,
       documentType: parsed.documentType,
       purchaseOrder: parsed.purchaseOrder,
@@ -705,7 +705,7 @@ If document type is unknown, return all as null.`;
       freightInvoice: parsed.freightInvoice,
       customsDocument: parsed.customsDocument,
       rawText: `Document parsed from: ${fileUrl}`
-    };
+    });
   } catch (error) {
     console.error("Document parse error:", error);
     return {
@@ -719,6 +719,126 @@ If document type is unknown, return all as null.`;
 /**
  * Match line items to existing raw materials
  */
+/**
+ * Line items on imported documents that must NOT be promoted into the raw-materials
+ * catalog: freight/logistics charges, taxes & fees, and SaaS/usage/subscription
+ * billing. Vendor invoices and POs routinely include these alongside (or instead of)
+ * physical goods, and auto-creating a "material" for each was polluting the materials
+ * list with entries like "OCEAN FREIGHT...", "Build Minutes", and "Max plan".
+ *
+ * Conservative by design: only skips line items that clearly match a non-material
+ * signal, so genuine goods are still catalogued.
+ */
+const NON_MATERIAL_DESCRIPTION_PATTERNS: RegExp[] = [
+  // Freight / logistics services
+  /\bfreight\b/i, /\bshipping\b/i, /\bcourier\b/i, /\bdrayage\b/i, /\bdemurrage\b/i,
+  /\bdetention\b/i, /\bhandling\b/i, /\blogistics\b/i, /\bport\b/i, /\bvessel\b/i,
+  /\bcustoms\b/i, /\bbroker(age)?\b/i, /\bclearance\b/i,
+  // Taxes / fees / surcharges
+  /\bdut(y|ies)\b/i, /\btariff\b/i, /\b(vat|gst)\b/i, /\bsales tax\b/i,
+  /\bsurcharge\b/i, /\bfuel\b/i, /\bservice fee\b/i, /\bprocessing fee\b/i,
+  // SaaS / usage / subscription billing
+  /\bsubscription\b/i, /\bseat[s]?\b/i, /\blicen[sc]e\b/i, /\busage\b/i,
+  /\bcredit[s]?\s+purchase\b/i, /\bper\s+(gb|mb|kb|tb|min|minute|hour|hr)\b/i,
+  /\b(api\s+calls?|compute|hosting|bandwidth|build\s+minutes?)\b/i,
+  /\b(hobby|pro|max|team|enterprise|starter|business)\s+plan\b/i,
+  // Billing-period suffix, e.g. "Apr 1 - Apr 30, 2026" — a SaaS metering signal,
+  // not something a physical material name carries.
+  /\b[A-Za-z]{3,9}\s+\d{1,2}\s*[-–]\s*[A-Za-z]{3,9}\s+\d{1,2},?\s*\d{4}\b/,
+];
+
+const NON_MATERIAL_UNITS = new Set([
+  "min", "mins", "minute", "minutes", "hr", "hour", "hours",
+  "gb", "mb", "kb", "tb", "seat", "seats", "license", "licenses",
+  "month", "months", "mo", "subscription",
+]);
+
+/**
+ * Returns true when an imported line item is a service/charge/billing line rather
+ * than a physical material, so callers can skip creating a raw-material record for it.
+ * The underlying invoice/PO line is still recorded — only the materials-catalog
+ * pollution is prevented.
+ */
+export function isNonMaterialLineItem(item: { description?: string | null; unit?: string | null }): boolean {
+  const description = (item.description ?? "").trim();
+  // No usable description → don't fabricate a material from it.
+  if (!description) return true;
+  if (NON_MATERIAL_DESCRIPTION_PATTERNS.some((re) => re.test(description))) return true;
+  const unit = (item.unit ?? "").trim().toLowerCase();
+  if (unit && NON_MATERIAL_UNITS.has(unit)) return true;
+  return false;
+}
+
+/**
+ * Strong freight/logistics signals (on a line-item description or a vendor name).
+ * Used to recognise freight bills that the AI parser mislabels as vendor invoices
+ * or purchase orders.
+ */
+const FREIGHT_SIGNAL_PATTERNS: RegExp[] = [
+  /\bfreight\b/i, /\bocean\s*freight\b/i, /\bair\s*freight\b/i, /\bsea\s*freight\b/i,
+  /\bshipping\b/i, /\bdrayage\b/i, /\bdemurrage\b/i, /\bdetention\b/i,
+  /\bhaulage\b/i, /\bcartage\b/i, /\bforward(?:er|ing)\b/i, /\blogistics\b/i,
+  /\bbill\s*of\s*lading\b/i, /\bcontainer\b/i, /\bport\b/i, /\bterminal handling\b/i,
+  /\bthc\b/i, /\bbaf\b/i, /\bcustoms\b/i, /\bbroker(?:age)?\b/i,
+  /\b(fcl|lcl|cfs)\b/i, /\bvessel\b/i, /\bvoyage\b/i,
+];
+const hasFreightSignal = (text: string | null | undefined) =>
+  FREIGHT_SIGNAL_PATTERNS.some((re) => re.test(text ?? ""));
+
+/**
+ * Decide whether a parsed vendor-invoice / purchase-order is really a freight bill.
+ * True when the vendor is clearly a carrier/forwarder, or freight charges make up at
+ * least half the line items. Conservative so ordinary goods invoices (which may carry
+ * a single "shipping" line) are not reclassified.
+ */
+export function looksLikeFreightInvoice(
+  vendorName: string | null | undefined,
+  lineItems: Array<{ description?: string | null }>,
+): boolean {
+  if (hasFreightSignal(vendorName)) return true;
+  if (!lineItems.length) return false;
+  const freightLines = lineItems.filter((li) => hasFreightSignal(li.description)).length;
+  return freightLines / lineItems.length >= 0.5;
+}
+
+function toFreightInvoice(src: ImportedVendorInvoice | ImportedPurchaseOrder): ImportedFreightInvoice {
+  const isInvoice = "invoiceNumber" in src;
+  const charges = src.lineItems.map((li) => li.description).filter(Boolean).join("; ");
+  return {
+    invoiceNumber: isInvoice ? (src as ImportedVendorInvoice).invoiceNumber : (src as ImportedPurchaseOrder).poNumber,
+    carrierName: src.vendorName,
+    carrierEmail: src.vendorEmail,
+    invoiceDate: isInvoice ? (src as ImportedVendorInvoice).invoiceDate : (src as ImportedPurchaseOrder).orderDate,
+    deliveryDate: "deliveryDate" in src ? (src as ImportedPurchaseOrder).deliveryDate : undefined,
+    freightCharges: src.subtotal ?? src.totalAmount,
+    totalAmount: src.totalAmount,
+    currency: src.currency,
+    relatedPoNumber: isInvoice ? (src as ImportedVendorInvoice).relatedPoNumber : (src as ImportedPurchaseOrder).poNumber,
+    notes: [src.notes, charges && `Charges: ${charges}`].filter(Boolean).join(" | ") || undefined,
+    confidence: src.confidence,
+  };
+}
+
+/**
+ * Deterministic safety net for parse results: freight/logistics bills are routinely
+ * misclassified as vendor invoices or POs, which sends them through the materials-
+ * creating import path instead of the freight path. Reclassify clear freight bills to
+ * `freight_invoice` so the existing routing imports them via importFreightInvoice
+ * (freight-history record, no materials).
+ */
+export function reclassifyFreightDocument(result: DocumentParseResult): DocumentParseResult {
+  if (!result.success) return result;
+  if (result.documentType === "vendor_invoice" && result.vendorInvoice
+      && looksLikeFreightInvoice(result.vendorInvoice.vendorName, result.vendorInvoice.lineItems)) {
+    return { ...result, documentType: "freight_invoice", freightInvoice: toFreightInvoice(result.vendorInvoice), vendorInvoice: undefined };
+  }
+  if (result.documentType === "purchase_order" && result.purchaseOrder
+      && looksLikeFreightInvoice(result.purchaseOrder.vendorName, result.purchaseOrder.lineItems)) {
+    return { ...result, documentType: "freight_invoice", freightInvoice: toFreightInvoice(result.purchaseOrder), purchaseOrder: undefined };
+  }
+  return result;
+}
+
 export async function matchLineItemsToMaterials(
   lineItems: ImportedLineItem[]
 ): Promise<ImportedLineItem[]> {
@@ -780,9 +900,13 @@ export async function importPurchaseOrder(
     // 2. Match line items to raw materials
     const matchedItems = await matchLineItemsToMaterials(po.lineItems);
     
-    // 3. Create raw materials for unmatched items
+    // 3. Create raw materials for unmatched items (skip services/charges/SaaS lines)
     for (const item of matchedItems) {
       if (!item.rawMaterialId) {
+        if (isNonMaterialLineItem(item)) {
+          warnings.push(`Skipped non-material line item "${item.description}" — recorded on the order but not added to materials.`);
+          continue;
+        }
         const materialResult = await db.createRawMaterial({
           name: item.description,
           sku: item.sku || `RM-${Date.now()}`,
@@ -876,7 +1000,9 @@ export async function importPurchaseOrder(
 export async function importFreightInvoice(
   invoice: ImportedFreightInvoice,
   userId: number,
-  createMissingVendor: boolean = false
+  createMissingVendor: boolean = false,
+  receiveInventory: boolean = false,
+  warehouseId?: number
 ): Promise<ImportResult> {
   const createdRecords: ImportResult["createdRecords"] = [];
   const updatedRecords: ImportResult["updatedRecords"] = [];
@@ -949,6 +1075,25 @@ export async function importFreightInvoice(
         name: invoice.relatedPoNumber!,
         changes: `Freight cost added: $${invoice.totalAmount}`
       });
+
+      // 5. Optionally receive the carried goods into inventory. A freight invoice
+      // typically arrives on/after delivery, so this lets freight drive inventory
+      // for the linked PO. Only outstanding quantities are received.
+      if (receiveInventory) {
+        const result = await db.receivePurchaseOrderIntoInventory(relatedPoId, { warehouseId, receivedBy: userId });
+        if (result.received) {
+          updatedRecords.push({
+            type: "purchase_order",
+            id: relatedPoId,
+            name: invoice.relatedPoNumber!,
+            changes: `Received ${result.itemCount} line item(s) into inventory (warehouse #${result.warehouseId})`
+          });
+        } else {
+          warnings.push(`Goods not received into inventory: ${result.reason}`);
+        }
+      }
+    } else if (receiveInventory) {
+      warnings.push("Could not receive goods into inventory: freight invoice is not linked to a purchase order.");
     }
 
     return {
@@ -1021,9 +1166,13 @@ export async function importVendorInvoice(
       }
     }
 
-    // 4. Create raw materials for unmatched items
+    // 4. Create raw materials for unmatched items (skip services/charges/SaaS lines)
     for (const item of matchedItems) {
       if (!item.rawMaterialId) {
+        if (isNonMaterialLineItem(item)) {
+          warnings.push(`Skipped non-material line item "${item.description}" — recorded on the invoice but not added to materials.`);
+          continue;
+        }
         const materialResult = await db.createRawMaterial({
           name: item.description,
           sku: item.sku || `RM-${Date.now()}`,
@@ -1219,6 +1368,8 @@ export async function importCustomsDocument(
               changes: `Added HS Code: ${item.hsCode}`
             });
           }
+        } else if (isNonMaterialLineItem(item)) {
+          warnings.push(`Skipped non-material line item "${item.description}" — recorded on the customs document but not added to materials.`);
         } else {
           // Create new material with HS code
           const materialResult = await db.createRawMaterial({

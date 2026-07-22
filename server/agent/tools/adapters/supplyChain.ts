@@ -45,6 +45,7 @@ export async function runSupplyChainWorkflow(input: ToolAdapterInput): Promise<T
 
   try {
     const db = await getDb();
+    if (!db) throw new Error("Database connection unavailable");
 
     // Find the workflow definition by type
     const [workflow] = await db

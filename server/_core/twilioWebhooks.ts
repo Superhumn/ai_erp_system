@@ -288,6 +288,7 @@ export function registerTwilioWebhooks(app: Express): void {
       }
 
       const db = await getDb();
+      if (!db) throw new Error("Database connection unavailable");
       const update: Record<string, unknown> = {};
       if (callStatus) update.status = callStatus;
       if (duration !== undefined) update.duration = duration;
@@ -319,6 +320,7 @@ export function registerTwilioWebhooks(app: Express): void {
       }
 
       const db = await getDb();
+      if (!db) throw new Error("Database connection unavailable");
       const update: Record<string, unknown> = {};
       if (status) update.status = status;
       if (errorCode) update.errorCode = errorCode;
@@ -347,6 +349,7 @@ export function registerTwilioWebhooks(app: Express): void {
       const numSegments = params.NumSegments ? Number(params.NumSegments) : undefined;
 
       const db = await getDb();
+      if (!db) throw new Error("Database connection unavailable");
 
       if (messageSid) {
         const [dup] = await db.select().from(agentSmsLogs)
@@ -530,6 +533,7 @@ export function registerTwilioWebhooks(app: Express): void {
       const callSid = params.CallSid;
 
       const db = await getDb();
+      if (!db) throw new Error("Database connection unavailable");
 
       if (callSid) {
         const [dup] = await db.select().from(agentCallLogs)
@@ -597,6 +601,7 @@ export function registerTwilioWebhooks(app: Express): void {
       }
 
       const db = await getDb();
+      if (!db) throw new Error("Database connection unavailable");
       const update: Record<string, unknown> = { status: "completed" };
       if (recordingUrl) update.recordingUrl = recordingUrl;
       if (recordingDuration !== undefined) update.duration = recordingDuration;

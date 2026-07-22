@@ -16,15 +16,18 @@ import { detectMaterialShortages, detectAnomalies, runShortageCheckAndNotify, ru
 import { linkParsedEmailToEntities } from "./emailDocumentLinker";
 import { trackShipment, getFreightRates, getShippingLines, getVesselSchedules } from "./searatesService";
 import { generateVendorEmail, sendVendorEmail, sendBulkEmail, checkAndSendPoFollowups } from "./vendorEmailAutomation";
-import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
+import { processAIAgentRequest, planAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import { agentRouter } from "./agent";
 import { parseNoteWithLLM } from "./notesParser";
 import type { NoteAppliedItem, NoteParseResult, NoteParsedItem } from "@shared/notes";
+import { buildImportRecord } from "@shared/importFields";
 import { employeePortalRouter } from "./routers/employeePortal";
+import { codeRouter } from "./routers/code";
 import { parseCopackerInventoryEmail, applyCopackerInventoryUpdate } from "./copackerEmailExtractor";
+import { importCandidateFromLinkedIn, normalizeLinkedInUrl } from "./linkedinCandidateService";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 import { parseInvoiceText } from "./_core/invoiceTextParser";
 import { parseEntityText } from "./_core/universalTextParser";
@@ -42,7 +45,7 @@ import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile, type GmailSendOptions, type GmailDraftOptions } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
 import { parseFormulationSheet } from "./recipeSheetImport";
-import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
+import { getGoogleFullAccessAuthUrl, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
 import { getServiceAccountEmail, isServiceAccountConfigured } from "./_core/googleServiceAccount";
 import { getQuickBooksAuthUrl, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems, getProfitAndLoss, parseProfitAndLossReport } from "./_core/quickbooks";
 import { listAllTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
@@ -132,6 +135,29 @@ const copackerProcedure = protectedProcedure.use(({ ctx, next }) => {
 const vendorProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (!['admin', 'ops', 'vendor'].includes(ctx.user.role)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Vendor access required' });
+  }
+  return next({ ctx });
+});
+
+// External / outside-the-org roles. These users are confined to their portal
+// and must never reach internal-only features (AI assistant, global search,
+// cross-module agent tasks) that read company-wide data.
+const EXTERNAL_ROLES = ['copacker', 'vendor', 'investor', 'contractor'];
+
+// Internal-staff-only. Allows every internal role (including the basic "user"
+// role, which has AI-query access) but blocks the external/portal roles.
+const internalProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (EXTERNAL_ROLES.includes(ctx.user.role)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Not available for external accounts' });
+  }
+  return next({ ctx });
+});
+
+// Contractor can access documents (data-room folders) granted to them.
+// admin/ops included so staff can preview/manage the contractor experience.
+const contractorProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (!['admin', 'ops', 'contractor'].includes(ctx.user.role)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Contractor access required' });
   }
   return next({ ctx });
 });
@@ -238,6 +264,32 @@ async function getValidGoogleToken(userId: number): Promise<{ accessToken: strin
   return { accessToken: token.accessToken };
 }
 
+// Data types the Google Drive auto-sync importer knows how to write. Anything
+// else (unknown / invoices / purchase_orders) is surfaced in the preview but
+// cannot be imported without manual handling.
+const DRIVE_SUPPORTED_TYPES = [
+  'vendors', 'customers', 'products', 'employees',
+  'raw_materials', 'crm_contacts', 'crm_deals', 'fundraising',
+] as const;
+
+// Detect the destination type for a sheet from its (lowercased) header row.
+// Shared by previewGoogleDrive (detect-only) and syncGoogleDrive (detect+import)
+// so the suggestion the user confirms is exactly what gets imported.
+export function detectSheetType(headers: string[]): string {
+  if (headers.some((h) => h.includes('vendor') || h.includes('supplier'))) return 'vendors';
+  if (headers.some((h) => h.includes('customer') || h.includes('client') || h.includes('buyer'))) return 'customers';
+  if (headers.some((h) => h.includes('sku') || h.includes('product') || h.includes('item'))) return 'products';
+  if (headers.some((h) => h.includes('invoice') || h.includes('bill'))) return 'invoices';
+  if (headers.some((h) => h.includes('employee') || h.includes('team') || h.includes('staff'))) return 'employees';
+  if (headers.some((h) => h.includes('ingredient') || h.includes('raw material') || h.includes('material'))) return 'raw_materials';
+  if (headers.some((h) => h.includes('order') || h.includes('po') || h.includes('purchase'))) return 'purchase_orders';
+  if (headers.some((h) => h.includes('price') || h.includes('cost') || h.includes('rate'))) return 'products';
+  if (headers.some((h) => h.includes('contact') || h.includes('lead') || h.includes('prospect') || h.includes('pipeline'))) return 'crm_contacts';
+  if (headers.some((h) => h.includes('investor') || h.includes('fund') || h.includes('commitment') || h.includes('round') || h.includes('series'))) return 'fundraising';
+  if (headers.some((h) => h.includes('deal') || h.includes('opportunity') || h.includes('stage'))) return 'crm_deals';
+  return 'unknown';
+}
+
 /**
  * Enforce per-recipe access. Recipes are private: only the creator (owner) or a
  * user with an explicit grant may view, and edit/manage requires the matching
@@ -262,12 +314,15 @@ async function requireRecipeAccess(
   return access;
 }
 
-// Helper to generate unique numbers
+// Helper to generate unique reference numbers (e.g. EMP-2606-1234). Uses a
+// CSPRNG for the suffix — not because these are secrets, but to satisfy static
+// analysis and avoid Math.random()'s modulo bias.
 export function generateNumber(prefix: string) {
   const date = new Date();
   const year = date.getFullYear().toString().slice(-2);
   const month = (date.getMonth() + 1).toString().padStart(2, '0');
-  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+  const crypto = require('crypto');
+  const random = crypto.randomInt(10000).toString().padStart(4, '0');
   return `${prefix}-${year}${month}-${random}`;
 }
 // Secure password hashing helpers using scrypt
@@ -350,6 +405,16 @@ export const appRouter = router({
 
   // Employee self-service portal
   employeePortal: employeePortalRouter,
+
+  // Material Supply & Reorder — inventory + inbound freight + reorder recommendations.
+  // No caller-supplied companyId: the param would let any ops user scope to an
+  // arbitrary tenant, and there is no per-user company to validate it against.
+  materialSupply: router({
+    overview: opsProcedure.query(() => db.getMaterialSupplyOverview()),
+  }),
+
+  // Admin-only AI code IDE (snippets, sandboxed execution, AI actions)
+  code: codeRouter,
 
   auth: router({
     me: publicProcedure.query(opts => {
@@ -820,6 +885,133 @@ ONLY return the JSON array, no other text.`;
 
           throw error;
         }
+      }),
+
+    // Look up a vendor's real business details online from a natural-language
+    // request (e.g. "add BCW as a warehouse vendor"). Uses the LLM with live
+    // web search to find the company's publicly-listed contact info and returns
+    // a pre-filled draft for the user to review — it does NOT create the vendor,
+    // keeping a human in the loop before a record is written.
+    enrichFromText: opsProcedure
+      .input(z.object({ text: z.string().min(1).max(2000) }))
+      .mutation(async ({ input }) => {
+        const prompt = `A user wants to add a vendor (supplier) to their ERP system. Their request:
+"${input.text}"
+
+Use web search to identify the specific real company the user most likely means and find its publicly-listed business details. Use any hints in the request (industry, role, location, e.g. "warehouse", "3PL", "packaging supplier") to disambiguate. Prefer the company's official website and reputable business directories.
+
+Return ONLY a JSON object with these fields. Use null for anything you cannot verify from public sources — NEVER invent or guess contact details:
+- name: official company name
+- contactName: a general/sales contact person if publicly listed, else null
+- email: general or sales contact email if publicly listed, else null
+- phone: main phone number (international format) if listed, else null
+- address: street address line only, else null
+- city, state, country, postalCode: location parts, else null
+- website: primary website URL, else null
+- type: one of "supplier", "contractor", "service" — best fit for how this vendor would be used
+- notes: 1-2 sentence description of what the company does. End with the website URL if known.
+- confidence: "high" | "medium" | "low" — how sure you are this is the right company with correct details
+- sources: array of the source URLs you actually used`;
+
+        const enrichmentSchema = {
+          type: "object" as const,
+          properties: {
+            name: { type: ["string", "null"] },
+            contactName: { type: ["string", "null"] },
+            email: { type: ["string", "null"] },
+            phone: { type: ["string", "null"] },
+            address: { type: ["string", "null"] },
+            city: { type: ["string", "null"] },
+            state: { type: ["string", "null"] },
+            country: { type: ["string", "null"] },
+            postalCode: { type: ["string", "null"] },
+            website: { type: ["string", "null"] },
+            type: { type: ["string", "null"] },
+            notes: { type: ["string", "null"] },
+            confidence: { type: ["string", "null"] },
+            sources: { type: "array", items: { type: "string" } },
+          },
+          required: ["name"],
+          additionalProperties: false,
+        };
+
+        let raw: Record<string, any> | null = null;
+        try {
+          const response = await invokeLLM({
+            messages: [
+              {
+                role: "system",
+                content:
+                  "You are a procurement research assistant. You look up real companies online and return accurate, verifiable business details. Never fabricate contact information — use null when a value cannot be verified from public sources.",
+              },
+              { role: "user", content: prompt },
+            ],
+            webSearch: { maxUses: 5 },
+            toolChoice: "auto",
+            maxTokens: 2000,
+            response_format: {
+              type: "json_schema",
+              json_schema: { name: "vendor_enrichment", strict: false, schema: enrichmentSchema },
+            },
+          });
+
+          const content = response.choices?.[0]?.message?.content;
+          const textOut = typeof content === "string" ? content.trim() : "";
+          try {
+            // The model is instructed to return only a JSON object, so parse the
+            // whole payload first (handles braces inside string fields correctly).
+            raw = textOut ? JSON.parse(textOut) : null;
+          } catch {
+            // Fallback: pull out the outermost {...} if the model added any prose.
+            const jsonMatch = textOut.match(/\{[\s\S]*\}/);
+            raw = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+          }
+        } catch (error) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: `Online vendor lookup failed: ${error instanceof Error ? error.message : String(error)}`,
+          });
+        }
+
+        const clean = (v: unknown): string | undefined =>
+          typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined;
+
+        // Require a real, non-empty string name — reject objects/numbers/blank.
+        const name = clean(raw?.name);
+        if (!name) {
+          return { found: false as const, vendor: null, sources: [] as string[], confidence: "low" as const };
+        }
+
+        const vendorType = clean(raw.type)?.toLowerCase();
+        const rawConfidence = clean(raw.confidence)?.toLowerCase();
+        const confidence: "high" | "medium" | "low" =
+          rawConfidence === "high" || rawConfidence === "low" ? rawConfidence : "medium";
+        const vendor = {
+          name,
+          contactName: clean(raw.contactName),
+          email: clean(raw.email),
+          phone: clean(raw.phone),
+          address: clean(raw.address),
+          city: clean(raw.city),
+          state: clean(raw.state),
+          country: clean(raw.country),
+          postalCode: clean(raw.postalCode),
+          website: clean(raw.website),
+          type: vendorType && ["supplier", "contractor", "service"].includes(vendorType) ? vendorType : "supplier",
+          notes: clean(raw.notes),
+        };
+
+        return {
+          found: true as const,
+          vendor,
+          sources: Array.isArray(raw.sources)
+            ? (raw.sources as unknown[])
+                .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+                .map(s => s.trim())
+                .slice(0, 10)
+            : [],
+          confidence,
+        };
       }),
   }),
 
@@ -3441,10 +3633,19 @@ ONLY return the JSON array, no other text.`;
         if (!project || project.studyId !== input.studyId) {
           throw new TRPCError({ code: 'BAD_REQUEST', message: 'Project does not belong to the specified study' });
         }
-        // Compute qualified amount server-side
-        const gross = parseFloat(input.grossAmount) || 0;
-        const rdPct = parseFloat(input.rdPercentage || "100") || 100;
-        const contractRate = parseFloat(input.contractResearchRate || "65") || 65;
+        // Compute qualified amount server-side. Hard-fail on non-numeric input
+        // rather than silently coercing to 0/100/65, which would corrupt the
+        // stored qualifiedAmount and the aggregated credit.
+        const parseAmount = (v: string, field: string): number => {
+          // Use Number (not parseFloat) so partially-numeric strings like
+          // "1.2xyz" are rejected rather than silently truncated to 1.2.
+          const n = Number(v);
+          if (v.trim() === '' || !Number.isFinite(n)) throw new TRPCError({ code: 'BAD_REQUEST', message: `Invalid numeric value for ${field}` });
+          return n;
+        };
+        const gross = parseAmount(input.grossAmount, 'grossAmount');
+        const rdPct = input.rdPercentage != null ? parseAmount(input.rdPercentage, 'rdPercentage') : 100;
+        const contractRate = input.contractResearchRate != null ? parseAmount(input.contractResearchRate, 'contractResearchRate') : 65;
         const qualifiedAmount = String(computeQualifiedAmount(input.category, gross, rdPct, contractRate).toFixed(2));
         const result = await db.createRdExpense({ ...input, qualifiedAmount });
         await createAuditLog(ctx.user.id, 'create', 'rdExpense', result.id, input.description || input.category);
@@ -3468,8 +3669,31 @@ ONLY return the JSON array, no other text.`;
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        const { computeQualifiedAmount } = await import("./rdTaxCreditService");
         const { id, ...data } = input;
-        await db.updateRdExpense(id, data);
+        const existing = await db.getRdExpenseById(id);
+        if (!existing) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Expense not found' });
+        }
+        // Recompute the qualified amount server-side from the merged row so an
+        // edit to category / grossAmount / rdPercentage / contractResearchRate
+        // never leaves a stale qualifiedAmount behind (which would corrupt the
+        // aggregated QRE and the credit calculation).
+        // Validate any client-supplied numeric strings; fall back to the
+        // (trusted) stored value when a field isn't being changed.
+        const parseAmount = (v: string, field: string): number => {
+          // Use Number (not parseFloat) so partially-numeric strings like
+          // "1.2xyz" are rejected rather than silently truncated to 1.2.
+          const n = Number(v);
+          if (v.trim() === '' || !Number.isFinite(n)) throw new TRPCError({ code: 'BAD_REQUEST', message: `Invalid numeric value for ${field}` });
+          return n;
+        };
+        const category = data.category ?? (existing.category as "wages" | "supplies" | "contract_research" | "cloud_computing");
+        const gross = data.grossAmount != null ? parseAmount(data.grossAmount, 'grossAmount') : (parseFloat(existing.grossAmount ?? "0") || 0);
+        const rdPct = data.rdPercentage != null ? parseAmount(data.rdPercentage, 'rdPercentage') : (parseFloat(existing.rdPercentage ?? "100") || 100);
+        const contractRate = data.contractResearchRate != null ? parseAmount(data.contractResearchRate, 'contractResearchRate') : (parseFloat(existing.contractResearchRate ?? "65") || 65);
+        const qualifiedAmount = String(computeQualifiedAmount(category, gross, rdPct, contractRate).toFixed(2));
+        await db.updateRdExpense(id, { ...data, qualifiedAmount });
         await createAuditLog(ctx.user.id, 'update', 'rdExpense', id);
         return { success: true };
       }),
@@ -3623,6 +3847,9 @@ ONLY return the JSON array, no other text.`;
           startDate: input.startDate,
           endDate: input.endDate,
         });
+        if (billsResult.error) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: `QuickBooks import failed: ${billsResult.error}` });
+        }
 
         const bills: any[] = billsResult?.data?.QueryResponse?.Bill || [];
         const expensesToCreate: Parameters<typeof db.createRdExpense>[0][] = [];
@@ -3797,8 +4024,8 @@ ONLY return the JSON array, no other text.`;
   // DASHBOARD & METRICS
   // ============================================
   dashboard: router({
-    metrics: protectedProcedure.query(() => db.getDashboardMetrics()),
-    search: protectedProcedure
+    metrics: internalProcedure.query(() => db.getDashboardMetrics()),
+    search: internalProcedure
       .input(z.object({ query: z.string().min(1) }))
       .query(({ input }) => db.globalSearch(input.query)),
   }),
@@ -4716,136 +4943,70 @@ ONLY return the JSON array, no other text.`;
         
         for (const row of data) {
           try {
-            // Map the row data to the target fields
-            const mappedData: Record<string, any> = {};
-            for (const [sheetCol, erpField] of Object.entries(columnMapping)) {
-              if (row[sheetCol] !== undefined && row[sheetCol] !== '') {
-                mappedData[erpField] = row[sheetCol];
-              }
+            // Coerce + validate the row against the destination's field catalogue.
+            // What the UI advertises == what we persist (see shared/importFields.ts).
+            const { record, errors: rowErrors } = buildImportRecord(row, columnMapping, targetModule);
+            if (rowErrors.length > 0) {
+              results.errors.push(rowErrors[0]);
+              results.failed++;
+              continue;
             }
-            
-            // Import based on target module
+
+            // Per-module glue: generated numbers + synthetic/derived columns.
             switch (targetModule) {
               case 'customers':
-                if (!mappedData.name) {
-                  results.errors.push(`Row missing required field: name`);
-                  results.failed++;
-                  continue;
-                }
-                await db.createCustomer({ 
-                  name: mappedData.name,
-                  email: mappedData.email || null,
-                  phone: mappedData.phone || null,
-                  address: mappedData.address || null,
-                  city: mappedData.city || null,
-                  state: mappedData.state || null,
-                  country: mappedData.country || null,
-                  postalCode: mappedData.postalCode || null,
-                  notes: mappedData.notes || null,
-                });
+                await db.createCustomer(record as any);
                 break;
-                
+
               case 'vendors':
-                if (!mappedData.name) {
-                  results.errors.push(`Row missing required field: name`);
-                  results.failed++;
-                  continue;
-                }
-                await db.createVendor({ 
-                  name: mappedData.name,
-                  email: mappedData.email || null,
-                  phone: mappedData.phone || null,
-                  address: mappedData.address || null,
-                  city: mappedData.city || null,
-                  state: mappedData.state || null,
-                  country: mappedData.country || null,
-                  postalCode: mappedData.postalCode || null,
-                  paymentTerms: mappedData.paymentTerms ? parseInt(mappedData.paymentTerms) : null,
-                  notes: mappedData.notes || null,
-                });
+                await db.createVendor(record as any);
                 break;
-                
+
               case 'products':
-                if (!mappedData.name) {
-                  results.errors.push(`Row missing required field: name`);
-                  results.failed++;
-                  continue;
-                }
-                const sku = mappedData.sku || generateNumber('PROD');
-                await db.createProduct({ 
-                  name: mappedData.name,
-                  sku,
-                  unitPrice: mappedData.price || mappedData.unitPrice || '0',
-                  description: mappedData.description || null,
-                  category: mappedData.category || null,
-                  costPrice: mappedData.cost || mappedData.costPrice || null,
-                });
+                await db.createProduct({
+                  ...record,
+                  sku: record.sku || generateNumber('PROD'),
+                  unitPrice: record.unitPrice ?? '0', // NOT NULL on the table
+                } as any);
                 break;
-                
+
               case 'employees':
-                if (!mappedData.firstName || !mappedData.lastName) {
-                  results.errors.push(`Row missing required fields: firstName, lastName`);
-                  results.failed++;
-                  continue;
-                }
-                const employeeNumber = generateNumber('EMP');
-                await db.createEmployee({ 
-                  ...mappedData, 
-                  employeeNumber,
-                  firstName: mappedData.firstName,
-                  lastName: mappedData.lastName,
-                });
+                await db.createEmployee({
+                  ...record,
+                  employeeNumber: generateNumber('EMP'),
+                } as any);
                 break;
-                
-              case 'invoices':
-                if (!mappedData.customerId || !mappedData.amount) {
-                  results.errors.push(`Row missing required fields: customerId, amount`);
-                  results.failed++;
-                  continue;
-                }
-                const invoiceNumber = generateNumber('INV');
-                const amount = mappedData.amount || '0';
-                await db.createInvoice({ 
-                  ...mappedData, 
-                  invoiceNumber,
-                  customerId: parseInt(mappedData.customerId) || 0,
+
+              case 'invoices': {
+                const amount = record.amount ?? '0';
+                delete record.amount; // synthetic -> subtotal/total below
+                await db.createInvoice({
+                  ...record,
+                  invoiceNumber: generateNumber('INV'),
                   issueDate: new Date(),
-                  dueDate: mappedData.dueDate ? new Date(mappedData.dueDate) : new Date(),
+                  dueDate: record.dueDate ?? new Date(),
                   subtotal: amount,
                   totalAmount: amount,
-                });
+                } as any);
                 break;
-                
+              }
+
               case 'contracts':
-                if (!mappedData.title) {
-                  results.errors.push(`Row missing required field: title`);
-                  results.failed++;
-                  continue;
-                }
-                const contractNumber = generateNumber('CON');
-                await db.createContract({ 
-                  ...mappedData, 
-                  contractNumber,
-                  title: mappedData.title,
-                  type: (mappedData.type as any) || 'service',
-                });
+                await db.createContract({
+                  ...record,
+                  contractNumber: generateNumber('CON'),
+                  type: record.type || 'service', // NOT NULL, no default
+                } as any);
                 break;
-                
+
               case 'projects':
-                if (!mappedData.name) {
-                  results.errors.push(`Row missing required field: name`);
-                  results.failed++;
-                  continue;
-                }
-                const projectNumber = generateNumber('PROJ');
-                await db.createProject({ 
-                  ...mappedData, 
-                  projectNumber,
-                  name: mappedData.name,
-                });
+                await db.createProject({
+                  ...record,
+                  projectNumber: generateNumber('PROJ'),
+                } as any);
                 break;
             }
-            
+
             results.imported++;
           } catch (error: any) {
             results.errors.push(`Import error: ${error.message}`);
@@ -4860,8 +5021,80 @@ ONLY return the JSON array, no other text.`;
       }),
 
     // Sync all Google Drive spreadsheets automatically
+    // Detect the destination type of each spreadsheet WITHOUT importing, so the
+    // UI can let the user confirm or override the target before any write.
+    previewGoogleDrive: protectedProcedure
+      .input(z.object({ fileIds: z.array(z.string()).optional() }).optional())
+      .query(async ({ input, ctx }) => {
+        const { accessToken, error: tokenError } = await getValidGoogleToken(ctx.user.id);
+        if (tokenError || !accessToken) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: tokenError || 'Google not connected. Go to Settings to connect your Google account.' });
+        }
+
+        const sheetsResponse = await fetch(
+          `https://www.googleapis.com/drive/v3/files?q=(mimeType='application/vnd.google-apps.spreadsheet' or mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or mimeType='text/csv')&fields=files(id,name,modifiedTime,mimeType)&orderBy=modifiedTime desc&pageSize=100`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+        if (!sheetsResponse.ok) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list Google Sheets from Drive' });
+        }
+        const sheetsData = await sheetsResponse.json();
+        let files = sheetsData.files || [];
+        const wanted = input?.fileIds && input.fileIds.length > 0 ? new Set(input.fileIds) : null;
+        if (wanted) files = files.filter((f: any) => wanted.has(f.id));
+
+        const previews: { fileId: string; fileName: string; detectedType: string; rowCount: number; supported: boolean }[] = [];
+        for (const file of files) {
+          try {
+            let data: any;
+            const dataResponse = await fetch(
+              `https://sheets.googleapis.com/v4/spreadsheets/${file.id}/values/Sheet1?majorDimension=ROWS`,
+              { headers: { Authorization: `Bearer ${accessToken}` } },
+            );
+            if (dataResponse.ok) {
+              data = await dataResponse.json();
+            } else {
+              const fallback = await fetch(
+                `https://sheets.googleapis.com/v4/spreadsheets/${file.id}/values/A:ZZ?majorDimension=ROWS`,
+                { headers: { Authorization: `Bearer ${accessToken}` } },
+              );
+              if (!fallback.ok) {
+                previews.push({ fileId: file.id, fileName: file.name, detectedType: 'error', rowCount: 0, supported: false });
+                continue;
+              }
+              data = await fallback.json();
+            }
+            const rows = data.values || [];
+            if (rows.length < 2) {
+              previews.push({ fileId: file.id, fileName: file.name, detectedType: 'skipped', rowCount: 0, supported: false });
+              continue;
+            }
+            const headers: string[] = rows[0].map((h: string) => h.toLowerCase().trim());
+            const detectedType = detectSheetType(headers);
+            previews.push({
+              fileId: file.id,
+              fileName: file.name,
+              detectedType,
+              rowCount: rows.length - 1,
+              supported: (DRIVE_SUPPORTED_TYPES as readonly string[]).includes(detectedType),
+            });
+          } catch (e: any) {
+            previews.push({ fileId: file.id, fileName: file.name, detectedType: 'error', rowCount: 0, supported: false });
+          }
+        }
+        return { previews };
+      }),
+
     syncGoogleDrive: protectedProcedure
-      .mutation(async ({ ctx }) => {
+      .input(z.object({
+        // When provided, import ONLY these files using the user-confirmed type
+        // (overriding auto-detection). Omitted = legacy "detect & import all".
+        selections: z.array(z.object({
+          fileId: z.string(),
+          type: z.enum(DRIVE_SUPPORTED_TYPES),
+        })).optional(),
+      }).optional())
+      .mutation(async ({ ctx, input }) => {
         const results: { sheet: string; type: string; imported: number; errors: string[] }[] = [];
 
         // 1. Get valid Google OAuth token
@@ -4869,6 +5102,10 @@ ONLY return the JSON array, no other text.`;
         if (tokenError || !accessToken) {
           throw new TRPCError({ code: 'PRECONDITION_FAILED', message: tokenError || 'Google not connected. Go to Settings to connect your Google account.' });
         }
+
+        const forcedTypes = input?.selections && input.selections.length > 0
+          ? new Map(input.selections.map((s) => [s.fileId, s.type as string]))
+          : null;
 
         // 2. List all Google Sheets in Drive
         const sheetsResponse = await fetch(
@@ -4879,7 +5116,9 @@ ONLY return the JSON array, no other text.`;
           throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list Google Sheets from Drive' });
         }
         const sheetsData = await sheetsResponse.json();
-        const files = sheetsData.files || [];
+        let files = sheetsData.files || [];
+        // Only import the confirmed files when selections were supplied.
+        if (forcedTypes) files = files.filter((f: any) => forcedTypes.has(f.id));
 
         // 3. For each spreadsheet, read the first sheet, detect type, and import
         for (const file of files) {
@@ -4912,21 +5151,10 @@ ONLY return the JSON array, no other text.`;
             const headers: string[] = rows[0].map((h: string) => h.toLowerCase().trim());
             const dataRows: string[][] = rows.slice(1);
 
-            // Auto-detect type based on column headers
-            let type = 'unknown';
-            if (headers.some((h: string) => h.includes('vendor') || h.includes('supplier'))) type = 'vendors';
-            else if (headers.some((h: string) => h.includes('customer') || h.includes('client') || h.includes('buyer'))) type = 'customers';
-            else if (headers.some((h: string) => h.includes('sku') || h.includes('product') || h.includes('item'))) type = 'products';
-            else if (headers.some((h: string) => h.includes('invoice') || h.includes('bill'))) type = 'invoices';
-            else if (headers.some((h: string) => h.includes('employee') || h.includes('team') || h.includes('staff'))) type = 'employees';
-            else if (headers.some((h: string) => h.includes('ingredient') || h.includes('raw material') || h.includes('material'))) type = 'raw_materials';
-            else if (headers.some((h: string) => h.includes('order') || h.includes('po') || h.includes('purchase'))) type = 'purchase_orders';
-            else if (headers.some((h: string) => h.includes('price') || h.includes('cost') || h.includes('rate'))) type = 'products';
-            else if (headers.some((h: string) => h.includes('contact') || h.includes('lead') || h.includes('prospect') || h.includes('pipeline'))) type = 'crm_contacts';
-            else if (headers.some((h: string) => h.includes('investor') || h.includes('fund') || h.includes('commitment') || h.includes('round') || h.includes('series'))) type = 'fundraising';
-            else if (headers.some((h: string) => h.includes('deal') || h.includes('opportunity') || h.includes('stage'))) type = 'crm_deals';
+            // Use the user-confirmed type when supplied, else auto-detect.
+            const type = forcedTypes?.get(file.id) ?? detectSheetType(headers);
 
-            if (type === 'unknown' || type === 'invoices' || type === 'purchase_orders') {
+            if (!(DRIVE_SUPPORTED_TYPES as readonly string[]).includes(type)) {
               results.push({ sheet: file.name, type, imported: 0, errors: type === 'unknown' ? ['Could not detect data type from headers'] : ['Auto-import not supported for this type'] });
               continue;
             }
@@ -5375,6 +5603,14 @@ ONLY return the JSON array, no other text.`;
       return { url, error: null };
     }),
 
+    // Disconnect the connected Google account. Gmail, Workspace, Sheets import
+    // and Drive/data-room all share one Google OAuth token, so this removes the
+    // connection for all of them.
+    disconnect: protectedProcedure.mutation(async ({ ctx }) => {
+      await db.deleteGoogleOAuthToken(ctx.user.id);
+      return { success: true };
+    }),
+
     // Send email via Gmail
     sendEmail: protectedProcedure
       .input(z.object({
@@ -5558,6 +5794,12 @@ ONLY return the JSON array, no other text.`;
 
       const url = getGoogleFullAccessAuthUrl(ctx.user.id, '/settings/integrations');
       return { url, error: null };
+    }),
+
+    // Disconnect the connected Google account (shared with Gmail/Sheets/Drive).
+    disconnect: protectedProcedure.mutation(async ({ ctx }) => {
+      await db.deleteGoogleOAuthToken(ctx.user.id);
+      return { success: true };
     }),
 
     // Create Google Doc
@@ -6030,6 +6272,37 @@ ONLY return the JSON array, no other text.`;
   }),
 
   // ============================================
+  // RECRUITING
+  // ============================================
+  recruiting: router({
+    // Paste a LinkedIn profile URL and pull structured candidate info to
+    // pre-fill the Add Candidate form. Best-effort: LinkedIn frequently walls
+    // anonymous fetches, in which case we recover the name and flag the rest.
+    importFromLinkedIn: protectedProcedure
+      .input(z.object({ url: z.string().min(1) }))
+      .mutation(async ({ input }) => {
+        const normalized = normalizeLinkedInUrl(input.url);
+        if (!normalized) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Please enter a valid LinkedIn profile URL, e.g. https://www.linkedin.com/in/username.",
+          });
+        }
+        try {
+          return await importCandidateFromLinkedIn(normalized);
+        } catch (err) {
+          // Log the real error server-side; return a generic message so we
+          // don't leak internal/LLM-provider details to the client.
+          console.error("recruiting.importFromLinkedIn failed:", err);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Could not import from LinkedIn right now. Please try again or enter the details manually.",
+          });
+        }
+      }),
+  }),
+
+  // ============================================
   // AI ASSISTANT
   // ============================================
   ai: router({
@@ -6126,7 +6399,7 @@ const assistantMessage = typeof rawContent === 'string' ? rawContent : 'I apolog
 
         return { message: assistantMessage };
       }),
-    query: protectedProcedure
+    query: internalProcedure
       .input(z.object({ question: z.string().min(1), context: z.record(z.string(), z.unknown()).optional() }))
       .mutation(async ({ input, ctx }) => {
         // Get all relevant data for context
@@ -6175,11 +6448,19 @@ Be concise and helpful. Always give actionable guidance.`;
     // Comprehensive AI Agent Chat - handles all ERP operations
     agentChat: protectedProcedure
       .input(z.object({
-        message: z.string().min(1),
+        message: z.string().min(1).max(10000),
+        // Only user/assistant turns — the system prompt is server-owned and must
+        // not be injectable by the client (prompt injection / privilege escalation).
+        // Bounded in count and size to limit token abuse.
         conversationHistory: z.array(z.object({
-          role: z.enum(['system', 'user', 'assistant']),
-          content: z.string(),
-        })).optional(),
+          role: z.enum(['user', 'assistant']),
+          content: z.string().max(10000),
+        })).max(50).optional(),
+        // "act" (default): the agent executes immediately.
+        // "plan": the agent returns a plan for the user to approve; nothing runs.
+        mode: z.enum(['act', 'plan']).optional(),
+        // When executing an approved plan, pass its text so the agent follows it.
+        approvedPlan: z.string().max(20000).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const agentContext: AIAgentContext = {
@@ -6189,11 +6470,29 @@ Be concise and helpful. Always give actionable guidance.`;
           companyId: (ctx.user as any).companyId,
         };
 
-        const result = await processAIAgentRequest(
-          input.message,
-          input.conversationHistory || [],
-          agentContext
-        );
+        const history = input.conversationHistory || [];
+
+        // Plan-first mode: describe what would happen, take no action.
+        if (input.mode === 'plan') {
+          return planAIAgentRequest(input.message, history, agentContext);
+        }
+
+        // Execute. If an approved plan was supplied, include it as guidance for
+        // the agent. Note this steers the model via the prompt — it's not a hard
+        // constraint, so the agent should follow the plan but may adapt if
+        // reality differs from what the plan assumed. Cap the plan portion so the
+        // combined prompt stays bounded regardless of the per-field input limits.
+        const MAX_PLAN_CHARS = 8000;
+        const planText = input.approvedPlan
+          ? (input.approvedPlan.length > MAX_PLAN_CHARS
+              ? `${input.approvedPlan.slice(0, MAX_PLAN_CHARS)}…`
+              : input.approvedPlan)
+          : undefined;
+        const message = planText
+          ? `${input.message}\n\nThe user reviewed and approved the following plan. Follow it as closely as possible, adjusting only where necessary:\n${planText}`
+          : input.message;
+
+        const result = await processAIAgentRequest(message, history, agentContext);
 
         return result;
       }),
@@ -6310,7 +6609,7 @@ Be concise and helpful. Always give actionable guidance.`;
       
       pendingApprovals: protectedProcedure.query(() => db.getPendingApprovalTasks()),
       
-      create: protectedProcedure
+      create: internalProcedure
         .input(z.object({
           taskType: z.enum(['generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory', 'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials', 'vendor_followup', 'create_work_order', 'query', 'reply_email', 'approve_po', 'approve_invoice', 'create_vendor', 'create_material', 'create_product', 'create_bom', 'create_customer', 'create_crm_deal']),
           priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium'),
@@ -9922,12 +10221,16 @@ Provide a brief status summary, any missing documents, and next steps.`;
       .input(z.object({ recipeId: z.number(), userId: z.number() }))
       .mutation(async ({ input, ctx }) => {
         await requireRecipeAccess(ctx.user.id, input.recipeId, "own");
+        // Capture the grant row id before deleting so the audit log references
+        // the grant itself (consistent with the grant path), not the recipe id.
+        const existing = await manufacturingDb.listRecipeAccessGrants(input.recipeId);
+        const grant = existing.find((g) => g.userId === input.userId);
         await manufacturingDb.revokeRecipeAccess(input.recipeId, input.userId);
         await createAuditLog(
           ctx.user.id,
           "delete",
           "recipe_access_grant",
-          input.recipeId,
+          grant?.id ?? input.recipeId,
           `recipe:${input.recipeId} × user:${input.userId}`,
         );
         return { success: true };
@@ -9969,6 +10272,7 @@ Provide a brief status summary, any missing documents, and next steps.`;
 
         // Cache ingredients to avoid repeated lookups across lines.
         const ingredientCache = new Map<string, number>();
+        let ingredientsCreated = 0;
         const resolveIngredientId = async (name: string, sku?: string): Promise<number> => {
           const key = (sku?.trim().toLowerCase() || "") + "|" + name.trim().toLowerCase();
           const cached = ingredientCache.get(key);
@@ -9986,14 +10290,13 @@ Provide a brief status summary, any missing documents, and next steps.`;
             sku: generatedSku,
           });
           ingredientCache.set(key, created.id);
+          ingredientsCreated++;
           return created.id;
         };
 
         let recipesCreated = 0;
         let linesCreated = 0;
         let proceduresCreated = 0;
-        let ingredientsCreated = 0;
-        const before = ingredientCache.size;
 
         for (const rec of parsed) {
           const recipeId =
@@ -10032,7 +10335,6 @@ Provide a brief status summary, any missing documents, and next steps.`;
 
           await createAuditLog(ctx.user.id, "create", "recipe", createdRecipe.id, `imported: ${rec.name}`);
         }
-        ingredientsCreated = ingredientCache.size - before;
 
         return {
           recipesCreated,
@@ -11834,12 +12136,17 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
         }),
     }),
     locationMappings: router({
-      list: protectedProcedure
+      // Admin-only across the board: location→warehouse routing (and the
+      // warehouse ids it exposes) is an admin/Settings concern, so the list
+      // read is gated to match the mutations below.
+      list: adminProcedure
         .input(z.object({ storeId: z.number() }))
         .query(async ({ input }) => {
           return db.getShopifyLocationMappings(input.storeId);
         }),
-      create: protectedProcedure
+      // Location→warehouse routing drives where synced inventory lands, so
+      // restrict mutations to admins (matches Settings being admin-only).
+      create: adminProcedure
         .input(z.object({
           storeId: z.number(),
           shopifyLocationId: z.string(),
@@ -11849,6 +12156,23 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
         }))
         .mutation(async ({ input }) => {
           return db.createShopifyLocationMapping(input);
+        }),
+      update: adminProcedure
+        .input(z.object({
+          id: z.number(),
+          shopifyLocationId: z.string().optional(),
+          shopifyLocationName: z.string().optional(),
+          warehouseId: z.number().optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { id, ...data } = input;
+          return db.updateShopifyLocationMapping(id, data);
+        }),
+      delete: adminProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          return db.deleteShopifyLocationMapping(input.id);
         }),
     }),
     // Sync operations
@@ -12054,33 +12378,117 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
                 continue;
               }
 
-              // Step 2: Fetch inventory levels for those locations
-              const response = await fetch(`${apiBase}/inventory_levels.json?location_ids=${locationIds.join(',')}&limit=250`, {
-                headers: {
-                  'X-Shopify-Access-Token': token,
-                  'Content-Type': 'application/json',
-                },
-              });
+              // Step 2: Fetch inventory levels for those locations, following
+              // Shopify's Link-header cursor pagination so stores with more than
+              // one page (>250) of levels aren't silently truncated.
+              const parseNextLink = (linkHeader: string | null): string | null => {
+                if (!linkHeader) return null;
+                for (const part of linkHeader.split(',')) {
+                  const m = part.match(/<([^>]+)>;\s*rel="next"/);
+                  if (m) return m[1];
+                }
+                return null;
+              };
 
-              if (!response.ok) {
-                throw new Error(`Shopify API error: ${response.status}`);
+              const levels: any[] = [];
+              let nextUrl: string | null = `${apiBase}/inventory_levels.json?location_ids=${locationIds.join(',')}&limit=250`;
+              let pageGuard = 0;
+              while (nextUrl && pageGuard < 100) {
+                pageGuard++;
+                const response = await fetch(nextUrl, {
+                  headers: {
+                    'X-Shopify-Access-Token': token,
+                    'Content-Type': 'application/json',
+                  },
+                });
+                if (!response.ok) {
+                  throw new Error(`Shopify API error: ${response.status}`);
+                }
+                const data = await response.json();
+                levels.push(...(data.inventory_levels || []));
+                nextUrl = parseNextLink(response.headers.get('link'));
               }
-
-              const data = await response.json();
-              const levels = data.inventory_levels || [];
+              if (nextUrl) {
+                console.warn(`[Shopify Sync] inventory_levels pagination hit the ${pageGuard}-page cap for ${store.storeDomain}; inventory sync may be incomplete`);
+              }
 
               // Get SKU mappings for this store
               const mappings = await db.getShopifySkuMappings(store.id);
 
+              // Shopify inventory_levels are keyed by inventory_item_id, which is
+              // NOT the variant id we store on the mapping. Backfill each mapping's
+              // inventory_item_id from the Shopify variant (once) so we can match.
+              for (const mapping of mappings) {
+                if (mapping.shopifyInventoryItemId || !mapping.shopifyVariantId) continue;
+                try {
+                  const variantResp = await fetch(`${apiBase}/variants/${mapping.shopifyVariantId}.json`, {
+                    headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+                  });
+                  if (!variantResp.ok) continue;
+                  const variantData = await variantResp.json();
+                  const inventoryItemId = variantData.variant?.inventory_item_id;
+                  if (inventoryItemId != null) {
+                    mapping.shopifyInventoryItemId = inventoryItemId.toString();
+                    await db.updateShopifySkuMapping(mapping.id, { shopifyInventoryItemId: mapping.shopifyInventoryItemId });
+                  }
+                } catch (e) {
+                  console.warn(`[Shopify Sync] Failed to resolve inventory_item_id for variant ${mapping.shopifyVariantId}:`, e);
+                }
+              }
+
+              // Route each level to a warehouse via the store's location mappings.
+              // inventory_levels are per-location, so with location mappings we
+              // update the (product, warehouse) row for the level's location.
+              const locationMappings = await db.getShopifyLocationMappings(store.id);
+              const activeLocationMappings = locationMappings.filter(m => m.isActive !== false);
+              const warehouseByLocationId = new Map(
+                activeLocationMappings.map(m => [m.shopifyLocationId, m.warehouseId] as const)
+              );
+
+              // Index mappings by inventory_item_id for O(1) lookup per level.
+              const mappingByInventoryItemId = new Map(
+                mappings.filter(m => m.shopifyInventoryItemId).map(m => [m.shopifyInventoryItemId!, m] as const)
+              );
+
+              // Pre-fetch every inventory row for the mapped products in one
+              // query and index it, so the per-level loop below does in-memory
+              // lookups instead of a DB read per inventory level (avoids N+1).
+              const inventoryRows = await db.getInventoryByProductIds(
+                [...new Set(mappings.map(m => m.productId))]
+              );
+              const inventoryByProductWarehouse = new Map(
+                inventoryRows.map(r => [`${r.productId}:${r.warehouseId}`, r] as const)
+              );
+              const inventoryByProduct = new Map<number, typeof inventoryRows[number]>();
+              for (const r of inventoryRows) {
+                if (!inventoryByProduct.has(r.productId)) inventoryByProduct.set(r.productId, r);
+              }
+
               for (const level of levels) {
-                const mapping = mappings.find(m => m.shopifyVariantId === level.inventory_item_id.toString());
-                if (mapping) {
-                  // Update local inventory
-                  const inventory = await db.getInventoryByProductId(mapping.productId);
+                const mapping = mappingByInventoryItemId.get(level.inventory_item_id.toString());
+                if (!mapping) continue;
+                const quantity = level.available?.toString() || '0';
+
+                if (activeLocationMappings.length > 0) {
+                  // The store has configured location→warehouse routing.
+                  const warehouseId = warehouseByLocationId.get(level.location_id?.toString());
+                  if (warehouseId == null) {
+                    // Location isn't mapped to a warehouse — don't guess where it lands.
+                    console.warn(`[Shopify Sync] No warehouse mapping for location ${level.location_id} in ${store.storeDomain}, skipping level`);
+                    continue;
+                  }
+                  const inventory = inventoryByProductWarehouse.get(`${mapping.productId}:${warehouseId}`);
                   if (inventory) {
-                    await db.updateInventory(inventory.id, {
-                      quantity: level.available?.toString() || '0',
-                    });
+                    await db.updateInventory(inventory.id, { quantity });
+                    totalUpdated++;
+                  } else {
+                    console.warn(`[Shopify Sync] No inventory row for product ${mapping.productId} at warehouse ${warehouseId}, skipping`);
+                  }
+                } else {
+                  // No location mappings configured — fall back to product-level update.
+                  const inventory = inventoryByProduct.get(mapping.productId);
+                  if (inventory) {
+                    await db.updateInventory(inventory.id, { quantity });
                     totalUpdated++;
                   }
                 }
@@ -13919,6 +14327,82 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
       }),
 
     // Folder operations
+    // Contractor-facing read-only documents. Reuses the data-room folder/doc
+    // tables (and therefore the Google Drive sync), but scopes by the logged-in
+    // user's role + individual grants instead of an email invite / link code.
+    contractor: router({
+      // Folders + documents this contractor may see, across all data rooms.
+      getContent: contractorProcedure.query(async ({ ctx }) => {
+        const folders = await db.getAccessibleDataRoomFoldersForUser(ctx.user.id, ctx.user.role);
+        const folderIds = folders.map((f) => f.id);
+        const documents = (await db.getDataRoomDocumentsInFolders(folderIds)).filter(
+          (d) => !d.isHidden,
+        );
+        return { folders, documents };
+      }),
+
+      // Open one document — verifies it lives in a folder the user may access.
+      getDocument: contractorProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input, ctx }) => {
+          const doc = await db.getDataRoomDocumentById(input.id);
+          if (!doc) throw new TRPCError({ code: 'NOT_FOUND' });
+          const folders = await db.getAccessibleDataRoomFoldersForUser(ctx.user.id, ctx.user.role);
+          const allowed = new Set(folders.map((f) => f.id));
+          if (doc.folderId == null || !allowed.has(doc.folderId)) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this document' });
+          }
+          return doc;
+        }),
+
+      // Admin: list a contractor user's per-folder grants.
+      listGrants: adminProcedure
+        .input(z.object({ userId: z.number() }))
+        .query(async ({ input }) => db.getContractorFolderGrants(input.userId)),
+
+      // Admin: every folder (with its data room) for the access picker.
+      listAllFolders: adminProcedure.query(async () => db.getAllDataRoomFoldersWithRoom()),
+
+      // Admin: grant or restrict a specific folder for a contractor user.
+      setGrant: adminProcedure
+        .input(z.object({
+          userId: z.number(),
+          folderId: z.number(),
+          mode: z.enum(['allow', 'restrict']),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createContractorFolderGrant({
+            userId: input.userId,
+            folderId: input.folderId,
+            mode: input.mode,
+            grantedBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'contractor_folder_grant', result.id);
+          return result;
+        }),
+
+      // Admin: remove a grant/restriction for a contractor user.
+      removeGrant: adminProcedure
+        .input(z.object({ userId: z.number(), folderId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteContractorFolderGrant(input.userId, input.folderId);
+          await createAuditLog(ctx.user.id, 'delete', 'contractor_folder_grant', input.folderId);
+          return { success: true };
+        }),
+
+      // Admin: set which app roles can see a folder (role-wide visibility).
+      setFolderVisibility: adminProcedure
+        .input(z.object({
+          folderId: z.number(),
+          visibleToRoles: z.array(z.string()),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          await db.updateDataRoomFolder(input.folderId, { visibleToRoles: input.visibleToRoles });
+          await createAuditLog(ctx.user.id, 'update', 'data_room_folder', input.folderId, undefined, undefined, { visibleToRoles: input.visibleToRoles });
+          return { success: true };
+        }),
+    }),
+
     folders: router({
       list: protectedProcedure
         .input(z.object({ dataRoomId: z.number(), parentId: z.number().nullable().optional() }))
@@ -14493,188 +14977,55 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
           throw new TRPCError({ code: 'BAD_REQUEST', message: folderInfo.error || 'Folder not found in Google Drive' });
         }
 
-        // Sync folder structure and files recursively
-        const syncResult = await syncDriveFolder(accessToken, folderId);
-        if (!syncResult.success) {
-          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: syncResult.error || 'Sync failed' });
+        // Reconcile the data room against the Drive tree — create new folders
+        // and files, and (for this user-initiated re-sync) remove Drive-backed
+        // items that were deleted in Drive. Shared with the background auto-sync
+        // scheduler so both behave identically.
+        const { reconcileDataRoomFromDrive } = await import('./googleDriveSyncService');
+        let recon;
+        try {
+          recon = await reconcileDataRoomFromDrive({
+            dataRoomId: input.dataRoomId,
+            rootFolderId: folderId,
+            accessToken,
+            uploadedBy: ctx.user.id,
+            allowDelete: true,
+          });
+        } catch (err: unknown) {
+          // reconcileDataRoomFromDrive only throws curated, user-safe messages
+          // (the Drive-listing hint, or a generic fallback); the full error is
+          // already logged there. Log again with room context and pass it on.
+          console.error(`[DataRoom] syncFromDrive failed for room ${input.dataRoomId}:`, err);
+          const msg = err instanceof Error ? err.message : 'Sync failed';
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: msg });
         }
 
-        // Get existing folders and documents to avoid duplicates
-        const allExistingFolders = await db.getDataRoomFolders(input.dataRoomId);
-        const allExistingDocs = await db.getDataRoomDocuments(input.dataRoomId);
-        const existingFoldersByDriveId = new Map(
-          allExistingFolders
-            .filter(f => f.googleDriveFolderId)
-            .map(f => [f.googleDriveFolderId!, f.id])
-        );
-        const existingDocsByDriveId = new Set(
-          allExistingDocs
-            .filter(d => d.googleDriveFileId)
-            .map(d => d.googleDriveFileId!)
-        );
-
-        // Create folder hierarchy in data room.
-        // syncDriveFolder pushes folders in DFS pre-order, so parents
-        // already precede their children — no sort needed.
-        const folderMap = new Map<string, number>();
-        const results: { name: string; type: string; status: string; error?: string }[] = [];
-        // Human-readable errors surfaced to the caller so a partial/empty sync
-        // reports *why* instead of silently claiming success with 0 files.
-        const syncErrors: string[] = [];
-
-        // Drive metadata occasionally exceeds our column widths (long file names,
-        // very long thumbnail/webView links). Trim defensively so a single
-        // oversized value can't abort the insert (and thus the whole batch).
-        const trunc = (v: string | null | undefined, max: number): string | undefined => {
-          if (v == null) return undefined;
-          return v.length > max ? v.slice(0, max) : v;
-        };
-
-        // Map DB/driver errors to concise, user-safe messages. The full error
-        // object (with driver code + stack) is always logged separately; only
-        // these sanitized strings are returned to the client / shown in toasts,
-        // so raw SQL/driver internals never leak into the UI.
-        const errMessage = (err: unknown): string => {
-          const code = (err as { code?: string })?.code;
-          switch (code) {
-            case 'ER_DATA_TOO_LONG': return 'a field exceeded the maximum length';
-            case 'ER_DUP_ENTRY': return 'a duplicate entry was detected';
-            case 'ER_TRUNCATED_WRONG_VALUE':
-            case 'WARN_DATA_TRUNCATED': return 'an unsupported character or value';
-            case 'ER_NO_REFERENCED_ROW_2':
-            case 'ER_ROW_IS_REFERENCED_2': return 'a related-record constraint failed';
-            case 'ER_BAD_NULL_ERROR': return 'a required field was missing';
-          }
-          // Errors we raise ourselves (no driver code) are already safe/worded
-          // for humans; anything else with an unrecognized driver code is kept
-          // generic so raw driver text can't reach the client.
-          if (err instanceof Error && !code) return err.message;
-          return 'an unexpected database error';
-        };
-
-        // Process folders — isolate each insert so one failure doesn't abort the rest.
-        for (const driveFolder of syncResult.folders) {
-          if (existingFoldersByDriveId.has(driveFolder.id)) {
-            folderMap.set(driveFolder.id, existingFoldersByDriveId.get(driveFolder.id)!);
-            results.push({ name: driveFolder.name, type: 'folder', status: 'exists' });
-            continue;
-          }
-
-          // Parent should already be mapped (DFS pre-order); fall back to any
-          // pre-existing data-room folder carrying the same Drive ID. If a parent
-          // was expected but is unmapped (e.g. its own insert failed earlier),
-          // don't silently root the child — surface it so the orphaning is visible.
-          const parentDriveId = driveFolder.parents?.[0];
-          let parentDataRoomId: number | null = null;
-          if (parentDriveId && parentDriveId !== folderId) {
-            parentDataRoomId = folderMap.get(parentDriveId) ?? existingFoldersByDriveId.get(parentDriveId) ?? null;
-            if (parentDataRoomId === null && syncErrors.length < 5) {
-              syncErrors.push(`Folder "${driveFolder.name}": parent folder could not be resolved; placed at root.`);
-            }
-          }
-
-          try {
-            const { id: newFolderId } = await db.createDataRoomFolder({
-              dataRoomId: input.dataRoomId,
-              parentId: parentDataRoomId,
-              name: trunc(driveFolder.name, 255) || 'Untitled folder',
-              googleDriveFolderId: driveFolder.id,
-            });
-
-            folderMap.set(driveFolder.id, newFolderId);
-            results.push({ name: driveFolder.name, type: 'folder', status: 'created' });
-          } catch (err: unknown) {
-            // Log Drive ID + room only — folder names can be sensitive and
-            // server logs are broadly accessible. The name still goes to the
-            // owner-facing response below, not to logs.
-            console.error(`[DataRoom] Failed to create folder ${driveFolder.id} (room ${input.dataRoomId}):`, err);
-            const msg = errMessage(err);
-            results.push({ name: driveFolder.name, type: 'folder', status: 'error', error: msg });
-            if (syncErrors.length < 5) syncErrors.push(`Folder "${driveFolder.name}": ${msg}`);
-          }
-        }
-
-        // Process files — store by reference in Google Drive (no download).
-        // Each insert is isolated: previously a single failing insert (e.g. an
-        // oversized field) threw out of the loop, leaving folders created but
-        // zero files — the "adds folders but no files" symptom.
-        for (const driveFile of syncResult.files) {
-          if (existingDocsByDriveId.has(driveFile.id)) {
-            results.push({ name: driveFile.name, type: 'file', status: 'exists' });
-            continue;
-          }
-
-          const displayName = driveFile.name;
-          const parentDriveId = driveFile.parents?.[0];
-          let fileFolderId: number | null = null;
-          if (parentDriveId && parentDriveId !== folderId) {
-            fileFolderId = folderMap.get(parentDriveId) ?? existingFoldersByDriveId.get(parentDriveId) ?? null;
-            // Parent expected but unmapped (e.g. its folder insert failed
-            // earlier). Import at root, but surface it like the folder loop
-            // does so the flattened hierarchy isn't silent.
-            if (fileFolderId === null && syncErrors.length < 5) {
-              syncErrors.push(`File "${displayName}": parent folder could not be resolved; placed at root.`);
-            }
-          }
-
-          const fileType = getSimpleFileType(driveFile.mimeType);
-          const fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
-            ? parseInt(driveFile.size)
-            : undefined;
-
-          try {
-            await db.createDataRoomDocument({
-              dataRoomId: input.dataRoomId,
-              folderId: fileFolderId,
-              name: trunc(displayName, 255) || 'Untitled',
-              fileType,
-              mimeType: trunc(driveFile.mimeType, 128),
-              fileSize,
-              storageType: 'google_drive',
-              storageUrl: trunc(driveFile.webViewLink, 512),
-              storageKey: undefined,
-              googleDriveFileId: driveFile.id,
-              googleDriveWebViewLink: trunc(driveFile.webViewLink, 512),
-              thumbnailUrl: trunc(driveFile.thumbnailLink, 512),
-              uploadedBy: ctx.user.id,
-            });
-
-            results.push({ name: displayName, type: 'file', status: 'synced' });
-          } catch (err: unknown) {
-            // Log Drive ID + room only — document names can be confidential.
-            console.error(`[DataRoom] Failed to create document ${driveFile.id} (room ${input.dataRoomId}):`, err);
-            const msg = errMessage(err);
-            results.push({ name: displayName, type: 'file', status: 'error', error: msg });
-            if (syncErrors.length < 5) syncErrors.push(`File "${displayName}": ${msg}`);
-          }
-        }
-
-        // Update data room with Google Drive folder ID and last sync time
+        // Always link the folder; only stamp lastSyncedAt on a complete listing
+        // (a partial sync skipped some sub-tree, so the room isn't fully synced).
         await db.updateDataRoom(input.dataRoomId, {
           googleDriveFolderId: folderId,
-          lastSyncedAt: new Date(),
+          ...(recon.partial ? {} : { lastSyncedAt: new Date() }),
         });
 
-        const filesFound = syncResult.files.length;
-        const foldersFound = syncResult.folders.length;
-        const totalSynced = results.filter(r => r.status === 'synced').length;
-        const totalCreated = results.filter(r => r.status === 'created').length;
-        const filesFailed = results.filter(r => r.type === 'file' && r.status === 'error').length;
-
         console.log(
-          `[DataRoom] Drive sync for room ${input.dataRoomId}: found ${foldersFound} folders / ${filesFound} files; ` +
-          `created ${totalCreated} folders / ${totalSynced} files; ${filesFailed} file errors.`
+          `[DataRoom] Drive sync for room ${input.dataRoomId}: found ${recon.foldersFound} folders / ${recon.filesFound} files; ` +
+          `created ${recon.foldersCreated} folders / ${recon.filesCreated} files; ` +
+          `updated ${recon.foldersUpdated} folders / ${recon.filesUpdated} files; ` +
+          `removed ${recon.foldersRemoved} folders / ${recon.filesRemoved} files; ${recon.filesFailed} file errors.`
         );
 
         return {
-          results,
-          totalSynced,
-          foldersCreated: totalCreated,
-          filesCreated: totalSynced,
-          filesFound,
-          foldersFound,
-          filesFailed,
-          errors: syncErrors,
+          totalSynced: recon.filesCreated,
+          foldersCreated: recon.foldersCreated,
+          foldersUpdated: recon.foldersUpdated,
+          filesCreated: recon.filesCreated,
+          filesUpdated: recon.filesUpdated,
+          filesRemoved: recon.filesRemoved,
+          foldersRemoved: recon.foldersRemoved,
+          filesFound: recon.filesFound,
+          foldersFound: recon.foldersFound,
+          filesFailed: recon.filesFailed,
+          errors: recon.errors,
           folderName: folderInfo.folder.name,
         };
       }),
@@ -17005,9 +17356,11 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
         }),
         linkToPO: z.boolean().default(true),
         createMissingVendor: z.boolean().default(false),
+        receiveInventory: z.boolean().default(false),
+        warehouseId: z.number().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        return importFreightInvoice(input.invoiceData as any, ctx.user.id, input.createMissingVendor);
+        return importFreightInvoice(input.invoiceData as any, ctx.user.id, input.createMissingVendor, input.receiveInventory, input.warehouseId);
       }),
 
     // Import a vendor invoice
@@ -17425,6 +17778,46 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
   // CRM MODULE - Contacts, Messaging & Tracking
   // ============================================
   crm: router({
+    // --- B2B ROCKET LEADS ---
+    // Leads pulled in from B2B Rocket via the Zapier webhook
+    // (/webhooks/b2brocket/leads), AI-scored on intake. These are just
+    // crmContacts with source = "b2brocket"; this sub-router exposes a
+    // score-sorted view + a summary for the outreach UI.
+    b2brocketLeads: router({
+      list: protectedProcedure
+        .input(z.object({
+          pipelineStage: z.string().optional(),
+          minScore: z.number().optional(),
+          search: z.string().optional(),
+          limit: z.number().optional(),
+          offset: z.number().optional(),
+        }).optional())
+        .query(async ({ input }) => {
+          const rows = await db.getCrmContacts({
+            source: "b2brocket",
+            pipelineStage: input?.pipelineStage,
+            search: input?.search,
+            limit: input?.limit,
+            offset: input?.offset,
+          });
+          const filtered = typeof input?.minScore === "number"
+            ? rows.filter((r: any) => (r.leadScore ?? 0) >= input.minScore!)
+            : rows;
+          // Highest-intent leads first.
+          return filtered.sort((a: any, b: any) => (b.leadScore ?? 0) - (a.leadScore ?? 0));
+        }),
+
+      stats: protectedProcedure.query(async () => {
+        const rows = await db.getCrmContacts({ source: "b2brocket" });
+        const total = rows.length;
+        const hot = rows.filter((r: any) => (r.leadScore ?? 0) >= 70).length;
+        const avgScore = total
+          ? Math.round(rows.reduce((s: number, r: any) => s + (r.leadScore ?? 0), 0) / total)
+          : 0;
+        return { total, hot, avgScore };
+      }),
+    }),
+
     // --- CONTACTS ---
     contacts: router({
       list: protectedProcedure
@@ -18518,6 +18911,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           bodyHtml: z.string(),
           bodyText: z.string().optional(),
           type: z.enum(["newsletter", "drip", "announcement", "follow_up", "custom"]).optional(),
+          status: z.enum(["draft", "scheduled", "sending", "sent", "paused", "cancelled"]).optional(),
           targetTags: z.string().optional(),
           targetContactTypes: z.string().optional(),
           targetPipelineStages: z.string().optional(),
@@ -18539,6 +18933,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           subject: z.string().optional(),
           bodyHtml: z.string().optional(),
           bodyText: z.string().optional(),
+          type: z.enum(["newsletter", "drip", "announcement", "follow_up", "custom"]).optional(),
           status: z.enum(["draft", "scheduled", "sending", "sent", "paused", "cancelled"]).optional(),
           scheduledAt: z.date().optional(),
         }))

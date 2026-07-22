@@ -26,6 +26,7 @@ interface ContactInput {
  */
 export async function runContactLookup(input: ContactInput): Promise<ToolAdapterResult> {
   const db = await getDb();
+  if (!db) throw new Error("Database connection unavailable");
   const { action, payload } = input;
 
   switch (action) {

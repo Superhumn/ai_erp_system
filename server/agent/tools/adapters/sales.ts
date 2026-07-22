@@ -14,6 +14,7 @@ import type { ToolAdapterInput, ToolAdapterResult } from "../../types";
  */
 export async function runSalesPipelineWorkflow(input: ToolAdapterInput): Promise<ToolAdapterResult> {
   const db = await getDb();
+  if (!db) throw new Error("Database connection unavailable");
   const { action, payload } = input;
 
   switch (action) {
