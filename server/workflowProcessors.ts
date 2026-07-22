@@ -3059,40 +3059,45 @@ Return vendor IDs in order of preference.`;
         }
         const { vendor, emailContent } = result;
         try {
-          // Create invitation record
-          const [invitation] = await db
-            .insert(vendorRfqInvitations)
-            .values({
-              rfqId,
-              vendorId: vendor.id,
-              status: "pending",
-              invitedAt: new Date(),
-            })
-            .$returningId();
+          // Persist the invitation + email atomically so a failed email insert
+          // can't leave an orphaned invitation — which the bulk "sent" update
+          // below would otherwise flip to sent with no queued email.
+          const { invitationId, emailId } = await db.transaction(async (tx: any) => {
+            const [invitation] = await tx
+              .insert(vendorRfqInvitations)
+              .values({
+                rfqId,
+                vendorId: vendor.id,
+                status: "pending",
+                invitedAt: new Date(),
+              })
+              .$returningId();
 
-          // Create email record
-          const [email] = await db
-            .insert(vendorRfqEmails)
-            .values({
-              rfqId,
-              vendorId: vendor.id,
-              direction: "outbound",
-              emailType: "rfq_request",
-              fromEmail: process.env.PROCUREMENT_EMAIL || "procurement@company.com",
-              toEmail: vendor.email,
-              subject: emailContent.subject,
-              body: emailContent.body,
-              aiGenerated: true,
-              sendStatus: "queued",
-            })
-            .$returningId();
+            const [email] = await tx
+              .insert(vendorRfqEmails)
+              .values({
+                rfqId,
+                vendorId: vendor.id,
+                direction: "outbound",
+                emailType: "rfq_request",
+                fromEmail: process.env.PROCUREMENT_EMAIL || "procurement@company.com",
+                toEmail: vendor.email,
+                subject: emailContent.subject,
+                body: emailContent.body,
+                aiGenerated: true,
+                sendStatus: "queued",
+              })
+              .$returningId();
+
+            return { invitationId: invitation.id, emailId: email.id };
+          });
 
           emailResults.push({
             vendorId: vendor.id,
             vendorName: vendor.name,
             email: vendor.email,
-            invitationId: invitation.id,
-            emailId: email.id,
+            invitationId,
+            emailId,
             status: "queued",
           });
 
