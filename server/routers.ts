@@ -11803,7 +11803,10 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
         }),
     }),
     locationMappings: router({
-      list: protectedProcedure
+      // Admin-only across the board: location→warehouse routing (and the
+      // warehouse ids it exposes) is an admin/Settings concern, so the list
+      // read is gated to match the mutations below.
+      list: adminProcedure
         .input(z.object({ storeId: z.number() }))
         .query(async ({ input }) => {
           return db.getShopifyLocationMappings(input.storeId);
