@@ -6290,16 +6290,19 @@ Be concise and helpful. Always give actionable guidance.`;
     // Comprehensive AI Agent Chat - handles all ERP operations
     agentChat: protectedProcedure
       .input(z.object({
-        message: z.string().min(1),
+        message: z.string().min(1).max(10000),
+        // Only user/assistant turns — the system prompt is server-owned and must
+        // not be injectable by the client (prompt injection / privilege escalation).
+        // Bounded in count and size to limit token abuse.
         conversationHistory: z.array(z.object({
-          role: z.enum(['system', 'user', 'assistant']),
-          content: z.string(),
-        })).optional(),
+          role: z.enum(['user', 'assistant']),
+          content: z.string().max(10000),
+        })).max(50).optional(),
         // "act" (default): the agent executes immediately.
         // "plan": the agent returns a plan for the user to approve; nothing runs.
         mode: z.enum(['act', 'plan']).optional(),
         // When executing an approved plan, pass its text so the agent follows it.
-        approvedPlan: z.string().optional(),
+        approvedPlan: z.string().max(20000).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const agentContext: AIAgentContext = {

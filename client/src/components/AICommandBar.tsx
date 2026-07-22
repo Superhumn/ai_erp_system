@@ -788,13 +788,16 @@ export function AICommandBar({ context }: AICommandBarProps) {
         return;
       }
       setResponse(data.message || "Done.");
-      setAgentActions(
+      const actions =
         Array.isArray(data.actions) && data.actions.length > 0
           ? (data.actions as Array<{ type: string; description?: string; status?: string; error?: string }>)
-          : null,
-      );
-      // Refresh anything the agent may have changed so the UI reflects new records.
-      utils.invalidate();
+          : null;
+      setAgentActions(actions);
+      // Only refresh caches when the agent actually took actions — a plain answer
+      // changes nothing, so a full invalidate would just cause needless refetches.
+      if (actions) {
+        utils.invalidate();
+      }
     },
     onError: (error) => {
       // Fall back to a plain answer so the user still gets a response.
@@ -1833,10 +1836,16 @@ export function AICommandBar({ context }: AICommandBarProps) {
                           className={
                             action.status === "failed"
                               ? "text-red-500"
-                              : "text-green-600 dark:text-green-500"
+                              : action.status === "completed"
+                                ? "text-green-600 dark:text-green-500"
+                                : "text-amber-500"
                           }
                         >
-                          {action.status === "failed" ? "✗" : "✓"}
+                          {action.status === "failed"
+                            ? "✗"
+                            : action.status === "completed"
+                              ? "✓"
+                              : "⋯"}
                         </span>
                         <span className="text-foreground/90">
                           {action.description || action.type}
