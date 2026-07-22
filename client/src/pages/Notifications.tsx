@@ -5,10 +5,31 @@ import { Bell, Check, CheckCheck, Info, AlertTriangle, AlertCircle, CheckCircle 
 import { formatDistanceToNow } from "date-fns";
 import { useLocation } from "wouter";
 
+// Base paths that actually have a /:id detail route in App.tsx. A server-written
+// link of the form /base/<id> is only safe to keep the id for these; otherwise
+// we strip it so the user lands on the list instead of NotFound.
+const ID_ROUTES = new Set([
+  "/sales/orders", "/sales/customers", "/operations/products", "/operations/transfers",
+  "/operations/bom", "/operations/work-orders", "/freight/rfqs", "/freight/customs",
+  "/pm/project", "/pm/market", "/pm/function", "/dataroom",
+]);
+
+// Server-written notification links can point at routes the client doesn't have
+// (e.g. /operations/purchase-orders/<id> with no :id route, or /data-rooms/<id>
+// where the route is /dataroom/:id). Normalize those to a real destination.
+function normalizeHref(href: string): string {
+  let h = href.replace(/^\/data-rooms\//, "/dataroom/");
+  const m = h.match(/^(\/[^?#]+)\/(\d+)(?=$|[?#])/);
+  if (m && !ID_ROUTES.has(m[1])) {
+    h = m[1] + h.slice(m[0].length);
+  }
+  return h;
+}
+
 // Resolve where a notification should take the user: prefer its explicit link,
 // otherwise map the related entity to its list/detail route.
 function notificationHref(n: any): string | null {
-  if (n.link) return n.link;
+  if (n.link) return normalizeHref(n.link);
   const t = (n.entityType || "").toLowerCase();
   const withId = (b: string) => (n.entityId ? `${b}/${n.entityId}` : b);
   switch (t) {
