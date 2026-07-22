@@ -6238,6 +6238,46 @@ export async function getSyncHistory(limit: number = 50) {
     .limit(limit);
 }
 
+// Pending (in-progress) sync logs for an integration, newest first. Used to
+// find a user's still-running background job without being limited by a global
+// recency window. Only actively-running jobs carry the "pending" status, so
+// this set is naturally small.
+export async function getPendingSyncLogs(integration: string, limit: number = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return await db.select()
+    .from(syncLogs)
+    .where(and(eq(syncLogs.integration, integration), eq(syncLogs.status, 'pending')))
+    .orderBy(desc(syncLogs.createdAt))
+    .limit(limit);
+}
+
+// Fetch a single sync log by id — used to poll the status of a background job.
+export async function getSyncLog(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db.select()
+    .from(syncLogs)
+    .where(eq(syncLogs.id, id))
+    .limit(1);
+  return row ?? null;
+}
+
+// Update a sync log row in place. Background jobs use this to record progress
+// (metadata) and to flip status from "pending" to a terminal state on finish.
+export async function updateSyncLog(id: number, data: {
+  status?: 'success' | 'error' | 'warning' | 'pending';
+  details?: string;
+  recordsProcessed?: number;
+  recordsFailed?: number;
+  errorMessage?: string;
+  metadata?: Record<string, unknown>;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(syncLogs).set(data).where(eq(syncLogs.id, id));
+}
+
 export async function clearSyncHistory() {
   const db = await getDb();
   if (!db) return;
