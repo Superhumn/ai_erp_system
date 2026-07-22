@@ -60,10 +60,24 @@ describe("normalizeLinkedInUrl", () => {
     ["feed path", "https://www.linkedin.com/feed/"],
     ["non-http(s) scheme", "ftp://www.linkedin.com/in/jane-doe"],
     ["javascript scheme", "javascript:alert(1)"],
+    [
+      "percent-encoded slash in slug (%2F -> /)",
+      "https://www.linkedin.com/in/%2Fcompany%2Facme",
+    ],
+    [
+      "double-encoded percent in slug",
+      "https://www.linkedin.com/in/jane%2525doe",
+    ],
     ["not a url", "just some text"],
     ["empty string", ""],
   ])("rejects %s", (_label, input) => {
     expect(normalizeLinkedInUrl(input)).toBeNull();
+  });
+
+  it("accepts legitimate percent-encoded Unicode in the slug", () => {
+    expect(
+      normalizeLinkedInUrl("https://www.linkedin.com/in/jos%C3%A9-garcia")
+    ).toBe("https://www.linkedin.com/in/jos%C3%A9-garcia");
   });
 
   it("resolves dot-segments safely without escaping the host", () => {
@@ -113,6 +127,26 @@ describe("nameFromSlug", () => {
 
   it("returns empty string when there is no /in/ segment", () => {
     expect(nameFromSlug("https://www.linkedin.com/company/acme")).toBe("");
+  });
+
+  it("keeps a real name segment that happens to be valid hex ('baca')", () => {
+    // "baca" matches /^[0-9a-f]{4,}$/i but has no digit, so it's not an id.
+    expect(nameFromSlug("https://www.linkedin.com/in/ana-baca")).toBe(
+      "Ana Baca"
+    );
+  });
+
+  it("still drops a trailing id even after a hex-looking name segment", () => {
+    expect(nameFromSlug("https://www.linkedin.com/in/ana-baca-8a1b2c3")).toBe(
+      "Ana Baca"
+    );
+  });
+
+  it("does not drop a hex-looking segment that isn't trailing", () => {
+    // "dead" (all hex, no digit) mid-slug must be kept.
+    expect(nameFromSlug("https://www.linkedin.com/in/dead-pool")).toBe(
+      "Dead Pool"
+    );
   });
 
   it("does not throw on malformed percent-encoding", () => {

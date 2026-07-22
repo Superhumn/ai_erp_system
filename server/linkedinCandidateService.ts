@@ -61,10 +61,29 @@ export function normalizeLinkedInUrl(raw: string): string | null {
   const host = url.hostname.toLowerCase();
   if (host !== "linkedin.com" && !host.endsWith(".linkedin.com")) return null;
   // Only canonical profile paths, e.g. /in/jane-doe-8a1b2c3
-  const slug = url.pathname.match(/^\/in\/([A-Za-z0-9%._-]+)\/?$/);
-  if (!slug) return null;
+  const slugMatch = url.pathname.match(/^\/in\/([A-Za-z0-9%._-]+)\/?$/);
+  if (!slugMatch) return null;
+  const rawSlug = slugMatch[1];
+  // Decode and re-check: percent-encoded reserved chars (e.g. %2F -> "/") could
+  // otherwise smuggle extra path structure past the single-segment guarantee.
+  // Legitimate encoded Unicode (e.g. josé -> jos%C3%A9) still passes.
+  let decodedSlug: string;
+  try {
+    decodedSlug = decodeURIComponent(rawSlug);
+  } catch {
+    return null; // malformed percent-encoding
+  }
+  // Reject path/query delimiters, a residual percent (double-encoding),
+  // whitespace, and control characters.
+  // eslint-disable-next-line no-control-regex
+  if (
+    /[/\\?#%\s]/.test(decodedSlug) ||
+    /[\u0000-\u001f\u007f]/.test(decodedSlug)
+  ) {
+    return null;
+  }
   // Rebuild from scratch to drop query, fragment, and any other path segments.
-  return `https://${host}/in/${slug[1]}`;
+  return `https://${host}/in/${rawSlug}`;
 }
 
 /** Turn a profile slug (…/in/jane-doe-8a1b2c3) into a rough display name. */
@@ -79,15 +98,21 @@ export function nameFromSlug(url: string): string {
   } catch {
     /* keep the raw, undecoded slug */
   }
-  return (
-    slug
-      .split("-")
-      // drop trailing id-ish segments (hex / digits) LinkedIn appends
-      .filter(part => !/^[0-9a-f]{4,}$/i.test(part) && !/^\d+$/.test(part))
-      .map(part => (part ? part[0].toUpperCase() + part.slice(1) : part))
-      .join(" ")
-      .trim()
-  );
+  const parts = slug.split("-");
+  // LinkedIn appends an opaque id suffix (e.g. "jane-doe-8a1b2c3"). Only strip
+  // it from the *end*, and only when it actually looks like an id — an
+  // all-numeric segment, or a hex-looking segment that contains a digit. A
+  // pure-alpha segment is kept even if it happens to be valid hex (e.g. the
+  // real surname "baca"), since it may be part of the name.
+  const isIdSuffix = (p: string) =>
+    /^\d+$/.test(p) || (/^[0-9a-f]+$/i.test(p) && /\d/.test(p));
+  while (parts.length > 1 && isIdSuffix(parts[parts.length - 1])) {
+    parts.pop();
+  }
+  return parts
+    .map(part => (part ? part[0].toUpperCase() + part.slice(1) : part))
+    .join(" ")
+    .trim();
 }
 
 /** Strip a fetched HTML page down to the text worth feeding the model. */
