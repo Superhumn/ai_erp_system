@@ -75,6 +75,9 @@ export const ENV = {
     twilioAccountSid: process.env.TWILIO_ACCOUNT_SID ?? "",
     twilioAuthToken: process.env.TWILIO_AUTH_TOKEN ?? "",
     twilioPhoneNumber: process.env.TWILIO_PHONE_NUMBER ?? "",
+    // WhatsApp Business sender, e.g. "whatsapp:+14155238886" (or bare "+14155238886").
+    // Required for live WhatsApp send/receive via the Twilio WhatsApp Business API.
+    twilioWhatsappNumber: process.env.TWILIO_WHATSAPP_NUMBER ?? "",
 
     // API Proxy (image generation, voice, maps, notifications, data API)
     apiProxyUrl: process.env.API_PROXY_URL ?? "",

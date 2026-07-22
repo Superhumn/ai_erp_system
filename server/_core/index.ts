@@ -10,6 +10,7 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import rateLimit from "express-rate-limit";
 import { registerOAuthRoutes } from "./oauth";
 import { registerLocalAuthRoutes } from "./localAuth";
+import { registerAttachmentRoutes } from "./attachmentRoutes";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 // serveStatic is inlined here to avoid importing vite.ts (which pulls in vite devDependencies)
@@ -735,6 +736,7 @@ async function startServer() {
   // Auth routes (login, register)
   registerOAuthRoutes(app);
   registerLocalAuthRoutes(app);
+  registerAttachmentRoutes(app);
 
   // Health check endpoint
   app.get('/api/health', (_req, res) => {
@@ -1677,6 +1679,37 @@ async function startServer() {
         }, 10 * 60 * 1000);
       } catch (e) {
         console.warn("[Data Room Follow-Up] Could not initialize:", e);
+      }
+    })();
+
+    // ── Task reminder emails for outstanding tasks (daily check) ──
+    (async () => {
+      try {
+        const TASK_REMINDER_INTERVAL = 24 * 60 * 60 * 1000; // Daily
+        console.log("[Task Reminder] Starting daily outstanding-task reminder scheduler");
+        setInterval(async () => {
+          try {
+            const { sendTaskReminders } = await import("../taskReminders");
+            const result = await sendTaskReminders();
+            if (result.sent > 0) {
+              console.log(`[Task Reminder] Sent ${result.sent} task reminder emails`);
+            }
+            if (result.failed > 0) {
+              console.warn(`[Task Reminder] ${result.failed} reminder emails failed to send`);
+            }
+          } catch (e) {
+            console.warn("[Task Reminder] Failed:", e);
+          }
+        }, TASK_REMINDER_INTERVAL);
+        // Initial check after 10 minutes
+        setTimeout(async () => {
+          try {
+            const { sendTaskReminders } = await import("../taskReminders");
+            await sendTaskReminders();
+          } catch {}
+        }, 10 * 60 * 1000);
+      } catch (e) {
+        console.warn("[Task Reminder] Could not initialize:", e);
       }
     })();
 
