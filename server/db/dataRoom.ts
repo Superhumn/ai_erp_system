@@ -1541,10 +1541,11 @@ export async function getChecklistWithItems(checklistId: number) {
   // Group items by category
   const categories: Record<string, typeof items> = {};
   items.forEach(item => {
-    if (!categories[item.categoryName]) {
-      categories[item.categoryName] = [];
+    const categoryName = item.categoryName ?? "Uncategorized";
+    if (!categories[categoryName]) {
+      categories[categoryName] = [];
     }
-    categories[item.categoryName].push(item);
+    categories[categoryName].push(item);
   });
 
   // Get linked documents for each item
@@ -1830,13 +1831,14 @@ export async function getChecklistSummary(dataRoomId: number) {
   // Group by category and status
   const byCategory: Record<string, { total: number; complete: number; partial: number; missing: number }> = {};
   items.forEach(item => {
-    if (!byCategory[item.categoryName]) {
-      byCategory[item.categoryName] = { total: 0, complete: 0, partial: 0, missing: 0 };
+    const categoryName = item.categoryName ?? "Uncategorized";
+    if (!byCategory[categoryName]) {
+      byCategory[categoryName] = { total: 0, complete: 0, partial: 0, missing: 0 };
     }
-    byCategory[item.categoryName].total++;
-    if (item.status === 'complete') byCategory[item.categoryName].complete++;
-    else if (item.status === 'partial') byCategory[item.categoryName].partial++;
-    else if (item.status === 'missing') byCategory[item.categoryName].missing++;
+    byCategory[categoryName].total++;
+    if (item.status === 'complete') byCategory[categoryName].complete++;
+    else if (item.status === 'partial') byCategory[categoryName].partial++;
+    else if (item.status === 'missing') byCategory[categoryName].missing++;
   });
 
   return {

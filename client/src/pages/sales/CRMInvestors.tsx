@@ -67,7 +67,7 @@ export default function CRMInvestors() {
       });
       refetch();
     },
-    onError: (error) => {
+    onError: (error: any) => {
       toast.error(error.message);
     },
   });
@@ -77,7 +77,7 @@ export default function CRMInvestors() {
     createInvestor.mutate(formData);
   };
 
-  const filteredInvestors = investors?.filter((investor) => {
+  const filteredInvestors = investors?.filter((investor: any) => {
     const matchesSearch = investor.name.toLowerCase().includes(search.toLowerCase()) ||
       investor.email?.toLowerCase().includes(search.toLowerCase()) ||
       investor.company?.toLowerCase().includes(search.toLowerCase());
@@ -362,7 +362,7 @@ export default function CRMInvestors() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredInvestors.map((investor) => (
+                    {filteredInvestors.map((investor: any) => (
                       <TableRow key={investor.id} className="cursor-pointer hover:bg-muted/50">
                         <TableCell>
                           <Link href={`/crm/investors/${investor.id}`} className="block">

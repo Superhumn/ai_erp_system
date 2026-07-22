@@ -45,6 +45,7 @@ const DEFAULT_LIMIT = 50;
  */
 export async function queryDatabase(input: ToolAdapterInput): Promise<ToolAdapterResult> {
   const db = await getDb();
+  if (!db) throw new Error("Database connection unavailable");
   const { table: tableName, filters, limit: requestedLimit } = input;
 
   if (!tableName) {
