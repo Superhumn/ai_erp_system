@@ -3346,8 +3346,10 @@ ONLY return the JSON array, no other text.`;
         // rather than silently coercing to 0/100/65, which would corrupt the
         // stored qualifiedAmount and the aggregated credit.
         const parseAmount = (v: string, field: string): number => {
-          const n = parseFloat(v);
-          if (!Number.isFinite(n)) throw new TRPCError({ code: 'BAD_REQUEST', message: `Invalid numeric value for ${field}` });
+          // Use Number (not parseFloat) so partially-numeric strings like
+          // "1.2xyz" are rejected rather than silently truncated to 1.2.
+          const n = Number(v);
+          if (v.trim() === '' || !Number.isFinite(n)) throw new TRPCError({ code: 'BAD_REQUEST', message: `Invalid numeric value for ${field}` });
           return n;
         };
         const gross = parseAmount(input.grossAmount, 'grossAmount');
@@ -3389,8 +3391,10 @@ ONLY return the JSON array, no other text.`;
         // Validate any client-supplied numeric strings; fall back to the
         // (trusted) stored value when a field isn't being changed.
         const parseAmount = (v: string, field: string): number => {
-          const n = parseFloat(v);
-          if (!Number.isFinite(n)) throw new TRPCError({ code: 'BAD_REQUEST', message: `Invalid numeric value for ${field}` });
+          // Use Number (not parseFloat) so partially-numeric strings like
+          // "1.2xyz" are rejected rather than silently truncated to 1.2.
+          const n = Number(v);
+          if (v.trim() === '' || !Number.isFinite(n)) throw new TRPCError({ code: 'BAD_REQUEST', message: `Invalid numeric value for ${field}` });
           return n;
         };
         const category = data.category ?? (existing.category as "wages" | "supplies" | "contract_research" | "cloud_computing");
