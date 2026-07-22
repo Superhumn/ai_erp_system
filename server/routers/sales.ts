@@ -591,6 +591,9 @@ export const salesRouter = router({
                 levels.push(...(data.inventory_levels || []));
                 nextUrl = parseNextLink(response.headers.get('link'));
               }
+              if (nextUrl) {
+                console.warn(`[Shopify Sync] inventory_levels pagination hit the ${pageGuard}-page cap for ${store.storeDomain}; inventory sync may be incomplete`);
+              }
 
               // Get SKU mappings for this store
               const mappings = await db.getShopifySkuMappings(store.id);

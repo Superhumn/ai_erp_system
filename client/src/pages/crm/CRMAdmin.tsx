@@ -117,7 +117,9 @@ function CampaignsSection() {
       bodyHtml: c.bodyHtml || "",
       type: c.type || "custom",
       status: c.status || "draft",
-      scheduledAt: c.scheduledAt ? new Date(c.scheduledAt).toISOString().slice(0, 10) : "",
+      // Format as local YYYY-MM-DD (en-CA) so the date shown in the date input
+      // doesn't shift for users outside UTC.
+      scheduledAt: c.scheduledAt ? new Date(c.scheduledAt).toLocaleDateString("en-CA") : "",
     });
     setEditingId(c.id);
   };
@@ -228,7 +230,9 @@ function CampaignsSection() {
             <Button
               disabled={!form.name || !form.subject || createCampaign.isPending || updateCampaign.isPending}
               onClick={() => {
-                const scheduledAt = form.scheduledAt ? new Date(form.scheduledAt) : undefined;
+                // Parse the date-only value as local time (no timezone suffix)
+                // so the intended day isn't shifted by UTC interpretation.
+                const scheduledAt = form.scheduledAt ? new Date(`${form.scheduledAt}T00:00:00`) : undefined;
                 const payload = {
                   name: form.name,
                   subject: form.subject,

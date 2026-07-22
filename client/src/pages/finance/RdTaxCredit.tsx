@@ -855,8 +855,8 @@ function ImportFromQBButton({ studyId, projects, onRefresh }: {
               <Select value={projectId} onValueChange={setProjectId}>
                 <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
                 <SelectContent>
-                  {projects.map((p) => (
-                    <SelectItem key={p.id ?? 0} value={String(p.id ?? 0)}>{p.projectName ?? ""}</SelectItem>
+                  {projects.filter((p) => p.id != null).map((p) => (
+                    <SelectItem key={p.id!} value={String(p.id!)}>{p.projectName ?? ""}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
