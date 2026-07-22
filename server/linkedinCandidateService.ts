@@ -38,7 +38,15 @@ const EMPTY: LinkedInCandidate = {
   confidence: "low",
 };
 
-/** Accept only https linkedin.com profile URLs (avoids SSRF against internal hosts). */
+/**
+ * Validate and canonicalize a LinkedIn profile URL.
+ *
+ * Since the result is later fetched server-side, this is deliberately strict to
+ * limit SSRF / open-redirect surface: only `https`, only `linkedin.com` (or a
+ * regional subdomain), only canonical `/in/<slug>` profile paths, and no
+ * embedded credentials, ports, query, or fragment. Returns a rebuilt
+ * `https://<host>/in/<slug>` string, or `null` if anything is off.
+ */
 export function normalizeLinkedInUrl(raw: string): string | null {
   let url: URL;
   try {
@@ -46,15 +54,21 @@ export function normalizeLinkedInUrl(raw: string): string | null {
   } catch {
     return null;
   }
+  // http is accepted on input but always upgraded to https below.
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  if (url.username || url.password) return null; // no embedded credentials
+  if (url.port) return null; // no non-standard ports
   const host = url.hostname.toLowerCase();
   if (host !== "linkedin.com" && !host.endsWith(".linkedin.com")) return null;
-  url.protocol = "https:";
-  return url.toString();
+  // Only canonical profile paths, e.g. /in/jane-doe-8a1b2c3
+  const slug = url.pathname.match(/^\/in\/([A-Za-z0-9%._-]+)\/?$/);
+  if (!slug) return null;
+  // Rebuild from scratch to drop query, fragment, and any other path segments.
+  return `https://${host}/in/${slug[1]}`;
 }
 
 /** Turn a profile slug (…/in/jane-doe-8a1b2c3) into a rough display name. */
-function nameFromSlug(url: string): string {
+export function nameFromSlug(url: string): string {
   const match = url.match(/\/in\/([^/?#]+)/i);
   if (!match) return "";
   return (
@@ -88,18 +102,20 @@ function extractReadableContent(html: string): string {
   if (ogDescription) parts.push(`Summary: ${ogDescription}`);
 
   // JSON-LD blocks on public profiles often carry structured Person data.
+  // The end-tag pattern tolerates whitespace/attributes (e.g. `</script >`).
   const ldMatches = html.matchAll(
-    /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
+    /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script\b[^>]*>/gi
   );
   for (const m of ldMatches) {
     const json = m[1]?.trim();
     if (json) parts.push(`Structured data: ${json}`);
   }
 
-  // Fallback: visible text, tags stripped.
+  // Fallback: visible text, tags stripped. End-tag patterns tolerate
+  // whitespace/attributes so `</script >`-style tags are still removed.
   const text = html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script\b[\s\S]*?<\/script\b[^>]*>/gi, " ")
+    .replace(/<style\b[\s\S]*?<\/style\b[^>]*>/gi, " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g, " ")
     .replace(/\s+/g, " ")
@@ -109,26 +125,48 @@ function extractReadableContent(html: string): string {
   return parts.join("\n\n").slice(0, 12000);
 }
 
+const MAX_REDIRECTS = 4;
+
 async function fetchProfileHtml(url: string): Promise<string | null> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12000);
+  const headers = {
+    // Present as a normal browser; LinkedIn still frequently walls us.
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+      "(KHTML, like Gecko) Chrome/125.0 Safari/537.36",
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+  };
   try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      redirect: "follow",
-      headers: {
-        // Present as a normal browser; LinkedIn still frequently walls us.
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-          "(KHTML, like Gecko) Chrome/125.0 Safari/537.36",
-        Accept:
-          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-      },
-    });
-    if (!res.ok) return null;
-    const html = await res.text();
-    return html || null;
+    let current = url;
+    // Follow redirects manually so every hop is re-validated against the
+    // allowlist — `redirect:"follow"` would let an off-host redirect through.
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      const res = await fetch(current, {
+        signal: controller.signal,
+        redirect: "manual",
+        headers,
+      });
+      if (res.status >= 300 && res.status < 400) {
+        const location = res.headers.get("location");
+        if (!location) return null;
+        let resolved: string;
+        try {
+          resolved = new URL(location, current).toString();
+        } catch {
+          return null;
+        }
+        const next = normalizeLinkedInUrl(resolved);
+        if (!next) return null; // redirect left the allowlist (e.g. auth wall)
+        current = next;
+        continue;
+      }
+      if (!res.ok) return null;
+      const html = await res.text();
+      return html || null;
+    }
+    return null; // too many redirects
   } catch {
     return null;
   } finally {
