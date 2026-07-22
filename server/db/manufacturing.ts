@@ -1,4 +1,4 @@
-import { eq, and, or, desc, sql, count } from "drizzle-orm";
+import { eq, and, or, desc, sql, inArray } from "drizzle-orm";
 import {
   billOfMaterials, InsertBillOfMaterials, bomComponents, InsertBomComponent,
   rawMaterials, InsertRawMaterial, bomVersionHistory, InsertBomVersionHistory,
@@ -17,7 +17,8 @@ import {
   ingredientQuoteRequests, InsertIngredientQuoteRequest,
   ingredientCostAlerts, InsertIngredientCostAlert,
   recipeCopackerShares, InsertRecipeCopackerShare,
-  vendors, warehouses,
+  recipeAccessGrants,
+  vendors, warehouses, users,
 } from "../../drizzle/schema";
 import { getDb } from "./connection";
 
@@ -979,6 +980,138 @@ export async function getRecipes(filters?: { category?: string; status?: string;
   return conditions.length > 0 ? query.where(and(...conditions)) : query;
 }
 
+/**
+ * List recipes visible to a specific user. A recipe is visible only if the user
+ * created it (the owner) or has an explicit access grant. There is no role-based
+ * bypass — formulations stay private until access is granted individually.
+ */
+export async function getRecipesForUser(
+  userId: number,
+  filters?: { category?: string; status?: string; isSubRecipe?: boolean },
+) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.category) conditions.push(eq(recipes.category, filters.category as any));
+  if (filters?.status) conditions.push(eq(recipes.status, filters.status as any));
+  if (typeof filters?.isSubRecipe === "boolean") conditions.push(eq(recipes.isSubRecipe, filters.isSubRecipe));
+  const grantedRecipeIds = db
+    .select({ id: recipeAccessGrants.recipeId })
+    .from(recipeAccessGrants)
+    .where(eq(recipeAccessGrants.userId, userId));
+  conditions.push(or(eq(recipes.createdBy, userId), inArray(recipes.id, grantedRecipeIds)));
+  return db.select().from(recipes).where(and(...conditions)).orderBy(desc(recipes.updatedAt));
+}
+
+/**
+ * Resolve a user's access to a single recipe.
+ * - Owner (createdBy): full access including grant management.
+ * - Grantee: view, plus edit when the grant allows it.
+ * - Everyone else: no access.
+ */
+export async function getRecipeAccess(
+  userId: number,
+  recipeId: number,
+): Promise<{ canView: boolean; canEdit: boolean; isOwner: boolean }> {
+  const db = await getDb();
+  if (!db) return { canView: false, canEdit: false, isOwner: false };
+  const recipe = await getRecipeById(recipeId);
+  if (!recipe) return { canView: false, canEdit: false, isOwner: false };
+  if (recipe.createdBy === userId) return { canView: true, canEdit: true, isOwner: true };
+  const grant = (
+    await db
+      .select()
+      .from(recipeAccessGrants)
+      .where(and(eq(recipeAccessGrants.recipeId, recipeId), eq(recipeAccessGrants.userId, userId)))
+      .limit(1)
+  )[0];
+  if (grant) return { canView: true, canEdit: !!grant.canEdit, isOwner: false };
+  return { canView: false, canEdit: false, isOwner: false };
+}
+
+export async function listRecipeAccessGrants(recipeId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select({
+      id: recipeAccessGrants.id,
+      userId: recipeAccessGrants.userId,
+      canEdit: recipeAccessGrants.canEdit,
+      grantedBy: recipeAccessGrants.grantedBy,
+      grantedAt: recipeAccessGrants.grantedAt,
+      userName: users.name,
+      userEmail: users.email,
+    })
+    .from(recipeAccessGrants)
+    .leftJoin(users, eq(recipeAccessGrants.userId, users.id))
+    .where(eq(recipeAccessGrants.recipeId, recipeId))
+    .orderBy(recipeAccessGrants.grantedAt);
+}
+
+export async function grantRecipeAccess(data: {
+  recipeId: number;
+  userId: number;
+  canEdit?: boolean;
+  grantedBy?: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const existing = (
+    await db
+      .select()
+      .from(recipeAccessGrants)
+      .where(and(eq(recipeAccessGrants.recipeId, data.recipeId), eq(recipeAccessGrants.userId, data.userId)))
+      .limit(1)
+  )[0];
+  if (existing) {
+    await db
+      .update(recipeAccessGrants)
+      .set({ canEdit: data.canEdit ?? existing.canEdit })
+      .where(eq(recipeAccessGrants.id, existing.id));
+    return { id: existing.id, created: false };
+  }
+  const result = await db
+    .insert(recipeAccessGrants)
+    .values({
+      recipeId: data.recipeId,
+      userId: data.userId,
+      canEdit: data.canEdit ?? false,
+      grantedBy: data.grantedBy,
+    })
+    .$returningId();
+  return { id: result[0].id, created: true };
+}
+
+export async function revokeRecipeAccess(recipeId: number, userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .delete(recipeAccessGrants)
+    .where(and(eq(recipeAccessGrants.recipeId, recipeId), eq(recipeAccessGrants.userId, userId)));
+}
+
+/** Find an ingredient by exact SKU first, then by case-insensitive name match. */
+export async function findIngredientByNameOrSku(name: string, sku?: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  if (sku && sku.trim()) {
+    const bySku = await db
+      .select()
+      .from(recipeIngredients)
+      .where(eq(recipeIngredients.sku, sku.trim()))
+      .limit(1);
+    if (bySku[0]) return bySku[0];
+  }
+  const trimmed = name.trim();
+  if (!trimmed) return undefined;
+  const byName = await db
+    .select()
+    .from(recipeIngredients)
+    .where(sql`LOWER(${recipeIngredients.name}) = ${trimmed.toLowerCase()}`)
+    .limit(1);
+  return byName[0];
+}
+
 export async function getRecipeById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
@@ -1015,6 +1148,7 @@ export async function deleteRecipe(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.transaction(async (tx) => {
+    await tx.delete(recipeAccessGrants).where(eq(recipeAccessGrants.recipeId, id));
     await tx.delete(recipeCopackerShares).where(eq(recipeCopackerShares.recipeId, id));
     await tx.delete(recipeProcedures).where(eq(recipeProcedures.recipeRowId, id));
     await tx.delete(recipeLines).where(eq(recipeLines.recipeRowId, id));

@@ -361,7 +361,28 @@ export default function DataRoomDetail() {
 
   const syncFromDriveMutation = trpc.dataRoom.syncFromDrive.useMutation({
     onSuccess: (data) => {
-      toast.success(`Synced ${data.filesCreated} files and ${data.foldersCreated} folders from Google Drive${data.folderName ? ` (${data.folderName})` : ''}`);
+      const where = data.folderName ? ` (${data.folderName})` : '';
+      const filesFound = data.filesFound ?? data.filesCreated;
+      const firstError = data.errors?.[0];
+      if (data.filesCreated === 0 && filesFound === 0) {
+        // Drive returned no files at all — usually a permissions/scope issue or
+        // an empty folder, not a successful sync. Don't show a green toast.
+        toast.error(
+          `No files found in the Google Drive folder${where}. ` +
+          `Check that the folder contains files and is shared with the connected account.`
+        );
+      } else if (data.filesCreated === 0 && filesFound > 0) {
+        // Files were found but none could be imported — surface the real reason.
+        toast.error(
+          `Found ${filesFound} file(s) but none could be imported${where}.` +
+          (firstError ? ` First error: ${firstError}` : '')
+        );
+      } else {
+        toast.success(
+          `Synced ${data.filesCreated} files and ${data.foldersCreated} folders from Google Drive${where}` +
+          (data.filesFailed ? ` (${data.filesFailed} file(s) failed)` : '')
+        );
+      }
       setGoogleDriveSyncOpen(false);
       setSelectedDriveFolderId("");
       refetchFolders();
