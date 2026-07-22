@@ -208,6 +208,11 @@ const entityConfig: Record<EntityType, {
     icon: <Building className="h-5 w-5" />,
     fields: [
       { name: "name", label: "Vendor Name", type: "text", placeholder: "e.g., Acme Supplies", required: true },
+      { name: "type", label: "Vendor Type", type: "select", options: [
+        { value: "supplier", label: "Supplier" },
+        { value: "contractor", label: "Contractor" },
+        { value: "service", label: "Service" },
+      ]},
       { name: "contactName", label: "Contact Name", type: "text", placeholder: "e.g., Jane Doe" },
       { name: "email", label: "Email", type: "email", placeholder: "contact@vendor.com" },
       { name: "phone", label: "Phone", type: "text", placeholder: "+1 (555) 123-4567" },

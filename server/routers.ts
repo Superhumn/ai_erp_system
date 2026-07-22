@@ -906,7 +906,10 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
 
         const clean = (v: unknown): string | undefined =>
           typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined;
-        const vendorType = clean(raw.type);
+        const vendorType = clean(raw.type)?.toLowerCase();
+        const rawConfidence = clean(raw.confidence)?.toLowerCase();
+        const confidence: "high" | "medium" | "low" =
+          rawConfidence === "high" || rawConfidence === "low" ? rawConfidence : "medium";
         const vendor = {
           name: raw.name as string,
           contactName: clean(raw.contactName),
@@ -926,7 +929,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           found: true as const,
           vendor,
           sources: Array.isArray(raw.sources) ? (raw.sources as string[]).filter(s => typeof s === "string") : [],
-          confidence: (clean(raw.confidence) as "high" | "medium" | "low" | undefined) ?? "medium",
+          confidence,
         };
       }),
   }),

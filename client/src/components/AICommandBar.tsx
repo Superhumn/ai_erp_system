@@ -674,10 +674,10 @@ export function AICommandBar({ context }: AICommandBarProps) {
   const [agentActions, setAgentActions] = useState<Array<{ type: string; description?: string; status?: string; error?: string }> | null>(null);
   // "plan" = propose a plan and wait for approval before acting; "act" = do it directly.
   const [agentMode, setAgentMode] = useState<"plan" | "act">(() => {
-    if (typeof window !== "undefined") {
+    try {
       const saved = window.localStorage.getItem("aiBarMode");
       if (saved === "act" || saved === "plan") return saved;
-    }
+    } catch { /* storage blocked (privacy mode / SSR) — fall through */ }
     return "plan";
   });
   const [pendingPlan, setPendingPlan] = useState<string | null>(null);
