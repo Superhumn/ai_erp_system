@@ -1,6 +1,7 @@
 import { invokeLLM } from "./_core/llm";
 import type { Message } from "./_core/llm";
 import { ENV } from "./_core/env";
+import { EXECUTABLE_LANGUAGES, isExecutableLanguage, type ExecutableLanguage } from "@shared/const";
 
 export type CodeAction = "generate" | "explain" | "debug" | "refactor" | "review" | "test" | "document" | "optimize";
 
@@ -200,7 +201,9 @@ export async function executeCodeSandboxed(code: string, language: string): Prom
     };
   }
 
-  const fileExt: Record<string, string> = {
+  // Keyed by ExecutableLanguage so this map must cover exactly the shared
+  // EXECUTABLE_LANGUAGES set — TS errors here if the two ever drift apart.
+  const fileExt: Record<ExecutableLanguage, string> = {
     javascript: "js",
     typescript: "ts",
     python: "py",
@@ -208,16 +211,16 @@ export async function executeCodeSandboxed(code: string, language: string): Prom
     sh: "sh",
   };
   const lang = language.toLowerCase();
-  const ext = fileExt[lang];
-  if (!ext) {
+  if (!isExecutableLanguage(lang)) {
     return {
       output: "",
-      errorOutput: `Unsupported language for execution: ${language}. Supported: ${Object.keys(fileExt).join(", ")}`,
+      errorOutput: `Unsupported language for execution: ${language}. Supported: ${EXECUTABLE_LANGUAGES.join(", ")}`,
       exitCode: 1,
       executionTimeMs: 0,
       status: "failed",
     };
   }
+  const ext = fileExt[lang as ExecutableLanguage];
 
   // Resolve the interpreter deterministically. Use absolute `node`
   // (process.execPath) and resolve the bundled `tsx` from our own
@@ -350,6 +353,13 @@ export async function executeCodeSandboxed(code: string, language: string): Prom
         stderr += data.toString();
         if (stderr.length > 100000) { overflow = true; killTree("SIGKILL"); }
       });
+
+      // As soon as the interpreter itself exits, reap the whole process group.
+      // This kills anything the run backgrounded (so it can't linger on the
+      // host) AND releases the stdout/stderr fds those children inherited —
+      // otherwise the pipes never EOF and `close` wouldn't fire until the
+      // timeout. No-op once the group is empty.
+      proc.on("exit", () => killTree("SIGKILL"));
 
       proc.on("close", (exitCode: number | null) => {
         clearTimeout(timer);
