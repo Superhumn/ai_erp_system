@@ -25,7 +25,7 @@
 // type-checker; see caveats in the emitted doc.
 
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 
 const ROOT = process.cwd();
 const CLIENT = join(ROOT, "client/src");
