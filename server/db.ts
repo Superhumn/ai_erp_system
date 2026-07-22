@@ -2217,6 +2217,26 @@ export async function getDocuments(filters?: { companyId?: number; type?: string
   return db.select().from(documents).orderBy(desc(documents.createdAt));
 }
 
+/**
+ * Batched document counts for many references of the same type, in one grouped
+ * query. Lets a table fetch every row's doc count at once instead of one query
+ * per row (the DocumentsCell N+1).
+ */
+export async function getDocumentCountsByReferences(
+  referenceType: string,
+  referenceIds: number[],
+): Promise<{ referenceId: number; count: number }[]> {
+  const db = await getDb();
+  if (!db) return [];
+  if (referenceIds.length === 0) return [];
+  const rows = await db
+    .select({ referenceId: documents.referenceId, docCount: count() })
+    .from(documents)
+    .where(and(eq(documents.referenceType, referenceType), inArray(documents.referenceId, referenceIds)))
+    .groupBy(documents.referenceId);
+  return rows.map((r) => ({ referenceId: Number(r.referenceId), count: Number(r.docCount) }));
+}
+
 export async function createDocument(data: InsertDocument) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");

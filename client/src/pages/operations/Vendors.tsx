@@ -106,6 +106,18 @@ export default function Vendors() {
 
   // Data queries
   const { data: vendors, isLoading: vendorsLoading } = trpc.vendors.list.useQuery();
+
+  // Batch-load document counts for all vendor rows in one query (avoids the
+  // per-row DocumentsCell fetch on mount).
+  const vendorIds = useMemo(() => (vendors ?? []).map((v) => v.id), [vendors]);
+  const { data: vendorDocCounts } = trpc.documents.countsByReferences.useQuery(
+    { referenceType: "vendor", referenceIds: vendorIds },
+    { enabled: vendorIds.length > 0 },
+  );
+  const docCountByVendor = useMemo(
+    () => new Map((vendorDocCounts ?? []).map((c) => [c.referenceId, c.count])),
+    [vendorDocCounts],
+  );
   const { data: purchaseOrders } = trpc.purchaseOrders.list.useQuery();
   const { data: negotiations } = trpc.vendorNegotiations.list.useQuery({});
   const { data: locations } = trpc.warehouses.list.useQuery();
@@ -765,7 +777,7 @@ export default function Vendors() {
                           </Badge>
                         </TableCell>
                         <TableCell className="text-sm whitespace-nowrap">
-                          <DocumentsCell referenceType="vendor" referenceId={vendor.id} />
+                          <DocumentsCell referenceType="vendor" referenceId={vendor.id} count={docCountByVendor.get(vendor.id) ?? 0} />
                         </TableCell>
                         <TableCell className="text-sm whitespace-nowrap">
                           <div className="flex items-center gap-1">

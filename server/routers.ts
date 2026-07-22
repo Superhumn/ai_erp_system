@@ -3533,6 +3533,14 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         referenceId: z.number().optional(),
       }).optional())
       .query(({ input }) => db.getDocuments(input)),
+    // Batched doc counts for many references at once, so a table can show a
+    // per-row count with one query instead of one query per row.
+    countsByReferences: protectedProcedure
+      .input(z.object({
+        referenceType: z.string(),
+        referenceIds: z.array(z.number()),
+      }))
+      .query(({ input }) => db.getDocumentCountsByReferences(input.referenceType, input.referenceIds)),
     upload: protectedProcedure
       .input(z.object({
         name: z.string().min(1),
