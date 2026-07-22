@@ -13506,15 +13506,27 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
             // back to a metadata-only row when no content is available.
             const attachmentContents: Array<{ filename: string; contentType: string; data: Buffer }> =
               (email as any).attachmentContents || [];
-            const contentByName = new Map(attachmentContents.map((a) => [a.filename, a]));
+            // Pair each attachment row with a downloaded buffer, consuming each
+            // buffer at most once (a per-filename queue) so multiple attachments
+            // sharing a filename each get distinct bytes rather than all
+            // resolving to the last one. Empty-filename parts aren't byte-matched.
+            const contentQueue = new Map<string, Array<{ filename: string; contentType: string; data: Buffer }>>();
+            for (const a of attachmentContents) {
+              if (!a.filename) continue;
+              const q = contentQueue.get(a.filename) ?? [];
+              q.push(a);
+              contentQueue.set(a.filename, q);
+            }
             for (const attachment of email.attachments) {
-              const withBytes = contentByName.get(attachment.filename);
+              const queue = attachment.filename ? contentQueue.get(attachment.filename) : undefined;
+              const withBytes = queue && queue.length ? queue.shift() : undefined;
               const { id: attachmentId } = await db.createEmailAttachment({
                 emailId,
                 filename: attachment.filename,
-                mimeType: attachment.contentType,
-                // Prefer the real downloaded byte length; IMAP metadata size can
-                // be null/approximate for parts we actually stored.
+                // Prefer the real downloaded content-type/size for stored bytes;
+                // IMAP metadata can be missing/approximate, and mimeType drives
+                // the Content-Type when serving /api/attachments/:id later.
+                mimeType: withBytes ? withBytes.contentType : attachment.contentType,
                 size: withBytes ? withBytes.data.length : attachment.size,
                 storageUrl: null,
               });

@@ -1360,9 +1360,8 @@ interface NormalizedDocSummary {
  * invoice / freight invoice / customs doc) and return the import result plus a
  * normalized summary for persisting a parsedDocument row.
  *
- * Shared by every intake path (email attachments, WhatsApp media, bulk upload)
- * so a supplier invoice or shipping doc is filed identically no matter how it
- * arrived.
+ * Shared by the email-attachment and WhatsApp intake paths so a supplier
+ * invoice or shipping doc is filed identically no matter how it arrived.
  */
 async function routeParsedDocumentToErp(
   parseResult: DocumentParseResult,
