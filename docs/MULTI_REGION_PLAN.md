@@ -38,7 +38,7 @@ per country — one system, region-scoped data, consolidation on top.
 | Data scoping | **None.** Any logged-in user sees all rows. `getCustomers` returns every row when `companyId` is omitted, and the router passes the *client-supplied* `input?.companyId` — scope is never derived from the user | Live monolith: `server/db.ts:557` (`getCustomers`), `:1043` (`getOrders`); `server/routers.ts:548-549` |
 | User identity | `users` has **no** `companyId`/`region`/`locale` | `drizzle/schema.ts:9` |
 | Roles | `users` enum: `user, admin, finance, ops, legal, exec, sales, copacker, vendor, contractor, investor` — **no `plant`/`procurement`**. Yet **live code gates on those roles** (`server/routers.ts:171-184` define `plantProcedure`/`procurementProcedure`; `server/materialShortageService.ts:207,241` filter on them), so those gates can never match a real user | `drizzle/schema.ts:15`; `server/routers.ts:171-184` |
-| AuthZ | Role-gate only, no scope injection. Base procedures in `server/_core/trpc.ts:29,31`; role gates defined **inline in the live monolith** (`server/routers.ts:110` `financeProcedure`, `:117` `opsProcedure`). The `server/routers/middleware.ts` copy is part of the orphaned tree | `server/_core/trpc.ts:29`; `server/routers.ts:110,117` |
+| AuthZ | Role-gate only, no scope injection. Base procedures in `server/_core/trpc.ts:29,31`; role gates defined **inline in the live monolith** (`server/routers.ts:110` `financeProcedure`, `:117` `opsProcedure`). The role-gate copies in `server/routers/middleware.ts` are **not** consumed by the live router — though that file isn't dead (its helper exports like `getValidGoogleToken` are imported live by `server/_core/index.ts:121`) | `server/_core/trpc.ts:29`; `server/routers.ts:110,117` |
 | Currency | Per-row `varchar(3) default("USD")` on ~30 tables. **No FX/exchange-rate table, no functional/reporting currency.** `customers`/`vendors` have no currency at all | `drizzle/schema.ts:291,315,337,372,395,433` |
 | Tax | Scalar `taxRate`/`taxAmount` per line. **No jurisdiction/rate registry, no VAT/GST typing.** Best existing shape is `product_price_tiers.taxMode` (inclusive/exclusive/exempt) | `drizzle/schema.ts:7247` |
 | Addresses | Denormalized inline columns; inconsistent (`varchar(64)` names in core tables vs ISO `varchar(8)` in newer ones). `orders` addresses are unstructured `text` | `drizzle/schema.ts:426`, various |
@@ -95,7 +95,7 @@ Small cleanups that unblock the rest and prevent enum drift.
 
 - Reconcile the `plant`/`procurement` role drift: **live code gates on these roles**
   (`server/routers.ts:171-184` `plantProcedure`/`procurementProcedure`;
-  `server/materialShortageService.ts:207,241`; plus the orphaned `server/routers/middleware.ts:51,59`),
+  `server/materialShortageService.ts:207,241`; plus the unused role-gate copies in `server/routers/middleware.ts:51,59`),
   but the `users` enum (`drizzle/schema.ts:15`) omits them — so no user can ever hold either role
   and those gates are currently unsatisfiable dead ends. Fix by either adding both to the enum
   (+ the `teamInvitations` copy at `:67`) or removing the dead gates, so region-based roles don't
@@ -135,8 +135,10 @@ Turns `companyId` from an optional filter into an enforced security boundary.
   role gates in `server/routers.ts` (`financeProcedure` :110, `opsProcedure` :117) — or next to
   `protectedProcedure` in `server/_core/trpc.ts:29`. It resolves the caller's visible `companyId`
   set (self, region siblings, or all) and exposes it as `ctx.scope.companyIds`. **Not** the
-  orphaned `server/routers/middleware.ts`, which the live tree doesn't import.
-- **DB helpers:** change the ~40 `getX(companyId?)` signatures in the live monolith
+  role-gate copies in `server/routers/middleware.ts` — those procedures are unused by the live
+  router (the live monolith defines its own inline), even though that file's helper exports like
+  `getValidGoogleToken` are imported live.
+- **DB helpers:** change the ~57 `getX(companyId?)` signatures in the live monolith
   (`server/db.ts:557` `getCustomers`, `:1043` `getOrders`, and siblings) so scope is
   **required**; queries `WHERE companyId IN (...)`.
   Audit every `protectedProcedure` list route — a missed call site leaks all data.

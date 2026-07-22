@@ -90,13 +90,16 @@ regionScope: mysqlEnum("regionScope", ["entity", "region", "global"]).default("e
 When loading the user, also load `companyId` + `regionScope`, then compute the visible entity
 set once per request and attach it:
 ```
-ctx.scope = { mode: user.regionScope, companyIds: number[] | "all" }
+// shape (define the type once, e.g. in server/_core/context.ts)
+type Scope = { mode: "entity" | "region" | "global"; companyIds: number[] | "all" };
+// value attached per request:
+ctx.scope = { mode: user.regionScope, companyIds: [/* visible entity ids */] };  // or "all" for global
 ```
 - `entity` → `[user.companyId]`
 - `region` → all `companies.id where regionId = <user's entity's regionId>`
 - `global` → `"all"`
 
-### 3.2 `scopedProcedure` (live monolith, NOT the orphaned tree)
+### 3.2 `scopedProcedure` (define it in the live monolith, not the unused middleware copy)
 Add alongside the existing inline gates in `server/routers.ts` (`financeProcedure` :110,
 `opsProcedure` :117, `plantProcedure` :171, `procurementProcedure` :180) — or next to
 `protectedProcedure` in `server/_core/trpc.ts:29`:
