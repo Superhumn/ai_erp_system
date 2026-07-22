@@ -337,7 +337,13 @@ export async function syncDriveFolder(
   let partial = false;
 
   async function syncRecursive(currentFolderId: string, depth: number) {
-    if (depth > maxDepth) return;
+    if (depth > maxDepth) {
+      // Recursion was cut off before this sub-tree could be listed, so the tree
+      // is incomplete. Mark partial so callers skip delete-propagation (a
+      // deeper item isn't "deleted", just unlisted).
+      partial = true;
+      return;
+    }
 
     // Single call returns both folders and files; split is done client-side.
     const { folders, files, error } = await listDriveItems(accessToken, currentFolderId);

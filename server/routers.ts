@@ -14454,8 +14454,12 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
             allowDelete: true,
           });
         } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err);
-          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: msg || 'Sync failed' });
+          // reconcileDataRoomFromDrive only throws curated, user-safe messages
+          // (the Drive-listing hint, or a generic fallback); the full error is
+          // already logged there. Log again with room context and pass it on.
+          console.error(`[DataRoom] syncFromDrive failed for room ${input.dataRoomId}:`, err);
+          const msg = err instanceof Error ? err.message : 'Sync failed';
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: msg });
         }
 
         // Link the folder + record last sync time.
