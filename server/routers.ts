@@ -9982,12 +9982,16 @@ Provide a brief status summary, any missing documents, and next steps.`;
       .input(z.object({ recipeId: z.number(), userId: z.number() }))
       .mutation(async ({ input, ctx }) => {
         await requireRecipeAccess(ctx.user.id, input.recipeId, "own");
+        // Capture the grant row id before deleting so the audit log references
+        // the grant itself (consistent with the grant path), not the recipe id.
+        const existing = await manufacturingDb.listRecipeAccessGrants(input.recipeId);
+        const grant = existing.find((g) => g.userId === input.userId);
         await manufacturingDb.revokeRecipeAccess(input.recipeId, input.userId);
         await createAuditLog(
           ctx.user.id,
           "delete",
           "recipe_access_grant",
-          input.recipeId,
+          grant?.id ?? input.recipeId,
           `recipe:${input.recipeId} × user:${input.userId}`,
         );
         return { success: true };
@@ -10029,6 +10033,7 @@ Provide a brief status summary, any missing documents, and next steps.`;
 
         // Cache ingredients to avoid repeated lookups across lines.
         const ingredientCache = new Map<string, number>();
+        let ingredientsCreated = 0;
         const resolveIngredientId = async (name: string, sku?: string): Promise<number> => {
           const key = (sku?.trim().toLowerCase() || "") + "|" + name.trim().toLowerCase();
           const cached = ingredientCache.get(key);
@@ -10046,14 +10051,13 @@ Provide a brief status summary, any missing documents, and next steps.`;
             sku: generatedSku,
           });
           ingredientCache.set(key, created.id);
+          ingredientsCreated++;
           return created.id;
         };
 
         let recipesCreated = 0;
         let linesCreated = 0;
         let proceduresCreated = 0;
-        let ingredientsCreated = 0;
-        const before = ingredientCache.size;
 
         for (const rec of parsed) {
           const recipeId =
@@ -10092,7 +10096,6 @@ Provide a brief status summary, any missing documents, and next steps.`;
 
           await createAuditLog(ctx.user.id, "create", "recipe", createdRecipe.id, `imported: ${rec.name}`);
         }
-        ingredientsCreated = ingredientCache.size - before;
 
         return {
           recipesCreated,

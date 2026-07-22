@@ -151,7 +151,7 @@ export default function Recipes() {
   const [grantEmail, setGrantEmail] = useState("");
   const [grantCanEdit, setGrantCanEdit] = useState(false);
   const { data: accessGrants, refetch: refetchAccess } = trpc.recipes.listAccess.useQuery(
-    { recipeId: accessRecipeId! },
+    { recipeId: accessRecipeId ?? 0 },
     { enabled: !!accessRecipeId },
   );
   const grantAccess = trpc.recipes.grant.useMutation({
@@ -585,7 +585,7 @@ export default function Recipes() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {accessGrants.map((g: any) => (
+                    {accessGrants.map((g) => (
                       <TableRow key={g.id}>
                         <TableCell>
                           <div className="text-sm font-medium">{g.userName ?? "—"}</div>
