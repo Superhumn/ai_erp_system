@@ -511,6 +511,14 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
         break;
   }
 
+  // If the turn is still paused after the continuation cap, fail loudly rather
+  // than handing callers a truncated/partial answer they might act on.
+  if (anthropicResp.stop_reason === "pause_turn") {
+        throw new Error(
+              `LLM invoke did not complete: turn still paused after ${MAX_PAUSE_CONTINUATIONS} continuations`,
+            );
+  }
+
   const result = convertAnthropicResponse(anthropicResp);
     // Prepend any text emitted during the paused segments so nothing is lost.
     if (carriedText.length > 0) {

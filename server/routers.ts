@@ -6316,10 +6316,12 @@ Be concise and helpful. Always give actionable guidance.`;
           return planAIAgentRequest(input.message, history, agentContext);
         }
 
-        // Execute. If an approved plan was supplied, hand it to the agent so it
-        // carries out exactly what the user signed off on.
+        // Execute. If an approved plan was supplied, include it as guidance for
+        // the agent. Note this steers the model via the prompt — it's not a hard
+        // constraint, so the agent should follow the plan but may adapt if
+        // reality differs from what the plan assumed.
         const message = input.approvedPlan
-          ? `${input.message}\n\nThe user reviewed and APPROVED this plan — carry it out now:\n${input.approvedPlan}`
+          ? `${input.message}\n\nThe user reviewed and approved the following plan. Follow it as closely as possible, adjusting only where necessary:\n${input.approvedPlan}`
           : input.message;
 
         const result = await processAIAgentRequest(message, history, agentContext);
