@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Settings as SettingsIcon, User, Shield, Bell, Link, ExternalLink, Globe, Users, Lock, Loader2, Eye, EyeOff, Mail } from "lucide-react";
+import { Settings as SettingsIcon, User, Bell, Link, ExternalLink, Globe, Users, Lock, Loader2, Eye, EyeOff, Mail } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
