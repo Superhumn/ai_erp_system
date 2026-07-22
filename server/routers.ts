@@ -2503,8 +2503,18 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         } catch (e: any) {
           throw new TRPCError({ code: 'BAD_REQUEST', message: e?.message || 'Invalid line items.' });
         }
-        const tax = parseFloat(input.taxAmount ?? po.taxAmount ?? '0') || 0;
-        const shipping = parseFloat(input.shippingAmount ?? po.shippingAmount ?? '0') || 0;
+        // Validate tax/shipping as finite, non-negative numbers rather than
+        // silently coercing bad input to 0 (which could hide client bugs or
+        // produce a negative total).
+        const parseMoney = (v: string | null | undefined, label: string): number => {
+          const n = parseFloat(v ?? '0');
+          if (!Number.isFinite(n) || n < 0) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: `Invalid ${label}.` });
+          }
+          return n;
+        };
+        const tax = parseMoney(input.taxAmount ?? po.taxAmount, 'tax amount');
+        const shipping = parseMoney(input.shippingAmount ?? po.shippingAmount, 'shipping amount');
         await db.updatePurchaseOrder(input.id, {
           subtotal: subtotal.toFixed(2),
           taxAmount: tax.toFixed(2),

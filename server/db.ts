@@ -1443,7 +1443,10 @@ export async function getPurchaseOrderDocuments(purchaseOrderId: number) {
   const docs = await db
     .select()
     .from(documents)
-    .where(and(eq(documents.referenceType, "po"), eq(documents.referenceId, purchaseOrderId)))
+    // `referenceType` is the entity type; the repo convention is the snake_case
+    // "purchase_order" (cf. work_order / shipment). Accept the legacy "po" too so
+    // nothing linked under the old tag is missed.
+    .where(and(inArray(documents.referenceType, ["purchase_order", "po"]), eq(documents.referenceId, purchaseOrderId)))
     .orderBy(desc(documents.createdAt));
   for (const d of docs) {
     out.push({
@@ -1494,7 +1497,7 @@ export async function getDocumentCountsByPO(purchaseOrderIds: number[]) {
   const ops = await db
     .select({ id: documents.referenceId, cnt: sql<number>`count(*)`.as("cnt") })
     .from(documents)
-    .where(and(eq(documents.referenceType, "po"), inArray(documents.referenceId, purchaseOrderIds)))
+    .where(and(inArray(documents.referenceType, ["purchase_order", "po"]), inArray(documents.referenceId, purchaseOrderIds)))
     .groupBy(documents.referenceId);
   for (const r of ops) add(r.id, Number(r.cnt));
 

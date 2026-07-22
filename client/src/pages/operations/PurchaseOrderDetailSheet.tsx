@@ -61,6 +61,24 @@ type EditItem = {
 
 const STATUS_OPTIONS = ["draft", "sent", "confirmed", "partial", "received", "cancelled"] as const;
 
+/**
+ * Only allow relative ("/...") or http(s) URLs into an href. Document URLs can
+ * be supplier/operator-controlled, so this blocks dangerous schemes such as
+ * javascript: and data:. Returns undefined for anything unsafe/empty.
+ */
+function safeHref(url: string | null | undefined): string | undefined {
+  if (!url) return undefined;
+  const trimmed = url.trim();
+  if (trimmed.startsWith("/") && !trimmed.startsWith("//")) return trimmed;
+  try {
+    const u = new URL(trimmed, window.location.origin);
+    if (u.protocol === "http:" || u.protocol === "https:") return trimmed;
+  } catch {
+    /* not a parseable URL */
+  }
+  return undefined;
+}
+
 function toDateInput(v: unknown): string {
   if (!v) return "";
   const d = new Date(v as string);
@@ -507,7 +525,13 @@ export default function PurchaseOrderDetailSheet({
                       No vendor documents linked yet. Files uploaded via the supplier portal or parsed from vendor emails appear here.
                     </div>
                   ) : (
-                    (documents || []).map((d) => (
+                    (documents || []).map((d) => {
+                      // Supplier/operator URLs can be user-controlled — only allow
+                      // relative or http(s) links so a javascript:/data: scheme
+                      // can't be smuggled into href.
+                      const viewHref = safeHref(d.viewUrl);
+                      const downloadHref = safeHref(d.downloadUrl);
+                      return (
                       <div key={d.id} className="border rounded-md p-3 flex items-center justify-between gap-3">
                         <div className="flex items-center gap-2 min-w-0">
                           <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -521,25 +545,26 @@ export default function PurchaseOrderDetailSheet({
                           </div>
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
-                          {d.viewUrl ? (
+                          {viewHref ? (
                             <Button size="sm" variant="outline" asChild>
-                              <a href={d.viewUrl} target="_blank" rel="noreferrer">
+                              <a href={viewHref} target="_blank" rel="noopener noreferrer">
                                 <Eye className="h-4 w-4 mr-1" /> View
                               </a>
                             </Button>
                           ) : (
                             <span className="text-xs text-muted-foreground">No file stored</span>
                           )}
-                          {d.downloadUrl && (
+                          {downloadHref && (
                             <Button size="sm" variant="ghost" asChild>
-                              <a href={d.downloadUrl} target="_blank" rel="noreferrer" download>
+                              <a href={downloadHref} target="_blank" rel="noopener noreferrer" download>
                                 <Download className="h-4 w-4" />
                               </a>
                             </Button>
                           )}
                         </div>
                       </div>
-                    ))
+                      );
+                    })
                   )}
                 </TabsContent>
               </Tabs>
