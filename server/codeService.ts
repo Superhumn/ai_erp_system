@@ -1,5 +1,6 @@
 import { invokeLLM } from "./_core/llm";
 import type { Message } from "./_core/llm";
+import { ENV } from "./_core/env";
 
 export type CodeAction = "generate" | "explain" | "debug" | "refactor" | "review" | "test" | "document" | "optimize";
 
@@ -131,20 +132,16 @@ export async function processCodeAIRequest(request: CodeAIRequest): Promise<Code
 /**
  * Whether server-side code execution is permitted on this deployment.
  *
- * `execute` runs arbitrary code on the app server's host. There is no true
- * sandbox available in this stack (production is a plain node:alpine
- * container on Railway/Docker — no bwrap/nsjail/containers-per-run), so the
- * only safe default is to keep it OFF in production and require an operator to
- * consciously opt in.
- *
- * - `CODE_EXEC_ENABLED=true` (or `1`) force-enables it anywhere.
- * - `CODE_EXEC_ENABLED=false` (or `0`) force-disables it anywhere.
- * - Unset: enabled outside production (dev/test DX), disabled in production.
+ * `execute` runs arbitrary code on the app server's host and there is no true
+ * sandbox in this stack (production is a plain node:alpine container on
+ * Railway/Docker — no bwrap/nsjail/containers-per-run), so it is disabled
+ * unless explicitly opted in. Resolution lives in `ENV.codeExecEnabled`:
+ * `CODE_EXEC_ENABLED` wins when set; otherwise on only for an explicit
+ * `NODE_ENV` of `development`/`test`, off everywhere else (staging, prod, or
+ * unset) so an ambiguous environment never quietly allows host RCE.
  */
 export function isCodeExecutionEnabled(): boolean {
-  const flag = process.env.CODE_EXEC_ENABLED;
-  if (flag !== undefined) return flag === "true" || flag === "1";
-  return process.env.NODE_ENV !== "production";
+  return ENV.codeExecEnabled;
 }
 
 /** Whether the operator asked us to drop the executed process into its own
@@ -153,8 +150,7 @@ export function isCodeExecutionEnabled(): boolean {
  * guaranteed. When on and `unshare` is present, executed code cannot reach the
  * network (no exfiltration / SSRF / pivoting). */
 function wantsNetworkIsolation(): boolean {
-  const flag = process.env.CODE_EXEC_NETWORK_ISOLATION;
-  return flag === "true" || flag === "1";
+  return ENV.codeExecNetworkIsolation;
 }
 
 let _unshareAvailable: boolean | null = null;
