@@ -340,7 +340,7 @@ async function createMeetingTaskSuggestion(args: {
     taskData: JSON.stringify(taskData),
     aiReasoning: `${args.reasoning} [importance=${args.importance}, confidence=${args.confidence}]`,
     aiConfidence: args.confidence.toFixed(2),
-  } as any);
+  });
 
   await logExtraction(args.ctx, args.index, args.item, {
     stage: "suggested_for_approval",
