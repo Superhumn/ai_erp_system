@@ -351,6 +351,13 @@
 			"when": 1781700001000,
 			"tag": "0049_shipment_raw_material_link",
 			"breakpoints": true
+		},
+		{
+			"idx": 50,
+			"version": "5",
+			"when": 1781786400000,
+			"tag": "0050_shopify_sku_inventory_item_id",
+			"breakpoints": true
 		}
 	]
 }

@@ -2805,6 +2805,23 @@ export async function getInventoryByProductId(productId: number) {
   return result[0];
 }
 
+export async function getInventoryByProductAndWarehouse(productId: number, warehouseId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db
+    .select()
+    .from(inventory)
+    .where(and(eq(inventory.productId, productId), eq(inventory.warehouseId, warehouseId)))
+    .limit(1);
+  return result[0];
+}
+
+export async function getInventoryByProductIds(productIds: number[]) {
+  const db = await getDb();
+  if (!db || productIds.length === 0) return [];
+  return db.select().from(inventory).where(inArray(inventory.productId, productIds));
+}
+
 export async function updateInventoryQuantity(productId: number, warehouseId: number, quantityChange: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -5351,6 +5368,13 @@ export async function createShopifySkuMapping(data: InsertShopifySkuMapping) {
   return { id: result[0].insertId };
 }
 
+export async function updateShopifySkuMapping(id: number, data: Partial<InsertShopifySkuMapping>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(shopifySkuMappings).set(data).where(eq(shopifySkuMappings.id, id));
+  return { id };
+}
+
 export async function getProductByShopifySku(storeId: number, shopifyVariantId: string) {
   const db = await getDb();
   if (!db) return undefined;
@@ -5378,6 +5402,23 @@ export async function createShopifyLocationMapping(data: InsertShopifyLocationMa
   if (!db) throw new Error("Database not available");
   const result = await db.insert(shopifyLocationMappings).values(data);
   return { id: result[0].insertId };
+}
+
+export async function updateShopifyLocationMapping(
+  id: number,
+  data: Partial<InsertShopifyLocationMapping>,
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(shopifyLocationMappings).set(data).where(eq(shopifyLocationMappings.id, id));
+  return { id };
+}
+
+export async function deleteShopifyLocationMapping(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(shopifyLocationMappings).where(eq(shopifyLocationMappings.id, id));
+  return { id };
 }
 
 export async function getWarehouseByShopifyLocation(storeId: number, shopifyLocationId: string) {
@@ -11776,6 +11817,13 @@ export async function getRdExpensesByStudy(studyId: number) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(rdExpenses).where(eq(rdExpenses.studyId, studyId)).orderBy(rdExpenses.category);
+}
+
+export async function getRdExpenseById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select().from(rdExpenses).where(eq(rdExpenses.id, id)).limit(1);
+  return rows[0];
 }
 
 export async function createRdExpense(data: InsertRdExpense) {

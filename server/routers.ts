@@ -3452,10 +3452,19 @@ ONLY return the JSON array, no other text.`;
         if (!project || project.studyId !== input.studyId) {
           throw new TRPCError({ code: 'BAD_REQUEST', message: 'Project does not belong to the specified study' });
         }
-        // Compute qualified amount server-side
-        const gross = parseFloat(input.grossAmount) || 0;
-        const rdPct = parseFloat(input.rdPercentage || "100") || 100;
-        const contractRate = parseFloat(input.contractResearchRate || "65") || 65;
+        // Compute qualified amount server-side. Hard-fail on non-numeric input
+        // rather than silently coercing to 0/100/65, which would corrupt the
+        // stored qualifiedAmount and the aggregated credit.
+        const parseAmount = (v: string, field: string): number => {
+          // Use Number (not parseFloat) so partially-numeric strings like
+          // "1.2xyz" are rejected rather than silently truncated to 1.2.
+          const n = Number(v);
+          if (v.trim() === '' || !Number.isFinite(n)) throw new TRPCError({ code: 'BAD_REQUEST', message: `Invalid numeric value for ${field}` });
+          return n;
+        };
+        const gross = parseAmount(input.grossAmount, 'grossAmount');
+        const rdPct = input.rdPercentage != null ? parseAmount(input.rdPercentage, 'rdPercentage') : 100;
+        const contractRate = input.contractResearchRate != null ? parseAmount(input.contractResearchRate, 'contractResearchRate') : 65;
         const qualifiedAmount = String(computeQualifiedAmount(input.category, gross, rdPct, contractRate).toFixed(2));
         const result = await db.createRdExpense({ ...input, qualifiedAmount });
         await createAuditLog(ctx.user.id, 'create', 'rdExpense', result.id, input.description || input.category);
@@ -3479,8 +3488,31 @@ ONLY return the JSON array, no other text.`;
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        const { computeQualifiedAmount } = await import("./rdTaxCreditService");
         const { id, ...data } = input;
-        await db.updateRdExpense(id, data);
+        const existing = await db.getRdExpenseById(id);
+        if (!existing) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Expense not found' });
+        }
+        // Recompute the qualified amount server-side from the merged row so an
+        // edit to category / grossAmount / rdPercentage / contractResearchRate
+        // never leaves a stale qualifiedAmount behind (which would corrupt the
+        // aggregated QRE and the credit calculation).
+        // Validate any client-supplied numeric strings; fall back to the
+        // (trusted) stored value when a field isn't being changed.
+        const parseAmount = (v: string, field: string): number => {
+          // Use Number (not parseFloat) so partially-numeric strings like
+          // "1.2xyz" are rejected rather than silently truncated to 1.2.
+          const n = Number(v);
+          if (v.trim() === '' || !Number.isFinite(n)) throw new TRPCError({ code: 'BAD_REQUEST', message: `Invalid numeric value for ${field}` });
+          return n;
+        };
+        const category = data.category ?? (existing.category as "wages" | "supplies" | "contract_research" | "cloud_computing");
+        const gross = data.grossAmount != null ? parseAmount(data.grossAmount, 'grossAmount') : (parseFloat(existing.grossAmount ?? "0") || 0);
+        const rdPct = data.rdPercentage != null ? parseAmount(data.rdPercentage, 'rdPercentage') : (parseFloat(existing.rdPercentage ?? "100") || 100);
+        const contractRate = data.contractResearchRate != null ? parseAmount(data.contractResearchRate, 'contractResearchRate') : (parseFloat(existing.contractResearchRate ?? "65") || 65);
+        const qualifiedAmount = String(computeQualifiedAmount(category, gross, rdPct, contractRate).toFixed(2));
+        await db.updateRdExpense(id, { ...data, qualifiedAmount });
         await createAuditLog(ctx.user.id, 'update', 'rdExpense', id);
         return { success: true };
       }),
@@ -3634,6 +3666,9 @@ ONLY return the JSON array, no other text.`;
           startDate: input.startDate,
           endDate: input.endDate,
         });
+        if (billsResult.error) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: `QuickBooks import failed: ${billsResult.error}` });
+        }
 
         const bills: any[] = billsResult?.data?.QueryResponse?.Bill || [];
         const expensesToCreate: Parameters<typeof db.createRdExpense>[0][] = [];
@@ -11845,12 +11880,17 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
         }),
     }),
     locationMappings: router({
-      list: protectedProcedure
+      // Admin-only across the board: location→warehouse routing (and the
+      // warehouse ids it exposes) is an admin/Settings concern, so the list
+      // read is gated to match the mutations below.
+      list: adminProcedure
         .input(z.object({ storeId: z.number() }))
         .query(async ({ input }) => {
           return db.getShopifyLocationMappings(input.storeId);
         }),
-      create: protectedProcedure
+      // Location→warehouse routing drives where synced inventory lands, so
+      // restrict mutations to admins (matches Settings being admin-only).
+      create: adminProcedure
         .input(z.object({
           storeId: z.number(),
           shopifyLocationId: z.string(),
@@ -11860,6 +11900,23 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
         }))
         .mutation(async ({ input }) => {
           return db.createShopifyLocationMapping(input);
+        }),
+      update: adminProcedure
+        .input(z.object({
+          id: z.number(),
+          shopifyLocationId: z.string().optional(),
+          shopifyLocationName: z.string().optional(),
+          warehouseId: z.number().optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { id, ...data } = input;
+          return db.updateShopifyLocationMapping(id, data);
+        }),
+      delete: adminProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          return db.deleteShopifyLocationMapping(input.id);
         }),
     }),
     // Sync operations
@@ -12065,33 +12122,117 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
                 continue;
               }
 
-              // Step 2: Fetch inventory levels for those locations
-              const response = await fetch(`${apiBase}/inventory_levels.json?location_ids=${locationIds.join(',')}&limit=250`, {
-                headers: {
-                  'X-Shopify-Access-Token': token,
-                  'Content-Type': 'application/json',
-                },
-              });
+              // Step 2: Fetch inventory levels for those locations, following
+              // Shopify's Link-header cursor pagination so stores with more than
+              // one page (>250) of levels aren't silently truncated.
+              const parseNextLink = (linkHeader: string | null): string | null => {
+                if (!linkHeader) return null;
+                for (const part of linkHeader.split(',')) {
+                  const m = part.match(/<([^>]+)>;\s*rel="next"/);
+                  if (m) return m[1];
+                }
+                return null;
+              };
 
-              if (!response.ok) {
-                throw new Error(`Shopify API error: ${response.status}`);
+              const levels: any[] = [];
+              let nextUrl: string | null = `${apiBase}/inventory_levels.json?location_ids=${locationIds.join(',')}&limit=250`;
+              let pageGuard = 0;
+              while (nextUrl && pageGuard < 100) {
+                pageGuard++;
+                const response = await fetch(nextUrl, {
+                  headers: {
+                    'X-Shopify-Access-Token': token,
+                    'Content-Type': 'application/json',
+                  },
+                });
+                if (!response.ok) {
+                  throw new Error(`Shopify API error: ${response.status}`);
+                }
+                const data = await response.json();
+                levels.push(...(data.inventory_levels || []));
+                nextUrl = parseNextLink(response.headers.get('link'));
               }
-
-              const data = await response.json();
-              const levels = data.inventory_levels || [];
+              if (nextUrl) {
+                console.warn(`[Shopify Sync] inventory_levels pagination hit the ${pageGuard}-page cap for ${store.storeDomain}; inventory sync may be incomplete`);
+              }
 
               // Get SKU mappings for this store
               const mappings = await db.getShopifySkuMappings(store.id);
 
+              // Shopify inventory_levels are keyed by inventory_item_id, which is
+              // NOT the variant id we store on the mapping. Backfill each mapping's
+              // inventory_item_id from the Shopify variant (once) so we can match.
+              for (const mapping of mappings) {
+                if (mapping.shopifyInventoryItemId || !mapping.shopifyVariantId) continue;
+                try {
+                  const variantResp = await fetch(`${apiBase}/variants/${mapping.shopifyVariantId}.json`, {
+                    headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+                  });
+                  if (!variantResp.ok) continue;
+                  const variantData = await variantResp.json();
+                  const inventoryItemId = variantData.variant?.inventory_item_id;
+                  if (inventoryItemId != null) {
+                    mapping.shopifyInventoryItemId = inventoryItemId.toString();
+                    await db.updateShopifySkuMapping(mapping.id, { shopifyInventoryItemId: mapping.shopifyInventoryItemId });
+                  }
+                } catch (e) {
+                  console.warn(`[Shopify Sync] Failed to resolve inventory_item_id for variant ${mapping.shopifyVariantId}:`, e);
+                }
+              }
+
+              // Route each level to a warehouse via the store's location mappings.
+              // inventory_levels are per-location, so with location mappings we
+              // update the (product, warehouse) row for the level's location.
+              const locationMappings = await db.getShopifyLocationMappings(store.id);
+              const activeLocationMappings = locationMappings.filter(m => m.isActive !== false);
+              const warehouseByLocationId = new Map(
+                activeLocationMappings.map(m => [m.shopifyLocationId, m.warehouseId] as const)
+              );
+
+              // Index mappings by inventory_item_id for O(1) lookup per level.
+              const mappingByInventoryItemId = new Map(
+                mappings.filter(m => m.shopifyInventoryItemId).map(m => [m.shopifyInventoryItemId!, m] as const)
+              );
+
+              // Pre-fetch every inventory row for the mapped products in one
+              // query and index it, so the per-level loop below does in-memory
+              // lookups instead of a DB read per inventory level (avoids N+1).
+              const inventoryRows = await db.getInventoryByProductIds(
+                [...new Set(mappings.map(m => m.productId))]
+              );
+              const inventoryByProductWarehouse = new Map(
+                inventoryRows.map(r => [`${r.productId}:${r.warehouseId}`, r] as const)
+              );
+              const inventoryByProduct = new Map<number, typeof inventoryRows[number]>();
+              for (const r of inventoryRows) {
+                if (!inventoryByProduct.has(r.productId)) inventoryByProduct.set(r.productId, r);
+              }
+
               for (const level of levels) {
-                const mapping = mappings.find(m => m.shopifyVariantId === level.inventory_item_id.toString());
-                if (mapping) {
-                  // Update local inventory
-                  const inventory = await db.getInventoryByProductId(mapping.productId);
+                const mapping = mappingByInventoryItemId.get(level.inventory_item_id.toString());
+                if (!mapping) continue;
+                const quantity = level.available?.toString() || '0';
+
+                if (activeLocationMappings.length > 0) {
+                  // The store has configured location→warehouse routing.
+                  const warehouseId = warehouseByLocationId.get(level.location_id?.toString());
+                  if (warehouseId == null) {
+                    // Location isn't mapped to a warehouse — don't guess where it lands.
+                    console.warn(`[Shopify Sync] No warehouse mapping for location ${level.location_id} in ${store.storeDomain}, skipping level`);
+                    continue;
+                  }
+                  const inventory = inventoryByProductWarehouse.get(`${mapping.productId}:${warehouseId}`);
                   if (inventory) {
-                    await db.updateInventory(inventory.id, {
-                      quantity: level.available?.toString() || '0',
-                    });
+                    await db.updateInventory(inventory.id, { quantity });
+                    totalUpdated++;
+                  } else {
+                    console.warn(`[Shopify Sync] No inventory row for product ${mapping.productId} at warehouse ${warehouseId}, skipping`);
+                  }
+                } else {
+                  // No location mappings configured — fall back to product-level update.
+                  const inventory = inventoryByProduct.get(mapping.productId);
+                  if (inventory) {
+                    await db.updateInventory(inventory.id, { quantity });
                     totalUpdated++;
                   }
                 }
@@ -18342,6 +18483,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           bodyHtml: z.string(),
           bodyText: z.string().optional(),
           type: z.enum(["newsletter", "drip", "announcement", "follow_up", "custom"]).optional(),
+          status: z.enum(["draft", "scheduled", "sending", "sent", "paused", "cancelled"]).optional(),
           targetTags: z.string().optional(),
           targetContactTypes: z.string().optional(),
           targetPipelineStages: z.string().optional(),
@@ -18363,6 +18505,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           subject: z.string().optional(),
           bodyHtml: z.string().optional(),
           bodyText: z.string().optional(),
+          type: z.enum(["newsletter", "drip", "announcement", "follow_up", "custom"]).optional(),
           status: z.enum(["draft", "scheduled", "sending", "sent", "paused", "cancelled"]).optional(),
           scheduledAt: z.date().optional(),
         }))
