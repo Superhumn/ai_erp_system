@@ -177,14 +177,6 @@ export async function executeCodeSandboxed(code: string, language: string): Prom
 }> {
   const { spawn } = await import("child_process");
 
-  const langConfig: Record<string, { cmd: string; args: string[]; fileExt: string }> = {
-    javascript: { cmd: "node", args: ["-e"], fileExt: "js" },
-    typescript: { cmd: "npx", args: ["tsx", "-e"], fileExt: "ts" },
-    python: { cmd: "python3", args: ["-c"], fileExt: "py" },
-    bash: { cmd: "bash", args: ["-c"], fileExt: "sh" },
-    sh: { cmd: "sh", args: ["-c"], fileExt: "sh" },
-  };
-
   // Secure-by-default gate. Refuse to run unless this deployment has opted in.
   if (!isCodeExecutionEnabled()) {
     return {
@@ -197,16 +189,43 @@ export async function executeCodeSandboxed(code: string, language: string): Prom
     };
   }
 
-  const config = langConfig[language.toLowerCase()];
-  if (!config) {
+  const fileExt: Record<string, string> = {
+    javascript: "js",
+    typescript: "ts",
+    python: "py",
+    bash: "sh",
+    sh: "sh",
+  };
+  const lang = language.toLowerCase();
+  const ext = fileExt[lang];
+  if (!ext) {
     return {
       output: "",
-      errorOutput: `Unsupported language for execution: ${language}. Supported: ${Object.keys(langConfig).join(", ")}`,
+      errorOutput: `Unsupported language for execution: ${language}. Supported: ${Object.keys(fileExt).join(", ")}`,
       exitCode: 1,
       executionTimeMs: 0,
       status: "failed",
     };
   }
+
+  // Resolve the interpreter deterministically. Use absolute `node`
+  // (process.execPath) and resolve the bundled `tsx` from our own
+  // node_modules — never `npx`, which walks up from the run's temp cwd, can't
+  // find the local install, and would try a network download each run.
+  const buildInterpreter = async (scriptFile: string): Promise<{ cmd: string; args: string[] } | { error: string }> => {
+    if (lang === "javascript") return { cmd: process.execPath, args: [scriptFile] };
+    if (lang === "python") return { cmd: "python3", args: [scriptFile] };
+    if (lang === "bash") return { cmd: "bash", args: [scriptFile] };
+    if (lang === "sh") return { cmd: "sh", args: [scriptFile] };
+    // typescript
+    try {
+      const { createRequire } = await import("module");
+      const tsxEntry = createRequire(import.meta.url).resolve("tsx");
+      return { cmd: process.execPath, args: ["--import", tsxEntry, scriptFile] };
+    } catch {
+      return { error: "TypeScript execution is unavailable on this deployment (the `tsx` runtime is not installed)." };
+    }
+  };
 
   const TIMEOUT_MS = 30000; // 30 second timeout
 
@@ -219,35 +238,52 @@ export async function executeCodeSandboxed(code: string, language: string): Prom
   // `finally`.
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "code-exec-"));
 
-  // Do NOT inherit the server's full environment — it holds DB credentials,
-  // API keys, OAuth secrets, etc. Executed code runs on the host, so it must
-  // only see the minimum needed to locate the interpreter. This is
-  // least-privilege damage limitation, not a real jail.
-  const minimalEnv: NodeJS.ProcessEnv = {
-    // Fall back to a conservative default so interpreters resolve even on
-    // minimal images where the server process has no PATH set.
-    PATH: process.env.PATH || "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-    HOME: cwd,
-    TMPDIR: cwd,
-    LANG: process.env.LANG,
-    NODE_NO_WARNINGS: "1",
-    // Cap heap for node/tsx runs so a run can't OOM the server host.
-    NODE_OPTIONS: "--max-old-space-size=256",
-  };
-
-  // Optionally drop the process into its own network namespace so executed
-  // code cannot reach the network. Best-effort: only if the operator opted in
-  // AND `unshare` is present; otherwise run without it.
-  let cmd = config.cmd;
-  let cmdArgs = [...config.args, code];
-  if (wantsNetworkIsolation() && (await unshareAvailable())) {
-    // --map-root-user lets this work without host privileges (user namespace);
-    // --net gives an isolated, network-less namespace.
-    cmdArgs = ["--net", "--map-root-user", "--", cmd, ...cmdArgs];
-    cmd = "unshare";
-  }
-
   try {
+    // Write the code to a file inside the run dir rather than passing it in
+    // argv: command-line args are visible via `ps`/procfs and are capped in
+    // length, so large snippets would be exposed or truncated.
+    const scriptFile = path.join(cwd, `main.${ext}`);
+    await fs.writeFile(scriptFile, code, "utf8");
+
+    const interpreter = await buildInterpreter(scriptFile);
+    if ("error" in interpreter) {
+      return {
+        output: "",
+        errorOutput: interpreter.error,
+        exitCode: 1,
+        executionTimeMs: 0,
+        status: "failed",
+      };
+    }
+
+    // Do NOT inherit the server's full environment — it holds DB credentials,
+    // API keys, OAuth secrets, etc. Executed code runs on the host, so it must
+    // only see the minimum needed to locate the interpreter. This is
+    // least-privilege damage limitation, not a real jail.
+    const minimalEnv: NodeJS.ProcessEnv = {
+      // Fall back to a conservative default so interpreters resolve even on
+      // minimal images where the server process has no PATH set.
+      PATH: process.env.PATH || "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      HOME: cwd,
+      TMPDIR: cwd,
+      LANG: process.env.LANG,
+      NODE_NO_WARNINGS: "1",
+      // Cap heap for node/tsx runs so a run can't OOM the server host.
+      NODE_OPTIONS: "--max-old-space-size=256",
+    };
+
+    // Optionally drop the process into its own network namespace so executed
+    // code cannot reach the network. Best-effort: only if the operator opted in
+    // AND `unshare` is present; otherwise run without it.
+    let cmd = interpreter.cmd;
+    let cmdArgs = interpreter.args;
+    if (wantsNetworkIsolation() && (await unshareAvailable())) {
+      // --map-root-user lets this work without host privileges (user namespace);
+      // --net gives an isolated, network-less namespace.
+      cmdArgs = ["--net", "--map-root-user", "--", cmd, ...cmdArgs];
+      cmd = "unshare";
+    }
+
     return await new Promise((resolve) => {
       const startTime = Date.now();
       let stdout = "";
@@ -256,8 +292,9 @@ export async function executeCodeSandboxed(code: string, language: string): Prom
       let timedOut = false;
 
       // detached:true makes the child a process-group leader so we can signal
-      // the whole tree. `npx tsx` and the `unshare` wrapper spawn grandchildren
-      // that a plain proc.kill() would orphan; killing the group reaps them.
+      // the whole tree. The `unshare` wrapper (and any subprocess the run
+      // spawns) creates grandchildren that a plain proc.kill() would orphan;
+      // killing the group reaps them.
       const proc = spawn(cmd, cmdArgs, {
         cwd,
         env: minimalEnv,

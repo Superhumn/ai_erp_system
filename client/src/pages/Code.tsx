@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
+import { isExecutableLanguage } from "@shared/const";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -176,6 +177,10 @@ export default function CodePage() {
   });
 
   const handleRun = useCallback(() => {
+    if (!isExecutableLanguage(language)) {
+      toast.error(`${language} can't be executed here. Executable languages: JavaScript, TypeScript, Python, Bash.`);
+      return;
+    }
     executeMutation.mutate({
       code,
       language,
@@ -313,7 +318,12 @@ export default function CodePage() {
           <Button
             size="sm"
             onClick={handleRun}
-            disabled={executeMutation.isPending || !code.trim()}
+            disabled={executeMutation.isPending || !code.trim() || !isExecutableLanguage(language)}
+            title={
+              isExecutableLanguage(language)
+                ? "Run (Ctrl+Enter)"
+                : `${language} isn't executable — only JavaScript, TypeScript, Python, and Bash can be run`
+            }
           >
             {executeMutation.isPending ? (
               <Loader2 className="h-4 w-4 mr-1 animate-spin" />
