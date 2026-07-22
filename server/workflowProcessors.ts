@@ -3085,6 +3085,13 @@ Return vendor IDs in order of preference.`;
       // Failures are captured per-vendor so one bad generation doesn't discard
       // the emails that succeeded (mirrors the original per-vendor resilience).
       const generatedEmails = await mapWithConcurrency(selectedVendors as (typeof vendors.$inferSelect)[], 5, async (vendor) => {
+        // Skip vendors with no email address: an RFQ email queued to a null/empty
+        // recipient can never be sent, so record it as a per-vendor failure
+        // (via the !ok branch below) rather than persisting an unsendable record.
+        if (!vendor.email) {
+          console.error(`[Procurement] Vendor ${vendor?.id} has no email address; skipping RFQ send.`);
+          return { vendor, ok: false as const };
+        }
         try {
           const emailContent = await generateRfqEmailContent(vendor, {
             rfqNumber,
