@@ -5490,18 +5490,24 @@ export async function createShopifyLocationMapping(data: InsertShopifyLocationMa
 
 export async function updateShopifyLocationMapping(
   id: number,
+  storeId: number,
   data: Partial<InsertShopifyLocationMapping>,
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(shopifyLocationMappings).set(data).where(eq(shopifyLocationMappings.id, id));
+  await db
+    .update(shopifyLocationMappings)
+    .set(data)
+    .where(and(eq(shopifyLocationMappings.id, id), eq(shopifyLocationMappings.storeId, storeId)));
   return { id };
 }
 
-export async function deleteShopifyLocationMapping(id: number) {
+export async function deleteShopifyLocationMapping(id: number, storeId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.delete(shopifyLocationMappings).where(eq(shopifyLocationMappings.id, id));
+  await db
+    .delete(shopifyLocationMappings)
+    .where(and(eq(shopifyLocationMappings.id, id), eq(shopifyLocationMappings.storeId, storeId)));
   return { id };
 }
 

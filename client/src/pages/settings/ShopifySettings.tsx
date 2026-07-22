@@ -506,6 +506,7 @@ function LocationMappingRow({ mapping, warehouses, warehouseName, updateMapping,
     updateMapping.mutate(
       {
         id: mapping.id,
+        storeId: mapping.storeId,
         shopifyLocationName: name || undefined,
         warehouseId: parseInt(warehouseId),
       },
@@ -536,7 +537,7 @@ function LocationMappingRow({ mapping, warehouses, warehouseName, updateMapping,
           <Switch
             checked={!!mapping.isActive}
             disabled={updateMapping.isPending}
-            onCheckedChange={(checked) => updateMapping.mutate({ id: mapping.id, isActive: checked })}
+            onCheckedChange={(checked) => updateMapping.mutate({ id: mapping.id, storeId: mapping.storeId, isActive: checked })}
             aria-label={mapping.isActive ? "Deactivate mapping" : "Activate mapping"}
           />
         </TableCell>
@@ -563,7 +564,7 @@ function LocationMappingRow({ mapping, warehouses, warehouseName, updateMapping,
         <Switch
           checked={!!mapping.isActive}
           disabled={updateMapping.isPending}
-          onCheckedChange={(checked) => updateMapping.mutate({ id: mapping.id, isActive: checked })}
+          onCheckedChange={(checked) => updateMapping.mutate({ id: mapping.id, storeId: mapping.storeId, isActive: checked })}
           aria-label={mapping.isActive ? "Deactivate mapping" : "Activate mapping"}
         />
       </TableCell>
@@ -576,7 +577,7 @@ function LocationMappingRow({ mapping, warehouses, warehouseName, updateMapping,
             variant="ghost"
             size="icon"
             disabled={deleteMapping.isPending}
-            onClick={() => deleteMapping.mutate({ id: mapping.id })}
+            onClick={() => deleteMapping.mutate({ id: mapping.id, storeId: mapping.storeId })}
             aria-label="Delete mapping"
           >
             <Trash2 className="h-4 w-4 text-destructive" />
