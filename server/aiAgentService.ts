@@ -1,5 +1,5 @@
 import { invokeLLM, Tool, Message } from "./_core/llm";
-import { getDb, updateInventoryQuantity, createWorkOrder, createFreightRfq } from "./db";
+import { getDb, createWorkOrder, createFreightRfq } from "./db";
 import { sendEmail, formatEmailHtml } from "./_core/email";
 import { getValidGoogleToken } from "./routers/middleware";
 import {
@@ -906,15 +906,23 @@ async function executeUpdateInventory(params: any, ctx: AIAgentContext): Promise
   if (!Number.isFinite(qty) || qty <= 0) throw new Error("A positive numeric quantity is required");
 
   // Apply a signed delta to one (product, warehouse) cell within a transaction.
+  // Rejects any move that would drop a location below zero on-hand.
   const applyDelta = async (tx: any, product: number, warehouse: number, change: number) => {
     const existing = await tx.select().from(inventory)
       .where(and(eq(inventory.productId, product), eq(inventory.warehouseId, warehouse))).limit(1);
     if (existing.length > 0) {
       const current = parseFloat(existing[0].quantity as string) || 0;
-      await tx.update(inventory).set({ quantity: (current + change).toString() })
+      const next = current + change;
+      if (next < 0) {
+        throw new Error(`Insufficient stock: product ${product} at warehouse ${warehouse} has ${current}, cannot apply ${change}`);
+      }
+      await tx.update(inventory).set({ quantity: next.toString() })
         .where(and(eq(inventory.productId, product), eq(inventory.warehouseId, warehouse)));
     } else {
-      await tx.insert(inventory).values({ productId: product, warehouseId: warehouse, quantity: change.toString() });
+      if (change < 0) {
+        throw new Error(`No stock of product ${product} at warehouse ${warehouse} to remove`);
+      }
+      await tx.insert(inventory).values({ companyId: ctx.companyId, productId: product, warehouseId: warehouse, quantity: change.toString() });
     }
   };
 
@@ -937,10 +945,13 @@ async function executeUpdateInventory(params: any, ctx: AIAgentContext): Promise
     };
   }
 
-  // Adjustment: negative for removals, positive otherwise.
+  // Adjustment: negative for removals, positive otherwise. Same guarded path so
+  // it can't drive a location below zero and stamps companyId on new rows.
   const isRemoval = ["remove", "decrease", "subtract", "out", "consume"].includes(String(action).toLowerCase());
   const delta = isRemoval ? -qty : qty;
-  await updateInventoryQuantity(pId, wId, delta);
+  await db.transaction(async (tx) => {
+    await applyDelta(tx, pId, wId, delta);
+  });
 
   return {
     executed: true,
@@ -1058,18 +1069,28 @@ async function executeCreatePurchaseOrder(params: any, ctx: AIAgentContext): Pro
 
   const poNumber = `PO-${Date.now().toString(36).toUpperCase()}`;
 
+  // Parse the optional expected date; ignore anything unparseable.
+  let expected: Date | undefined;
+  if (expectedDate) {
+    const d = new Date(expectedDate);
+    if (!isNaN(d.getTime())) expected = d;
+  }
+
   // Create the PO header + line items atomically, as a draft (the live approval
   // gate is the assistant's Plan-first mode, not a separate approval queue).
   const poId = await db.transaction(async (tx) => {
     const [po] = await tx.insert(purchaseOrders).values({
       poNumber,
+      companyId: ctx.companyId,
       vendorId,
       status: "draft",
       orderDate: new Date(),
+      expectedDate: expected,
       subtotal: subtotal.toFixed(2),
       totalAmount: subtotal.toFixed(2),
       currency: "USD",
       notes: notes || "Created by AI assistant",
+      createdBy: ctx.userId,
     }).$returningId();
 
     for (const i of normalizedItems) {
@@ -1122,20 +1143,31 @@ async function executeManageCopacker(params: any, ctx: AIAgentContext): Promise<
 
     case "create_work_order": {
       if (!workOrderData) throw new Error("Work order data required");
-      const { bomId, productId, quantity, unit, priority } = workOrderData;
+      const { bomId, productId, quantity, unit, priority, dueDate, notes } = workOrderData;
       if (!bomId || !productId || quantity == null) {
         throw new Error("Work order requires bomId, productId, and quantity");
+      }
+
+      // Parse an optional due date into scheduledEndDate; ignore if unparseable.
+      let scheduledEndDate: Date | undefined;
+      if (dueDate) {
+        const d = new Date(dueDate);
+        if (!isNaN(d.getTime())) scheduledEndDate = d;
       }
 
       // Create the work order for real, as a draft. Live approval is handled by
       // the assistant's Plan-first mode rather than a separate approval queue.
       const wo = await createWorkOrder({
+        companyId: ctx.companyId,
         bomId,
         productId,
         quantity: String(quantity),
         unit: unit || "EA",
         status: "draft",
         priority: priority || "normal",
+        scheduledEndDate,
+        notes: notes || undefined,
+        createdBy: ctx.userId,
       });
 
       return {
@@ -1257,7 +1289,7 @@ async function executeManageFreight(params: any, ctx: AIAgentContext): Promise<a
     case "create_rfq": {
       if (!rfqData?.title) throw new Error("Freight RFQ requires a title");
       // Create the RFQ for real (draft). Live approval is Plan-first mode.
-      const rfq = await createFreightRfq({ ...rfqData, status: rfqData.status || "draft" });
+      const rfq = await createFreightRfq({ ...rfqData, status: rfqData.status || "draft", createdById: ctx.userId });
       return {
         created: true,
         freightRfqId: rfq.id,
