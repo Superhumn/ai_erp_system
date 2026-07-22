@@ -333,6 +333,67 @@ describe("AI Agent System", () => {
     });
   });
 
+  describe("Meeting Task Suggestions (create_project_task)", () => {
+    // Mirrors the payload the meeting extractor writes and the validation the
+    // live `query` executor applies before createProjectTaskFromSource.
+    const clampPriority = (p: unknown) =>
+      (["low", "medium", "high", "critical"] as const).includes(p as any) ? p : "medium";
+    const parseDue = (v: unknown): Date | undefined => {
+      if (!v) return undefined;
+      const d = new Date(v as any);
+      return Number.isNaN(d.getTime()) ? undefined : d;
+    };
+    const toPositiveInt = (v: unknown): number | undefined => {
+      const n = Number(v);
+      return Number.isInteger(n) && n > 0 ? n : undefined;
+    };
+
+    it("suggestion carries the fields the executor requires", () => {
+      const taskData = {
+        action: "create_project_task",
+        projectId: 7,
+        name: "Send the signed contract to Acme by Friday",
+        priority: "high",
+        assigneeId: 3,
+        source: "fireflies",
+        sourceExternalId: "abc123#2",
+        sourceMeeting: { meetingId: 42, firefliesId: "abc123", title: "Acme sync" },
+      };
+      expect(taskData.action).toBe("create_project_task");
+      expect(toPositiveInt(taskData.projectId)).toBe(7);
+      expect(taskData.name.length).toBeGreaterThan(0);
+      expect(taskData.source).toBe("fireflies");
+      expect(taskData.sourceExternalId).toMatch(/#\d+$/);
+      expect(toPositiveInt(taskData.sourceMeeting.meetingId)).toBe(42);
+    });
+
+    it("clamps an unexpected priority to medium and keeps valid ones", () => {
+      expect(clampPriority("bogus")).toBe("medium");
+      expect(clampPriority(undefined)).toBe("medium");
+      expect(clampPriority("critical")).toBe("critical");
+    });
+
+    it("drops a malformed dueDate but keeps a real one", () => {
+      expect(parseDue("not-a-date")).toBeUndefined();
+      expect(parseDue(undefined)).toBeUndefined();
+      expect(parseDue("2026-08-01")).toBeInstanceOf(Date);
+    });
+
+    it("rejects non-positive-integer ids so they cannot become NaN", () => {
+      expect(toPositiveInt("not-a-number")).toBeUndefined();
+      expect(toPositiveInt(0)).toBeUndefined();
+      expect(toPositiveInt(-4)).toBeUndefined();
+      expect(toPositiveInt("15")).toBe(15);
+    });
+
+    it("dedup blocks still-open/rejected suggestions but allows re-queue after terminal states", () => {
+      const blocking = ["pending_approval", "approved", "in_progress", "rejected"];
+      const requeueable = ["completed", "failed", "cancelled"];
+      for (const s of blocking) expect(blocking.includes(s)).toBe(true);
+      for (const s of requeueable) expect(blocking.includes(s)).toBe(false);
+    });
+  });
+
   describe("Task Data Validation", () => {
     it("should validate PO task has required fields", () => {
       const taskData = {

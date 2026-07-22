@@ -8524,13 +8524,22 @@ export async function getPendingApprovalTasks() {
     .orderBy(desc(aiAgentTasks.priority), desc(aiAgentTasks.createdAt));
 }
 
+// Suggestion states that should block re-queuing the same meeting action
+// item: still-open work (pending_approval / approved / in_progress) and an
+// explicit human rejection (which we honor by not re-creating). Terminal
+// completed / failed / cancelled states are intentionally excluded so a failed
+// execution can be retried and a re-synced item can re-appear if its created
+// task was later deleted — completed suggestions are still guarded against
+// duplicates by the separate getProjectTaskBySourceExternalId check.
+const BLOCKING_SUGGESTION_STATUSES = ["pending_approval", "approved", "in_progress", "rejected"] as const;
+
 /**
  * Find an existing "create_project_task" suggestion (aiAgentTasks, taskType
- * "query") whose taskData carries the given sourceExternalId, regardless of
- * status. Used by the meeting extractor to avoid re-queuing a suggestion for
- * the same action item on every re-sync — and to honor a prior rejection
- * (a rejected suggestion is not re-created). Matched in JS because the key
- * lives inside the JSON taskData column.
+ * "query") whose taskData carries the given sourceExternalId and is still in a
+ * blocking state (see BLOCKING_SUGGESTION_STATUSES). Used by the meeting
+ * extractor to avoid re-queuing a suggestion for the same action item on every
+ * re-sync while still allowing re-processing after a terminal failure. Matched
+ * in JS because the key lives inside the JSON taskData column.
  */
 export async function findMeetingTaskSuggestionByExternalId(externalId: string) {
   const db = await getDb();
@@ -8550,6 +8559,7 @@ export async function findMeetingTaskSuggestionByExternalId(externalId: string) 
   const rows = await db.select().from(aiAgentTasks)
     .where(and(
       eq(aiAgentTasks.taskType, "query"),
+      inArray(aiAgentTasks.status, [...BLOCKING_SUGGESTION_STATUSES]),
       like(aiAgentTasks.taskData, `%${likeEscaped}%`),
     ))
     .orderBy(desc(aiAgentTasks.createdAt))

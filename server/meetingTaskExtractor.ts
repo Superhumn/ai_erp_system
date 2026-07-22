@@ -292,8 +292,10 @@ function toAgentPriority(p: "low" | "medium" | "high" | "critical"): "low" | "me
  * project task directly. Rendered as a "Suggested Project Task" card
  * (client/src/pages/ai/ApprovalQueue.tsx); approving + executing it creates the
  * real project task via the `create_project_task` executor. Deduped by the
- * meeting action item's stable externalId so re-syncs don't stack duplicates
- * (and a previously rejected suggestion is not re-queued).
+ * meeting action item's stable externalId against still-open or rejected
+ * suggestions so re-syncs don't stack duplicates and a prior rejection is
+ * honored — while a terminally failed/cancelled suggestion can still be
+ * re-queued (see findMeetingTaskSuggestionByExternalId).
  */
 async function createMeetingTaskSuggestion(args: {
   ctx: MeetingContext;
