@@ -1319,6 +1319,19 @@ async function startServer() {
     // Start the email queue worker
     startEmailQueueWorker();
 
+    // Reconcile background tasks orphaned by the previous process. The runner is
+    // in-memory, so anything left "queued"/"running" across a restart is dead —
+    // mark it failed so the client's task tray doesn't spin forever.
+    (async () => {
+      try {
+        const db = await import("../db");
+        const failed = await db.failInterruptedBackgroundTasks();
+        if (failed > 0) console.log(`[BackgroundTask] Marked ${failed} interrupted task(s) as failed on boot.`);
+      } catch (e) {
+        console.warn("[BackgroundTask] Boot recovery failed:", e);
+      }
+    })();
+
     // One-time cleanup: remove non-food products (equipment, machinery, etc.)
     (async () => {
       try {
