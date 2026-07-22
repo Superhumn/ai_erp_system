@@ -3,8 +3,28 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Bell, Check, CheckCheck, Info, AlertTriangle, AlertCircle, CheckCircle } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { useLocation } from "wouter";
+
+// Resolve where a notification should take the user: prefer its explicit link,
+// otherwise map the related entity to its list/detail route.
+function notificationHref(n: any): string | null {
+  if (n.link) return n.link;
+  const t = (n.entityType || "").toLowerCase();
+  const withId = (b: string) => (n.entityId ? `${b}/${n.entityId}` : b);
+  switch (t) {
+    case "order": return withId("/sales/orders");
+    case "customer": return withId("/sales/customers");
+    case "product": return withId("/operations/products");
+    case "purchase_order": case "purchaseorder": return "/operations/purchase-orders";
+    case "inventory": return "/operations/inventory";
+    case "invoice": return "/finance/invoices";
+    case "payment": return "/finance/payments";
+    default: return null;
+  }
+}
 
 export default function Notifications() {
+  const [, setLocation] = useLocation();
   const { data: notifications, refetch } = trpc.notifications.list.useQuery();
   const markRead = trpc.notifications.markRead.useMutation({
     onSuccess: () => refetch(),
@@ -64,12 +84,19 @@ export default function Notifications() {
             </div>
           ) : (
             <div className="space-y-2">
-              {notifications.map((notification) => (
+              {notifications.map((notification) => {
+                const href = notificationHref(notification);
+                const handleOpen = () => {
+                  if (!notification.isRead) markRead.mutate({ id: notification.id });
+                  if (href) setLocation(href);
+                };
+                return (
                 <div
                   key={notification.id}
+                  onClick={href || !notification.isRead ? handleOpen : undefined}
                   className={`flex items-start gap-3 p-3 rounded-lg transition-colors ${
                     notification.isRead ? 'bg-transparent' : 'bg-muted/50'
-                  }`}
+                  }${href || !notification.isRead ? ' cursor-pointer hover:bg-muted/70' : ''}`}
                 >
                   <div className="mt-0.5">{getIcon(notification.type)}</div>
                   <div className="flex-1 min-w-0">
@@ -87,14 +114,15 @@ export default function Notifications() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => markRead.mutate({ id: notification.id })}
+                      onClick={(e) => { e.stopPropagation(); markRead.mutate({ id: notification.id }); }}
                       disabled={markRead.isPending}
                     >
                       <Check className="h-4 w-4" />
                     </Button>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </CardContent>

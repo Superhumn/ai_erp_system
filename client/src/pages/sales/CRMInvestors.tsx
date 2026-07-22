@@ -32,13 +32,14 @@ import {
 } from "@/components/ui/table";
 import { Users, Plus, Search, Loader2, Mail, Phone, Building2, Calendar, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
-import { Link } from "wouter";
+import { DetailSheet } from "@/components/DetailSheet";
 
 export default function CRMInvestors() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
+  const [selected, setSelected] = useState<any | null>(null);
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -363,19 +364,22 @@ export default function CRMInvestors() {
                   </TableHeader>
                   <TableBody>
                     {filteredInvestors.map((investor: any) => (
-                      <TableRow key={investor.id} className="cursor-pointer hover:bg-muted/50">
+                      <TableRow
+                        key={investor.id}
+                        className="cursor-pointer hover:bg-muted/50"
+                        data-selected={selected?.id === investor.id ? "true" : undefined}
+                        onClick={() => setSelected(investor)}
+                      >
                         <TableCell>
-                          <Link href={`/crm/investors/${investor.id}`} className="block">
-                            <div className="font-medium">{investor.name}</div>
-                            <div className="text-sm text-muted-foreground flex items-center gap-2 mt-1">
-                              {investor.email && (
-                                <span className="flex items-center gap-1">
-                                  <Mail className="h-3 w-3" />
-                                  {investor.email}
-                                </span>
-                              )}
-                            </div>
-                          </Link>
+                          <div className="font-medium">{investor.name}</div>
+                          <div className="text-sm text-muted-foreground flex items-center gap-2 mt-1">
+                            {investor.email && (
+                              <span className="flex items-center gap-1">
+                                <Mail className="h-3 w-3" />
+                                {investor.email}
+                              </span>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell>
                           {investor.company && (
@@ -438,6 +442,52 @@ export default function CRMInvestors() {
           </div>
         </CardContent>
       </Card>
+
+      <DetailSheet
+        open={!!selected}
+        onOpenChange={(o) => !o && setSelected(null)}
+        title={selected?.name}
+        subtitle={selected?.company || selected?.email || null}
+      >
+        {selected && (
+          <div className="space-y-4 text-sm">
+            <div className="flex flex-wrap gap-2">
+              {selected.type && (
+                <Badge variant="outline" className="capitalize">{String(selected.type).replace('_', ' ')}</Badge>
+              )}
+              {selected.status && <Badge className={getStatusColor(selected.status)}>{selected.status}</Badge>}
+              {selected.priority && <Badge className={getPriorityColor(selected.priority)}>{selected.priority}</Badge>}
+            </div>
+            <dl className="space-y-2">
+              {([
+                ["Email", selected.email],
+                ["Phone", selected.phone],
+                ["Company", selected.company],
+                ["Title", selected.title],
+                ["Total invested", selected.totalInvested && parseFloat(selected.totalInvested) > 0 ? `$${parseFloat(selected.totalInvested).toLocaleString()}` : null],
+                ["Source", selected.source],
+                ["LinkedIn", selected.linkedinUrl],
+                ["Website", selected.website],
+                ["Last contacted", selected.lastContactedAt ? new Date(selected.lastContactedAt).toLocaleDateString() : null],
+                ["Next follow-up", selected.nextFollowUpAt ? new Date(selected.nextFollowUpAt).toLocaleDateString() : null],
+              ] as [string, string | null][])
+                .filter(([, v]) => v)
+                .map(([k, v]) => (
+                  <div key={k} className="grid grid-cols-3 gap-3">
+                    <dt className="text-muted-foreground">{k}</dt>
+                    <dd className="col-span-2 break-words">{v}</dd>
+                  </div>
+                ))}
+            </dl>
+            {selected.notes && (
+              <div>
+                <div className="text-muted-foreground mb-1">Notes</div>
+                <p className="whitespace-pre-wrap">{selected.notes}</p>
+              </div>
+            )}
+          </div>
+        )}
+      </DetailSheet>
     </div>
   );
 }
