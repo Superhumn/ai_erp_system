@@ -16,7 +16,7 @@ import { detectMaterialShortages, detectAnomalies, runShortageCheckAndNotify, ru
 import { linkParsedEmailToEntities } from "./emailDocumentLinker";
 import { trackShipment, getFreightRates, getShippingLines, getVesselSchedules } from "./searatesService";
 import { generateVendorEmail, sendVendorEmail, sendBulkEmail, checkAndSendPoFollowups } from "./vendorEmailAutomation";
-import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
+import { processAIAgentRequest, planAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
@@ -832,6 +832,133 @@ ONLY return the JSON array, no other text.`;
 
           throw error;
         }
+      }),
+
+    // Look up a vendor's real business details online from a natural-language
+    // request (e.g. "add BCW as a warehouse vendor"). Uses the LLM with live
+    // web search to find the company's publicly-listed contact info and returns
+    // a pre-filled draft for the user to review — it does NOT create the vendor,
+    // keeping a human in the loop before a record is written.
+    enrichFromText: opsProcedure
+      .input(z.object({ text: z.string().min(1).max(2000) }))
+      .mutation(async ({ input }) => {
+        const prompt = `A user wants to add a vendor (supplier) to their ERP system. Their request:
+"${input.text}"
+
+Use web search to identify the specific real company the user most likely means and find its publicly-listed business details. Use any hints in the request (industry, role, location, e.g. "warehouse", "3PL", "packaging supplier") to disambiguate. Prefer the company's official website and reputable business directories.
+
+Return ONLY a JSON object with these fields. Use null for anything you cannot verify from public sources — NEVER invent or guess contact details:
+- name: official company name
+- contactName: a general/sales contact person if publicly listed, else null
+- email: general or sales contact email if publicly listed, else null
+- phone: main phone number (international format) if listed, else null
+- address: street address line only, else null
+- city, state, country, postalCode: location parts, else null
+- website: primary website URL, else null
+- type: one of "supplier", "contractor", "service" — best fit for how this vendor would be used
+- notes: 1-2 sentence description of what the company does. End with the website URL if known.
+- confidence: "high" | "medium" | "low" — how sure you are this is the right company with correct details
+- sources: array of the source URLs you actually used`;
+
+        const enrichmentSchema = {
+          type: "object" as const,
+          properties: {
+            name: { type: ["string", "null"] },
+            contactName: { type: ["string", "null"] },
+            email: { type: ["string", "null"] },
+            phone: { type: ["string", "null"] },
+            address: { type: ["string", "null"] },
+            city: { type: ["string", "null"] },
+            state: { type: ["string", "null"] },
+            country: { type: ["string", "null"] },
+            postalCode: { type: ["string", "null"] },
+            website: { type: ["string", "null"] },
+            type: { type: ["string", "null"] },
+            notes: { type: ["string", "null"] },
+            confidence: { type: ["string", "null"] },
+            sources: { type: "array", items: { type: "string" } },
+          },
+          required: ["name"],
+          additionalProperties: false,
+        };
+
+        let raw: Record<string, any> | null = null;
+        try {
+          const response = await invokeLLM({
+            messages: [
+              {
+                role: "system",
+                content:
+                  "You are a procurement research assistant. You look up real companies online and return accurate, verifiable business details. Never fabricate contact information — use null when a value cannot be verified from public sources.",
+              },
+              { role: "user", content: prompt },
+            ],
+            webSearch: { maxUses: 5 },
+            toolChoice: "auto",
+            maxTokens: 2000,
+            response_format: {
+              type: "json_schema",
+              json_schema: { name: "vendor_enrichment", strict: false, schema: enrichmentSchema },
+            },
+          });
+
+          const content = response.choices?.[0]?.message?.content;
+          const textOut = typeof content === "string" ? content.trim() : "";
+          try {
+            // The model is instructed to return only a JSON object, so parse the
+            // whole payload first (handles braces inside string fields correctly).
+            raw = textOut ? JSON.parse(textOut) : null;
+          } catch {
+            // Fallback: pull out the outermost {...} if the model added any prose.
+            const jsonMatch = textOut.match(/\{[\s\S]*\}/);
+            raw = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+          }
+        } catch (error) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: `Online vendor lookup failed: ${error instanceof Error ? error.message : String(error)}`,
+          });
+        }
+
+        const clean = (v: unknown): string | undefined =>
+          typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined;
+
+        // Require a real, non-empty string name — reject objects/numbers/blank.
+        const name = clean(raw?.name);
+        if (!name) {
+          return { found: false as const, vendor: null, sources: [] as string[], confidence: "low" as const };
+        }
+
+        const vendorType = clean(raw.type)?.toLowerCase();
+        const rawConfidence = clean(raw.confidence)?.toLowerCase();
+        const confidence: "high" | "medium" | "low" =
+          rawConfidence === "high" || rawConfidence === "low" ? rawConfidence : "medium";
+        const vendor = {
+          name,
+          contactName: clean(raw.contactName),
+          email: clean(raw.email),
+          phone: clean(raw.phone),
+          address: clean(raw.address),
+          city: clean(raw.city),
+          state: clean(raw.state),
+          country: clean(raw.country),
+          postalCode: clean(raw.postalCode),
+          website: clean(raw.website),
+          type: vendorType && ["supplier", "contractor", "service"].includes(vendorType) ? vendorType : "supplier",
+          notes: clean(raw.notes),
+        };
+
+        return {
+          found: true as const,
+          vendor,
+          sources: Array.isArray(raw.sources)
+            ? (raw.sources as unknown[])
+                .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+                .map(s => s.trim())
+                .slice(0, 10)
+            : [],
+          confidence,
+        };
       }),
   }),
 
@@ -6267,11 +6394,19 @@ Be concise and helpful. Always give actionable guidance.`;
     // Comprehensive AI Agent Chat - handles all ERP operations
     agentChat: protectedProcedure
       .input(z.object({
-        message: z.string().min(1),
+        message: z.string().min(1).max(10000),
+        // Only user/assistant turns — the system prompt is server-owned and must
+        // not be injectable by the client (prompt injection / privilege escalation).
+        // Bounded in count and size to limit token abuse.
         conversationHistory: z.array(z.object({
-          role: z.enum(['system', 'user', 'assistant']),
-          content: z.string(),
-        })).optional(),
+          role: z.enum(['user', 'assistant']),
+          content: z.string().max(10000),
+        })).max(50).optional(),
+        // "act" (default): the agent executes immediately.
+        // "plan": the agent returns a plan for the user to approve; nothing runs.
+        mode: z.enum(['act', 'plan']).optional(),
+        // When executing an approved plan, pass its text so the agent follows it.
+        approvedPlan: z.string().max(20000).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const agentContext: AIAgentContext = {
@@ -6281,11 +6416,29 @@ Be concise and helpful. Always give actionable guidance.`;
           companyId: (ctx.user as any).companyId,
         };
 
-        const result = await processAIAgentRequest(
-          input.message,
-          input.conversationHistory || [],
-          agentContext
-        );
+        const history = input.conversationHistory || [];
+
+        // Plan-first mode: describe what would happen, take no action.
+        if (input.mode === 'plan') {
+          return planAIAgentRequest(input.message, history, agentContext);
+        }
+
+        // Execute. If an approved plan was supplied, include it as guidance for
+        // the agent. Note this steers the model via the prompt — it's not a hard
+        // constraint, so the agent should follow the plan but may adapt if
+        // reality differs from what the plan assumed. Cap the plan portion so the
+        // combined prompt stays bounded regardless of the per-field input limits.
+        const MAX_PLAN_CHARS = 8000;
+        const planText = input.approvedPlan
+          ? (input.approvedPlan.length > MAX_PLAN_CHARS
+              ? `${input.approvedPlan.slice(0, MAX_PLAN_CHARS)}…`
+              : input.approvedPlan)
+          : undefined;
+        const message = planText
+          ? `${input.message}\n\nThe user reviewed and approved the following plan. Follow it as closely as possible, adjusting only where necessary:\n${planText}`
+          : input.message;
+
+        const result = await processAIAgentRequest(message, history, agentContext);
 
         return result;
       }),

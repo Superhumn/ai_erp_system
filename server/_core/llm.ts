@@ -61,6 +61,11 @@ export type ToolChoice =
   | ToolChoiceByName
   | ToolChoiceExplicit;
 
+export type WebSearchOptions = {
+    /** Max number of web searches the model may run in a single turn (default 5). */
+    maxUses?: number;
+};
+
 // Prompt caching (Anthropic ephemeral cache).
 //
 // Cache writes happen only at a cache breakpoint, and the cache is a prefix
@@ -99,6 +104,13 @@ export type InvokeParams = {
     output_schema?: OutputSchema;
     responseFormat?: ResponseFormat;
     response_format?: ResponseFormat;
+    /**
+     * Enable Anthropic's server-side web search tool so the model can look up
+     * live information online before answering. Pass `true` for defaults or an
+     * options object to tune it. Handled entirely server-side by the provider —
+     * the final response is still plain text/tool_use blocks.
+     */
+    webSearch?: boolean | WebSearchOptions;
     cache?: CacheControlOption;
     cache_control?: CacheControlOption;
 };
@@ -240,8 +252,12 @@ function resolveAnthropicUrl(): string {
 }
 
 type AnthropicContentBlock =
-    | { type: "text"; text: string }
-  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> };
+    | { type: "text"; text: string; citations?: unknown }
+  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
+  // Server-side tool blocks (e.g. web search). Emitted when webSearch is enabled;
+  // handled by the provider, so we simply skip them when reading the response.
+  | { type: "server_tool_use"; id: string; name: string; input: Record<string, unknown> }
+  | { type: "web_search_tool_result"; tool_use_id: string; content: unknown };
 
 type AnthropicResponse = {
     id: string;
@@ -480,6 +496,7 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
         output_schema,
         responseFormat,
         response_format,
+        webSearch,
         cache,
         cache_control,
   } = params;
@@ -498,11 +515,22 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
         payload.system = converted.system;
   }
 
+  const anthropicTools: unknown[] = [];
   if (tools && tools.length > 0) {
-        payload.tools = convertToolsToAnthropic(
+        anthropicTools.push(...convertToolsToAnthropic(
                 tools,
                 cacheConfig?.tools ? cacheConfig.control : undefined,
-        );
+        ));
+  }
+  if (webSearch) {
+        const maxUses =
+              typeof webSearch === "object" && typeof webSearch.maxUses === "number"
+                ? webSearch.maxUses
+                : 5;
+        anthropicTools.push({ type: "web_search_20250305", name: "web_search", max_uses: maxUses });
+  }
+  if (anthropicTools.length > 0) {
+        payload.tools = anthropicTools;
   }
 
   const anthropicToolChoice = convertAnthropicToolChoice(toolChoice || tool_choice, tools);
@@ -540,23 +568,61 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
         ];
   }
 
-  const response = await fetch(resolveAnthropicUrl(), {
-        method: "POST",
-        headers: {
-                "content-type": "application/json",
-                "x-api-key": ENV.llmApiKey,
-                "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify(payload),
-  });
+  // Server-side tools (e.g. web search) can pause a long turn: the API returns
+  // stop_reason "pause_turn" with the partial assistant content. To continue, we
+  // append that content and re-request until the turn actually ends. Without this,
+  // a paused turn would surface as empty/partial text to the caller.
+  const MAX_PAUSE_CONTINUATIONS = 4;
+  const carriedText: string[] = [];
+  let anthropicResp: AnthropicResponse;
+  let continuations = 0;
 
-  if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(
-                `LLM invoke failed: ${response.status} ${response.statusText} – ${errorText}`
-              );
+  for (;;) {
+        const response = await fetch(resolveAnthropicUrl(), {
+              method: "POST",
+              headers: {
+                      "content-type": "application/json",
+                      "x-api-key": ENV.llmApiKey,
+                      "anthropic-version": "2023-06-01",
+              },
+              body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+              const errorText = await response.text();
+              throw new Error(
+                      `LLM invoke failed: ${response.status} ${response.statusText} – ${errorText}`
+                    );
+        }
+
+        anthropicResp = (await response.json()) as AnthropicResponse;
+
+        if (anthropicResp.stop_reason === "pause_turn" && continuations < MAX_PAUSE_CONTINUATIONS) {
+              continuations++;
+              for (const block of anthropicResp.content) {
+                      if (block.type === "text") carriedText.push(block.text);
+              }
+              (payload.messages as unknown[]).push({ role: "assistant", content: anthropicResp.content });
+              continue;
+        }
+        break;
   }
 
-  const anthropicResp = (await response.json()) as AnthropicResponse;
-    return convertAnthropicResponse(anthropicResp);
+  // If the turn is still paused after the continuation cap, fail loudly rather
+  // than handing callers a truncated/partial answer they might act on.
+  if (anthropicResp.stop_reason === "pause_turn") {
+        throw new Error(
+              `LLM invoke did not complete: turn still paused after ${MAX_PAUSE_CONTINUATIONS} continuations`,
+            );
+  }
+
+  const result = convertAnthropicResponse(anthropicResp);
+    // Prepend any text emitted during the paused segments so nothing is lost.
+    if (carriedText.length > 0) {
+          const msg = result.choices[0].message;
+          if (typeof msg.content === "string") {
+                msg.content = carriedText.join("") + msg.content;
+          }
+    }
+    return result;
 }

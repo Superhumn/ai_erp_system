@@ -39,10 +39,12 @@ export default function AIAssistant() {
 
     try {
       // Build conversation history from previous messages for context
-      const conversationHistory = messages.map((m) => ({
-        role: m.role as "user" | "assistant" | "system",
-        content: m.content,
-      }));
+      const conversationHistory = messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => ({
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        }));
 
       const response = await agentChat.mutateAsync({
         message: userMessage,
