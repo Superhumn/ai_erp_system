@@ -6910,6 +6910,12 @@ Be concise and helpful. Always give actionable guidance.`;
                     const parsed = new Date(taskData.dueDate);
                     if (!Number.isNaN(parsed.getTime())) dueDate = parsed;
                   }
+                  // Carry the suggestion's AI reasoning/confidence onto the
+                  // created task so it stays as traceable as a directly
+                  // extracted meeting task.
+                  const aiConfidenceNum = task.aiConfidence != null && Number.isFinite(Number(task.aiConfidence))
+                    ? Number(task.aiConfidence)
+                    : undefined;
                   const created = await createProjectTaskFromSource({
                     projectId,
                     name,
@@ -6921,6 +6927,8 @@ Be concise and helpful. Always give actionable guidance.`;
                     sourceRefType: meetingRefId ? 'firefliesMeeting' : undefined,
                     sourceRefId: meetingRefId,
                     sourceExternalId: taskData.sourceExternalId ? String(taskData.sourceExternalId) : undefined,
+                    aiReasoning: task.aiReasoning ?? undefined,
+                    aiConfidence: aiConfidenceNum,
                     createdBy: ctx.user.id,
                   });
                   result = {

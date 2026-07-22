@@ -8536,18 +8536,19 @@ export async function findMeetingTaskSuggestionByExternalId(externalId: string) 
   const db = await getDb();
   if (!db) return null;
   // Prefilter in SQL on the raw JSON text so we don't load every "query" task
-  // into memory as the table grows: only rows whose taskData contains the
-  // externalId literal come back. LIKE wildcards in the id can only widen the
-  // match, and the exact-equality check below rejects any false positives.
+  // into memory as the table grows. Match the exact serialized key/value
+  // fragment (`"sourceExternalId":"<id>"`, as JSON.stringify emits it) rather
+  // than a bare substring, so unrelated tasks that merely mention the id
+  // elsewhere don't come back. The exact-equality check below is still the
+  // source of truth and rejects any false positives.
   const escaped = externalId.replace(/[\\%_]/g, (c) => `\\${c}`);
-  // Bound the scan: the escaped externalId is specific enough that a real
-  // match is 0-1 rows, so newest-first + a small limit keeps the lookup cheap
-  // even if unrelated tasks happen to contain the substring. Any match is
-  // sufficient for dedup / honoring a prior rejection.
+  // Bound the scan: newest-first + a small limit keeps the lookup cheap even
+  // if the fragment somehow appears in several rows. Any match is sufficient
+  // for dedup / honoring a prior rejection.
   const rows = await db.select().from(aiAgentTasks)
     .where(and(
       eq(aiAgentTasks.taskType, "query" as any),
-      like(aiAgentTasks.taskData, `%${escaped}%`),
+      like(aiAgentTasks.taskData, `%"sourceExternalId":"${escaped}"%`),
     ))
     .orderBy(desc(aiAgentTasks.createdAt))
     .limit(25);
