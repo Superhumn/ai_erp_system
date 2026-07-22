@@ -1602,6 +1602,12 @@ export async function importWhatsappDocumentToErp(opts: {
   const markPOsAsReceived = opts.markPOsAsReceived ?? true;
   const createMissingVendor = opts.createMissingVendor ?? true;
 
+  // Enforce the cost-control guard locally so the "no LLM call on non-document
+  // media" guarantee holds for every call site, not just the Twilio webhook.
+  if (!isParseableDocumentMime(opts.mimeType)) {
+    return { success: false, documentType: "unknown", error: `Unsupported media type for document parsing: ${opts.mimeType ?? "unknown"}` };
+  }
+
   // Parse + route are wrapped so this function honors its "never throws"
   // contract for webhook/background callers; the later persistence steps are
   // already individually best-effort.

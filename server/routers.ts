@@ -13558,7 +13558,11 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
                   mimeType: withBytes.contentType,
                   userId: ctx.user.id,
                 });
-              } catch { /* skip individual attachment failures */ }
+              } catch (e: any) {
+                // Skip individual attachment failures, but log so they're
+                // diagnosable rather than silently dropped.
+                console.error(`[scanInbox] attachment import failed (${attachment.filename}):`, e?.message);
+              }
             }
 
             // ── IMAP Automation #6: Auto-run email document linker ──

@@ -218,6 +218,14 @@ describe("importWhatsappDocumentToErp — WhatsApp intake parity", () => {
     expect(result.success).toBe(false);
     expect(db.createParsedDocument).not.toHaveBeenCalled();
   });
+
+  it("skips non-document media without an LLM call (guard enforced internally)", async () => {
+    const result = await importWhatsappDocumentToErp({ ...whatsappOpts, mimeType: "audio/ogg" });
+
+    expect(result.success).toBe(false);
+    expect(invokeLLM).not.toHaveBeenCalled();
+    expect(db.createParsedDocument).not.toHaveBeenCalled();
+  });
 });
 
 describe("isParseableDocumentMime", () => {
