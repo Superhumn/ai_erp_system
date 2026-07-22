@@ -70,11 +70,16 @@ jobs:
             echo "No RAILWAY_TOKEN set — skipping CLI deploy; Railway's GitHub integration handles deploys."
             exit 0
           fi
+          rc=0
           if [ -n "$RAILWAY_SERVICE_ID" ]; then
-            railway up --service "$RAILWAY_SERVICE_ID"
+            railway up --service "$RAILWAY_SERVICE_ID" || rc=$?
           else
-            railway up
-          fi || echo "::warning::railway up failed (token invalid or lacks access). Deferring to Railway's GitHub integration."
+            railway up || rc=$?
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::warning::railway up failed (exit $rc; token invalid or lacks access). Deferring to Railway's GitHub integration."
+          fi
+          exit 0
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
@@ -132,11 +137,16 @@ jobs:
             echo "No RAILWAY_TOKEN set — skipping CLI deploy; Railway's GitHub integration handles deploys."
             exit 0
           fi
+          rc=0
           if [ -n "$RAILWAY_SERVICE_ID" ]; then
-            railway up --service "$RAILWAY_SERVICE_ID"
+            railway up --service "$RAILWAY_SERVICE_ID" || rc=$?
           else
-            railway up
-          fi || echo "::warning::railway up failed (token invalid or lacks access). Deferring to Railway's GitHub integration."
+            railway up || rc=$?
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::warning::railway up failed (exit $rc; token invalid or lacks access). Deferring to Railway's GitHub integration."
+          fi
+          exit 0
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
