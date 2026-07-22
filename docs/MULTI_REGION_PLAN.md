@@ -31,10 +31,10 @@ per country — one system, region-scoped data, consolidation on top.
 | Area | State today | Key references |
 |------|-------------|----------------|
 | Legal entity | `companies` already models `parent`/`subsidiary`/`branch` + `parentCompanyId`, with `country`, `currency`, `taxId` | `drizzle/schema.ts:203` |
-| Data scoping | **None.** Any logged-in user sees all rows. `companyId` is an *optional client-supplied filter*, not derived from the user | `server/db/sales.ts:17,77`; `server/routers/sales.ts:14` |
+| Data scoping | **None.** Any logged-in user sees all rows. `getCustomers` returns every row when `companyId` is omitted, and the router passes the *client-supplied* `input?.companyId` — scope is never derived from the user | Live monolith: `server/db.ts:557` (`getCustomers`), `:1043` (`getOrders`); `server/routers.ts:548-549` |
 | User identity | `users` has **no** `companyId`/`region`/`locale` | `drizzle/schema.ts:9` |
-| Roles | Single enum: `user, admin, finance, ops, legal, exec, sales, copacker, vendor, contractor, investor`. `plant`/`procurement` are checked in middleware but **missing from the enum** | `drizzle/schema.ts:15`; `server/routers/middleware.ts:51,59` |
-| AuthZ | Role-gate only (`protectedProcedure`, `adminProcedure`, `financeProcedure`, …). No scope injection | `server/_core/trpc.ts`; `server/routers/middleware.ts` |
+| Roles | Single enum: `user, admin, finance, ops, legal, exec, sales, copacker, vendor, contractor, investor`. `plant`/`procurement` appear **only** in the orphaned `server/routers/middleware.ts:51,59` — the live monolith and the enum don't include them | `drizzle/schema.ts:15` |
+| AuthZ | Role-gate only, no scope injection. Base procedures in `server/_core/trpc.ts:29,31`; role gates defined **inline in the live monolith** (`server/routers.ts:110` `financeProcedure`, `:117` `opsProcedure`). The `server/routers/middleware.ts` copy is part of the orphaned tree | `server/_core/trpc.ts:29`; `server/routers.ts:110,117` |
 | Currency | Per-row `varchar(3) default("USD")` on ~30 tables. **No FX/exchange-rate table, no functional/reporting currency.** `customers`/`vendors` have no currency at all | `drizzle/schema.ts:291,315,337,372,395,433` |
 | Tax | Scalar `taxRate`/`taxAmount` per line. **No jurisdiction/rate registry, no VAT/GST typing.** Best existing shape is `product_price_tiers.taxMode` (inclusive/exclusive/exempt) | `drizzle/schema.ts:7247` |
 | Addresses | Denormalized inline columns; inconsistent (`varchar(64)` names in core tables vs ISO `varchar(8)` in newer ones). `orders` addresses are unstructured `text` | `drizzle/schema.ts:426`, various |
@@ -80,14 +80,20 @@ server-derived** instead of an optional client filter.
 
 ## 4. Phased plan
 
-Recommended order: **0 → 2 → 1 → 3 → 4 → 5**. (Scoping first because it's a live data-leak;
-the entity model is tiny and can land alongside it.)
+Recommended order: **0 → 1 + 2 (together) → 3 → 4 → 5**. Phase 2 (scoping) is the priority
+because it closes a live data-leak, but it needs the entity model (a `companyId` FK target) to
+exist first — and Phase 1 is tiny (extend `companies`). So land **1 and 2 as a pair**, doing the
+minimal entity work needed to unblock scoping. The dependency table in §8 reflects this
+(Phase 2 depends on 0 and 1).
 
 ### Phase 0 — Reconciliation & guardrails (0.5 day)
 Small cleanups that unblock the rest and prevent enum drift.
 
-- Add `plant` and `procurement` to the `users` role enum (`drizzle/schema.ts:15`) and the
-  `teamInvitations` copy (`:67`) — they're already referenced in `middleware.ts:51,59`.
+- Reconcile the `plant`/`procurement` role drift: these roles are referenced **only** in the
+  orphaned `server/routers/middleware.ts:51,59` — the live monolith (`server/routers.ts`) and
+  the `users` enum don't use them. Decide whether they're real (add to the enum at
+  `drizzle/schema.ts:15` + the `teamInvitations` copy at `:67`, and wire live procedures) or
+  dead (drop them) so region-based roles don't inherit the inconsistency.
 - Decide canonical country encoding: **ISO 3166-1 alpha-2** everywhere (newer tables already
   do this). Add a `shared/regions.ts` constant with the launch countries + ISO codes,
   currency, default locale, and timezone.
@@ -118,11 +124,14 @@ Turns `companyId` from an optional filter into an enforced security boundary.
   (`entity`/`region`/`global`) to `users` (`drizzle/schema.ts:9`). `global` = exec/consolidation.
 - **Context:** load `companyId`/`regionScope` into `ctx.user` in
   `server/_core/context.ts` / `sdk.ts:79`.
-- **New middleware (`server/routers/middleware.ts`):** `scopedProcedure` that resolves the
-  caller's visible `companyId` set (self, region siblings, or all) and exposes it as
-  `ctx.scope.companyIds`.
-- **DB helpers:** change the ~40 `getX(companyId?)` signatures (`server/db/sales.ts:17,77`
-  and siblings in `server/db.ts`) so scope is **required**; queries `WHERE companyId IN (...)`.
+- **New procedure (in the live monolith):** add `scopedProcedure` alongside the existing inline
+  role gates in `server/routers.ts` (`financeProcedure` :110, `opsProcedure` :117) — or next to
+  `protectedProcedure` in `server/_core/trpc.ts:29`. It resolves the caller's visible `companyId`
+  set (self, region siblings, or all) and exposes it as `ctx.scope.companyIds`. **Not** the
+  orphaned `server/routers/middleware.ts`, which the live tree doesn't import.
+- **DB helpers:** change the ~40 `getX(companyId?)` signatures in the live monolith
+  (`server/db.ts:557` `getCustomers`, `:1043` `getOrders`, and siblings) so scope is
+  **required**; queries `WHERE companyId IN (...)`.
   Audit every `protectedProcedure` list route — a missed call site leaks all data.
 - **Tests:** add a scoping test suite — user in Entity A must not see Entity B's
   orders/customers/invoices; a `global` user sees both.
@@ -230,11 +239,12 @@ Build the formatting seam now; defer translation content until a non-English mar
 | Phase | Scope | Est. | Depends on |
 |-------|-------|------|-----------|
 | 0 | Reconciliation & constants | 0.5d | — |
-| 2 | Identity + scoping (security) | 3–5d | 0, 1 |
 | 1 | Entity/region model | 1–2d | 0 |
+| 2 | Identity + scoping (security) | 3–5d | 0, 1 |
 | 3 | Currency & FX | 3–4d | 1 |
 | 4 | Tax registry | 4–6d | 1 |
 | 5 | Locale/i18n seam | 2–3d | 1, 3 |
 | 6 | Regional integrations | per-market | 1, 2 |
 
-Phases 1+2 are the unlock; 3+4 are the compliance heavy-lifts; 5+6 are incremental per market.
+Phases 1+2 are the unlock and land together (Phase 2 depends on Phase 1); 3+4 are the
+compliance heavy-lifts; 5+6 are incremental per market.
