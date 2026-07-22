@@ -718,13 +718,22 @@ export default function PurchaseOrders() {
                   // Prefer the server-joined vendor (always present) and only fall
                   // back to the client vendor list, then to the id, so the real
                   // name shows even when the vendor isn't in the loaded list.
-                  const vendor = (po as any).vendor || vendors?.find((v) => v.id === po.vendorId);
+                  const vendor = po.vendor ?? vendors?.find((v) => v.id === po.vendorId);
                   const vendorName = vendor?.name || (po.vendorId ? `Vendor #${po.vendorId}` : "-");
                   return (
                     <TableRow
                       key={po.id}
                       className="cursor-pointer"
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Open purchase order ${po.poNumber}`}
                       onClick={() => setDetailPoId(po.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setDetailPoId(po.id);
+                        }
+                      }}
                     >
                       <TableCell className="font-mono text-primary underline-offset-2 hover:underline">
                         {po.poNumber}

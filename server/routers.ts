@@ -2444,7 +2444,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
         const oldPO = await db.getPurchaseOrderById(id);
-        await db.updatePurchaseOrder(id, data as any);
+        await db.updatePurchaseOrder(id, data);
         await createAuditLog(ctx.user.id, 'update', 'purchaseOrder', id, oldPO?.poNumber, oldPO, data);
         
         // Create notification for PO status changes
@@ -2497,7 +2497,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           taxAmount: tax.toFixed(2),
           shippingAmount: shipping.toFixed(2),
           totalAmount: (subtotal + tax + shipping).toFixed(2),
-        } as any);
+        });
         await createAuditLog(ctx.user.id, 'update', 'purchaseOrder', input.id, po.poNumber);
         return { success: true };
       }),
@@ -2514,6 +2514,12 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
       .mutation(async ({ input, ctx }) => {
         const po = await db.getPurchaseOrderById(input.id);
         if (!po) throw new TRPCError({ code: 'NOT_FOUND', message: 'Purchase order not found' });
+        if (po.status === 'draft' || po.status === 'cancelled') {
+          throw new TRPCError({
+            code: 'PRECONDITION_FAILED',
+            message: `Cannot receive against a ${po.status} PO. Send it to the supplier first.`,
+          });
+        }
         const result = await db.setPurchaseOrderReceivedQuantities(input.id, input.items);
         await createAuditLog(ctx.user.id, 'update', 'purchaseOrder', input.id, po.poNumber, { status: po.status }, { status: result.status });
         return { success: true, status: result.status };

@@ -1465,15 +1465,51 @@ export async function getPurchaseOrderDocuments(purchaseOrderId: number) {
 /**
  * Replace all line items on a draft PO in one transaction. Cleans up the
  * raw-material junction rows for the removed items first so the FK to
- * `purchaseOrderItems` never dangles, then reinserts the new set.
+ * `purchaseOrderItems` never dangles, then reinserts the new set and rebuilds
+ * the raw-material links for items carrying a productId (mirrors the create
+ * flow so editing doesn't silently drop material links).
+ *
+ * Line totals are recomputed server-side as quantity * unitPrice — the caller's
+ * `totalAmount` is never trusted — and non-numeric quantity/price is rejected.
  * Returns the recomputed subtotal.
  */
 export async function replacePurchaseOrderItems(
   purchaseOrderId: number,
-  items: Array<{ productId?: number | null; description: string; quantity: string; unitPrice: string; totalAmount: string }>,
+  items: Array<{ productId?: number | null; description: string; quantity: string; unitPrice: string }>,
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+
+  // Validate + recompute every line before touching the DB.
+  const normalized = items.map((item, idx) => {
+    const quantity = parseFloat(item.quantity);
+    const unitPrice = parseFloat(item.unitPrice);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      throw new Error(`Line item #${idx + 1} has an invalid quantity.`);
+    }
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+      throw new Error(`Line item #${idx + 1} has an invalid unit price.`);
+    }
+    return {
+      productId: item.productId ?? null,
+      description: item.description,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      totalAmount: (quantity * unitPrice).toFixed(2),
+    };
+  });
+
+  // Pre-resolve raw-material links outside the transaction (reads of unrelated
+  // tables) so the write transaction stays short.
+  const linkByIndex = new Map<number, { rawMaterialId: number; unit: string }>();
+  for (let i = 0; i < normalized.length; i++) {
+    const pid = normalized[i].productId;
+    if (!pid) continue;
+    const product = await getProductById(pid);
+    if (!product) continue;
+    const rawMaterial = await getRawMaterialByNameOrSku(product.name, product.sku || "");
+    if (rawMaterial) linkByIndex.set(i, { rawMaterialId: rawMaterial.id, unit: rawMaterial.unit || "EA" });
+  }
 
   await db.transaction(async (tx) => {
     const existing = await tx
@@ -1485,19 +1521,29 @@ export async function replacePurchaseOrderItems(
       await tx.delete(purchaseOrderRawMaterials).where(inArray(purchaseOrderRawMaterials.purchaseOrderItemId, ids));
       await tx.delete(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
     }
-    for (const item of items) {
-      await tx.insert(purchaseOrderItems).values({
+    for (let i = 0; i < normalized.length; i++) {
+      const item = normalized[i];
+      const inserted = await tx.insert(purchaseOrderItems).values({
         purchaseOrderId,
-        productId: item.productId ?? null,
+        productId: item.productId,
         description: item.description,
         quantity: item.quantity,
         unitPrice: item.unitPrice,
         totalAmount: item.totalAmount,
       });
+      const link = linkByIndex.get(i);
+      if (link) {
+        await tx.insert(purchaseOrderRawMaterials).values({
+          purchaseOrderItemId: inserted[0].insertId,
+          rawMaterialId: link.rawMaterialId,
+          orderedQuantity: item.quantity,
+          unit: link.unit,
+        });
+      }
     }
   });
 
-  const subtotal = items.reduce((sum, i) => sum + (parseFloat(i.totalAmount) || 0), 0);
+  const subtotal = normalized.reduce((sum, i) => sum + (parseFloat(i.totalAmount) || 0), 0);
   return { subtotal };
 }
 
@@ -1514,36 +1560,40 @@ export async function setPurchaseOrderReceivedQuantities(
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  for (const r of received) {
-    await db
-      .update(purchaseOrderItems)
-      .set({ receivedQuantity: r.receivedQuantity })
-      .where(and(eq(purchaseOrderItems.id, r.purchaseOrderItemId), eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId)));
-  }
+  // Per-item updates + the derived PO status change are one atomic unit so a
+  // mid-way failure can't leave quantities updated but the status stale.
+  return db.transaction(async (tx) => {
+    for (const r of received) {
+      await tx
+        .update(purchaseOrderItems)
+        .set({ receivedQuantity: r.receivedQuantity })
+        .where(and(eq(purchaseOrderItems.id, r.purchaseOrderItemId), eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId)));
+    }
 
-  // Recompute status from the full item set.
-  const items = await db
-    .select({ quantity: purchaseOrderItems.quantity, receivedQuantity: purchaseOrderItems.receivedQuantity })
-    .from(purchaseOrderItems)
-    .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
+    // Recompute status from the full item set.
+    const items = await tx
+      .select({ quantity: purchaseOrderItems.quantity, receivedQuantity: purchaseOrderItems.receivedQuantity })
+      .from(purchaseOrderItems)
+      .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
 
-  let anyReceived = false;
-  let allReceived = items.length > 0;
-  for (const it of items) {
-    const ordered = parseFloat(it.quantity?.toString() || "0");
-    const got = parseFloat(it.receivedQuantity?.toString() || "0");
-    if (got > 0) anyReceived = true;
-    if (got < ordered) allReceived = false;
-  }
+    let anyReceived = false;
+    let allReceived = items.length > 0;
+    for (const it of items) {
+      const ordered = parseFloat(it.quantity?.toString() || "0");
+      const got = parseFloat(it.receivedQuantity?.toString() || "0");
+      if (got > 0) anyReceived = true;
+      if (got < ordered) allReceived = false;
+    }
 
-  const status = allReceived ? "received" : anyReceived ? "partial" : undefined;
-  if (status) {
-    await db
-      .update(purchaseOrders)
-      .set({ status: status as any, ...(status === "received" ? { receivedDate: new Date() } : {}) })
-      .where(eq(purchaseOrders.id, purchaseOrderId));
-  }
-  return { status: status ?? null };
+    const status = allReceived ? "received" : anyReceived ? "partial" : undefined;
+    if (status) {
+      await tx
+        .update(purchaseOrders)
+        .set({ status: status as any, ...(status === "received" ? { receivedDate: new Date() } : {}) })
+        .where(eq(purchaseOrders.id, purchaseOrderId));
+    }
+    return { status: status ?? null };
+  });
 }
 
 export async function createPurchaseOrder(data: InsertPurchaseOrder) {

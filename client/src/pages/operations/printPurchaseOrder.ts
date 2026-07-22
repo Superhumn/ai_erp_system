@@ -184,10 +184,12 @@ export function printPurchaseOrder(po: PrintPO, vendor: PrintVendor, items: Prin
 
   const w = window.open("", "_blank", "width=820,height=1000");
   if (!w) {
-    // Popup blocked — fall back to a data URL the user can open.
+    // Popup blocked — fall back to a blob URL the user can open, and revoke it
+    // afterward so repeated prints don't leak object URLs in long sessions.
     const blob = new Blob([html], { type: "text/html" });
     const url = URL.createObjectURL(blob);
     window.open(url, "_blank");
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
     return;
   }
   w.document.open();
