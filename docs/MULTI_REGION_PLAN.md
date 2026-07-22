@@ -71,7 +71,7 @@ Region-awareness is built as **five layers**, each independently shippable:
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Core model:** one `region` groups one-or-more legal `companies` (entities). A user is
+**Core model:** one `region` groups one or more legal `companies` (entities). A user is
 bound to one home entity (+ optional cross-region visibility for exec/global roles).
 Every business record already carries `companyId`; we make it **mandatory and
 server-derived** instead of an optional client filter.
