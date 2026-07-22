@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   UserPlus, Plus, Search, Loader2, Sparkles, Star, ChevronDown, Trash2,
-  FileText, Calendar, Mail, Phone, Briefcase, GraduationCap,
+  FileText, Calendar, Mail, Phone, Briefcase, GraduationCap, Linkedin, Download,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -52,9 +52,35 @@ export default function Recruiting() {
   const [isOpen, setIsOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [scoring, setScoringId] = useState<number | null>(null);
+  const [linkedinUrl, setLinkedinUrl] = useState("");
   const [formData, setFormData] = useState({
     name: "", email: "", phone: "", position: "", resume: "", source: "linkedin", notes: "",
   });
+
+  // Pull candidate info from a pasted LinkedIn profile URL
+  const importMutation = trpc.recruiting.importFromLinkedIn.useMutation({
+    onSuccess: (data) => {
+      setFormData((prev) => ({
+        ...prev,
+        name: data.name || prev.name,
+        email: data.email || prev.email,
+        phone: data.phone || prev.phone,
+        position: data.position || prev.position,
+        resume: data.resume || prev.resume,
+        source: "linkedin",
+        notes: prev.notes || (data.location ? `Location: ${data.location}` : ""),
+      }));
+      if (data.note) toast.warning(data.note);
+      else toast.success("Pulled candidate info from LinkedIn");
+    },
+    onError: (err) => { toast.error(err.message || "Could not import from LinkedIn"); },
+  });
+
+  const handleImport = () => {
+    const url = linkedinUrl.trim();
+    if (!url) return;
+    importMutation.mutate({ url });
+  };
 
   // AI scoring
   const aiMutation = trpc.ai.query.useMutation({
@@ -84,6 +110,7 @@ export default function Recruiting() {
     setCandidates([candidate, ...candidates]);
     setIsOpen(false);
     setFormData({ name: "", email: "", phone: "", position: "", resume: "", source: "linkedin", notes: "" });
+    setLinkedinUrl("");
     toast.success("Candidate added");
   };
 
@@ -150,6 +177,19 @@ Provide: 1) Score X/10, 2) Key strengths, 3) Concerns, 4) Recommendation (advanc
           <DialogContent>
             <DialogHeader><DialogTitle>Add Candidate</DialogTitle></DialogHeader>
             <div className="space-y-3">
+              <div className="space-y-1 pb-3 border-b">
+                <Label className="text-xs flex items-center gap-1"><Linkedin className="h-3.5 w-3.5 text-[#0a66c2]" /> Import from LinkedIn</Label>
+                <div className="flex gap-2">
+                  <Input placeholder="https://linkedin.com/in/…" value={linkedinUrl} disabled={importMutation.isPending}
+                    onChange={(e) => setLinkedinUrl(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleImport(); } }} />
+                  <Button type="button" variant="secondary" className="shrink-0" onClick={handleImport} disabled={!linkedinUrl.trim() || importMutation.isPending}>
+                    {importMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                    <span className="ml-1">{importMutation.isPending ? "Importing…" : "Import"}</span>
+                  </Button>
+                </div>
+                <p className="text-[10px] text-muted-foreground">Paste a public profile URL to auto-fill the fields below.</p>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1"><Label className="text-xs">Name *</Label><Input value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} /></div>
                 <div className="space-y-1"><Label className="text-xs">Email</Label><Input value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} /></div>
