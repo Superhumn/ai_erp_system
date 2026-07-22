@@ -421,11 +421,9 @@ function DetailPane({ node }: { node: TreeNode }) {
     { enabled: node.type === "sales_order" && node.id > 0 }
   );
 
-  const { data: purchaseOrderDetail } = trpc.purchaseOrders.list.useQuery(
-    { status: undefined },
-    { enabled: node.type === "purchase_order" && node.id > 0,
-      select: (data) => data.find(po => po.id === node.id)
-    }
+  const { data: purchaseOrderDetail } = trpc.purchaseOrders.get.useQuery(
+    { id: node.id },
+    { enabled: node.type === "purchase_order" && node.id > 0 }
   );
 
   const { data: workOrderDetail } = trpc.workOrders.getById.useQuery(
