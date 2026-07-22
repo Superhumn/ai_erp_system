@@ -8524,6 +8524,62 @@ export async function getPendingApprovalTasks() {
     .orderBy(desc(aiAgentTasks.priority), desc(aiAgentTasks.createdAt));
 }
 
+// Suggestion states that should block re-queuing the same meeting action
+// item: still-open work (pending_approval / approved / in_progress) and an
+// explicit human rejection (which we honor by not re-creating). Terminal
+// completed / failed / cancelled states are intentionally excluded so a failed
+// execution can be retried and a re-synced item can re-appear if its created
+// task was later deleted — completed suggestions are still guarded against
+// duplicates by the separate getProjectTaskBySourceExternalId check.
+const BLOCKING_SUGGESTION_STATUSES = ["pending_approval", "approved", "in_progress", "rejected"] as const;
+
+/**
+ * Find an existing "create_project_task" suggestion (aiAgentTasks, taskType
+ * "query") whose taskData carries the given sourceExternalId and is still in a
+ * blocking state (see BLOCKING_SUGGESTION_STATUSES). Used by the meeting
+ * extractor to avoid re-queuing a suggestion for the same action item on every
+ * re-sync while still allowing re-processing after a terminal failure. Matched
+ * in JS because the key lives inside the JSON taskData column.
+ */
+export async function findMeetingTaskSuggestionByExternalId(externalId: string) {
+  const db = await getDb();
+  if (!db) return null;
+  // Prefilter in SQL on the raw JSON text so we don't load every "query" task
+  // into memory as the table grows. Match the "sourceExternalId" key and the
+  // JSON-stringified id value as two separate LIKE terms rather than one
+  // adjacent fragment, so the row still matches if taskData was re-saved
+  // pretty-printed (e.g. edited in the Approval Queue) with whitespace between
+  // the key and value. JSON.stringify(id) for the value also matches ids
+  // containing quotes/backslashes against the stored (escaped) text. The
+  // exact-equality check below is still the source of truth.
+  const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+  const keyTerm = `%${likeEscape('"sourceExternalId"')}%`;
+  const valueTerm = `%${likeEscape(JSON.stringify(externalId))}%`;
+  // Bound the scan: newest-first + a small limit keeps the lookup cheap even
+  // if the terms appear in several rows. Any match is sufficient for dedup /
+  // honoring a prior rejection.
+  const rows = await db.select().from(aiAgentTasks)
+    .where(and(
+      eq(aiAgentTasks.taskType, "query"),
+      inArray(aiAgentTasks.status, [...BLOCKING_SUGGESTION_STATUSES]),
+      like(aiAgentTasks.taskData, keyTerm),
+      like(aiAgentTasks.taskData, valueTerm),
+    ))
+    .orderBy(desc(aiAgentTasks.createdAt))
+    .limit(25);
+  for (const row of rows) {
+    try {
+      const data = JSON.parse(row.taskData || "{}");
+      if (data?.action === "create_project_task" && data?.sourceExternalId === externalId) {
+        return row;
+      }
+    } catch {
+      /* ignore malformed taskData */
+    }
+  }
+  return null;
+}
+
 export async function createAiAgentRule(data: InsertAiAgentRule) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
