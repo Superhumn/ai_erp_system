@@ -364,9 +364,9 @@ export default function InventoryCosting() {
       <Dialog open={configDialogOpen} onOpenChange={setConfigDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Costing Method</DialogTitle>
+            <DialogTitle>Costing Method (informational)</DialogTitle>
             <DialogDescription>
-              Set the costing method used across all products. This determines how COGS is calculated system-wide.
+              The active costing method is controlled by the <code>COSTING_METHOD</code> environment variable and applies to all products. This dialog is read-only — selecting a method here previews how it works but does not change the configured method.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
