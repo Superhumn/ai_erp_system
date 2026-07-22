@@ -581,15 +581,17 @@ export default function ApprovalQueue() {
                         </Badge>
                       </p>
                     )}
-                    {Array.isArray(taskData.steps) && taskData.steps.length > 0 && (
+                    {Array.isArray(taskData.steps) && taskData.steps.some((s: any) => typeof s === "string" && s.trim()) && (
                       <div>
                         <p className="font-medium text-foreground mb-1 flex items-center gap-1">
                           <ListChecks className="h-4 w-4" /> Plan
                         </p>
                         <ol className="list-decimal list-inside space-y-0.5">
-                          {taskData.steps.map((step: string, i: number) => (
-                            <li key={i}>{step}</li>
-                          ))}
+                          {taskData.steps
+                            .filter((s: any) => typeof s === "string" && s.trim())
+                            .map((step: string, i: number) => (
+                              <li key={i}>{step}</li>
+                            ))}
                         </ol>
                       </div>
                     )}

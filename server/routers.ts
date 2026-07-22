@@ -6482,7 +6482,15 @@ Be concise and helpful. Always give actionable guidance.`;
           // the original task so editing the plan can never change WHO it runs as,
           // preventing identity spoofing via this admin endpoint.
           if (task.taskType === 'concierge_errand') {
-            const original = JSON.parse(task.taskData || '{}');
+            // Parse defensively so a malformed stored row or a valid-but-non-object
+            // payload (null/array) can't turn a recoverable bad edit into a 500.
+            const isPlainObject = (v: any) => v != null && typeof v === 'object' && !Array.isArray(v);
+            if (!isPlainObject(parsedTaskData)) {
+              throw new TRPCError({ code: 'BAD_REQUEST', message: 'Errand taskData must be a JSON object' });
+            }
+            let original: any = {};
+            try { original = JSON.parse(task.taskData || '{}'); } catch { original = {}; }
+            if (!isPlainObject(original)) original = {};
             parsedTaskData.submittedByUserId = original.submittedByUserId;
             parsedTaskData.userName = original.userName;
             parsedTaskData.userRole = original.userRole;
