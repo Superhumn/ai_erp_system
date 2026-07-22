@@ -61,7 +61,12 @@ import { getYouTubeAuthUrl } from "./_core/youtube";
 import { encrypt, decrypt } from "./_core/crypto";
 import { ENV } from "./_core/env";
 import { reassignProjectTaskToHuman, createProjectTaskFromSource } from "./taskAgentBridge";
-import { createDecipheriv, createHash } from "crypto";
+import { createDecipheriv, createHash, scrypt, randomBytes, timingSafeEqual } from "crypto";
+import { promisify } from "util";
+
+// Promisified scrypt, created once at module scope so the (hot) share-link auth
+// helpers below don't re-require modules or re-wrap scrypt on every call.
+const scryptAsync = promisify(scrypt);
 
 /**
  * Expose a lightweight `hasStoredContent` flag the UI uses to decide whether the
@@ -325,21 +330,20 @@ export function generateNumber(prefix: string) {
   const random = crypto.randomInt(10000).toString().padStart(4, '0');
   return `${prefix}-${year}${month}-${random}`;
 }
-// Secure password hashing helpers using scrypt
-function hashPassword(password: string): string {
-  const crypto = require('crypto');
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+// Secure password hashing helpers using scrypt. Async so the (deliberately slow)
+// scrypt work runs on libuv's threadpool instead of blocking the event loop.
+async function hashPassword(password: string): Promise<string> {
+  const salt = randomBytes(16).toString('hex');
+  const hash = (await scryptAsync(password, salt, 64) as Buffer).toString('hex');
   return `${salt}:${hash}`;
 }
 
-function verifyPassword(password: string, stored: string): { valid: boolean; needsUpgrade: boolean } {
-  const crypto = require('crypto');
+async function verifyPassword(password: string, stored: string): Promise<{ valid: boolean; needsUpgrade: boolean }> {
   const [salt, hash] = stored.split(':');
   if (!salt || !hash) return { valid: false, needsUpgrade: false };
-  const computed = crypto.scryptSync(password, salt, 64);
+  const computed = await scryptAsync(password, salt, 64) as Buffer;
   const storedBuf = Buffer.from(hash, 'hex');
-  const valid = computed.length === storedBuf.length && crypto.timingSafeEqual(computed, storedBuf);
+  const valid = computed.length === storedBuf.length && timingSafeEqual(computed, storedBuf);
   return { valid, needsUpgrade: false };
 }
 
@@ -620,10 +624,18 @@ export const appRouter = router({
         let imported = 0;
         let updated = 0;
         let skipped = 0;
-        
+
+        // Bulk-load existing customers by Shopify ID to avoid a lookup per record.
+        const shopifyIds = [...new Set(shopifyCustomers.map((sc: any) => sc.id.toString()))] as string[];
+        const existingByShopifyId = new Map(
+          (await db.getCustomersByShopifyIds(shopifyIds))
+            .filter((c) => c.shopifyCustomerId != null)
+            .map((c) => [c.shopifyCustomerId, c]),
+        );
+
         for (const sc of shopifyCustomers) {
-          // Check if customer already exists by Shopify ID
-          const existing = await db.getCustomerByShopifyId(sc.id.toString());
+          // Check if customer already exists by Shopify ID (from the bulk map)
+          const existing = existingByShopifyId.get(sc.id.toString());
           
           const customerData = {
             name: `${sc.first_name || ''} ${sc.last_name || ''}`.trim() || sc.email || 'Unknown',
@@ -977,8 +989,10 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined;
 
         // Require a real, non-empty string name — reject objects/numbers/blank.
+        // (Guarding `raw` here also narrows it to non-null for the accesses below;
+        // a null `raw` already yields an empty name and returns.)
         const name = clean(raw?.name);
-        if (!name) {
+        if (!raw || !name) {
           return { found: false as const, vendor: null, sources: [] as string[], confidence: "low" as const };
         }
 
@@ -1916,17 +1930,20 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         if (action === 'adjust_quantity' && data.quantityAdjustment !== undefined) {
           const updatedItems = await db.getInventoryByIds(ids);
           const opsUsers = await db.getUsersByRoles(['admin', 'ops', 'exec']);
+          // Bulk-load products for the adjusted items to avoid a query per row.
+          const productIds = [...new Set(updatedItems.map((i) => i.productId).filter((id): id is number => id != null))];
+          const productById = new Map((await db.getProductsByIds(productIds)).map((p) => [p.id, p]));
 
           for (const item of updatedItems) {
             const qty = parseFloat(item.quantity || '0');
             const reorderLevel = parseFloat(item.reorderLevel || '0');
 
             if (qty <= reorderLevel && qty > 0) {
-              const product = await db.getProductById(item.productId);
+              const product = productById.get(item.productId);
               await db.notifyUsersOfEvent({
                 type: 'inventory_low',
                 title: `Low Stock Alert: ${product?.name || 'Product'}`,
-                message: `Inventory for ${product?.name} is at ${qty} units, below reorder level of ${reorderLevel}`,
+                message: `Inventory for ${product?.name || 'Product'} is at ${qty} units, below reorder level of ${reorderLevel}`,
                 entityType: 'inventory',
                 entityId: item.id,
                 severity: 'warning',
@@ -8019,13 +8036,13 @@ Format the email professionally and request a response by ${rfq.quoteDueDate ? n
             throw new TRPCError({ code: 'BAD_REQUEST', message: 'No quotes to analyze' });
           }
           
-          // Get carrier details for each quote
-          const quotesWithCarriers = await Promise.all(
-            quotes.map(async (q) => {
-              const carrier = await db.getFreightCarrierById(q.carrierId);
-              return { ...q, carrierName: carrier?.name, carrierRating: carrier?.rating };
-            })
-          );
+          // Get carrier details for each quote (bulk-loaded to avoid N+1)
+          const carrierIds = [...new Set(quotes.map((q) => q.carrierId).filter((id): id is number => id != null))];
+          const carrierById = new Map((await db.getFreightCarriersByIds(carrierIds)).map((c) => [c.id, c]));
+          const quotesWithCarriers = quotes.map((q) => {
+            const carrier = carrierById.get(q.carrierId);
+            return { ...q, carrierName: carrier?.name, carrierRating: carrier?.rating };
+          });
           
           const analysisPrompt = `Analyze and compare these freight quotes for the following shipment:
 
@@ -14196,7 +14213,7 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
         // Hash password if provided
         let hashedPassword = null;
         if (input.password) {
-          hashedPassword = hashPassword(input.password);
+          hashedPassword = await hashPassword(input.password);
         }
 
         const { enableWatermark, ...rest } = input;
@@ -14246,7 +14263,7 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
           if (password === null) {
             hashedPassword = null;
           } else {
-            hashedPassword = hashPassword(password);
+            hashedPassword = await hashPassword(password);
           }
         }
 
@@ -14623,7 +14640,7 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
               : nanoid(12);
           let hashedPassword = null;
           if (input.password) {
-            hashedPassword = hashPassword(input.password);
+            hashedPassword = await hashPassword(input.password);
           }
 
           const { id } = await db.createDataRoomLink({
@@ -15097,14 +15114,14 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
               return { requiresPassword: true, dataRoomId: null, visitorId: null };
             }
 
-            const { valid, needsUpgrade } = verifyPassword(input.password, link.password);
+            const { valid, needsUpgrade } = await verifyPassword(input.password, link.password);
 
             if (!valid) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid password' });
             }
 
             if (needsUpgrade) {
-              const upgradedHash = hashPassword(input.password);
+              const upgradedHash = await hashPassword(input.password);
               await db.updateDataRoomLink(link.id, { password: upgradedHash });
             }
           }
@@ -22670,15 +22687,17 @@ Return JSON array only. No markdown.`;
         ? await db.getCompanyById(stakeholder.companyId)
         : undefined;
       // The full list of entities this user holds a position in, so the
-      // UI can render an entity switcher. Resolved in one query per id
-      // since a typical investor has 1–3 entities.
-      const entities = await Promise.all(
-        allStakeholders.map(async (s) => {
+      // UI can render an entity switcher. Companies are bulk-loaded once
+      // (deduped) to avoid a query per stakeholder.
+      const companyIds = [...new Set(allStakeholders.map((s) => s.companyId).filter((id): id is number => id != null))];
+      const companyById = new Map((await db.getCompaniesByIds(companyIds)).map((c) => [c.id, c]));
+      const entities = allStakeholders
+        .map((s) => {
           if (!s.companyId) return null;
-          const c = await db.getCompanyById(s.companyId);
+          const c = companyById.get(s.companyId);
           return c ? { id: c.id, name: c.name, type: c.type, country: c.country } : null;
-        }),
-      ).then((rows) => rows.filter((r) => r !== null));
+        })
+        .filter((r): r is NonNullable<typeof r> => r !== null);
 
       const totalShares = allGrants.reduce(
         (s: number, g: { shares?: string | number | null }) =>

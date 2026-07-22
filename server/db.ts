@@ -469,6 +469,13 @@ export async function getCompanyById(id: number) {
   return result[0];
 }
 
+export async function getCompaniesByIds(ids: number[]) {
+  const db = await getDb();
+  if (!db) return [];
+  if (ids.length === 0) return [];
+  return db.select().from(companies).where(inArray(companies.id, ids));
+}
+
 export async function createCompany(data: InsertCompany) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -568,6 +575,13 @@ export async function getCustomerByShopifyId(shopifyId: string) {
   if (!db) return undefined;
   const result = await db.select().from(customers).where(eq(customers.shopifyCustomerId, shopifyId)).limit(1);
   return result[0];
+}
+
+export async function getCustomersByShopifyIds(shopifyIds: string[]) {
+  const db = await getDb();
+  if (!db) return [];
+  if (shopifyIds.length === 0) return [];
+  return db.select().from(customers).where(inArray(customers.shopifyCustomerId, shopifyIds));
 }
 
 export async function getCustomerByHubspotId(hubspotId: string) {
@@ -728,6 +742,13 @@ export async function getProductById(id: number) {
   if (!db) return undefined;
   const result = await db.select().from(products).where(eq(products.id, id)).limit(1);
   return result[0];
+}
+
+export async function getProductsByIds(ids: number[]) {
+  const db = await getDb();
+  if (!db) return [];
+  if (ids.length === 0) return [];
+  return db.select().from(products).where(inArray(products.id, ids));
 }
 
 export async function getProductBySku(sku: string) {
@@ -2421,6 +2442,13 @@ export async function getFreightCarrierById(id: number) {
   return result[0];
 }
 
+export async function getFreightCarriersByIds(ids: number[]) {
+  const db = await getDb();
+  if (!db) return [];
+  if (ids.length === 0) return [];
+  return db.select().from(freightCarriers).where(inArray(freightCarriers.id, ids));
+}
+
 export async function createFreightCarrier(data: InsertFreightCarrier) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -3532,6 +3560,13 @@ export async function getRawMaterialById(id: number) {
 
   const result = await db.select().from(rawMaterials).where(eq(rawMaterials.id, id)).limit(1);
   return result[0];
+}
+
+export async function getRawMaterialsByIds(ids: number[]) {
+  const db = await getDb();
+  if (!db) return [];
+  if (ids.length === 0) return [];
+  return db.select().from(rawMaterials).where(inArray(rawMaterials.id, ids));
 }
 
 export async function getRawMaterialByNameOrSku(name: string, sku: string) {
