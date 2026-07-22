@@ -1336,3 +1336,190 @@ export async function bulkImportDocuments(
     results
   };
 }
+
+/**
+ * Parse a single email attachment and import its data into the relevant ERP
+ * location (purchase order / vendor invoice / freight invoice / customs doc).
+ *
+ * Unlike `bulkImportDocuments`, this also persists a `parsedDocument` row linked
+ * to the originating email + attachment so the Email Inbox UI can surface what
+ * was extracted, and it flips the attachment's `isProcessed` flag. It parses the
+ * document exactly once (no double LLM call).
+ */
+export async function importEmailAttachmentToErp(opts: {
+  emailId: number;
+  attachmentId: number;
+  content: string; // data URL: data:<mime>;base64,<...>
+  filename: string;
+  mimeType?: string;
+  userId: number;
+  hint?: "purchase_order" | "vendor_invoice" | "freight_invoice" | "customs_document";
+  markPOsAsReceived?: boolean;
+  createMissingVendor?: boolean;
+}): Promise<{
+  success: boolean;
+  documentType: string;
+  parsedDocumentId?: number;
+  importResult?: ImportResult;
+  error?: string;
+}> {
+  const markPOsAsReceived = opts.markPOsAsReceived ?? true;
+  const createMissingVendor = opts.createMissingVendor ?? true;
+
+  // Preserve any stored raw content so the attachment can be re-parsed later.
+  const existing = await db.getEmailAttachmentById(opts.attachmentId);
+  const existingMeta = ((existing?.metadata as any) || {});
+  const preserved = existingMeta.contentDataUrl ? { contentDataUrl: existingMeta.contentDataUrl } : {};
+
+  const parseHint = opts.hint === "purchase_order" || opts.hint === "freight_invoice"
+    ? opts.hint
+    : undefined;
+  const parseResult = await parseUploadedDocument(opts.content, opts.filename, parseHint, opts.mimeType);
+
+  if (!parseResult.success) {
+    await db.updateEmailAttachment(opts.attachmentId, {
+      isProcessed: true,
+      metadata: { ...preserved, parseError: parseResult.error || "Failed to parse document" },
+    });
+    return { success: false, documentType: "unknown", error: parseResult.error || "Failed to parse document" };
+  }
+
+  // Route to the correct ERP importer (mirrors bulkImportDocuments) and collect
+  // a normalized summary for the parsedDocument record.
+  let importResult: ImportResult;
+  let parsedType: "receipt" | "invoice" | "purchase_order" | "customs_document" | "other" = "other";
+  let summary: {
+    documentNumber?: string | null;
+    vendorName?: string | null;
+    vendorEmail?: string | null;
+    documentDate?: string | null;
+    dueDate?: string | null;
+    subtotal?: number | null;
+    taxAmount?: number | null;
+    shippingAmount?: number | null;
+    totalAmount?: number | null;
+    currency?: string | null;
+    trackingNumber?: string | null;
+    carrierName?: string | null;
+    confidence?: number | null;
+    lineItems?: any[] | null;
+  } = {};
+
+  if (parseResult.documentType === "purchase_order" && parseResult.purchaseOrder) {
+    const po = parseResult.purchaseOrder;
+    importResult = await importPurchaseOrder(po, opts.userId, markPOsAsReceived, createMissingVendor);
+    parsedType = "purchase_order";
+    summary = {
+      documentNumber: po.poNumber, vendorName: po.vendorName, vendorEmail: po.vendorEmail,
+      documentDate: po.orderDate, subtotal: po.subtotal, taxAmount: po.taxAmount,
+      shippingAmount: po.shippingAmount, totalAmount: po.totalAmount, currency: po.currency,
+      confidence: po.confidence, lineItems: po.lineItems,
+    };
+  } else if (parseResult.documentType === "vendor_invoice" && parseResult.vendorInvoice) {
+    const inv = parseResult.vendorInvoice;
+    importResult = await importVendorInvoice(inv, opts.userId, markPOsAsReceived, createMissingVendor);
+    parsedType = "invoice";
+    summary = {
+      documentNumber: inv.invoiceNumber, vendorName: inv.vendorName, vendorEmail: inv.vendorEmail,
+      documentDate: inv.invoiceDate, dueDate: inv.dueDate, subtotal: inv.subtotal,
+      taxAmount: inv.taxAmount, shippingAmount: inv.shippingAmount, totalAmount: inv.totalAmount,
+      currency: inv.currency, confidence: inv.confidence, lineItems: inv.lineItems,
+    };
+  } else if (parseResult.documentType === "freight_invoice" && parseResult.freightInvoice) {
+    const fr = parseResult.freightInvoice;
+    importResult = await importFreightInvoice(fr, opts.userId, createMissingVendor);
+    parsedType = "invoice";
+    summary = {
+      documentNumber: fr.invoiceNumber, vendorName: fr.carrierName, vendorEmail: fr.carrierEmail,
+      documentDate: fr.invoiceDate, totalAmount: fr.totalAmount, currency: fr.currency,
+      trackingNumber: fr.trackingNumber, carrierName: fr.carrierName, confidence: fr.confidence,
+    };
+  } else if (parseResult.documentType === "customs_document" && parseResult.customsDocument) {
+    const cd = parseResult.customsDocument;
+    importResult = await importCustomsDocument(cd, opts.userId, createMissingVendor);
+    parsedType = "customs_document";
+    summary = {
+      documentNumber: cd.documentNumber, vendorName: cd.shipperName,
+      documentDate: cd.entryDate, totalAmount: cd.totalCharges, currency: cd.currency,
+      trackingNumber: cd.trackingNumber, confidence: cd.confidence,
+      lineItems: cd.lineItems,
+    };
+  } else {
+    importResult = {
+      success: false, documentType: parseResult.documentType, createdRecords: [],
+      updatedRecords: [], warnings: [], error: "Unrecognized document type",
+    };
+  }
+
+  // Persist a parsedDocument record linked to the email + attachment.
+  let parsedDocumentId: number | undefined;
+  try {
+    const { id } = await db.createParsedDocument({
+      emailId: opts.emailId,
+      attachmentId: opts.attachmentId,
+      documentType: parsedType as any,
+      confidence: summary.confidence != null ? summary.confidence.toString() : null,
+      vendorName: summary.vendorName ?? null,
+      vendorEmail: summary.vendorEmail ?? null,
+      vendorId: importResult.createdRecords.find(r => r.type === "vendor")?.id
+        ?? importResult.updatedRecords.find(r => r.type === "vendor")?.id ?? null,
+      documentNumber: summary.documentNumber ?? null,
+      documentDate: summary.documentDate ? new Date(summary.documentDate) : null,
+      dueDate: summary.dueDate ? new Date(summary.dueDate) : null,
+      subtotal: summary.subtotal != null ? summary.subtotal.toString() : null,
+      taxAmount: summary.taxAmount != null ? summary.taxAmount.toString() : null,
+      shippingAmount: summary.shippingAmount != null ? summary.shippingAmount.toString() : null,
+      totalAmount: summary.totalAmount != null ? summary.totalAmount.toString() : null,
+      currency: summary.currency ?? "USD",
+      trackingNumber: summary.trackingNumber ?? null,
+      carrierName: summary.carrierName ?? null,
+      lineItems: summary.lineItems ?? null,
+      isApproved: importResult.success,
+      rawExtractedData: parseResult as any,
+      notes: importResult.success
+        ? `Imported: ${importResult.createdRecords.map(r => `${r.type} ${r.name}`).join(", ") || "none"}`
+        : importResult.error || null,
+    } as any);
+    parsedDocumentId = id;
+
+    if (summary.lineItems && summary.lineItems.length > 0) {
+      for (let i = 0; i < summary.lineItems.length; i++) {
+        const item: any = summary.lineItems[i];
+        await db.createParsedDocumentLineItem({
+          documentId: id,
+          lineNumber: i + 1,
+          description: item.description || null,
+          sku: item.sku || null,
+          quantity: item.quantity != null ? item.quantity.toString() : null,
+          unit: item.unit || null,
+          unitPrice: item.unitPrice != null ? item.unitPrice.toString() : null,
+          totalPrice: (item.totalPrice ?? item.declaredValue) != null ? (item.totalPrice ?? item.declaredValue).toString() : null,
+        } as any);
+      }
+    }
+  } catch (e: any) {
+    console.error("[ImportAttachment] Failed to persist parsedDocument:", e?.message);
+  }
+
+  // Mark the attachment processed with a short extracted summary.
+  await db.updateEmailAttachment(opts.attachmentId, {
+    isProcessed: true,
+    extractedText: parseResult.rawText?.substring(0, 5000),
+    metadata: {
+      ...preserved,
+      documentType: parseResult.documentType,
+      imported: importResult.success,
+      createdRecords: importResult.createdRecords,
+      updatedRecords: importResult.updatedRecords,
+      warnings: importResult.warnings,
+      error: importResult.error,
+    },
+  });
+
+  return {
+    success: importResult.success,
+    documentType: parseResult.documentType,
+    parsedDocumentId,
+    importResult,
+  };
+}
