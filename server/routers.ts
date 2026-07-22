@@ -6885,12 +6885,23 @@ Be concise and helpful. Always give actionable guidance.`;
                 // the approved suggestion creates the real project task here,
                 // preserving the meeting source so it keeps its "Meeting" badge.
                 if (taskData.action === 'create_project_task') {
-                  if (!taskData.projectId || !taskData.name) {
-                    throw new Error('Project task suggestion missing projectId or name');
+                  // taskData is untrusted JSON — validate every field before use.
+                  const toPositiveInt = (v: unknown): number | undefined => {
+                    const n = Number(v);
+                    return Number.isInteger(n) && n > 0 ? n : undefined;
+                  };
+                  const projectId = toPositiveInt(taskData.projectId);
+                  const name = taskData.name ? String(taskData.name).trim() : '';
+                  if (!projectId || !name) {
+                    throw new Error('Project task suggestion missing or invalid projectId or name');
                   }
-                  // taskData is untrusted JSON: validate priority against the
-                  // allowed set and only accept a genuinely parseable dueDate so
-                  // a malformed value can't insert an Invalid Date.
+                  const assigneeId = toPositiveInt(taskData.assigneeId);
+                  // Keep the source ref pair consistent: both derive from meetingId
+                  // (an undefined id must not leave a dangling refType).
+                  const meetingRefId = toPositiveInt(taskData.sourceMeeting?.meetingId);
+                  // Validate priority against the allowed set and only accept a
+                  // genuinely parseable dueDate so a malformed value can't insert
+                  // an Invalid Date.
                   const priority = (['low', 'medium', 'high', 'critical'] as const).includes(taskData.priority)
                     ? taskData.priority
                     : 'medium';
@@ -6899,16 +6910,11 @@ Be concise and helpful. Always give actionable guidance.`;
                     const parsed = new Date(taskData.dueDate);
                     if (!Number.isNaN(parsed.getTime())) dueDate = parsed;
                   }
-                  // Keep the source ref pair consistent: both derive from
-                  // meetingId (an undefined id must not leave a dangling refType).
-                  const meetingRefId = taskData.sourceMeeting?.meetingId
-                    ? Number(taskData.sourceMeeting.meetingId)
-                    : undefined;
                   const created = await createProjectTaskFromSource({
-                    projectId: Number(taskData.projectId),
-                    name: String(taskData.name),
+                    projectId,
+                    name,
                     description: taskData.description ? String(taskData.description) : undefined,
-                    assigneeId: taskData.assigneeId ? Number(taskData.assigneeId) : undefined,
+                    assigneeId,
                     priority,
                     dueDate,
                     sourceType: 'meeting',
@@ -6921,8 +6927,8 @@ Be concise and helpful. Always give actionable guidance.`;
                     created: true,
                     action: 'create_project_task',
                     projectTaskId: created.id,
-                    projectId: Number(taskData.projectId),
-                    assigneeId: taskData.assigneeId ? Number(taskData.assigneeId) : null,
+                    projectId,
+                    assigneeId: assigneeId ?? null,
                   };
                   break;
                 }

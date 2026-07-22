@@ -8540,11 +8540,17 @@ export async function findMeetingTaskSuggestionByExternalId(externalId: string) 
   // externalId literal come back. LIKE wildcards in the id can only widen the
   // match, and the exact-equality check below rejects any false positives.
   const escaped = externalId.replace(/[\\%_]/g, (c) => `\\${c}`);
+  // Bound the scan: the escaped externalId is specific enough that a real
+  // match is 0-1 rows, so newest-first + a small limit keeps the lookup cheap
+  // even if unrelated tasks happen to contain the substring. Any match is
+  // sufficient for dedup / honoring a prior rejection.
   const rows = await db.select().from(aiAgentTasks)
     .where(and(
       eq(aiAgentTasks.taskType, "query" as any),
       like(aiAgentTasks.taskData, `%${escaped}%`),
-    ));
+    ))
+    .orderBy(desc(aiAgentTasks.createdAt))
+    .limit(25);
   for (const row of rows) {
     try {
       const data = JSON.parse(row.taskData || "{}");
