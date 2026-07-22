@@ -125,16 +125,26 @@ function generateSalt(): string {
  * hash was produced with the legacy iteration count and should be re-hashed.
  */
 async function verifyPassword(password: string, salt: string, hash: string): Promise<{ valid: boolean; needsUpgrade: boolean }> {
-  const passwordHash = await hashPasswordWithIterations(password, salt, HASH_ITERATIONS);
-  if (passwordHash.length === hash.length && timingSafeEqual(Buffer.from(passwordHash, "hex"), Buffer.from(hash, "hex"))) {
-    return { valid: true, needsUpgrade: false };
-  }
+  try {
+    // Decode the stored hash once. A malformed stored hash (non-hex / odd
+    // length) would otherwise make timingSafeEqual throw on a length mismatch;
+    // comparing decoded buffer lengths and catching below turns that into a
+    // clean "invalid password" instead of a 500.
+    const stored = Buffer.from(hash, "hex");
 
-  // Fallback: try the legacy iteration count for accounts created before the
-  // HASH_ITERATIONS increase (100k → 600k, April 2026).
-  const legacyHash = await hashPasswordWithIterations(password, salt, HASH_ITERATIONS_LEGACY);
-  if (legacyHash.length === hash.length && timingSafeEqual(Buffer.from(legacyHash, "hex"), Buffer.from(hash, "hex"))) {
-    return { valid: true, needsUpgrade: true };
+    const candidate = Buffer.from(await hashPasswordWithIterations(password, salt, HASH_ITERATIONS), "hex");
+    if (candidate.length === stored.length && timingSafeEqual(candidate, stored)) {
+      return { valid: true, needsUpgrade: false };
+    }
+
+    // Fallback: try the legacy iteration count for accounts created before the
+    // HASH_ITERATIONS increase (100k → 600k, April 2026).
+    const legacy = Buffer.from(await hashPasswordWithIterations(password, salt, HASH_ITERATIONS_LEGACY), "hex");
+    if (legacy.length === stored.length && timingSafeEqual(legacy, stored)) {
+      return { valid: true, needsUpgrade: true };
+    }
+  } catch {
+    // Malformed stored hash — treat as an authentication failure, not an error.
   }
 
   return { valid: false, needsUpgrade: false };

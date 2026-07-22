@@ -3027,6 +3027,7 @@ Generate a professional, concise email requesting a quote.`;
           continue;
         }
         const { vendor, emailContent } = result;
+        try {
         // Create invitation record
         const [invitation] = await db
           .insert(vendorRfqInvitations)
@@ -3065,6 +3066,10 @@ Generate a professional, concise email requesting a quote.`;
         });
 
         itemsSucceeded++;
+        } catch (err) {
+          console.error(`[Procurement] Failed to persist RFQ email for vendor ${vendor?.id}:`, err);
+          itemsFailed++;
+        }
       }
 
       // Update RFQ status to sent
