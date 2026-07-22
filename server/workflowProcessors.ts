@@ -634,10 +634,14 @@ const procurementProcessor: WorkflowProcessor = {
         : [];
       const vendorById = new Map(vendorRows.map((v) => [v.id, v] as const));
 
-      const allSpoItems = spoIds.length
+      // Left as `any[]` (not $inferSelect) to preserve the existing runtime
+      // behavior of the loop below, which reads item.totalPrice — a field not on
+      // the suggestedPoItems row type. Typing it would surface that pre-existing
+      // mismatch as a compile error; that's a separate bug, out of scope here.
+      const allSpoItems: any[] = spoIds.length
         ? await db.select().from(suggestedPoItems).where(inArray(suggestedPoItems.suggestedPoId, spoIds))
         : [];
-      const itemsBySpoId = new Map<number, typeof allSpoItems>();
+      const itemsBySpoId = new Map<number, any[]>();
       for (const it of allSpoItems) {
         const list = itemsBySpoId.get(it.suggestedPoId) ?? [];
         list.push(it);

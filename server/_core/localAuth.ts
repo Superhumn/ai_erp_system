@@ -126,14 +126,14 @@ function generateSalt(): string {
  */
 async function verifyPassword(password: string, salt: string, hash: string): Promise<{ valid: boolean; needsUpgrade: boolean }> {
   const passwordHash = await hashPasswordWithIterations(password, salt, HASH_ITERATIONS);
-  if (passwordHash.length === hash.length && timingSafeEqual(Buffer.from(passwordHash), Buffer.from(hash))) {
+  if (passwordHash.length === hash.length && timingSafeEqual(Buffer.from(passwordHash, "hex"), Buffer.from(hash, "hex"))) {
     return { valid: true, needsUpgrade: false };
   }
 
   // Fallback: try the legacy iteration count for accounts created before the
   // HASH_ITERATIONS increase (100k → 600k, April 2026).
   const legacyHash = await hashPasswordWithIterations(password, salt, HASH_ITERATIONS_LEGACY);
-  if (legacyHash.length === hash.length && timingSafeEqual(Buffer.from(legacyHash), Buffer.from(hash))) {
+  if (legacyHash.length === hash.length && timingSafeEqual(Buffer.from(legacyHash, "hex"), Buffer.from(hash, "hex"))) {
     return { valid: true, needsUpgrade: true };
   }
 
