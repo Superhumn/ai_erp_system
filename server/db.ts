@@ -5495,19 +5495,27 @@ export async function updateShopifyLocationMapping(
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db
+  const result = await db
     .update(shopifyLocationMappings)
     .set(data)
     .where(and(eq(shopifyLocationMappings.id, id), eq(shopifyLocationMappings.storeId, storeId)));
+  const affectedRows = (result as any)[0]?.affectedRows ?? (result as any).rowsAffected ?? 0;
+  if (affectedRows === 0) {
+    throw new Error(`Location mapping ${id} not found for store ${storeId}`);
+  }
   return { id };
 }
 
 export async function deleteShopifyLocationMapping(id: number, storeId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db
+  const result = await db
     .delete(shopifyLocationMappings)
     .where(and(eq(shopifyLocationMappings.id, id), eq(shopifyLocationMappings.storeId, storeId)));
+  const affectedRows = (result as any)[0]?.affectedRows ?? (result as any).rowsAffected ?? 0;
+  if (affectedRows === 0) {
+    throw new Error(`Location mapping ${id} not found for store ${storeId}`);
+  }
   return { id };
 }
 
