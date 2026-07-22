@@ -738,11 +738,11 @@ export default function IntegrationsPage() {
                       <div className="p-4 border rounded-lg">
                         <h4 className="font-medium mb-2">Quick Actions</h4>
                         <div className="space-y-2">
-                          <Button variant="outline" size="sm" className="w-full justify-start">
+                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => window.open("https://mail.google.com/mail/?view=cm&fs=1", "_blank", "noopener,noreferrer")}>
                             <Mail className="w-4 h-4 mr-2" />
                             Compose Email
                           </Button>
-                          <Button variant="outline" size="sm" className="w-full justify-start">
+                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => window.open("https://mail.google.com/", "_blank", "noopener,noreferrer")}>
                             <ExternalLink className="w-4 h-4 mr-2" />
                             View in Gmail
                           </Button>
@@ -890,11 +890,11 @@ export default function IntegrationsPage() {
                       <div className="p-4 border rounded-lg">
                         <h4 className="font-medium mb-2">Quick Actions</h4>
                         <div className="space-y-2">
-                          <Button variant="outline" size="sm" className="w-full justify-start">
+                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => window.open("https://docs.new", "_blank", "noopener,noreferrer")}>
                             <FileSpreadsheet className="w-4 h-4 mr-2" />
                             Create Google Doc
                           </Button>
-                          <Button variant="outline" size="sm" className="w-full justify-start">
+                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => window.open("https://sheets.new", "_blank", "noopener,noreferrer")}>
                             <FileSpreadsheet className="w-4 h-4 mr-2" />
                             Create Google Sheet
                           </Button>
