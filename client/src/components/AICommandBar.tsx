@@ -1419,7 +1419,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
               <span className="text-muted-foreground">
                 {agentChat.isPending
                   ? agentMode === "plan" && !pendingPlan
-                    ? "Drafting a plan — checking your data and searching the web…"
+                    ? "Drafting a plan — thinking it through and searching the web…"
                     : "Working on it — reasoning, checking your data, and searching the web…"
                   : "Processing…"}
               </span>

@@ -471,23 +471,53 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
         payload.system = (converted.system ?? "") + jsonInstruction;
   }
 
-  const response = await fetch(resolveAnthropicUrl(), {
-        method: "POST",
-        headers: {
-                "content-type": "application/json",
-                "x-api-key": ENV.llmApiKey,
-                "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify(payload),
-  });
+  // Server-side tools (e.g. web search) can pause a long turn: the API returns
+  // stop_reason "pause_turn" with the partial assistant content. To continue, we
+  // append that content and re-request until the turn actually ends. Without this,
+  // a paused turn would surface as empty/partial text to the caller.
+  const MAX_PAUSE_CONTINUATIONS = 4;
+  const carriedText: string[] = [];
+  let anthropicResp: AnthropicResponse;
+  let continuations = 0;
 
-  if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(
-                `LLM invoke failed: ${response.status} ${response.statusText} – ${errorText}`
-              );
+  for (;;) {
+        const response = await fetch(resolveAnthropicUrl(), {
+              method: "POST",
+              headers: {
+                      "content-type": "application/json",
+                      "x-api-key": ENV.llmApiKey,
+                      "anthropic-version": "2023-06-01",
+              },
+              body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+              const errorText = await response.text();
+              throw new Error(
+                      `LLM invoke failed: ${response.status} ${response.statusText} – ${errorText}`
+                    );
+        }
+
+        anthropicResp = (await response.json()) as AnthropicResponse;
+
+        if (anthropicResp.stop_reason === "pause_turn" && continuations < MAX_PAUSE_CONTINUATIONS) {
+              continuations++;
+              for (const block of anthropicResp.content) {
+                      if (block.type === "text") carriedText.push(block.text);
+              }
+              (payload.messages as unknown[]).push({ role: "assistant", content: anthropicResp.content });
+              continue;
+        }
+        break;
   }
 
-  const anthropicResp = (await response.json()) as AnthropicResponse;
-    return convertAnthropicResponse(anthropicResp);
+  const result = convertAnthropicResponse(anthropicResp);
+    // Prepend any text emitted during the paused segments so nothing is lost.
+    if (carriedText.length > 0) {
+          const msg = result.choices[0].message;
+          if (typeof msg.content === "string") {
+                msg.content = carriedText.join("") + msg.content;
+          }
+    }
+    return result;
 }
