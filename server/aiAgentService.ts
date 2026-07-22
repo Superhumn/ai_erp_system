@@ -1,5 +1,5 @@
 import { invokeLLM, Tool, Message } from "./_core/llm";
-import { getDb } from "./db";
+import { getDb, updateInventoryQuantity, createWorkOrder, createFreightRfq } from "./db";
 import { sendEmail, formatEmailHtml } from "./_core/email";
 import { getValidGoogleToken } from "./routers/middleware";
 import {
@@ -896,31 +896,31 @@ async function executeUpdateInventory(params: any, ctx: AIAgentContext): Promise
   if (!db) throw new Error("Database not available");
 
   const { productId, warehouseId, quantity, action, reason, targetWarehouseId } = params;
+  const qty = parseFloat(String(quantity ?? "0"));
 
-  // This creates a task for approval rather than executing directly
-  const task = await db.insert(aiAgentTasks).values({
-    taskType: "update_inventory",
-    status: "pending_approval",
-    priority: "medium",
-    taskData: JSON.stringify({
-      productId,
-      warehouseId,
-      quantity,
+  // Execute the change directly (live). The approval gate is Plan-first mode.
+  if (action === "transfer") {
+    if (!targetWarehouseId) throw new Error("targetWarehouseId is required for a transfer");
+    await updateInventoryQuantity(productId, warehouseId, -qty);
+    await updateInventoryQuantity(productId, targetWarehouseId, qty);
+    return {
+      executed: true,
       action,
-      reason,
-      targetWarehouseId,
-    }),
-    aiReasoning: `Inventory ${action} requested: ${quantity} units. Reason: ${reason || "No reason provided"}`,
-    aiConfidence: "0.85",
-    relatedEntityType: "inventory",
-    requiresApproval: true,
-  }).$returningId();
+      message: `Transferred ${qty} units of product ${productId} from warehouse ${warehouseId} to ${targetWarehouseId}.`,
+      details: { productId, fromWarehouseId: warehouseId, toWarehouseId: targetWarehouseId, quantity: qty },
+    };
+  }
+
+  // Adjustment: negative for removals, positive otherwise.
+  const isRemoval = ["remove", "decrease", "subtract", "out", "consume"].includes(String(action).toLowerCase());
+  const delta = isRemoval ? -Math.abs(qty) : Math.abs(qty);
+  await updateInventoryQuantity(productId, warehouseId, delta);
 
   return {
-    taskCreated: true,
-    taskId: task[0].id,
-    message: `Inventory ${action} task created and pending approval`,
-    details: { productId, warehouseId, quantity, action },
+    executed: true,
+    action,
+    message: `Adjusted inventory for product ${productId} at warehouse ${warehouseId} by ${delta} units${reason ? ` (${reason})` : ""}.`,
+    details: { productId, warehouseId, delta },
   };
 }
 
@@ -1018,34 +1018,42 @@ async function executeCreatePurchaseOrder(params: any, ctx: AIAgentContext): Pro
   // Generate PO number
   const poNumber = `PO-${Date.now().toString(36).toUpperCase()}`;
 
-  // Create task for approval
-  const task = await db.insert(aiAgentTasks).values({
-    taskType: "generate_po",
-    status: "pending_approval",
-    priority: "medium",
-    taskData: JSON.stringify({
-      vendorId,
-      vendorName: vendor[0].name,
-      poNumber,
-      items,
-      subtotal: subtotal.toFixed(2),
-      notes,
-      expectedDate,
-    }),
-    aiReasoning: `PO for ${vendor[0].name} with ${items.length} line items totaling $${subtotal.toFixed(2)}`,
-    aiConfidence: "0.90",
-    relatedEntityType: "purchase_order",
-    requiresApproval: true,
+  // Create the purchase order for real, as a draft (the live approval gate is
+  // the assistant's Plan-first mode, not a separate approval queue).
+  const [po] = await db.insert(purchaseOrders).values({
+    poNumber,
+    vendorId,
+    status: "draft",
+    orderDate: new Date(),
+    subtotal: subtotal.toFixed(2),
+    totalAmount: subtotal.toFixed(2),
+    currency: "USD",
+    notes: notes || "Created by AI assistant",
   }).$returningId();
 
+  // Create line items
+  for (const item of items) {
+    const qty = parseFloat(String(item.quantity ?? "1"));
+    const price = parseFloat(String(item.unitPrice ?? "0"));
+    await db.insert(purchaseOrderItems).values({
+      purchaseOrderId: po.id,
+      productId: item.productId,
+      description: item.description || item.name || "Item",
+      quantity: qty.toString(),
+      unitPrice: price.toString(),
+      totalAmount: (qty * price).toString(),
+    });
+  }
+
   return {
-    taskCreated: true,
-    taskId: task[0].id,
+    created: true,
+    purchaseOrderId: po.id,
     poNumber,
     vendorName: vendor[0].name,
     subtotal: subtotal.toFixed(2),
     itemCount: items.length,
-    message: "Purchase order task created and pending approval",
+    status: "draft",
+    message: `Created draft purchase order ${poNumber} for ${vendor[0].name} — ${items.length} item(s), $${subtotal.toFixed(2)}.`,
   };
 }
 
@@ -1074,25 +1082,28 @@ async function executeManageCopacker(params: any, ctx: AIAgentContext): Promise<
 
     case "create_work_order": {
       if (!workOrderData) throw new Error("Work order data required");
+      const { bomId, productId, quantity, unit, priority } = workOrderData;
+      if (!bomId || !productId || quantity == null) {
+        throw new Error("Work order requires bomId, productId, and quantity");
+      }
 
-      const task = await db.insert(aiAgentTasks).values({
-        taskType: "create_work_order",
-        status: "pending_approval",
-        priority: "medium",
-        taskData: JSON.stringify({
-          copackerId,
-          ...workOrderData,
-        }),
-        aiReasoning: `Work order for copacker: ${workOrderData.quantity} units`,
-        aiConfidence: "0.85",
-        relatedEntityType: "work_order",
-        requiresApproval: true,
-      }).$returningId();
+      // Create the work order for real, as a draft. Live approval is handled by
+      // the assistant's Plan-first mode rather than a separate approval queue.
+      const wo = await createWorkOrder({
+        bomId,
+        productId,
+        quantity: String(quantity),
+        unit: unit || "EA",
+        status: "draft",
+        priority: priority || "normal",
+      });
 
       return {
-        taskCreated: true,
-        taskId: task[0].id,
-        message: "Work order task created and pending approval",
+        created: true,
+        workOrderId: wo.id,
+        workOrderNumber: wo.workOrderNumber,
+        copackerId: copackerId ?? null,
+        message: `Created work order ${wo.workOrderNumber} (draft) for ${quantity} units.`,
       };
     }
 
@@ -1204,21 +1215,14 @@ async function executeManageFreight(params: any, ctx: AIAgentContext): Promise<a
     }
 
     case "create_rfq": {
-      const task = await db.insert(aiAgentTasks).values({
-        taskType: "send_rfq",
-        status: "pending_approval",
-        priority: "medium",
-        taskData: JSON.stringify(rfqData),
-        aiReasoning: "Freight RFQ creation requested",
-        aiConfidence: "0.85",
-        relatedEntityType: "freight_rfq",
-        requiresApproval: true,
-      }).$returningId();
-
+      if (!rfqData?.title) throw new Error("Freight RFQ requires a title");
+      // Create the RFQ for real (draft). Live approval is Plan-first mode.
+      const rfq = await createFreightRfq({ ...rfqData, status: rfqData.status || "draft" });
       return {
-        taskCreated: true,
-        taskId: task[0].id,
-        message: "Freight RFQ task created and pending approval",
+        created: true,
+        freightRfqId: rfq.id,
+        rfqNumber: rfq.rfqNumber,
+        message: `Created freight RFQ ${rfq.rfqNumber} (${rfqData.status || "draft"}).`,
       };
     }
 
