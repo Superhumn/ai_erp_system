@@ -108,7 +108,9 @@ function activityHref(entityType?: string, entityId?: number | null): string | n
     case "customer": return withId("/sales/customers");
     case "order": return withId("/sales/orders");
     case "product": return withId("/operations/products");
-    case "transfer": return withId("/operations/transfers");
+    case "transfer":
+    case "inventory_transfer":
+    case "inventorytransfer": return withId("/operations/transfers");
     case "invoice": return "/finance/invoices";
     case "payment": return "/finance/payments";
     case "vendor": return "/operations/vendors";
@@ -483,6 +485,9 @@ export default function Home() {
                   <div
                     key={entry.id}
                     onClick={href ? () => setLocation(href) : undefined}
+                    onKeyDown={href ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setLocation(href); } } : undefined}
+                    role={href ? "button" : undefined}
+                    tabIndex={href ? 0 : undefined}
                     className={`flex items-start gap-3 py-2.5 first:pt-0 last:pb-0${href ? " cursor-pointer hover:bg-muted/40 -mx-2 px-2 rounded-md transition-colors" : ""}`}
                   >
                     <Activity className="h-3.5 w-3.5 text-muted-foreground/50 mt-0.5 shrink-0" />

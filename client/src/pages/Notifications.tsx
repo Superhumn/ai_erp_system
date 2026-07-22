@@ -90,13 +90,17 @@ export default function Notifications() {
                   if (!notification.isRead) markRead.mutate({ id: notification.id });
                   if (href) setLocation(href);
                 };
+                const interactive = href || !notification.isRead;
                 return (
                 <div
                   key={notification.id}
-                  onClick={href || !notification.isRead ? handleOpen : undefined}
+                  onClick={interactive ? handleOpen : undefined}
+                  onKeyDown={interactive ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleOpen(); } } : undefined}
+                  role={interactive ? "button" : undefined}
+                  tabIndex={interactive ? 0 : undefined}
                   className={`flex items-start gap-3 p-3 rounded-lg transition-colors ${
                     notification.isRead ? 'bg-transparent' : 'bg-muted/50'
-                  }${href || !notification.isRead ? ' cursor-pointer hover:bg-muted/70' : ''}`}
+                  }${interactive ? ' cursor-pointer hover:bg-muted/70' : ''}`}
                 >
                   <div className="mt-0.5">{getIcon(notification.type)}</div>
                   <div className="flex-1 min-w-0">

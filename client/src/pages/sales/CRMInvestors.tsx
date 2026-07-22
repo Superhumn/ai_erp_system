@@ -368,7 +368,10 @@ export default function CRMInvestors() {
                         key={investor.id}
                         className="cursor-pointer hover:bg-muted/50"
                         data-selected={selected?.id === investor.id ? "true" : undefined}
+                        role="button"
+                        tabIndex={0}
                         onClick={() => setSelected(investor)}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected(investor); } }}
                       >
                         <TableCell>
                           <div className="font-medium">{investor.name}</div>
