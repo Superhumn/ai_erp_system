@@ -1984,6 +1984,45 @@ export async function getAllProjectTasks() {
   }));
 }
 
+/**
+ * Project tasks that need an outstanding-task reminder email.
+ *
+ * A task qualifies when it is still open (not completed/cancelled), is assigned to
+ * a human user who has an email on file, and has a dueDate that is already overdue
+ * or coming due before `dueBefore` (the "due soon" lookahead). `reminderCutoff`
+ * de-dupes repeat sends: a task whose reminder was sent more recently than the
+ * cutoff is skipped, so a still-open task is nudged at most once per run window.
+ * Tasks with no dueDate are excluded (a NULL dueDate never satisfies the `<=` bound).
+ */
+export async function getProjectTasksNeedingReminders(opts: { dueBefore: Date; reminderCutoff: Date }) {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select({
+    task: projectTasks,
+    projectName: projects.name,
+    assigneeName: users.name,
+    assigneeEmail: users.email,
+  })
+    .from(projectTasks)
+    .innerJoin(users, eq(projectTasks.assigneeId, users.id))
+    .leftJoin(projects, eq(projectTasks.projectId, projects.id))
+    .where(and(
+      eq(projectTasks.assigneeType, "human"),
+      inArray(projectTasks.status, ["todo", "in_progress", "review"]),
+      lte(projectTasks.dueDate, opts.dueBefore),
+      sql`${users.email} is not null and ${users.email} != ''`,
+      or(isNull(projectTasks.reminderSentAt), lte(projectTasks.reminderSentAt, opts.reminderCutoff)),
+    ))
+    .orderBy(asc(projectTasks.dueDate));
+
+  return rows.map((row) => ({
+    ...row.task,
+    projectName: row.projectName,
+    assigneeName: row.assigneeName,
+    assigneeEmail: row.assigneeEmail,
+  }));
+}
+
 // ============================================
 // INVESTMENT GRANT CHECKLISTS
 // ============================================
@@ -3504,11 +3543,31 @@ export async function createRawMaterial(data: Omit<InsertRawMaterial, 'id' | 'cr
 export async function updateRawMaterial(id: number, data: Partial<InsertRawMaterial>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
+
   await db.update(rawMaterials).set({
     ...data,
     updatedAt: new Date(),
   }).where(eq(rawMaterials.id, id));
+}
+
+// Atomically adjust a raw material's quantity buckets by signed deltas, flooring
+// each at 0. Using SQL-level `col + delta` (rather than read-modify-write) keeps
+// concurrent shipment updates for the same material from clobbering each other.
+export async function adjustRawMaterialInventory(
+  id: number,
+  deltas: { onOrder?: number; inTransit?: number; received?: number },
+  extra?: Partial<InsertRawMaterial>,
+) {
+  const db = await getDb();
+  if (!db) return;
+  const set: Record<string, any> = { ...extra, updatedAt: new Date() };
+  if (deltas.onOrder !== undefined)
+    set.quantityOnOrder = sql`GREATEST(0, COALESCE(${rawMaterials.quantityOnOrder}, 0) + ${deltas.onOrder})`;
+  if (deltas.inTransit !== undefined)
+    set.quantityInTransit = sql`GREATEST(0, COALESCE(${rawMaterials.quantityInTransit}, 0) + ${deltas.inTransit})`;
+  if (deltas.received !== undefined)
+    set.quantityReceived = sql`GREATEST(0, COALESCE(${rawMaterials.quantityReceived}, 0) + ${deltas.received})`;
+  await db.update(rawMaterials).set(set).where(eq(rawMaterials.id, id));
 }
 
 export async function deleteRawMaterial(id: number) {
@@ -9244,6 +9303,23 @@ export async function createWhatsappMessage(data: InsertWhatsappMessage) {
   if (!db) throw new Error("Database not available");
   const result = await db.insert(whatsappMessages).values(data);
   return result[0].insertId;
+}
+
+export async function updateWhatsappMessage(id: number, data: Partial<InsertWhatsappMessage>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(whatsappMessages).set(data).where(eq(whatsappMessages.id, id));
+}
+
+// Look up an outbound WhatsApp message by its provider message id (Twilio SID),
+// used by the delivery-status webhook to attach status updates.
+export async function getWhatsappMessageByMessageId(messageId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(whatsappMessages)
+    .where(eq(whatsappMessages.messageId, messageId))
+    .limit(1);
+  return row;
 }
 
 export async function updateWhatsappMessageStatus(
