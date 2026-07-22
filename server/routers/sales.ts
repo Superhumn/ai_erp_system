@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "../db";
+import { safeDecryptToken } from "../_core/crypto";
 import { router, publicProcedure, protectedProcedure, adminProcedure, createAuditLog, generateNumber } from "./middleware";
 
 export const salesRouter = router({
@@ -544,10 +545,12 @@ export const salesRouter = router({
             if (!store) continue;
             try {
               const apiBase = `https://${store.storeDomain}/admin/api/2024-01`;
+              // Access tokens are encrypted at rest; decrypt before calling Shopify.
+              const token = safeDecryptToken(store.accessToken!);
 
               // Step 1: Fetch active locations (inventory_levels requires location_ids)
               const locResp = await fetch(`${apiBase}/locations.json`, {
-                headers: { 'X-Shopify-Access-Token': store.accessToken!, 'Content-Type': 'application/json' },
+                headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
               });
               if (!locResp.ok) throw new Error(`Shopify locations API error: ${locResp.status}`);
               const locData = await locResp.json();
@@ -563,7 +566,7 @@ export const salesRouter = router({
 
               // Step 2: Fetch inventory levels for those locations
               const response = await fetch(`${apiBase}/inventory_levels.json?location_ids=${locationIds.join(',')}&limit=250`, {
-                headers: { 'X-Shopify-Access-Token': store.accessToken!, 'Content-Type': 'application/json' },
+                headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
               });
 
               if (!response.ok) {
@@ -583,7 +586,7 @@ export const salesRouter = router({
                 if (mapping.shopifyInventoryItemId || !mapping.shopifyVariantId) continue;
                 try {
                   const variantResp = await fetch(`${apiBase}/variants/${mapping.shopifyVariantId}.json`, {
-                    headers: { 'X-Shopify-Access-Token': store.accessToken!, 'Content-Type': 'application/json' },
+                    headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
                   });
                   if (!variantResp.ok) continue;
                   const variantData = await variantResp.json();
