@@ -68,13 +68,13 @@ function ActionStatusBadge({ action }: { action: AIAction }) {
     failed: { icon: XCircle, color: 'text-red-500', bg: 'bg-red-500/10' },
   };
 
-  const config = statusConfig[action.status];
+  const config = statusConfig[action.status ?? "pending"];
   const Icon = config.icon;
 
   return (
     <div className={cn('flex items-center gap-2 px-2 py-1 rounded text-xs', config.bg)}>
       <Icon className={cn('h-3 w-3', config.color)} />
-      <span className={config.color}>{action.type.replace(/_/g, ' ')}</span>
+      <span className={config.color}>{(action.type ?? "").replace(/_/g, ' ')}</span>
       <span className="text-muted-foreground">- {action.status}</span>
     </div>
   );

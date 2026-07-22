@@ -908,7 +908,7 @@ export default function DataRoomDetail() {
                   <>
                     {/* Viewer toolbar */}
                     <div className="px-5 py-3 border-b flex items-center gap-3 shrink-0 bg-muted/10">
-                      <span className="shrink-0">{getFileIcon(selectedDoc.fileType)}</span>
+                      <span className="shrink-0">{getFileIcon(selectedDoc.fileType ?? "")}</span>
                       <span className="text-sm font-medium truncate flex-1">{selectedDoc.name}</span>
                       {selectedDoc.fileSize && (
                         <span className="text-xs text-muted-foreground shrink-0">
@@ -3220,7 +3220,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
   // Expand all categories by default when data loads
   useEffect(() => {
     if (checklistData?.categories && expandedCategories.size === 0) {
-      setExpandedCategories(new Set(checklistData.categories.map(c => c.name)));
+      setExpandedCategories(new Set(checklistData.categories.map((c: any) => c.name)));
     }
   }, [checklistData]);
 
@@ -3338,7 +3338,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
   }
 
   // Collect all missing items across categories for the missing panel
-  const allItems = checklistData?.categories.flatMap(c => c.items) || [];
+  const allItems = checklistData?.categories.flatMap((c: any) => c.items) || [];
   const missingItems = allItems.filter((i: any) => i.status === 'missing');
   const completeItems = allItems.filter((i: any) => i.status === 'complete');
 
@@ -3487,7 +3487,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
       )}
 
       {/* Checklist Items by Category */}
-      {!showMissingOnly && checklistData?.categories.map((category) => {
+      {!showMissingOnly && checklistData?.categories.map((category: any) => {
         const catComplete = category.items.filter((i: any) => i.status === 'complete').length;
         const catTotal = category.items.length;
         const catPct = Math.round((catComplete / catTotal) * 100);
@@ -3676,7 +3676,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
                 placeholder="e.g. Corporate Documents"
               />
               <datalist id="dd-category-options">
-                {(checklistData?.categories || []).map((c) => (
+                {(checklistData?.categories || []).map((c: any) => (
                   <option key={c.name} value={c.name} />
                 ))}
               </datalist>

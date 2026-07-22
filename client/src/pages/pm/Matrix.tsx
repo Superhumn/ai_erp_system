@@ -26,7 +26,7 @@ export default function PmMatrix() {
   }, [data]);
 
   const cellsByKey = useMemo(() => {
-    if (!data) return new Map<string, (typeof data.cells)[number]>();
+    if (!data) return new Map<string, NonNullable<typeof data>["cells"][number]>();
     return new Map(data.cells.map(cell => [`${cell.marketId}:${cell.functionId}`, cell]));
   }, [data]);
 

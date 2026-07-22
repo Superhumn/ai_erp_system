@@ -247,7 +247,7 @@ export function verifyWebhookSignature(
  * Map SendGrid event types to our status enum
  */
 export function mapEventToStatus(eventType: string): string | null {
-  const mapping: Record<string, string> = {
+  const mapping: Record<string, string | null> = {
     // Successful delivery
     'delivered': 'delivered',
 

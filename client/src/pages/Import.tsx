@@ -691,7 +691,7 @@ export default function Import() {
   const { data: connectionStatus, refetch: refetchConnection, isLoading: connectionLoading } =
     trpc.sheetsImport.getConnectionStatus.useQuery(undefined, {
       enabled: isAuthenticated,
-      onSuccess: (data) => {
+      onSuccess: (data: any) => {
         if (data?.connected) setForceConnected(true);
       },
     } as any);

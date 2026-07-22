@@ -31,6 +31,7 @@ interface SendEmailInput {
  */
 export async function runEmailCommunication(input: SendEmailInput): Promise<ToolAdapterResult> {
   const db = await getDb();
+  if (!db) throw new Error("Database connection unavailable");
   const { action, payload } = input;
 
   switch (action) {

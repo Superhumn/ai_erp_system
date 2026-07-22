@@ -396,7 +396,7 @@ function DashboardLayoutContent({
 
           {/* Flat navigation - all items visible, no dropdowns */}
           <SidebarContent className="overflow-y-auto p-0 gap-0">
-            <nav className="flex flex-col">
+            <nav className="flex flex-col m-px">
               {getMenuGroups(user?.role).map((group, gi) => (
                 <div key={group.label}>
                   {gi > 0 && !isCollapsed && <div className="border-t border-border/30" />}

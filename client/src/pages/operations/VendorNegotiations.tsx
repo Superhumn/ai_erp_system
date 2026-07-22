@@ -618,6 +618,7 @@ export default function VendorNegotiations() {
                   <Select
                     value={selectedDetail.negotiation.status}
                     onValueChange={(v) => {
+                      if (!selectedDetail.negotiation) return;
                       if (v === selectedDetail.negotiation.status) return;
                       updateNegotiation.mutate({ id: selectedDetail.negotiation.id, status: v as any });
                     }}
@@ -739,6 +740,7 @@ export default function VendorNegotiations() {
                           size="sm"
                           variant="outline"
                           onClick={() => {
+                            if (!selectedDetail.negotiation) return;
                             const nextRound = (selectedDetail.rounds?.length ?? 0) + 1;
                             generateDraft.mutate({
                               negotiationId: selectedDetail.negotiation.id,
