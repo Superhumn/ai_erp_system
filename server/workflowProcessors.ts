@@ -46,6 +46,30 @@ interface WorkflowProcessor {
   execute(engine: WorkflowEngine, context: WorkflowContext): Promise<WorkflowResult>;
 }
 
+/**
+ * Run an async mapper over items with a bounded concurrency limit, preserving
+ * input order in the results. Used to parallelize independent LLM/API calls
+ * without firing an unbounded number of requests at once.
+ */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+  const workerCount = Math.max(1, Math.min(limit, items.length));
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const index = cursor++;
+      if (index >= items.length) break;
+      results[index] = await mapper(items[index], index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 // ============================================
 // DEMAND FORECASTING WORKFLOW
 // ============================================
@@ -601,19 +625,38 @@ const procurementProcessor: WorkflowProcessor = {
     const step2 = await engine.recordStep(context, 2, "Convert to Purchase Orders", "create_record", async () => {
       const createdPOs: any[] = [];
 
+      // Bulk-load vendors, line items, and raw materials up front to avoid the
+      // nested N+1 (one vendor query per PO + one raw-material query per line item).
+      const vendorIds = [...new Set(suggestedPOs.map((s: any) => s.vendorId as number).filter(Boolean))] as number[];
+      const spoIds = suggestedPOs.map((s: any) => s.id as number) as number[];
+      const vendorRows: (typeof vendors.$inferSelect)[] = vendorIds.length
+        ? await db.select().from(vendors).where(inArray(vendors.id, vendorIds))
+        : [];
+      const vendorById = new Map(vendorRows.map((v) => [v.id, v] as const));
+
+      const allSpoItems = spoIds.length
+        ? await db.select().from(suggestedPoItems).where(inArray(suggestedPoItems.suggestedPoId, spoIds))
+        : [];
+      const itemsBySpoId = new Map<number, typeof allSpoItems>();
+      for (const it of allSpoItems) {
+        const list = itemsBySpoId.get(it.suggestedPoId) ?? [];
+        list.push(it);
+        itemsBySpoId.set(it.suggestedPoId, list);
+      }
+
+      const rawMaterialIds = [...new Set(allSpoItems.map((it) => it.rawMaterialId).filter(Boolean))] as number[];
+      const rawMaterialRows: (typeof rawMaterials.$inferSelect)[] = rawMaterialIds.length
+        ? await db.select().from(rawMaterials).where(inArray(rawMaterials.id, rawMaterialIds))
+        : [];
+      const rawMaterialById = new Map(rawMaterialRows.map((r) => [r.id, r] as const));
+
       for (const spo of suggestedPOs) {
         try {
-          // Get vendor details
-          const [vendor] = await db
-            .select()
-            .from(vendors)
-            .where(eq(vendors.id, spo.vendorId));
+          // Vendor details (pre-loaded)
+          const vendor = vendorById.get(spo.vendorId);
 
-          // Get line items
-          const items = await db
-            .select()
-            .from(suggestedPoItems)
-            .where(eq(suggestedPoItems.suggestedPoId, spo.id));
+          // Line items (pre-loaded)
+          const items = itemsBySpoId.get(spo.id) ?? [];
 
           // Calculate totals
           const subtotal = items.reduce((sum, item) => sum + parseFloat(item.totalPrice || "0"), 0);
@@ -640,10 +683,7 @@ const procurementProcessor: WorkflowProcessor = {
 
           // Create line items
           for (const item of items) {
-            const [rm] = await db
-              .select()
-              .from(rawMaterials)
-              .where(eq(rawMaterials.id, item.rawMaterialId));
+            const rm = rawMaterialById.get(item.rawMaterialId);
 
             const [poItem] = await db
               .insert(purchaseOrderItems)
@@ -2914,7 +2954,9 @@ Return vendor IDs in order of preference.`;
     const step4 = await engine.recordStep(context, 4, "Send RFQ Emails", "communication", async () => {
       const emailResults = [];
 
-      for (const vendor of selectedVendors) {
+      // Generate all vendor RFQ emails in parallel (independent LLM calls,
+      // bounded concurrency) instead of one blocking call per vendor in series.
+      const generatedEmails = await mapWithConcurrency(selectedVendors as any[], 5, async (vendor: any) => {
         // Generate AI-powered email content
         const emailPrompt = `Generate a professional RFQ email to vendor:
 Vendor Name: ${vendor.name}
@@ -2964,7 +3006,11 @@ Generate a professional, concise email requesting a quote.`;
 
         const content = aiEmail.choices[0].message.content;
         const emailContent = JSON.parse(typeof content === "string" ? content : "{}");
+        return { vendor, emailContent };
+      });
 
+      // Persist invitations and email records sequentially (ordered writes + counter).
+      for (const { vendor, emailContent } of generatedEmails) {
         // Create invitation record
         const [invitation] = await db
           .insert(vendorRfqInvitations)
