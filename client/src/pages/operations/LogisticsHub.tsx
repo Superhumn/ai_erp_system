@@ -30,6 +30,7 @@ import {
   Plane,
 } from "lucide-react";
 import { toast } from "sonner";
+import { Link } from "wouter";
 import { formatCurrency } from "@/lib/format";
 
 function formatDate(value: string | Date | null | undefined) {
@@ -364,6 +365,14 @@ export default function LogisticsHub() {
         <div><span className="text-muted-foreground">Customs</span> <span className="font-bold text-orange-600">{stats.inCustoms}</span></div>
         <div className="h-4 w-px bg-border" />
         <div><span className="text-muted-foreground">Delivered</span> <span className="font-bold text-green-600">{stats.delivered}</span></div>
+        <div className="h-4 w-px bg-border" />
+        <Link
+          href="/operations/material-supply"
+          className="flex items-center gap-1.5 font-semibold text-blue-600 hover:underline"
+        >
+          <Ship className="h-3.5 w-3.5" />
+          Material Supply &amp; Reorder
+        </Link>
       </div>
 
       {/* Shipments table — row click opens side-sheet */}

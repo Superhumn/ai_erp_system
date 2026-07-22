@@ -2630,6 +2630,10 @@ export const shopifySkuMappings = mysqlTable("shopifySkuMappings", {
   storeId: int("storeId").notNull(),
   shopifyProductId: varchar("shopifyProductId", { length: 64 }).notNull(),
   shopifyVariantId: varchar("shopifyVariantId", { length: 64 }).notNull(),
+  // Shopify InventoryItem id for this variant. Inventory-level webhooks/REST
+  // report inventory_item_id (NOT the variant id), so this is what inventory
+  // sync matches against. Backfilled lazily from the Shopify API during sync.
+  shopifyInventoryItemId: varchar("shopifyInventoryItemId", { length: 64 }),
   shopifySku: varchar("shopifySku", { length: 128 }),
   productId: int("productId").notNull(),
   isActive: boolean("isActive").default(true),
