@@ -17172,9 +17172,11 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
         }),
         linkToPO: z.boolean().default(true),
         createMissingVendor: z.boolean().default(false),
+        receiveInventory: z.boolean().default(false),
+        warehouseId: z.number().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        return importFreightInvoice(input.invoiceData as any, ctx.user.id, input.createMissingVendor);
+        return importFreightInvoice(input.invoiceData as any, ctx.user.id, input.createMissingVendor, input.receiveInventory, input.warehouseId);
       }),
 
     // Import a vendor invoice
