@@ -896,31 +896,57 @@ async function executeUpdateInventory(params: any, ctx: AIAgentContext): Promise
   if (!db) throw new Error("Database not available");
 
   const { productId, warehouseId, quantity, action, reason, targetWarehouseId } = params;
-  const qty = parseFloat(String(quantity ?? "0"));
+
+  // Validate inputs before touching inventory — the model can pass junk.
+  const pId = Number(productId);
+  const wId = Number(warehouseId);
+  const qty = Number(quantity);
+  if (!Number.isFinite(pId)) throw new Error("A valid productId is required");
+  if (!Number.isFinite(wId)) throw new Error("A valid warehouseId is required");
+  if (!Number.isFinite(qty) || qty <= 0) throw new Error("A positive numeric quantity is required");
+
+  // Apply a signed delta to one (product, warehouse) cell within a transaction.
+  const applyDelta = async (tx: any, product: number, warehouse: number, change: number) => {
+    const existing = await tx.select().from(inventory)
+      .where(and(eq(inventory.productId, product), eq(inventory.warehouseId, warehouse))).limit(1);
+    if (existing.length > 0) {
+      const current = parseFloat(existing[0].quantity as string) || 0;
+      await tx.update(inventory).set({ quantity: (current + change).toString() })
+        .where(and(eq(inventory.productId, product), eq(inventory.warehouseId, warehouse)));
+    } else {
+      await tx.insert(inventory).values({ productId: product, warehouseId: warehouse, quantity: change.toString() });
+    }
+  };
 
   // Execute the change directly (live). The approval gate is Plan-first mode.
   if (action === "transfer") {
-    if (!targetWarehouseId) throw new Error("targetWarehouseId is required for a transfer");
-    await updateInventoryQuantity(productId, warehouseId, -qty);
-    await updateInventoryQuantity(productId, targetWarehouseId, qty);
+    const targetId = Number(targetWarehouseId);
+    if (!Number.isFinite(targetId)) throw new Error("A valid targetWarehouseId is required for a transfer");
+    if (targetId === wId) throw new Error("Source and target warehouses must differ");
+    // Both legs in one transaction so a failure can't leave stock decremented
+    // at the source without the matching increment at the target.
+    await db.transaction(async (tx) => {
+      await applyDelta(tx, pId, wId, -qty);
+      await applyDelta(tx, pId, targetId, qty);
+    });
     return {
       executed: true,
       action,
-      message: `Transferred ${qty} units of product ${productId} from warehouse ${warehouseId} to ${targetWarehouseId}.`,
-      details: { productId, fromWarehouseId: warehouseId, toWarehouseId: targetWarehouseId, quantity: qty },
+      message: `Transferred ${qty} units of product ${pId} from warehouse ${wId} to ${targetId}.`,
+      details: { productId: pId, fromWarehouseId: wId, toWarehouseId: targetId, quantity: qty },
     };
   }
 
   // Adjustment: negative for removals, positive otherwise.
   const isRemoval = ["remove", "decrease", "subtract", "out", "consume"].includes(String(action).toLowerCase());
-  const delta = isRemoval ? -Math.abs(qty) : Math.abs(qty);
-  await updateInventoryQuantity(productId, warehouseId, delta);
+  const delta = isRemoval ? -qty : qty;
+  await updateInventoryQuantity(pId, wId, delta);
 
   return {
     executed: true,
     action,
-    message: `Adjusted inventory for product ${productId} at warehouse ${warehouseId} by ${delta} units${reason ? ` (${reason})` : ""}.`,
-    details: { productId, warehouseId, delta },
+    message: `Adjusted inventory for product ${pId} at warehouse ${wId} by ${delta} units${reason ? ` (${reason})` : ""}.`,
+    details: { productId: pId, warehouseId: wId, delta },
   };
 }
 
@@ -1010,50 +1036,64 @@ async function executeCreatePurchaseOrder(params: any, ctx: AIAgentContext): Pro
   const vendor = await db.select().from(vendors).where(eq(vendors.id, vendorId)).limit(1);
   if (!vendor[0]) throw new Error("Vendor not found");
 
-  // Calculate totals
-  const subtotal = items.reduce((sum: number, item: any) => {
-    return sum + (item.quantity * item.unitPrice);
-  }, 0);
-
-  // Generate PO number
-  const poNumber = `PO-${Date.now().toString(36).toUpperCase()}`;
-
-  // Create the purchase order for real, as a draft (the live approval gate is
-  // the assistant's Plan-first mode, not a separate approval queue).
-  const [po] = await db.insert(purchaseOrders).values({
-    poNumber,
-    vendorId,
-    status: "draft",
-    orderDate: new Date(),
-    subtotal: subtotal.toFixed(2),
-    totalAmount: subtotal.toFixed(2),
-    currency: "USD",
-    notes: notes || "Created by AI assistant",
-  }).$returningId();
-
-  // Create line items
-  for (const item of items) {
-    const qty = parseFloat(String(item.quantity ?? "1"));
-    const price = parseFloat(String(item.unitPrice ?? "0"));
-    await db.insert(purchaseOrderItems).values({
-      purchaseOrderId: po.id,
+  // Normalize + validate line items before writing anything — the model can
+  // pass missing/non-numeric values, which must not become "NaN" in the DB.
+  const normalizedItems = (Array.isArray(items) ? items : []).map((item: any, idx: number) => {
+    const qty = Number(item.quantity);
+    const price = Number(item.unitPrice);
+    if (!Number.isFinite(qty) || qty <= 0) throw new Error(`Line item ${idx + 1} has an invalid quantity`);
+    if (!Number.isFinite(price) || price < 0) throw new Error(`Line item ${idx + 1} has an invalid unit price`);
+    return {
       productId: item.productId,
       description: item.description || item.name || "Item",
-      quantity: qty.toString(),
-      unitPrice: price.toString(),
-      totalAmount: (qty * price).toString(),
-    });
-  }
+      qty,
+      price,
+      lineTotal: qty * price,
+    };
+  });
+  if (normalizedItems.length === 0) throw new Error("A purchase order needs at least one valid line item");
+
+  const subtotal = normalizedItems.reduce((sum, i) => sum + i.lineTotal, 0);
+  if (!Number.isFinite(subtotal)) throw new Error("Could not compute a valid order total");
+
+  const poNumber = `PO-${Date.now().toString(36).toUpperCase()}`;
+
+  // Create the PO header + line items atomically, as a draft (the live approval
+  // gate is the assistant's Plan-first mode, not a separate approval queue).
+  const poId = await db.transaction(async (tx) => {
+    const [po] = await tx.insert(purchaseOrders).values({
+      poNumber,
+      vendorId,
+      status: "draft",
+      orderDate: new Date(),
+      subtotal: subtotal.toFixed(2),
+      totalAmount: subtotal.toFixed(2),
+      currency: "USD",
+      notes: notes || "Created by AI assistant",
+    }).$returningId();
+
+    for (const i of normalizedItems) {
+      await tx.insert(purchaseOrderItems).values({
+        purchaseOrderId: po.id,
+        productId: i.productId,
+        description: i.description,
+        quantity: i.qty.toString(),
+        unitPrice: i.price.toString(),
+        totalAmount: i.lineTotal.toFixed(2),
+      });
+    }
+    return po.id;
+  });
 
   return {
     created: true,
-    purchaseOrderId: po.id,
+    purchaseOrderId: poId,
     poNumber,
     vendorName: vendor[0].name,
     subtotal: subtotal.toFixed(2),
-    itemCount: items.length,
+    itemCount: normalizedItems.length,
     status: "draft",
-    message: `Created draft purchase order ${poNumber} for ${vendor[0].name} — ${items.length} item(s), $${subtotal.toFixed(2)}.`,
+    message: `Created draft purchase order ${poNumber} for ${vendor[0].name} — ${normalizedItems.length} item(s), $${subtotal.toFixed(2)}.`,
   };
 }
 
