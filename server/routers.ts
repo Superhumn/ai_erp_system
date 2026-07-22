@@ -6494,7 +6494,9 @@ Be concise and helpful. Always give actionable guidance.`;
             parsedTaskData.submittedByUserId = original.submittedByUserId;
             parsedTaskData.userName = original.userName;
             parsedTaskData.userRole = original.userRole;
-            parsedTaskData.companyId = original.companyId;
+            // Keep taskData.companyId in sync with the authoritative row column
+            // (not the old JSON) so an edit can't persist a tenancy mismatch.
+            parsedTaskData.companyId = task.companyId ?? undefined;
             taskDataToSave = JSON.stringify(parsedTaskData);
           }
 

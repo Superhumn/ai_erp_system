@@ -65,14 +65,15 @@ export async function executeConciergeErrand(task: AiAgentTask): Promise<ErrandE
     return { success: false, error: "Errand is missing the submitting user context; refusing to execute" };
   }
 
-  // Tenancy comes from the immutable aiAgentTasks.companyId column, never the
-  // mutable taskData JSON. If taskData carries a companyId that disagrees with
-  // the row, treat it as tampering and refuse rather than risk cross-company
-  // execution.
+  // Tenancy comes solely from the immutable aiAgentTasks.companyId column, never
+  // the mutable taskData JSON. If taskData carries a companyId that disagrees
+  // with the row, treat it as tampering and refuse. If the column is null the
+  // errand simply runs untenanted — we never fall back to the JSON value, so the
+  // "row column is authoritative" guarantee holds.
   if (parsed.companyId != null && task.companyId != null && Number(parsed.companyId) !== Number(task.companyId)) {
     return { success: false, error: "Errand company mismatch between task row and taskData; refusing to execute" };
   }
-  const companyId = task.companyId ?? parsed.companyId ?? undefined;
+  const companyId = task.companyId ?? undefined;
 
   // Act on behalf of the user who submitted the errand so user-scoped tools
   // (calendar, Gmail, etc.) resolve the right credentials. `executingErrand`

@@ -1458,7 +1458,7 @@ async function executePlanErrand(params: any, ctx: AIAgentContext): Promise<any>
     priority,
     taskData: JSON.stringify(taskData),
     aiReasoning: title || goal,
-    aiConfidence: "0.85",
+    aiConfidence: "85.00", // aiConfidence is a 0-100 percentage, not a 0-1 fraction
     requiresApproval,
   }).$returningId();
 
