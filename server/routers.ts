@@ -14180,15 +14180,21 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
               }
 
               try {
-                const { importEmailAttachmentToErp } = await import("./documentImportService");
-                await importEmailAttachmentToErp({
-                  emailId,
-                  attachmentId,
-                  content: `data:${withBytes.contentType};base64,${withBytes.data.toString("base64")}`,
-                  filename: attachment.filename,
-                  mimeType: withBytes.contentType,
-                  userId: ctx.user.id,
-                });
+                const { importEmailAttachmentToErp, isParseableDocumentMime } = await import("./documentImportService");
+                // Only spend an LLM parse on document-like media. The IMAP
+                // scanner downloads many image/* parts (inline logos, email
+                // signatures, webp/gif), which are stored above for viewing but
+                // must not each trigger a costly parse.
+                if (isParseableDocumentMime(withBytes.contentType)) {
+                  await importEmailAttachmentToErp({
+                    emailId,
+                    attachmentId,
+                    content: `data:${withBytes.contentType};base64,${withBytes.data.toString("base64")}`,
+                    filename: attachment.filename,
+                    mimeType: withBytes.contentType,
+                    userId: ctx.user.id,
+                  });
+                }
               } catch (e: any) {
                 // Skip individual attachment failures, but log so they're
                 // diagnosable rather than silently dropped.
