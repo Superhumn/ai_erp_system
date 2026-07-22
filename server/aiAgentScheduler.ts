@@ -650,6 +650,10 @@ async function executeTask(task: typeof aiAgentTasks.$inferSelect): Promise<{
       return await executeIngredientRfq(task);
     case "invoice_price_review":
       return await executeIngredientRfq(task);
+    case "concierge_errand": {
+      const { executeConciergeErrand } = await import("./conciergeErrandService");
+      return await executeConciergeErrand(task);
+    }
     default:
       return { success: false, error: `Unknown task type: ${task.taskType}` };
   }
