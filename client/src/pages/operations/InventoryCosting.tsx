@@ -60,9 +60,7 @@ export default function InventoryCosting() {
   const [cogsDialogOpen, setCogsDialogOpen] = useState(false);
 
   // Config form state
-  const [configProductId, setConfigProductId] = useState("");
   const [configMethod, setConfigMethod] = useState<CostingMethod>("weighted_average");
-  const [configNotes, setConfigNotes] = useState("");
 
   // Layer form state
   const [layerProductId, setLayerProductId] = useState("");
@@ -86,18 +84,6 @@ export default function InventoryCosting() {
   const { data: products } = trpc.products.list.useQuery({});
 
   // Mutations
-  const createConfigMutation = trpc.inventoryCosting.configs.create.useMutation({
-    onSuccess: () => {
-      toast.success("Product costing method has been set.");
-      setConfigDialogOpen(false);
-      resetConfigForm();
-      utils.inventoryCosting.configs.list.invalidate();
-    },
-    onError: (error) => {
-      toast.error(error.message);
-    },
-  });
-
   const createLayerMutation = trpc.inventoryCosting.layers.create.useMutation({
     onSuccess: () => {
       toast.success("Inventory cost layer has been recorded.");
@@ -124,11 +110,6 @@ export default function InventoryCosting() {
     },
   });
 
-  function resetConfigForm() {
-    setConfigProductId("");
-    setConfigMethod("weighted_average");
-    setConfigNotes("");
-  }
   function resetLayerForm() {
     setLayerProductId("");
     setLayerQuantity("");
@@ -410,17 +391,7 @@ export default function InventoryCosting() {
             </p>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConfigDialogOpen(false)}>Close</Button>
-            <Button
-              onClick={() => {
-                toast.success(`Costing method set to ${configMethod.replace('_', ' ')}. Update COSTING_METHOD env var on Railway to persist.`);
-                setConfigDialogOpen(false);
-              }}
-              disabled={createConfigMutation.isPending}
-            >
-              {createConfigMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Save Configuration
-            </Button>
+            <Button onClick={() => setConfigDialogOpen(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

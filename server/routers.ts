@@ -11574,20 +11574,36 @@ Ask if they received the original request and if they can provide a quote.`;
                 continue;
               }
 
-              // Step 2: Fetch inventory levels for those locations
-              const response = await fetch(`${apiBase}/inventory_levels.json?location_ids=${locationIds.join(',')}&limit=250`, {
-                headers: {
-                  'X-Shopify-Access-Token': token,
-                  'Content-Type': 'application/json',
-                },
-              });
+              // Step 2: Fetch inventory levels for those locations, following
+              // Shopify's Link-header cursor pagination so stores with more than
+              // one page (>250) of levels aren't silently truncated.
+              const parseNextLink = (linkHeader: string | null): string | null => {
+                if (!linkHeader) return null;
+                for (const part of linkHeader.split(',')) {
+                  const m = part.match(/<([^>]+)>;\s*rel="next"/);
+                  if (m) return m[1];
+                }
+                return null;
+              };
 
-              if (!response.ok) {
-                throw new Error(`Shopify API error: ${response.status}`);
+              const levels: any[] = [];
+              let nextUrl: string | null = `${apiBase}/inventory_levels.json?location_ids=${locationIds.join(',')}&limit=250`;
+              let pageGuard = 0;
+              while (nextUrl && pageGuard < 100) {
+                pageGuard++;
+                const response = await fetch(nextUrl, {
+                  headers: {
+                    'X-Shopify-Access-Token': token,
+                    'Content-Type': 'application/json',
+                  },
+                });
+                if (!response.ok) {
+                  throw new Error(`Shopify API error: ${response.status}`);
+                }
+                const data = await response.json();
+                levels.push(...(data.inventory_levels || []));
+                nextUrl = parseNextLink(response.headers.get('link'));
               }
-
-              const data = await response.json();
-              const levels = data.inventory_levels || [];
 
               // Get SKU mappings for this store
               const mappings = await db.getShopifySkuMappings(store.id);
