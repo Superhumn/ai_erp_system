@@ -14429,9 +14429,42 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
         // syncDriveFolder pushes folders in DFS pre-order, so parents
         // already precede their children — no sort needed.
         const folderMap = new Map<string, number>();
-        const results: { name: string; type: string; status: string }[] = [];
+        const results: { name: string; type: string; status: string; error?: string }[] = [];
+        // Human-readable errors surfaced to the caller so a partial/empty sync
+        // reports *why* instead of silently claiming success with 0 files.
+        const syncErrors: string[] = [];
 
-        // Process folders
+        // Drive metadata occasionally exceeds our column widths (long file names,
+        // very long thumbnail/webView links). Trim defensively so a single
+        // oversized value can't abort the insert (and thus the whole batch).
+        const trunc = (v: string | null | undefined, max: number): string | undefined => {
+          if (v == null) return undefined;
+          return v.length > max ? v.slice(0, max) : v;
+        };
+
+        // Map DB/driver errors to concise, user-safe messages. The full error
+        // object (with driver code + stack) is always logged separately; only
+        // these sanitized strings are returned to the client / shown in toasts,
+        // so raw SQL/driver internals never leak into the UI.
+        const errMessage = (err: unknown): string => {
+          const code = (err as { code?: string })?.code;
+          switch (code) {
+            case 'ER_DATA_TOO_LONG': return 'a field exceeded the maximum length';
+            case 'ER_DUP_ENTRY': return 'a duplicate entry was detected';
+            case 'ER_TRUNCATED_WRONG_VALUE':
+            case 'WARN_DATA_TRUNCATED': return 'an unsupported character or value';
+            case 'ER_NO_REFERENCED_ROW_2':
+            case 'ER_ROW_IS_REFERENCED_2': return 'a related-record constraint failed';
+            case 'ER_BAD_NULL_ERROR': return 'a required field was missing';
+          }
+          // Errors we raise ourselves (no driver code) are already safe/worded
+          // for humans; anything else with an unrecognized driver code is kept
+          // generic so raw driver text can't reach the client.
+          if (err instanceof Error && !code) return err.message;
+          return 'an unexpected database error';
+        };
+
+        // Process folders — isolate each insert so one failure doesn't abort the rest.
         for (const driveFolder of syncResult.folders) {
           if (existingFoldersByDriveId.has(driveFolder.id)) {
             folderMap.set(driveFolder.id, existingFoldersByDriveId.get(driveFolder.id)!);
@@ -14439,60 +14472,93 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
             continue;
           }
 
+          // Parent should already be mapped (DFS pre-order); fall back to any
+          // pre-existing data-room folder carrying the same Drive ID. If a parent
+          // was expected but is unmapped (e.g. its own insert failed earlier),
+          // don't silently root the child — surface it so the orphaning is visible.
           const parentDriveId = driveFolder.parents?.[0];
-          const parentDataRoomId = parentDriveId && parentDriveId !== folderId
-            ? folderMap.get(parentDriveId)
-            : null;
+          let parentDataRoomId: number | null = null;
+          if (parentDriveId && parentDriveId !== folderId) {
+            parentDataRoomId = folderMap.get(parentDriveId) ?? existingFoldersByDriveId.get(parentDriveId) ?? null;
+            if (parentDataRoomId === null && syncErrors.length < 5) {
+              syncErrors.push(`Folder "${driveFolder.name}": parent folder could not be resolved; placed at root.`);
+            }
+          }
 
-          const { id: newFolderId } = await db.createDataRoomFolder({
-            dataRoomId: input.dataRoomId,
-            parentId: parentDataRoomId,
-            name: driveFolder.name,
-            googleDriveFolderId: driveFolder.id,
-          });
+          try {
+            const { id: newFolderId } = await db.createDataRoomFolder({
+              dataRoomId: input.dataRoomId,
+              parentId: parentDataRoomId,
+              name: trunc(driveFolder.name, 255) || 'Untitled folder',
+              googleDriveFolderId: driveFolder.id,
+            });
 
-          folderMap.set(driveFolder.id, newFolderId);
-          results.push({ name: driveFolder.name, type: 'folder', status: 'created' });
+            folderMap.set(driveFolder.id, newFolderId);
+            results.push({ name: driveFolder.name, type: 'folder', status: 'created' });
+          } catch (err: unknown) {
+            // Log Drive ID + room only — folder names can be sensitive and
+            // server logs are broadly accessible. The name still goes to the
+            // owner-facing response below, not to logs.
+            console.error(`[DataRoom] Failed to create folder ${driveFolder.id} (room ${input.dataRoomId}):`, err);
+            const msg = errMessage(err);
+            results.push({ name: driveFolder.name, type: 'folder', status: 'error', error: msg });
+            if (syncErrors.length < 5) syncErrors.push(`Folder "${driveFolder.name}": ${msg}`);
+          }
         }
 
-        // Process files — store by reference in Google Drive (no download)
+        // Process files — store by reference in Google Drive (no download).
+        // Each insert is isolated: previously a single failing insert (e.g. an
+        // oversized field) threw out of the loop, leaving folders created but
+        // zero files — the "adds folders but no files" symptom.
         for (const driveFile of syncResult.files) {
           if (existingDocsByDriveId.has(driveFile.id)) {
             results.push({ name: driveFile.name, type: 'file', status: 'exists' });
             continue;
           }
 
+          const displayName = driveFile.name;
           const parentDriveId = driveFile.parents?.[0];
           let fileFolderId: number | null = null;
-          if (parentDriveId === folderId) {
-            fileFolderId = null;
-          } else if (parentDriveId) {
-            fileFolderId = folderMap.get(parentDriveId) || existingFoldersByDriveId.get(parentDriveId) || null;
+          if (parentDriveId && parentDriveId !== folderId) {
+            fileFolderId = folderMap.get(parentDriveId) ?? existingFoldersByDriveId.get(parentDriveId) ?? null;
+            // Parent expected but unmapped (e.g. its folder insert failed
+            // earlier). Import at root, but surface it like the folder loop
+            // does so the flattened hierarchy isn't silent.
+            if (fileFolderId === null && syncErrors.length < 5) {
+              syncErrors.push(`File "${displayName}": parent folder could not be resolved; placed at root.`);
+            }
           }
 
-          const displayName = driveFile.name;
           const fileType = getSimpleFileType(driveFile.mimeType);
           const fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
             ? parseInt(driveFile.size)
             : undefined;
 
-          await db.createDataRoomDocument({
-            dataRoomId: input.dataRoomId,
-            folderId: fileFolderId,
-            name: displayName,
-            fileType,
-            mimeType: driveFile.mimeType,
-            fileSize,
-            storageType: 'google_drive',
-            storageUrl: driveFile.webViewLink || undefined,
-            storageKey: undefined,
-            googleDriveFileId: driveFile.id,
-            googleDriveWebViewLink: driveFile.webViewLink,
-            thumbnailUrl: driveFile.thumbnailLink,
-            uploadedBy: ctx.user.id,
-          });
+          try {
+            await db.createDataRoomDocument({
+              dataRoomId: input.dataRoomId,
+              folderId: fileFolderId,
+              name: trunc(displayName, 255) || 'Untitled',
+              fileType,
+              mimeType: trunc(driveFile.mimeType, 128),
+              fileSize,
+              storageType: 'google_drive',
+              storageUrl: trunc(driveFile.webViewLink, 512),
+              storageKey: undefined,
+              googleDriveFileId: driveFile.id,
+              googleDriveWebViewLink: trunc(driveFile.webViewLink, 512),
+              thumbnailUrl: trunc(driveFile.thumbnailLink, 512),
+              uploadedBy: ctx.user.id,
+            });
 
-          results.push({ name: displayName, type: 'file', status: 'synced' });
+            results.push({ name: displayName, type: 'file', status: 'synced' });
+          } catch (err: unknown) {
+            // Log Drive ID + room only — document names can be confidential.
+            console.error(`[DataRoom] Failed to create document ${driveFile.id} (room ${input.dataRoomId}):`, err);
+            const msg = errMessage(err);
+            results.push({ name: displayName, type: 'file', status: 'error', error: msg });
+            if (syncErrors.length < 5) syncErrors.push(`File "${displayName}": ${msg}`);
+          }
         }
 
         // Update data room with Google Drive folder ID and last sync time
@@ -14501,14 +14567,26 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
           lastSyncedAt: new Date(),
         });
 
+        const filesFound = syncResult.files.length;
+        const foldersFound = syncResult.folders.length;
         const totalSynced = results.filter(r => r.status === 'synced').length;
         const totalCreated = results.filter(r => r.status === 'created').length;
+        const filesFailed = results.filter(r => r.type === 'file' && r.status === 'error').length;
+
+        console.log(
+          `[DataRoom] Drive sync for room ${input.dataRoomId}: found ${foldersFound} folders / ${filesFound} files; ` +
+          `created ${totalCreated} folders / ${totalSynced} files; ${filesFailed} file errors.`
+        );
 
         return {
           results,
           totalSynced,
           foldersCreated: totalCreated,
           filesCreated: totalSynced,
+          filesFound,
+          foldersFound,
+          filesFailed,
+          errors: syncErrors,
           folderName: folderInfo.folder.name,
         };
       }),

@@ -154,6 +154,11 @@ export async function listDriveFolders(
         fields: "nextPageToken,files(id,name,mimeType,webViewLink,parents)",
         orderBy: "name",
         pageSize: "1000",
+        // corpora=allDrives (with supportsAllDrives + includeItemsFromAllDrives)
+        // is required for files.list to return items that live in Shared/Team
+        // Drives. Without it the default `user` corpus can silently omit Shared
+        // Drive contents, which showed up as folders syncing but no files.
+        corpora: "allDrives",
         supportsAllDrives: "true",
         includeItemsFromAllDrives: "true",
       });
@@ -198,6 +203,11 @@ export async function listDriveFiles(
         fields: "nextPageToken,files(id,name,mimeType,size,webViewLink,thumbnailLink,iconLink,createdTime,modifiedTime,parents)",
         orderBy: "name",
         pageSize: "1000",
+        // corpora=allDrives (with supportsAllDrives + includeItemsFromAllDrives)
+        // is required for files.list to return items that live in Shared/Team
+        // Drives. Without it the default `user` corpus can silently omit Shared
+        // Drive contents, which showed up as folders syncing but no files.
+        corpora: "allDrives",
         supportsAllDrives: "true",
         includeItemsFromAllDrives: "true",
       });
@@ -245,6 +255,11 @@ async function listDriveItems(
         fields: "nextPageToken,files(id,name,mimeType,size,webViewLink,thumbnailLink,iconLink,createdTime,modifiedTime,parents)",
         orderBy: "name",
         pageSize: "1000",
+        // corpora=allDrives (with supportsAllDrives + includeItemsFromAllDrives)
+        // is required for files.list to return items that live in Shared/Team
+        // Drives. Without it the default `user` corpus can silently omit Shared
+        // Drive contents, which showed up as folders syncing but no files.
+        corpora: "allDrives",
         supportsAllDrives: "true",
         includeItemsFromAllDrives: "true",
       });
