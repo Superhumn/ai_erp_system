@@ -41,6 +41,7 @@ import { storagePut, storageDelete } from "./storage";
 import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile, type GmailSendOptions, type GmailDraftOptions } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
+import { parseFormulationSheet } from "./recipeSheetImport";
 import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
 import { getServiceAccountEmail, isServiceAccountConfigured } from "./_core/googleServiceAccount";
 import { getQuickBooksAuthUrl, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems, getProfitAndLoss, parseProfitAndLossReport } from "./_core/quickbooks";
@@ -58,6 +59,19 @@ import { encrypt, decrypt } from "./_core/crypto";
 import { ENV } from "./_core/env";
 import { reassignProjectTaskToHuman } from "./taskAgentBridge";
 import { createDecipheriv, createHash } from "crypto";
+
+/**
+ * Expose a lightweight `hasStoredContent` flag the UI uses to decide whether the
+ * View / Download / Parse actions are available for an email attachment. Content
+ * lives in object storage (R2), keyed by `storageKey`.
+ */
+function sanitizeAttachments(attachments: any[]): any[] {
+  return (attachments || []).map((a) => ({
+    ...a,
+    hasStoredContent: !!a.storageKey,
+  }));
+}
+
 // Decrypts a stored password supporting both the current AES-256-GCM format
 // (iv:authTag:ciphertext) and the legacy AES-256-CBC format (plain hex ciphertext).
 function decryptPassword(encryptedText: string): string {
@@ -222,6 +236,30 @@ async function getValidGoogleToken(userId: number): Promise<{ accessToken: strin
   }
   
   return { accessToken: token.accessToken };
+}
+
+/**
+ * Enforce per-recipe access. Recipes are private: only the creator (owner) or a
+ * user with an explicit grant may view, and edit/manage requires the matching
+ * permission. Throws FORBIDDEN otherwise. Returns the resolved access for reuse.
+ */
+async function requireRecipeAccess(
+  userId: number,
+  recipeId: number,
+  mode: "view" | "edit" | "own" = "view",
+) {
+  const access = await manufacturingDb.getRecipeAccess(userId, recipeId);
+  const ok = mode === "own" ? access.isOwner : mode === "edit" ? access.canEdit : access.canView;
+  if (!ok) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message:
+        mode === "view"
+          ? "You don't have access to this recipe."
+          : "You don't have permission to manage this recipe.",
+    });
+  }
+  return access;
 }
 
 // Helper to generate unique numbers
@@ -2432,6 +2470,8 @@ ONLY return the JSON array, no other text.`;
         type: z.enum(['inbound', 'outbound']),
         orderId: z.number().optional(),
         purchaseOrderId: z.number().optional(),
+        rawMaterialId: z.number().optional(),
+        quantity: z.string().regex(/^\d+(\.\d+)?$/, "quantity must be numeric").optional(),
         carrier: z.string().optional(),
         trackingNumber: z.string().optional(),
         shipDate: z.date().optional(),
@@ -2445,6 +2485,23 @@ ONLY return the JSON array, no other text.`;
         const shipmentNumber = generateNumber('SHIP');
         const result = await db.createShipment({ ...input, shipmentNumber });
         await createAuditLog(ctx.user.id, 'create', 'shipment', result.id, shipmentNumber);
+
+        // ── Inventory link: inbound shipment carrying a raw material reserves
+        // the quantity as "in transit" until it's marked delivered. ──
+        if (input.type === 'inbound' && input.rawMaterialId && input.quantity) {
+          try {
+            const qty = parseFloat(input.quantity);
+            if (qty > 0) {
+              await db.adjustRawMaterialInventory(input.rawMaterialId, { inTransit: qty }, {
+                receivingStatus: 'in_transit',
+                ...(input.shipDate ? { expectedDeliveryDate: input.shipDate } : {}),
+              });
+            }
+          } catch (e) {
+            console.warn('[Shipment] inbound in-transit inventory update failed:', e);
+          }
+        }
+
         return result;
       }),
     update: opsProcedure
@@ -2457,9 +2514,51 @@ ONLY return the JSON array, no other text.`;
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
-        const [oldShipment] = await db.getShipments({ id } as any) || [];
+        const oldShipment = await db.getShipmentById(id);
         await db.updateShipment(id, data);
         await createAuditLog(ctx.user.id, 'update', 'shipment', id);
+
+        // ── Inventory link: keep raw-material stock in sync with shipment status. ──
+        // Delivery moves the carried quantity from "in transit" → "received".
+        // Cancel/return releases the reservation. Guarded on the prior status so
+        // repeated updates can't double-count.
+        if (
+          oldShipment?.type === 'inbound' &&
+          oldShipment.rawMaterialId &&
+          oldShipment.quantity &&
+          data.status &&
+          data.status !== oldShipment.status
+        ) {
+          try {
+            const qty = parseFloat(oldShipment.quantity);
+            const materialId = oldShipment.rawMaterialId;
+            if (qty > 0) {
+              if (data.status === 'delivered') {
+                // Arrived: move the quantity from in-transit into received.
+                await db.adjustRawMaterialInventory(materialId, { inTransit: -qty, received: qty }, {
+                  receivingStatus: 'received',
+                  lastReceivedDate: new Date(),
+                  lastReceivedQty: String(qty),
+                });
+              } else if (oldShipment.status === 'delivered') {
+                // Reversing a previously-delivered shipment: pull the quantity
+                // back out of received so inventory isn't overstated. If it's
+                // going back to a pre-delivery state, restore the reservation.
+                const restoreInTransit = data.status === 'pending' || data.status === 'in_transit';
+                await db.adjustRawMaterialInventory(
+                  materialId,
+                  { received: -qty, ...(restoreInTransit ? { inTransit: qty } : {}) },
+                  { receivingStatus: restoreInTransit ? 'in_transit' : 'none' },
+                );
+              } else if (data.status === 'cancelled' || data.status === 'returned') {
+                // Pre-delivery cancellation: release the in-transit reservation.
+                await db.adjustRawMaterialInventory(materialId, { inTransit: -qty }, { receivingStatus: 'none' });
+              }
+            }
+          } catch (e) {
+            console.warn('[Shipment] inventory sync on status change failed:', e);
+          }
+        }
         
         // Create notification for shipment status changes
         if (data.status && oldShipment?.status !== data.status) {
@@ -9649,7 +9748,7 @@ Provide a brief status summary, any missing documents, and next steps.`;
         status: z.string().optional(),
         isSubRecipe: z.boolean().optional(),
       }).optional())
-      .query(({ input }) => manufacturingDb.getRecipes(input)),
+      .query(({ input, ctx }) => manufacturingDb.getRecipesForUser(ctx.user.id, input)),
     create: protectedProcedure
       .input(z.object({
         recipeId: z.string().min(1),
@@ -9672,19 +9771,23 @@ Provide a brief status summary, any missing documents, and next steps.`;
         scaleFactor: z.number().optional(),
         targetLbs: z.number().optional(),
       }))
-      .query(({ input }) => manufacturingDb.calculateRecipeBatchCost({
-        recipeId: input.id,
-        formulation: input.formulation,
-        batchGrams: input.batchGrams,
-        scaleFactor: input.scaleFactor,
-        targetLbs: input.targetLbs,
-      })),
+      .query(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.id, "view");
+        return manufacturingDb.calculateRecipeBatchCost({
+          recipeId: input.id,
+          formulation: input.formulation,
+          batchGrams: input.batchGrams,
+          scaleFactor: input.scaleFactor,
+          targetLbs: input.targetLbs,
+        });
+      }),
     saveBatchSnapshot: protectedProcedure
       .input(z.object({
         recipeId: z.number(),
         formulationType: z.enum(["wet", "dry"]),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "view");
         const cost = await manufacturingDb.calculateRecipeBatchCost({
           recipeId: input.recipeId,
           formulation: input.formulationType,
@@ -9710,15 +9813,183 @@ Provide a brief status summary, any missing documents, and next steps.`;
         formulation: z.enum(["wet", "dry"]).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "edit");
         return db.syncRecipeToBom(input.recipeId, input.productId, {
           userId: ctx.user?.id,
           formulation: input.formulation,
         });
       }),
-    // List copackers a recipe is shared with
+    // --- Per-user access grants (recipe owner only) ---
+    // List who currently has access to a recipe (besides the owner).
+    listAccess: protectedProcedure
+      .input(z.object({ recipeId: z.number() }))
+      .query(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "own");
+        return manufacturingDb.listRecipeAccessGrants(input.recipeId);
+      }),
+    // Grant a specific user access to a recipe, identified by email.
+    grant: protectedProcedure
+      .input(z.object({
+        recipeId: z.number(),
+        email: z.string().email(),
+        canEdit: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "own");
+        const target = await db.getUserByEmail(input.email.trim().toLowerCase());
+        if (!target) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: `No user found with email ${input.email}. They must have an account first.`,
+          });
+        }
+        const result = await manufacturingDb.grantRecipeAccess({
+          recipeId: input.recipeId,
+          userId: target.id,
+          canEdit: input.canEdit,
+          grantedBy: ctx.user.id,
+        });
+        await createAuditLog(
+          ctx.user.id,
+          result.created ? "create" : "update",
+          "recipe_access_grant",
+          result.id,
+          `recipe:${input.recipeId} → user:${target.id} (${input.canEdit ? "edit" : "view"})`,
+        );
+        return { ...result, userId: target.id };
+      }),
+    // Revoke a user's access to a recipe.
+    revoke: protectedProcedure
+      .input(z.object({ recipeId: z.number(), userId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "own");
+        await manufacturingDb.revokeRecipeAccess(input.recipeId, input.userId);
+        await createAuditLog(
+          ctx.user.id,
+          "delete",
+          "recipe_access_grant",
+          input.recipeId,
+          `recipe:${input.recipeId} × user:${input.userId}`,
+        );
+        return { success: true };
+      }),
+    // Import recipe formulations from a Google Spreadsheet. Imported recipes are
+    // owned by the importer, so they stay private until access is granted.
+    importFromGoogleSheet: protectedProcedure
+      .input(z.object({
+        spreadsheetId: z.string().min(1),
+        range: z.string().optional(),
+        defaultRecipeName: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: error });
+        }
+        const sheet = await getGoogleSheetValues(
+          accessToken,
+          input.spreadsheetId,
+          input.range || "A1:Z1000",
+        );
+        if (!sheet.success) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: sheet.error || "Failed to read the spreadsheet.",
+          });
+        }
+        const { recipes: parsed, warnings } = parseFormulationSheet(
+          (sheet.values as unknown[][]) || [],
+          { defaultRecipeName: input.defaultRecipeName },
+        );
+        if (parsed.length === 0) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: warnings[0] || "No recipes could be parsed from the spreadsheet.",
+          });
+        }
+
+        // Cache ingredients to avoid repeated lookups across lines.
+        const ingredientCache = new Map<string, number>();
+        const resolveIngredientId = async (name: string, sku?: string): Promise<number> => {
+          const key = (sku?.trim().toLowerCase() || "") + "|" + name.trim().toLowerCase();
+          const cached = ingredientCache.get(key);
+          if (cached) return cached;
+          const existing = await manufacturingDb.findIngredientByNameOrSku(name, sku);
+          if (existing) {
+            ingredientCache.set(key, existing.id);
+            return existing.id;
+          }
+          const generatedSku =
+            sku?.trim() ||
+            `ING-${name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "-").slice(0, 24)}-${Math.floor(Math.random() * 10000)}`;
+          const created = await manufacturingDb.createIngredient({
+            name: name.trim(),
+            sku: generatedSku,
+          });
+          ingredientCache.set(key, created.id);
+          return created.id;
+        };
+
+        let recipesCreated = 0;
+        let linesCreated = 0;
+        let proceduresCreated = 0;
+        let ingredientsCreated = 0;
+        const before = ingredientCache.size;
+
+        for (const rec of parsed) {
+          const recipeId =
+            rec.recipeId?.slice(0, 32) || generateNumber("RCP").slice(0, 32);
+          const createdRecipe = await manufacturingDb.createRecipe({
+            recipeId,
+            name: rec.name.slice(0, 255),
+            category: rec.category,
+            status: "development",
+            createdBy: ctx.user.id,
+          });
+          recipesCreated++;
+
+          let lineNumber = 1;
+          for (const line of rec.lines) {
+            const ingredientId = await resolveIngredientId(line.ingredientName, line.ingredientSku);
+            await manufacturingDb.createRecipeLine({
+              recipeRowId: createdRecipe.id,
+              lineNumber: lineNumber++,
+              ingredientId,
+              quantityGrams: String(line.quantityGrams),
+              quantityGramsDry:
+                line.quantityGramsDry != null ? String(line.quantityGramsDry) : undefined,
+            });
+            linesCreated++;
+          }
+
+          for (const proc of rec.procedures) {
+            await manufacturingDb.createRecipeProcedure({
+              recipeRowId: createdRecipe.id,
+              stepNumber: proc.stepNumber,
+              instruction: proc.instruction,
+            });
+            proceduresCreated++;
+          }
+
+          await createAuditLog(ctx.user.id, "create", "recipe", createdRecipe.id, `imported: ${rec.name}`);
+        }
+        ingredientsCreated = ingredientCache.size - before;
+
+        return {
+          recipesCreated,
+          linesCreated,
+          proceduresCreated,
+          ingredientsCreated,
+          warnings,
+        };
+      }),
+    // List copackers a recipe is shared with (owner only)
     listShares: opsProcedure
       .input(z.object({ recipeId: z.number() }))
-      .query(({ input }) => manufacturingDb.getRecipeShares(input.recipeId)),
+      .query(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "own");
+        return manufacturingDb.getRecipeShares(input.recipeId);
+      }),
     // Share (or update share settings) for a recipe with a copacker warehouse
     share: opsProcedure
       .input(z.object({
@@ -9729,6 +10000,7 @@ Provide a brief status summary, any missing documents, and next steps.`;
         notes: z.string().nullish(),
       }))
       .mutation(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "own");
         const warehouse = await db.getWarehouseById(input.warehouseId);
         if (!warehouse) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Warehouse not found" });
@@ -9759,6 +10031,7 @@ Provide a brief status summary, any missing documents, and next steps.`;
     unshare: opsProcedure
       .input(z.object({ recipeId: z.number(), warehouseId: z.number() }))
       .mutation(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.recipeId, "own");
         const existingShares = await manufacturingDb.getRecipeShares(input.recipeId);
         const shareToRemove = existingShares.find((share) => share.warehouseId === input.warehouseId);
 
@@ -9778,6 +10051,7 @@ Provide a brief status summary, any missing documents, and next steps.`;
     delete: opsProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input, ctx }) => {
+        await requireRecipeAccess(ctx.user.id, input.id, "own");
         await manufacturingDb.deleteRecipe(input.id);
         await createAuditLog(ctx.user.id, 'delete', 'recipe', input.id);
         return { success: true };
@@ -11244,8 +11518,196 @@ Ask if they received the original request and if they can provide a quote.`;
           await createAuditLog(ctx.user.id, 'update', 'vendor_rfq', input.rfqId, 'AI analyzed and ranked quotes');
           return { success: true };
         }),
+
+      // AI bid leveling: normalize quotes to a common scope baseline, detect
+      // scope deviations vs the RFQ requirements, and re-rank on leveled cost.
+      levelBids: opsProcedure
+        .input(z.object({ rfqId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const rfq = await db.getVendorRfqById(input.rfqId);
+          if (!rfq) throw new TRPCError({ code: 'NOT_FOUND', message: 'RFQ not found' });
+
+          const allQuotes = await db.getVendorQuotes({ rfqId: input.rfqId });
+          const quotes = allQuotes.filter(q => ['received', 'under_review'].includes(q.status));
+          if (quotes.length === 0) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'No received quotes to level for this RFQ' });
+          }
+
+          // Batch-load vendors (avoid an N+1 per-quote lookup).
+          const uniqueVendorIds = Array.from(new Set(quotes.map(q => q.vendorId)));
+          const vendorList = await db.getVendorsByIds(uniqueVendorIds);
+          const vendorNames = new Map<number, string>(uniqueVendorIds.map(id => [id, `Vendor ${id}`]));
+          for (const v of vendorList) vendorNames.set(v.id, v.name || `Vendor ${v.id}`);
+
+          const requirementBlock = `RFQ ${rfq.rfqNumber}
+Material: ${rfq.materialName}${rfq.materialDescription ? ` — ${rfq.materialDescription}` : ''}
+Required quantity: ${rfq.quantity} ${rfq.unit}
+Specifications: ${rfq.specifications || 'Standard'}
+Required delivery date: ${rfq.requiredDeliveryDate ? new Date(rfq.requiredDeliveryDate).toLocaleDateString() : 'Flexible'}
+Delivery location: ${rfq.deliveryLocation || 'TBD'}
+Incoterms requested: ${rfq.incoterms || 'Not specified'}`;
+
+          const quoteBlocks = quotes.map(q => `Quote id ${q.id} — ${vendorNames.get(q.vendorId)}
+  Unit price: ${q.unitPrice ?? 'n/a'} ${q.currency || 'USD'}
+  Quantity quoted: ${q.quantity ?? 'n/a'}
+  Total price: ${q.totalPrice ?? 'n/a'}
+  Shipping: ${q.shippingCost ?? '0'}, Handling: ${q.handlingFee ?? '0'}, Tax: ${q.taxAmount ?? '0'}, Other: ${q.otherCharges ?? '0'}
+  Total with charges: ${q.totalWithCharges ?? 'n/a'}
+  Lead time: ${q.leadTimeDays ?? 'n/a'} days
+  Minimum order qty: ${q.minimumOrderQty ?? 'n/a'}
+  Payment terms: ${q.paymentTerms || 'n/a'}
+  Valid until: ${q.validUntil ? new Date(q.validUntil).toLocaleDateString() : 'n/a'}
+  Vendor notes: ${q.notes || 'none'}`).join('\n\n');
+
+          const prompt = `You are a procurement analyst performing BID LEVELING for a single-material RFQ.
+Bid leveling means adjusting each vendor's quote to a common scope baseline so prices are compared on equal terms, surfacing hidden assumptions and scope gaps.
+
+RFQ REQUIREMENTS:
+${requirementBlock}
+
+VENDOR QUOTES:
+${quoteBlocks}
+
+For EACH quote:
+1. Compute a "leveledTotalCost": the total all-in cost normalized to the RFQ's requested quantity and scope. Include shipping/handling/tax/other charges. If the vendor quoted a different quantity than requested, pro-rate to the requested quantity (${rfq.quantity}). If freight/incoterms differ from what was requested and the vendor's price excludes delivery, add a reasonable allowance and note it as a deviation.
+2. Identify scopeDeviations: each is { requirement, finding, severity } where requirement is the specific RFQ requirement (e.g. "delivery date", "incoterms", "quantity", "specifications", "payment terms"), finding describes how this quote diverges, and severity is "low" | "medium" | "high". Return an empty array if fully compliant.
+3. Write a one-to-two sentence rationale explaining the leveling adjustments.
+4. Give a score 0-100 (higher = better leveled value, balancing cost, lead time, compliance).
+
+Then rank all quotes by best leveled value (1 = best), recommend one quoteId to award, and write a short award-recommendation summary a procurement manager could defend to an auditor.`;
+
+          const response = await invokeLLM({
+            messages: [
+              { role: 'system', content: 'You are a procurement bid-leveling analyst. Always respond with valid JSON matching the schema. Be conservative and explicit about assumptions.' },
+              { role: 'user', content: prompt },
+            ],
+            response_format: {
+              type: 'json_schema',
+              json_schema: {
+                name: 'bid_leveling',
+                strict: true,
+                schema: {
+                  type: 'object',
+                  properties: {
+                    quotes: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          quoteId: { type: 'number' },
+                          leveledTotalCost: { type: 'number' },
+                          leveledRank: { type: 'number' },
+                          score: { type: 'number' },
+                          rationale: { type: 'string' },
+                          scopeDeviations: {
+                            type: 'array',
+                            items: {
+                              type: 'object',
+                              properties: {
+                                requirement: { type: 'string' },
+                                finding: { type: 'string' },
+                                severity: { type: 'string', enum: ['low', 'medium', 'high'] },
+                              },
+                              required: ['requirement', 'finding', 'severity'],
+                              additionalProperties: false,
+                            },
+                          },
+                        },
+                        required: ['quoteId', 'leveledTotalCost', 'leveledRank', 'score', 'rationale', 'scopeDeviations'],
+                        additionalProperties: false,
+                      },
+                    },
+                    recommendedQuoteId: { type: 'number' },
+                    summary: { type: 'string' },
+                  },
+                  required: ['quotes', 'recommendedQuoteId', 'summary'],
+                  additionalProperties: false,
+                },
+              },
+            },
+          });
+
+          const raw = response.choices[0]?.message?.content;
+          const content = typeof raw === 'string' ? raw : JSON.stringify(raw);
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, ''));
+          } catch {
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to parse bid-leveling response' });
+          }
+
+          // `response_format: json_schema` is only a prompt hint here (see
+          // server/_core/llm.ts) — nothing enforces the shape — so validate at
+          // runtime. The overall structure must match; per-quote field fuzz the
+          // model may emit (bad severity casing, missing numbers) falls back
+          // rather than failing the whole leveling pass.
+          const deviationSchema = z.object({
+            requirement: z.string().catch(''),
+            finding: z.string().catch(''),
+            severity: z
+              .preprocess(v => (typeof v === 'string' ? v.toLowerCase() : v), z.enum(['low', 'medium', 'high']))
+              .catch('medium'),
+          });
+          const leveledQuoteSchema = z.object({
+            quoteId: z.number(),
+            leveledTotalCost: z.number().nullable().catch(null),
+            leveledRank: z.number().nullable().catch(null),
+            score: z.number().nullable().catch(null),
+            rationale: z.string().nullable().catch(null),
+            scopeDeviations: z.array(deviationSchema).catch([]),
+          });
+          const responseSchema = z.object({
+            quotes: z.array(leveledQuoteSchema),
+            recommendedQuoteId: z.number().nullable().catch(null),
+            summary: z.string(),
+          });
+          const validation = responseSchema.safeParse(parsed);
+          if (!validation.success) {
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message: 'Bid-leveling response did not match the expected shape',
+            });
+          }
+          const leveled = validation.data;
+
+          const now = new Date();
+          const validIds = new Set(quotes.map(q => q.id));
+          for (const item of leveled.quotes) {
+            if (!validIds.has(item.quoteId)) continue;
+            await db.updateVendorQuote(item.quoteId, {
+              leveledTotalCost: item.leveledTotalCost != null ? item.leveledTotalCost.toFixed(2) : null,
+              leveledRank: item.leveledRank,
+              scopeDeviations: JSON.stringify(item.scopeDeviations),
+              leveledNotes: item.rationale,
+              leveledAt: now,
+              // Only set aiScore when the model returned a number, so a missing
+              // score leaves the existing column value untouched.
+              ...(item.score != null ? { aiScore: Math.round(item.score) } : {}),
+            });
+          }
+
+          await db.updateVendorRfq(input.rfqId, {
+            levelingSummary: leveled.summary || null,
+            leveledAt: now,
+          });
+
+          // Only surface a recommendation that maps to a real quote on this RFQ;
+          // ignore a hallucinated id.
+          const recommendedQuoteId =
+            leveled.recommendedQuoteId != null && validIds.has(leveled.recommendedQuoteId)
+              ? leveled.recommendedQuoteId
+              : null;
+
+          await createAuditLog(ctx.user.id, 'update', 'vendor_rfq', input.rfqId, `AI bid leveling across ${quotes.length} quotes`);
+          return {
+            success: true,
+            leveledCount: quotes.length,
+            recommendedQuoteId,
+            summary: leveled.summary,
+          };
+        }),
     }),
-    
+
     // Emails
     emails: router({
       list: protectedProcedure
@@ -11322,6 +11784,7 @@ Ask if they received the original request and if they can provide a quote.`;
         .input(z.object({
           storeId: z.number(),
           shopifyLocationId: z.string(),
+          shopifyLocationName: z.string().optional(),
           warehouseId: z.number(),
           isActive: z.boolean().default(true),
         }))
@@ -11986,7 +12449,7 @@ Ask if they received the original request and if they can provide a quote.`;
 
             for (const { email } of parsedResults) {
               try {
-                await db.createInboundEmail?.({
+                const { id: emailId } = await db.createInboundEmail({
                   messageId: email.messageId,
                   fromEmail: email.from.address,
                   fromName: email.from.name || "",
@@ -11998,17 +12461,50 @@ Ask if they received the original request and if they can provide a quote.`;
                   category: email.categorization?.category || "other",
                 } as any);
 
-                // Parse attachments and AUTO-IMPORT into correct DB tables
+                // Persist attachment records (so they show in the inbox) and
+                // AUTO-IMPORT each into the correct ERP location.
                 if ((email as any).attachmentContents?.length > 0) {
-                  const { bulkImportDocuments } = await import("./documentImportService");
-                  const docs = (email as any).attachmentContents.map((att: any) => ({
-                    content: `data:${att.contentType};base64,${att.data.toString("base64")}`,
-                    filename: att.filename,
-                  }));
-                  try {
-                    const importResult = await bulkImportDocuments(docs, 1, true);
-                    totalAttachmentsParsed += importResult.successful;
-                  } catch { /* skip */ }
+                  const { importEmailAttachmentToErp } = await import("./documentImportService");
+                  const { storagePut } = await import("./storage");
+                  const existing = await db.getEmailAttachments(emailId);
+                  const existingNames = new Set(existing.map((a: any) => a.filename));
+                  for (const att of (email as any).attachmentContents as Array<{ filename: string; contentType: string; data: Buffer }>) {
+                    if (existingNames.has(att.filename)) continue;
+
+                    // Persist the row, then store the bytes in object storage (R2).
+                    const { id: attachmentId } = await db.createEmailAttachment({
+                      emailId,
+                      filename: att.filename,
+                      mimeType: att.contentType,
+                      size: att.data.length,
+                      isProcessed: false,
+                    } as any);
+
+                    try {
+                      const safeName = att.filename.replace(/[^\w.\-]+/g, "_").slice(0, 120) || "file";
+                      const put = await storagePut(`email-attachments/${emailId}/${attachmentId}-${safeName}`, att.data, att.contentType);
+                      await db.updateEmailAttachment(attachmentId, {
+                        storageKey: put.key,
+                        storageUrl: `/api/attachments/${attachmentId}`,
+                      } as any);
+                    } catch (e: any) {
+                      console.error("[scanNow] attachment upload failed:", e?.message);
+                      continue; // no stored bytes — skip parsing this attachment
+                    }
+
+                    try {
+                      const r = await importEmailAttachmentToErp({
+                        emailId,
+                        attachmentId,
+                        // Parse from the in-memory bytes we just uploaded (no R2 round-trip).
+                        content: `data:${att.contentType};base64,${att.data.toString("base64")}`,
+                        filename: att.filename,
+                        mimeType: att.contentType,
+                        userId: 1,
+                      });
+                      if (r.success) totalAttachmentsParsed++;
+                    } catch { /* skip individual attachment failures */ }
+                  }
                 }
                 totalProcessed++;
               } catch { /* skip */ }
@@ -12055,8 +12551,8 @@ Ask if they received the original request and if they can provide a quote.`;
         
         const attachments = await db.getEmailAttachments(input.id);
         const documents = await db.getParsedDocuments({ emailId: input.id });
-        
-        return { ...email, attachments, documents };
+
+        return { ...email, attachments: sanitizeAttachments(attachments), documents };
       }),
 
     /** Resolve by RFC Message-ID (approval queue source links). */
@@ -12068,7 +12564,67 @@ Ask if they received the original request and if they can provide a quote.`;
         const id = (email as { id: number }).id;
         const attachments = await db.getEmailAttachments(id);
         const documents = await db.getParsedDocuments({ emailId: id });
-        return { ...email, attachments, documents };
+        return { ...email, attachments: sanitizeAttachments(attachments), documents };
+      }),
+
+    // Parse a stored attachment on demand and import its data into the ERP
+    // (purchase order / vendor invoice / freight invoice / customs document).
+    parseAttachment: protectedProcedure
+      .input(z.object({
+        attachmentId: z.number(),
+        hint: z.enum(["purchase_order", "vendor_invoice", "freight_invoice", "customs_document"]).optional(),
+        createMissingVendor: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const attachment = await db.getEmailAttachmentById(input.attachmentId);
+        if (!attachment) throw new TRPCError({ code: "NOT_FOUND", message: "Attachment not found" });
+
+        // Resolve a fetchable source for the bytes from object storage (R2).
+        // parseUploadedDocument fetch()es it, so the presigned/public URL works.
+        if (!attachment.storageKey) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: "Attachment content is not stored. Re-scan the inbox to refetch it.",
+          });
+        }
+        let source: string;
+        try {
+          const { storageGet } = await import("./storage");
+          source = (await storageGet(attachment.storageKey)).url;
+        } catch (e: any) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `Could not load stored attachment: ${e.message}` });
+        }
+
+        const { importEmailAttachmentToErp } = await import("./documentImportService");
+        const result = await importEmailAttachmentToErp({
+          emailId: attachment.emailId,
+          attachmentId: attachment.id,
+          content: source,
+          filename: attachment.filename,
+          mimeType: attachment.mimeType || undefined,
+          userId: (ctx as any)?.user?.id ?? 1,
+          hint: input.hint,
+          createMissingVendor: input.createMissingVendor ?? true,
+        });
+
+        if (!result.success) {
+          return {
+            success: false,
+            documentType: result.documentType,
+            error: result.error || result.importResult?.error || "Could not import document",
+            createdRecords: result.importResult?.createdRecords ?? [],
+            warnings: result.importResult?.warnings ?? [],
+          };
+        }
+
+        return {
+          success: true,
+          documentType: result.documentType,
+          parsedDocumentId: result.parsedDocumentId,
+          createdRecords: result.importResult?.createdRecords ?? [],
+          updatedRecords: result.importResult?.updatedRecords ?? [],
+          warnings: result.importResult?.warnings ?? [],
+        };
       }),
 
     // Submit email for parsing (manual forward)
@@ -13848,9 +14404,42 @@ Ask if they received the original request and if they can provide a quote.`;
         // syncDriveFolder pushes folders in DFS pre-order, so parents
         // already precede their children — no sort needed.
         const folderMap = new Map<string, number>();
-        const results: { name: string; type: string; status: string }[] = [];
+        const results: { name: string; type: string; status: string; error?: string }[] = [];
+        // Human-readable errors surfaced to the caller so a partial/empty sync
+        // reports *why* instead of silently claiming success with 0 files.
+        const syncErrors: string[] = [];
 
-        // Process folders
+        // Drive metadata occasionally exceeds our column widths (long file names,
+        // very long thumbnail/webView links). Trim defensively so a single
+        // oversized value can't abort the insert (and thus the whole batch).
+        const trunc = (v: string | null | undefined, max: number): string | undefined => {
+          if (v == null) return undefined;
+          return v.length > max ? v.slice(0, max) : v;
+        };
+
+        // Map DB/driver errors to concise, user-safe messages. The full error
+        // object (with driver code + stack) is always logged separately; only
+        // these sanitized strings are returned to the client / shown in toasts,
+        // so raw SQL/driver internals never leak into the UI.
+        const errMessage = (err: unknown): string => {
+          const code = (err as { code?: string })?.code;
+          switch (code) {
+            case 'ER_DATA_TOO_LONG': return 'a field exceeded the maximum length';
+            case 'ER_DUP_ENTRY': return 'a duplicate entry was detected';
+            case 'ER_TRUNCATED_WRONG_VALUE':
+            case 'WARN_DATA_TRUNCATED': return 'an unsupported character or value';
+            case 'ER_NO_REFERENCED_ROW_2':
+            case 'ER_ROW_IS_REFERENCED_2': return 'a related-record constraint failed';
+            case 'ER_BAD_NULL_ERROR': return 'a required field was missing';
+          }
+          // Errors we raise ourselves (no driver code) are already safe/worded
+          // for humans; anything else with an unrecognized driver code is kept
+          // generic so raw driver text can't reach the client.
+          if (err instanceof Error && !code) return err.message;
+          return 'an unexpected database error';
+        };
+
+        // Process folders — isolate each insert so one failure doesn't abort the rest.
         for (const driveFolder of syncResult.folders) {
           if (existingFoldersByDriveId.has(driveFolder.id)) {
             folderMap.set(driveFolder.id, existingFoldersByDriveId.get(driveFolder.id)!);
@@ -13858,60 +14447,93 @@ Ask if they received the original request and if they can provide a quote.`;
             continue;
           }
 
+          // Parent should already be mapped (DFS pre-order); fall back to any
+          // pre-existing data-room folder carrying the same Drive ID. If a parent
+          // was expected but is unmapped (e.g. its own insert failed earlier),
+          // don't silently root the child — surface it so the orphaning is visible.
           const parentDriveId = driveFolder.parents?.[0];
-          const parentDataRoomId = parentDriveId && parentDriveId !== folderId
-            ? folderMap.get(parentDriveId)
-            : null;
+          let parentDataRoomId: number | null = null;
+          if (parentDriveId && parentDriveId !== folderId) {
+            parentDataRoomId = folderMap.get(parentDriveId) ?? existingFoldersByDriveId.get(parentDriveId) ?? null;
+            if (parentDataRoomId === null && syncErrors.length < 5) {
+              syncErrors.push(`Folder "${driveFolder.name}": parent folder could not be resolved; placed at root.`);
+            }
+          }
 
-          const { id: newFolderId } = await db.createDataRoomFolder({
-            dataRoomId: input.dataRoomId,
-            parentId: parentDataRoomId,
-            name: driveFolder.name,
-            googleDriveFolderId: driveFolder.id,
-          });
+          try {
+            const { id: newFolderId } = await db.createDataRoomFolder({
+              dataRoomId: input.dataRoomId,
+              parentId: parentDataRoomId,
+              name: trunc(driveFolder.name, 255) || 'Untitled folder',
+              googleDriveFolderId: driveFolder.id,
+            });
 
-          folderMap.set(driveFolder.id, newFolderId);
-          results.push({ name: driveFolder.name, type: 'folder', status: 'created' });
+            folderMap.set(driveFolder.id, newFolderId);
+            results.push({ name: driveFolder.name, type: 'folder', status: 'created' });
+          } catch (err: unknown) {
+            // Log Drive ID + room only — folder names can be sensitive and
+            // server logs are broadly accessible. The name still goes to the
+            // owner-facing response below, not to logs.
+            console.error(`[DataRoom] Failed to create folder ${driveFolder.id} (room ${input.dataRoomId}):`, err);
+            const msg = errMessage(err);
+            results.push({ name: driveFolder.name, type: 'folder', status: 'error', error: msg });
+            if (syncErrors.length < 5) syncErrors.push(`Folder "${driveFolder.name}": ${msg}`);
+          }
         }
 
-        // Process files — store by reference in Google Drive (no download)
+        // Process files — store by reference in Google Drive (no download).
+        // Each insert is isolated: previously a single failing insert (e.g. an
+        // oversized field) threw out of the loop, leaving folders created but
+        // zero files — the "adds folders but no files" symptom.
         for (const driveFile of syncResult.files) {
           if (existingDocsByDriveId.has(driveFile.id)) {
             results.push({ name: driveFile.name, type: 'file', status: 'exists' });
             continue;
           }
 
+          const displayName = driveFile.name;
           const parentDriveId = driveFile.parents?.[0];
           let fileFolderId: number | null = null;
-          if (parentDriveId === folderId) {
-            fileFolderId = null;
-          } else if (parentDriveId) {
-            fileFolderId = folderMap.get(parentDriveId) || existingFoldersByDriveId.get(parentDriveId) || null;
+          if (parentDriveId && parentDriveId !== folderId) {
+            fileFolderId = folderMap.get(parentDriveId) ?? existingFoldersByDriveId.get(parentDriveId) ?? null;
+            // Parent expected but unmapped (e.g. its folder insert failed
+            // earlier). Import at root, but surface it like the folder loop
+            // does so the flattened hierarchy isn't silent.
+            if (fileFolderId === null && syncErrors.length < 5) {
+              syncErrors.push(`File "${displayName}": parent folder could not be resolved; placed at root.`);
+            }
           }
 
-          const displayName = driveFile.name;
           const fileType = getSimpleFileType(driveFile.mimeType);
           const fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
             ? parseInt(driveFile.size)
             : undefined;
 
-          await db.createDataRoomDocument({
-            dataRoomId: input.dataRoomId,
-            folderId: fileFolderId,
-            name: displayName,
-            fileType,
-            mimeType: driveFile.mimeType,
-            fileSize,
-            storageType: 'google_drive',
-            storageUrl: driveFile.webViewLink || undefined,
-            storageKey: undefined,
-            googleDriveFileId: driveFile.id,
-            googleDriveWebViewLink: driveFile.webViewLink,
-            thumbnailUrl: driveFile.thumbnailLink,
-            uploadedBy: ctx.user.id,
-          });
+          try {
+            await db.createDataRoomDocument({
+              dataRoomId: input.dataRoomId,
+              folderId: fileFolderId,
+              name: trunc(displayName, 255) || 'Untitled',
+              fileType,
+              mimeType: trunc(driveFile.mimeType, 128),
+              fileSize,
+              storageType: 'google_drive',
+              storageUrl: trunc(driveFile.webViewLink, 512),
+              storageKey: undefined,
+              googleDriveFileId: driveFile.id,
+              googleDriveWebViewLink: trunc(driveFile.webViewLink, 512),
+              thumbnailUrl: trunc(driveFile.thumbnailLink, 512),
+              uploadedBy: ctx.user.id,
+            });
 
-          results.push({ name: displayName, type: 'file', status: 'synced' });
+            results.push({ name: displayName, type: 'file', status: 'synced' });
+          } catch (err: unknown) {
+            // Log Drive ID + room only — document names can be confidential.
+            console.error(`[DataRoom] Failed to create document ${driveFile.id} (room ${input.dataRoomId}):`, err);
+            const msg = errMessage(err);
+            results.push({ name: displayName, type: 'file', status: 'error', error: msg });
+            if (syncErrors.length < 5) syncErrors.push(`File "${displayName}": ${msg}`);
+          }
         }
 
         // Update data room with Google Drive folder ID and last sync time
@@ -13920,14 +14542,26 @@ Ask if they received the original request and if they can provide a quote.`;
           lastSyncedAt: new Date(),
         });
 
+        const filesFound = syncResult.files.length;
+        const foldersFound = syncResult.folders.length;
         const totalSynced = results.filter(r => r.status === 'synced').length;
         const totalCreated = results.filter(r => r.status === 'created').length;
+        const filesFailed = results.filter(r => r.type === 'file' && r.status === 'error').length;
+
+        console.log(
+          `[DataRoom] Drive sync for room ${input.dataRoomId}: found ${foldersFound} folders / ${filesFound} files; ` +
+          `created ${totalCreated} folders / ${totalSynced} files; ${filesFailed} file errors.`
+        );
 
         return {
           results,
           totalSynced,
           foldersCreated: totalCreated,
           filesCreated: totalSynced,
+          filesFound,
+          foldersFound,
+          filesFailed,
+          errors: syncErrors,
           folderName: folderInfo.folder.name,
         };
       }),
@@ -16976,16 +17610,50 @@ Ask if they received the original request and if they can provide a quote.`;
           messageType: z.enum(["text", "image", "video", "audio", "document", "location", "contact", "template"]).optional(),
           templateName: z.string().optional(),
           templateParams: z.string().optional(),
+          conversationId: z.string().optional(),
+          // Optional linkage to another record (e.g. a shipment) so supplier
+          // chatter can be tied to the thing it's about.
+          relatedEntityType: z.string().optional(),
+          relatedEntityId: z.number().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          // Create message record (actual sending would be via WhatsApp Business API webhook)
+          const conversationId = input.conversationId || `wa_${input.whatsappNumber}_${Date.now()}`;
+
+          // Record the outbound message immediately (status pending).
           const id = await db.createWhatsappMessage({
             ...input,
             direction: "outbound",
             status: "pending",
             sentBy: ctx.user.id,
-            conversationId: `wa_${input.whatsappNumber}_${Date.now()}`,
+            conversationId,
           });
+
+          // Send for real via the Twilio WhatsApp Business API when configured.
+          // If not configured, the message stays a local "pending" log.
+          let status: "pending" | "sent" | "failed" = "pending";
+          let failedReason: string | undefined;
+          if (ENV.twilioAccountSid && ENV.twilioAuthToken && ENV.twilioWhatsappNumber) {
+            const withChannel = (n: string) =>
+              n.startsWith("whatsapp:") ? n : `whatsapp:${n.startsWith("+") ? n : `+${n.replace(/[^\d]/g, "")}`}`;
+            try {
+              const twilioMod = await import("twilio");
+              const client = twilioMod.default(ENV.twilioAccountSid, ENV.twilioAuthToken);
+              const msg = await client.messages.create({
+                to: withChannel(input.whatsappNumber),
+                from: withChannel(ENV.twilioWhatsappNumber),
+                body: input.content,
+                ...(ENV.publicAppUrl && ENV.publicAppUrl !== "http://localhost:3000"
+                  ? { statusCallback: `${ENV.publicAppUrl.replace(/\/$/, "")}/api/twilio/whatsapp/status` }
+                  : {}),
+              });
+              status = "sent";
+              await db.updateWhatsappMessage(id, { status: "sent", messageId: msg.sid, sentAt: new Date() });
+            } catch (err) {
+              status = "failed";
+              failedReason = (err as Error).message;
+              await db.updateWhatsappMessage(id, { status: "failed", failedReason });
+            }
+          }
 
           // Also create an interaction record
           if (input.contactId) {
@@ -16999,7 +17667,7 @@ Ask if they received the original request and if they can provide a quote.`;
             });
           }
 
-          return { id, status: "pending" };
+          return { id, status, failedReason };
         }),
 
       logInbound: protectedProcedure
