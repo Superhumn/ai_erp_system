@@ -42,7 +42,7 @@ import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile, type GmailSendOptions, type GmailDraftOptions } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
 import { parseFormulationSheet } from "./recipeSheetImport";
-import { getGoogleFullAccessAuthUrl, listDriveFolders, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
+import { getGoogleFullAccessAuthUrl, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
 import { getServiceAccountEmail, isServiceAccountConfigured } from "./_core/googleServiceAccount";
 import { getQuickBooksAuthUrl, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems, getProfitAndLoss, parseProfitAndLossReport } from "./_core/quickbooks";
 import { listAllTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
