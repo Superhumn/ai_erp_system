@@ -50,6 +50,7 @@ import {
   AlertTriangle,
   Bot,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -547,7 +548,7 @@ function KanbanCard({
 }
 
 // Task Detail Panel (for spreadsheet view)
-function TaskDetailPanel({ task, onClose, onStatusChange, projects, onProjectChange, onAssignToAi, onReassignToHuman }: {
+function TaskDetailPanel({ task, onClose, onStatusChange, projects, onProjectChange, onAssignToAi, onReassignToHuman, users, onDelete, onAssign }: {
   task: any;
   onClose: () => void;
   onStatusChange: (taskId: number, status: string) => void;
@@ -555,6 +556,9 @@ function TaskDetailPanel({ task, onClose, onStatusChange, projects, onProjectCha
   onProjectChange?: (taskId: number, projectId: number) => void;
   onAssignToAi?: (task: any) => void;
   onReassignToHuman?: (task: any) => void;
+  users?: any[];
+  onDelete?: (task: any) => void;
+  onAssign?: (task: any, assigneeId: number | null) => void;
 }) {
   const statusOption = taskStatusOptions.find(s => s.value === task.status);
   const priority = priorityOptions.find(p => p.value === task.priority);
@@ -689,6 +693,23 @@ function TaskDetailPanel({ task, onClose, onStatusChange, projects, onProjectCha
       )}
 
       <div className="flex items-center gap-2 pt-2">
+        {!isAi && onAssign && users && users.length > 0 && (
+          <Select
+            value={task.assigneeId ? String(task.assigneeId) : "unassigned"}
+            onValueChange={(v) => onAssign(task, v === "unassigned" ? null : Number(v))}
+          >
+            <SelectTrigger className="w-[180px] h-8 text-xs">
+              <User className="h-3.5 w-3.5 mr-1.5 shrink-0" />
+              <SelectValue placeholder="Assign to..." />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="unassigned">Unassigned</SelectItem>
+              {users.map((u: any) => (
+                <SelectItem key={u.id} value={String(u.id)}>{u.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         {!isAi && onAssignToAi && (
           <Button size="sm" variant="outline" onClick={() => onAssignToAi(task)}>
             <Bot className="h-3.5 w-3.5 mr-1.5" />
@@ -699,6 +720,17 @@ function TaskDetailPanel({ task, onClose, onStatusChange, projects, onProjectCha
           <Button size="sm" variant="outline" onClick={() => onReassignToHuman(task)}>
             <User className="h-3.5 w-3.5 mr-1.5" />
             Reassign to human
+          </Button>
+        )}
+        {onDelete && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="ml-auto text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30"
+            onClick={() => onDelete(task)}
+          >
+            <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+            Delete
           </Button>
         )}
       </div>
@@ -712,6 +744,9 @@ export default function Projects() {
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const [filterProject, setFilterProject] = useState<string>("all");
   const [filterPriority, setFilterPriority] = useState<string>("all");
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number | string>>(new Set());
+  const [bulkAssignOpen, setBulkAssignOpen] = useState(false);
+  const [bulkAssigneeId, setBulkAssigneeId] = useState<string>("unassigned");
 
   const [taskForm, setTaskForm] = useState({
     title: "",
@@ -754,6 +789,65 @@ export default function Projects() {
     },
     onError: (err: any) => toast.error(err.message),
   });
+
+  const deleteTask = trpc.projects.deleteTask.useMutation({
+    onSuccess: () => {
+      toast.success("Task deleted");
+      setExpandedTaskId(null);
+      setSelectedTask(null);
+      refetchTasks();
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const deleteTasksBulk = trpc.projects.deleteTasks.useMutation({
+    onSuccess: (res: any) => {
+      toast.success(`${res?.count ?? "Selected"} task${res?.count === 1 ? "" : "s"} deleted`);
+      setSelectedTaskIds(new Set());
+      refetchTasks();
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const assignTasks = trpc.projects.assignTasks.useMutation({
+    onSuccess: (res: any) => {
+      toast.success(`${res?.count ?? "Task"} assigned`);
+      setSelectedTaskIds(new Set());
+      setBulkAssignOpen(false);
+      refetchTasks();
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const handleDeleteTask = (task: any) => {
+    if (!confirm(`Delete task "${task.name}"? This cannot be undone.`)) return;
+    deleteTask.mutate({ id: Number(task.id) });
+  };
+
+  const handleAssignTask = (task: any, assigneeId: number | null) => {
+    assignTasks.mutate({ ids: [Number(task.id)], assigneeId });
+  };
+
+  const handleBulkAction = (action: string, ids: Set<number | string>) => {
+    const list = [...ids].map(Number);
+    if (list.length === 0) return;
+    if (action === "delete") {
+      if (!confirm(`Delete ${list.length} task${list.length > 1 ? "s" : ""}? This cannot be undone.`)) return;
+      deleteTasksBulk.mutate({ ids: list });
+    } else if (action === "assign") {
+      setBulkAssigneeId("unassigned");
+      setBulkAssignOpen(true);
+    }
+  };
+
+  const submitBulkAssign = () => {
+    const list = [...selectedTaskIds].map(Number);
+    if (list.length === 0) return;
+    assignTasks.mutate({
+      ids: list,
+      assigneeId: bulkAssigneeId === "unassigned" ? null : Number(bulkAssigneeId),
+    });
+  };
 
   // The tRPC router has grown large enough that v11's type inference
   // truncates the client-side AppRouter type before reaching `taskBridge`.
@@ -1082,8 +1176,18 @@ export default function Projects() {
                     onStatusChange={handleStatusChange}
                     onAssignToAi={openAssignAi}
                     onReassignToHuman={handleReassignHuman}
+                    users={users}
+                    onDelete={handleDeleteTask}
+                    onAssign={handleAssignTask}
                   />
                 )}
+                selectedRows={selectedTaskIds}
+                onSelectionChange={setSelectedTaskIds}
+                bulkActions={[
+                  { key: "assign", label: "Assign", icon: <User className="h-3.5 w-3.5" /> },
+                  { key: "delete", label: "Delete", variant: "destructive", icon: <Trash2 className="h-3.5 w-3.5" /> },
+                ]}
+                onBulkAction={handleBulkAction}
                 onCellEdit={(rowId, key, value) => {
                   if (key === "status") {
                     handleStatusChange(rowId as number, value);
@@ -1136,6 +1240,9 @@ export default function Projects() {
                   handleReassignHuman(task);
                   setSelectedTask(null);
                 }}
+                users={users}
+                onDelete={handleDeleteTask}
+                onAssign={handleAssignTask}
               />
             )}
           </DialogContent>
@@ -1350,6 +1457,42 @@ export default function Projects() {
                 {assignToAgent.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 <Bot className="h-3.5 w-3.5 mr-1.5" />
                 Assign to AI
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Bulk Assign Dialog */}
+        <Dialog open={bulkAssignOpen} onOpenChange={setBulkAssignOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <User className="h-4 w-4" />
+                Assign {selectedTaskIds.size} task{selectedTaskIds.size === 1 ? "" : "s"}
+              </DialogTitle>
+              <DialogDescription>
+                Assign the selected task{selectedTaskIds.size === 1 ? "" : "s"} to a team member, or clear the assignee.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2">
+              <Label>Assignee</Label>
+              <Select value={bulkAssigneeId} onValueChange={setBulkAssigneeId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select assignee" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="unassigned">Unassigned</SelectItem>
+                  {users?.map((u: any) => (
+                    <SelectItem key={u.id} value={String(u.id)}>{u.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setBulkAssignOpen(false)}>Cancel</Button>
+              <Button onClick={submitBulkAssign} disabled={assignTasks.isPending}>
+                {assignTasks.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Assign
               </Button>
             </DialogFooter>
           </DialogContent>

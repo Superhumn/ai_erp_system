@@ -1834,6 +1834,44 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
     );
   }, [allContracts, person]);
 
+  const utils = trpc.useUtils();
+  const [compOpen, setCompOpen] = useState(false);
+  const [compForm, setCompForm] = useState({
+    effectiveDate: "",
+    salary: "",
+    salaryFrequency: "annual" as "hourly" | "weekly" | "biweekly" | "monthly" | "annual",
+    reason: "",
+    notes: "",
+  });
+  const addCompensation = trpc.employees.addCompensation.useMutation({
+    onSuccess: () => {
+      toast.success("Compensation record added");
+      if (person.employeeId) utils.employees.compensationHistory.invalidate({ employeeId: person.employeeId });
+      utils.employees.list.invalidate();
+      setCompOpen(false);
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const handleAddCompensation = () => {
+    if (!person.employeeId) return;
+    if (!compForm.effectiveDate) {
+      toast.error("Effective date is required");
+      return;
+    }
+    if (!compForm.salary.trim()) {
+      toast.error("Salary is required");
+      return;
+    }
+    addCompensation.mutate({
+      employeeId: person.employeeId,
+      effectiveDate: new Date(compForm.effectiveDate),
+      salary: compForm.salary.trim(),
+      salaryFrequency: compForm.salaryFrequency,
+      reason: compForm.reason || undefined,
+      notes: compForm.notes || undefined,
+    });
+  };
+
   return (
                 <div className="space-y-5">
                   {/* Personal Information */}
@@ -1862,7 +1900,16 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
                   {/* Compensation History */}
                   {person.employeeId && (
                     <div>
-                      <h4 className="text-sm font-semibold text-muted-foreground mb-2">Compensation History</h4>
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-sm font-semibold text-muted-foreground">Compensation History</h4>
+                        <Button size="sm" variant="outline" onClick={() => {
+                          setCompForm({ effectiveDate: "", salary: "", salaryFrequency: "annual", reason: "", notes: "" });
+                          setCompOpen(true);
+                        }}>
+                          <Plus className="h-3.5 w-3.5 mr-1.5" />
+                          Add compensation
+                        </Button>
+                      </div>
                       {compHistory && (compHistory as any[]).length > 0 ? (
                         <div className="border rounded-lg overflow-hidden">
                           <Table className="text-sm">
@@ -1887,6 +1934,73 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
                       ) : (
                         <p className="text-sm text-muted-foreground italic">No compensation history recorded.</p>
                       )}
+                      <Dialog open={compOpen} onOpenChange={setCompOpen}>
+                        <DialogContent className="max-w-md">
+                          <DialogHeader>
+                            <DialogTitle>Add compensation</DialogTitle>
+                            <DialogDescription>Record a new compensation entry for {person.name}.</DialogDescription>
+                          </DialogHeader>
+                          <div className="space-y-4">
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <Label>Effective date *</Label>
+                                <Input
+                                  type="date"
+                                  value={compForm.effectiveDate}
+                                  onChange={(e) => setCompForm({ ...compForm, effectiveDate: e.target.value })}
+                                />
+                              </div>
+                              <div>
+                                <Label>Frequency</Label>
+                                <Select
+                                  value={compForm.salaryFrequency}
+                                  onValueChange={(v) => setCompForm({ ...compForm, salaryFrequency: v as typeof compForm.salaryFrequency })}
+                                >
+                                  <SelectTrigger><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="hourly">Hourly</SelectItem>
+                                    <SelectItem value="weekly">Weekly</SelectItem>
+                                    <SelectItem value="biweekly">Biweekly</SelectItem>
+                                    <SelectItem value="monthly">Monthly</SelectItem>
+                                    <SelectItem value="annual">Annual</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+                            <div>
+                              <Label>Salary *</Label>
+                              <Input
+                                value={compForm.salary}
+                                onChange={(e) => setCompForm({ ...compForm, salary: e.target.value })}
+                                placeholder="e.g. 120000"
+                              />
+                            </div>
+                            <div>
+                              <Label>Reason</Label>
+                              <Input
+                                value={compForm.reason}
+                                onChange={(e) => setCompForm({ ...compForm, reason: e.target.value })}
+                                placeholder="e.g. Annual raise, promotion"
+                              />
+                            </div>
+                            <div>
+                              <Label>Notes</Label>
+                              <Textarea
+                                rows={2}
+                                value={compForm.notes}
+                                onChange={(e) => setCompForm({ ...compForm, notes: e.target.value })}
+                              />
+                            </div>
+                          </div>
+                          <DialogFooter>
+                            <Button variant="outline" onClick={() => setCompOpen(false)}>Cancel</Button>
+                            <Button onClick={handleAddCompensation} disabled={addCompensation.isPending}>
+                              {addCompensation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                              Add
+                            </Button>
+                          </DialogFooter>
+                        </DialogContent>
+                      </Dialog>
                     </div>
                   )}
 
