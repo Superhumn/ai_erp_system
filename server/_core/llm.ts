@@ -61,6 +61,38 @@ export type ToolChoice =
   | ToolChoiceByName
   | ToolChoiceExplicit;
 
+export type WebSearchOptions = {
+    /** Max number of web searches the model may run in a single turn (default 5). */
+    maxUses?: number;
+};
+
+// Prompt caching (Anthropic ephemeral cache).
+//
+// Cache writes happen only at a cache breakpoint, and the cache is a prefix
+// match — render order is `tools` → `system` → `messages`. The stable,
+// reusable prefix for this codebase is the system prompt (and tool
+// definitions); the incoming user message varies per request. So we place the
+// breakpoint at the end of the system prompt and on the last tool, NOT on the
+// trailing message. Marking the volatile final message (what top-level
+// "automatic" caching would do) writes a fresh entry every request and never
+// reads — see the prompt-caching docs' "common mistake".
+//
+// Caching is opt-in per call: pass `cache: true` (or a CacheOptions object).
+// The 5-minute cache refreshes for free on each hit; use `ttl: "1h"` for
+// prefixes reused less often than every 5 minutes (2x the write cost).
+export type CacheTtl = "5m" | "1h";
+
+export type CacheOptions = {
+    // Cache the system prompt prefix (caches preceding tools too). Default true.
+    system?: boolean;
+    // Cache the tool definitions block. Default true when tools are present.
+    tools?: boolean;
+    // Cache lifetime. Default "5m".
+    ttl?: CacheTtl;
+};
+
+export type CacheControlOption = boolean | CacheOptions;
+
 export type InvokeParams = {
     messages: Message[];
     tools?: Tool[];
@@ -72,6 +104,15 @@ export type InvokeParams = {
     output_schema?: OutputSchema;
     responseFormat?: ResponseFormat;
     response_format?: ResponseFormat;
+    /**
+     * Enable Anthropic's server-side web search tool so the model can look up
+     * live information online before answering. Pass `true` for defaults or an
+     * options object to tune it. Handled entirely server-side by the provider —
+     * the final response is still plain text/tool_use blocks.
+     */
+    webSearch?: boolean | WebSearchOptions;
+    cache?: CacheControlOption;
+    cache_control?: CacheControlOption;
 };
 
 export type ToolCall = {
@@ -100,6 +141,12 @@ export type InvokeResult = {
       prompt_tokens: number;
       completion_tokens: number;
       total_tokens: number;
+      // Anthropic prompt-caching breakdown (0 when caching is not in effect).
+      // `prompt_tokens` above is the full input count
+      // (uncached + cache reads + cache writes), so existing cost math stays
+      // correct; these fields let callers track cache hit rates.
+      cache_creation_input_tokens?: number;
+      cache_read_input_tokens?: number;
     };
 };
 
@@ -205,8 +252,12 @@ function resolveAnthropicUrl(): string {
 }
 
 type AnthropicContentBlock =
-    | { type: "text"; text: string }
-  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> };
+    | { type: "text"; text: string; citations?: unknown }
+  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
+  // Server-side tool blocks (e.g. web search). Emitted when webSearch is enabled;
+  // handled by the provider, so we simply skip them when reading the response.
+  | { type: "server_tool_use"; id: string; name: string; input: Record<string, unknown> }
+  | { type: "web_search_tool_result"; tool_use_id: string; content: unknown };
 
 type AnthropicResponse = {
     id: string;
@@ -216,8 +267,29 @@ type AnthropicResponse = {
     usage: {
       input_tokens: number;
       output_tokens: number;
+      cache_creation_input_tokens?: number;
+      cache_read_input_tokens?: number;
     };
 };
+
+type CacheControl = { type: "ephemeral"; ttl?: "1h" };
+
+// Resolve the user-supplied cache option into a concrete config, or null when
+// caching is disabled.
+function resolveCacheOptions(
+    option: CacheControlOption | undefined,
+  ): { system: boolean; tools: boolean; control: CacheControl } | null {
+    if (!option) return null;
+    const opts: CacheOptions = option === true ? {} : option;
+    const ttl = opts.ttl ?? "5m";
+    const control: CacheControl =
+          ttl === "1h" ? { type: "ephemeral", ttl: "1h" } : { type: "ephemeral" };
+    return {
+          system: opts.system ?? true,
+          tools: opts.tools ?? true,
+          control,
+    };
+}
 
 function convertContentToAnthropic(content: MessageContent | MessageContent[]): unknown {
     const parts = ensureArray(content);
@@ -305,12 +377,21 @@ function convertMessagesToAnthropic(messages: Message[]): { system: string | und
   return { system, messages: anthropicMessages };
 }
 
-function convertToolsToAnthropic(tools: Tool[]): unknown[] {
-    return tools.map(t => ({
+function convertToolsToAnthropic(
+    tools: Tool[],
+    cacheControl?: CacheControl,
+  ): unknown[] {
+    const converted = tools.map(t => ({
           name: t.function.name,
           description: t.function.description ?? "",
           input_schema: t.function.parameters ?? { type: "object", properties: {} },
     }));
+    // A single breakpoint on the last tool caches every preceding tool too.
+    if (cacheControl && converted.length > 0) {
+          (converted[converted.length - 1] as Record<string, unknown>).cache_control =
+                  cacheControl;
+    }
+    return converted;
 }
 
 function convertAnthropicToolChoice(
@@ -376,13 +457,25 @@ function convertAnthropicResponse(anthropicResp: AnthropicResponse): InvokeResul
                       ? "tool_calls"
                               : anthropicResp.stop_reason,
         }],
-        usage: {
-                prompt_tokens: anthropicResp.usage.input_tokens,
-                completion_tokens: anthropicResp.usage.output_tokens,
-                total_tokens:
-                          anthropicResp.usage.input_tokens + anthropicResp.usage.output_tokens,
-        },
+        usage: buildUsage(anthropicResp.usage),
   };
+}
+
+function buildUsage(
+    usage: AnthropicResponse["usage"],
+  ): NonNullable<InvokeResult["usage"]> {
+    const cacheCreation = usage.cache_creation_input_tokens ?? 0;
+    const cacheRead = usage.cache_read_input_tokens ?? 0;
+    // `input_tokens` only counts tokens after the last cache breakpoint, so the
+    // full prompt size is the sum of uncached + cache writes + cache reads.
+    const promptTokens = usage.input_tokens + cacheCreation + cacheRead;
+    return {
+          prompt_tokens: promptTokens,
+          completion_tokens: usage.output_tokens,
+          total_tokens: promptTokens + usage.output_tokens,
+          ...(cacheCreation > 0 ? { cache_creation_input_tokens: cacheCreation } : {}),
+          ...(cacheRead > 0 ? { cache_read_input_tokens: cacheRead } : {}),
+    };
 }
 
 // ============================================
@@ -403,7 +496,12 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
         output_schema,
         responseFormat,
         response_format,
+        webSearch,
+        cache,
+        cache_control,
   } = params;
+
+  const cacheConfig = resolveCacheOptions(cache ?? cache_control);
 
   const converted = convertMessagesToAnthropic(messages);
 
@@ -417,8 +515,22 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
         payload.system = converted.system;
   }
 
+  const anthropicTools: unknown[] = [];
   if (tools && tools.length > 0) {
-        payload.tools = convertToolsToAnthropic(tools);
+        anthropicTools.push(...convertToolsToAnthropic(
+                tools,
+                cacheConfig?.tools ? cacheConfig.control : undefined,
+        ));
+  }
+  if (webSearch) {
+        const maxUses =
+              typeof webSearch === "object" && typeof webSearch.maxUses === "number"
+                ? webSearch.maxUses
+                : 5;
+        anthropicTools.push({ type: "web_search_20250305", name: "web_search", max_uses: maxUses });
+  }
+  if (anthropicTools.length > 0) {
+        payload.tools = anthropicTools;
   }
 
   const anthropicToolChoice = convertAnthropicToolChoice(toolChoice || tool_choice, tools);
@@ -443,23 +555,74 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
         payload.system = (converted.system ?? "") + jsonInstruction;
   }
 
-  const response = await fetch(resolveAnthropicUrl(), {
-        method: "POST",
-        headers: {
-                "content-type": "application/json",
-                "x-api-key": ENV.llmApiKey,
-                "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(
-                `LLM invoke failed: ${response.status} ${response.statusText} – ${errorText}`
-              );
+  // Place the cache breakpoint at the end of the (now fully assembled) system
+  // prompt. Done last so the cached prefix includes any appended JSON-schema
+  // instruction; a breakpoint here also caches the preceding tools block.
+  if (cacheConfig?.system && typeof payload.system === "string" && payload.system.length > 0) {
+        payload.system = [
+                {
+                          type: "text",
+                          text: payload.system,
+                          cache_control: cacheConfig.control,
+                },
+        ];
   }
 
-  const anthropicResp = (await response.json()) as AnthropicResponse;
-    return convertAnthropicResponse(anthropicResp);
+  // Server-side tools (e.g. web search) can pause a long turn: the API returns
+  // stop_reason "pause_turn" with the partial assistant content. To continue, we
+  // append that content and re-request until the turn actually ends. Without this,
+  // a paused turn would surface as empty/partial text to the caller.
+  const MAX_PAUSE_CONTINUATIONS = 4;
+  const carriedText: string[] = [];
+  let anthropicResp: AnthropicResponse;
+  let continuations = 0;
+
+  for (;;) {
+        const response = await fetch(resolveAnthropicUrl(), {
+              method: "POST",
+              headers: {
+                      "content-type": "application/json",
+                      "x-api-key": ENV.llmApiKey,
+                      "anthropic-version": "2023-06-01",
+              },
+              body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+              const errorText = await response.text();
+              throw new Error(
+                      `LLM invoke failed: ${response.status} ${response.statusText} – ${errorText}`
+                    );
+        }
+
+        anthropicResp = (await response.json()) as AnthropicResponse;
+
+        if (anthropicResp.stop_reason === "pause_turn" && continuations < MAX_PAUSE_CONTINUATIONS) {
+              continuations++;
+              for (const block of anthropicResp.content) {
+                      if (block.type === "text") carriedText.push(block.text);
+              }
+              (payload.messages as unknown[]).push({ role: "assistant", content: anthropicResp.content });
+              continue;
+        }
+        break;
+  }
+
+  // If the turn is still paused after the continuation cap, fail loudly rather
+  // than handing callers a truncated/partial answer they might act on.
+  if (anthropicResp.stop_reason === "pause_turn") {
+        throw new Error(
+              `LLM invoke did not complete: turn still paused after ${MAX_PAUSE_CONTINUATIONS} continuations`,
+            );
+  }
+
+  const result = convertAnthropicResponse(anthropicResp);
+    // Prepend any text emitted during the paused segments so nothing is lost.
+    if (carriedText.length > 0) {
+          const msg = result.choices[0].message;
+          if (typeof msg.content === "string") {
+                msg.content = carriedText.join("") + msg.content;
+          }
+    }
+    return result;
 }

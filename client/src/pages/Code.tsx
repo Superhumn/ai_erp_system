@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
+import { isExecutableLanguage } from "@shared/const";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -93,7 +94,7 @@ const AI_ACTIONS = [
 type AIAction = typeof AI_ACTIONS[number]["value"];
 
 export default function CodePage() {
-  const codeApi = (trpc as any).code;
+  const codeApi = trpc.code;
   const [code, setCode] = useState("// Start coding here...\nconsole.log('Hello, World!');\n");
   const [language, setLanguage] = useState("typescript");
   const [activeTab, setActiveTab] = useState("editor");
@@ -124,7 +125,7 @@ export default function CodePage() {
 
   // Mutations
   const executeMutation = codeApi.execute.useMutation({
-    onSuccess: (data: any) => {
+    onSuccess: (data) => {
       setExecutionOutput(data);
       setActiveTab("output");
       if (data.exitCode === 0) {
@@ -133,16 +134,16 @@ export default function CodePage() {
         toast.error("Execution failed");
       }
     },
-    onError: (err: any) => toast.error(err.message),
+    onError: (err) => toast.error(err.message),
   });
 
   const aiMutation = codeApi.aiAction.useMutation({
-    onSuccess: (data: any) => {
-      setAiResult(data);
+    onSuccess: (data) => {
+      setAiResult({ outputCode: data.outputCode ?? null, explanation: data.explanation ?? "" });
       setActiveTab("ai-result");
       toast.success("AI response received");
     },
-    onError: (err: any) => toast.error(err.message),
+    onError: (err) => toast.error(err.message),
   });
 
   const createSnippetMutation = codeApi.createSnippet.useMutation({
@@ -151,7 +152,7 @@ export default function CodePage() {
       setShowSaveDialog(false);
       snippetsQuery.refetch();
     },
-    onError: (err: any) => toast.error(err.message),
+    onError: (err) => toast.error(err.message),
   });
 
   const updateSnippetMutation = codeApi.updateSnippet.useMutation({
@@ -159,7 +160,7 @@ export default function CodePage() {
       toast.success("Snippet updated");
       snippetsQuery.refetch();
     },
-    onError: (err: any) => toast.error(err.message),
+    onError: (err) => toast.error(err.message),
   });
 
   const deleteSnippetMutation = codeApi.deleteSnippet.useMutation({
@@ -172,10 +173,14 @@ export default function CodePage() {
         setSnippetTitle("");
       }
     },
-    onError: (err: any) => toast.error(err.message),
+    onError: (err) => toast.error(err.message),
   });
 
   const handleRun = useCallback(() => {
+    if (!isExecutableLanguage(language)) {
+      toast.error(`${language} can't be executed here. Executable languages: JavaScript, TypeScript, Python, Bash.`);
+      return;
+    }
     executeMutation.mutate({
       code,
       language,
@@ -313,7 +318,12 @@ export default function CodePage() {
           <Button
             size="sm"
             onClick={handleRun}
-            disabled={executeMutation.isPending || !code.trim()}
+            disabled={executeMutation.isPending || !code.trim() || !isExecutableLanguage(language)}
+            title={
+              isExecutableLanguage(language)
+                ? "Run (Ctrl+Enter)"
+                : `${language} isn't executable — only JavaScript, TypeScript, Python, and Bash can be run`
+            }
           >
             {executeMutation.isPending ? (
               <Loader2 className="h-4 w-4 mr-1 animate-spin" />

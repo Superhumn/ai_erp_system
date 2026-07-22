@@ -46,6 +46,152 @@ interface WorkflowProcessor {
   execute(engine: WorkflowEngine, context: WorkflowContext): Promise<WorkflowResult>;
 }
 
+/**
+ * Run an async mapper over items with a bounded concurrency limit, preserving
+ * input order in the results. Used to parallelize independent LLM/API calls
+ * without firing an unbounded number of requests at once.
+ */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+  // Normalize limit to a finite positive integer so a non-finite value (e.g. NaN)
+  // can't collapse workerCount to NaN and silently run zero workers.
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : 1;
+  const workerCount = Math.max(1, Math.min(safeLimit, items.length));
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const index = cursor++;
+      if (index >= items.length) break;
+      results[index] = await mapper(items[index], index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+/**
+ * Derive numerically-consistent line amounts for a suggested-PO item. Legacy
+ * rows (created before totalAmount was written) may have a NULL unitPrice or
+ * totalAmount; rather than zeroing them, fill each missing value from the others
+ * (totalAmount = unitPrice x quantity, unitPrice = totalAmount / quantity) so
+ * converted POs keep correct totals. Falls back to 0 only when nothing is known.
+ */
+function deriveSuggestedPoItemAmounts(item: {
+  quantity: string;
+  unitPrice: string | null;
+  totalAmount: string | null;
+}): { unitPrice: string; totalAmount: string; lineTotal: number } {
+  const quantity = parseFloat(item.quantity || "0");
+  const rawUnit = item.unitPrice != null ? parseFloat(item.unitPrice) : NaN;
+  const rawTotal = item.totalAmount != null ? parseFloat(item.totalAmount) : NaN;
+
+  let lineTotal: number;
+  if (!Number.isNaN(rawTotal)) {
+    lineTotal = rawTotal;
+  } else if (!Number.isNaN(rawUnit)) {
+    lineTotal = rawUnit * quantity;
+  } else {
+    lineTotal = 0;
+  }
+
+  let unitPrice: number;
+  if (!Number.isNaN(rawUnit)) {
+    unitPrice = rawUnit;
+  } else if (quantity > 0) {
+    unitPrice = lineTotal / quantity;
+  } else {
+    unitPrice = 0;
+  }
+
+  // Round to cents so the stored DECIMAL(_,2) values and the in-memory totals
+  // agree (avoids float artifacts like 0.30000000000000004).
+  const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+  const roundedTotal = round2(lineTotal);
+  return {
+    unitPrice: round2(unitPrice).toFixed(2),
+    totalAmount: roundedTotal.toFixed(2),
+    lineTotal: roundedTotal,
+  };
+}
+
+/** Generate the AI RFQ email (subject + body) for a single vendor. */
+async function generateRfqEmailContent(
+  vendor: typeof vendors.$inferSelect,
+  ctx: {
+    rfqNumber: string;
+    materialName: string;
+    materialDescription?: string | null;
+    quantity: number | string;
+    unit: string;
+    specifications?: string | null;
+    requiredDeliveryDate?: string | null;
+    deliveryLocation?: string | null;
+  },
+): Promise<{ subject: string; body: string }> {
+  const emailPrompt = `Generate a professional RFQ email to vendor:
+Vendor Name: ${vendor.name}
+Contact Name: ${vendor.contactName || "Procurement Team"}
+
+RFQ Details:
+- RFQ Number: ${ctx.rfqNumber}
+- Material: ${ctx.materialName}
+- Description: ${ctx.materialDescription || "N/A"}
+- Quantity: ${ctx.quantity} ${ctx.unit}
+- Specifications: ${ctx.specifications || "N/A"}
+- Required Delivery Date: ${ctx.requiredDeliveryDate || "ASAP"}
+- Delivery Location: ${ctx.deliveryLocation || "N/A"}
+- Quote Due Date: 7 days from now
+- Validity Period: 30 days
+
+Generate a professional, concise email requesting a quote.`;
+
+  const aiEmail = await invokeLLM({
+    messages: [
+      {
+        role: "system",
+        content: "You are a professional procurement officer writing RFQ emails to vendors.",
+      },
+      { role: "user", content: emailPrompt },
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "rfq_email",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: {
+            subject: { type: "string" },
+            body: { type: "string" },
+          },
+          required: ["subject", "body"],
+          additionalProperties: false,
+        },
+      },
+    },
+  });
+
+  const content = aiEmail.choices[0].message.content;
+  const parsed = JSON.parse(typeof content === "string" ? content : "{}");
+  // Validate the shape so a malformed/partial model response fails this vendor
+  // (recorded as a per-vendor failure by the caller) rather than queuing an
+  // email with a null/undefined subject or body.
+  if (
+    !parsed ||
+    typeof parsed.subject !== "string" ||
+    !parsed.subject.trim() ||
+    typeof parsed.body !== "string" ||
+    !parsed.body.trim()
+  ) {
+    throw new Error("RFQ email generation returned malformed content (missing subject/body)");
+  }
+  return { subject: parsed.subject, body: parsed.body };
+}
+
 // ============================================
 // DEMAND FORECASTING WORKFLOW
 // ============================================
@@ -523,7 +669,7 @@ const materialRequirementsProcessor: WorkflowProcessor = {
             rawMaterialId: item.materialId,
             quantity: item.shortage.toString(),
             unitPrice: (item.cost / item.shortage).toString(),
-            totalPrice: item.cost.toString(),
+            totalAmount: item.cost.toString(),
           });
         }
 
@@ -601,22 +747,42 @@ const procurementProcessor: WorkflowProcessor = {
     const step2 = await engine.recordStep(context, 2, "Convert to Purchase Orders", "create_record", async () => {
       const createdPOs: any[] = [];
 
+      // Bulk-load vendors, line items, and raw materials up front to avoid the
+      // nested N+1 (one vendor query per PO + one raw-material query per line item).
+      const vendorIds = [...new Set(suggestedPOs.map((s: any) => s.vendorId as number).filter(Boolean))] as number[];
+      const spoIds = suggestedPOs.map((s: any) => s.id as number) as number[];
+      const vendorRows: (typeof vendors.$inferSelect)[] = vendorIds.length
+        ? await db.select().from(vendors).where(inArray(vendors.id, vendorIds))
+        : [];
+      const vendorById = new Map(vendorRows.map((v) => [v.id, v] as const));
+
+      const allSpoItems: (typeof suggestedPoItems.$inferSelect)[] = spoIds.length
+        ? await db.select().from(suggestedPoItems).where(inArray(suggestedPoItems.suggestedPoId, spoIds))
+        : [];
+      const itemsBySpoId = new Map<number, (typeof suggestedPoItems.$inferSelect)[]>();
+      for (const it of allSpoItems) {
+        const list = itemsBySpoId.get(it.suggestedPoId) ?? [];
+        list.push(it);
+        itemsBySpoId.set(it.suggestedPoId, list);
+      }
+
+      const rawMaterialIds = [...new Set(allSpoItems.map((it) => it.rawMaterialId).filter(Boolean))] as number[];
+      const rawMaterialRows: (typeof rawMaterials.$inferSelect)[] = rawMaterialIds.length
+        ? await db.select().from(rawMaterials).where(inArray(rawMaterials.id, rawMaterialIds))
+        : [];
+      const rawMaterialById = new Map(rawMaterialRows.map((r) => [r.id, r] as const));
+
       for (const spo of suggestedPOs) {
         try {
-          // Get vendor details
-          const [vendor] = await db
-            .select()
-            .from(vendors)
-            .where(eq(vendors.id, spo.vendorId));
+          // Vendor details (pre-loaded)
+          const vendor = vendorById.get(spo.vendorId);
 
-          // Get line items
-          const items = await db
-            .select()
-            .from(suggestedPoItems)
-            .where(eq(suggestedPoItems.suggestedPoId, spo.id));
+          // Line items (pre-loaded)
+          const items = itemsBySpoId.get(spo.id) ?? [];
 
-          // Calculate totals
-          const subtotal = items.reduce((sum: number, item: any) => sum + parseFloat(item.totalPrice || "0"), 0);
+          // Calculate totals (derive missing line amounts from the other fields
+          // so legacy rows with a NULL totalAmount don't zero out the PO total).
+          const subtotal = items.reduce((sum, item) => sum + deriveSuggestedPoItemAmounts(item).lineTotal, 0);
 
           // Create PO
           const poNumber = `PO-${Date.now().toString(36).toUpperCase()}`;
@@ -631,8 +797,8 @@ const procurementProcessor: WorkflowProcessor = {
               status: "draft",
               orderDate: new Date(),
               expectedDate,
-              subtotal: subtotal.toString(),
-              totalAmount: subtotal.toString(),
+              subtotal: subtotal.toFixed(2),
+              totalAmount: subtotal.toFixed(2),
               currency: spo.currency || "USD",
               notes: `Auto-generated from suggested PO ${spo.suggestedPoNumber}`,
             })
@@ -640,10 +806,10 @@ const procurementProcessor: WorkflowProcessor = {
 
           // Create line items
           for (const item of items) {
-            const [rm] = await db
-              .select()
-              .from(rawMaterials)
-              .where(eq(rawMaterials.id, item.rawMaterialId));
+            const rm = rawMaterialById.get(item.rawMaterialId);
+            // purchaseOrderItems.unitPrice/.totalAmount are NOT NULL; derive any
+            // missing value (legacy rows) from the others instead of zeroing.
+            const amounts = deriveSuggestedPoItemAmounts(item);
 
             const [poItem] = await db
               .insert(purchaseOrderItems)
@@ -652,8 +818,8 @@ const procurementProcessor: WorkflowProcessor = {
                 productId: item.productId,
                 description: rm?.name || `Material #${item.rawMaterialId}`,
                 quantity: item.quantity,
-                unitPrice: item.unitPrice,
-                totalAmount: item.totalPrice,
+                unitPrice: amounts.unitPrice,
+                totalAmount: amounts.totalAmount,
               })
               .$returningId();
 
@@ -2914,95 +3080,101 @@ Return vendor IDs in order of preference.`;
     const step4 = await engine.recordStep(context, 4, "Send RFQ Emails", "communication", async () => {
       const emailResults = [];
 
-      for (const vendor of selectedVendors) {
-        // Generate AI-powered email content
-        const emailPrompt = `Generate a professional RFQ email to vendor:
-Vendor Name: ${vendor.name}
-Contact Name: ${vendor.contactName || "Procurement Team"}
+      // Generate all vendor RFQ emails in parallel (independent LLM calls,
+      // bounded concurrency) instead of one blocking call per vendor in series.
+      // Failures are captured per-vendor so one bad generation doesn't discard
+      // the emails that succeeded (mirrors the original per-vendor resilience).
+      const generatedEmails = await mapWithConcurrency(selectedVendors as (typeof vendors.$inferSelect)[], 5, async (vendor) => {
+        // Skip vendors with no email address: an RFQ email queued to a null/empty
+        // recipient can never be sent, so record it as a per-vendor failure
+        // (via the !ok branch below) rather than persisting an unsendable record.
+        if (!vendor.email) {
+          console.error(`[Procurement] Vendor ${vendor?.id} has no email address; skipping RFQ send.`);
+          return { vendor, ok: false as const };
+        }
+        try {
+          const emailContent = await generateRfqEmailContent(vendor, {
+            rfqNumber,
+            materialName,
+            materialDescription,
+            quantity,
+            unit,
+            specifications,
+            requiredDeliveryDate,
+            deliveryLocation,
+          });
+          return { vendor, emailContent, ok: true as const };
+        } catch (err) {
+          console.error(`[Procurement] Failed to generate RFQ email for vendor ${vendor?.id}:`, err);
+          return { vendor, ok: false as const };
+        }
+      });
 
-RFQ Details:
-- RFQ Number: ${rfqNumber}
-- Material: ${materialName}
-- Description: ${materialDescription || "N/A"}
-- Quantity: ${quantity} ${unit}
-- Specifications: ${specifications || "N/A"}
-- Required Delivery Date: ${requiredDeliveryDate || "ASAP"}
-- Delivery Location: ${deliveryLocation || "N/A"}
-- Quote Due Date: 7 days from now
-- Validity Period: 30 days
+      // Persist invitations and email records sequentially (ordered writes + counter).
+      for (const result of generatedEmails) {
+        if (!result.ok) {
+          itemsFailed++;
+          continue;
+        }
+        const { vendor, emailContent } = result;
+        try {
+          // Persist the invitation + email atomically so a failed email insert
+          // can't leave an orphaned invitation — which the bulk "sent" update
+          // below would otherwise flip to sent with no queued email.
+          const { invitationId, emailId } = await db.transaction(async (tx: any) => {
+            const [invitation] = await tx
+              .insert(vendorRfqInvitations)
+              .values({
+                rfqId,
+                vendorId: vendor.id,
+                status: "pending",
+                invitedAt: new Date(),
+              })
+              .$returningId();
 
-Generate a professional, concise email requesting a quote.`;
+            const [email] = await tx
+              .insert(vendorRfqEmails)
+              .values({
+                rfqId,
+                vendorId: vendor.id,
+                direction: "outbound",
+                emailType: "rfq_request",
+                fromEmail: process.env.PROCUREMENT_EMAIL || "procurement@company.com",
+                toEmail: vendor.email,
+                subject: emailContent.subject,
+                body: emailContent.body,
+                aiGenerated: true,
+                sendStatus: "queued",
+              })
+              .$returningId();
 
-        const aiEmail = await invokeLLM({
-          messages: [
-            {
-              role: "system",
-              content: "You are a professional procurement officer writing RFQ emails to vendors.",
-            },
-            {
-              role: "user",
-              content: emailPrompt,
-            },
-          ],
-          response_format: {
-            type: "json_schema",
-            json_schema: {
-              name: "rfq_email",
-              strict: true,
-              schema: {
-                type: "object",
-                properties: {
-                  subject: { type: "string" },
-                  body: { type: "string" },
-                },
-                required: ["subject", "body"],
-                additionalProperties: false,
-              },
-            },
-          },
-        });
+            return { invitationId: invitation.id, emailId: email.id };
+          });
 
-        const content = aiEmail.choices[0].message.content;
-        const emailContent = JSON.parse(typeof content === "string" ? content : "{}");
-
-        // Create invitation record
-        const [invitation] = await db
-          .insert(vendorRfqInvitations)
-          .values({
-            rfqId,
+          emailResults.push({
             vendorId: vendor.id,
-            status: "pending",
-            invitedAt: new Date(),
-          })
-          .$returningId();
+            vendorName: vendor.name,
+            email: vendor.email,
+            invitationId,
+            emailId,
+            status: "queued",
+          });
 
-        // Create email record
-        const [email] = await db
-          .insert(vendorRfqEmails)
-          .values({
-            rfqId,
-            vendorId: vendor.id,
-            direction: "outbound",
-            emailType: "rfq_request",
-            fromEmail: process.env.PROCUREMENT_EMAIL || "procurement@company.com",
-            toEmail: vendor.email,
-            subject: emailContent.subject,
-            body: emailContent.body,
-            aiGenerated: true,
-            sendStatus: "queued",
-          })
-          .$returningId();
+          itemsSucceeded++;
+        } catch (err) {
+          console.error(`[Procurement] Failed to persist RFQ email for vendor ${vendor?.id}:`, err);
+          itemsFailed++;
+        }
+      }
 
-        emailResults.push({
-          vendorId: vendor.id,
-          vendorName: vendor.name,
-          email: vendor.email,
-          invitationId: invitation.id,
-          emailId: email.id,
-          status: "queued",
-        });
-
-        itemsSucceeded++;
+      // If no emails were successfully generated and queued for any vendor, fail
+      // the step instead of marking the RFQ "sent" with nothing queued (which
+      // would make downstream monitoring report emails that don't exist).
+      if (emailResults.length === 0) {
+        return {
+          success: false,
+          error: "No RFQ emails could be generated or queued for any vendor.",
+        };
       }
 
       // Update RFQ status to sent

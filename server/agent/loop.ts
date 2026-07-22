@@ -31,7 +31,18 @@ export async function runAgent(
   options: { maxIterations?: number; userId?: number; companyId?: number } = {},
 ): Promise<AgentRunResult> {
   const maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
-  const tools = getTools();
+  // ERP tools plus Anthropic's server-side web search, so the agent can look up
+  // live public information (companies, vendors, prices, addresses, etc.) online
+  // and reason over it — not just the internal database.
+  const webSearchTool = {
+    type: "web_search_20250305",
+    name: "web_search",
+    max_uses: 8,
+  } as unknown as Anthropic.Tool;
+  const baseTools = getTools();
+  // Enabled by default; disabled at runtime if the model/account rejects the
+  // web_search server tool, so a run degrades to ERP-only instead of hard-failing.
+  let webSearchEnabled = true;
   const history = new MessageHistory();
   const startTime = Date.now();
 
@@ -60,13 +71,34 @@ export async function runAgent(
 
       logAgent({ level: "debug", runId, iteration: iterations, message: "Sending request to Claude" });
 
-      const response = await client.messages.create({
-        model: AGENT_MODEL,
-        max_tokens: 4096,
-        system: buildSystemPrompt(context),
-        tools,
-        messages: history.getMessages(),
-      });
+      const requestTools = webSearchEnabled ? [...baseTools, webSearchTool] : baseTools;
+      let response;
+      try {
+        response = await client.messages.create({
+          model: AGENT_MODEL,
+          max_tokens: 4096,
+          system: buildSystemPrompt(context),
+          tools: requestTools,
+          messages: history.getMessages(),
+        });
+      } catch (err) {
+        const msg = (err as Error).message || "";
+        // If the endpoint rejected the web_search server tool, drop it and retry
+        // ERP-only rather than failing the whole run. Other errors propagate.
+        if (webSearchEnabled && /web[_ ]?search/i.test(msg)) {
+          logAgent({ level: "warn", runId, iteration: iterations, message: "web_search unsupported — retrying without it" });
+          webSearchEnabled = false;
+          response = await client.messages.create({
+            model: AGENT_MODEL,
+            max_tokens: 4096,
+            system: buildSystemPrompt(context),
+            tools: baseTools,
+            messages: history.getMessages(),
+          });
+        } else {
+          throw err;
+        }
+      }
 
       const iterDuration = Date.now() - iterStart;
       const tokensUsed = (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0);
@@ -142,7 +174,37 @@ export async function runAgent(
         }
 
         history.push({ role: "user", content: toolResults });
+        continue;
       }
+
+      // Server-side tools (e.g. web search) can pause a long turn; the assistant
+      // content is already in history, so re-request to let the model continue.
+      if (response.stop_reason === "pause_turn") {
+        logAgent({ level: "debug", runId, iteration: iterations, message: "Turn paused (server tool) — continuing" });
+        // Record the pause so the persisted run timeline has no gaps.
+        await recordAgentStep({
+          runId,
+          iteration: iterations,
+          assistantMessage: textContent,
+          stopReason: "pause_turn",
+          tokensUsed,
+          durationMs: iterDuration,
+        });
+        continue;
+      }
+
+      // Any other terminal stop reason (max_tokens, stop_sequence, refusal, …):
+      // record it and stop rather than looping until max iterations.
+      logAgent({ level: "info", runId, iteration: iterations, durationMs: iterDuration, message: `Agent stopped (${response.stop_reason})` });
+      await recordAgentStep({
+        runId,
+        iteration: iterations,
+        assistantMessage: textContent,
+        stopReason: response.stop_reason ?? "unknown",
+        tokensUsed,
+        durationMs: iterDuration,
+      });
+      break;
     }
 
     const totalDuration = Date.now() - startTime;
