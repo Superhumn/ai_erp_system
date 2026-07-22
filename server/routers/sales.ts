@@ -10,8 +10,7 @@ export const salesRouter = router({
   // ============================================
   customers: router({
     list: protectedProcedure
-      .input(z.object({ companyId: z.number().optional() }).optional())
-      .query(({ input }) => db.getCustomers(input?.companyId)),
+      .query(() => db.getCustomers()),
     get: protectedProcedure
       .input(z.object({ id: z.number() }))
       .query(({ input }) => db.getCustomerById(input.id)),
