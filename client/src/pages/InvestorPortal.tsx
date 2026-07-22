@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -41,6 +42,7 @@ function formatShares(s: number | string | null | undefined): string {
 }
 
 export default function InvestorPortal() {
+  const { user } = useAuth();
   // Multi-entity: an investor with stakes in parent + JVs picks which
   // entity they're viewing. Default (undefined) → server picks the
   // earliest stakeholder row.
@@ -49,6 +51,22 @@ export default function InvestorPortal() {
   const { data: me, isLoading: meLoading, error: meError } = trpc.investorPortal.me.useQuery(queryInput);
   const { data: fin, isLoading: finLoading } = trpc.investorPortal.financials.useQuery(queryInput);
   const { data: updates } = trpc.investorPortal.updates.useQuery(queryInput);
+
+  // Client-side guard mirrors the vendor/copacker portals. Server endpoints
+  // are still the source of truth, but admins/exec can preview the view.
+  if (user && user.role !== "investor" && user.role !== "admin" && user.role !== "exec") {
+    return (
+      <div className="p-6">
+        <Card>
+          <CardContent className="py-12 text-center">
+            <p className="text-muted-foreground">
+              You don't have access to the Investor Portal.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   if (meLoading) {
     return (

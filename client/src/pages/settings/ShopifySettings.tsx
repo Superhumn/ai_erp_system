@@ -16,6 +16,7 @@ import {
   Settings,
   Loader2,
   Plus,
+  Pencil,
   Trash2,
   CheckCircle2,
   XCircle,
@@ -299,7 +300,8 @@ export default function ShopifySettings() {
                       <Label className="text-sm font-medium">Location Mappings</Label>
                       <AddLocationMappingButton storeId={store.id} />
                     </div>
-                    <p className="text-xs text-muted-foreground">Map Shopify fulfillment locations to ERP warehouses for inventory sync.</p>
+                    <p className="text-xs text-muted-foreground mb-3">Map Shopify fulfillment locations to ERP warehouses for inventory sync.</p>
+                    <LocationMappingTable storeId={store.id} />
                   </div>
                 </div>
               </CardContent>
@@ -357,6 +359,7 @@ function AddLocationMappingButton({ storeId }: { storeId: number }) {
   const [shopifyLocationId, setShopifyLocationId] = useState("");
   const [warehouseId, setWarehouseId] = useState("");
 
+  const utils = trpc.useUtils();
   const { data: warehouses } = trpc.warehouses.list.useQuery();
 
   const createMapping = trpc.shopify.locationMappings.create.useMutation({
@@ -365,6 +368,7 @@ function AddLocationMappingButton({ storeId }: { storeId: number }) {
       setOpen(false);
       setShopifyLocationId("");
       setWarehouseId("");
+      utils.shopify.locationMappings.list.invalidate({ storeId });
     },
     onError: (error: any) => toast.error(error.message),
   });
@@ -424,5 +428,161 @@ function AddLocationMappingButton({ storeId }: { storeId: number }) {
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+function LocationMappingTable({ storeId }: { storeId: number }) {
+  const utils = trpc.useUtils();
+  const { data: mappings, isLoading } = trpc.shopify.locationMappings.list.useQuery({ storeId });
+  const { data: warehouses } = trpc.warehouses.list.useQuery();
+
+  const warehouseName = (id: number) =>
+    warehouses?.find((w: any) => w.id === id)?.name ?? `#${id}`;
+
+  const invalidate = () => utils.shopify.locationMappings.list.invalidate({ storeId });
+
+  const updateMapping = trpc.shopify.locationMappings.update.useMutation({
+    onSuccess: invalidate,
+    onError: (error: any) => toast.error(error.message),
+  });
+  const deleteMapping = trpc.shopify.locationMappings.delete.useMutation({
+    onSuccess: () => { toast.success("Location mapping deleted"); invalidate(); },
+    onError: (error: any) => toast.error(error.message),
+  });
+
+  if (isLoading) {
+    return <div className="text-sm text-muted-foreground py-2">Loading location mappings...</div>;
+  }
+
+  if (!mappings || mappings.length === 0) {
+    return <p className="text-sm text-muted-foreground py-2">No location mappings configured yet.</p>;
+  }
+
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Shopify Location</TableHead>
+          <TableHead>Shopify Location ID</TableHead>
+          <TableHead>ERP Warehouse</TableHead>
+          <TableHead>Active</TableHead>
+          <TableHead className="text-right">Actions</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {mappings.map((mapping: any) => (
+          <LocationMappingRow
+            key={mapping.id}
+            mapping={mapping}
+            warehouses={warehouses}
+            warehouseName={warehouseName}
+            updateMapping={updateMapping}
+            deleteMapping={deleteMapping}
+          />
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+function LocationMappingRow({ mapping, warehouses, warehouseName, updateMapping, deleteMapping }: {
+  mapping: any;
+  warehouses: any[] | undefined;
+  warehouseName: (id: number) => string;
+  updateMapping: any;
+  deleteMapping: any;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(mapping.shopifyLocationName ?? "");
+  const [warehouseId, setWarehouseId] = useState(String(mapping.warehouseId));
+
+  const startEdit = () => {
+    setName(mapping.shopifyLocationName ?? "");
+    setWarehouseId(String(mapping.warehouseId));
+    setEditing(true);
+  };
+
+  const save = () => {
+    updateMapping.mutate(
+      {
+        id: mapping.id,
+        shopifyLocationName: name || undefined,
+        warehouseId: parseInt(warehouseId),
+      },
+      // Only leave edit mode once the update actually succeeds — otherwise a
+      // failed mutation would discard the user's edits.
+      { onSuccess: () => setEditing(false) },
+    );
+  };
+
+  if (editing) {
+    return (
+      <TableRow>
+        <TableCell>
+          <Input value={name} placeholder="Location name" onChange={(e) => setName(e.target.value)} />
+        </TableCell>
+        <TableCell className="font-mono text-sm">{mapping.shopifyLocationId}</TableCell>
+        <TableCell>
+          <Select value={warehouseId} onValueChange={setWarehouseId}>
+            <SelectTrigger><SelectValue placeholder="Select warehouse" /></SelectTrigger>
+            <SelectContent>
+              {warehouses?.map((w: any) => (
+                <SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </TableCell>
+        <TableCell>
+          <Switch
+            checked={!!mapping.isActive}
+            disabled={updateMapping.isPending}
+            onCheckedChange={(checked) => updateMapping.mutate({ id: mapping.id, isActive: checked })}
+            aria-label={mapping.isActive ? "Deactivate mapping" : "Activate mapping"}
+          />
+        </TableCell>
+        <TableCell>
+          <div className="flex">
+            <Button variant="ghost" size="icon" disabled={!warehouseId || updateMapping.isPending} onClick={save} aria-label="Save mapping">
+              <CheckCircle2 className="h-4 w-4 text-green-600" />
+            </Button>
+            <Button variant="ghost" size="icon" onClick={() => setEditing(false)} aria-label="Cancel edit">
+              <XCircle className="h-4 w-4 text-muted-foreground" />
+            </Button>
+          </div>
+        </TableCell>
+      </TableRow>
+    );
+  }
+
+  return (
+    <TableRow>
+      <TableCell>{mapping.shopifyLocationName || "—"}</TableCell>
+      <TableCell className="font-mono text-sm">{mapping.shopifyLocationId}</TableCell>
+      <TableCell>{warehouseName(mapping.warehouseId)}</TableCell>
+      <TableCell>
+        <Switch
+          checked={!!mapping.isActive}
+          disabled={updateMapping.isPending}
+          onCheckedChange={(checked) => updateMapping.mutate({ id: mapping.id, isActive: checked })}
+          aria-label={mapping.isActive ? "Deactivate mapping" : "Activate mapping"}
+        />
+      </TableCell>
+      <TableCell>
+        <div className="flex">
+          <Button variant="ghost" size="icon" onClick={startEdit} aria-label="Edit mapping">
+            <Pencil className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            disabled={deleteMapping.isPending}
+            onClick={() => deleteMapping.mutate({ id: mapping.id })}
+            aria-label="Delete mapping"
+          >
+            <Trash2 className="h-4 w-4 text-destructive" />
+          </Button>
+        </div>
+      </TableCell>
+    </TableRow>
   );
 }
