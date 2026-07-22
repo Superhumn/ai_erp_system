@@ -1,7 +1,8 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import * as db from "../db/code";
 import { router, adminProcedure } from "./middleware";
-import { processCodeAIRequest, executeCodeSandboxed, type CodeAction } from "../codeService";
+import { processCodeAIRequest, executeCodeSandboxed, isCodeExecutionEnabled, type CodeAction } from "../codeService";
 
 // NOTE: This is the live code router. It is mounted at `code` in the monolith
 // (server/routers.ts) and in the extracted tree (server/routers/index.ts).
@@ -75,6 +76,16 @@ export const codeRouter = router({
       snippetId: z.number().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
+      // Refuse early (before writing a record) if this deployment hasn't
+      // opted into server-side execution.
+      if (!isCodeExecutionEnabled()) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message:
+            "Code execution is disabled on this deployment. An administrator must set CODE_EXEC_ENABLED=true to enable it (runs code on the server host).",
+        });
+      }
+
       // Create execution record
       const exec = await db.createCodeExecution({
         userId: ctx.user.id,

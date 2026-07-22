@@ -128,6 +128,48 @@ export async function processCodeAIRequest(request: CodeAIRequest): Promise<Code
   };
 }
 
+/**
+ * Whether server-side code execution is permitted on this deployment.
+ *
+ * `execute` runs arbitrary code on the app server's host. There is no true
+ * sandbox available in this stack (production is a plain node:alpine
+ * container on Railway/Docker — no bwrap/nsjail/containers-per-run), so the
+ * only safe default is to keep it OFF in production and require an operator to
+ * consciously opt in.
+ *
+ * - `CODE_EXEC_ENABLED=true` (or `1`) force-enables it anywhere.
+ * - `CODE_EXEC_ENABLED=false` (or `0`) force-disables it anywhere.
+ * - Unset: enabled outside production (dev/test DX), disabled in production.
+ */
+export function isCodeExecutionEnabled(): boolean {
+  const flag = process.env.CODE_EXEC_ENABLED;
+  if (flag !== undefined) return flag === "true" || flag === "1";
+  return process.env.NODE_ENV !== "production";
+}
+
+/** Whether the operator asked us to drop the executed process into its own
+ * (network-less) namespace via util-linux `unshare`. Best-effort and opt-in —
+ * off by default because it depends on kernel/container privileges that aren't
+ * guaranteed. When on and `unshare` is present, executed code cannot reach the
+ * network (no exfiltration / SSRF / pivoting). */
+function wantsNetworkIsolation(): boolean {
+  const flag = process.env.CODE_EXEC_NETWORK_ISOLATION;
+  return flag === "true" || flag === "1";
+}
+
+let _unshareAvailable: boolean | null = null;
+async function unshareAvailable(): Promise<boolean> {
+  if (_unshareAvailable !== null) return _unshareAvailable;
+  try {
+    const { spawnSync } = await import("child_process");
+    const res = spawnSync("unshare", ["--version"], { timeout: 2000 });
+    _unshareAvailable = res.status === 0;
+  } catch {
+    _unshareAvailable = false;
+  }
+  return _unshareAvailable;
+}
+
 export async function executeCodeSandboxed(code: string, language: string): Promise<{
   output: string;
   errorOutput: string;
@@ -144,6 +186,17 @@ export async function executeCodeSandboxed(code: string, language: string): Prom
     sh: { cmd: "sh", args: ["-c"], fileExt: "sh" },
   };
 
+  // Secure-by-default gate. Refuse to run unless this deployment has opted in.
+  if (!isCodeExecutionEnabled()) {
+    return {
+      output: "",
+      errorOutput:
+        "Code execution is disabled on this deployment. An administrator must set CODE_EXEC_ENABLED=true to enable it (runs code on the server host).",
+      exitCode: 1,
+      executionTimeMs: 0,
+    };
+  }
+
   const config = langConfig[language.toLowerCase()];
   if (!config) {
     return {
@@ -156,70 +209,93 @@ export async function executeCodeSandboxed(code: string, language: string): Prom
 
   const TIMEOUT_MS = 30000; // 30 second timeout
 
-  // Run in an isolated temp directory so executed code can't read or clobber
-  // the app's working tree via relative paths.
   const os = await import("os");
-  const cwd = os.tmpdir();
+  const fs = await import("fs/promises");
+  const path = await import("path");
+
+  // Give each run its own throwaway working directory so code can't read or
+  // clobber the app tree — or another run — via relative paths. Cleaned up in
+  // `finally`.
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "code-exec-"));
 
   // Do NOT inherit the server's full environment — it holds DB credentials,
   // API keys, OAuth secrets, etc. Executed code runs on the host, so it must
-  // only see the minimum needed to locate the interpreter. This is not a real
-  // sandbox (no container/jail); it's least-privilege damage limitation.
+  // only see the minimum needed to locate the interpreter. This is
+  // least-privilege damage limitation, not a real jail.
   const minimalEnv: NodeJS.ProcessEnv = {
     PATH: process.env.PATH,
-    HOME: os.homedir(),
+    HOME: cwd,
     TMPDIR: cwd,
     LANG: process.env.LANG,
     NODE_NO_WARNINGS: "1",
+    // Cap heap for node/tsx runs so a run can't OOM the server host.
+    NODE_OPTIONS: "--max-old-space-size=256",
   };
 
-  return new Promise((resolve) => {
-    const startTime = Date.now();
-    let stdout = "";
-    let stderr = "";
-    let killed = false;
+  // Optionally drop the process into its own network namespace so executed
+  // code cannot reach the network. Best-effort: only if the operator opted in
+  // AND `unshare` is present; otherwise run without it.
+  let cmd = config.cmd;
+  let cmdArgs = [...config.args, code];
+  if (wantsNetworkIsolation() && (await unshareAvailable())) {
+    // --map-root-user lets this work without host privileges (user namespace);
+    // --net gives an isolated, network-less namespace.
+    cmdArgs = ["--net", "--map-root-user", "--", cmd, ...cmdArgs];
+    cmd = "unshare";
+  }
 
-    const proc = spawn(config.cmd, [...config.args, code], {
-      timeout: TIMEOUT_MS,
-      killSignal: "SIGKILL", // ensure runaway/timed-out processes are actually killed
-      cwd,
-      env: minimalEnv,
-    });
+  try {
+    return await new Promise((resolve) => {
+      const startTime = Date.now();
+      let stdout = "";
+      let stderr = "";
+      let killed = false;
 
-    proc.stdout.on("data", (data: Buffer) => {
-      stdout += data.toString();
-      if (stdout.length > 100000) {
-        proc.kill();
-        killed = true;
-      }
-    });
+      const proc = spawn(cmd, cmdArgs, {
+        timeout: TIMEOUT_MS,
+        killSignal: "SIGKILL", // ensure runaway/timed-out processes are actually killed
+        cwd,
+        env: minimalEnv,
+      });
 
-    proc.stderr.on("data", (data: Buffer) => {
-      stderr += data.toString();
-      if (stderr.length > 100000) {
-        proc.kill();
-        killed = true;
-      }
-    });
+      proc.stdout.on("data", (data: Buffer) => {
+        stdout += data.toString();
+        if (stdout.length > 100000) {
+          proc.kill("SIGKILL");
+          killed = true;
+        }
+      });
 
-    proc.on("close", (exitCode: number | null) => {
-      const executionTimeMs = Date.now() - startTime;
-      resolve({
-        output: stdout.slice(0, 100000),
-        errorOutput: killed ? stderr.slice(0, 100000) + "\n[Output truncated]" : stderr.slice(0, 100000),
-        exitCode: killed ? 137 : (exitCode ?? 1),
-        executionTimeMs,
+      proc.stderr.on("data", (data: Buffer) => {
+        stderr += data.toString();
+        if (stderr.length > 100000) {
+          proc.kill("SIGKILL");
+          killed = true;
+        }
+      });
+
+      proc.on("close", (exitCode: number | null) => {
+        const executionTimeMs = Date.now() - startTime;
+        resolve({
+          output: stdout.slice(0, 100000),
+          errorOutput: killed ? stderr.slice(0, 100000) + "\n[Output truncated]" : stderr.slice(0, 100000),
+          exitCode: killed ? 137 : (exitCode ?? 1),
+          executionTimeMs,
+        });
+      });
+
+      proc.on("error", (err: Error) => {
+        const executionTimeMs = Date.now() - startTime;
+        resolve({
+          output: "",
+          errorOutput: `Failed to execute: ${err.message}`,
+          exitCode: 1,
+          executionTimeMs,
+        });
       });
     });
-
-    proc.on("error", (err: Error) => {
-      const executionTimeMs = Date.now() - startTime;
-      resolve({
-        output: "",
-        errorOutput: `Failed to execute: ${err.message}`,
-        exitCode: 1,
-        executionTimeMs,
-      });
-    });
-  });
+  } finally {
+    // Always remove the throwaway working directory.
+    await fs.rm(cwd, { recursive: true, force: true }).catch(() => {});
+  }
 }
