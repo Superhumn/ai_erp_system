@@ -71,8 +71,16 @@ export function normalizeLinkedInUrl(raw: string): string | null {
 export function nameFromSlug(url: string): string {
   const match = url.match(/\/in\/([^/?#]+)/i);
   if (!match) return "";
+  // decodeURIComponent throws on malformed % sequences; fall back to the raw
+  // segment so a bad slug still yields a best-effort name instead of erroring.
+  let slug = match[1];
+  try {
+    slug = decodeURIComponent(slug);
+  } catch {
+    /* keep the raw, undecoded slug */
+  }
   return (
-    decodeURIComponent(match[1])
+    slug
       .split("-")
       // drop trailing id-ish segments (hex / digits) LinkedIn appends
       .filter(part => !/^[0-9a-f]{4,}$/i.test(part) && !/^\d+$/.test(part))
@@ -213,6 +221,37 @@ const OUTPUT_SCHEMA = {
   },
 } as const;
 
+/**
+ * Parse JSON from an LLM response. `invokeLLM` enforces the schema via prompt
+ * text only (not native structured output), so the model may wrap the object
+ * in a ```json fence or add stray prose — recover the object in those cases
+ * instead of failing straight to a slug-only result.
+ */
+export function parseLlmJson(raw: string): Partial<LinkedInCandidate> | null {
+  const tryParse = (s: string): Partial<LinkedInCandidate> | null => {
+    try {
+      const value = JSON.parse(s);
+      return value && typeof value === "object" ? value : null;
+    } catch {
+      return null;
+    }
+  };
+  const direct = tryParse(raw.trim());
+  if (direct) return direct;
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) {
+    const inner = tryParse(fenced[1].trim());
+    if (inner) return inner;
+  }
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start !== -1 && end > start) {
+    const sliced = tryParse(raw.slice(start, end + 1));
+    if (sliced) return sliced;
+  }
+  return null;
+}
+
 export async function importCandidateFromLinkedIn(
   rawUrl: string
 ): Promise<LinkedInImportResult> {
@@ -256,8 +295,8 @@ export async function importCandidateFromLinkedIn(
       maxTokens: 1024,
     });
     const raw = response.choices[0]?.message?.content;
-    if (typeof raw === "string" && raw.trim()) {
-      const parsed = JSON.parse(raw) as Partial<LinkedInCandidate>;
+    const parsed = typeof raw === "string" ? parseLlmJson(raw) : null;
+    if (parsed) {
       extracted = {
         name: (parsed.name || slugName || "").trim(),
         email: (parsed.email || "").trim(),

@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { normalizeLinkedInUrl, nameFromSlug } from "./linkedinCandidateService";
+import {
+  normalizeLinkedInUrl,
+  nameFromSlug,
+  parseLlmJson,
+} from "./linkedinCandidateService";
 
 describe("normalizeLinkedInUrl", () => {
   it("accepts a canonical profile URL", () => {
@@ -109,5 +113,50 @@ describe("nameFromSlug", () => {
 
   it("returns empty string when there is no /in/ segment", () => {
     expect(nameFromSlug("https://www.linkedin.com/company/acme")).toBe("");
+  });
+
+  it("does not throw on malformed percent-encoding", () => {
+    // `%zz` is not valid encoding; decodeURIComponent would throw.
+    expect(() =>
+      nameFromSlug("https://www.linkedin.com/in/jane%zz-doe")
+    ).not.toThrow();
+    expect(nameFromSlug("https://www.linkedin.com/in/jane%zz-doe")).toBe(
+      "Jane%zz Doe"
+    );
+  });
+});
+
+describe("parseLlmJson", () => {
+  it("parses a plain JSON object", () => {
+    expect(parseLlmJson('{"name":"Jane Doe"}')).toEqual({ name: "Jane Doe" });
+  });
+
+  it("parses JSON wrapped in a ```json code fence", () => {
+    const raw = '```json\n{"name":"Jane Doe","position":"Engineer"}\n```';
+    expect(parseLlmJson(raw)).toEqual({
+      name: "Jane Doe",
+      position: "Engineer",
+    });
+  });
+
+  it("parses JSON wrapped in a bare code fence", () => {
+    expect(parseLlmJson('```\n{"name":"Jane"}\n```')).toEqual({ name: "Jane" });
+  });
+
+  it("recovers a JSON object embedded in prose", () => {
+    const raw = 'Here is the candidate: {"name":"Jane Doe"} — hope that helps!';
+    expect(parseLlmJson(raw)).toEqual({ name: "Jane Doe" });
+  });
+
+  it("returns null for non-JSON text", () => {
+    expect(parseLlmJson("I could not find any information.")).toBeNull();
+  });
+
+  it("returns null for a JSON primitive (not an object)", () => {
+    expect(parseLlmJson('"just a string"')).toBeNull();
+  });
+
+  it("returns null for empty input", () => {
+    expect(parseLlmJson("")).toBeNull();
   });
 });
