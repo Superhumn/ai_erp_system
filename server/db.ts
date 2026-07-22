@@ -1551,16 +1551,18 @@ export async function replacePurchaseOrderItems(
   });
 
   // Pre-resolve raw-material links outside the transaction (reads of unrelated
-  // tables) so the write transaction stays short.
+  // tables) so the write transaction stays short. The per-item lookups are
+  // independent, so run them concurrently instead of a sequential N+1 chain.
   const linkByIndex = new Map<number, { rawMaterialId: number; unit: string }>();
-  for (let i = 0; i < normalized.length; i++) {
-    const pid = normalized[i].productId;
-    if (!pid) continue;
-    const product = await getProductById(pid);
-    if (!product) continue;
-    const rawMaterial = await getRawMaterialByNameOrSku(product.name, product.sku || "");
-    if (rawMaterial) linkByIndex.set(i, { rawMaterialId: rawMaterial.id, unit: rawMaterial.unit || "EA" });
-  }
+  await Promise.all(
+    normalized.map(async (n, i) => {
+      if (!n.productId) return;
+      const product = await getProductById(n.productId);
+      if (!product) return;
+      const rawMaterial = await getRawMaterialByNameOrSku(product.name, product.sku || "");
+      if (rawMaterial) linkByIndex.set(i, { rawMaterialId: rawMaterial.id, unit: rawMaterial.unit || "EA" });
+    }),
+  );
 
   await db.transaction(async (tx) => {
     const existing = await tx
@@ -1614,8 +1616,11 @@ export async function setPurchaseOrderReceivedQuantities(
   // Validate every received quantity up front — reject non-numeric / negative
   // values so bad input can't corrupt the stored quantity or the status
   // recomputation below.
+  // Strict parse (not parseFloat, which accepts "10abc" -> 10) so malformed
+  // quantities are rejected rather than silently coerced into the DECIMAL column.
   const clean = received.map((r) => {
-    const qty = parseFloat(r.receivedQuantity);
+    const t = String(r.receivedQuantity ?? "").trim();
+    const qty = /^-?\d+(\.\d+)?$/.test(t) ? Number(t) : NaN;
     if (!Number.isFinite(qty) || qty < 0) {
       throw new Error(`Invalid received quantity for item ${r.purchaseOrderItemId}.`);
     }
