@@ -56,9 +56,6 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
-
       - name: Deploy to Staging (Railway CLI, optional)
         # App deploys are handled by Railway's native GitHub integration.
         # This CLI step is a best-effort fallback: it runs only if a token is
@@ -70,6 +67,10 @@ jobs:
             echo "No RAILWAY_TOKEN set — skipping CLI deploy; Railway's GitHub integration handles deploys."
             exit 0
           fi
+          npm install -g @railway/cli || {
+            echo "::warning::Railway CLI install failed. Deferring to Railway's GitHub integration."
+            exit 0
+          }
           rc=0
           if [ -n "$RAILWAY_SERVICE_ID" ]; then
             railway up --service "$RAILWAY_SERVICE_ID" || rc=$?
@@ -123,9 +124,6 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
-
       - name: Deploy to Production (Railway CLI, optional)
         # App deploys are handled by Railway's native GitHub integration.
         # This CLI step is a best-effort fallback: it runs only if a token is
@@ -137,6 +135,10 @@ jobs:
             echo "No RAILWAY_TOKEN set — skipping CLI deploy; Railway's GitHub integration handles deploys."
             exit 0
           fi
+          npm install -g @railway/cli || {
+            echo "::warning::Railway CLI install failed. Deferring to Railway's GitHub integration."
+            exit 0
+          }
           rc=0
           if [ -n "$RAILWAY_SERVICE_ID" ]; then
             railway up --service "$RAILWAY_SERVICE_ID" || rc=$?
