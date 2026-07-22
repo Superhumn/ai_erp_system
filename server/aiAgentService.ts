@@ -27,6 +27,17 @@ import {
 } from "../drizzle/schema";
 import { eq, and, like, desc, sql, gte, lte, or, isNull, isNotNull, count, sum, lt, inArray } from "drizzle-orm";
 
+// Roles allowed to have the agent MUTATE ERP data (create POs, change inventory,
+// send email, etc.) — mirrors opsProcedure. Reads/Q&A stay open to all roles.
+// Because the chat's mode is client-controlled, this server-side check is what
+// actually prevents a non-ops user (or scripted client) from driving writes.
+const MUTATION_ROLES = ["admin", "ops", "exec"];
+function assertCanMutate(ctx: AIAgentContext, action: string): void {
+  if (!MUTATION_ROLES.includes(ctx.userRole)) {
+    throw new Error(`Not authorized: "${action}" requires an operations, admin, or executive role.`);
+  }
+}
+
 // ============================================
 // AI AGENT SERVICE - Comprehensive ERP Integration
 // ============================================
@@ -740,6 +751,7 @@ async function executeAnalyzeData(params: any, ctx: AIAgentContext): Promise<any
 }
 
 async function executeSendEmail(params: any, ctx: AIAgentContext): Promise<any> {
+  assertCanMutate(ctx, "send email");
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
@@ -892,6 +904,7 @@ async function executeTrackItems(params: any, ctx: AIAgentContext): Promise<any>
 }
 
 async function executeUpdateInventory(params: any, ctx: AIAgentContext): Promise<any> {
+  assertCanMutate(ctx, "update inventory");
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
@@ -908,8 +921,11 @@ async function executeUpdateInventory(params: any, ctx: AIAgentContext): Promise
   // Apply a signed delta to one (product, warehouse) cell within a transaction.
   // Rejects any move that would drop a location below zero on-hand.
   const applyDelta = async (tx: any, product: number, warehouse: number, change: number) => {
+    // Lock the (product, warehouse) row for the duration of the transaction so
+    // concurrent adjustments can't both read the same value and lose an update
+    // (or slip past the non-negative check).
     const existing = await tx.select().from(inventory)
-      .where(and(eq(inventory.productId, product), eq(inventory.warehouseId, warehouse))).limit(1);
+      .where(and(eq(inventory.productId, product), eq(inventory.warehouseId, warehouse))).limit(1).for("update");
     if (existing.length > 0) {
       const current = parseFloat(existing[0].quantity as string) || 0;
       const next = current + change;
@@ -994,6 +1010,7 @@ async function executeManageVendor(params: any, ctx: AIAgentContext): Promise<an
     }
 
     case "create": {
+      assertCanMutate(ctx, "create vendor");
       if (!data?.name) throw new Error("Vendor name required");
       const newVendor = await db.insert(vendors).values({
         name: data.name,
@@ -1006,6 +1023,7 @@ async function executeManageVendor(params: any, ctx: AIAgentContext): Promise<an
     }
 
     case "update": {
+      assertCanMutate(ctx, "update vendor");
       if (!vendorId) throw new Error("Vendor ID required");
       await db.update(vendors).set(data).where(eq(vendors.id, vendorId));
       return { updated: true, vendorId };
@@ -1038,6 +1056,7 @@ async function executeManageVendor(params: any, ctx: AIAgentContext): Promise<an
 }
 
 async function executeCreatePurchaseOrder(params: any, ctx: AIAgentContext): Promise<any> {
+  assertCanMutate(ctx, "create purchase order");
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
@@ -1142,6 +1161,7 @@ async function executeManageCopacker(params: any, ctx: AIAgentContext): Promise<
     }
 
     case "create_work_order": {
+      assertCanMutate(ctx, "create work order");
       if (!workOrderData) throw new Error("Work order data required");
       const { bomId, productId, quantity, unit, priority, dueDate, notes } = workOrderData;
       if (!bomId || !productId || quantity == null) {
@@ -1287,6 +1307,7 @@ async function executeManageFreight(params: any, ctx: AIAgentContext): Promise<a
     }
 
     case "create_rfq": {
+      assertCanMutate(ctx, "create freight RFQ");
       if (!rfqData?.title) throw new Error("Freight RFQ requires a title");
       // Create the RFQ for real (draft). Live approval is Plan-first mode.
       const rfq = await createFreightRfq({ ...rfqData, status: rfqData.status || "draft", createdById: ctx.userId });
