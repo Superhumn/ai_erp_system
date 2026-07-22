@@ -72,7 +72,7 @@ async function mapWithConcurrency<T, R>(
 
 /** Generate the AI RFQ email (subject + body) for a single vendor. */
 async function generateRfqEmailContent(
-  vendor: any,
+  vendor: typeof vendors.$inferSelect,
   ctx: {
     rfqNumber: string;
     materialName: string;
@@ -3036,7 +3036,7 @@ Return vendor IDs in order of preference.`;
       // bounded concurrency) instead of one blocking call per vendor in series.
       // Failures are captured per-vendor so one bad generation doesn't discard
       // the emails that succeeded (mirrors the original per-vendor resilience).
-      const generatedEmails = await mapWithConcurrency(selectedVendors as any[], 5, async (vendor: any) => {
+      const generatedEmails = await mapWithConcurrency(selectedVendors as (typeof vendors.$inferSelect)[], 5, async (vendor) => {
         try {
           const emailContent = await generateRfqEmailContent(vendor, {
             rfqNumber,

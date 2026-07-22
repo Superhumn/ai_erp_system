@@ -126,10 +126,10 @@ function generateSalt(): string {
  */
 async function verifyPassword(password: string, salt: string, hash: string): Promise<{ valid: boolean; needsUpgrade: boolean }> {
   try {
-    // Decode the stored hash once. A malformed stored hash (non-hex / odd
-    // length) would otherwise make timingSafeEqual throw on a length mismatch;
-    // comparing decoded buffer lengths and catching below turns that into a
-    // clean "invalid password" instead of a 500.
+    // Decode the stored hash once and compare fixed-length buffers. The length
+    // is checked before timingSafeEqual (which requires equal-length inputs),
+    // and the surrounding try/catch defensively treats any malformed stored
+    // hash as an authentication failure rather than surfacing a 500.
     const stored = Buffer.from(hash, "hex");
 
     const candidate = Buffer.from(await hashPasswordWithIterations(password, salt, HASH_ITERATIONS), "hex");
