@@ -2960,7 +2960,10 @@ Return vendor IDs in order of preference.`;
 
       // Generate all vendor RFQ emails in parallel (independent LLM calls,
       // bounded concurrency) instead of one blocking call per vendor in series.
+      // Failures are captured per-vendor so one bad generation doesn't discard
+      // the emails that succeeded (mirrors the original per-vendor resilience).
       const generatedEmails = await mapWithConcurrency(selectedVendors as any[], 5, async (vendor: any) => {
+        try {
         // Generate AI-powered email content
         const emailPrompt = `Generate a professional RFQ email to vendor:
 Vendor Name: ${vendor.name}
@@ -3010,11 +3013,20 @@ Generate a professional, concise email requesting a quote.`;
 
         const content = aiEmail.choices[0].message.content;
         const emailContent = JSON.parse(typeof content === "string" ? content : "{}");
-        return { vendor, emailContent };
+        return { vendor, emailContent, ok: true as const };
+        } catch (err) {
+          console.error(`[Procurement] Failed to generate RFQ email for vendor ${vendor?.id}:`, err);
+          return { vendor, ok: false as const };
+        }
       });
 
       // Persist invitations and email records sequentially (ordered writes + counter).
-      for (const { vendor, emailContent } of generatedEmails) {
+      for (const result of generatedEmails) {
+        if (!result.ok) {
+          itemsFailed++;
+          continue;
+        }
+        const { vendor, emailContent } = result;
         // Create invitation record
         const [invitation] = await db
           .insert(vendorRfqInvitations)
