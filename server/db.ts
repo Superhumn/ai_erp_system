@@ -469,6 +469,13 @@ export async function getCompanyById(id: number) {
   return result[0];
 }
 
+export async function getCompaniesByIds(ids: number[]) {
+  const db = await getDb();
+  if (!db) return [];
+  if (ids.length === 0) return [];
+  return db.select().from(companies).where(inArray(companies.id, ids));
+}
+
 export async function createCompany(data: InsertCompany) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -568,6 +575,13 @@ export async function getCustomerByShopifyId(shopifyId: string) {
   if (!db) return undefined;
   const result = await db.select().from(customers).where(eq(customers.shopifyCustomerId, shopifyId)).limit(1);
   return result[0];
+}
+
+export async function getCustomersByShopifyIds(shopifyIds: string[]) {
+  const db = await getDb();
+  if (!db) return [];
+  if (shopifyIds.length === 0) return [];
+  return db.select().from(customers).where(inArray(customers.shopifyCustomerId, shopifyIds));
 }
 
 export async function getCustomerByHubspotId(hubspotId: string) {
@@ -728,6 +742,13 @@ export async function getProductById(id: number) {
   if (!db) return undefined;
   const result = await db.select().from(products).where(eq(products.id, id)).limit(1);
   return result[0];
+}
+
+export async function getProductsByIds(ids: number[]) {
+  const db = await getDb();
+  if (!db) return [];
+  if (ids.length === 0) return [];
+  return db.select().from(products).where(inArray(products.id, ids));
 }
 
 export async function getProductBySku(sku: string) {
@@ -2421,6 +2442,13 @@ export async function getFreightCarrierById(id: number) {
   return result[0];
 }
 
+export async function getFreightCarriersByIds(ids: number[]) {
+  const db = await getDb();
+  if (!db) return [];
+  if (ids.length === 0) return [];
+  return db.select().from(freightCarriers).where(inArray(freightCarriers.id, ids));
+}
+
 export async function createFreightCarrier(data: InsertFreightCarrier) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -3532,6 +3560,13 @@ export async function getRawMaterialById(id: number) {
 
   const result = await db.select().from(rawMaterials).where(eq(rawMaterials.id, id)).limit(1);
   return result[0];
+}
+
+export async function getRawMaterialsByIds(ids: number[]) {
+  const db = await getDb();
+  if (!db) return [];
+  if (ids.length === 0) return [];
+  return db.select().from(rawMaterials).where(inArray(rawMaterials.id, ids));
 }
 
 export async function getRawMaterialByNameOrSku(name: string, sku: string) {
@@ -5885,6 +5920,46 @@ export async function getSyncHistory(limit: number = 50) {
     .from(syncLogs)
     .orderBy(desc(syncLogs.createdAt))
     .limit(limit);
+}
+
+// Pending (in-progress) sync logs for an integration, newest first. Used to
+// find a user's still-running background job without being limited by a global
+// recency window. Only actively-running jobs carry the "pending" status, so
+// this set is naturally small.
+export async function getPendingSyncLogs(integration: string, limit: number = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return await db.select()
+    .from(syncLogs)
+    .where(and(eq(syncLogs.integration, integration), eq(syncLogs.status, 'pending')))
+    .orderBy(desc(syncLogs.createdAt))
+    .limit(limit);
+}
+
+// Fetch a single sync log by id — used to poll the status of a background job.
+export async function getSyncLog(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db.select()
+    .from(syncLogs)
+    .where(eq(syncLogs.id, id))
+    .limit(1);
+  return row ?? null;
+}
+
+// Update a sync log row in place. Background jobs use this to record progress
+// (metadata) and to flip status from "pending" to a terminal state on finish.
+export async function updateSyncLog(id: number, data: {
+  status?: 'success' | 'error' | 'warning' | 'pending';
+  details?: string;
+  recordsProcessed?: number;
+  recordsFailed?: number;
+  errorMessage?: string;
+  metadata?: Record<string, unknown>;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(syncLogs).set(data).where(eq(syncLogs.id, id));
 }
 
 export async function clearSyncHistory() {

@@ -23,6 +23,8 @@ vi.mock("./db", () => ({
   createRawMaterial: vi.fn(async () => ({ id: 30 })),
   updateRawMaterial: vi.fn(async () => {}),
   createFreightHistory: vi.fn(async () => ({ id: 40 })),
+  // Touched by importWhatsappDocumentToErp for shipment linkage
+  findShipmentByTracking: vi.fn(async () => null),
 }));
 
 // ── Mock the LLM so parseUploadedDocument returns deterministic structured data
@@ -30,7 +32,7 @@ vi.mock("./_core/llm", () => ({
   invokeLLM: vi.fn(),
 }));
 
-import { importEmailAttachmentToErp } from "./documentImportService";
+import { importEmailAttachmentToErp, importWhatsappDocumentToErp, isParseableDocumentMime } from "./documentImportService";
 import { invokeLLM } from "./_core/llm";
 import * as db from "./db";
 
@@ -149,5 +151,92 @@ describe("importEmailAttachmentToErp — document-type routing", () => {
     expect(db.createParsedDocument).toHaveBeenCalledWith(
       expect.objectContaining({ documentType: "other" })
     );
+  });
+});
+
+const whatsappOpts = {
+  whatsappMessageId: 42,
+  content: `data:text/csv;base64,${Buffer.from("csv,content").toString("base64")}`,
+  filename: "doc.csv",
+  mimeType: "text/csv",
+  fromNumber: "+15551234567",
+};
+
+describe("importWhatsappDocumentToErp — WhatsApp intake parity", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (db.findShipmentByTracking as any).mockResolvedValue(null);
+  });
+
+  it("routes a vendor invoice through the same importers as the email path", async () => {
+    mockParse("vendor_invoice", { vendorInvoice: VENDOR_INVOICE });
+    const result = await importWhatsappDocumentToErp(whatsappOpts);
+
+    expect(result.documentType).toBe("vendor_invoice");
+    // Persists a parsedDocument NOT linked to any email/attachment, tagged as WhatsApp-sourced.
+    expect(db.createParsedDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        documentType: "invoice",
+        documentNumber: "INV-2002",
+        emailId: null,
+        attachmentId: null,
+        notes: expect.stringContaining("WhatsApp"),
+      })
+    );
+    expect(db.createParsedDocumentLineItem).toHaveBeenCalledTimes(VENDOR_INVOICE.lineItems.length);
+    // No email-attachment side effects on the WhatsApp path.
+    expect(db.updateEmailAttachment).not.toHaveBeenCalled();
+  });
+
+  it("routes a purchase order and creates the PO record", async () => {
+    mockParse("purchase_order", { purchaseOrder: PO });
+    const result = await importWhatsappDocumentToErp(whatsappOpts);
+
+    expect(result.documentType).toBe("purchase_order");
+    expect(db.createPurchaseOrder).toHaveBeenCalled();
+    expect(db.createParsedDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ documentType: "purchase_order", documentNumber: "PO-1001" })
+    );
+  });
+
+  it("links a freight document to an existing shipment by tracking number", async () => {
+    (db.findShipmentByTracking as any).mockResolvedValue({ id: 77 });
+    mockParse("freight_invoice", { freightInvoice: FREIGHT_INVOICE });
+    const result = await importWhatsappDocumentToErp(whatsappOpts);
+
+    expect(result.documentType).toBe("freight_invoice");
+    expect(db.findShipmentByTracking).toHaveBeenCalledWith("TRK-9");
+    expect(db.createParsedDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ trackingNumber: "TRK-9", shipmentId: 77 })
+    );
+  });
+
+  it("returns a failure without persisting when parsing fails", async () => {
+    (invokeLLM as any).mockResolvedValueOnce({ choices: [{ message: { content: "not json" } }] });
+    const result = await importWhatsappDocumentToErp(whatsappOpts);
+
+    expect(result.success).toBe(false);
+    expect(db.createParsedDocument).not.toHaveBeenCalled();
+  });
+
+  it("skips non-document media without an LLM call (guard enforced internally)", async () => {
+    const result = await importWhatsappDocumentToErp({ ...whatsappOpts, mimeType: "audio/ogg" });
+
+    expect(result.success).toBe(false);
+    expect(invokeLLM).not.toHaveBeenCalled();
+    expect(db.createParsedDocument).not.toHaveBeenCalled();
+  });
+});
+
+describe("isParseableDocumentMime", () => {
+  it("accepts documents/images the parser can read", () => {
+    for (const m of ["application/pdf", "image/jpeg", "image/png", "text/csv", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]) {
+      expect(isParseableDocumentMime(m)).toBe(true);
+    }
+  });
+  it("rejects media that can never be a business document", () => {
+    for (const m of ["audio/ogg", "video/mp4", "text/vcard", undefined]) {
+      expect(isParseableDocumentMime(m)).toBe(false);
+    }
   });
 });

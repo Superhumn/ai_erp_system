@@ -61,7 +61,12 @@ import { getYouTubeAuthUrl } from "./_core/youtube";
 import { encrypt, decrypt } from "./_core/crypto";
 import { ENV } from "./_core/env";
 import { reassignProjectTaskToHuman, createProjectTaskFromSource } from "./taskAgentBridge";
-import { createDecipheriv, createHash } from "crypto";
+import { createDecipheriv, createHash, scrypt, randomBytes, timingSafeEqual } from "crypto";
+import { promisify } from "util";
+
+// Promisified scrypt, created once at module scope so the (hot) share-link auth
+// helpers below don't re-require modules or re-wrap scrypt on every call.
+const scryptAsync = promisify(scrypt);
 
 /**
  * Expose a lightweight `hasStoredContent` flag the UI uses to decide whether the
@@ -290,6 +295,287 @@ export function detectSheetType(headers: string[]): string {
   return 'unknown';
 }
 
+export type DriveSyncResult = { sheet: string; type: string; imported: number; errors: string[] };
+
+// Read every (selected) spreadsheet from the user's Google Drive and import its
+// rows into the matching ERP tables. Extracted from the syncGoogleDrive mutation
+// so it can run either inline (awaited) or detached as a background job. The
+// optional onProgress callback is invoked after each sheet so a background runner
+// can persist partial progress — letting the client reconnect to a running import
+// after navigating away from the Import page.
+async function importDriveFiles(opts: {
+  userId: number;
+  accessToken: string;
+  forcedTypes: Map<string, string> | null;
+  onProgress?: (p: { results: DriveSyncResult[]; totalSheets: number; processedSheets: number; currentFile?: string }) => Promise<void> | void;
+}): Promise<{ results: DriveSyncResult[]; totalSheets: number }> {
+  const { accessToken, forcedTypes, onProgress } = opts;
+  const results: DriveSyncResult[] = [];
+
+  // 1. List all Google Sheets in Drive
+  const sheetsResponse = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q=(mimeType='application/vnd.google-apps.spreadsheet' or mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or mimeType='text/csv')&fields=files(id,name,modifiedTime,mimeType)&orderBy=modifiedTime desc&pageSize=100`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (!sheetsResponse.ok) {
+    throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list Google Sheets from Drive' });
+  }
+  const sheetsData = await sheetsResponse.json();
+  let files = sheetsData.files || [];
+  // Only import the confirmed files when selections were supplied.
+  if (forcedTypes) files = files.filter((f: any) => forcedTypes.has(f.id));
+
+  const totalSheets = files.length;
+
+  // 2. For each spreadsheet, read the first sheet, detect type, and import
+  for (const file of files) {
+    try {
+      const dataResponse = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${file.id}/values/Sheet1?majorDimension=ROWS`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      let data: any;
+      if (!dataResponse.ok) {
+        // Try without sheet name (default first sheet)
+        const fallbackResponse = await fetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${file.id}/values/A:ZZ?majorDimension=ROWS`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+        if (!fallbackResponse.ok) {
+          results.push({ sheet: file.name, type: 'error', imported: 0, errors: ['Could not read sheet data'] });
+          await onProgress?.({ results, totalSheets, processedSheets: results.length, currentFile: file.name });
+          continue;
+        }
+        data = await fallbackResponse.json();
+      } else {
+        data = await dataResponse.json();
+      }
+
+      const rows = data.values || [];
+      if (rows.length < 2) {
+        results.push({ sheet: file.name, type: 'skipped', imported: 0, errors: ['No data rows found'] });
+        await onProgress?.({ results, totalSheets, processedSheets: results.length, currentFile: file.name });
+        continue;
+      }
+
+      const headers: string[] = rows[0].map((h: string) => h.toLowerCase().trim());
+      const dataRows: string[][] = rows.slice(1);
+
+      // Use the user-confirmed type when supplied, else auto-detect.
+      const type = forcedTypes?.get(file.id) ?? detectSheetType(headers);
+
+      if (!(DRIVE_SUPPORTED_TYPES as readonly string[]).includes(type)) {
+        results.push({ sheet: file.name, type, imported: 0, errors: type === 'unknown' ? ['Could not detect data type from headers'] : ['Auto-import not supported for this type'] });
+        await onProgress?.({ results, totalSheets, processedSheets: results.length, currentFile: file.name });
+        continue;
+      }
+
+      let imported = 0;
+      const errors: string[] = [];
+
+      for (const row of dataRows) {
+        try {
+          const record: Record<string, string> = {};
+          headers.forEach((h: string, i: number) => { record[h] = row[i] || ''; });
+
+          switch (type) {
+            case 'vendors': {
+              const name = record.name || record.vendor || record.company || record['vendor name'];
+              if (!name) { errors.push(`Row ${imported + 1}: Missing vendor name`); continue; }
+              await db.createVendor({
+                name,
+                email: record.email || record['email address'] || null,
+                phone: record.phone || record.telephone || null,
+                address: record.address || null,
+                city: record.city || null,
+                state: record.state || null,
+                country: record.country || null,
+              });
+              imported++;
+              break;
+            }
+            case 'customers': {
+              const name = record.name || record.customer || record.company || record['customer name'];
+              if (!name) { errors.push(`Row ${imported + 1}: Missing customer name`); continue; }
+              await db.createCustomer({
+                name,
+                email: record.email || null,
+                phone: record.phone || null,
+                address: record.address || null,
+                city: record.city || null,
+                state: record.state || null,
+              });
+              imported++;
+              break;
+            }
+            case 'products': {
+              const name = record.name || record.product || record.item || record.description;
+              if (!name) { errors.push(`Row ${imported + 1}: Missing product name`); continue; }
+              const sku = record.sku || record['product code'] || record.code || generateNumber('PROD');
+              await db.createProduct({
+                name,
+                sku,
+                unitPrice: record.price || record['unit price'] || record.cost || record.rate || '0',
+                category: record.category || record.type || null,
+                description: record.description || record.notes || null,
+              });
+              imported++;
+              break;
+            }
+            case 'employees': {
+              const firstName = record['first name'] || record.firstname || record['first'];
+              const lastName = record['last name'] || record.lastname || record['last'];
+              if (!firstName || !lastName) { errors.push(`Row ${imported + 1}: Missing first/last name`); continue; }
+              const employeeNumber = generateNumber('EMP');
+              await db.createEmployee({
+                employeeNumber,
+                firstName,
+                lastName,
+                email: record.email || null,
+                phone: record.phone || null,
+                jobTitle: record.title || record.position || record['job title'] || null,
+              });
+              imported++;
+              break;
+            }
+            case 'raw_materials': {
+              const name = record.name || record.ingredient || record.material || record['material name'];
+              if (!name) { errors.push(`Row ${imported + 1}: Missing material name`); continue; }
+              await db.createRawMaterial({
+                name,
+                sku: record.sku || record.code || `RM-${Date.now().toString(36)}-${imported}`,
+                unit: record.unit || record.uom || 'kg',
+                unitCost: record.cost || record['unit cost'] || record.price || '0',
+              });
+              imported++;
+              break;
+            }
+            case 'crm_contacts': {
+              const name = record.name || record.contact || record['contact name'] || record['full name'] || record.company || `Contact ${imported + 1}`;
+              const firstName = name.split(' ')[0] || name;
+              const lastName = name.split(' ').slice(1).join(' ') || '';
+              const { created } = await db.findOrCreateCrmContact({
+                firstName,
+                lastName,
+                fullName: name,
+                email: record.email || record['email address'] || undefined,
+                phone: record.phone || record.mobile || undefined,
+                organization: record.company || record.organization || record.firm || undefined,
+                jobTitle: record.title || record.position || record.role || undefined,
+                source: 'import',
+                notes: record.notes || record.comments || undefined,
+                status: (record.status === 'active' || record.status === 'inactive') ? record.status as any : 'active',
+              });
+              if (created) imported++;
+              break;
+            }
+            case 'crm_deals': {
+              // Find or create default pipeline
+              let pipelineId = 1;
+              try {
+                const pipelines = await db.getCrmPipelines();
+                if (!pipelines || pipelines.length === 0) {
+                  pipelineId = await db.createCrmPipeline({ name: 'Sales Pipeline', stages: JSON.stringify(['discovery','qualified','proposal','negotiation','closed_won','closed_lost']) });
+                } else {
+                  pipelineId = pipelines[0].id;
+                }
+              } catch {}
+
+              // Resolve company name — that's the deal title.
+              const company = (record.company || record.organization || record.account || record.client || record.name || record.deal || record.opportunity || '').toString().trim();
+              if (!company) { imported++; break; }
+
+              // Skip duplicates — by existing deal or already-pending approval task.
+              if (await db.findCrmDealByCompany(company)) { imported++; break; }
+              if (await db.hasPendingDealApprovalForCompany(company)) { imported++; break; }
+
+              // Create a placeholder contact tied to that company.
+              let contactId: number;
+              try {
+                const { id } = await db.findOrCreateCrmContact({
+                  firstName: company,
+                  lastName: '',
+                  fullName: company,
+                  organization: company,
+                  source: 'import',
+                  contactType: 'lead',
+                });
+                contactId = id;
+              } catch {
+                contactId = 1;
+              }
+
+              const taskData = {
+                pipelineId,
+                contactId,
+                company,
+                stage: record.stage || record.status || 'discovery',
+                amount: record.amount || record.value || record['deal size'] || undefined,
+                source: 'google_sheets',
+                notes: record.notes || undefined,
+              };
+              await db.createAiAgentTask({
+                taskType: 'create_crm_deal',
+                priority: 'medium',
+                status: 'pending_approval',
+                taskData: JSON.stringify(taskData),
+                aiReasoning: `Imported CRM deal for "${company}" from Google Sheets — pending approval.`,
+                aiConfidence: '90.00',
+              });
+              imported++;
+              break;
+            }
+            case 'fundraising': {
+              // Create investor stakeholder
+              const investorName = record.name || record.investor || record['investor name'] || record.fund || `Investor ${imported + 1}`;
+              await db.createStakeholder({
+                name: investorName,
+                email: record.email || undefined,
+                type: 'investor',
+                relationship: record.fund || record.firm || record.company || undefined,
+                notes: record.notes || record.status || undefined,
+                accreditedInvestor: true,
+              });
+
+              // If there's an amount, also create an investment commitment
+              const rawAmount = record.amount || record.commitment || record['investment amount'] || record.invested;
+              if (rawAmount) {
+                try {
+                  const cleanAmount = String(rawAmount).replace(/[$,]/g, '');
+                  const instrumentRaw = (record.instrument || record.type || record['security type'] || 'safe').toLowerCase();
+                  await db.createInvestmentCommitment({
+                    investorName,
+                    investorEmail: record.email || '',
+                    investorCompany: record.fund || record.firm || record.company || undefined,
+                    investmentAmount: cleanAmount,
+                    instrumentType: instrumentRaw.includes('safe') ? 'safe' : 'equity',
+                    status: (record.status || '').toLowerCase().includes('close') || (record.status || '').toLowerCase().includes('fund') ? 'funded' : 'interested',
+                    notes: record.notes || undefined,
+                  });
+                } catch {}
+              }
+              imported++;
+              break;
+            }
+            default:
+              break;
+          }
+        } catch (e: any) {
+          errors.push(`Row ${imported + 1}: ${e.message}`);
+        }
+      }
+
+      results.push({ sheet: file.name, type, imported, errors });
+      await onProgress?.({ results, totalSheets, processedSheets: results.length, currentFile: file.name });
+    } catch (e: any) {
+      results.push({ sheet: file.name, type: 'error', imported: 0, errors: [e.message] });
+      await onProgress?.({ results, totalSheets, processedSheets: results.length, currentFile: file.name });
+    }
+  }
+
+  return { results, totalSheets };
+}
+
 /**
  * Enforce per-recipe access. Recipes are private: only the creator (owner) or a
  * user with an explicit grant may view, and edit/manage requires the matching
@@ -325,21 +611,20 @@ export function generateNumber(prefix: string) {
   const random = crypto.randomInt(10000).toString().padStart(4, '0');
   return `${prefix}-${year}${month}-${random}`;
 }
-// Secure password hashing helpers using scrypt
-function hashPassword(password: string): string {
-  const crypto = require('crypto');
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+// Secure password hashing helpers using scrypt. Async so the (deliberately slow)
+// scrypt work runs on libuv's threadpool instead of blocking the event loop.
+async function hashPassword(password: string): Promise<string> {
+  const salt = randomBytes(16).toString('hex');
+  const hash = (await scryptAsync(password, salt, 64) as Buffer).toString('hex');
   return `${salt}:${hash}`;
 }
 
-function verifyPassword(password: string, stored: string): { valid: boolean; needsUpgrade: boolean } {
-  const crypto = require('crypto');
+async function verifyPassword(password: string, stored: string): Promise<{ valid: boolean; needsUpgrade: boolean }> {
   const [salt, hash] = stored.split(':');
   if (!salt || !hash) return { valid: false, needsUpgrade: false };
-  const computed = crypto.scryptSync(password, salt, 64);
+  const computed = await scryptAsync(password, salt, 64) as Buffer;
   const storedBuf = Buffer.from(hash, 'hex');
-  const valid = computed.length === storedBuf.length && crypto.timingSafeEqual(computed, storedBuf);
+  const valid = computed.length === storedBuf.length && timingSafeEqual(computed, storedBuf);
   return { valid, needsUpgrade: false };
 }
 
@@ -620,10 +905,18 @@ export const appRouter = router({
         let imported = 0;
         let updated = 0;
         let skipped = 0;
-        
+
+        // Bulk-load existing customers by Shopify ID to avoid a lookup per record.
+        const shopifyIds = [...new Set(shopifyCustomers.map((sc: any) => sc.id.toString()))] as string[];
+        const existingByShopifyId = new Map(
+          (await db.getCustomersByShopifyIds(shopifyIds))
+            .filter((c) => c.shopifyCustomerId != null)
+            .map((c) => [c.shopifyCustomerId, c]),
+        );
+
         for (const sc of shopifyCustomers) {
-          // Check if customer already exists by Shopify ID
-          const existing = await db.getCustomerByShopifyId(sc.id.toString());
+          // Check if customer already exists by Shopify ID (from the bulk map)
+          const existing = existingByShopifyId.get(sc.id.toString());
           
           const customerData = {
             name: `${sc.first_name || ''} ${sc.last_name || ''}`.trim() || sc.email || 'Unknown',
@@ -977,8 +1270,10 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined;
 
         // Require a real, non-empty string name — reject objects/numbers/blank.
+        // (Guarding `raw` here also narrows it to non-null for the accesses below;
+        // a null `raw` already yields an empty name and returns.)
         const name = clean(raw?.name);
-        if (!name) {
+        if (!raw || !name) {
           return { found: false as const, vendor: null, sources: [] as string[], confidence: "low" as const };
         }
 
@@ -1916,17 +2211,20 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         if (action === 'adjust_quantity' && data.quantityAdjustment !== undefined) {
           const updatedItems = await db.getInventoryByIds(ids);
           const opsUsers = await db.getUsersByRoles(['admin', 'ops', 'exec']);
+          // Bulk-load products for the adjusted items to avoid a query per row.
+          const productIds = [...new Set(updatedItems.map((i) => i.productId).filter((id): id is number => id != null))];
+          const productById = new Map((await db.getProductsByIds(productIds)).map((p) => [p.id, p]));
 
           for (const item of updatedItems) {
             const qty = parseFloat(item.quantity || '0');
             const reorderLevel = parseFloat(item.reorderLevel || '0');
 
             if (qty <= reorderLevel && qty > 0) {
-              const product = await db.getProductById(item.productId);
+              const product = productById.get(item.productId);
               await db.notifyUsersOfEvent({
                 type: 'inventory_low',
                 title: `Low Stock Alert: ${product?.name || 'Product'}`,
-                message: `Inventory for ${product?.name} is at ${qty} units, below reorder level of ${reorderLevel}`,
+                message: `Inventory for ${product?.name || 'Product'} is at ${qty} units, below reorder level of ${reorderLevel}`,
                 entityType: 'inventory',
                 entityId: item.id,
                 severity: 'warning',
@@ -5095,8 +5393,6 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         })).optional(),
       }).optional())
       .mutation(async ({ ctx, input }) => {
-        const results: { sheet: string; type: string; imported: number; errors: string[] }[] = [];
-
         // 1. Get valid Google OAuth token
         const { accessToken, error: tokenError } = await getValidGoogleToken(ctx.user.id);
         if (tokenError || !accessToken) {
@@ -5107,276 +5403,158 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           ? new Map(input.selections.map((s) => [s.fileId, s.type as string]))
           : null;
 
-        // 2. List all Google Sheets in Drive
-        const sheetsResponse = await fetch(
-          `https://www.googleapis.com/drive/v3/files?q=(mimeType='application/vnd.google-apps.spreadsheet' or mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or mimeType='text/csv')&fields=files(id,name,modifiedTime,mimeType)&orderBy=modifiedTime desc&pageSize=100`,
-          { headers: { Authorization: `Bearer ${accessToken}` } },
-        );
-        if (!sheetsResponse.ok) {
-          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list Google Sheets from Drive' });
-        }
-        const sheetsData = await sheetsResponse.json();
-        let files = sheetsData.files || [];
-        // Only import the confirmed files when selections were supplied.
-        if (forcedTypes) files = files.filter((f: any) => forcedTypes.has(f.id));
+        // 2. Read + import every (selected) spreadsheet
+        const { results, totalSheets } = await importDriveFiles({ userId: ctx.user.id, accessToken, forcedTypes });
 
-        // 3. For each spreadsheet, read the first sheet, detect type, and import
-        for (const file of files) {
-          try {
-            const dataResponse = await fetch(
-              `https://sheets.googleapis.com/v4/spreadsheets/${file.id}/values/Sheet1?majorDimension=ROWS`,
-              { headers: { Authorization: `Bearer ${accessToken}` } },
-            );
-            if (!dataResponse.ok) {
-              // Try without sheet name (default first sheet)
-              const fallbackResponse = await fetch(
-                `https://sheets.googleapis.com/v4/spreadsheets/${file.id}/values/A:ZZ?majorDimension=ROWS`,
-                { headers: { Authorization: `Bearer ${accessToken}` } },
-              );
-              if (!fallbackResponse.ok) {
-                results.push({ sheet: file.name, type: 'error', imported: 0, errors: ['Could not read sheet data'] });
-                continue;
-              }
-              var data = await fallbackResponse.json();
-            } else {
-              var data = await dataResponse.json();
-            }
-
-            const rows = data.values || [];
-            if (rows.length < 2) {
-              results.push({ sheet: file.name, type: 'skipped', imported: 0, errors: ['No data rows found'] });
-              continue;
-            }
-
-            const headers: string[] = rows[0].map((h: string) => h.toLowerCase().trim());
-            const dataRows: string[][] = rows.slice(1);
-
-            // Use the user-confirmed type when supplied, else auto-detect.
-            const type = forcedTypes?.get(file.id) ?? detectSheetType(headers);
-
-            if (!(DRIVE_SUPPORTED_TYPES as readonly string[]).includes(type)) {
-              results.push({ sheet: file.name, type, imported: 0, errors: type === 'unknown' ? ['Could not detect data type from headers'] : ['Auto-import not supported for this type'] });
-              continue;
-            }
-
-            let imported = 0;
-            const errors: string[] = [];
-
-            for (const row of dataRows) {
-              try {
-                const record: Record<string, string> = {};
-                headers.forEach((h: string, i: number) => { record[h] = row[i] || ''; });
-
-                switch (type) {
-                  case 'vendors': {
-                    const name = record.name || record.vendor || record.company || record['vendor name'];
-                    if (!name) { errors.push(`Row ${imported + 1}: Missing vendor name`); continue; }
-                    await db.createVendor({
-                      name,
-                      email: record.email || record['email address'] || null,
-                      phone: record.phone || record.telephone || null,
-                      address: record.address || null,
-                      city: record.city || null,
-                      state: record.state || null,
-                      country: record.country || null,
-                    });
-                    imported++;
-                    break;
-                  }
-                  case 'customers': {
-                    const name = record.name || record.customer || record.company || record['customer name'];
-                    if (!name) { errors.push(`Row ${imported + 1}: Missing customer name`); continue; }
-                    await db.createCustomer({
-                      name,
-                      email: record.email || null,
-                      phone: record.phone || null,
-                      address: record.address || null,
-                      city: record.city || null,
-                      state: record.state || null,
-                    });
-                    imported++;
-                    break;
-                  }
-                  case 'products': {
-                    const name = record.name || record.product || record.item || record.description;
-                    if (!name) { errors.push(`Row ${imported + 1}: Missing product name`); continue; }
-                    const sku = record.sku || record['product code'] || record.code || generateNumber('PROD');
-                    await db.createProduct({
-                      name,
-                      sku,
-                      unitPrice: record.price || record['unit price'] || record.cost || record.rate || '0',
-                      category: record.category || record.type || null,
-                      description: record.description || record.notes || null,
-                    });
-                    imported++;
-                    break;
-                  }
-                  case 'employees': {
-                    const firstName = record['first name'] || record.firstname || record['first'];
-                    const lastName = record['last name'] || record.lastname || record['last'];
-                    if (!firstName || !lastName) { errors.push(`Row ${imported + 1}: Missing first/last name`); continue; }
-                    const employeeNumber = generateNumber('EMP');
-                    await db.createEmployee({
-                      employeeNumber,
-                      firstName,
-                      lastName,
-                      email: record.email || null,
-                      phone: record.phone || null,
-                      jobTitle: record.title || record.position || record['job title'] || null,
-                    });
-                    imported++;
-                    break;
-                  }
-                  case 'raw_materials': {
-                    const name = record.name || record.ingredient || record.material || record['material name'];
-                    if (!name) { errors.push(`Row ${imported + 1}: Missing material name`); continue; }
-                    await db.createRawMaterial({
-                      name,
-                      sku: record.sku || record.code || `RM-${Date.now().toString(36)}-${imported}`,
-                      unit: record.unit || record.uom || 'kg',
-                      unitCost: record.cost || record['unit cost'] || record.price || '0',
-                    });
-                    imported++;
-                    break;
-                  }
-                  case 'crm_contacts': {
-                    const name = record.name || record.contact || record['contact name'] || record['full name'] || record.company || `Contact ${imported + 1}`;
-                    const firstName = name.split(' ')[0] || name;
-                    const lastName = name.split(' ').slice(1).join(' ') || '';
-                    const { created } = await db.findOrCreateCrmContact({
-                      firstName,
-                      lastName,
-                      fullName: name,
-                      email: record.email || record['email address'] || undefined,
-                      phone: record.phone || record.mobile || undefined,
-                      organization: record.company || record.organization || record.firm || undefined,
-                      jobTitle: record.title || record.position || record.role || undefined,
-                      source: 'import',
-                      notes: record.notes || record.comments || undefined,
-                      status: (record.status === 'active' || record.status === 'inactive') ? record.status as any : 'active',
-                    });
-                    if (created) imported++;
-                    break;
-                  }
-                  case 'crm_deals': {
-                    // Find or create default pipeline
-                    let pipelineId = 1;
-                    try {
-                      const pipelines = await db.getCrmPipelines();
-                      if (!pipelines || pipelines.length === 0) {
-                        pipelineId = await db.createCrmPipeline({ name: 'Sales Pipeline', stages: JSON.stringify(['discovery','qualified','proposal','negotiation','closed_won','closed_lost']) });
-                      } else {
-                        pipelineId = pipelines[0].id;
-                      }
-                    } catch {}
-
-                    // Resolve company name — that's the deal title.
-                    const company = (record.company || record.organization || record.account || record.client || record.name || record.deal || record.opportunity || '').toString().trim();
-                    if (!company) { imported++; break; }
-
-                    // Skip duplicates — by existing deal or already-pending approval task.
-                    if (await db.findCrmDealByCompany(company)) { imported++; break; }
-                    if (await db.hasPendingDealApprovalForCompany(company)) { imported++; break; }
-
-                    // Create a placeholder contact tied to that company.
-                    let contactId: number;
-                    try {
-                      const { id } = await db.findOrCreateCrmContact({
-                        firstName: company,
-                        lastName: '',
-                        fullName: company,
-                        organization: company,
-                        source: 'import',
-                        contactType: 'lead',
-                      });
-                      contactId = id;
-                    } catch {
-                      contactId = 1;
-                    }
-
-                    const taskData = {
-                      pipelineId,
-                      contactId,
-                      company,
-                      stage: record.stage || record.status || 'discovery',
-                      amount: record.amount || record.value || record['deal size'] || undefined,
-                      source: 'google_sheets',
-                      notes: record.notes || undefined,
-                    };
-                    await db.createAiAgentTask({
-                      taskType: 'create_crm_deal',
-                      priority: 'medium',
-                      status: 'pending_approval',
-                      taskData: JSON.stringify(taskData),
-                      aiReasoning: `Imported CRM deal for "${company}" from Google Sheets — pending approval.`,
-                      aiConfidence: '90.00',
-                    });
-                    imported++;
-                    break;
-                  }
-                  case 'fundraising': {
-                    // Create investor stakeholder
-                    const investorName = record.name || record.investor || record['investor name'] || record.fund || `Investor ${imported + 1}`;
-                    await db.createStakeholder({
-                      name: investorName,
-                      email: record.email || undefined,
-                      type: 'investor',
-                      relationship: record.fund || record.firm || record.company || undefined,
-                      notes: record.notes || record.status || undefined,
-                      accreditedInvestor: true,
-                    });
-
-                    // If there's an amount, also create an investment commitment
-                    const rawAmount = record.amount || record.commitment || record['investment amount'] || record.invested;
-                    if (rawAmount) {
-                      try {
-                        const cleanAmount = String(rawAmount).replace(/[$,]/g, '');
-                        const instrumentRaw = (record.instrument || record.type || record['security type'] || 'safe').toLowerCase();
-                        await db.createInvestmentCommitment({
-                          investorName,
-                          investorEmail: record.email || '',
-                          investorCompany: record.fund || record.firm || record.company || undefined,
-                          investmentAmount: cleanAmount,
-                          instrumentType: instrumentRaw.includes('safe') ? 'safe' : 'equity',
-                          status: (record.status || '').toLowerCase().includes('close') || (record.status || '').toLowerCase().includes('fund') ? 'funded' : 'interested',
-                          notes: record.notes || undefined,
-                        });
-                      } catch {}
-                    }
-                    imported++;
-                    break;
-                  }
-                  default:
-                    break;
-                }
-              } catch (e: any) {
-                errors.push(`Row ${imported + 1}: ${e.message}`);
-              }
-            }
-
-            results.push({ sheet: file.name, type, imported, errors });
-          } catch (e: any) {
-            results.push({ sheet: file.name, type: 'error', imported: 0, errors: [e.message] });
-          }
-        }
-
-        // Create audit log
+        // 3. Audit log
         const totalImported = results.reduce((sum, r) => sum + r.imported, 0);
-        await createAuditLog(ctx.user.id, 'create', 'google_drive_sync', 0, `Synced ${totalImported} records from ${files.length} sheets`);
+        await createAuditLog(ctx.user.id, 'create', 'google_drive_sync', 0, `Synced ${totalImported} records from ${totalSheets} sheets`);
 
         // Persist detailed sync results to syncLogs so they survive page reload
         await db.createSyncLog({
           integration: 'google_drive',
           action: 'full_sync',
           status: totalImported > 0 ? 'success' : 'warning',
-          details: `Synced ${totalImported} records from ${files.length} sheets`,
+          details: `Synced ${totalImported} records from ${totalSheets} sheets`,
           recordsProcessed: totalImported,
           recordsFailed: results.reduce((sum, r) => sum + r.errors.length, 0),
-          metadata: { results, totalSheets: files.length, userId: ctx.user.id },
+          metadata: { results, totalSheets, userId: ctx.user.id },
         });
 
-        return { results, totalSheets: files.length };
+        return { results, totalSheets };
       }),
+
+    // Kick off a Google Drive import that runs in the BACKGROUND on the server.
+    // Unlike syncGoogleDrive (which imports inline and only returns when done),
+    // this creates a "pending" syncLog job row, returns its id immediately, and
+    // continues the import detached from the request. The client polls
+    // getSyncStatus and can reconnect to a running job via getActiveSync — so
+    // navigating away from the Import page no longer stops the import.
+    startSyncGoogleDrive: protectedProcedure
+      .input(z.object({
+        selections: z.array(z.object({
+          fileId: z.string(),
+          type: z.enum(DRIVE_SUPPORTED_TYPES),
+        })).optional(),
+      }).optional())
+      .mutation(async ({ ctx, input }) => {
+        // Validate the token up front so connection problems surface immediately
+        // (before we tell the client the job is running).
+        const { accessToken, error: tokenError } = await getValidGoogleToken(ctx.user.id);
+        if (tokenError || !accessToken) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: tokenError || 'Google not connected. Go to Settings to connect your Google account.' });
+        }
+
+        const forcedTypes = input?.selections && input.selections.length > 0
+          ? new Map(input.selections.map((s) => [s.fileId, s.type as string]))
+          : null;
+        const userId = ctx.user.id;
+
+        // Create the job row up front so the client (and getActiveSync) can find it.
+        const { id: jobId } = await db.createSyncLog({
+          integration: 'google_drive',
+          action: 'full_sync',
+          status: 'pending',
+          details: 'Import in progress…',
+          recordsProcessed: 0,
+          recordsFailed: 0,
+          metadata: { status: 'running', results: [], totalSheets: 0, processedSheets: 0, userId, startedAt: new Date().toISOString() },
+        });
+
+        // Detached background runner — intentionally not awaited. The Express
+        // server is long-lived, so this keeps running after the response is sent
+        // and after the client navigates away.
+        void (async () => {
+          try {
+            const { results, totalSheets } = await importDriveFiles({
+              userId,
+              accessToken,
+              forcedTypes,
+              onProgress: async ({ results, totalSheets, processedSheets, currentFile }) => {
+                await db.updateSyncLog(jobId, {
+                  recordsProcessed: results.reduce((sum, r) => sum + r.imported, 0),
+                  recordsFailed: results.reduce((sum, r) => sum + r.errors.length, 0),
+                  metadata: { status: 'running', results, totalSheets, processedSheets, currentFile, userId },
+                }).catch(() => { /* best-effort progress */ });
+              },
+            });
+
+            const totalImported = results.reduce((sum, r) => sum + r.imported, 0);
+            await createAuditLog(userId, 'create', 'google_drive_sync', 0, `Synced ${totalImported} records from ${totalSheets} sheets`);
+            await db.updateSyncLog(jobId, {
+              status: totalImported > 0 ? 'success' : 'warning',
+              details: `Synced ${totalImported} records from ${totalSheets} sheets`,
+              recordsProcessed: totalImported,
+              recordsFailed: results.reduce((sum, r) => sum + r.errors.length, 0),
+              metadata: { status: 'done', results, totalSheets, processedSheets: results.length, userId },
+            });
+          } catch (e: any) {
+            await db.updateSyncLog(jobId, {
+              status: 'error',
+              details: 'Import failed',
+              errorMessage: e?.message ?? 'Unknown error',
+              metadata: { status: 'error', error: e?.message ?? 'Unknown error', results: [], totalSheets: 0, processedSheets: 0, userId },
+            }).catch(() => { /* nothing more we can do */ });
+          }
+        })();
+
+        return { jobId };
+      }),
+
+    // Poll the status of a background import job started by startSyncGoogleDrive.
+    getSyncStatus: protectedProcedure
+      .input(z.object({ jobId: z.number() }))
+      .query(async ({ ctx, input }) => {
+        const log = await db.getSyncLog(input.jobId);
+        // Fail closed: only expose Google Drive import jobs owned by the caller.
+        // syncLogs has no userId column and other integrations write rows without
+        // metadata.userId, so a missing owner must be treated as "not yours".
+        if (!log || log.integration !== 'google_drive') return null;
+        const meta = (log.metadata as any) || {};
+        if (meta.userId !== ctx.user.id) return null;
+        const state: 'running' | 'done' | 'error' =
+          meta.status === 'done' ? 'done'
+          : meta.status === 'error' || log.status === 'error' ? 'error'
+          : log.status === 'pending' ? 'running'
+          : 'done';
+        return {
+          jobId: log.id,
+          state,
+          results: (meta.results as DriveSyncResult[]) || [],
+          totalSheets: meta.totalSheets || 0,
+          processedSheets: meta.processedSheets || 0,
+          currentFile: meta.currentFile || null,
+          error: meta.error || log.errorMessage || null,
+          syncedAt: log.createdAt,
+        };
+      }),
+
+    // Find the caller's most recent still-running import so the Import page can
+    // reconnect to it on mount (after navigation / reload / tab close). Ignores
+    // jobs older than an hour, which are treated as stale/abandoned.
+    getActiveSync: protectedProcedure.query(async ({ ctx }) => {
+      // Query pending google_drive jobs directly rather than scanning a global
+      // recency window — otherwise a burst of other sync logs could push the
+      // caller's running job out of view and break reconnection.
+      const pending = await db.getPendingSyncLogs('google_drive', 50);
+      const oneHourAgo = Date.now() - 60 * 60 * 1000;
+      const active = pending.find((log: any) => {
+        const meta = (log.metadata as any) || {};
+        if (meta.userId !== ctx.user.id) return false;
+        return new Date(log.createdAt).getTime() >= oneHourAgo;
+      });
+      if (!active) return null;
+      const meta = (active.metadata as any) || {};
+      return {
+        jobId: active.id,
+        state: 'running' as const,
+        results: (meta.results as DriveSyncResult[]) || [],
+        totalSheets: meta.totalSheets || 0,
+        processedSheets: meta.processedSheets || 0,
+        currentFile: meta.currentFile || null,
+        syncedAt: active.createdAt,
+      };
+    }),
 
     // List files from Google Drive (all types, not just spreadsheets)
     listDriveFiles: protectedProcedure
@@ -5523,10 +5701,16 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
 
     // Get past Google Drive sync history so results persist across page reloads
     getSyncHistory: protectedProcedure.query(async ({ ctx }) => {
-      const history = await db.getSyncHistory(20);
-      // Filter to only google_drive syncs and include the current user's syncs
+      // Fetch a wider window then scope to the caller — these logs contain
+      // per-import details/results and must not leak across users. A "pending"
+      // row is a background job still in progress (surfaced via getSyncStatus).
+      const history = await db.getSyncHistory(100);
       return history
-        .filter((log: any) => log.integration === 'google_drive')
+        .filter((log: any) =>
+          log.integration === 'google_drive' &&
+          log.status !== 'pending' &&
+          (log.metadata as any)?.userId === ctx.user.id)
+        .slice(0, 20)
         .map((log: any) => ({
           id: log.id,
           status: log.status,
@@ -6611,6 +6795,11 @@ Be concise and helpful. Always give actionable guidance.`;
       
       create: internalProcedure
         .input(z.object({
+          // NOTE: 'concierge_errand' is intentionally NOT creatable here. Errands
+          // carry the submitting user's identity in taskData, which the executor
+          // trusts to choose the execution context; allowing arbitrary clients to
+          // POST that taskData would enable identity spoofing. Errands are created
+          // server-side only, via the plan_errand agent tool.
           taskType: z.enum(['generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory', 'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials', 'vendor_followup', 'create_work_order', 'query', 'reply_email', 'approve_po', 'approve_invoice', 'create_vendor', 'create_material', 'create_product', 'create_bom', 'create_customer', 'create_crm_deal']),
           priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium'),
           taskData: z.string(), // JSON string with task-specific data
@@ -6752,25 +6941,50 @@ Be concise and helpful. Always give actionable guidance.`;
           if (!task) throw new TRPCError({ code: 'NOT_FOUND', message: 'Task not found' });
           
           // Validate JSON format
+          let parsedTaskData: any;
           try {
-            JSON.parse(input.taskData);
+            parsedTaskData = JSON.parse(input.taskData);
           } catch (e) {
-            throw new TRPCError({ 
-              code: 'BAD_REQUEST', 
-              message: 'Invalid JSON format in taskData' 
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'Invalid JSON format in taskData'
             });
           }
-          
+
           // Only allow updates on pending or approved tasks
           if (!['pending_approval', 'approved'].includes(task.status)) {
-            throw new TRPCError({ 
-              code: 'BAD_REQUEST', 
-              message: 'Can only update pending or approved tasks' 
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'Can only update pending or approved tasks'
             });
           }
-          
+
+          let taskDataToSave = input.taskData;
+          // Concierge errands execute under the original submitter's identity
+          // (stored in taskData). Those fields are immutable — preserve them from
+          // the original task so editing the plan can never change WHO it runs as,
+          // preventing identity spoofing via this admin endpoint.
+          if (task.taskType === 'concierge_errand') {
+            // Parse defensively so a malformed stored row or a valid-but-non-object
+            // payload (null/array) can't turn a recoverable bad edit into a 500.
+            const isPlainObject = (v: any) => v != null && typeof v === 'object' && !Array.isArray(v);
+            if (!isPlainObject(parsedTaskData)) {
+              throw new TRPCError({ code: 'BAD_REQUEST', message: 'Errand taskData must be a JSON object' });
+            }
+            let original: any = {};
+            try { original = JSON.parse(task.taskData || '{}'); } catch { original = {}; }
+            if (!isPlainObject(original)) original = {};
+            parsedTaskData.submittedByUserId = original.submittedByUserId;
+            parsedTaskData.userName = original.userName;
+            parsedTaskData.userRole = original.userRole;
+            // Keep taskData.companyId in sync with the authoritative row column
+            // (not the old JSON) so an edit can't persist a tenancy mismatch.
+            parsedTaskData.companyId = task.companyId ?? undefined;
+            taskDataToSave = JSON.stringify(parsedTaskData);
+          }
+
           await db.updateAiAgentTask(input.id, {
-            taskData: input.taskData,
+            taskData: taskDataToSave,
             aiReasoning: input.aiReasoning || task.aiReasoning || undefined,
           });
           
@@ -7174,6 +7388,15 @@ Be concise and helpful. Always give actionable guidance.`;
                 });
                 
                 result = { created: true, workOrderId: workOrder.id, workOrderNumber: workOrder.workOrderNumber };
+                break;
+              }
+
+              case 'concierge_errand': {
+                // Replay the approved plan through the main AI agent loop.
+                const { executeConciergeErrand } = await import('./conciergeErrandService');
+                const errandResult = await executeConciergeErrand(task);
+                if (!errandResult.success) throw new Error(errandResult.error || 'Errand execution failed');
+                result = errandResult.data;
                 break;
               }
 
@@ -8019,13 +8242,13 @@ Format the email professionally and request a response by ${rfq.quoteDueDate ? n
             throw new TRPCError({ code: 'BAD_REQUEST', message: 'No quotes to analyze' });
           }
           
-          // Get carrier details for each quote
-          const quotesWithCarriers = await Promise.all(
-            quotes.map(async (q) => {
-              const carrier = await db.getFreightCarrierById(q.carrierId);
-              return { ...q, carrierName: carrier?.name, carrierRating: carrier?.rating };
-            })
-          );
+          // Get carrier details for each quote (bulk-loaded to avoid N+1)
+          const carrierIds = [...new Set(quotes.map((q) => q.carrierId).filter((id): id is number => id != null))];
+          const carrierById = new Map((await db.getFreightCarriersByIds(carrierIds)).map((c) => [c.id, c]));
+          const quotesWithCarriers = quotes.map((q) => {
+            const carrier = carrierById.get(q.carrierId);
+            return { ...q, carrierName: carrier?.name, carrierRating: carrier?.rating };
+          });
           
           const analysisPrompt = `Analyze and compare these freight quotes for the following shipment:
 
@@ -13914,15 +14137,75 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
               }
             }
 
-            // Create attachment records
+            // Persist attachment records and, when the scanner downloaded the
+            // bytes, store them and AUTO-IMPORT each into the correct ERP
+            // location (same path as the env-configured "Scan inbox"). Falls
+            // back to a metadata-only row when no content is available.
+            const attachmentContents: Array<{ filename: string; contentType: string; data: Buffer }> =
+              (email as any).attachmentContents || [];
+            // Pair each attachment row with a downloaded buffer, consuming each
+            // buffer at most once (a per-filename queue) so multiple attachments
+            // sharing a filename each get distinct bytes rather than all
+            // resolving to the last one. Empty-filename parts aren't byte-matched.
+            const contentQueue = new Map<string, Array<{ filename: string; contentType: string; data: Buffer }>>();
+            for (const a of attachmentContents) {
+              if (!a.filename) continue;
+              const q = contentQueue.get(a.filename) ?? [];
+              q.push(a);
+              contentQueue.set(a.filename, q);
+            }
             for (const attachment of email.attachments) {
-              await db.createEmailAttachment({
+              const queue = attachment.filename ? contentQueue.get(attachment.filename) : undefined;
+              const withBytes = queue && queue.length ? queue.shift() : undefined;
+              const { id: attachmentId } = await db.createEmailAttachment({
                 emailId,
                 filename: attachment.filename,
-                mimeType: attachment.contentType,
-                size: attachment.size,
-                storageUrl: null, // Attachments not downloaded in scan
+                // Prefer the real downloaded content-type/size for stored bytes;
+                // IMAP metadata can be missing/approximate, and mimeType drives
+                // the Content-Type when serving /api/attachments/:id later.
+                mimeType: withBytes ? withBytes.contentType : attachment.contentType,
+                size: withBytes ? withBytes.data.length : attachment.size,
+                storageUrl: null,
               });
+
+              if (!withBytes) continue;
+
+              // Persist to object storage for later viewing. A storage failure
+              // must NOT skip parsing — we hold the bytes in memory, so the doc
+              // can still be extracted/imported (just not re-viewable later).
+              try {
+                const { storagePut } = await import("./storage");
+                const safeName = attachment.filename.replace(/[^\w.\-]+/g, "_").slice(0, 120) || "file";
+                const put = await storagePut(`email-attachments/${emailId}/${attachmentId}-${safeName}`, withBytes.data, withBytes.contentType);
+                await db.updateEmailAttachment(attachmentId, {
+                  storageKey: put.key,
+                  storageUrl: `/api/attachments/${attachmentId}`,
+                });
+              } catch (e: any) {
+                console.error("[scanInbox] attachment upload failed (parsing from memory anyway):", e?.message);
+              }
+
+              try {
+                const { importEmailAttachmentToErp, isParseableDocumentMime } = await import("./documentImportService");
+                // Only spend an LLM parse on document-like media. The IMAP
+                // scanner downloads many image/* parts (inline logos, email
+                // signatures, webp/gif), which are stored above for viewing but
+                // must not each trigger a costly parse.
+                if (isParseableDocumentMime(withBytes.contentType)) {
+                  await importEmailAttachmentToErp({
+                    emailId,
+                    attachmentId,
+                    content: `data:${withBytes.contentType};base64,${withBytes.data.toString("base64")}`,
+                    filename: attachment.filename,
+                    mimeType: withBytes.contentType,
+                    userId: ctx.user.id,
+                  });
+                }
+              } catch (e: any) {
+                // Skip individual attachment failures, but log so they're
+                // diagnosable rather than silently dropped.
+                console.error(`[scanInbox] attachment import failed (${attachment.filename}):`, e?.message);
+              }
             }
 
             // ── IMAP Automation #6: Auto-run email document linker ──
@@ -14202,7 +14485,7 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
         // Hash password if provided
         let hashedPassword = null;
         if (input.password) {
-          hashedPassword = hashPassword(input.password);
+          hashedPassword = await hashPassword(input.password);
         }
 
         const { enableWatermark, ...rest } = input;
@@ -14252,7 +14535,7 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
           if (password === null) {
             hashedPassword = null;
           } else {
-            hashedPassword = hashPassword(password);
+            hashedPassword = await hashPassword(password);
           }
         }
 
@@ -14629,7 +14912,7 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
               : nanoid(12);
           let hashedPassword = null;
           if (input.password) {
-            hashedPassword = hashPassword(input.password);
+            hashedPassword = await hashPassword(input.password);
           }
 
           const { id } = await db.createDataRoomLink({
@@ -15103,14 +15386,14 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
               return { requiresPassword: true, dataRoomId: null, visitorId: null };
             }
 
-            const { valid, needsUpgrade } = verifyPassword(input.password, link.password);
+            const { valid, needsUpgrade } = await verifyPassword(input.password, link.password);
 
             if (!valid) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid password' });
             }
 
             if (needsUpgrade) {
-              const upgradedHash = hashPassword(input.password);
+              const upgradedHash = await hashPassword(input.password);
               await db.updateDataRoomLink(link.id, { password: upgradedHash });
             }
           }
@@ -22676,15 +22959,17 @@ Return JSON array only. No markdown.`;
         ? await db.getCompanyById(stakeholder.companyId)
         : undefined;
       // The full list of entities this user holds a position in, so the
-      // UI can render an entity switcher. Resolved in one query per id
-      // since a typical investor has 1–3 entities.
-      const entities = await Promise.all(
-        allStakeholders.map(async (s) => {
+      // UI can render an entity switcher. Companies are bulk-loaded once
+      // (deduped) to avoid a query per stakeholder.
+      const companyIds = [...new Set(allStakeholders.map((s) => s.companyId).filter((id): id is number => id != null))];
+      const companyById = new Map((await db.getCompaniesByIds(companyIds)).map((c) => [c.id, c]));
+      const entities = allStakeholders
+        .map((s) => {
           if (!s.companyId) return null;
-          const c = await db.getCompanyById(s.companyId);
+          const c = companyById.get(s.companyId);
           return c ? { id: c.id, name: c.name, type: c.type, country: c.country } : null;
-        }),
-      ).then((rows) => rows.filter((r) => r !== null));
+        })
+        .filter((r): r is NonNullable<typeof r> => r !== null);
 
       const totalShares = allGrants.reduce(
         (s: number, g: { shares?: string | number | null }) =>
