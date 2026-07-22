@@ -63,13 +63,20 @@ export async function executeConciergeErrand(task: AiAgentTask): Promise<ErrandE
   const ctx: AIAgentContext = {
     userId: parsed.submittedByUserId,
     userName: parsed.userName ?? "Concierge",
-    userRole: parsed.userRole ?? "member",
+    // "user" is the schema's default (lowest-privilege) role — never fabricate a
+    // higher-privileged role when the stored role is missing.
+    userRole: parsed.userRole ?? "user",
     companyId: parsed.companyId,
     executingErrand: true,
   };
 
-  const planText = Array.isArray(steps) && steps.length
-    ? steps.map((s, i) => `${i + 1}. ${s}`).join("\n")
+  // steps come from persisted JSON — sanitize to trimmed strings so a malformed
+  // task can't inject "[object Object]" / blank lines into the plan directive.
+  const cleanSteps = Array.isArray(steps)
+    ? steps.filter((s: any) => typeof s === "string" && s.trim()).map((s: string) => s.trim())
+    : [];
+  const planText = cleanSteps.length
+    ? cleanSteps.map((s, i) => `${i + 1}. ${s}`).join("\n")
     : "(no explicit steps were provided — carry out the goal directly)";
 
   const directive = `You are EXECUTING an already-approved errand on behalf of ${ctx.userName}. This plan has been reviewed and approved — carry it out now using your action tools (send emails, create/update records, book freight, etc.). Do NOT ask for confirmation and do NOT call plan_errand again; approval has already happened.

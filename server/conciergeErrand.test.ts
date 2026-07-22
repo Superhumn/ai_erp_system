@@ -65,6 +65,19 @@ describe("executeConciergeErrand", () => {
     expect(result.data.failedActions).toEqual([{ type: "send_email", error: "SMTP unavailable" }]);
   });
 
+  it("sanitizes non-string / blank steps out of the plan directive", async () => {
+    processAIAgentRequest.mockResolvedValue({ message: "done", actions: [] });
+
+    await executeConciergeErrand(
+      taskWith({ ...validData, steps: ["Look up invoice", { bad: 1 }, "  ", "Send it"] }),
+    );
+
+    const directive = processAIAgentRequest.mock.calls[0][0] as string;
+    expect(directive).not.toContain("[object Object]");
+    expect(directive).toContain("1. Look up invoice");
+    expect(directive).toContain("2. Send it");
+  });
+
   it("fails cleanly when taskData is not valid JSON", async () => {
     const result = await executeConciergeErrand({ id: 1, taskType: "concierge_errand", taskData: "{not json" } as any);
     expect(result.success).toBe(false);

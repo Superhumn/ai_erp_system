@@ -1426,16 +1426,24 @@ async function executePlanErrand(params: any, ctx: AIAgentContext): Promise<any>
     ? params.steps.filter((s: any) => typeof s === "string" && s.trim()).map((s: string) => s.trim())
     : [];
 
-  const normalizedRisk = ["low", "medium", "high"].includes(params.riskLevel) ? params.riskLevel : "medium";
+  const selfRatedRisk = ["low", "medium", "high"].includes(params.riskLevel) ? params.riskLevel : "medium";
+  // Server-side backstop: riskLevel is LLM self-rated, so a prompt-influenced
+  // model could mark a consequential errand "low" and get it auto-approved.
+  // Never auto-run a "low"-rated errand whose goal/steps show real-world side
+  // effects (outbound comms, money movement, deletes, bulk changes) — force it
+  // into the approval queue instead. Over-triggering only errs toward asking.
+  const HIGH_RISK_INDICATORS = /\b(e-?mail|send|reply|message|call|text|refund|pay|payment|wire|transfer|deposit|withdraw|charge|invoic|delet|remov|cancel|terminat|fire|bulk|everyone|all customers|all vendors|purchase order)\b/i;
+  const riskText = `${title} ${goal} ${steps.join(" ")}`;
+  const riskLevel = selfRatedRisk === "low" && HIGH_RISK_INDICATORS.test(riskText) ? "medium" : selfRatedRisk;
   // Low-risk errands run automatically; medium/high-risk wait for plan approval.
-  const requiresApproval = normalizedRisk !== "low";
-  const priority = normalizedRisk === "high" ? "high" : normalizedRisk === "low" ? "low" : "medium";
+  const requiresApproval = riskLevel !== "low";
+  const priority = riskLevel === "high" ? "high" : riskLevel === "low" ? "low" : "medium";
 
   const taskData = {
     title,
     goal,
     steps,
-    riskLevel: normalizedRisk,
+    riskLevel,
     // Carried through so the executor can act on behalf of the submitting user.
     submittedByUserId: ctx.userId,
     userName: ctx.userName,
@@ -1458,14 +1466,14 @@ async function executePlanErrand(params: any, ctx: AIAgentContext): Promise<any>
     action: "errand_planned",
     status: "info",
     message: `Concierge errand ${requiresApproval ? "queued for approval" : "auto-approved (low risk)"} for ${ctx.userName}`,
-    details: JSON.stringify({ title: taskData.title, riskLevel: normalizedRisk, steps: taskData.steps }),
+    details: JSON.stringify({ title: taskData.title, riskLevel, steps: taskData.steps }),
   });
 
   return {
     errandCreated: true,
     taskId: task[0].id,
     title: taskData.title,
-    riskLevel: normalizedRisk,
+    riskLevel,
     steps: taskData.steps,
     requiresApproval,
     status: requiresApproval ? "pending_approval" : "approved",
