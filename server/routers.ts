@@ -5421,6 +5421,14 @@ ONLY return the JSON array, no other text.`;
       return { url, error: null };
     }),
 
+    // Disconnect the connected Google account. Gmail, Workspace, Sheets import
+    // and Drive/data-room all share one Google OAuth token, so this removes the
+    // connection for all of them.
+    disconnect: protectedProcedure.mutation(async ({ ctx }) => {
+      await db.deleteGoogleOAuthToken(ctx.user.id);
+      return { success: true };
+    }),
+
     // Send email via Gmail
     sendEmail: protectedProcedure
       .input(z.object({
@@ -5604,6 +5612,12 @@ ONLY return the JSON array, no other text.`;
 
       const url = getGoogleFullAccessAuthUrl(ctx.user.id, '/settings/integrations');
       return { url, error: null };
+    }),
+
+    // Disconnect the connected Google account (shared with Gmail/Sheets/Drive).
+    disconnect: protectedProcedure.mutation(async ({ ctx }) => {
+      await db.deleteGoogleOAuthToken(ctx.user.id);
+      return { success: true };
     }),
 
     // Create Google Doc
