@@ -13925,15 +13925,69 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
               }
             }
 
-            // Create attachment records
+            // Persist attachment records and, when the scanner downloaded the
+            // bytes, store them and AUTO-IMPORT each into the correct ERP
+            // location (same path as the env-configured "Scan inbox"). Falls
+            // back to a metadata-only row when no content is available.
+            const attachmentContents: Array<{ filename: string; contentType: string; data: Buffer }> =
+              (email as any).attachmentContents || [];
+            // Pair each attachment row with a downloaded buffer, consuming each
+            // buffer at most once (a per-filename queue) so multiple attachments
+            // sharing a filename each get distinct bytes rather than all
+            // resolving to the last one. Empty-filename parts aren't byte-matched.
+            const contentQueue = new Map<string, Array<{ filename: string; contentType: string; data: Buffer }>>();
+            for (const a of attachmentContents) {
+              if (!a.filename) continue;
+              const q = contentQueue.get(a.filename) ?? [];
+              q.push(a);
+              contentQueue.set(a.filename, q);
+            }
             for (const attachment of email.attachments) {
-              await db.createEmailAttachment({
+              const queue = attachment.filename ? contentQueue.get(attachment.filename) : undefined;
+              const withBytes = queue && queue.length ? queue.shift() : undefined;
+              const { id: attachmentId } = await db.createEmailAttachment({
                 emailId,
                 filename: attachment.filename,
-                mimeType: attachment.contentType,
-                size: attachment.size,
-                storageUrl: null, // Attachments not downloaded in scan
+                // Prefer the real downloaded content-type/size for stored bytes;
+                // IMAP metadata can be missing/approximate, and mimeType drives
+                // the Content-Type when serving /api/attachments/:id later.
+                mimeType: withBytes ? withBytes.contentType : attachment.contentType,
+                size: withBytes ? withBytes.data.length : attachment.size,
+                storageUrl: null,
               });
+
+              if (!withBytes) continue;
+
+              // Persist to object storage for later viewing. A storage failure
+              // must NOT skip parsing — we hold the bytes in memory, so the doc
+              // can still be extracted/imported (just not re-viewable later).
+              try {
+                const { storagePut } = await import("./storage");
+                const safeName = attachment.filename.replace(/[^\w.\-]+/g, "_").slice(0, 120) || "file";
+                const put = await storagePut(`email-attachments/${emailId}/${attachmentId}-${safeName}`, withBytes.data, withBytes.contentType);
+                await db.updateEmailAttachment(attachmentId, {
+                  storageKey: put.key,
+                  storageUrl: `/api/attachments/${attachmentId}`,
+                });
+              } catch (e: any) {
+                console.error("[scanInbox] attachment upload failed (parsing from memory anyway):", e?.message);
+              }
+
+              try {
+                const { importEmailAttachmentToErp } = await import("./documentImportService");
+                await importEmailAttachmentToErp({
+                  emailId,
+                  attachmentId,
+                  content: `data:${withBytes.contentType};base64,${withBytes.data.toString("base64")}`,
+                  filename: attachment.filename,
+                  mimeType: withBytes.contentType,
+                  userId: ctx.user.id,
+                });
+              } catch (e: any) {
+                // Skip individual attachment failures, but log so they're
+                // diagnosable rather than silently dropped.
+                console.error(`[scanInbox] attachment import failed (${attachment.filename}):`, e?.message);
+              }
             }
 
             // ── IMAP Automation #6: Auto-run email document linker ──
