@@ -13500,15 +13500,49 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
               }
             }
 
-            // Create attachment records
+            // Persist attachment records and, when the scanner downloaded the
+            // bytes, store them and AUTO-IMPORT each into the correct ERP
+            // location (same path as the env-configured "Scan inbox"). Falls
+            // back to a metadata-only row when no content is available.
+            const attachmentContents: Array<{ filename: string; contentType: string; data: Buffer }> =
+              (email as any).attachmentContents || [];
+            const contentByName = new Map(attachmentContents.map((a) => [a.filename, a]));
             for (const attachment of email.attachments) {
-              await db.createEmailAttachment({
+              const { id: attachmentId } = await db.createEmailAttachment({
                 emailId,
                 filename: attachment.filename,
                 mimeType: attachment.contentType,
                 size: attachment.size,
-                storageUrl: null, // Attachments not downloaded in scan
+                storageUrl: null,
               });
+
+              const withBytes = contentByName.get(attachment.filename);
+              if (!withBytes) continue;
+
+              try {
+                const { storagePut } = await import("./storage");
+                const safeName = attachment.filename.replace(/[^\w.\-]+/g, "_").slice(0, 120) || "file";
+                const put = await storagePut(`email-attachments/${emailId}/${attachmentId}-${safeName}`, withBytes.data, withBytes.contentType);
+                await db.updateEmailAttachment(attachmentId, {
+                  storageKey: put.key,
+                  storageUrl: `/api/attachments/${attachmentId}`,
+                } as any);
+              } catch (e: any) {
+                console.error("[scanInbox] attachment upload failed:", e?.message);
+                continue; // no stored bytes — skip parsing this attachment
+              }
+
+              try {
+                const { importEmailAttachmentToErp } = await import("./documentImportService");
+                await importEmailAttachmentToErp({
+                  emailId,
+                  attachmentId,
+                  content: `data:${withBytes.contentType};base64,${withBytes.data.toString("base64")}`,
+                  filename: attachment.filename,
+                  mimeType: withBytes.contentType,
+                  userId: ctx.user.id,
+                });
+              } catch { /* skip individual attachment failures */ }
             }
 
             // ── IMAP Automation #6: Auto-run email document linker ──
