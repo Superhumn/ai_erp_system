@@ -57,7 +57,7 @@ import { planPublish, publishToPlatform, type Platform as SocialPlatform } from 
 import { getYouTubeAuthUrl } from "./_core/youtube";
 import { encrypt, decrypt } from "./_core/crypto";
 import { ENV } from "./_core/env";
-import { reassignProjectTaskToHuman } from "./taskAgentBridge";
+import { reassignProjectTaskToHuman, createProjectTaskFromSource } from "./taskAgentBridge";
 import { createDecipheriv, createHash } from "crypto";
 
 /**
@@ -6877,7 +6877,73 @@ Be concise and helpful. Always give actionable guidance.`;
                 result = { created: true, workOrderId: workOrder.id, workOrderNumber: workOrder.workOrderNumber };
                 break;
               }
-              
+
+              case 'query': {
+                // Generic "query" tasks can carry a structured action. The
+                // meeting extractor uses action=create_project_task to route a
+                // Fireflies action item through the Approval Queue; executing
+                // the approved suggestion creates the real project task here,
+                // preserving the meeting source so it keeps its "Meeting" badge.
+                if (taskData.action === 'create_project_task') {
+                  // taskData is untrusted JSON — validate every field before use.
+                  const toPositiveInt = (v: unknown): number | undefined => {
+                    const n = Number(v);
+                    return Number.isInteger(n) && n > 0 ? n : undefined;
+                  };
+                  const projectId = toPositiveInt(taskData.projectId);
+                  const name = taskData.name ? String(taskData.name).trim() : '';
+                  if (!projectId || !name) {
+                    throw new Error('Project task suggestion missing or invalid projectId or name');
+                  }
+                  const assigneeId = toPositiveInt(taskData.assigneeId);
+                  // Keep the source ref pair consistent: both derive from meetingId
+                  // (an undefined id must not leave a dangling refType).
+                  const meetingRefId = toPositiveInt(taskData.sourceMeeting?.meetingId);
+                  // Validate priority against the allowed set and only accept a
+                  // genuinely parseable dueDate so a malformed value can't insert
+                  // an Invalid Date.
+                  const priority = (['low', 'medium', 'high', 'critical'] as const).includes(taskData.priority)
+                    ? taskData.priority
+                    : 'medium';
+                  let dueDate: Date | undefined;
+                  if (taskData.dueDate) {
+                    const parsed = new Date(taskData.dueDate);
+                    if (!Number.isNaN(parsed.getTime())) dueDate = parsed;
+                  }
+                  // Carry the suggestion's AI reasoning/confidence onto the
+                  // created task so it stays as traceable as a directly
+                  // extracted meeting task.
+                  const aiConfidenceNum = task.aiConfidence != null && Number.isFinite(Number(task.aiConfidence))
+                    ? Number(task.aiConfidence)
+                    : undefined;
+                  const created = await createProjectTaskFromSource({
+                    projectId,
+                    name,
+                    description: taskData.description ? String(taskData.description) : undefined,
+                    assigneeId,
+                    priority,
+                    dueDate,
+                    sourceType: 'meeting',
+                    sourceRefType: meetingRefId ? 'firefliesMeeting' : undefined,
+                    sourceRefId: meetingRefId,
+                    sourceExternalId: taskData.sourceExternalId ? String(taskData.sourceExternalId) : undefined,
+                    aiReasoning: task.aiReasoning ?? undefined,
+                    aiConfidence: aiConfidenceNum,
+                    createdBy: ctx.user.id,
+                  });
+                  result = {
+                    created: true,
+                    action: 'create_project_task',
+                    projectTaskId: created.id,
+                    projectId,
+                    assigneeId: assigneeId ?? null,
+                  };
+                  break;
+                }
+                result = { executed: true, taskType: task.taskType };
+                break;
+              }
+
               default:
                 result = { executed: true, taskType: task.taskType };
             }
@@ -19457,6 +19523,11 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             firefliesId: t.id,
             actionItems: parseActionItems(actionItems),
             participants,
+            // Respect Settings → Fireflies "Auto-create tasks": only when
+            // explicitly off do we route items to the Approval Queue instead
+            // of creating directly (unset defaults to auto-create, as the UI
+            // does).
+            routeToApproval: config.autoCreateTasks === false,
           });
           tasksSuggested += suggested;
           if (suggested > 0) {
