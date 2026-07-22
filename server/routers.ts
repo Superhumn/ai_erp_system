@@ -6795,6 +6795,11 @@ Be concise and helpful. Always give actionable guidance.`;
       
       create: internalProcedure
         .input(z.object({
+          // NOTE: 'concierge_errand' is intentionally NOT creatable here. Errands
+          // carry the submitting user's identity in taskData, which the executor
+          // trusts to choose the execution context; allowing arbitrary clients to
+          // POST that taskData would enable identity spoofing. Errands are created
+          // server-side only, via the plan_errand agent tool.
           taskType: z.enum(['generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory', 'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials', 'vendor_followup', 'create_work_order', 'query', 'reply_email', 'approve_po', 'approve_invoice', 'create_vendor', 'create_material', 'create_product', 'create_bom', 'create_customer', 'create_crm_deal']),
           priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium'),
           taskData: z.string(), // JSON string with task-specific data
@@ -6936,25 +6941,50 @@ Be concise and helpful. Always give actionable guidance.`;
           if (!task) throw new TRPCError({ code: 'NOT_FOUND', message: 'Task not found' });
           
           // Validate JSON format
+          let parsedTaskData: any;
           try {
-            JSON.parse(input.taskData);
+            parsedTaskData = JSON.parse(input.taskData);
           } catch (e) {
-            throw new TRPCError({ 
-              code: 'BAD_REQUEST', 
-              message: 'Invalid JSON format in taskData' 
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'Invalid JSON format in taskData'
             });
           }
-          
+
           // Only allow updates on pending or approved tasks
           if (!['pending_approval', 'approved'].includes(task.status)) {
-            throw new TRPCError({ 
-              code: 'BAD_REQUEST', 
-              message: 'Can only update pending or approved tasks' 
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'Can only update pending or approved tasks'
             });
           }
-          
+
+          let taskDataToSave = input.taskData;
+          // Concierge errands execute under the original submitter's identity
+          // (stored in taskData). Those fields are immutable — preserve them from
+          // the original task so editing the plan can never change WHO it runs as,
+          // preventing identity spoofing via this admin endpoint.
+          if (task.taskType === 'concierge_errand') {
+            // Parse defensively so a malformed stored row or a valid-but-non-object
+            // payload (null/array) can't turn a recoverable bad edit into a 500.
+            const isPlainObject = (v: any) => v != null && typeof v === 'object' && !Array.isArray(v);
+            if (!isPlainObject(parsedTaskData)) {
+              throw new TRPCError({ code: 'BAD_REQUEST', message: 'Errand taskData must be a JSON object' });
+            }
+            let original: any = {};
+            try { original = JSON.parse(task.taskData || '{}'); } catch { original = {}; }
+            if (!isPlainObject(original)) original = {};
+            parsedTaskData.submittedByUserId = original.submittedByUserId;
+            parsedTaskData.userName = original.userName;
+            parsedTaskData.userRole = original.userRole;
+            // Keep taskData.companyId in sync with the authoritative row column
+            // (not the old JSON) so an edit can't persist a tenancy mismatch.
+            parsedTaskData.companyId = task.companyId ?? undefined;
+            taskDataToSave = JSON.stringify(parsedTaskData);
+          }
+
           await db.updateAiAgentTask(input.id, {
-            taskData: input.taskData,
+            taskData: taskDataToSave,
             aiReasoning: input.aiReasoning || task.aiReasoning || undefined,
           });
           
@@ -7358,6 +7388,15 @@ Be concise and helpful. Always give actionable guidance.`;
                 });
                 
                 result = { created: true, workOrderId: workOrder.id, workOrderNumber: workOrder.workOrderNumber };
+                break;
+              }
+
+              case 'concierge_errand': {
+                // Replay the approved plan through the main AI agent loop.
+                const { executeConciergeErrand } = await import('./conciergeErrandService');
+                const errandResult = await executeConciergeErrand(task);
+                if (!errandResult.success) throw new Error(errandResult.error || 'Errand execution failed');
+                result = errandResult.data;
                 break;
               }
 
