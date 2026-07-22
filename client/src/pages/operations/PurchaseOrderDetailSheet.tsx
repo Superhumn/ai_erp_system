@@ -136,8 +136,11 @@ export default function PurchaseOrderDetailSheet({
       );
     }
     if (po && mode === "receive") {
+      // Seed with what's already been received (or 0) — never the ordered
+      // quantity, so a user can't accidentally mark the whole PO received just by
+      // clicking "Record receipt" without entering numbers.
       const seed: Record<number, string> = {};
-      for (const it of po.items || []) seed[it.id] = String(it.receivedQuantity ?? it.quantity ?? "0");
+      for (const it of po.items || []) seed[it.id] = String(it.receivedQuantity ?? "0");
       setReceipts(seed);
     }
   }, [po, mode]);

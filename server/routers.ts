@@ -2470,7 +2470,9 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
             entityType: 'purchase_order',
             entityId: id,
             severity: data.status === 'received' ? 'info' : 'info',
-            link: `/operations/purchase-orders/${id}`,
+            // The client has no /:id route — deep-link the list, which opens the
+            // detail drawer for ?po=<id>.
+            link: `/operations/purchase-orders?po=${id}`,
           }, opsUsers.map(u => u.id));
         }
         

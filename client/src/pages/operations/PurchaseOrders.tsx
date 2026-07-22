@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -64,6 +64,17 @@ export default function PurchaseOrders() {
   const [activeAction, setActiveAction] = useState<'draft' | 'email' | null>(null);
   const [deletePOId, setDeletePOId] = useState<number | null>(null);
   const [detailPoId, setDetailPoId] = useState<number | null>(null);
+
+  // Deep-link support: /operations/purchase-orders?po=<id> opens that PO's
+  // detail drawer (used by status-change notifications).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const po = params.get("po");
+    if (po) {
+      const id = parseInt(po, 10);
+      if (Number.isFinite(id)) setDetailPoId(id);
+    }
+  }, []);
   const [chatTarget, setChatTarget] = useState<{ contactId: number; whatsappNumber: string; contactName?: string; subtitle?: string } | null>(null);
   const [linkTarget, setLinkTarget] = useState<{ vendorId: number; vendorName: string; vendorPhone?: string | null; poNumber: string } | null>(null);
   const [poPreview, setPoPreview] = useState<{
@@ -729,6 +740,9 @@ export default function PurchaseOrders() {
                       aria-label={`Open purchase order ${po.poNumber}`}
                       onClick={() => setDetailPoId(po.id)}
                       onKeyDown={(e) => {
+                        // Only act when the row itself is focused — not when the
+                        // event bubbles up from the status Select or action buttons.
+                        if (e.currentTarget !== e.target) return;
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
                           setDetailPoId(po.id);
