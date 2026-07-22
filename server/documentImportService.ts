@@ -1555,8 +1555,11 @@ export async function importEmailAttachmentToErp(opts: {
   };
 }
 
-/** MIME types the document parser can extract structured data from. */
-const PARSEABLE_DOCUMENT_MIME = /pdf|image|png|jpe?g|webp|gif|msword|word|spreadsheet|excel|sheet|csv/i;
+// Document-like MIME types the parser can extract structured data from.
+// Images are limited to jpeg/png (photographed/scanned docs); animated and
+// sticker formats (webp/gif) are deliberately excluded — WhatsApp stickers are
+// image/webp and would otherwise burn an LLM call.
+const PARSEABLE_DOCUMENT_MIME = /pdf|png|jpe?g|msword|word|spreadsheet|excel|sheet|csv/i;
 
 /**
  * True when a WhatsApp/media attachment of the given MIME type is worth sending

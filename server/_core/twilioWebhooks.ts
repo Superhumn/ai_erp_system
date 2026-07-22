@@ -241,10 +241,14 @@ async function importWhatsappMedia(
     // Auto-extract & file the document into the ERP (invoice / shipment / PO /
     // customs) using the same parser+importers as the email intake path, so
     // supplier docs sent over WhatsApp get sorted rather than just stored.
-    // Best-effort and only for parseable types — never blocks media capture.
-    try {
-      const { importWhatsappDocumentToErp, isParseableDocumentMime } = await import("../documentImportService");
-      if (isParseableDocumentMime(mime)) {
+    // Detached on purpose: parsing is an LLM call, and storage has already
+    // succeeded — the caller repoints the message at the durable URL as soon as
+    // this returns, so the parse must not delay that. Best-effort, gated to
+    // parseable types, and never throws out of importWhatsappMedia.
+    void (async () => {
+      try {
+        const { importWhatsappDocumentToErp, isParseableDocumentMime } = await import("../documentImportService");
+        if (!isParseableDocumentMime(mime)) return;
         const dataUrl = `data:${mime};base64,${buffer.toString("base64")}`;
         await importWhatsappDocumentToErp({
           whatsappMessageId: waMsgId,
@@ -253,10 +257,10 @@ async function importWhatsappMedia(
           mimeType: mime,
           fromNumber,
         });
+      } catch (parseErr) {
+        console.warn(`[Twilio Webhook] document auto-parse failed for msg ${waMsgId}:`, parseErr);
       }
-    } catch (parseErr) {
-      console.warn(`[Twilio Webhook] document auto-parse failed for msg ${waMsgId}:`, parseErr);
-    }
+    })();
 
     return fileUrl;
   } catch (err) {

@@ -13508,15 +13508,17 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
               (email as any).attachmentContents || [];
             const contentByName = new Map(attachmentContents.map((a) => [a.filename, a]));
             for (const attachment of email.attachments) {
+              const withBytes = contentByName.get(attachment.filename);
               const { id: attachmentId } = await db.createEmailAttachment({
                 emailId,
                 filename: attachment.filename,
                 mimeType: attachment.contentType,
-                size: attachment.size,
+                // Prefer the real downloaded byte length; IMAP metadata size can
+                // be null/approximate for parts we actually stored.
+                size: withBytes ? withBytes.data.length : attachment.size,
                 storageUrl: null,
               });
 
-              const withBytes = contentByName.get(attachment.filename);
               if (!withBytes) continue;
 
               try {
@@ -13526,7 +13528,7 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
                 await db.updateEmailAttachment(attachmentId, {
                   storageKey: put.key,
                   storageUrl: `/api/attachments/${attachmentId}`,
-                } as any);
+                });
               } catch (e: any) {
                 console.error("[scanInbox] attachment upload failed:", e?.message);
                 continue; // no stored bytes — skip parsing this attachment
