@@ -2451,6 +2451,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
         const oldPO = await db.getPurchaseOrderById(id);
+        if (!oldPO) throw new TRPCError({ code: 'NOT_FOUND', message: 'Purchase order not found' });
         await db.updatePurchaseOrder(id, data);
         await createAuditLog(ctx.user.id, 'update', 'purchaseOrder', id, oldPO?.poNumber, oldPO, data);
         

@@ -741,7 +741,7 @@ function ReceiveView({
 }: {
   po: any;
   receipts: Record<number, string>;
-  setReceipts: (r: Record<number, string>) => void;
+  setReceipts: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   onCancel: () => void;
   onSave: () => void;
   saving: boolean;
@@ -777,7 +777,7 @@ function ReceiveView({
                     type="number"
                     min="0"
                     value={receipts[it.id] ?? ""}
-                    onChange={(e) => setReceipts({ ...receipts, [it.id]: e.target.value })}
+                    onChange={(e) => setReceipts((prev) => ({ ...prev, [it.id]: e.target.value }))}
                   />
                 </TableCell>
               </TableRow>

@@ -1641,14 +1641,28 @@ export async function setPurchaseOrderReceivedQuantities(
       if (got < ordered) allReceived = false;
     }
 
-    const status = allReceived ? "received" : anyReceived ? "partial" : undefined;
-    if (status) {
+    const current = (
+      await tx.select({ status: purchaseOrders.status }).from(purchaseOrders).where(eq(purchaseOrders.id, purchaseOrderId)).limit(1)
+    )[0]?.status;
+
+    // Derive the new status. When quantities are corrected back down (e.g. all
+    // set to 0) a PO previously marked received/partial must be walked back to
+    // "confirmed" so it doesn't stay stuck at received; other statuses (sent /
+    // confirmed) are left untouched when nothing has been received yet.
+    let status: string | undefined;
+    if (allReceived) status = "received";
+    else if (anyReceived) status = "partial";
+    else if (current === "received" || current === "partial") status = "confirmed";
+
+    if (status && status !== current) {
       await tx
         .update(purchaseOrders)
-        .set({ status: status as any, ...(status === "received" ? { receivedDate: new Date() } : {}) })
+        // Set receivedDate only when fully received; clear it on any walk-back so
+        // a stale received date can't linger.
+        .set({ status: status as any, receivedDate: status === "received" ? new Date() : null })
         .where(eq(purchaseOrders.id, purchaseOrderId));
     }
-    return { status: status ?? null };
+    return { status: status ?? current ?? null };
   });
 }
 
