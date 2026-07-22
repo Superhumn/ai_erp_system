@@ -1682,6 +1682,39 @@ async function startServer() {
       }
     })();
 
+    // ── Thread Follow-Up workflow (daily scan) ──
+    // Scans for follow-up threads whose nextNudgeAt is due and drives automated
+    // nudges (active vendors: up to 4 then a human; others: one nudge then drop).
+    // Dry-run is DEFAULT ON: set THREAD_FOLLOWUP_DRY_RUN="false" to actually send.
+    // The job itself re-checks the Tue–Thu 09:00–16:00 recipient-local send
+    // window per thread, so a coarse daily interval is fine.
+    (async () => {
+      try {
+        const TF_INTERVAL = 24 * 60 * 60 * 1000; // Daily
+        console.log("[Thread Follow-Up] Starting daily scan scheduler");
+        setInterval(async () => {
+          try {
+            const { runThreadFollowUpJob } = await import("../threadFollowUp");
+            const r = await runThreadFollowUpJob();
+            console.log(`[Thread Follow-Up]${r.dryRun ? " [dry-run]" : ""} scanned=${r.scanned} ` +
+              `sent=${r.sent} skipped=${r.skipped} dropped=${r.dropped} escalated=${r.escalated} ` +
+              `stopped=${r.stopped} errors=${r.errors}`);
+          } catch (e) {
+            console.warn("[Thread Follow-Up] Scan failed:", e);
+          }
+        }, TF_INTERVAL);
+        // Initial scan after 10 minutes.
+        setTimeout(async () => {
+          try {
+            const { runThreadFollowUpJob } = await import("../threadFollowUp");
+            await runThreadFollowUpJob();
+          } catch {}
+        }, 10 * 60 * 1000);
+      } catch (e) {
+        console.warn("[Thread Follow-Up] Could not initialize:", e);
+      }
+    })();
+
     // ── Task reminder emails for outstanding tasks (daily check) ──
     (async () => {
       try {
