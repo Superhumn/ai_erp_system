@@ -114,7 +114,8 @@ function activityHref(entityType?: string, entityId?: number | null): string | n
     case "invoice": return "/finance/invoices";
     case "payment": return "/finance/payments";
     case "vendor": return "/operations/vendors";
-    case "purchaseorder": return "/operations/purchase-orders";
+    case "purchaseorder":
+    case "purchase_order": return "/operations/purchase-orders";
     case "inventory": return "/operations/inventory";
     case "employee": return "/hr/employees";
     case "project":
