@@ -98,6 +98,32 @@ function KPICard({
   );
 }
 
+// Map an audit-log entity to the best in-app destination. Entities with a
+// detail route deep-link by id; the rest go to their list. Unknown types
+// return null and stay non-clickable (rather than guess a wrong route).
+function activityHref(entityType?: string, entityId?: number | null): string | null {
+  const t = (entityType || "").toLowerCase();
+  const withId = (base: string) => (entityId ? `${base}/${entityId}` : base);
+  switch (t) {
+    case "customer": return withId("/sales/customers");
+    case "order": return withId("/sales/orders");
+    case "product": return withId("/operations/products");
+    case "transfer":
+    case "inventory_transfer":
+    case "inventorytransfer": return withId("/operations/transfers");
+    case "invoice": return "/finance/invoices";
+    case "payment": return "/finance/payments";
+    case "vendor": return "/operations/vendors";
+    case "purchaseorder":
+    case "purchase_order": return "/operations/purchase-orders";
+    case "inventory": return "/operations/inventory";
+    case "employee": return "/hr/employees";
+    case "project":
+    case "projecttask": return "/projects";
+    default: return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Dashboard
 // ---------------------------------------------------------------------------
@@ -454,10 +480,16 @@ export default function Home() {
               </p>
             ) : (
               <div className="divide-y divide-border/50">
-                {recentActivity.map((entry: any) => (
+                {recentActivity.map((entry: any) => {
+                  const href = activityHref(entry.entityType, entry.entityId);
+                  return (
                   <div
                     key={entry.id}
-                    className="flex items-start gap-3 py-2.5 first:pt-0 last:pb-0"
+                    onClick={href ? () => setLocation(href) : undefined}
+                    onKeyDown={href ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setLocation(href); } } : undefined}
+                    role={href ? "button" : undefined}
+                    tabIndex={href ? 0 : undefined}
+                    className={`flex items-start gap-3 py-2.5 first:pt-0 last:pb-0${href ? " cursor-pointer hover:bg-muted/40 -mx-2 px-2 rounded-md transition-colors" : ""}`}
                   >
                     <Activity className="h-3.5 w-3.5 text-muted-foreground/50 mt-0.5 shrink-0" />
                     <div className="flex-1 min-w-0">
@@ -484,7 +516,8 @@ export default function Home() {
                         : ""}
                     </span>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardContent>
