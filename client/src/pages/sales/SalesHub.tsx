@@ -167,6 +167,7 @@ export default function SalesHub() {
     id: number;
     orderNumber: string;
     orderDate: string | Date | null;
+    customerId: number | null;
     customerName: string;
     customerEmail: string;
     itemCount: number | string;
@@ -209,6 +210,7 @@ export default function SalesHub() {
         id: order.id,
         orderNumber: order.orderNumber || "\u2014",
         orderDate: order.orderDate,
+        customerId: order.customerId ?? null,
         customerName: cust?.name || "\u2014",
         customerEmail: cust?.email || "\u2014",
         itemCount: order.items?.length || order.lineItems?.length || "\u2014",
@@ -357,11 +359,11 @@ export default function SalesHub() {
         return <Badge variant="secondary" className={`${channelColors[val] ?? channelColors.Manual} text-[11px] font-medium`}>{val}</Badge>;
       case "orderNumber":
         return val && val !== "\u2014" ? (
-          <span className="text-primary font-semibold">{val}</span>
+          <a href={`/sales/orders/${row.id}`} onClick={(e) => { e.preventDefault(); navigate(`/sales/orders/${row.id}`); }} className="text-primary font-semibold hover:underline cursor-pointer">{val}</a>
         ) : "\u2014";
       case "customerName":
         return val && val !== "\u2014" ? (
-          <a href="/crm/hub" onClick={(e) => { e.preventDefault(); navigate("/crm/hub"); }} className="text-primary hover:underline cursor-pointer">
+          <a href={row.customerId ? `/sales/customers/${row.customerId}` : "/crm/hub"} onClick={(e) => { e.preventDefault(); navigate(row.customerId ? `/sales/customers/${row.customerId}` : "/crm/hub"); }} className="text-primary hover:underline cursor-pointer">
             {val}
           </a>
         ) : "\u2014";

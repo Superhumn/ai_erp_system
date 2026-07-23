@@ -271,7 +271,11 @@ export default function BOM() {
                             <div className="text-sm text-muted-foreground">{product?.sku}</div>
                           </div>
                         </TableCell>
-                        <TableCell className="font-medium">{bom.name}</TableCell>
+                        <TableCell className="font-medium">
+                          <button className="text-left hover:underline" onClick={() => navigate(`/operations/bom/${bom.id}`)}>
+                            {bom.name}
+                          </button>
+                        </TableCell>
                         <TableCell>{bom.version}</TableCell>
                         <TableCell>
                           {bom.batchSize} {bom.batchUnit}
