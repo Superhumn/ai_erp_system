@@ -44,7 +44,7 @@ import { storagePut, storageDelete } from "./storage";
 import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile, type GmailSendOptions, type GmailDraftOptions } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
-import { parseFormulationSheet } from "./recipeSheetImport";
+import { parseFormulationSheet, suggestColumnMapping, type ColumnKey } from "./recipeSheetImport";
 import { getGoogleFullAccessAuthUrl, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
 import { getServiceAccountEmail, isServiceAccountConfigured } from "./_core/googleServiceAccount";
 import { getQuickBooksAuthUrl, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems, getProfitAndLoss, parseProfitAndLossReport } from "./_core/quickbooks";
@@ -609,10 +609,11 @@ async function requireRecipeAccess(
 async function importFormulationRows(
   values: unknown[][],
   userId: number,
-  opts?: { defaultRecipeName?: string },
+  opts?: { defaultRecipeName?: string; columnMapping?: Partial<Record<ColumnKey, number>> },
 ) {
   const { recipes: parsed, warnings } = parseFormulationSheet(values || [], {
     defaultRecipeName: opts?.defaultRecipeName,
+    columnMapping: opts?.columnMapping,
   });
   if (parsed.length === 0) {
     throw new TRPCError({
@@ -10655,6 +10656,9 @@ Provide a brief status summary, any missing documents, and next steps.`;
         spreadsheetId: z.string().min(1),
         range: z.string().optional(),
         defaultRecipeName: z.string().optional(),
+        // Optional explicit column mapping (field → column index) that
+        // overrides automatic header detection.
+        columnMapping: z.record(z.string(), z.number()).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
@@ -10675,9 +10679,50 @@ Provide a brief status summary, any missing documents, and next steps.`;
         return importFormulationRows(
           (sheet.values as unknown[][]) || [],
           ctx.user.id,
-          { defaultRecipeName: input.defaultRecipeName },
+          {
+            defaultRecipeName: input.defaultRecipeName,
+            columnMapping: input.columnMapping as Partial<Record<ColumnKey, number>> | undefined,
+          },
         );
       }),
+    // Read a sheet's header row (plus a few sample rows) and suggest a column
+    // mapping, so the import UI can let the user review/adjust which column maps
+    // to which recipe field before importing. Read-only — nothing is persisted.
+    previewGoogleSheet: protectedProcedure
+      .input(z.object({
+        spreadsheetId: z.string().min(1),
+        range: z.string().optional(),
+      }))
+      .query(async ({ input, ctx }) => {
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: error });
+        }
+        const sheet = await getGoogleSheetValues(
+          accessToken,
+          input.spreadsheetId,
+          input.range || "A1:Z1000",
+        );
+        if (!sheet.success) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: sheet.error || "Failed to read the spreadsheet.",
+          });
+        }
+        const values = (sheet.values as unknown[][]) || [];
+        const header = (values[0] as unknown[]) || [];
+        return {
+          headers: header.map((h) => String(h ?? "")),
+          sampleRows: values.slice(1, 6).map((r) => (r as unknown[]).map((c) => String(c ?? ""))),
+          suggestedMapping: suggestColumnMapping(header),
+        };
+      }),
+    // Suggest a column mapping for a header row parsed on the client (file
+    // upload path), keeping the auto-detection logic on the server as the single
+    // source of truth.
+    suggestImportMapping: protectedProcedure
+      .input(z.object({ headers: z.array(z.string()).max(200) }))
+      .query(({ input }) => suggestColumnMapping(input.headers)),
     // Import recipe formulations from an uploaded CSV/XLSX file. The client
     // parses the file into a 2D array of rows (header row first) and sends it
     // here, so no Google account or hosted sheet is required. Same parsing and
@@ -10686,10 +10731,12 @@ Provide a brief status summary, any missing documents, and next steps.`;
       .input(z.object({
         rows: z.array(z.array(z.any())).max(10000),
         defaultRecipeName: z.string().optional(),
+        columnMapping: z.record(z.string(), z.number()).optional(),
       }))
       .mutation(({ input, ctx }) =>
         importFormulationRows(input.rows as unknown[][], ctx.user.id, {
           defaultRecipeName: input.defaultRecipeName,
+          columnMapping: input.columnMapping as Partial<Record<ColumnKey, number>> | undefined,
         })),
     // List copackers a recipe is shared with (owner only)
     listShares: opsProcedure
