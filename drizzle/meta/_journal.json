@@ -379,6 +379,13 @@
       "when": 1781786403000,
       "tag": "0053_background_tasks",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "5",
+      "when": 1784823841000,
+      "tag": "0054_supply_chain_workflow_tables",
+      "breakpoints": true
     }
   ]
 }
