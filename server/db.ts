@@ -1,5 +1,6 @@
 import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray, ne, sum, max, min } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
+import { scopeAllows, scopeCompanyIds, type Scope } from "./_core/scope";
 import {
   InsertUser, users, authTokens, InsertAuthToken, localAuthCredentials, InsertLocalAuthCredential, companies, customers, vendors, products,
   accounts, invoices, invoiceItems, payments, transactions, transactionLines,
@@ -476,6 +477,14 @@ export async function getCompaniesByIds(ids: number[]) {
   return db.select().from(companies).where(inArray(companies.id, ids));
 }
 
+// All company ids in a region. Used by region-scoped access resolution.
+export async function getCompanyIdsInRegion(regionId: number): Promise<number[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select({ id: companies.id }).from(companies).where(eq(companies.regionId, regionId));
+  return rows.map((r) => r.id);
+}
+
 export async function createCompany(data: InsertCompany) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -554,20 +563,32 @@ export async function getCompanyStructure() {
 // CUSTOMER MANAGEMENT
 // ============================================
 
-export async function getCustomers(companyId?: number) {
+// Pass a request's `ctx.scope` to restrict results to the caller's visible entities.
+// Omit `scope` for trusted internal/system callers that need full access.
+export async function getCustomers(scope?: Scope) {
   const db = await getDb();
   if (!db) return [];
-  if (companyId) {
-    return db.select().from(customers).where(eq(customers.companyId, companyId)).orderBy(desc(customers.createdAt));
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return []; // scoped user with no visible entities
+    return db.select().from(customers).where(inArray(customers.companyId, ids)).orderBy(desc(customers.createdAt));
   }
   return db.select().from(customers).orderBy(desc(customers.createdAt));
 }
 
-export async function getCustomerById(id: number) {
+// Pass a request's `ctx.scope` to enforce entity visibility: a customer outside the caller's
+// scope is reported as not found (undefined) so cross-entity existence isn't leaked. Omit `scope`
+// for trusted internal callers.
+export async function getCustomerById(id: number, scope?: Scope) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(customers).where(eq(customers.id, id)).limit(1);
-  return result[0];
+  const customer = result[0];
+  if (!customer) return undefined;
+  if (scope && !scopeAllows(scope, customer.companyId)) {
+    return undefined; // outside the caller's entity scope
+  }
+  return customer;
 }
 
 export async function getCustomerByShopifyId(shopifyId: string) {
