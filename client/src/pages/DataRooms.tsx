@@ -85,19 +85,13 @@ export default function DataRooms() {
   });
 
   const [syncingRoomId, setSyncingRoomId] = useState<number | null>(null);
-  const syncFromDriveMutation = trpc.dataRoom.syncFromDrive.useMutation({
+  // Kick off the Drive sync as a background task. It returns immediately and keeps
+  // running server-side; the global task tray shows live progress and fires a
+  // toast on completion, so the sync survives navigating away from this page.
+  const syncFromDriveMutation = trpc.dataRoom.startDriveSync.useMutation({
     onSuccess: (data) => {
-      const filesFound = data.filesFound ?? data.filesCreated;
-      const firstError = data.errors?.[0];
-      if (data.filesCreated === 0 && filesFound === 0) {
-        toast.error("No files found in the Google Drive folder. Check that it contains files and is shared with the connected account.");
-      } else if (data.filesCreated === 0 && filesFound > 0) {
-        toast.error(`Found ${filesFound} file(s) but none could be imported.${firstError ? ` First error: ${firstError}` : ''}`);
-      } else {
-        toast.success(`Synced ${data.filesCreated} files and ${data.foldersCreated} folders from Google Drive${(data.filesUpdated || data.foldersUpdated) ? `, updated ${(data.filesUpdated ?? 0) + (data.foldersUpdated ?? 0)}` : ''}${(data.filesRemoved || data.foldersRemoved) ? `, removed ${(data.filesRemoved ?? 0) + (data.foldersRemoved ?? 0)} deleted in Drive` : ''}${data.filesFailed ? ` (${data.filesFailed} file(s) failed)` : ''}`);
-      }
+      toast.success(`Sync started${data.folderName ? ` for "${data.folderName}"` : ""} — it'll keep running in the background.`);
       setSyncingRoomId(null);
-      utils.dataRoom.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);

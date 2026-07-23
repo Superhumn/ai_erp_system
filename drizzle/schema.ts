@@ -2946,6 +2946,41 @@ export type SyncLog = typeof syncLogs.$inferSelect;
 export type InsertSyncLog = typeof syncLogs.$inferInsert;
 
 
+// ============================================
+// BACKGROUND TASKS (generic async job tracking)
+// ============================================
+// Long-running, user-initiated operations (e.g. Data Room ↔ Google Drive sync)
+// run detached from the originating HTTP request and record their progress here.
+// The client polls this table via a global provider so in-flight work is visible
+// anywhere in the app and survives navigating away from the page that started it.
+export const backgroundTasks = mysqlTable("background_tasks", {
+  id: varchar("id", { length: 36 }).primaryKey(), // uuid, generated app-side
+  userId: int("userId").notNull(),                // owner — tasks are scoped per user
+  type: varchar("type", { length: 64 }).notNull(),// e.g. "data_room_drive_sync"
+  title: varchar("title", { length: 255 }).notNull(),
+  description: varchar("description", { length: 500 }),
+  status: mysqlEnum("status", ["queued", "running", "success", "error", "cancelled"]).default("queued").notNull(),
+  progress: int("progress").default(0).notNull(),  // 0..100; indeterminate while total is 0
+  processed: int("processed").default(0).notNull(),
+  total: int("total").default(0).notNull(),
+  message: varchar("message", { length: 500 }),    // latest human-readable status line
+  entityType: varchar("entityType", { length: 64 }),
+  entityId: int("entityId"),
+  link: varchar("link", { length: 512 }),          // deep link to view the result
+  result: json("result"),
+  errorMessage: text("errorMessage"),
+  cancelRequested: boolean("cancelRequested").default(false).notNull(),
+  dismissedAt: timestamp("dismissedAt"),
+  startedAt: timestamp("startedAt"),
+  finishedAt: timestamp("finishedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type BackgroundTask = typeof backgroundTasks.$inferSelect;
+export type InsertBackgroundTask = typeof backgroundTasks.$inferInsert;
+
+
 // Email scanning types
 export type InboundEmail = typeof inboundEmails.$inferSelect;
 export type InsertInboundEmail = typeof inboundEmails.$inferInsert;

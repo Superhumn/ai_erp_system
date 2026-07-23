@@ -11,6 +11,7 @@ import {
   contracts, contractKeyDates, disputes, documents,
   projects, projectMilestones, projectTasks,
   auditLogs, notifications, integrationConfigs, aiConversations, aiMessages,
+  backgroundTasks, BackgroundTask, InsertBackgroundTask,
   googleOAuthTokens, InsertGoogleOAuthToken,
   quickbooksOAuthTokens, InsertQuickBooksOAuthToken,
   quickbooksAccounts, InsertQuickBooksAccount,
@@ -6408,6 +6409,148 @@ export async function createNotificationsForAllUsers(
   
   await db.insert(notifications).values(notificationValues);
   return notificationValues.length;
+}
+
+// ============================================
+// BACKGROUND TASKS
+// ============================================
+// Generic tracking for long-running, user-initiated operations that run detached
+// from the request that started them (see server/_core/backgroundTasks.ts). The
+// client polls these via the `backgroundTasks` tRPC router so work is visible
+// app-wide and survives navigation. All helpers are per-user scoped by callers.
+
+export interface CreateBackgroundTaskInput {
+  id: string;
+  userId: number;
+  type: string;
+  title: string;
+  description?: string | null;
+  total?: number;
+  message?: string | null;
+  entityType?: string | null;
+  entityId?: number | null;
+  link?: string | null;
+}
+
+export async function createBackgroundTask(input: CreateBackgroundTaskInput) {
+  const db = await getDb();
+  if (!db) return null;
+
+  await db.insert(backgroundTasks).values({
+    id: input.id,
+    userId: input.userId,
+    type: input.type,
+    title: input.title,
+    description: input.description ?? null,
+    status: "queued",
+    progress: 0,
+    processed: 0,
+    total: input.total ?? 0,
+    message: input.message ?? null,
+    entityType: input.entityType ?? null,
+    entityId: input.entityId ?? null,
+    link: input.link ?? null,
+  });
+
+  return input.id;
+}
+
+export async function updateBackgroundTask(
+  id: string,
+  data: Partial<Pick<InsertBackgroundTask,
+    | "status" | "progress" | "processed" | "total" | "message"
+    | "result" | "errorMessage" | "cancelRequested"
+    | "startedAt" | "finishedAt" | "link">>,
+) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(backgroundTasks).set(data).where(eq(backgroundTasks.id, id));
+}
+
+/**
+ * Tasks a user should currently see: everything still in flight, plus anything
+ * that finished recently and hasn't been dismissed. `finishedSince` bounds how
+ * far back completed tasks stay in the tray (default: last 6 hours).
+ */
+export async function listVisibleBackgroundTasks(
+  userId: number,
+  opts?: { finishedSince?: Date; limit?: number },
+): Promise<BackgroundTask[]> {
+  const db = await getDb();
+  if (!db) return [];
+
+  const since = opts?.finishedSince ?? new Date(Date.now() - 6 * 60 * 60 * 1000);
+  const rows = await db.select()
+    .from(backgroundTasks)
+    .where(and(
+      eq(backgroundTasks.userId, userId),
+      isNull(backgroundTasks.dismissedAt),
+      or(
+        inArray(backgroundTasks.status, ["queued", "running"]),
+        gte(backgroundTasks.updatedAt, since),
+      ),
+    ))
+    .orderBy(desc(backgroundTasks.createdAt))
+    .limit(opts?.limit ?? 50);
+
+  return rows;
+}
+
+export async function requestBackgroundTaskCancel(id: string, userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(backgroundTasks)
+    .set({ cancelRequested: true })
+    .where(and(eq(backgroundTasks.id, id), eq(backgroundTasks.userId, userId)));
+}
+
+export async function isBackgroundTaskCancelRequested(id: string): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  const [row] = await db.select({ cancelRequested: backgroundTasks.cancelRequested })
+    .from(backgroundTasks).where(eq(backgroundTasks.id, id)).limit(1);
+  return !!row?.cancelRequested;
+}
+
+/** Hide a finished task from the tray. Only affects the owner's rows. */
+export async function dismissBackgroundTask(id: string, userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(backgroundTasks)
+    .set({ dismissedAt: new Date() })
+    .where(and(eq(backgroundTasks.id, id), eq(backgroundTasks.userId, userId)));
+}
+
+/** Dismiss every finished (non-in-flight) task for a user in one shot. */
+export async function dismissFinishedBackgroundTasks(userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(backgroundTasks)
+    .set({ dismissedAt: new Date() })
+    .where(and(
+      eq(backgroundTasks.userId, userId),
+      isNull(backgroundTasks.dismissedAt),
+      inArray(backgroundTasks.status, ["success", "error", "cancelled"]),
+    ));
+}
+
+/**
+ * Boot recovery: the in-memory runner dies on server restart, so any task still
+ * marked queued/running is orphaned. Fail them so they don't spin forever in the
+ * client. Called once at startup.
+ */
+export async function failInterruptedBackgroundTasks(): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const result = await db.update(backgroundTasks)
+    .set({
+      status: "error",
+      errorMessage: "Interrupted by a server restart.",
+      message: "Interrupted by a server restart.",
+      finishedAt: new Date(),
+    })
+    .where(inArray(backgroundTasks.status, ["queued", "running"]));
+  return (result as any)[0]?.affectedRows ?? (result as any).rowsAffected ?? 0;
 }
 
 export async function getUserNotifications(userId: number, options?: {

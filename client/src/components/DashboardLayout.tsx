@@ -2,6 +2,8 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { NotificationCenter } from "@/components/NotificationCenter";
 import { OfflineIndicator } from "@/components/OfflineIndicator";
 import { AutonomousAgentBar } from "@/components/AutonomousAgentBar";
+import { BackgroundTasksProvider } from "@/contexts/BackgroundTasksContext";
+import { BackgroundTasksIndicator, BackgroundTasksTray } from "@/components/BackgroundTasksTray";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -369,7 +371,7 @@ function DashboardLayoutContent({
   }, [isResizing, setSidebarWidth]);
 
   return (
-    <>
+    <BackgroundTasksProvider>
       <div className="relative z-10" ref={sidebarRef}>
         <Sidebar
           collapsible="icon"
@@ -523,6 +525,7 @@ function DashboardLayoutContent({
               <TooltipContent>Quick note (g then n)</TooltipContent>
             </Tooltip>
             {!isExternalRole && <AutonomousAgentBar />}
+            <BackgroundTasksIndicator />
             <NotificationCenter />
           </div>
         </header>
@@ -532,6 +535,9 @@ function DashboardLayoutContent({
       {/* Floating AI removed - using toolbar only */}
 
       <QuickNoteDialog open={quickNoteOpen} onOpenChange={setQuickNoteOpen} />
-    </>
+
+      {/* Floating corner tray — in-flight background work, visible app-wide */}
+      <BackgroundTasksTray />
+    </BackgroundTasksProvider>
   );
 }
