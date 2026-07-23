@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
+import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -32,6 +33,7 @@ import {
 export function AutonomousAgentBar() {
   const [, setLocation] = useLocation();
   const [isExpanded, setIsExpanded] = useState(false);
+  const { toast } = useToast();
 
   // Fetch orchestrator status
   const statusQuery = trpc.autonomousWorkflows.orchestrator.status.useQuery(undefined, {
@@ -47,10 +49,27 @@ export function AutonomousAgentBar() {
 
   // Start/Stop mutations
   const startMutation = trpc.autonomousWorkflows.orchestrator.start.useMutation({
-    onSuccess: () => statusQuery.refetch(),
+    onSuccess: async () => {
+      const { data } = await statusQuery.refetch();
+      if (data?.isRunning) {
+        toast.success("Autonomous agent started");
+      } else {
+        toast.error("Agent did not start", {
+          description:
+            "The orchestrator reported success but is not running. Check the server logs.",
+        });
+      }
+    },
+    onError: (error) =>
+      toast.error("Failed to start autonomous agent", { description: error.message }),
   });
   const stopMutation = trpc.autonomousWorkflows.orchestrator.stop.useMutation({
-    onSuccess: () => statusQuery.refetch(),
+    onSuccess: () => {
+      statusQuery.refetch();
+      toast.success("Autonomous agent stopped");
+    },
+    onError: (error) =>
+      toast.error("Failed to stop autonomous agent", { description: error.message }),
   });
 
   const isRunning = statusQuery.data?.isRunning ?? false;
