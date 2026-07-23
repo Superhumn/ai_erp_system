@@ -14,6 +14,11 @@ export const users = mysqlTable("users", {
   loginMethod: varchar("loginMethod", { length: 64 }),
   role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "sales", "copacker", "vendor", "contractor", "investor"]).default("user").notNull(),
   departmentId: int("departmentId"),
+  // Multi-region: home legal entity + how wide this user can see.
+  // regionScope defaults to "global" so existing users keep full visibility until real
+  // entities are assigned; tighten the default to "entity" once the backfill is done.
+  companyId: int("companyId").references((): AnyMySqlColumn => companies.id),
+  regionScope: mysqlEnum("regionScope", ["entity", "region", "global"]).default("global").notNull(),
   avatarUrl: text("avatarUrl"),
   phone: varchar("phone", { length: 32 }),
   // For external users (copackers, vendors), link to their entity
@@ -200,6 +205,21 @@ export type InsertQuickBooksItem = typeof quickbooksItems.$inferInsert;
 // CORE ENTITIES
 // ============================================
 
+// Regions group one or more legal entities (companies) for multi-country operation
+// and consolidated reporting. See docs/MULTI_REGION_PLAN.md.
+export const regions = mysqlTable("regions", {
+  id: int("id").autoincrement().primaryKey(),
+  code: varchar("code", { length: 16 }).notNull().unique(), // natural key, e.g. "EMEA", "APAC", "US"
+  name: varchar("name", { length: 128 }).notNull(),
+  baseCurrency: varchar("baseCurrency", { length: 3 }).notNull().default("USD"),
+  status: mysqlEnum("status", ["active", "inactive"]).default("active").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Region = typeof regions.$inferSelect;
+export type InsertRegion = typeof regions.$inferInsert;
+
 export const companies = mysqlTable("companies", {
   id: int("id").autoincrement().primaryKey(),
   name: varchar("name", { length: 255 }).notNull(),
@@ -216,6 +236,12 @@ export const companies = mysqlTable("companies", {
   email: varchar("email", { length: 320 }),
   website: varchar("website", { length: 512 }),
   industry: varchar("industry", { length: 128 }),
+  // Multi-region / multi-entity attributes (see docs/MULTI_REGION_PLAN.md)
+  regionId: int("regionId").references(() => regions.id),
+  functionalCurrency: varchar("functionalCurrency", { length: 3 }).notNull().default("USD"),
+  locale: varchar("locale", { length: 10 }).notNull().default("en-US"),
+  timezone: varchar("timezone", { length: 64 }).notNull().default("America/New_York"),
+  taxRegime: mysqlEnum("taxRegime", ["vat", "gst", "sales_tax", "none"]).default("none").notNull(),
   status: mysqlEnum("status", ["active", "inactive", "pending"]).default("active").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

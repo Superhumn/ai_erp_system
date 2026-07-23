@@ -497,39 +497,42 @@ export default function InventoryHub() {
   }, [inventoryRows]);
 
   const getStatusBadge = (status: string) => {
+    // Superhumn scheme: severity via dark ink + weight, never hue.
     switch (status) {
       case "low":
-        return <Badge className="bg-amber-500/8 text-amber-600 dark:text-amber-400 text-[10px] px-1.5 py-0">Low</Badge>;
+        return <Badge className="bg-muted text-foreground font-semibold text-[10px] px-1.5 py-0">Low</Badge>;
       case "out_of_stock":
-        return <Badge className="bg-red-500/8 text-red-600 dark:text-red-400 text-[10px] px-1.5 py-0">Out</Badge>;
+        return <Badge className="bg-[oklch(0.30_0.02_262)] text-white font-semibold text-[10px] px-1.5 py-0">Out</Badge>;
       default:
-        return <Badge className="bg-emerald-500/8 text-emerald-600 dark:text-emerald-400 text-[10px] px-1.5 py-0">OK</Badge>;
+        return <Badge className="bg-muted text-muted-foreground text-[10px] px-1.5 py-0">OK</Badge>;
     }
   };
 
   const getPOStatusBadge = (status: string) => {
     if (!status) return <span className="text-muted-foreground">—</span>;
+    // Neutral = ink on muted; active = primary blue; partial = dark ink + weight; cancelled = severe dark fill.
     const colors: Record<string, string> = {
-      draft: "bg-gray-500/8 text-gray-600",
-      sent: "bg-blue-500/8 text-blue-600",
-      confirmed: "bg-emerald-500/8 text-emerald-600",
-      partial: "bg-amber-500/8 text-amber-600",
-      received: "bg-green-500/8 text-green-600",
-      cancelled: "bg-red-500/8 text-red-600",
+      draft: "bg-muted text-muted-foreground",
+      sent: "bg-primary/10 text-primary",
+      confirmed: "bg-primary/10 text-primary",
+      partial: "bg-muted text-foreground font-semibold",
+      received: "bg-muted text-muted-foreground",
+      cancelled: "bg-[oklch(0.30_0.02_262)] text-white",
     };
-    return <Badge className={`${colors[status] || "bg-gray-500/8 text-gray-600"} text-[10px] px-1.5 py-0`}>{status}</Badge>;
+    return <Badge className={`${colors[status] || "bg-muted text-muted-foreground"} text-[10px] px-1.5 py-0`}>{status}</Badge>;
   };
 
   const getShipStatusBadge = (status: string) => {
     if (!status) return <span className="text-muted-foreground">—</span>;
+    // Neutral = ink on muted; in-transit = primary blue; returned = dark ink + weight; cancelled = severe dark fill.
     const colors: Record<string, string> = {
-      pending: "bg-gray-500/8 text-gray-600",
-      in_transit: "bg-blue-500/8 text-blue-600",
-      delivered: "bg-emerald-500/8 text-emerald-600",
-      returned: "bg-amber-500/8 text-amber-600",
-      cancelled: "bg-red-500/8 text-red-600",
+      pending: "bg-muted text-muted-foreground",
+      in_transit: "bg-primary/10 text-primary",
+      delivered: "bg-muted text-muted-foreground",
+      returned: "bg-muted text-foreground font-semibold",
+      cancelled: "bg-[oklch(0.30_0.02_262)] text-white",
     };
-    return <Badge className={`${colors[status] || "bg-gray-500/8 text-gray-600"} text-[10px] px-1.5 py-0`}>{status.replace("_", " ")}</Badge>;
+    return <Badge className={`${colors[status] || "bg-muted text-muted-foreground"} text-[10px] px-1.5 py-0`}>{status.replace("_", " ")}</Badge>;
   };
 
   const fmtDate = (d: any) => {
@@ -592,10 +595,10 @@ export default function InventoryHub() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuLabel className="flex items-center gap-2">
-                <ShoppingBag className="h-4 w-4 text-green-600" />
+                <ShoppingBag className="h-4 w-4 text-muted-foreground" />
                 Shopify Sync
                 {integrationStatus?.shopify?.configured ? (
-                  <Badge variant="outline" className="ml-auto text-xs bg-green-50 text-green-700">Connected</Badge>
+                  <Badge variant="outline" className="ml-auto text-xs bg-primary/10 text-primary">Connected</Badge>
                 ) : (
                   <Badge variant="outline" className="ml-auto text-xs">Not Set Up</Badge>
                 )}
@@ -670,22 +673,22 @@ export default function InventoryHub() {
       <div className="flex items-center gap-5 flex-wrap text-sm border rounded-xl px-4 py-3 bg-card">
         <div>
           <span className="text-xs text-muted-foreground">Total Items</span>
-          <div className="font-bold text-base">{stats.totalItems}</div>
+          <div className="font-bold text-base font-display tabular-nums">{stats.totalItems}</div>
         </div>
         <div className="h-8 w-px bg-border" />
         <div>
           <span className="text-xs text-muted-foreground">Low Stock</span>
-          <div className="font-bold text-base text-amber-600">{stats.lowStock}</div>
+          <div className="font-bold text-base text-foreground font-display tabular-nums">{stats.lowStock}</div>
         </div>
         <div className="h-8 w-px bg-border" />
         <div>
           <span className="text-xs text-muted-foreground">Out of Stock</span>
-          <div className="font-bold text-base text-red-600">{stats.outOfStock}</div>
+          <div className="font-bold text-base text-foreground font-display tabular-nums">{stats.outOfStock}</div>
         </div>
         <div className="h-8 w-px bg-border" />
         <div>
           <span className="text-xs text-muted-foreground">In Transit</span>
-          <div className="font-bold text-base text-blue-600">{stats.inTransitCount}</div>
+          <div className="font-bold text-base text-primary font-display tabular-nums">{stats.inTransitCount}</div>
         </div>
       </div>
 
@@ -753,10 +756,10 @@ export default function InventoryHub() {
                       <TableCell className="px-2 py-1 text-right font-mono text-xs font-medium">{row.available.toLocaleString()}</TableCell>
                       <TableCell className="px-2 py-1 text-right font-mono text-xs text-muted-foreground">{row.reorderPoint > 0 ? row.reorderPoint.toLocaleString() : "—"}</TableCell>
                       <TableCell className="px-2 py-1 text-right font-mono text-xs">
-                        {row.inTransit > 0 ? <span className="text-blue-600">+{row.inTransit.toLocaleString()}</span> : "—"}
+                        {row.inTransit > 0 ? <span className="text-primary">+{row.inTransit.toLocaleString()}</span> : "—"}
                       </TableCell>
                       <TableCell className="px-2 py-1 text-right font-mono text-xs">
-                        {row.onOrderQty > 0 ? <span className="text-violet-600">{row.onOrderQty.toLocaleString()}</span> : "—"}
+                        {row.onOrderQty > 0 ? <span className="text-foreground font-medium">{row.onOrderQty.toLocaleString()}</span> : "—"}
                       </TableCell>
                       <TableCell className="px-2 py-1 text-xs font-mono truncate max-w-[100px]">
                         {row.openPONumbers ? (
@@ -946,7 +949,7 @@ export default function InventoryHub() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Shield className="h-5 w-5 text-yellow-500" />
+              <Shield className="h-5 w-5 text-foreground" />
               Place on QC Hold
             </DialogTitle>
             <DialogDescription>
@@ -963,8 +966,8 @@ export default function InventoryHub() {
                 rows={4}
               />
             </div>
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-              <p className="text-sm text-yellow-800">
+            <div className="bg-muted border border-border rounded-lg p-3">
+              <p className="text-sm text-foreground">
                 Placing an item on QC hold will create an alert and prevent it from being used in production until the hold is resolved.
               </p>
             </div>
@@ -974,7 +977,7 @@ export default function InventoryHub() {
             <Button
               onClick={submitQcHold}
               disabled={createAlert.isPending}
-              className="bg-yellow-500 hover:bg-yellow-600"
+              className="bg-primary hover:bg-primary/90"
             >
               {createAlert.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               <Shield className="h-4 w-4 mr-1" />
@@ -1029,7 +1032,7 @@ export default function InventoryHub() {
               </div>
               <div>
                 <p className="text-xs text-muted-foreground mb-0.5">In Transit</p>
-                <p className="font-medium font-mono text-blue-600">{detailItem.inTransit > 0 ? `+${detailItem.inTransit.toLocaleString()}` : "—"}</p>
+                <p className="font-medium font-mono text-primary">{detailItem.inTransit > 0 ? `+${detailItem.inTransit.toLocaleString()}` : "—"}</p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground mb-0.5">Total Value</p>

@@ -39,6 +39,7 @@ import { estimateEffort, optimizeResourceAllocation, predictProjectRisks, optimi
 import { detectEdiAnomalies, predictEdiErrors } from "./ediAiService";
 import { scoreSuppliers } from "./supplierScoringService";
 import * as db from "./db";
+import { resolveScope } from "./_core/scope";
 import * as manufacturingDb from "./db/manufacturing";
 import { storagePut, storageDelete } from "./storage";
 import { nanoid } from "nanoid";
@@ -119,6 +120,24 @@ export const opsProcedure = protectedProcedure.use(({ ctx, next }) => {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Operations access required' });
   }
   return next({ ctx });
+});
+
+// Region/entity data-scoping middleware. Resolves the caller's visible entity set from their
+// home company + regionScope and attaches `ctx.scope`, which scoped DB helpers consume. Global
+// users (the backfill default) get { companyIds: "all" }, preserving pre-multi-region behavior.
+// See docs/MULTI_REGION_PHASE_1_2_SPEC.md.
+export const scopedProcedure = protectedProcedure.use(async ({ ctx, next }) => {
+  const scope = await resolveScope(
+    { companyId: ctx.user.companyId, regionScope: ctx.user.regionScope },
+    {
+      getCompanyRegionId: async (id) => (await db.getCompanyById(id))?.regionId ?? null,
+      getCompanyIdsInRegion: (regionId) => db.getCompanyIdsInRegion(regionId),
+    },
+  );
+  if (scope.companyIds !== 'all' && scope.companyIds.length === 0) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'No entity scope assigned' });
+  }
+  return next({ ctx: { ...ctx, scope } });
 });
 
 const legalProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -947,12 +966,12 @@ export const appRouter = router({
   // CUSTOMER MANAGEMENT
   // ============================================
   customers: router({
-    list: protectedProcedure
-      .input(z.object({ companyId: z.number().optional() }).optional())
-      .query(({ input }) => db.getCustomers(input?.companyId)),
-    get: protectedProcedure
+    // Scope is derived server-side from the caller's identity (ctx.scope), never from client input.
+    list: scopedProcedure
+      .query(({ ctx }) => db.getCustomers(ctx.scope)),
+    get: scopedProcedure
       .input(z.object({ id: z.number() }))
-      .query(({ input }) => db.getCustomerById(input.id)),
+      .query(({ input, ctx }) => db.getCustomerById(input.id, ctx.scope)),
     create: protectedProcedure
       .input(z.object({
         name: z.string().min(1),
@@ -1071,8 +1090,8 @@ export const appRouter = router({
       }),
     
     // Get sync status
-    getSyncStatus: protectedProcedure.query(async () => {
-      const customers = await db.getCustomers();
+    getSyncStatus: scopedProcedure.query(async ({ ctx }) => {
+      const customers = await db.getCustomers(ctx.scope);
       const shopifyCount = customers.filter(c => c.shopifyCustomerId).length;
       const manualCount = customers.filter(c => !c.shopifyCustomerId).length;
 

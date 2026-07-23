@@ -143,7 +143,7 @@ function DriveFileBrowser({ onImport }: { onImport: (selections: { fileId: strin
         <div className="border rounded-lg divide-y max-h-72 overflow-y-auto">
           {previews.map((p) => (
             <div key={p.fileId} className="flex items-center gap-3 p-3">
-              <FileSpreadsheet className="h-4 w-4 text-green-600 shrink-0" />
+              <FileSpreadsheet className="h-4 w-4 text-muted-foreground shrink-0" />
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium truncate">{p.fileName}</div>
                 <div className="text-xs text-muted-foreground">
@@ -242,7 +242,7 @@ function DriveFileBrowser({ onImport }: { onImport: (selections: { fileId: strin
                 onChange={() => toggleFile(file.id)}
                 className="rounded"
               />
-              <FileSpreadsheet className="h-4 w-4 text-green-600 shrink-0" />
+              <FileSpreadsheet className="h-4 w-4 text-muted-foreground shrink-0" />
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium truncate">{file.name}</div>
                 <div className="text-xs text-muted-foreground">
@@ -280,10 +280,10 @@ const DRIVE_TABS = [
 ] as const;
 
 function driveFileIcon(mimeType: string) {
-  if (mimeType === "application/vnd.google-apps.document") return <FileText className="h-4 w-4 text-blue-600 shrink-0" />;
-  if (mimeType === "application/vnd.google-apps.spreadsheet") return <FileSpreadsheet className="h-4 w-4 text-green-600 shrink-0" />;
-  if (mimeType === "application/pdf") return <File className="h-4 w-4 text-red-500 shrink-0" />;
-  if (mimeType?.includes("presentation") || mimeType === "application/vnd.google-apps.presentation") return <File className="h-4 w-4 text-yellow-500 shrink-0" />;
+  if (mimeType === "application/vnd.google-apps.document") return <FileText className="h-4 w-4 text-muted-foreground shrink-0" />;
+  if (mimeType === "application/vnd.google-apps.spreadsheet") return <FileSpreadsheet className="h-4 w-4 text-muted-foreground shrink-0" />;
+  if (mimeType === "application/pdf") return <File className="h-4 w-4 text-muted-foreground shrink-0" />;
+  if (mimeType?.includes("presentation") || mimeType === "application/vnd.google-apps.presentation") return <File className="h-4 w-4 text-muted-foreground shrink-0" />;
   return <File className="h-4 w-4 text-muted-foreground shrink-0" />;
 }
 
@@ -586,9 +586,9 @@ function CsvImportPanel({ file, onClear }: {
         ) : (
           <div className="space-y-3">
             {workbook && workbook.sheetNames.length > 1 && (
-              <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 dark:bg-amber-950/30 p-2">
-                <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
-                <span className="text-xs text-amber-700 dark:text-amber-300">
+              <div className="flex items-center gap-2 rounded-md border border-border bg-muted p-2">
+                <AlertCircle className="h-4 w-4 text-foreground shrink-0" />
+                <span className="text-xs text-foreground">
                   This file has {workbook.sheetNames.length} sheets. Importing one at a time — choose which:
                 </span>
                 <select
@@ -608,7 +608,7 @@ function CsvImportPanel({ file, onClear }: {
             <div className="text-sm text-muted-foreground">
               Found <strong>{parsed.rows.length}</strong> rows. Map each spreadsheet column to a{" "}
               <strong>{sectionLabel}</strong> field so the data lands in the right place
-              (<span className="text-amber-600">*</span> = required):
+              (<span className="text-primary">*</span> = required):
             </div>
 
             {/* Column → field mapping */}
@@ -642,7 +642,7 @@ function CsvImportPanel({ file, onClear }: {
             </div>
 
             {missingRequired.length > 0 && (
-              <div className="flex items-center gap-2 text-xs text-amber-600">
+              <div className="flex items-center gap-2 text-xs text-foreground font-semibold">
                 <AlertCircle className="h-3.5 w-3.5 shrink-0" />
                 Required field{missingRequired.length > 1 ? "s" : ""} not mapped:{" "}
                 {missingRequired.map(f => f.label).join(", ")}
@@ -655,7 +655,7 @@ function CsvImportPanel({ file, onClear }: {
                 Importing <strong>{mappedCount}</strong> of {parsed.headers.length} column{parsed.headers.length === 1 ? "" : "s"} into <strong>{sectionLabel}</strong>.
               </div>
               {ignoredColumns.length > 0 && (
-                <div className="text-amber-600">
+                <div className="text-foreground font-semibold">
                   Will be ignored: {ignoredColumns.join(", ")}
                 </div>
               )}
@@ -904,14 +904,14 @@ export default function Import() {
 
   const getTypeBadgeColor = (type: string) => {
     switch (type) {
-      case "vendors": return "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200";
-      case "customers": return "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200";
-      case "products": return "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200";
-      case "employees": return "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200";
-      case "raw_materials": return "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200";
-      case "error": return "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200";
-      case "skipped": return "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200";
-      default: return "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300";
+      case "vendors": return "bg-muted text-foreground";
+      case "customers": return "bg-muted text-foreground";
+      case "products": return "bg-muted text-foreground";
+      case "employees": return "bg-muted text-foreground";
+      case "raw_materials": return "bg-muted text-foreground";
+      case "error": return "bg-[oklch(0.30_0.02_262)] text-white";
+      case "skipped": return "bg-muted text-muted-foreground";
+      default: return "bg-muted text-muted-foreground";
     }
   };
 
@@ -974,8 +974,8 @@ export default function Import() {
               </div>
 
               {authUrlData?.error ? (
-                <div className="p-4 bg-yellow-50 dark:bg-yellow-950 rounded-lg">
-                  <p className="text-yellow-800 dark:text-yellow-200 text-sm">
+                <div className="p-4 bg-muted rounded-lg">
+                  <p className="text-foreground text-sm">
                     {authUrlData.error}. Please ask an administrator to configure Google OAuth credentials.
                   </p>
                 </div>
@@ -994,10 +994,10 @@ export default function Import() {
           ) : syncState === "idle" ? (
             /* Connected, ready to sync */
             <div className="space-y-4">
-              <div className="flex items-center justify-between p-3 bg-green-50 dark:bg-green-950 rounded-lg">
+              <div className="flex items-center justify-between p-3 bg-primary/10 rounded-lg">
                 <div className="flex items-center gap-2">
-                  <CheckCircle className="h-4 w-4 text-green-600" />
-                  <span className="text-sm text-green-800 dark:text-green-200">
+                  <CheckCircle className="h-4 w-4 text-primary" />
+                  <span className="text-sm text-foreground">
                     Connected as {connectionStatus.email}
                   </span>
                 </div>
@@ -1031,7 +1031,7 @@ export default function Import() {
                       <details key={entry.id} className="border rounded-lg">
                         <summary className="flex items-center justify-between p-3 cursor-pointer hover:bg-muted/50">
                           <div className="flex items-center gap-3 min-w-0">
-                            <CheckCircle className="h-4 w-4 text-green-600 flex-shrink-0" />
+                            <CheckCircle className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                             <span className="text-sm font-medium">
                               {entryImported} records from {entry.totalSheets} sheets
                             </span>
@@ -1097,16 +1097,16 @@ export default function Import() {
               {/* Summary */}
               <div className="grid grid-cols-3 gap-4">
                 <div className="p-4 bg-muted rounded-lg text-center">
-                  <p className="text-2xl font-semibold">{totalSheets}</p>
+                  <p className="font-display text-2xl font-bold tabular-nums">{totalSheets}</p>
                   <p className="text-sm text-muted-foreground">Sheets found</p>
                 </div>
-                <div className="p-4 bg-green-50 dark:bg-green-950 rounded-lg text-center">
-                  <p className="text-2xl font-semibold text-green-600">{totalImported}</p>
-                  <p className="text-sm text-green-800 dark:text-green-200">Records imported</p>
+                <div className="p-4 bg-primary/5 rounded-lg text-center">
+                  <p className="font-display text-2xl font-bold tabular-nums text-primary">{totalImported}</p>
+                  <p className="text-sm text-muted-foreground">Records imported</p>
                 </div>
-                <div className="p-4 bg-red-50 dark:bg-red-950 rounded-lg text-center">
-                  <p className="text-2xl font-semibold text-red-600">{totalErrors}</p>
-                  <p className="text-sm text-red-800 dark:text-red-200">Errors</p>
+                <div className="p-4 bg-muted rounded-lg text-center">
+                  <p className="font-display text-2xl font-bold tabular-nums text-foreground">{totalErrors}</p>
+                  <p className="text-sm text-muted-foreground">Errors</p>
                 </div>
               </div>
 
@@ -1121,7 +1121,7 @@ export default function Import() {
                     className="flex items-center justify-between p-3 border rounded-lg"
                   >
                     <div className="flex items-center gap-3 min-w-0">
-                      <FileSpreadsheet className="h-4 w-4 text-green-600 flex-shrink-0" />
+                      <FileSpreadsheet className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                       <span className="text-sm font-medium truncate">{result.sheet}</span>
                       <Badge className={`text-xs ${getTypeBadgeColor(result.type)}`}>
                         {result.type}
@@ -1129,18 +1129,18 @@ export default function Import() {
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       {result.imported > 0 ? (
-                        <span className="text-sm text-green-600 font-medium">
+                        <span className="text-sm text-primary font-medium">
                           +{result.imported} imported
                         </span>
                       ) : result.type === "skipped" || result.type === "unknown" ? (
                         <span className="text-sm text-muted-foreground">skipped</span>
                       ) : result.type === "error" ? (
-                        <span className="text-sm text-red-600">failed</span>
+                        <span className="text-sm text-foreground font-semibold">failed</span>
                       ) : (
                         <span className="text-sm text-muted-foreground">0 imported</span>
                       )}
                       {result.errors.length > 0 && (
-                        <AlertCircle className="h-4 w-4 text-amber-500" />
+                        <AlertCircle className="h-4 w-4 text-foreground" />
                       )}
                     </div>
                   </div>
