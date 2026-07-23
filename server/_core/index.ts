@@ -669,7 +669,7 @@ async function startServer() {
     res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
     res.setHeader(
       "Content-Security-Policy",
-      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; connect-src 'self' https:; font-src 'self' https://fonts.gstatic.com; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'"
+      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; connect-src 'self' https:; font-src 'self' https://fonts.gstatic.com; frame-src 'self' https://drive.google.com https://docs.google.com https://view.officeapps.live.com; object-src 'none'; base-uri 'self'; form-action 'self'"
     );
     if (process.env.NODE_ENV === "production") {
       res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
@@ -1057,6 +1057,13 @@ async function startServer() {
   //   - linkCode query param must resolve to an active share link for the
   //     data room that contains this document.
   app.get('/api/drive/proxy/:documentId', async (req, res) => {
+    // This endpoint exists to be embedded in the document viewer's iframe, so it
+    // must be frameable same-origin. Override the global `X-Frame-Options: DENY`
+    // (set for clickjacking protection on the app's HTML pages) — DENY blocks
+    // even same-origin framing, which otherwise makes every Drive-backed
+    // document render blank in the data-room viewer, including for external
+    // visitors. CSP `frame-src 'self'` already scopes this to our own origin.
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     try {
       const documentId = parseInt(req.params.documentId, 10);
       if (!Number.isFinite(documentId)) return res.status(400).send('Invalid document id');

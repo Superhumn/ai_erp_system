@@ -101,6 +101,11 @@ export default function EDIDashboard() {
           <div><span className="text-muted-foreground">Errors</span> <span className="font-bold text-red-600">{(stats as any)?.errorTransactions || 0}</span></div>
         </div>
         <div className="flex gap-2">
+          <Link href="/edi/insights">
+            <Button variant="outline" size="sm">
+              AI Insights
+            </Button>
+          </Link>
           <Link href="/edi/partners">
             <Button variant="outline" size="sm">
               <Building2 className="h-4 w-4 mr-2" />

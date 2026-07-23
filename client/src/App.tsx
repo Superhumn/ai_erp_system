@@ -86,6 +86,20 @@ const VendorNegotiations = lazy(() => import("./pages/operations/VendorNegotiati
 const SupplierPortal = lazy(() => import("./pages/SupplierPortal"));
 const MaterialSupply = lazy(() => import("./pages/operations/MaterialSupply"));
 
+// Backend→frontend gap: pages wiring previously-orphaned routers
+const Costing = lazy(() => import("./pages/finance/Costing"));
+const EmailScanning = lazy(() => import("./pages/settings/EmailScanning"));
+const OfferLetters = lazy(() => import("./pages/hr/OfferLetters"));
+const Departments = lazy(() => import("./pages/hr/Departments"));
+const ProductionBatches = lazy(() => import("./pages/operations/ProductionBatches"));
+const Ingredients = lazy(() => import("./pages/operations/Ingredients"));
+const Allocations = lazy(() => import("./pages/operations/Allocations"));
+const InventoryPlanning = lazy(() => import("./pages/operations/InventoryPlanning"));
+const Recommendations = lazy(() => import("./pages/ai/Recommendations"));
+const EDIInsights = lazy(() => import("./pages/edi/EDIInsights"));
+const CarrierQuotes = lazy(() => import("./pages/freight/CarrierQuotes"));
+const CalendarEvents = lazy(() => import("./pages/CalendarEvents"));
+
 // EDI
 const EDIDashboard = lazy(() => import("./pages/edi/EDIDashboard"));
 const TradingPartners = lazy(() => import("./pages/edi/TradingPartners"));
@@ -273,6 +287,7 @@ function Router() {
           <Route path="/" component={Home} />
           <Route path="/ai" component={AIAssistant} />
           <Route path="/ai/approvals" component={ApprovalQueue} />
+          <Route path="/ai/recommendations" component={Recommendations} />
           <Route path="/search" component={GlobalSearch} />
 
           {/* Autonomous Supply Chain */}
@@ -288,6 +303,7 @@ function Router() {
           <Route path="/settings/fireflies" component={Fireflies} />
           <Route path="/settings/quickbooks" component={QuickBooksIntegration} />
           <Route path="/settings/shopify" component={ShopifySettings} />
+          <Route path="/settings/email-scanning" component={EmailScanning} />
 
           {/* Finance */}
           <Route path="/finance" component={FinanceHub} />
@@ -299,6 +315,7 @@ function Router() {
           <Route path="/finance/banking" component={Banking} />
           <Route path="/finance/rd-tax-credit" component={RdTaxCredit} />
           <Route path="/finance/ai" component={FinanceAI} />
+          <Route path="/finance/costing" component={Costing} />
 
           {/* Sales */}
           <Route path="/sales/orders/:id" component={OrderDetail} />
@@ -350,12 +367,17 @@ function Router() {
           <Route path="/operations/vendor-negotiations" component={VendorNegotiations} />
           <Route path="/operations/manufacturing-ai" component={ManufacturingAI} />
           <Route path="/operations/supplier-scoring" component={SupplierScoring} />
+          <Route path="/operations/production-batches" component={ProductionBatches} />
+          <Route path="/operations/ingredients" component={Ingredients} />
+          <Route path="/operations/allocations" component={Allocations} />
+          <Route path="/operations/inventory-planning" component={InventoryPlanning} />
 
           {/* EDI */}
           <Route path="/edi" component={EDIDashboard} />
           <Route path="/edi/connect" component={RetailerOnboarding} />
           <Route path="/edi/partners" component={TradingPartners} />
           <Route path="/edi/transactions" component={EDITransactions} />
+          <Route path="/edi/insights" component={EDIInsights} />
 
           {/* Freight */}
           <Route path="/freight" component={FreightDashboard} />
@@ -366,6 +388,7 @@ function Router() {
           <Route path="/freight/rfqs/:id" component={RFQDetail} />
           <Route path="/freight/customs" component={CustomsClearance} />
           <Route path="/freight/customs/:id" component={CustomsDetail} />
+          <Route path="/freight/carrier-quotes" component={CarrierQuotes} />
 
           {/* Marketing */}
           <Route path="/marketing" component={MarketingHub} />
@@ -385,6 +408,8 @@ function Router() {
           <Route path="/hr/investors" component={InvestorsHub} />
           <Route path="/investor-portal" component={InvestorPortal} />
           <Route path="/hr/time-tracking" component={TimeTracking} />
+          <Route path="/hr/offer-letters" component={OfferLetters} />
+          <Route path="/hr/departments" component={Departments} />
           <Route path="/structure" component={GlobalStructure} />
 
           {/* Legal */}
@@ -420,6 +445,7 @@ function Router() {
 
           {/* Meetings */}
           <Route path="/meetings" component={Meetings} />
+          <Route path="/calendar" component={CalendarEvents} />
 
           {/* Quick Notes */}
           <Route path="/notes" component={Notes} />
