@@ -1,5 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+/* Superhumn design system — display/number face (DM Sans) + body/UI face (Inter Tight). */
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400..800&family=Inter+Tight:wght@400;500;600;700&display=swap");
 
 @custom-variant dark (&:is(.dark *));
 
@@ -8,8 +10,8 @@
      This scales every p-*, gap-*, space-y-*, m-* utility across the whole
      app without touching individual page files. */
   --spacing: 0.2rem;
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-display: "Inter", var(--font-sans);
+  --font-sans: "Inter Tight", "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-display: "DM Sans", var(--font-sans);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -62,10 +64,11 @@
 
 :root {
   /* Primary: Ocean blue — confident, professional */
-  --primary: oklch(0.50 0.22 215);
-  --primary-foreground: oklch(0.985 0.004 215);
-  --sidebar-primary: oklch(0.50 0.22 215);
-  --sidebar-primary-foreground: oklch(0.985 0.004 215);
+  /* Superhumn electric blue — the single accent (actions / live / selected). */
+  --primary: oklch(0.47 0.21 255);
+  --primary-foreground: oklch(0.985 0.004 255);
+  --sidebar-primary: oklch(0.47 0.21 255);
+  --sidebar-primary-foreground: oklch(0.985 0.004 255);
   /* Chart palette — blue-teal family */
   --chart-1: oklch(0.50 0.22 215);
   --chart-2: oklch(0.58 0.18 195);
@@ -90,7 +93,7 @@
   --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(0.908 0.008 220);
   --input: oklch(0.908 0.008 220);
-  --ring: oklch(0.50 0.22 215);
+  --ring: oklch(0.47 0.21 255);
   --success: oklch(0.58 0.17 150);
   --success-foreground: oklch(0.985 0 0);
   --warning: oklch(0.70 0.16 75);
@@ -106,10 +109,10 @@
 
 .dark {
   /* Primary: Vibrant ocean blue on dark */
-  --primary: oklch(0.635 0.22 215);
-  --primary-foreground: oklch(0.10 0.018 215);
-  --sidebar-primary: oklch(0.635 0.22 215);
-  --sidebar-primary-foreground: oklch(0.10 0.018 215);
+  --primary: oklch(0.62 0.22 258);
+  --primary-foreground: oklch(0.10 0.018 258);
+  --sidebar-primary: oklch(0.62 0.22 258);
+  --sidebar-primary-foreground: oklch(0.10 0.018 258);
   /* Deep charcoal background */
   --background: oklch(0.058 0.008 220);
   --foreground: oklch(0.930 0.005 220);
@@ -129,7 +132,7 @@
   /* Borders: Structural, visible */
   --border: oklch(0.205 0.010 220);
   --input: oklch(0.158 0.010 220);
-  --ring: oklch(0.635 0.22 215);
+  --ring: oklch(0.62 0.22 258);
   --chart-1: oklch(0.635 0.22 215);
   --chart-2: oklch(0.62 0.18 195);
   --chart-3: oklch(0.58 0.16 230);
@@ -170,11 +173,12 @@
   input[type="radio"]:not(:disabled) {
     @apply cursor-pointer;
   }
-  /* Typography scale */
-  h1 { @apply text-[1.875rem] font-bold tracking-[-0.03em] leading-tight; }
-  h2 { @apply text-xl font-semibold tracking-[-0.02em] leading-tight; }
-  h3 { @apply text-lg font-semibold tracking-[-0.01em] leading-snug; }
-  h4 { @apply text-base font-medium tracking-[-0.006em] leading-snug; }
+  /* Typography scale — headings + numeric displays use DM Sans (display face). */
+  h1, h2, h3, h4 { font-family: var(--font-display); }
+  h1 { @apply text-[1.875rem] font-bold tracking-[-0.035em] leading-tight; }
+  h2 { @apply text-xl font-bold tracking-[-0.035em] leading-tight; }
+  h3 { @apply text-lg font-semibold tracking-[-0.02em] leading-snug; }
+  h4 { @apply text-base font-medium tracking-[-0.01em] leading-snug; }
 }
 
 @layer components {
