@@ -105,6 +105,14 @@ export default function AutonomousSettings() {
     onError: (err) => toast.error(err.message),
   });
 
+  const triggerWorkflowMutation = trpc.autonomousWorkflows.workflows.trigger.useMutation({
+    onSuccess: () => {
+      workflowsQuery.refetch();
+      toast.success("Workflow run started");
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
   const initializeDefaultsMutation = trpc.autonomousWorkflows.orchestrator.initializeDefaults.useMutation({
     onSuccess: () => {
       workflowsQuery.refetch();
@@ -476,7 +484,13 @@ export default function AutonomousSettings() {
                             >
                               <Edit className="h-4 w-4" />
                             </Button>
-                            <Button variant="ghost" size="icon" aria-label="Run workflow">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Run workflow"
+                              disabled={!workflow.isActive || triggerWorkflowMutation.isPending}
+                              onClick={() => triggerWorkflowMutation.mutate({ id: workflow.id })}
+                            >
                               <Play className="h-4 w-4" />
                             </Button>
                           </div>
