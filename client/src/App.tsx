@@ -65,6 +65,7 @@ const Recipes = lazy(() => import("./pages/operations/Recipes"));
 const BOMDetail = lazy(() => import("./pages/operations/BOMDetail"));
 const RawMaterials = lazy(() => import("./pages/operations/RawMaterials"));
 const WorkOrders = lazy(() => import("./pages/operations/WorkOrders"));
+const ProductionBatches = lazy(() => import("./pages/operations/ProductionBatches"));
 const WorkOrderDetail = lazy(() => import("./pages/operations/WorkOrderDetail"));
 const POReceiving = lazy(() => import("./pages/operations/POReceiving"));
 const Forecasting = lazy(() => import("./pages/operations/Forecasting"));
@@ -332,6 +333,7 @@ function Router() {
           <Route path="/operations/raw-materials" component={RawMaterials} />
           <Route path="/operations/work-orders" component={WorkOrders} />
           <Route path="/operations/work-orders/:id" component={WorkOrderDetail} />
+          <Route path="/operations/production-batches" component={ProductionBatches} />
           <Route path="/operations/receiving" component={POReceiving} />
           <Route path="/operations/forecasting" component={Forecasting} />
           <Route path="/operations/core" component={CoreOperations} />

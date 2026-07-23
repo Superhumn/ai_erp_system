@@ -75,6 +75,13 @@ export default function AccountsAndTransactions() {
     subtype: "",
     description: "",
   });
+  const [txOpen, setTxOpen] = useState(false);
+  const [txForm, setTxForm] = useState({
+    type: "journal" as "journal" | "invoice" | "payment" | "expense" | "transfer" | "adjustment",
+    date: "",
+    description: "",
+    totalAmount: "",
+  });
 
   const utils = trpc.useUtils();
   const { data: accounts, isLoading: accountsLoading } = trpc.accounts.list.useQuery();
@@ -105,9 +112,37 @@ export default function AccountsAndTransactions() {
     return matchesSearch && matchesType && matchesCogs;
   });
 
+  const createTransaction = trpc.transactions.create.useMutation({
+    onSuccess: () => {
+      toast.success("Transaction created");
+      setTxOpen(false);
+      setTxForm({ type: "journal", date: "", description: "", totalAmount: "" });
+      utils.transactions.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     createAccount.mutate(formData);
+  };
+
+  const handleTxSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!txForm.date) {
+      toast.error("Date is required");
+      return;
+    }
+    if (!txForm.totalAmount.trim()) {
+      toast.error("Amount is required");
+      return;
+    }
+    createTransaction.mutate({
+      type: txForm.type,
+      date: new Date(txForm.date),
+      description: txForm.description || undefined,
+      totalAmount: txForm.totalAmount.trim(),
+    });
   };
 
   return (
@@ -218,6 +253,10 @@ export default function AccountsAndTransactions() {
               <DollarSign className="h-3 w-3" />
               COGS Only
             </button>
+            <Button size="sm" className="ml-auto" onClick={() => setTxOpen(true)}>
+              <Plus className="h-4 w-4 mr-1" />
+              Add transaction
+            </Button>
           </div>
         </CardHeader>
         <CardContent className="p-0">
@@ -311,6 +350,55 @@ export default function AccountsAndTransactions() {
               <Button type="button" variant="outline" onClick={() => setIsOpen(false)}>Cancel</Button>
               <Button type="submit" disabled={createAccount.isPending}>
                 {createAccount.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Create
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Add Transaction Dialog ── */}
+      <Dialog open={txOpen} onOpenChange={setTxOpen}>
+        <DialogContent>
+          <form onSubmit={handleTxSubmit}>
+            <DialogHeader>
+              <DialogTitle>Add Transaction</DialogTitle>
+              <DialogDescription>Record a new general-ledger transaction.</DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="txType">Type</Label>
+                  <Select value={txForm.type} onValueChange={(value: any) => setTxForm({ ...txForm, type: value })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="journal">Journal</SelectItem>
+                      <SelectItem value="invoice">Invoice</SelectItem>
+                      <SelectItem value="payment">Payment</SelectItem>
+                      <SelectItem value="expense">Expense</SelectItem>
+                      <SelectItem value="transfer">Transfer</SelectItem>
+                      <SelectItem value="adjustment">Adjustment</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="txDate">Date</Label>
+                  <Input id="txDate" type="date" value={txForm.date} onChange={(e) => setTxForm({ ...txForm, date: e.target.value })} required />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="txAmount">Amount</Label>
+                <Input id="txAmount" value={txForm.totalAmount} onChange={(e) => setTxForm({ ...txForm, totalAmount: e.target.value })} placeholder="1000.00" required />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="txDesc">Description (Optional)</Label>
+                <Input id="txDesc" value={txForm.description} onChange={(e) => setTxForm({ ...txForm, description: e.target.value })} placeholder="What is this transaction for?" />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setTxOpen(false)}>Cancel</Button>
+              <Button type="submit" disabled={createTransaction.isPending}>
+                {createTransaction.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 Create
               </Button>
             </DialogFooter>

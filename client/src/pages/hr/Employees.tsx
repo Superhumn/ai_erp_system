@@ -1908,11 +1908,83 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
     });
   };
 
+  const { data: employeeSource } = trpc.employees.get.useQuery(
+    { id: person.employeeId! },
+    { enabled: !!person.employeeId }
+  );
+  const [editOpen, setEditOpen] = useState(false);
+  const [editForm, setEditForm] = useState({
+    firstName: "",
+    lastName: "",
+    email: "",
+    phone: "",
+    jobTitle: "",
+    departmentId: "",
+    status: "active" as "active" | "inactive" | "on_leave" | "terminated",
+    salary: "",
+    address: "",
+    notes: "",
+  });
+  const updateEmployee = trpc.employees.update.useMutation({
+    onSuccess: () => {
+      toast.success("Employee updated");
+      utils.employees.list.invalidate();
+      if (person.employeeId) utils.employees.get.invalidate({ id: person.employeeId });
+      setEditOpen(false);
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const openEdit = () => {
+    const e: any = employeeSource;
+    if (!e) return;
+    setEditForm({
+      firstName: e.firstName ?? "",
+      lastName: e.lastName ?? "",
+      email: e.email ?? "",
+      phone: e.phone ?? "",
+      jobTitle: e.jobTitle ?? "",
+      departmentId: e.departmentId != null ? String(e.departmentId) : "",
+      status: e.status || "active",
+      salary: e.salary != null ? String(e.salary) : "",
+      address: e.address ?? "",
+      notes: e.notes ?? "",
+    });
+    setEditOpen(true);
+  };
+  const handleUpdateEmployee = () => {
+    if (!person.employeeId) return;
+    if (!editForm.firstName.trim() || !editForm.lastName.trim()) {
+      toast.error("First and last name are required");
+      return;
+    }
+    updateEmployee.mutate({
+      id: person.employeeId,
+      firstName: editForm.firstName.trim(),
+      lastName: editForm.lastName.trim(),
+      email: editForm.email || undefined,
+      phone: editForm.phone || undefined,
+      jobTitle: editForm.jobTitle || undefined,
+      departmentId: editForm.departmentId ? Number(editForm.departmentId) : undefined,
+      status: editForm.status,
+      salary: editForm.salary || undefined,
+      address: editForm.address || undefined,
+      notes: editForm.notes || undefined,
+    });
+  };
+
   return (
                 <div className="space-y-5">
                   {/* Personal Information */}
                   <div>
-                    <h4 className="text-sm font-semibold text-muted-foreground mb-2">Personal Information</h4>
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="text-sm font-semibold text-muted-foreground">Personal Information</h4>
+                      {person.employeeId && (
+                        <Button size="sm" variant="outline" onClick={openEdit} disabled={!employeeSource}>
+                          <Pencil className="h-3.5 w-3.5 mr-1.5" />
+                          Edit
+                        </Button>
+                      )}
+                    </div>
                     <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
                       <div className="flex justify-between"><span className="text-muted-foreground">Name</span><span>{person.name}</span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Email</span><span>{person.email || "-"}</span></div>
@@ -1931,6 +2003,79 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
                         ) : "-"}
                       </span></div>
                     </div>
+                    <Dialog open={editOpen} onOpenChange={setEditOpen}>
+                      <DialogContent className="max-w-lg">
+                        <DialogHeader>
+                          <DialogTitle>Edit employee</DialogTitle>
+                          <DialogDescription>Update {person.name}'s employment details.</DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <Label>First name *</Label>
+                              <Input value={editForm.firstName} onChange={(e) => setEditForm({ ...editForm, firstName: e.target.value })} />
+                            </div>
+                            <div>
+                              <Label>Last name *</Label>
+                              <Input value={editForm.lastName} onChange={(e) => setEditForm({ ...editForm, lastName: e.target.value })} />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <Label>Email</Label>
+                              <Input value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} />
+                            </div>
+                            <div>
+                              <Label>Phone</Label>
+                              <Input value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <Label>Job title</Label>
+                              <Input value={editForm.jobTitle} onChange={(e) => setEditForm({ ...editForm, jobTitle: e.target.value })} />
+                            </div>
+                            <div>
+                              <Label>Status</Label>
+                              <Select value={editForm.status} onValueChange={(v) => setEditForm({ ...editForm, status: v as typeof editForm.status })}>
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="active">Active</SelectItem>
+                                  <SelectItem value="on_leave">On leave</SelectItem>
+                                  <SelectItem value="inactive">Inactive</SelectItem>
+                                  <SelectItem value="terminated">Terminated</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <Label>Department ID</Label>
+                              <Input type="number" value={editForm.departmentId} onChange={(e) => setEditForm({ ...editForm, departmentId: e.target.value })} />
+                            </div>
+                            <div>
+                              <Label>Salary</Label>
+                              <Input value={editForm.salary} onChange={(e) => setEditForm({ ...editForm, salary: e.target.value })} />
+                            </div>
+                          </div>
+                          <div>
+                            <Label>Address</Label>
+                            <Input value={editForm.address} onChange={(e) => setEditForm({ ...editForm, address: e.target.value })} />
+                          </div>
+                          <div>
+                            <Label>Notes</Label>
+                            <Textarea rows={2} value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} />
+                          </div>
+                        </div>
+                        <DialogFooter>
+                          <Button variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
+                          <Button onClick={handleUpdateEmployee} disabled={updateEmployee.isPending}>
+                            {updateEmployee.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                            Save changes
+                          </Button>
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
                   </div>
 
                   {/* Compensation History */}
