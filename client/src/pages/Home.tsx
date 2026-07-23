@@ -48,10 +48,12 @@ function KPICard({
   variant?: KPIVariant;
   trend?: "up" | "down" | null;
 }) {
+  // Superhumn scheme: electric blue is the only accent. Severity is expressed
+  // with ink weight, not color — so every KPI icon reads as muted ink.
   const iconColors: Record<KPIVariant, string> = {
-    green: "text-emerald-500",
-    amber: "text-amber-500",
-    blue: "text-blue-500",
+    green: "text-muted-foreground/50",
+    amber: "text-muted-foreground/50",
+    blue: "text-muted-foreground/50",
     default: "text-muted-foreground/50",
   };
 
@@ -76,14 +78,14 @@ function KPICard({
               <Icon className={`h-3.5 w-3.5 ${iconColors[variant]}`} />
             </div>
             <div className="flex items-baseline gap-2">
-              <span className="text-xl font-semibold tracking-[-0.02em]">
+              <span className="font-display text-2xl font-bold tracking-[-0.04em] tabular-nums">
                 {value}
               </span>
               {trend === "up" && (
-                <ArrowUpRight className="h-4 w-4 text-emerald-500" />
+                <ArrowUpRight className="h-4 w-4 text-muted-foreground/60" />
               )}
               {trend === "down" && (
-                <ArrowDownRight className="h-4 w-4 text-red-500" />
+                <ArrowDownRight className="h-4 w-4 text-muted-foreground/60" />
               )}
             </div>
             {subtitle && (
@@ -435,7 +437,9 @@ export default function Home() {
                 if (unit === "lbs") return v.toLocaleString() + " lbs";
                 return v.toLocaleString();
               };
-              const barColor = kpi.pct >= 80 ? "bg-emerald-500" : kpi.pct >= 50 ? "bg-amber-500" : kpi.pct > 0 ? "bg-blue-500" : "bg-gray-300";
+              // Single-accent meter: blue fill, darkening to ink near/over target.
+              // No emerald/amber/green severity.
+              const barColor = kpi.pct >= 85 ? "bg-[oklch(0.30_0.03_262)]" : kpi.pct > 0 ? "bg-primary" : "bg-muted-foreground/20";
               return (
                 <Card key={kpi.name}>
                   <CardContent className="pt-3 pb-2.5 px-3">
@@ -446,7 +450,7 @@ export default function Home() {
                       <Target className="h-3.5 w-3.5 text-muted-foreground/50" />
                     </div>
                     <div className="flex items-baseline gap-2 mb-1.5">
-                      <span className="text-lg font-semibold tracking-[-0.02em]">
+                      <span className="font-display text-lg font-bold tracking-[-0.03em] tabular-nums">
                         {fmtVal(kpi.actual, kpi.unit)}
                       </span>
                       <span className="text-xs text-muted-foreground">

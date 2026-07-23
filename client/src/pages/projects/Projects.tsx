@@ -107,10 +107,12 @@ const PRIORITY_CONFIG: Record<
   string,
   { label: string; color: string; dot: string; border: string; Icon: React.ElementType }
 > = {
-  critical: { label: "Critical", color: "text-rose-500", dot: "bg-rose-500", border: "border-l-rose-500", Icon: Flame },
-  high: { label: "High", color: "text-orange-500", dot: "bg-orange-500", border: "border-l-orange-500", Icon: ArrowUp },
-  medium: { label: "Medium", color: "text-amber-500", dot: "bg-amber-500", border: "border-l-amber-500", Icon: Minus },
-  low: { label: "Low", color: "text-sky-500", dot: "bg-sky-500", border: "border-l-sky-500", Icon: ArrowDown },
+  // Superhumn scheme: priority severity is a monochrome ink ramp (weight/darkness),
+  // not hue. Icon shape (Flame/ArrowUp/Minus/ArrowDown) carries the rest.
+  critical: { label: "Critical", color: "text-foreground", dot: "bg-[oklch(0.30_0.03_262)]", border: "border-l-[oklch(0.30_0.03_262)]", Icon: Flame },
+  high: { label: "High", color: "text-foreground", dot: "bg-foreground", border: "border-l-foreground", Icon: ArrowUp },
+  medium: { label: "Medium", color: "text-muted-foreground", dot: "bg-muted-foreground", border: "border-l-muted-foreground", Icon: Minus },
+  low: { label: "Low", color: "text-muted-foreground/60", dot: "bg-muted-foreground/40", border: "border-l-muted-foreground/40", Icon: ArrowDown },
 };
 
 const PRIORITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
@@ -118,46 +120,46 @@ const PRIORITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2
 const STATUS_META = {
   todo: {
     label: "To Do",
-    badge: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
-    dot: "bg-slate-400",
+    badge: "bg-muted text-muted-foreground",
+    dot: "bg-muted-foreground/40",
     Icon: Circle,
     pulse: false,
   },
   in_progress: {
     label: "In Progress",
-    badge: "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
-    dot: "bg-blue-500",
+    badge: "bg-primary/10 text-primary",
+    dot: "bg-primary",
     Icon: Timer,
     pulse: true,
   },
   review: {
     label: "In Review",
-    badge: "bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-300",
-    dot: "bg-violet-500",
+    badge: "bg-muted text-foreground",
+    dot: "bg-foreground",
     Icon: Eye,
     pulse: false,
   },
   completed: {
     label: "Completed",
-    badge: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
-    dot: "bg-emerald-500",
+    badge: "bg-muted text-muted-foreground",
+    dot: "bg-muted-foreground",
     Icon: CheckCircle2,
     pulse: false,
   },
   cancelled: {
     label: "Cancelled",
-    badge: "bg-red-50 text-red-600 dark:bg-red-950 dark:text-red-300",
-    dot: "bg-red-400",
+    badge: "bg-[oklch(0.30_0.02_262)] text-white",
+    dot: "bg-[oklch(0.30_0.03_262)]",
     Icon: XCircle,
     pulse: false,
   },
 } as const;
 
 const BOARD_COLUMNS = [
-  { key: "todo", label: "To Do", headerColor: "bg-slate-500/10 text-slate-600 dark:text-slate-300", dotColor: "bg-slate-400" },
-  { key: "in_progress", label: "In Progress", headerColor: "bg-blue-500/10 text-blue-700 dark:text-blue-300", dotColor: "bg-blue-500" },
-  { key: "review", label: "In Review", headerColor: "bg-violet-500/10 text-violet-700 dark:text-violet-300", dotColor: "bg-violet-500" },
-  { key: "completed", label: "Completed", headerColor: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300", dotColor: "bg-emerald-500" },
+  { key: "todo", label: "To Do", headerColor: "bg-muted text-muted-foreground", dotColor: "bg-muted-foreground/40" },
+  { key: "in_progress", label: "In Progress", headerColor: "bg-primary/10 text-primary", dotColor: "bg-primary" },
+  { key: "review", label: "In Review", headerColor: "bg-muted text-foreground", dotColor: "bg-foreground" },
+  { key: "completed", label: "Completed", headerColor: "bg-muted text-muted-foreground", dotColor: "bg-muted-foreground" },
 ] as const;
 
 function getUserName(users: UserRecord[] | undefined, id: number | null): string {
@@ -186,9 +188,9 @@ function dueDateBadge(d: string | Date | null | undefined): { text: string; clas
   if (!d) return null;
   const days = daysUntilDate(d);
   if (days === null) return null;
-  if (days < 0) return { text: `${Math.abs(days)}d overdue`, className: "bg-rose-50 text-rose-600 dark:bg-rose-950 dark:text-rose-300" };
-  if (days === 0) return { text: "Due today", className: "bg-amber-50 text-amber-600 dark:bg-amber-950 dark:text-amber-300" };
-  if (days <= 3) return { text: `Due in ${days}d`, className: "bg-amber-50 text-amber-600 dark:bg-amber-950 dark:text-amber-300" };
+  if (days < 0) return { text: `${Math.abs(days)}d overdue`, className: "bg-[oklch(0.30_0.02_262)] text-white" };
+  if (days === 0) return { text: "Due today", className: "bg-muted text-foreground font-semibold" };
+  if (days <= 3) return { text: `Due in ${days}d`, className: "bg-muted text-foreground font-semibold" };
   return { text: fmtDate(d), className: "bg-muted/60 text-muted-foreground" };
 }
 
@@ -202,7 +204,7 @@ function ProgressRing({ value, size = 80, strokeWidth = 7 }: { value: number; si
       <circle
         cx={size / 2} cy={size / 2} r={r} fill="none" stroke="currentColor" strokeWidth={strokeWidth}
         strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
-        className="text-emerald-500 transition-all duration-700 ease-out"
+        className="text-primary transition-all duration-700 ease-out"
       />
     </svg>
   );
@@ -613,10 +615,10 @@ export default function Projects() {
   const hasActiveFilters = statusFilter !== "all" || priorityFilter !== "all" || projectFilter !== "all";
 
   const statPills = [
-    { Icon: Timer, label: `${metrics.inProgress} in progress`, color: "bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300", delay: "100ms" },
-    { Icon: Eye, label: `${metrics.review} in review`, color: "bg-violet-50 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300", delay: "200ms" },
-    ...(metrics.overdue > 0 ? [{ Icon: AlertTriangle, label: `${metrics.overdue} overdue`, color: "bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300", delay: "300ms" }] : []),
-    { Icon: CheckCircle2, label: `${metrics.completed}/${metrics.total} done`, color: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300", delay: "400ms" },
+    { Icon: Timer, label: `${metrics.inProgress} in progress`, color: "bg-primary/10 text-primary", delay: "100ms" },
+    { Icon: Eye, label: `${metrics.review} in review`, color: "bg-muted text-foreground", delay: "200ms" },
+    ...(metrics.overdue > 0 ? [{ Icon: AlertTriangle, label: `${metrics.overdue} overdue`, color: "bg-[oklch(0.30_0.02_262)] text-white", delay: "300ms" }] : []),
+    { Icon: CheckCircle2, label: `${metrics.completed}/${metrics.total} done`, color: "bg-muted text-muted-foreground", delay: "400ms" },
   ];
 
   return (
@@ -633,7 +635,7 @@ export default function Projects() {
           <div className="flex items-center gap-5">
             <div className="relative hidden shrink-0 sm:block">
               <ProgressRing value={statsVisible ? metrics.completionRate : 0} />
-              <span className="absolute inset-0 flex items-center justify-center text-sm font-bold">
+              <span className="absolute inset-0 flex items-center justify-center text-sm font-bold font-display tabular-nums">
                 {metrics.completionRate}%
               </span>
             </div>
@@ -1609,7 +1611,7 @@ function MilestonesDialog({
                     key={m.id}
                     className="flex items-center gap-2 rounded-md border p-2 hover:bg-muted/30"
                   >
-                    <Flag className={cn("h-4 w-4 shrink-0", isComplete ? "text-emerald-500" : "text-muted-foreground")} />
+                    <Flag className={cn("h-4 w-4 shrink-0", isComplete ? "text-primary" : "text-muted-foreground")} />
                     <div className="flex-1 min-w-0">
                       <div className={cn("text-sm font-medium truncate", isComplete && "line-through text-muted-foreground")}>
                         {m.name}
