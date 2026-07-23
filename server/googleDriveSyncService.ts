@@ -431,7 +431,10 @@ export async function reconcileDataRoomFromDrive(params: {
     }
 
     // Delete-propagation — remove Drive-originated items no longer in Drive.
+    // Isolated so a delete-propagation failure never discards the create/update
+    // work above (creating the files is the primary goal and must survive).
     const treeIsEmpty = sync.folders.length === 0 && sync.files.length === 0;
+    try {
     if (allowDelete && (sync.partial || treeIsEmpty)) {
       // Removals are deliberately skipped when the tree is incomplete/empty — tell
       // the caller so 0-removed isn't mistaken for "nothing to delete".
@@ -500,11 +503,19 @@ export async function reconcileDataRoomFromDrive(params: {
         }
       }
     }
+    } catch (delErr: unknown) {
+      // Non-fatal: files were already created/updated above.
+      console.error(`[DataRoom] Delete-propagation failed for room ${dataRoomId}:`, delErr);
+      if (errors.length < 5) errors.push(`Delete cleanup skipped: ${errMessage(delErr)}`);
+    }
   } catch (err: unknown) {
-    // Unexpected failure (e.g. a DB read). Log the full error server-side and
-    // surface a generic message so raw driver text never reaches the client.
+    // Unexpected failure (e.g. a DB write/read). Log the full error server-side,
+    // and include the concise cause in the thrown message. This route is
+    // owner/admin-only, so surfacing the reason to the caller is acceptable and
+    // is the only way to diagnose failures without server-log access.
     console.error(`[DataRoom] Reconcile failed for room ${dataRoomId}:`, err);
-    throw new Error('Failed to update the data room from Google Drive.');
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to update the data room from Google Drive: ${detail}`);
   }
 
   return {
