@@ -22,3 +22,6 @@ const paths = walk(appRouter);
 paths.sort();
 for (const p of paths) console.log(p);
 console.error(`\n[dump] ${paths.length} procedures`);
+// Importing the live appRouter pulls in module-level pools/timers that keep the
+// event loop alive; the walk above is fully synchronous, so exit deterministically.
+process.exit(0);
