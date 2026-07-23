@@ -6467,13 +6467,6 @@ export async function updateBackgroundTask(
   await db.update(backgroundTasks).set(data).where(eq(backgroundTasks.id, id));
 }
 
-export async function getBackgroundTaskById(id: string): Promise<BackgroundTask | null> {
-  const db = await getDb();
-  if (!db) return null;
-  const [task] = await db.select().from(backgroundTasks).where(eq(backgroundTasks.id, id)).limit(1);
-  return task ?? null;
-}
-
 /**
  * Tasks a user should currently see: everything still in flight, plus anything
  * that finished recently and hasn't been dismissed. `finishedSince` bounds how
@@ -6557,7 +6550,7 @@ export async function failInterruptedBackgroundTasks(): Promise<number> {
       finishedAt: new Date(),
     })
     .where(inArray(backgroundTasks.status, ["queued", "running"]));
-  return (result as unknown as { rowsAffected?: number }).rowsAffected ?? 0;
+  return (result as any)[0]?.affectedRows ?? (result as any).rowsAffected ?? 0;
 }
 
 export async function getUserNotifications(userId: number, options?: {
