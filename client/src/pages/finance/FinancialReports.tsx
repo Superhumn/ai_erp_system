@@ -184,18 +184,21 @@ function ChartTooltipContent({ active, payload, label }: TooltipProps<number, st
 }
 
 function varianceColor(variancePct: number | null): string {
+  // Superhumn scheme: no red/green. Positive variance recedes (muted); a
+  // shortfall stands out with dark ink + weight. Arrows carry the direction.
   if (variancePct === null) return "";
-  if (variancePct >= 0) return "text-green-600 dark:text-green-400";
-  return "text-red-600 dark:text-red-400";
+  return variancePct >= 0 ? "text-muted-foreground" : "text-foreground font-semibold";
 }
 
 function kpiStatusBadge(status: string | null | undefined) {
+  // Neutral = ink on muted · highlight/exceeded = blue accent ·
+  // severe/behind = white on dark ink · warning = ink + weight.
   const styles: Record<string, string> = {
-    on_track: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
-    exceeded: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
-    at_risk: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300",
-    behind: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
-    not_started: "bg-gray-100 text-gray-600 dark:bg-gray-800/30 dark:text-gray-400",
+    on_track: "bg-muted text-foreground",
+    exceeded: "bg-primary/10 text-primary",
+    at_risk: "bg-muted text-foreground font-semibold",
+    behind: "bg-[oklch(0.30_0.02_262)] text-white",
+    not_started: "bg-muted text-muted-foreground",
   };
   const s = status || "not_started";
   return styles[s] || styles.not_started;
@@ -359,7 +362,7 @@ export function FinancialsCharts() {
     <div className="space-y-3">
       <div>
         <h2 className="text-base font-semibold flex items-center gap-2">
-          <BarChart3 className="h-4 w-4 text-blue-600" />
+          <BarChart3 className="h-4 w-4 text-muted-foreground" />
           Financials · 5-Year Projections
         </h2>
         <p className="text-xs text-muted-foreground mt-0.5">
@@ -529,7 +532,7 @@ export function ModelVsActual() {
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <TrendingUp className="h-5 w-5 text-indigo-600" />
+            <TrendingUp className="h-5 w-5 text-muted-foreground" />
             <div>
               <CardTitle className="text-base">Model vs Actual</CardTitle>
               <CardDescription className="text-sm">
@@ -773,7 +776,7 @@ export function ReportsSection() {
               <TableCell
                 className={`text-right ${
                   typeof row.amount === "number" && row.amount < 0
-                    ? "text-red-600"
+                    ? "text-foreground font-semibold"
                     : ""
                 }`}
               >
@@ -817,9 +820,9 @@ export function ReportsSection() {
 
       {/* Auto-Categorize result */}
       {autoCategorize.data && (
-        <Card className="border-green-200 bg-green-50 dark:bg-green-950/20 dark:border-green-800">
+        <Card className="border-border bg-muted/50">
           <CardContent className="pt-4">
-            <p className="text-sm text-green-800 dark:text-green-200">
+            <p className="text-sm text-foreground">
               Auto-categorization complete: {autoCategorize.data.categorized} of{" "}
               {autoCategorize.data.total} transactions categorized.
             </p>
@@ -882,9 +885,9 @@ export function ReportsSection() {
             <p className="text-sm text-muted-foreground bg-muted/50 rounded-md px-3 py-2">{reportData.summary}</p>
             <div className="border rounded-md overflow-hidden">{renderReportTable(reportData)}</div>
             {aiAnalysis && (
-              <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-md p-3">
-                <div className="flex items-center gap-2 mb-2 text-sm font-medium"><Sparkles className="h-4 w-4 text-blue-600" /> AI Analysis</div>
-                <div className="text-sm whitespace-pre-wrap text-blue-900 dark:text-blue-100">{aiAnalysis}</div>
+              <div className="bg-primary/5 border border-primary/20 rounded-md p-3">
+                <div className="flex items-center gap-2 mb-2 text-sm font-medium"><Sparkles className="h-4 w-4 text-primary" /> AI Analysis</div>
+                <div className="text-sm whitespace-pre-wrap text-foreground">{aiAnalysis}</div>
               </div>
             )}
           </CardContent>
@@ -917,7 +920,7 @@ export function KpiGoalsSection() {
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Target className="h-5 w-5 text-emerald-600" />
+            <Target className="h-5 w-5 text-muted-foreground" />
             <div>
               <CardTitle className="text-base">KPI Goals</CardTitle>
               <CardDescription className="text-sm">
@@ -985,7 +988,7 @@ export function KpiGoalsSection() {
                         </div>
                         <div className="flex items-end justify-between">
                           <div>
-                            <span className="text-lg font-bold">
+                            <span className="font-display text-lg font-bold tabular-nums">
                               {kpi.unit === "USD" || kpi.unit === "$"
                                 ? fmtCompact(actual)
                                 : `${actual.toLocaleString()}${kpi.unit === "%" ? "%" : ""}`}
@@ -996,19 +999,17 @@ export function KpiGoalsSection() {
                                 : `${target.toLocaleString()}${kpi.unit === "%" ? "%" : ""}`}
                             </span>
                           </div>
-                          <span className={`text-xs font-medium ${isOverTarget ? "text-green-600" : pct >= 70 ? "text-yellow-600" : "text-red-600"}`}>
+                          <span className={`text-xs font-medium tabular-nums ${isOverTarget ? "text-muted-foreground" : pct >= 70 ? "text-muted-foreground" : "text-foreground font-semibold"}`}>
                             {pct}%
                           </span>
                         </div>
-                        {/* Progress bar */}
-                        <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                        {/* Progress bar — blue fill, darkening to ink near/over target */}
+                        <div className="w-full bg-muted rounded-full h-2">
                           <div
                             className={`h-2 rounded-full transition-all ${
-                              isOverTarget
-                                ? "bg-green-500"
-                                : pct >= 70
-                                  ? "bg-yellow-500"
-                                  : "bg-red-500"
+                              pct >= 85
+                                ? "bg-[oklch(0.30_0.03_262)]"
+                                : "bg-primary"
                             }`}
                             style={{ width: `${Math.min(pct, 100)}%` }}
                           />
@@ -1056,7 +1057,7 @@ export function BankingSection() {
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2">
-          <DollarSign className="h-4 w-4 text-blue-600" /> Banking
+          <DollarSign className="h-4 w-4 text-muted-foreground" /> Banking
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -1067,7 +1068,7 @@ export function BankingSection() {
                 <div className="text-sm text-muted-foreground font-medium">
                   {acct.name || acct.nickname || "Account"}
                 </div>
-                <div className="text-2xl font-bold mt-1">
+                <div className="font-display text-2xl font-bold tabular-nums mt-1">
                   {fmtCompact(acct.currentBalance ?? acct.availableBalance ?? 0)}
                 </div>
                 <p className="text-xs text-muted-foreground mt-1">

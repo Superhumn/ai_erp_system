@@ -80,15 +80,13 @@ const BENCHMARKS = {
 };
 
 function benchColor(v: number | null, band: { great: number; ok: number; poor: number }, lowerBetter = false): string {
+  // Superhumn scheme: severity via dark ink + weight, never hue. Metrics that
+  // are on/above benchmark stay calm (muted); a below-benchmark reading is the
+  // only one that pops (dark foreground + weight). The benchLabel text below
+  // still spells out Top quartile / On track / Below benchmark.
   if (v === null || !Number.isFinite(v)) return "text-muted-foreground";
-  if (lowerBetter) {
-    if (v <= band.great) return "text-emerald-600 dark:text-emerald-400";
-    if (v <= band.ok)    return "text-amber-600 dark:text-amber-400";
-    return "text-red-600 dark:text-red-400";
-  }
-  if (v >= band.great) return "text-emerald-600 dark:text-emerald-400";
-  if (v >= band.ok)    return "text-amber-600 dark:text-amber-400";
-  return "text-red-600 dark:text-red-400";
+  const below = lowerBetter ? v > band.ok : v < band.ok;
+  return below ? "text-foreground font-semibold" : "text-muted-foreground";
 }
 
 function benchLabel(v: number | null, band: { great: number; ok: number; poor: number }, lowerBetter = false): string {
@@ -119,7 +117,7 @@ function KpiCard({ icon: Icon, label, value, sub, tone, hint }: KpiCardProps) {
         <Icon className="h-2.5 w-2.5 shrink-0" />
         <span className="truncate">{label}</span>
       </div>
-      <p className={`text-sm font-bold leading-tight mt-1 ${tone ?? ""}`}>{value}</p>
+      <p className={`font-display text-sm font-bold tabular-nums leading-tight mt-1 ${tone ?? ""}`}>{value}</p>
       {(sub || hint) && (
         <p className="text-[9px] text-muted-foreground truncate leading-none mt-0.5" title={sub ?? hint}>
           {sub ?? hint}
@@ -761,12 +759,14 @@ export default function CFODashboard() {
 
       {/* Executive summary banner — section health + top concern */}
       {(() => {
+        // Severity by ink darkness, not hue: healthy recedes (light), warning
+        // is mid ink, and a problem is solid dark ink.
         const dot = (ok: boolean, warn: boolean) =>
-          ok ? "bg-emerald-500" : warn ? "bg-amber-500" : "bg-red-500";
+          ok ? "bg-muted-foreground/30" : warn ? "bg-foreground/50" : "bg-foreground";
         const liquidityDot = dot(runwayMonths >= 18, runwayMonths >= 12);
         const growthDot    = dot(momGrowth >= 15, momGrowth >= 8);
         const efficiencyDot = burnMultiple === null
-          ? "bg-muted-foreground"
+          ? "bg-muted-foreground/30"
           : dot(burnMultiple <= 1, burnMultiple <= 2);
         const riskDot      = dot(concentration.topPct <= 15 && arAging.d90 === 0, concentration.topPct <= 25);
 
@@ -831,7 +831,7 @@ export default function CFODashboard() {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2">
-            <Clock className="h-4 w-4 text-cyan-600" /> Cash runway — 18mo scenarios
+            <Clock className="h-4 w-4 text-muted-foreground" /> Cash runway — 18mo scenarios
           </CardTitle>
           <CardDescription className="text-xs">Bear (-25% rev) · Base (flat) · Bull (+20% rev) · dashed line = zero cash</CardDescription>
         </CardHeader>
@@ -864,7 +864,7 @@ export default function CFODashboard() {
                    : "Trailing 3mo × 12 (no recurring detected)"} />
         <KpiCard icon={Zap} label="Net New ARR"
                  value={fmtCompact(netNewArr)}
-                 tone={netNewArr >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}
+                 tone={netNewArr >= 0 ? "text-muted-foreground" : "text-foreground font-semibold"}
                  sub="MoM change × 12" />
         <KpiCard icon={Activity} label="MoM Growth"
                  value={`${momGrowth >= 0 ? "+" : ""}${momGrowth.toFixed(1)}%`}
@@ -896,7 +896,7 @@ export default function CFODashboard() {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2">
-            <TrendingUp className="h-4 w-4 text-blue-600" /> Revenue trajectory — trailing 12mo
+            <TrendingUp className="h-4 w-4 text-muted-foreground" /> Revenue trajectory — trailing 12mo
           </CardTitle>
           <CardDescription className="text-xs">
             3mo avg {fmtCompact(threeMonthAvgRev)} · YoY {yoyGrowth >= 0 ? "+" : ""}{yoyGrowth.toFixed(0)}%
@@ -936,11 +936,11 @@ export default function CFODashboard() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
-                <Zap className="h-4 w-4 text-blue-600" /> ARR Movement — last 6mo
+                <Zap className="h-4 w-4 text-muted-foreground" /> ARR Movement — last 6mo
               </CardTitle>
               <CardDescription className="text-xs">
                 Starting {fmtCompact(arrMovement.starting)} → Ending {fmtCompact(arrMovement.ending)}{" "}
-                <span className={delta >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>
+                <span className={delta >= 0 ? "text-muted-foreground" : "text-foreground font-semibold"}>
                   ({delta >= 0 ? "+" : ""}{fmtCompact(delta)} · {deltaPct >= 0 ? "+" : ""}{deltaPct.toFixed(0)}%)
                 </span>
               </CardDescription>
@@ -964,19 +964,22 @@ export default function CFODashboard() {
       })()}
 
       {cohortHeatmap && (() => {
+        // Single-accent sequential: strong retention reads as blue tint,
+        // fading through neutral ink; the weakest retention is the one that
+        // pops, as white on dark ink (the scheme's "severe" treatment).
         const cellClass = (v: number | null) => {
           if (v === null) return "";
-          if (v >= 100) return "bg-emerald-200 text-emerald-900 dark:bg-emerald-900/80 dark:text-emerald-100";
-          if (v >= 80)  return "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-200";
-          if (v >= 60)  return "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200";
-          if (v >= 40)  return "bg-orange-100 text-orange-900 dark:bg-orange-900/40 dark:text-orange-200";
-          return "bg-red-100 text-red-900 dark:bg-red-900/40 dark:text-red-200";
+          if (v >= 100) return "bg-primary/20 text-foreground";
+          if (v >= 80)  return "bg-primary/10 text-foreground";
+          if (v >= 60)  return "bg-muted text-foreground";
+          if (v >= 40)  return "bg-foreground/10 text-foreground";
+          return "bg-[oklch(0.30_0.02_262)] text-white";
         };
         return (
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
-                <PieChart className="h-4 w-4 text-indigo-600" /> Cohort Retention
+                <PieChart className="h-4 w-4 text-muted-foreground" /> Cohort Retention
               </CardTitle>
               <CardDescription className="text-xs">
                 Revenue retention by acquisition quarter · Q+N = quarters after first order.
@@ -1027,12 +1030,12 @@ export default function CFODashboard() {
             <Activity className="h-3 w-3" /> Recurring Orders
           </span>
           <span><span className="text-muted-foreground">MRR:</span> <span className="font-semibold">{fmtCompact(recurring.detectedMRR)}</span></span>
-          <span className="text-emerald-600 dark:text-emerald-400">● {recurring.active} active</span>
+          <span className="text-muted-foreground">● {recurring.active} active</span>
           {recurring.atRisk > 0 && (
-            <span className="text-amber-600 dark:text-amber-400">● {recurring.atRisk} at-risk ({fmtCompact(recurring.atRiskARR)} ARR)</span>
+            <span className="text-foreground">● {recurring.atRisk} at-risk ({fmtCompact(recurring.atRiskARR)} ARR)</span>
           )}
           {recurring.churned > 0 && (
-            <span className="text-red-600 dark:text-red-400">● {recurring.churned} churned</span>
+            <span className="text-foreground font-semibold">● {recurring.churned} churned</span>
           )}
           <span className="text-[10px] text-muted-foreground">status inferred from cadence (1.5× / 3× thresholds)</span>
         </div>
@@ -1048,7 +1051,7 @@ export default function CFODashboard() {
           {pipeline.coverage !== null && (
             <span>
               <span className="text-muted-foreground">Coverage:</span>{" "}
-              <span className={`font-semibold ${pipeline.coverage >= 3 ? "text-emerald-600 dark:text-emerald-400" : pipeline.coverage >= 2 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}`}>
+              <span className={`font-semibold ${pipeline.coverage >= 2 ? "text-muted-foreground" : "text-foreground"}`}>
                 {pipeline.coverage.toFixed(1)}x
               </span>{" "}
               <span className="text-[10px] text-muted-foreground">vs last qtr run-rate (3x target)</span>
@@ -1127,17 +1130,17 @@ export default function CFODashboard() {
             </span>
           </div>
           <div className="flex rounded overflow-hidden h-4 bg-muted">
-            {opexBreakdown.rdPct > 0    && <div className="bg-violet-500"  style={{ width: `${opexBreakdown.rdPct}%` }} />}
-            {opexBreakdown.smPct > 0    && <div className="bg-blue-500"    style={{ width: `${opexBreakdown.smPct}%` }} />}
-            {opexBreakdown.gaPct > 0    && <div className="bg-slate-400"   style={{ width: `${opexBreakdown.gaPct}%` }} />}
-            {opexBreakdown.otherPct > 0 && <div className="bg-muted-foreground/30" style={{ width: `${opexBreakdown.otherPct}%` }} />}
+            {opexBreakdown.rdPct > 0    && <div className="bg-primary"  style={{ width: `${opexBreakdown.rdPct}%` }} />}
+            {opexBreakdown.smPct > 0    && <div className="bg-[oklch(0.30_0.03_262)]"    style={{ width: `${opexBreakdown.smPct}%` }} />}
+            {opexBreakdown.gaPct > 0    && <div className="bg-muted-foreground/50"   style={{ width: `${opexBreakdown.gaPct}%` }} />}
+            {opexBreakdown.otherPct > 0 && <div className="bg-muted-foreground/25" style={{ width: `${opexBreakdown.otherPct}%` }} />}
           </div>
           <div className="flex items-center gap-4 mt-1.5 text-[11px]">
-            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-violet-500" />R&D {opexBreakdown.rdPct.toFixed(0)}% · {fmtCompact(opexBreakdown.rd)}</span>
-            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-blue-500" />S&M {opexBreakdown.smPct.toFixed(0)}% · {fmtCompact(opexBreakdown.sm)}</span>
-            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-slate-400" />G&A {opexBreakdown.gaPct.toFixed(0)}% · {fmtCompact(opexBreakdown.ga)}</span>
+            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-primary" />R&D {opexBreakdown.rdPct.toFixed(0)}% · {fmtCompact(opexBreakdown.rd)}</span>
+            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-[oklch(0.30_0.03_262)]" />S&M {opexBreakdown.smPct.toFixed(0)}% · {fmtCompact(opexBreakdown.sm)}</span>
+            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-muted-foreground/50" />G&A {opexBreakdown.gaPct.toFixed(0)}% · {fmtCompact(opexBreakdown.ga)}</span>
             {opexBreakdown.otherPct > 0 && (
-              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-muted-foreground/30" />Other {opexBreakdown.otherPct.toFixed(0)}%</span>
+              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-muted-foreground/25" />Other {opexBreakdown.otherPct.toFixed(0)}%</span>
             )}
           </div>
         </div>
@@ -1147,7 +1150,7 @@ export default function CFODashboard() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center gap-2">
-              <BarChart3 className="h-4 w-4 text-violet-600" /> Margin trajectory — financial model
+              <BarChart3 className="h-4 w-4 text-muted-foreground" /> Margin trajectory — financial model
             </CardTitle>
             <CardDescription className="text-xs">
               Projected gross and EBITDA margin % by year. Series B benchmark: gross ≥70%, EBITDA improving.
@@ -1185,7 +1188,7 @@ export default function CFODashboard() {
           {cashGapDays !== null && (
             <span>
               <span className="text-muted-foreground">Cash gap:</span>{" "}
-              <span className={`font-semibold ${cashGapDays > 30 ? "text-red-600 dark:text-red-400" : cashGapDays > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+              <span className={`font-semibold ${cashGapDays > 30 ? "text-foreground" : cashGapDays > 0 ? "text-foreground" : "text-muted-foreground"}`}>
                 {cashGapDays > 0 ? "+" : ""}{cashGapDays}d
               </span>{" "}
               <span className="text-[10px] text-muted-foreground">
@@ -1200,7 +1203,7 @@ export default function CFODashboard() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-amber-600" /> At-risk recurring customers
+              <AlertTriangle className="h-4 w-4 text-muted-foreground" /> At-risk recurring customers
             </CardTitle>
             <CardDescription className="text-xs">
               Customers overdue for their next order (past 1.5× their typical cadence) — totals {fmtCompact(recurring.atRiskARR)} annualized.
@@ -1227,7 +1230,7 @@ export default function CFODashboard() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center gap-2">
-              <Users className="h-4 w-4 text-indigo-600" /> Customer concentration
+              <Users className="h-4 w-4 text-muted-foreground" /> Customer concentration
             </CardTitle>
             <CardDescription className="text-xs">
               Top customer {concentration.topPct.toFixed(0)}% ·{" "}
@@ -1246,7 +1249,7 @@ export default function CFODashboard() {
                     <span className="text-[11px] w-5 text-muted-foreground">{i + 1}.</span>
                     <span className="text-xs flex-1 truncate">{c.name}</span>
                     <div className="w-32 bg-muted rounded-full h-1.5">
-                      <div className="bg-indigo-500 h-1.5 rounded-full" style={{ width: `${Math.min(c.pct, 100)}%` }} />
+                      <div className="bg-primary h-1.5 rounded-full" style={{ width: `${Math.min(c.pct, 100)}%` }} />
                     </div>
                     <span className="text-[11px] font-medium w-16 text-right">{formatCurrency(c.value)}</span>
                     <span className="text-[11px] text-muted-foreground w-10 text-right">{c.pct.toFixed(0)}%</span>
@@ -1260,7 +1263,7 @@ export default function CFODashboard() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-amber-600" /> AR aging & DSO
+              <AlertTriangle className="h-4 w-4 text-muted-foreground" /> AR aging & DSO
             </CardTitle>
             <CardDescription className="text-xs">
               Total AR {fmtCompact(totalAR)} · DSO {dso !== null ? `${dso}d` : "—"}
@@ -1286,7 +1289,7 @@ export default function CFODashboard() {
               </BarChart>
             </ResponsiveContainer>
             {arAging.d90 > 0 && (
-              <p className="text-[11px] text-red-600 mt-1">
+              <p className="text-[11px] text-foreground font-semibold mt-1">
                 {fmtCompact(arAging.d90)} over 60 days — collections follow-up recommended.
               </p>
             )}
@@ -1368,7 +1371,7 @@ export function CFOStrategy() {
             </span>
             <span>
               <span className="text-muted-foreground">Sent:</span>{" "}
-              <span className={`font-semibold ${lastInvestorUpdate.daysAgo <= 45 ? "text-emerald-600 dark:text-emerald-400" : lastInvestorUpdate.daysAgo <= 100 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}`}>
+              <span className={`font-semibold ${lastInvestorUpdate.daysAgo <= 45 ? "text-muted-foreground" : "text-foreground"}`}>
                 {lastInvestorUpdate.daysAgo}d ago
               </span>{" "}
               <span className="text-[10px] text-muted-foreground">

@@ -372,21 +372,25 @@ const taskTypeLabels: Record<string, string> = {
   concierge_errand: "Errand",
 };
 
+// Superhumn scheme: severity is ink weight, not hue. Low/medium recede as muted
+// ink; high gains weight; urgent goes dark-ink-on-severe.
 const priorityColors: Record<string, string> = {
-  low: "bg-gray-100 text-gray-700",
-  medium: "bg-blue-100 text-blue-700",
-  high: "bg-orange-100 text-orange-700",
-  urgent: "bg-red-100 text-red-700",
+  low: "bg-muted text-muted-foreground",
+  medium: "bg-muted text-foreground",
+  high: "bg-muted text-foreground font-semibold",
+  urgent: "bg-[oklch(0.30_0.02_262)] text-white",
 };
 
+// pending_approval / in_progress = active "needs you" → blue accent.
+// approved / completed = neutral ink. rejected / failed = severe dark ink.
 const statusColors: Record<string, string> = {
-  pending_approval: "bg-yellow-100 text-yellow-700",
-  approved: "bg-green-100 text-green-700",
-  rejected: "bg-red-100 text-red-700",
-  in_progress: "bg-blue-100 text-blue-700",
-  completed: "bg-green-100 text-green-700",
-  failed: "bg-red-100 text-red-700",
-  cancelled: "bg-gray-100 text-gray-700",
+  pending_approval: "bg-primary/10 text-primary",
+  approved: "bg-muted text-foreground font-medium",
+  rejected: "bg-[oklch(0.30_0.02_262)] text-white",
+  in_progress: "bg-primary/10 text-primary",
+  completed: "bg-muted text-foreground",
+  failed: "bg-[oklch(0.30_0.02_262)] text-white",
+  cancelled: "bg-muted text-muted-foreground",
 };
 
 export default function ApprovalQueue() {
@@ -557,9 +561,9 @@ export default function ApprovalQueue() {
                     <p><strong>Quantity:</strong> {taskData.quantity} | <strong>Total:</strong> {formatCurrency(taskData.totalAmount)}</p>
                     {taskData.expectedDate && <p><strong>Expected:</strong> {formatDate(taskData.expectedDate)}</p>}
                     {task.resultData && (
-                      <p className="mt-2 p-2 bg-green-50 rounded border border-green-200">
+                      <p className="mt-2 p-2 bg-muted/50 rounded border border-border">
                         <strong>Created:</strong>{" "}
-                        <Link href={`/operations/procurement-hub?tab=orders&id=${JSON.parse(task.resultData).poId}`} className="text-green-700 hover:underline inline-flex items-center gap-1">
+                        <Link href={`/operations/procurement-hub?tab=orders&id=${JSON.parse(task.resultData).poId}`} className="text-primary hover:underline inline-flex items-center gap-1">
                           PO #{JSON.parse(task.resultData).poNumber}
                           <ExternalLink className="h-3 w-3" />
                         </Link>
@@ -599,10 +603,10 @@ export default function ApprovalQueue() {
                       try {
                         const r = JSON.parse(task.executionResult);
                         return (
-                          <div className="mt-2 p-2 bg-green-50 rounded border border-green-200 text-foreground">
+                          <div className="mt-2 p-2 bg-muted/50 rounded border border-border text-foreground">
                             {r.summary && <p>{r.summary}</p>}
                             {Array.isArray(r.failedActions) && r.failedActions.length > 0 && (
-                              <p className="mt-1 text-orange-700">
+                              <p className="mt-1 text-foreground font-semibold">
                                 {r.failedActions.length} action(s) could not be completed.
                               </p>
                             )}
@@ -633,9 +637,9 @@ export default function ApprovalQueue() {
                     <p><strong>To:</strong> {taskData.to || "Unknown"}</p>
                     <p><strong>Subject:</strong> {taskData.subject || "No subject"}</p>
                     {task.resultData && (
-                      <p className="mt-2 p-2 bg-green-50 rounded border border-green-200">
+                      <p className="mt-2 p-2 bg-muted/50 rounded border border-border">
                         <strong>Sent:</strong>{" "}
-                        <Link href="/operations/email-inbox?tab=sent" className="text-green-700 hover:underline inline-flex items-center gap-1">
+                        <Link href="/operations/email-inbox?tab=sent" className="text-primary hover:underline inline-flex items-center gap-1">
                           View in Sent Emails
                           <ExternalLink className="h-3 w-3" />
                         </Link>
@@ -659,9 +663,9 @@ export default function ApprovalQueue() {
                     <p><strong>Vendor Name:</strong> {taskData.name || "Unknown"}</p>
                     {taskData.email && <p><strong>Email:</strong> {taskData.email}</p>}
                     {task.resultData && (
-                      <p className="mt-2 p-2 bg-green-50 rounded border border-green-200">
+                      <p className="mt-2 p-2 bg-muted/50 rounded border border-border">
                         <strong>Created:</strong>{" "}
-                        <Link href={`/operations/procurement-hub?tab=vendors&id=${JSON.parse(task.resultData).vendorId}`} className="text-green-700 hover:underline inline-flex items-center gap-1">
+                        <Link href={`/operations/procurement-hub?tab=vendors&id=${JSON.parse(task.resultData).vendorId}`} className="text-primary hover:underline inline-flex items-center gap-1">
                           View Vendor
                           <ExternalLink className="h-3 w-3" />
                         </Link>
@@ -675,9 +679,9 @@ export default function ApprovalQueue() {
                     <p><strong>Material Name:</strong> {taskData.name || "Unknown"}</p>
                     {taskData.sku && <p><strong>SKU:</strong> {taskData.sku}</p>}
                     {task.resultData && (
-                      <p className="mt-2 p-2 bg-green-50 rounded border border-green-200">
+                      <p className="mt-2 p-2 bg-muted/50 rounded border border-border">
                         <strong>Created:</strong>{" "}
-                        <Link href={`/operations/procurement-hub?tab=materials&id=${JSON.parse(task.resultData).materialId}`} className="text-green-700 hover:underline inline-flex items-center gap-1">
+                        <Link href={`/operations/procurement-hub?tab=materials&id=${JSON.parse(task.resultData).materialId}`} className="text-primary hover:underline inline-flex items-center gap-1">
                           View Material
                           <ExternalLink className="h-3 w-3" />
                         </Link>
@@ -691,9 +695,9 @@ export default function ApprovalQueue() {
                     <p><strong>Product Name:</strong> {taskData.name || "Unknown"}</p>
                     {taskData.sku && <p><strong>SKU:</strong> {taskData.sku}</p>}
                     {task.resultData && (
-                      <p className="mt-2 p-2 bg-green-50 rounded border border-green-200">
+                      <p className="mt-2 p-2 bg-muted/50 rounded border border-border">
                         <strong>Created:</strong>{" "}
-                        <Link href={`/sales/products?id=${JSON.parse(task.resultData).productId}`} className="text-green-700 hover:underline inline-flex items-center gap-1">
+                        <Link href={`/sales/products?id=${JSON.parse(task.resultData).productId}`} className="text-primary hover:underline inline-flex items-center gap-1">
                           View Product
                           <ExternalLink className="h-3 w-3" />
                         </Link>
@@ -707,9 +711,9 @@ export default function ApprovalQueue() {
                     <p><strong>Customer Name:</strong> {taskData.name || "Unknown"}</p>
                     {taskData.email && <p><strong>Email:</strong> {taskData.email}</p>}
                     {task.resultData && (
-                      <p className="mt-2 p-2 bg-green-50 rounded border border-green-200">
+                      <p className="mt-2 p-2 bg-muted/50 rounded border border-border">
                         <strong>Created:</strong>{" "}
-                        <Link href={`/sales/customers?id=${JSON.parse(task.resultData).customerId}`} className="text-green-700 hover:underline inline-flex items-center gap-1">
+                        <Link href={`/sales/customers?id=${JSON.parse(task.resultData).customerId}`} className="text-primary hover:underline inline-flex items-center gap-1">
                           View Customer
                           <ExternalLink className="h-3 w-3" />
                         </Link>
@@ -726,9 +730,9 @@ export default function ApprovalQueue() {
                     {taskData.source && <p><strong>Source:</strong> {taskData.source}</p>}
                     {taskData.notes && <p className="line-clamp-2"><strong>Notes:</strong> {taskData.notes}</p>}
                     {task.resultData && (
-                      <p className="mt-2 p-2 bg-green-50 rounded border border-green-200">
+                      <p className="mt-2 p-2 bg-muted/50 rounded border border-border">
                         <strong>Created:</strong>{" "}
-                        <Link href={`/crm`} className="text-green-700 hover:underline inline-flex items-center gap-1">
+                        <Link href={`/crm`} className="text-primary hover:underline inline-flex items-center gap-1">
                           View Deal
                           <ExternalLink className="h-3 w-3" />
                         </Link>
@@ -793,7 +797,7 @@ export default function ApprovalQueue() {
                 </Button>
                 <Button
                   size="sm"
-                  className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
+                  className="bg-primary text-primary-foreground hover:bg-primary/90"
                   onClick={async () => {
                     await handleApprove(task.id);
                     setTimeout(() => handleExecute(task.id), 500);
@@ -879,11 +883,11 @@ export default function ApprovalQueue() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-4">
-              <div className="p-3 rounded-lg bg-yellow-100">
-                <Clock className="h-6 w-6 text-yellow-600" />
+              <div className="p-3 rounded-lg bg-primary/10">
+                <Clock className="h-6 w-6 text-primary" />
               </div>
               <div>
-                <p className="text-xl font-semibold tracking-[-0.02em]">{pendingCount}</p>
+                <p className="font-display text-xl font-bold tracking-[-0.02em] tabular-nums">{pendingCount}</p>
                 <p className="text-sm text-muted-foreground">Pending Approval</p>
               </div>
             </div>
@@ -893,11 +897,11 @@ export default function ApprovalQueue() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-4">
-              <div className="p-3 rounded-lg bg-green-100">
-                <CheckCircle className="h-6 w-6 text-green-600" />
+              <div className="p-3 rounded-lg bg-muted">
+                <CheckCircle className="h-6 w-6 text-muted-foreground" />
               </div>
               <div>
-                <p className="text-xl font-semibold tracking-[-0.02em]">{approvedCount}</p>
+                <p className="font-display text-xl font-bold tracking-[-0.02em] tabular-nums">{approvedCount}</p>
                 <p className="text-sm text-muted-foreground">Approved</p>
               </div>
             </div>
@@ -907,11 +911,11 @@ export default function ApprovalQueue() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-4">
-              <div className="p-3 rounded-lg bg-blue-100">
-                <Play className="h-6 w-6 text-blue-600" />
+              <div className="p-3 rounded-lg bg-muted">
+                <Play className="h-6 w-6 text-muted-foreground" />
               </div>
               <div>
-                <p className="text-xl font-semibold tracking-[-0.02em]">{completedCount}</p>
+                <p className="font-display text-xl font-bold tracking-[-0.02em] tabular-nums">{completedCount}</p>
                 <p className="text-sm text-muted-foreground">Completed</p>
               </div>
             </div>
@@ -925,7 +929,7 @@ export default function ApprovalQueue() {
                 <Bot className="h-6 w-6 text-primary" />
               </div>
               <div>
-                <p className="text-xl font-semibold tracking-[-0.02em]">{allTasks?.length || 0}</p>
+                <p className="font-display text-xl font-bold tracking-[-0.02em] tabular-nums">{allTasks?.length || 0}</p>
                 <p className="text-sm text-muted-foreground">Total Tasks</p>
               </div>
             </div>
@@ -938,7 +942,7 @@ export default function ApprovalQueue() {
           <TabsTrigger value="pending" className="relative">
             Pending Approval
             {pendingCount > 0 && (
-              <Badge className="ml-2 bg-yellow-500">{pendingCount}</Badge>
+              <Badge className="ml-2 bg-primary text-primary-foreground">{pendingCount}</Badge>
             )}
           </TabsTrigger>
           <TabsTrigger value="all">All Tasks</TabsTrigger>
@@ -953,7 +957,7 @@ export default function ApprovalQueue() {
           ) : pendingTasks?.length === 0 ? (
             <Card>
               <CardContent className="py-12 text-center">
-                <CheckCircle className="h-12 w-12 mx-auto text-green-500 mb-4" />
+                <CheckCircle className="h-12 w-12 mx-auto text-primary mb-4" />
                 <h3 className="text-lg font-semibold">All caught up!</h3>
                 <p className="text-muted-foreground">No tasks pending approval</p>
               </CardContent>
@@ -995,15 +999,15 @@ export default function ApprovalQueue() {
                   {logs?.map((log: any) => (
                     <div key={log.id} className="flex items-start gap-3 p-3 bg-muted/30 rounded-lg">
                       <div className={`p-1.5 rounded ${
-                        log.status === "success" ? "bg-green-100" :
-                        log.status === "error" ? "bg-red-100" :
-                        log.status === "warning" ? "bg-yellow-100" :
-                        "bg-blue-100"
+                        log.status === "success" ? "bg-muted" :
+                        log.status === "error" ? "bg-[oklch(0.30_0.02_262)]" :
+                        log.status === "warning" ? "bg-muted" :
+                        "bg-primary/10"
                       }`}>
-                        {log.status === "success" ? <CheckCircle className="h-4 w-4 text-green-600" /> :
-                         log.status === "error" ? <XCircle className="h-4 w-4 text-red-600" /> :
-                         log.status === "warning" ? <AlertTriangle className="h-4 w-4 text-yellow-600" /> :
-                         <Eye className="h-4 w-4 text-blue-600" />}
+                        {log.status === "success" ? <CheckCircle className="h-4 w-4 text-muted-foreground" /> :
+                         log.status === "error" ? <XCircle className="h-4 w-4 text-white" /> :
+                         log.status === "warning" ? <AlertTriangle className="h-4 w-4 text-foreground" /> :
+                         <Eye className="h-4 w-4 text-primary" />}
                       </div>
                       <div className="flex-1">
                         <p className="text-sm font-medium">{log.action.replace(/_/g, " ")}</p>
@@ -1204,10 +1208,10 @@ export default function ApprovalQueue() {
               {selectedTask.executionResult && (
                 <div>
                   <label className="text-sm font-medium flex items-center gap-2 mb-2">
-                    <CheckCircle className="h-4 w-4 text-green-600" />
+                    <CheckCircle className="h-4 w-4 text-muted-foreground" />
                     Execution Result
                   </label>
-                  <pre className="text-xs bg-green-50 p-3 rounded border border-green-200 overflow-x-auto">
+                  <pre className="text-xs bg-muted/50 p-3 rounded border border-border overflow-x-auto">
                     {(() => {
                       try {
                         return JSON.stringify(JSON.parse(selectedTask.executionResult), null, 2);
@@ -1223,10 +1227,10 @@ export default function ApprovalQueue() {
               {selectedTask.errorMessage && (
                 <div>
                   <label className="text-sm font-medium flex items-center gap-2 mb-2">
-                    <XCircle className="h-4 w-4 text-red-600" />
+                    <XCircle className="h-4 w-4 text-foreground" />
                     Error Message
                   </label>
-                  <p className="text-sm text-red-600 p-3 bg-red-50 rounded border border-red-200">
+                  <p className="text-sm text-foreground font-medium p-3 bg-muted rounded border border-border">
                     {selectedTask.errorMessage}
                   </p>
                 </div>
@@ -1234,20 +1238,20 @@ export default function ApprovalQueue() {
               
               {/* Approval/Rejection Info */}
               {selectedTask.approvedAt && (
-                <div className="p-3 bg-green-50 rounded border border-green-200">
-                  <p className="text-sm text-green-700">
+                <div className="p-3 bg-muted rounded border border-border">
+                  <p className="text-sm text-foreground font-medium">
                     <strong>Approved:</strong> {formatDate(selectedTask.approvedAt)}
                   </p>
                 </div>
               )}
-              
+
               {selectedTask.rejectedAt && (
-                <div className="p-3 bg-red-50 rounded border border-red-200">
-                  <p className="text-sm text-red-700">
+                <div className="p-3 bg-[oklch(0.30_0.02_262)] rounded border border-border">
+                  <p className="text-sm text-white font-medium">
                     <strong>Rejected:</strong> {formatDate(selectedTask.rejectedAt)}
                   </p>
                   {selectedTask.rejectionReason && (
-                    <p className="text-sm text-red-600 mt-1">
+                    <p className="text-sm text-white/80 mt-1">
                       <strong>Reason:</strong> {selectedTask.rejectionReason}
                     </p>
                   )}
@@ -1255,8 +1259,8 @@ export default function ApprovalQueue() {
               )}
               
               {selectedTask.executedAt && (
-                <div className="p-3 bg-blue-50 rounded border border-blue-200">
-                  <p className="text-sm text-blue-700">
+                <div className="p-3 bg-primary/10 rounded border border-primary/20">
+                  <p className="text-sm text-primary">
                     <strong>Executed:</strong> {formatDate(selectedTask.executedAt)}
                   </p>
                 </div>
@@ -1610,7 +1614,7 @@ function AgentConfigDialog({ open, onClose }: { open: boolean; onClose: () => vo
                             {r.requiresApproval ? (
                               <Badge variant="outline" className="text-[10px]">needs approval</Badge>
                             ) : (
-                              <Badge className="text-[10px] bg-emerald-500/15 text-emerald-700">auto</Badge>
+                              <Badge className="text-[10px] bg-primary/10 text-primary">auto</Badge>
                             )}
                           </div>
                           {r.description && <div className="text-xs text-muted-foreground truncate mt-0.5">{r.description}</div>}
@@ -1711,7 +1715,7 @@ function AgentConfigDialog({ open, onClose }: { open: boolean; onClose: () => vo
                           <div className="flex items-center gap-2">
                             <span className="font-medium text-sm">{t.name}</span>
                             <Badge variant="outline" className="text-[10px]">{t.templateType}</Badge>
-                            {t.isDefault && <Badge className="text-[10px] bg-blue-500/15 text-blue-700">default</Badge>}
+                            {t.isDefault && <Badge className="text-[10px] bg-primary/10 text-primary">default</Badge>}
                           </div>
                           <div className="text-xs text-muted-foreground truncate mt-0.5">{t.subject}</div>
                         </div>

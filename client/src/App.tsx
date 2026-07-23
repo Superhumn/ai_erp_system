@@ -19,6 +19,8 @@ import NotFound from "@/pages/NotFound";
 
 // Lazy-loaded pages — split into separate chunks for smaller initial bundle
 const AIAssistant = lazy(() => import("./pages/AIAssistant"));
+// Superhumn design handoff — canonical screens gallery (standalone, scoped theme)
+const SuperhumnGallery = lazy(() => import("./pages/superhumn"));
 const Settings = lazy(() => import("./pages/Settings"));
 const GlobalSearch = lazy(() => import("./pages/GlobalSearch"));
 const Notifications = lazy(() => import("./pages/Notifications"));
@@ -505,6 +507,8 @@ function App() {
                 <Route path="/dr/:code" component={DataRoomPublic} />
                 {/* Supplier Portal (public) */}
                 <Route path="/supplier-portal/:token" component={SupplierPortal} />
+                {/* Superhumn design handoff gallery (standalone, self-contained frames) */}
+                <Route path="/superhumn" component={SuperhumnGallery} />
                 {/* All other routes go through dashboard */}
                 <Route component={Router} />
               </Switch>
