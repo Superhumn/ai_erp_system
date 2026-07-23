@@ -24,6 +24,7 @@ import {
   aiAgentTasks,
   aiAgentLogs,
   sentEmails,
+  inboundEmails,
 } from "../drizzle/schema";
 import { eq, and, like, desc, sql, gte, lte, or, isNull, isNotNull, count, sum, lt, inArray } from "drizzle-orm";
 
@@ -165,6 +166,37 @@ const AI_TOOLS: Tool[] = [
           },
         },
         required: ["subject", "body"],
+      },
+    },
+  },
+  // Inbound Email (read-only)
+  {
+    type: "function",
+    function: {
+      name: "search_inbox",
+      description: "Search and list received (inbound) emails in the company inbox. Use this to FIND an email the user is asking about — e.g. 'find the latest email from Acme', 'any emails about invoice 1234?', 'what did the supplier send yesterday?'. Returns matching emails with id, sender, subject, date, category and a short snippet. Call read_email with an id to see the full body. Read-only — safe to use freely.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Free text to match against subject, body, and sender" },
+          from: { type: "string", description: "Filter by sender name or email address" },
+          category: { type: "string", description: "Optional category filter (e.g. invoice, order, vendor, general)" },
+          limit: { type: "number", description: "Max results to return (default 20, max 50)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "read_email",
+      description: "Read the full contents of a single received (inbound) email by its id (from search_inbox). Returns the sender, subject, date and full body text. Read-only.",
+      parameters: {
+        type: "object",
+        properties: {
+          emailId: { type: "number", description: "The inbound email id returned by search_inbox" },
+        },
+        required: ["emailId"],
       },
     },
   },
@@ -850,6 +882,103 @@ async function executeDraftEmail(params: any, ctx: AIAgentContext): Promise<any>
     body: params.body,
     purpose: params.purpose,
     message: "Email draft created. Please review and send when ready.",
+  };
+}
+
+// ============================================
+// INBOUND EMAIL (READ-ONLY)
+// ============================================
+
+type InboundEmailRow = typeof inboundEmails.$inferSelect;
+
+// Prefer plain text; fall back to a stripped-down version of the HTML body.
+export function extractEmailBody(email: Pick<InboundEmailRow, "bodyText" | "bodyHtml">): string {
+  if (email.bodyText && email.bodyText.trim()) return email.bodyText.trim();
+  if (email.bodyHtml && email.bodyHtml.trim()) {
+    return email.bodyHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  }
+  return "";
+}
+
+// Compact one-line summary of an inbound email for search results.
+export function formatInboundSummary(email: Partial<InboundEmailRow>): {
+  id: number | undefined;
+  from: string;
+  subject: string;
+  receivedAt: Date | null | undefined;
+  category: string | null | undefined;
+  priority: string | null | undefined;
+  snippet: string;
+} {
+  const from = email.fromName ? `${email.fromName} <${email.fromEmail}>` : (email.fromEmail || "unknown");
+  const snippet = extractEmailBody({ bodyText: email.bodyText ?? null, bodyHtml: email.bodyHtml ?? null }).slice(0, 200);
+  return {
+    id: email.id,
+    from,
+    subject: email.subject || "(no subject)",
+    receivedAt: email.receivedAt,
+    category: email.category,
+    priority: email.priority,
+    snippet,
+  };
+}
+
+async function executeSearchInbox(params: any, _ctx: AIAgentContext): Promise<any> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const conditions: any[] = [];
+  if (typeof params.query === "string" && params.query.trim()) {
+    const q = `%${params.query.trim()}%`;
+    conditions.push(
+      or(
+        like(inboundEmails.subject, q),
+        like(inboundEmails.bodyText, q),
+        like(inboundEmails.fromEmail, q),
+        like(inboundEmails.fromName, q),
+      ),
+    );
+  }
+  if (typeof params.from === "string" && params.from.trim()) {
+    const f = `%${params.from.trim()}%`;
+    conditions.push(or(like(inboundEmails.fromEmail, f), like(inboundEmails.fromName, f)));
+  }
+  if (typeof params.category === "string" && params.category.trim()) {
+    conditions.push(eq(inboundEmails.category, params.category.trim() as any));
+  }
+
+  const limit = Math.min(Math.max(Number(params.limit) || 20, 1), 50);
+  let q = db.select().from(inboundEmails);
+  if (conditions.length) q = q.where(and(...conditions)) as any;
+  const rows = await q.orderBy(desc(inboundEmails.receivedAt)).limit(limit);
+
+  return {
+    count: rows.length,
+    emails: rows.map(formatInboundSummary),
+    hint: rows.length ? "Use read_email with an id to read the full message." : "No matching emails found.",
+  };
+}
+
+async function executeReadEmail(params: any, _ctx: AIAgentContext): Promise<any> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const emailId = Number(params.emailId);
+  if (!Number.isFinite(emailId)) return { error: "A numeric emailId is required (get it from search_inbox)." };
+
+  const rows = await db.select().from(inboundEmails).where(eq(inboundEmails.id, emailId)).limit(1);
+  const email = rows[0];
+  if (!email) return { error: `No inbound email found with id ${emailId}.` };
+
+  return {
+    id: email.id,
+    from: email.fromName ? `${email.fromName} <${email.fromEmail}>` : email.fromEmail,
+    to: email.toEmail,
+    subject: email.subject || "(no subject)",
+    receivedAt: email.receivedAt,
+    category: email.category,
+    priority: email.priority,
+    body: extractEmailBody(email).slice(0, 8000),
   };
 }
 
@@ -1838,6 +1967,10 @@ async function executeTool(toolName: string, params: any, ctx: AIAgentContext): 
       return executeSendEmail(params, ctx);
     case "draft_email":
       return executeDraftEmail(params, ctx);
+    case "search_inbox":
+      return executeSearchInbox(params, ctx);
+    case "read_email":
+      return executeReadEmail(params, ctx);
     case "track_items":
       return executeTrackItems(params, ctx);
     case "update_inventory":
@@ -2055,7 +2188,7 @@ Your capabilities include:
 8. **Shipments & Freight**: Create shipments, book freight, create RFQs for carriers, get quotes, and track shipment status.
 9. **BOMs & Recipes**: Create and modify bills of materials and recipes for manufacturing.
 10. **Co-packers**: Create work orders for contract manufacturers, track co-packer production, and manage co-packer relationships.
-11. **Email & Communication**: Send emails to vendors, customers, or team members. Draft professional emails for review. Follow up on outstanding items.
+11. **Email & Communication**: Send emails to vendors, customers, or team members. Draft professional emails for review. Follow up on outstanding items. Search and read the received (inbound) email inbox with search_inbox / read_email to find or reference a message the user asks about (e.g. "find the latest email from Acme").
 12. **Reports & Analytics**: Generate business reports, analyze sales trends, forecast demand, detect anomalies, and provide actionable insights.
 13. **Tasks & Approvals**: Create tasks, approve or reject pending items, and manage workflow approvals.
 14. **Web research**: You have a live web_search tool. Use it to look up real-world information that isn't in the ERP — a company's real contact details, address, and website; vendors/suppliers; current market prices; industry data; news. Prefer official sources and don't fabricate details you could verify by searching.
