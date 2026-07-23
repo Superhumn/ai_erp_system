@@ -96,6 +96,9 @@ export default function AIAssistant() {
         <p className="text-muted-foreground mt-1">
           Ask questions about your business data using natural language.
         </p>
+        <a href="/ai/recommendations" className="inline-block mt-2 text-sm text-primary hover:underline">
+          View AI recommendations →
+        </a>
       </div>
 
       {/* Chat Area */}

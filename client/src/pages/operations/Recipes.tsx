@@ -9,8 +9,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Calculator, KeyRound, Link2, Loader2, Lock, Plus, Share2, Trash2, Upload } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Calculator, FileUp, KeyRound, Link2, Loader2, Lock, Plus, Share2, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
+import * as XLSX from "xlsx";
 import { useAuth } from "@/_core/hooks/useAuth";
 
 /** Extract a spreadsheet ID from a full Google Sheets URL, or pass through an ID. */
@@ -146,6 +148,57 @@ export default function Recipes() {
     onError: (err) => toast.error(err.message),
   });
 
+  // --- Import from an uploaded CSV/XLSX file (no Google account needed) ---
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const importFromRows = trpc.recipes.importFromRows.useMutation({
+    onSuccess: (res) => {
+      toast.success(
+        `Imported ${res.recipesCreated} recipe(s), ${res.linesCreated} line(s), ${res.ingredientsCreated} new ingredient(s).`,
+      );
+      res.warnings?.slice(0, 4).forEach((w) => toast.warning(w));
+      setImportOpen(false);
+      setImportFile(null);
+      setImportDefaultName("");
+      refetch();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  // Parse the selected file into a 2D array (header row first) in the browser,
+  // then hand the rows to the server importer — same format as the Sheet import.
+  const handleFileImport = async () => {
+    if (!importFile) return;
+    try {
+      const name = importFile.name.toLowerCase();
+      const workbook =
+        name.endsWith(".xlsx") || name.endsWith(".xls")
+          ? XLSX.read(await importFile.arrayBuffer(), { type: "array", raw: false })
+          : XLSX.read(await importFile.text(), { type: "string", raw: false });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      if (!firstSheet) {
+        toast.error("No sheets found in the file.");
+        return;
+      }
+      const rows = XLSX.utils.sheet_to_json<unknown[]>(firstSheet, {
+        header: 1,
+        defval: "",
+        raw: false,
+        blankrows: false,
+      });
+      if (rows.length < 2) {
+        toast.error("The file needs a header row plus at least one data row.");
+        return;
+      }
+      importFromRows.mutate({
+        rows: rows as any[][],
+        defaultRecipeName: importDefaultName.trim() || undefined,
+      });
+    } catch (err) {
+      console.error("Recipe file parse error:", err);
+      toast.error("Could not read the file. Export it as CSV or XLSX and try again.");
+    }
+  };
+
   // --- Per-user access grants (owner only) ---
   const [accessRecipeId, setAccessRecipeId] = useState<number | null>(null);
   const [grantEmail, setGrantEmail] = useState("");
@@ -186,7 +239,7 @@ export default function Recipes() {
         <div className="flex items-center gap-2">
         <Button variant="outline" onClick={() => setImportOpen(true)}>
           <Upload className="h-4 w-4 mr-2" />
-          Import from Google Sheet
+          Import Recipes
         </Button>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild>
@@ -465,68 +518,124 @@ export default function Recipes() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={importOpen} onOpenChange={setImportOpen}>
+      <Dialog
+        open={importOpen}
+        onOpenChange={(open) => {
+          setImportOpen(open);
+          if (!open) setImportFile(null);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Import formulations from Google Sheet</DialogTitle>
+            <DialogTitle>Import recipe formulations</DialogTitle>
             <DialogDescription>
-              Paste a Google Sheets link or ID. Use a header row with columns like
-              {" "}<span className="font-mono text-xs">Recipe</span>,{" "}
+              Use a header row with columns like{" "}
+              <span className="font-mono text-xs">Recipe</span>,{" "}
               <span className="font-mono text-xs">Ingredient</span>,{" "}
               <span className="font-mono text-xs">Quantity (g)</span>, and optionally{" "}
               <span className="font-mono text-xs">SKU</span>,{" "}
               <span className="font-mono text-xs">Category</span>,{" "}
-              <span className="font-mono text-xs">Procedure</span>. Imported recipes are private
-              to you until you grant access.
+              <span className="font-mono text-xs">Procedure</span>. Imported recipes are
+              private to you until you grant access.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 pt-2">
-            <div className="space-y-1">
-              <Label>Google Sheet URL or ID</Label>
-              <Input
-                placeholder="https://docs.google.com/spreadsheets/d/…"
-                value={importSheet}
-                onChange={(e) => setImportSheet(e.target.value)}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
+
+          <Tabs defaultValue="file" className="pt-2">
+            <TabsList className="w-full">
+              <TabsTrigger value="file" className="flex-1">
+                <FileUp className="h-4 w-4" /> Upload file
+              </TabsTrigger>
+              <TabsTrigger value="sheet" className="flex-1">
+                <Upload className="h-4 w-4" /> Google Sheet
+              </TabsTrigger>
+            </TabsList>
+
+            {/* Upload a CSV/XLSX file — parsed in the browser, no Google needed. */}
+            <TabsContent value="file" className="space-y-3">
               <div className="space-y-1">
-                <Label>Range (optional)</Label>
+                <Label>CSV or XLSX file</Label>
                 <Input
-                  placeholder="A1:Z1000"
-                  value={importRange}
-                  onChange={(e) => setImportRange(e.target.value)}
+                  type="file"
+                  accept=".csv,.tsv,.xlsx,.xls"
+                  onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
                 />
+                {importFile && (
+                  <p className="text-xs text-muted-foreground">
+                    Selected: <span className="font-medium">{importFile.name}</span>{" "}
+                    ({(importFile.size / 1024).toFixed(1)} KB)
+                  </p>
+                )}
               </div>
               <div className="space-y-1">
                 <Label>Default recipe name (optional)</Label>
                 <Input
-                  placeholder="Used when no Recipe column"
+                  placeholder="Used when there's no Recipe column"
                   value={importDefaultName}
                   onChange={(e) => setImportDefaultName(e.target.value)}
                 />
               </div>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              The sheet must be accessible by your connected Google account.
-            </p>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setImportOpen(false)}>Cancel</Button>
-            <Button
-              disabled={!importSheet.trim() || importFromSheet.isPending}
-              onClick={() =>
-                importFromSheet.mutate({
-                  spreadsheetId: extractSpreadsheetId(importSheet),
-                  range: importRange.trim() || undefined,
-                  defaultRecipeName: importDefaultName.trim() || undefined,
-                })
-              }
-            >
-              {importFromSheet.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Import
-            </Button>
-          </DialogFooter>
+              <p className="text-xs text-muted-foreground">
+                The file is read in your browser — no Google account required. Only the
+                first sheet is imported.
+              </p>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setImportOpen(false)}>Cancel</Button>
+                <Button disabled={!importFile || importFromRows.isPending} onClick={handleFileImport}>
+                  {importFromRows.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Import
+                </Button>
+              </DialogFooter>
+            </TabsContent>
+
+            {/* Import from a Google Sheet by URL/ID (requires connected Google account). */}
+            <TabsContent value="sheet" className="space-y-3">
+              <div className="space-y-1">
+                <Label>Google Sheet URL or ID</Label>
+                <Input
+                  placeholder="https://docs.google.com/spreadsheets/d/…"
+                  value={importSheet}
+                  onChange={(e) => setImportSheet(e.target.value)}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label>Range (optional)</Label>
+                  <Input
+                    placeholder="A1:Z1000"
+                    value={importRange}
+                    onChange={(e) => setImportRange(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Default recipe name (optional)</Label>
+                  <Input
+                    placeholder="Used when no Recipe column"
+                    value={importDefaultName}
+                    onChange={(e) => setImportDefaultName(e.target.value)}
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                The sheet must be accessible by your connected Google account.
+              </p>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setImportOpen(false)}>Cancel</Button>
+                <Button
+                  disabled={!importSheet.trim() || importFromSheet.isPending}
+                  onClick={() =>
+                    importFromSheet.mutate({
+                      spreadsheetId: extractSpreadsheetId(importSheet),
+                      range: importRange.trim() || undefined,
+                      defaultRecipeName: importDefaultName.trim() || undefined,
+                    })
+                  }
+                >
+                  {importFromSheet.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Import
+                </Button>
+              </DialogFooter>
+            </TabsContent>
+          </Tabs>
         </DialogContent>
       </Dialog>
 

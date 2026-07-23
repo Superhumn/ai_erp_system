@@ -74,7 +74,7 @@ export default function GlobalSearch() {
                   {results.customers.map((customer) => (
                     <button
                       key={customer.id}
-                      onClick={() => setLocation('/sales/customers')}
+                      onClick={() => setLocation(`/sales/customers/${customer.id}`)}
                       className="w-full text-left p-2 rounded-md hover:bg-muted transition-colors"
                     >
                       <p className="font-medium text-sm">{customer.name}</p>
@@ -124,7 +124,7 @@ export default function GlobalSearch() {
                   {results.products.map((product) => (
                     <button
                       key={product.id}
-                      onClick={() => setLocation('/operations/products')}
+                      onClick={() => setLocation(`/operations/products/${product.id}`)}
                       className="w-full text-left p-2 rounded-md hover:bg-muted transition-colors"
                     >
                       <p className="font-medium text-sm">{product.name}</p>
@@ -223,7 +223,7 @@ export default function GlobalSearch() {
                   {(results as any).meetings.map((meeting: any) => (
                     <button
                       key={meeting.id}
-                      onClick={() => setLocation('/meetings')}
+                      onClick={() => setLocation(`/meetings?meetingId=${meeting.id}`)}
                       className="w-full text-left p-2 rounded-md hover:bg-muted transition-colors"
                     >
                       <p className="font-medium text-sm">{meeting.title}</p>

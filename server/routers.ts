@@ -600,6 +600,95 @@ async function requireRecipeAccess(
   return access;
 }
 
+// Shared persistence for recipe formulation imports. Parses a 2D sheet
+// (header row + one row per line) into grouped recipes and writes them to the
+// DB, owned by `userId` so they stay private until access is granted. Used by
+// both the Google Sheet importer and the CSV/XLSX file-upload importer, so the
+// two paths always create recipes, lines, procedures and ingredients the same
+// way.
+async function importFormulationRows(
+  values: unknown[][],
+  userId: number,
+  opts?: { defaultRecipeName?: string },
+) {
+  const { recipes: parsed, warnings } = parseFormulationSheet(values || [], {
+    defaultRecipeName: opts?.defaultRecipeName,
+  });
+  if (parsed.length === 0) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: warnings[0] || "No recipes could be parsed from the spreadsheet.",
+    });
+  }
+
+  // Cache ingredients to avoid repeated lookups across lines.
+  const ingredientCache = new Map<string, number>();
+  let ingredientsCreated = 0;
+  const resolveIngredientId = async (name: string, sku?: string): Promise<number> => {
+    const key = (sku?.trim().toLowerCase() || "") + "|" + name.trim().toLowerCase();
+    const cached = ingredientCache.get(key);
+    if (cached) return cached;
+    const existing = await manufacturingDb.findIngredientByNameOrSku(name, sku);
+    if (existing) {
+      ingredientCache.set(key, existing.id);
+      return existing.id;
+    }
+    const generatedSku =
+      sku?.trim() ||
+      `ING-${name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "-").slice(0, 24)}-${Math.floor(Math.random() * 10000)}`;
+    const created = await manufacturingDb.createIngredient({
+      name: name.trim(),
+      sku: generatedSku,
+    });
+    ingredientCache.set(key, created.id);
+    ingredientsCreated++;
+    return created.id;
+  };
+
+  let recipesCreated = 0;
+  let linesCreated = 0;
+  let proceduresCreated = 0;
+
+  for (const rec of parsed) {
+    const recipeId = rec.recipeId?.slice(0, 32) || generateNumber("RCP").slice(0, 32);
+    const createdRecipe = await manufacturingDb.createRecipe({
+      recipeId,
+      name: rec.name.slice(0, 255),
+      category: rec.category,
+      status: "development",
+      createdBy: userId,
+    });
+    recipesCreated++;
+
+    let lineNumber = 1;
+    for (const line of rec.lines) {
+      const ingredientId = await resolveIngredientId(line.ingredientName, line.ingredientSku);
+      await manufacturingDb.createRecipeLine({
+        recipeRowId: createdRecipe.id,
+        lineNumber: lineNumber++,
+        ingredientId,
+        quantityGrams: String(line.quantityGrams),
+        quantityGramsDry:
+          line.quantityGramsDry != null ? String(line.quantityGramsDry) : undefined,
+      });
+      linesCreated++;
+    }
+
+    for (const proc of rec.procedures) {
+      await manufacturingDb.createRecipeProcedure({
+        recipeRowId: createdRecipe.id,
+        stepNumber: proc.stepNumber,
+        instruction: proc.instruction,
+      });
+      proceduresCreated++;
+    }
+
+    await createAuditLog(userId, "create", "recipe", createdRecipe.id, `imported: ${rec.name}`);
+  }
+
+  return { recipesCreated, linesCreated, proceduresCreated, ingredientsCreated, warnings };
+}
+
 // Helper to generate unique reference numbers (e.g. EMP-2606-1234). Uses a
 // CSPRNG for the suffix — not because these are secrets, but to satisfy static
 // analysis and avoid Math.random()'s modulo bias.
@@ -2649,10 +2738,22 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
     parsedInvoices: opsProcedure
       .input(z.object({ purchaseOrderId: z.number() }))
       .query(({ input }) => db.getParsedDocumentsForPO(input.purchaseOrderId)),
+    // All documents attached to a PO (parsed inbound + supplier-portal uploads +
+    // operator uploads), normalized into a single view-ready list.
+    documents: opsProcedure
+      .input(z.object({ purchaseOrderId: z.number() }))
+      .query(({ input }) => db.getPurchaseOrderDocuments(input.purchaseOrderId)),
     parsedInvoiceCounts: opsProcedure
       .input(z.object({ purchaseOrderIds: z.array(z.number()) }))
       .query(async ({ input }) => {
         const counts = await db.getParsedDocumentCountsByPO(input.purchaseOrderIds);
+        return Array.from(counts.entries()).map(([purchaseOrderId, count]) => ({ purchaseOrderId, count }));
+      }),
+    // Total document count per PO across all sources (parsed + supplier + operator).
+    documentCounts: opsProcedure
+      .input(z.object({ purchaseOrderIds: z.array(z.number()) }))
+      .query(async ({ input }) => {
+        const counts = await db.getDocumentCountsByPO(input.purchaseOrderIds);
         return Array.from(counts.entries()).map(([purchaseOrderId, count]) => ({ purchaseOrderId, count }));
       }),
     create: opsProcedure
@@ -2712,11 +2813,15 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         id: z.number(),
         status: z.enum(['draft', 'sent', 'confirmed', 'partial', 'received', 'cancelled']).optional(),
         receivedDate: z.date().optional(),
+        expectedDate: z.date().nullable().optional(),
+        orderDate: z.date().optional(),
+        shippingAddress: z.string().optional(),
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
         const oldPO = await db.getPurchaseOrderById(id);
+        if (!oldPO) throw new TRPCError({ code: 'NOT_FOUND', message: 'Purchase order not found' });
         await db.updatePurchaseOrder(id, data);
         await createAuditLog(ctx.user.id, 'update', 'purchaseOrder', id, oldPO?.poNumber, oldPO, data);
         
@@ -2735,11 +2840,96 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
             entityType: 'purchase_order',
             entityId: id,
             severity: data.status === 'received' ? 'info' : 'info',
-            link: `/operations/purchase-orders/${id}`,
+            // The client has no /:id route — deep-link the list, which opens the
+            // detail drawer for ?po=<id>.
+            link: `/operations/purchase-orders?po=${id}`,
           }, opsUsers.map(u => u.id));
         }
         
         return { success: true };
+      }),
+    // Replace the line items on a PO and recompute its totals. Editing items is
+    // only allowed while the PO is still a draft (nothing has been sent/received).
+    updateItems: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        items: z.array(z.object({
+          productId: z.number().nullable().optional(),
+          // Trim so a whitespace-only description ("   ") can't pass min(1) and
+          // create a blank line item.
+          description: z.string().trim().min(1),
+          quantity: z.string(),
+          unitPrice: z.string(),
+          // Server recomputes the line total from quantity * unitPrice; a
+          // caller-supplied total is ignored, so it's optional.
+          totalAmount: z.string().optional(),
+        })).min(1),
+        taxAmount: z.string().optional(),
+        shippingAmount: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const po = await db.getPurchaseOrderById(input.id);
+        if (!po) throw new TRPCError({ code: 'NOT_FOUND', message: 'Purchase order not found' });
+        if (po.status !== 'draft') {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Line items can only be edited while the PO is a draft.' });
+        }
+        let subtotal: number;
+        try {
+          ({ subtotal } = await db.replacePurchaseOrderItems(input.id, input.items));
+        } catch (e: any) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: e?.message || 'Invalid line items.' });
+        }
+        // Validate tax/shipping as finite, non-negative numbers rather than
+        // silently coercing bad input to 0 (which could hide client bugs or
+        // produce a negative total).
+        // Strict parse (not parseFloat, which accepts "10abc" -> 10) so malformed
+        // money strings are rejected rather than silently coerced.
+        const parseMoney = (v: string | null | undefined, label: string): number => {
+          const t = String(v ?? '0').trim();
+          const n = /^-?\d+(\.\d+)?$/.test(t) ? Number(t) : NaN;
+          if (!Number.isFinite(n) || n < 0) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: `Invalid ${label}.` });
+          }
+          return n;
+        };
+        const tax = parseMoney(input.taxAmount ?? po.taxAmount, 'tax amount');
+        const shipping = parseMoney(input.shippingAmount ?? po.shippingAmount, 'shipping amount');
+        await db.updatePurchaseOrder(input.id, {
+          subtotal: subtotal.toFixed(2),
+          taxAmount: tax.toFixed(2),
+          shippingAmount: shipping.toFixed(2),
+          totalAmount: (subtotal + tax + shipping).toFixed(2),
+        });
+        await createAuditLog(ctx.user.id, 'update', 'purchaseOrder', input.id, po.poNumber);
+        return { success: true };
+      }),
+    // Record received quantities against line items and advance the PO status
+    // to partial / received accordingly.
+    receiveItems: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        items: z.array(z.object({
+          purchaseOrderItemId: z.number(),
+          receivedQuantity: z.string(),
+        })).min(1),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const po = await db.getPurchaseOrderById(input.id);
+        if (!po) throw new TRPCError({ code: 'NOT_FOUND', message: 'Purchase order not found' });
+        if (po.status === 'cancelled') {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'This PO has been cancelled and cannot receive items.' });
+        }
+        if (po.status === 'draft') {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Send this draft PO to the supplier before receiving items.' });
+        }
+        let result: { status: string | null };
+        try {
+          result = await db.setPurchaseOrderReceivedQuantities(input.id, input.items);
+        } catch (e: any) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: e?.message || 'Invalid received quantities.' });
+        }
+        await createAuditLog(ctx.user.id, 'update', 'purchaseOrder', input.id, po.poNumber, { status: po.status }, { status: result.status });
+        return { success: true, status: result.status };
       }),
     approve: opsProcedure
       .input(z.object({ id: z.number() }))
@@ -10482,91 +10672,25 @@ Provide a brief status summary, any missing documents, and next steps.`;
             message: sheet.error || "Failed to read the spreadsheet.",
           });
         }
-        const { recipes: parsed, warnings } = parseFormulationSheet(
+        return importFormulationRows(
           (sheet.values as unknown[][]) || [],
+          ctx.user.id,
           { defaultRecipeName: input.defaultRecipeName },
         );
-        if (parsed.length === 0) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: warnings[0] || "No recipes could be parsed from the spreadsheet.",
-          });
-        }
-
-        // Cache ingredients to avoid repeated lookups across lines.
-        const ingredientCache = new Map<string, number>();
-        let ingredientsCreated = 0;
-        const resolveIngredientId = async (name: string, sku?: string): Promise<number> => {
-          const key = (sku?.trim().toLowerCase() || "") + "|" + name.trim().toLowerCase();
-          const cached = ingredientCache.get(key);
-          if (cached) return cached;
-          const existing = await manufacturingDb.findIngredientByNameOrSku(name, sku);
-          if (existing) {
-            ingredientCache.set(key, existing.id);
-            return existing.id;
-          }
-          const generatedSku =
-            sku?.trim() ||
-            `ING-${name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "-").slice(0, 24)}-${Math.floor(Math.random() * 10000)}`;
-          const created = await manufacturingDb.createIngredient({
-            name: name.trim(),
-            sku: generatedSku,
-          });
-          ingredientCache.set(key, created.id);
-          ingredientsCreated++;
-          return created.id;
-        };
-
-        let recipesCreated = 0;
-        let linesCreated = 0;
-        let proceduresCreated = 0;
-
-        for (const rec of parsed) {
-          const recipeId =
-            rec.recipeId?.slice(0, 32) || generateNumber("RCP").slice(0, 32);
-          const createdRecipe = await manufacturingDb.createRecipe({
-            recipeId,
-            name: rec.name.slice(0, 255),
-            category: rec.category,
-            status: "development",
-            createdBy: ctx.user.id,
-          });
-          recipesCreated++;
-
-          let lineNumber = 1;
-          for (const line of rec.lines) {
-            const ingredientId = await resolveIngredientId(line.ingredientName, line.ingredientSku);
-            await manufacturingDb.createRecipeLine({
-              recipeRowId: createdRecipe.id,
-              lineNumber: lineNumber++,
-              ingredientId,
-              quantityGrams: String(line.quantityGrams),
-              quantityGramsDry:
-                line.quantityGramsDry != null ? String(line.quantityGramsDry) : undefined,
-            });
-            linesCreated++;
-          }
-
-          for (const proc of rec.procedures) {
-            await manufacturingDb.createRecipeProcedure({
-              recipeRowId: createdRecipe.id,
-              stepNumber: proc.stepNumber,
-              instruction: proc.instruction,
-            });
-            proceduresCreated++;
-          }
-
-          await createAuditLog(ctx.user.id, "create", "recipe", createdRecipe.id, `imported: ${rec.name}`);
-        }
-
-        return {
-          recipesCreated,
-          linesCreated,
-          proceduresCreated,
-          ingredientsCreated,
-          warnings,
-        };
       }),
+    // Import recipe formulations from an uploaded CSV/XLSX file. The client
+    // parses the file into a 2D array of rows (header row first) and sends it
+    // here, so no Google account or hosted sheet is required. Same parsing and
+    // ownership rules as importFromGoogleSheet.
+    importFromRows: protectedProcedure
+      .input(z.object({
+        rows: z.array(z.array(z.any())).max(10000),
+        defaultRecipeName: z.string().optional(),
+      }))
+      .mutation(({ input, ctx }) =>
+        importFormulationRows(input.rows as unknown[][], ctx.user.id, {
+          defaultRecipeName: input.defaultRecipeName,
+        })),
     // List copackers a recipe is shared with (owner only)
     listShares: opsProcedure
       .input(z.object({ recipeId: z.number() }))

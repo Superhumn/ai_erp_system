@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +32,7 @@ import { formatDistanceToNow } from "date-fns";
 
 export default function AutonomousDashboard() {
   const [selectedTab, setSelectedTab] = useState("overview");
+  const [, setLocation] = useLocation();
 
   // Queries
   const statusQuery = trpc.autonomousWorkflows.orchestrator.status.useQuery(undefined, {
@@ -156,7 +158,13 @@ export default function AutonomousDashboard() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card
+          role="button"
+          tabIndex={0}
+          onClick={() => setLocation("/approvals")}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setLocation("/approvals"); } }}
+          className="cursor-pointer transition-colors hover:bg-muted/40"
+        >
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Pending Approvals</CardTitle>
             <Clock className="h-4 w-4 text-muted-foreground" />
@@ -167,7 +175,13 @@ export default function AutonomousDashboard() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card
+          role="button"
+          tabIndex={0}
+          onClick={() => setLocation("/exceptions")}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setLocation("/exceptions"); } }}
+          className="cursor-pointer transition-colors hover:bg-muted/40"
+        >
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Open Exceptions</CardTitle>
             <AlertTriangle className="h-4 w-4 text-muted-foreground" />
