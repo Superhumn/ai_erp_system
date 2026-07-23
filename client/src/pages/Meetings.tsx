@@ -473,6 +473,7 @@ export default function Meetings() {
           <span className="rounded bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 px-1.5 py-0.5 font-medium tabular-nums">{stats?.processed ?? 0} done</span>
         </div>
         <div className="ml-auto flex items-center gap-1.5">
+          <a href="/calendar" className="rounded border px-2 py-1 text-[11px] font-medium hover:border-primary/40 hover:text-primary transition-colors">Calendar</a>
           <div className="relative">
             <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
