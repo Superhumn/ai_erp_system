@@ -87,10 +87,13 @@ function getViewerSrc(doc: DocumentItem, linkCode?: string): { src: string | nul
 
   if (isImg) return { src: doc.storageUrl, isImg: true };
 
-  if (isOffice) {
-    const encoded = encodeURIComponent(doc.storageUrl);
-    return { src: `https://view.officeapps.live.com/op/embed.aspx?src=${encoded}`, isImg: false };
-  }
+  // Office documents (doc/xls/ppt) are deliberately NOT embedded via
+  // view.officeapps.live.com in the external viewer: that renderer requires
+  // Microsoft's servers to fetch `storageUrl`, which would transmit an
+  // NDA/link-gated data-room document to a third party (and anyone who obtains
+  // the URL), bypassing this room's access controls. Fall through to the
+  // download fallback instead (still gated by allowDownload).
+  if (isOffice) return { src: null, isImg: false };
 
   return { src: doc.storageUrl, isImg: false };
 }
