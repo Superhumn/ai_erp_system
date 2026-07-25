@@ -39,6 +39,7 @@ import { estimateEffort, optimizeResourceAllocation, predictProjectRisks, optimi
 import { detectEdiAnomalies, predictEdiErrors } from "./ediAiService";
 import { scoreSuppliers } from "./supplierScoringService";
 import * as db from "./db";
+import { resolveScope } from "./_core/scope";
 import * as manufacturingDb from "./db/manufacturing";
 import { storagePut, storageDelete } from "./storage";
 import { nanoid } from "nanoid";
@@ -119,6 +120,24 @@ export const opsProcedure = protectedProcedure.use(({ ctx, next }) => {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Operations access required' });
   }
   return next({ ctx });
+});
+
+// Region/entity data-scoping middleware. Resolves the caller's visible entity set from their
+// home company + regionScope and attaches `ctx.scope`, which scoped DB helpers consume. Global
+// users (the backfill default) get { companyIds: "all" }, preserving pre-multi-region behavior.
+// See docs/MULTI_REGION_PHASE_1_2_SPEC.md.
+export const scopedProcedure = protectedProcedure.use(async ({ ctx, next }) => {
+  const scope = await resolveScope(
+    { companyId: ctx.user.companyId, regionScope: ctx.user.regionScope },
+    {
+      getCompanyRegionId: async (id) => (await db.getCompanyById(id))?.regionId ?? null,
+      getCompanyIdsInRegion: (regionId) => db.getCompanyIdsInRegion(regionId),
+    },
+  );
+  if (scope.companyIds !== 'all' && scope.companyIds.length === 0) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'No entity scope assigned' });
+  }
+  return next({ ctx: { ...ctx, scope } });
 });
 
 const legalProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -790,6 +809,39 @@ export const appRouter = router({
   // Admin-only AI code IDE (snippets, sandboxed execution, AI actions)
   code: codeRouter,
 
+  // Generic background-task tracking — long-running, user-initiated operations
+  // (e.g. Data Room ↔ Google Drive sync) that continue running after the user
+  // navigates away and are surfaced app-wide via the global task tray.
+  backgroundTasks: router({
+    // Everything the current user should currently see: in-flight tasks plus
+    // anything finished recently that hasn't been dismissed. Polled by the client.
+    list: protectedProcedure.query(({ ctx }) =>
+      db.listVisibleBackgroundTasks(ctx.user.id),
+    ),
+
+    // Cooperative cancel — flags the task; the worker stops at its next checkpoint.
+    cancel: protectedProcedure
+      .input(z.object({ id: z.string() }))
+      .mutation(async ({ ctx, input }) => {
+        await db.requestBackgroundTaskCancel(input.id, ctx.user.id);
+        return { ok: true };
+      }),
+
+    // Hide a finished task from the tray.
+    dismiss: protectedProcedure
+      .input(z.object({ id: z.string() }))
+      .mutation(async ({ ctx, input }) => {
+        await db.dismissBackgroundTask(input.id, ctx.user.id);
+        return { ok: true };
+      }),
+
+    // Clear all finished tasks from the tray at once.
+    dismissAllFinished: protectedProcedure.mutation(async ({ ctx }) => {
+      await db.dismissFinishedBackgroundTasks(ctx.user.id);
+      return { ok: true };
+    }),
+  }),
+
   auth: router({
     me: publicProcedure.query(opts => {
       if (!opts.ctx.user) return null;
@@ -914,12 +966,12 @@ export const appRouter = router({
   // CUSTOMER MANAGEMENT
   // ============================================
   customers: router({
-    list: protectedProcedure
-      .input(z.object({ companyId: z.number().optional() }).optional())
-      .query(({ input }) => db.getCustomers(input?.companyId)),
-    get: protectedProcedure
+    // Scope is derived server-side from the caller's identity (ctx.scope), never from client input.
+    list: scopedProcedure
+      .query(({ ctx }) => db.getCustomers(ctx.scope)),
+    get: scopedProcedure
       .input(z.object({ id: z.number() }))
-      .query(({ input }) => db.getCustomerById(input.id)),
+      .query(({ input, ctx }) => db.getCustomerById(input.id, ctx.scope)),
     create: protectedProcedure
       .input(z.object({
         name: z.string().min(1),
@@ -1038,8 +1090,8 @@ export const appRouter = router({
       }),
     
     // Get sync status
-    getSyncStatus: protectedProcedure.query(async () => {
-      const customers = await db.getCustomers();
+    getSyncStatus: scopedProcedure.query(async ({ ctx }) => {
+      const customers = await db.getCustomers(ctx.scope);
       const shopifyCount = customers.filter(c => c.shopifyCustomerId).length;
       const manualCount = customers.filter(c => !c.shopifyCustomerId).length;
 
@@ -15387,6 +15439,123 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
           errors: recon.errors,
           folderName: folderInfo.folder.name,
         };
+      }),
+
+    // Kick off a Drive → Data Room sync as a background task and return
+    // immediately with a taskId. The heavy reconcile runs detached from this
+    // request so it keeps going — and stays visible in the global task tray —
+    // after the user navigates away. Pre-flight validation (ownership, OAuth,
+    // folder resolution) still happens synchronously so obvious errors surface
+    // to the caller right away.
+    startDriveSync: protectedProcedure
+      .input(z.object({
+        dataRoomId: z.number(),
+        driveFolderId: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const room = await db.getDataRoomById(input.dataRoomId);
+        if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+        if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+        }
+
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+        }
+
+        let folderId = input.driveFolderId || room.googleDriveFolderId;
+        if (!folderId) {
+          const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
+            "name contains 'Data Room' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+          )}&fields=files(id,name)&pageSize=5`;
+          const searchResponse = await fetch(searchUrl, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          if (searchResponse.ok) {
+            const searchData = await searchResponse.json();
+            if (searchData.files?.length > 0) {
+              folderId = searchData.files[0].id;
+            }
+          }
+          if (!folderId) {
+            throw new TRPCError({
+              code: 'NOT_FOUND',
+              message: 'No Google Drive folder specified and no "Data Room" folder found in Google Drive. Please provide a folder ID or create a folder named "Data Room" in your Google Drive.',
+            });
+          }
+        }
+
+        const folderInfo = await getFolderInfo(accessToken, folderId);
+        if (folderInfo.error || !folderInfo.folder) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: folderInfo.error || 'Folder not found in Google Drive' });
+        }
+
+        // Capture non-null values for the detached closure.
+        const resolvedFolderId = folderId;
+        const userId = ctx.user.id;
+        const { dataRoomId } = input;
+
+        const { runBackgroundTask } = await import('./_core/backgroundTasks');
+        const { reconcileDataRoomFromDrive } = await import('./googleDriveSyncService');
+
+        const { taskId } = await runBackgroundTask(
+          {
+            userId,
+            type: 'data_room_drive_sync',
+            title: `Syncing "${room.name}" from Google Drive`,
+            description: folderInfo.folder.name ? `Drive folder: ${folderInfo.folder.name}` : undefined,
+            message: 'Starting…',
+            entityType: 'data_room',
+            entityId: dataRoomId,
+            link: `/data-rooms/${dataRoomId}`,
+          },
+          async (handle) => {
+            const recon = await reconcileDataRoomFromDrive({
+              dataRoomId,
+              rootFolderId: resolvedFolderId,
+              accessToken,
+              uploadedBy: userId,
+              allowDelete: true,
+              onProgress: (u) => handle.report(u),
+            });
+
+            await db.updateDataRoom(dataRoomId, {
+              googleDriveFolderId: resolvedFolderId,
+              ...(recon.partial ? {} : { lastSyncedAt: new Date() }),
+            });
+
+            const summaryParts: string[] = [];
+            if (recon.filesCreated) summaryParts.push(`${recon.filesCreated} added`);
+            if (recon.filesUpdated) summaryParts.push(`${recon.filesUpdated} updated`);
+            if (recon.filesRemoved) summaryParts.push(`${recon.filesRemoved} removed`);
+            if (recon.filesFailed) summaryParts.push(`${recon.filesFailed} failed`);
+            const summaryMsg = summaryParts.length
+              ? `Synced ${folderInfo.folder!.name}: ${summaryParts.join(', ')}`
+              : `${folderInfo.folder!.name} is already up to date`;
+
+            return {
+              message: recon.partial ? `${summaryMsg} (partial)` : summaryMsg,
+              result: {
+                totalSynced: recon.filesCreated,
+                foldersCreated: recon.foldersCreated,
+                foldersUpdated: recon.foldersUpdated,
+                filesCreated: recon.filesCreated,
+                filesUpdated: recon.filesUpdated,
+                filesRemoved: recon.filesRemoved,
+                foldersRemoved: recon.foldersRemoved,
+                filesFound: recon.filesFound,
+                foldersFound: recon.foldersFound,
+                filesFailed: recon.filesFailed,
+                partial: recon.partial,
+                errors: recon.errors,
+                folderName: folderInfo.folder!.name,
+              },
+            };
+          },
+        );
+
+        return { taskId, folderName: folderInfo.folder.name };
       }),
 
     // Google Drive sync

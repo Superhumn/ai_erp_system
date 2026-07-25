@@ -14,6 +14,11 @@ export const users = mysqlTable("users", {
   loginMethod: varchar("loginMethod", { length: 64 }),
   role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "sales", "copacker", "vendor", "contractor", "investor"]).default("user").notNull(),
   departmentId: int("departmentId"),
+  // Multi-region: home legal entity + how wide this user can see.
+  // regionScope defaults to "global" so existing users keep full visibility until real
+  // entities are assigned; tighten the default to "entity" once the backfill is done.
+  companyId: int("companyId").references((): AnyMySqlColumn => companies.id),
+  regionScope: mysqlEnum("regionScope", ["entity", "region", "global"]).default("global").notNull(),
   avatarUrl: text("avatarUrl"),
   phone: varchar("phone", { length: 32 }),
   // For external users (copackers, vendors), link to their entity
@@ -200,6 +205,21 @@ export type InsertQuickBooksItem = typeof quickbooksItems.$inferInsert;
 // CORE ENTITIES
 // ============================================
 
+// Regions group one or more legal entities (companies) for multi-country operation
+// and consolidated reporting. See docs/MULTI_REGION_PLAN.md.
+export const regions = mysqlTable("regions", {
+  id: int("id").autoincrement().primaryKey(),
+  code: varchar("code", { length: 16 }).notNull().unique(), // natural key, e.g. "EMEA", "APAC", "US"
+  name: varchar("name", { length: 128 }).notNull(),
+  baseCurrency: varchar("baseCurrency", { length: 3 }).notNull().default("USD"),
+  status: mysqlEnum("status", ["active", "inactive"]).default("active").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Region = typeof regions.$inferSelect;
+export type InsertRegion = typeof regions.$inferInsert;
+
 export const companies = mysqlTable("companies", {
   id: int("id").autoincrement().primaryKey(),
   name: varchar("name", { length: 255 }).notNull(),
@@ -216,6 +236,12 @@ export const companies = mysqlTable("companies", {
   email: varchar("email", { length: 320 }),
   website: varchar("website", { length: 512 }),
   industry: varchar("industry", { length: 128 }),
+  // Multi-region / multi-entity attributes (see docs/MULTI_REGION_PLAN.md)
+  regionId: int("regionId").references(() => regions.id),
+  functionalCurrency: varchar("functionalCurrency", { length: 3 }).notNull().default("USD"),
+  locale: varchar("locale", { length: 10 }).notNull().default("en-US"),
+  timezone: varchar("timezone", { length: 64 }).notNull().default("America/New_York"),
+  taxRegime: mysqlEnum("taxRegime", ["vat", "gst", "sales_tax", "none"]).default("none").notNull(),
   status: mysqlEnum("status", ["active", "inactive", "pending"]).default("active").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -2918,6 +2944,41 @@ export const syncLogs = mysqlTable("syncLogs", {
 
 export type SyncLog = typeof syncLogs.$inferSelect;
 export type InsertSyncLog = typeof syncLogs.$inferInsert;
+
+
+// ============================================
+// BACKGROUND TASKS (generic async job tracking)
+// ============================================
+// Long-running, user-initiated operations (e.g. Data Room ↔ Google Drive sync)
+// run detached from the originating HTTP request and record their progress here.
+// The client polls this table via a global provider so in-flight work is visible
+// anywhere in the app and survives navigating away from the page that started it.
+export const backgroundTasks = mysqlTable("background_tasks", {
+  id: varchar("id", { length: 36 }).primaryKey(), // uuid, generated app-side
+  userId: int("userId").notNull(),                // owner — tasks are scoped per user
+  type: varchar("type", { length: 64 }).notNull(),// e.g. "data_room_drive_sync"
+  title: varchar("title", { length: 255 }).notNull(),
+  description: varchar("description", { length: 500 }),
+  status: mysqlEnum("status", ["queued", "running", "success", "error", "cancelled"]).default("queued").notNull(),
+  progress: int("progress").default(0).notNull(),  // 0..100; indeterminate while total is 0
+  processed: int("processed").default(0).notNull(),
+  total: int("total").default(0).notNull(),
+  message: varchar("message", { length: 500 }),    // latest human-readable status line
+  entityType: varchar("entityType", { length: 64 }),
+  entityId: int("entityId"),
+  link: varchar("link", { length: 512 }),          // deep link to view the result
+  result: json("result"),
+  errorMessage: text("errorMessage"),
+  cancelRequested: boolean("cancelRequested").default(false).notNull(),
+  dismissedAt: timestamp("dismissedAt"),
+  startedAt: timestamp("startedAt"),
+  finishedAt: timestamp("finishedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type BackgroundTask = typeof backgroundTasks.$inferSelect;
+export type InsertBackgroundTask = typeof backgroundTasks.$inferInsert;
 
 
 // Email scanning types
