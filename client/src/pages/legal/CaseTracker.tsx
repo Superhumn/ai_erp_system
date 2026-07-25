@@ -70,6 +70,8 @@ export default function CaseTracker() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [cardFilter, setCardFilter] = useState<string | null>(null);
+  const toggleCard = (key: string) => setCardFilter((cur) => (cur === key ? null : key));
   const [isOpen, setIsOpen] = useState(false);
   const [form, setForm] = useState({
     caseNumber: "",
@@ -112,9 +114,15 @@ export default function CaseTracker() {
         c.opposingParty?.toLowerCase().includes(search.toLowerCase());
       const matchStatus = statusFilter === "all" || c.status === statusFilter;
       const matchType = typeFilter === "all" || c.type === typeFilter;
-      return matchSearch && matchStatus && matchType;
+      const matchCard =
+        !cardFilter ||
+        (cardFilter === "open" && c.status === "open") ||
+        (cardFilter === "pending" && (c.status === "pending" || c.status === "in_review")) ||
+        (cardFilter === "resolved" && (c.status === "resolved" || c.status === "closed")) ||
+        (cardFilter === "critical" && (c.priority === "critical" || c.priority === "high"));
+      return matchSearch && matchStatus && matchType && matchCard;
     });
-  }, [cases, search, statusFilter, typeFilter]);
+  }, [cases, search, statusFilter, typeFilter, cardFilter]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -268,24 +276,29 @@ export default function CaseTracker() {
         </Dialog>
       </div>
 
-      {/* Summary cards */}
+      {/* Summary cards — click to filter the list */}
       <div className="grid grid-cols-4 gap-4">
-        <Card><CardContent className="pt-4 pb-4">
-          <div className="text-sm text-muted-foreground">Open Cases</div>
-          <div className="text-2xl font-semibold text-blue-600">{openCount}</div>
-        </CardContent></Card>
-        <Card><CardContent className="pt-4 pb-4">
-          <div className="text-sm text-muted-foreground">Pending / In Review</div>
-          <div className="text-2xl font-semibold text-yellow-600">{pendingCount}</div>
-        </CardContent></Card>
-        <Card><CardContent className="pt-4 pb-4">
-          <div className="text-sm text-muted-foreground">Resolved / Closed</div>
-          <div className="text-2xl font-semibold text-emerald-600">{resolvedCount}</div>
-        </CardContent></Card>
-        <Card><CardContent className="pt-4 pb-4">
-          <div className="text-sm text-muted-foreground">High / Critical</div>
-          <div className="text-2xl font-semibold text-red-600">{criticalCount}</div>
-        </CardContent></Card>
+        {([
+          { key: "open", label: "Open Cases", value: openCount, color: "text-blue-600" },
+          { key: "pending", label: "Pending / In Review", value: pendingCount, color: "text-yellow-600" },
+          { key: "resolved", label: "Resolved / Closed", value: resolvedCount, color: "text-emerald-600" },
+          { key: "critical", label: "High / Critical", value: criticalCount, color: "text-red-600" },
+        ] as const).map((c) => (
+          <Card
+            key={c.key}
+            role="button"
+            tabIndex={0}
+            aria-pressed={cardFilter === c.key}
+            onClick={() => toggleCard(c.key)}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleCard(c.key); } }}
+            className={`cursor-pointer transition-colors hover:bg-muted/40 ${cardFilter === c.key ? "ring-2 ring-primary" : ""}`}
+          >
+            <CardContent className="pt-4 pb-4">
+              <div className="text-sm text-muted-foreground">{c.label}</div>
+              <div className={`text-2xl font-semibold ${c.color}`}>{c.value}</div>
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
       {/* Filters + Table */}
