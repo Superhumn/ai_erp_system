@@ -8,7 +8,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, Plus, Trash2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
-import { PmHeader, PmTabs, PriorityBadge, ProgressBar, PM_STATUSES, STATUS_LABEL, fmtDate, fmtMoney, daysSince, type PmStatus } from "./_shared";
+import { PmHeader, PmTabs, ProgressBar, PM_STATUSES, STATUS_LABEL, PM_PRIORITIES, fmtDate, fmtMoney, daysSince, type PmStatus, type PmPriority } from "./_shared";
+import InlineEdit from "@/components/InlineEdit";
 
 export default function PmProject() {
   const params = useParams<{ id: string }>();
@@ -84,7 +85,12 @@ export default function PmProject() {
 
           <Card className="p-4">
             <div className="text-sm font-semibold mb-3">Description</div>
-            <div className="text-sm whitespace-pre-wrap">{project.description ?? <span className="text-muted-foreground">No description.</span>}</div>
+            <InlineEdit
+              value={project.description ?? ""}
+              type="text"
+              placeholder="No description."
+              onSave={(v) => update.mutate({ id, description: v })}
+            />
           </Card>
 
           <Card className="p-0">
@@ -261,7 +267,17 @@ export default function PmProject() {
             </div>
             <div>
               <div className="text-xs uppercase text-muted-foreground mb-1">Priority</div>
-              <div className="flex items-center gap-2"><PriorityBadge priority={project.priority as any} /></div>
+              <Select
+                value={project.priority ?? undefined}
+                onValueChange={(v) => update.mutate({ id, priority: v as PmPriority })}
+              >
+                <SelectTrigger className="h-8 w-28"><SelectValue placeholder="—" /></SelectTrigger>
+                <SelectContent>
+                  {PM_PRIORITIES.map(p => (
+                    <SelectItem key={p} value={p}>{p.toUpperCase()}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <div className="text-xs uppercase text-muted-foreground mb-1">Start</div>
