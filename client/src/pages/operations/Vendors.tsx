@@ -30,7 +30,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Building2, Plus, Search, Loader2, Upload, ShoppingBag, Star, ExternalLink, CheckCircle2, Trash2, MessageCircle } from "lucide-react";
+import { Building2, Plus, Search, Loader2, Upload, ShoppingBag, Star, ExternalLink, CheckCircle2, Trash2, MessageCircle, Pencil } from "lucide-react";
 import WhatsAppDrawer from "@/components/WhatsAppDrawer";
 import LinkContactDialog from "@/components/LinkContactDialog";
 import {
@@ -79,6 +79,7 @@ export default function Vendors() {
   const [alibabaUsedFallback, setAlibabaUsedFallback] = useState(false);
   const [expandedVendorId, setExpandedVendorId] = useState<number | null>(null);
   const [vendorToDelete, setVendorToDelete] = useState<{ id: number; name: string } | null>(null);
+  const [editingVendorId, setEditingVendorId] = useState<number | null>(null);
   const [chatTarget, setChatTarget] = useState<{ contactId: number; whatsappNumber: string; contactName?: string; vendorName: string } | null>(null);
   const [linkTarget, setLinkTarget] = useState<{ vendorId: number; vendorName: string; vendorPhone?: string | null } | null>(null);
   const [newMaterialName, setNewMaterialName] = useState("");
@@ -125,6 +126,18 @@ export default function Vendors() {
   const createVendor = trpc.vendors.create.useMutation({
     onSuccess: () => {
       toast.success("Vendor created successfully");
+      setIsOpen(false);
+      resetVendorForm();
+      utils.vendors.list.invalidate();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const updateVendor = trpc.vendors.update.useMutation({
+    onSuccess: () => {
+      toast.success("Vendor updated");
       setIsOpen(false);
       resetVendorForm();
       utils.vendors.list.invalidate();
@@ -218,11 +231,32 @@ export default function Vendors() {
   };
 
   const resetVendorForm = () => {
+    setEditingVendorId(null);
     setFormData({
       name: "", contactName: "", email: "", phone: "", type: "supplier",
       address: "", city: "", state: "", country: "", postalCode: "",
       paymentTerms: 30, defaultLeadTimeDays: 14, notes: "",
     });
+  };
+
+  const openEditVendor = (vendor: any) => {
+    setEditingVendorId(vendor.id);
+    setFormData({
+      name: vendor.name ?? "",
+      contactName: vendor.contactName ?? "",
+      email: vendor.email ?? "",
+      phone: vendor.phone ?? "",
+      type: (vendor.type ?? "supplier") as "supplier" | "contractor" | "service",
+      address: vendor.address ?? "",
+      city: vendor.city ?? "",
+      state: vendor.state ?? "",
+      country: vendor.country ?? "",
+      postalCode: vendor.postalCode ?? "",
+      paymentTerms: vendor.paymentTerms ?? 30,
+      defaultLeadTimeDays: vendor.defaultLeadTimeDays ?? 14,
+      notes: vendor.notes ?? "",
+    });
+    setIsOpen(true);
   };
 
   // Aggregate PO data per vendor
@@ -328,7 +362,7 @@ export default function Vendors() {
 
   const handleSubmitVendor = (e: React.FormEvent) => {
     e.preventDefault();
-    createVendor.mutate({
+    const payload = {
       name: formData.name,
       contactName: formData.contactName || undefined,
       email: formData.email || undefined,
@@ -342,7 +376,12 @@ export default function Vendors() {
       paymentTerms: formData.paymentTerms,
       defaultLeadTimeDays: formData.defaultLeadTimeDays,
       notes: formData.notes || undefined,
-    });
+    };
+    if (editingVendorId !== null) {
+      updateVendor.mutate({ id: editingVendorId, ...payload });
+    } else {
+      createVendor.mutate(payload);
+    }
   };
 
   const isLoading = vendorsLoading;
@@ -362,7 +401,7 @@ export default function Vendors() {
           <ShoppingBag className="h-4 w-4 mr-2" />
           Search Alibaba
         </Button>
-        <Dialog open={isOpen} onOpenChange={setIsOpen}>
+        <Dialog open={isOpen} onOpenChange={(o) => { setIsOpen(o); if (!o) resetVendorForm(); }}>
           <DialogTrigger asChild>
             <Button>
               <Plus className="h-4 w-4 mr-2" />
@@ -372,7 +411,7 @@ export default function Vendors() {
           <DialogContent className="max-w-lg">
             <form onSubmit={handleSubmitVendor}>
               <DialogHeader>
-                <DialogTitle>Add Vendor</DialogTitle>
+                <DialogTitle>{editingVendorId !== null ? "Edit Vendor" : "Add Vendor"}</DialogTitle>
                 <DialogDescription>
                   Add a new supplier or service provider.
                 </DialogDescription>
@@ -498,9 +537,9 @@ export default function Vendors() {
                 <Button type="button" variant="outline" onClick={() => setIsOpen(false)}>
                   Cancel
                 </Button>
-                <Button type="submit" disabled={createVendor.isPending}>
-                  {createVendor.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                  Add Vendor
+                <Button type="submit" disabled={createVendor.isPending || updateVendor.isPending}>
+                  {(createVendor.isPending || updateVendor.isPending) && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  {editingVendorId !== null ? "Save changes" : "Add Vendor"}
                 </Button>
               </DialogFooter>
             </form>
@@ -782,6 +821,18 @@ export default function Vendors() {
                               ) : (
                                 <MessageCircle className="h-4 w-4" />
                               )}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openEditVendor(vendor);
+                              }}
+                              aria-label={`Edit vendor ${vendor.name}`}
+                            >
+                              <Pencil className="h-4 w-4" />
                             </Button>
                             <Button
                               variant="ghost"
