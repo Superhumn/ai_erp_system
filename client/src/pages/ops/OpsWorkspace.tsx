@@ -8,7 +8,7 @@
 // Reachable at /ops (also /ops/views, /ops/forms, /ops/automations, /ops/reports).
 // The sidebar is locked, so this page is entry-pointed from module pages and by URL.
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useRoute } from "wouter";
 import {
   LayoutDashboard, FileText, Zap, PieChart, Plus, Trash2, Pencil,
@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
+  Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import DataViews from "@/components/opsToolkit/DataViews";
 import PivotTable from "@/components/opsToolkit/PivotTable";
