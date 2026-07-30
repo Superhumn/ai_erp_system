@@ -22,6 +22,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useAuth } from "@/_core/hooks/useAuth";
+import InlineEdit from "@/components/InlineEdit";
 import {
   Table,
   TableBody,
@@ -1834,6 +1836,14 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
     );
   }, [allContracts, person]);
 
+  const utils = trpc.useUtils();
+  const { user } = useAuth();
+  const canEditEmployee = !!user && ["admin", "exec"].includes(user.role) && !!person.employeeId;
+  const updateEmployee = trpc.employees.update.useMutation({
+    onSuccess: () => { utils.employees.list.invalidate(); toast.success("Employee updated"); },
+    onError: (e: any) => toast.error(e.message),
+  });
+
   return (
                 <div className="space-y-5">
                   {/* Personal Information */}
@@ -1847,12 +1857,26 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
                           <Badge className={typeColors[person.type] || "bg-gray-500/10 text-gray-600"}>{person.type.replace(/_/g, " ")}</Badge>
                         ) : "-"}
                       </span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Title</span><span>{person.title}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Title</span><span>
+                        {canEditEmployee ? (
+                          <InlineEdit value={person.title === "-" ? "" : person.title} type="text" onSave={(v) => updateEmployee.mutate({ id: person.employeeId!, jobTitle: v })} />
+                        ) : person.title}
+                      </span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Department</span><span>{person.department}</span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Salary</span><span>{person.salary}</span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Hire Date</span><span>{person.hireDate ? fmtDate(person.hireDate) : "-"}</span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Status</span><span>
-                        {person.status && person.status !== "-" ? (
+                        {canEditEmployee ? (
+                          <Select value={person.status} onValueChange={(v) => updateEmployee.mutate({ id: person.employeeId!, status: v as any })}>
+                            <SelectTrigger className="h-7 w-32 text-xs"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="active">Active</SelectItem>
+                              <SelectItem value="inactive">Inactive</SelectItem>
+                              <SelectItem value="on_leave">On leave</SelectItem>
+                              <SelectItem value="terminated">Terminated</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        ) : person.status && person.status !== "-" ? (
                           <Badge className={statusColors[person.status] || "bg-gray-500/10 text-gray-600"}>{person.status.replace(/_/g, " ")}</Badge>
                         ) : "-"}
                       </span></div>
