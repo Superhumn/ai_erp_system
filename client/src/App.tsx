@@ -96,7 +96,6 @@ const Costing = lazy(() => import("./pages/finance/Costing"));
 const EmailScanning = lazy(() => import("./pages/settings/EmailScanning"));
 const OfferLetters = lazy(() => import("./pages/hr/OfferLetters"));
 const Departments = lazy(() => import("./pages/hr/Departments"));
-const ProductionBatches = lazy(() => import("./pages/operations/ProductionBatches"));
 const Ingredients = lazy(() => import("./pages/operations/Ingredients"));
 const Allocations = lazy(() => import("./pages/operations/Allocations"));
 const InventoryPlanning = lazy(() => import("./pages/operations/InventoryPlanning"));
@@ -373,7 +372,6 @@ function Router() {
           <Route path="/operations/vendor-negotiations" component={VendorNegotiations} />
           <Route path="/operations/manufacturing-ai" component={ManufacturingAI} />
           <Route path="/operations/supplier-scoring" component={SupplierScoring} />
-          <Route path="/operations/production-batches" component={ProductionBatches} />
           <Route path="/operations/ingredients" component={Ingredients} />
           <Route path="/operations/allocations" component={Allocations} />
           <Route path="/operations/inventory-planning" component={InventoryPlanning} />
