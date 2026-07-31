@@ -1849,11 +1849,157 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
     );
   }, [allContracts, person]);
 
+  const utils = trpc.useUtils();
+  const [compOpen, setCompOpen] = useState(false);
+  const [compForm, setCompForm] = useState({
+    effectiveDate: "",
+    salary: "",
+    salaryFrequency: "annual" as "hourly" | "weekly" | "biweekly" | "monthly" | "annual",
+    reason: "",
+    notes: "",
+  });
+  const addCompensation = trpc.employees.addCompensation.useMutation({
+    onSuccess: () => {
+      toast.success("Compensation record added");
+      if (person.employeeId) utils.employees.compensationHistory.invalidate({ employeeId: person.employeeId });
+      utils.employees.list.invalidate();
+      setCompOpen(false);
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const handleAddCompensation = () => {
+    if (!person.employeeId) return;
+    if (!compForm.effectiveDate) {
+      toast.error("Effective date is required");
+      return;
+    }
+    if (!compForm.salary.trim()) {
+      toast.error("Salary is required");
+      return;
+    }
+    addCompensation.mutate({
+      employeeId: person.employeeId,
+      effectiveDate: new Date(compForm.effectiveDate),
+      salary: compForm.salary.trim(),
+      salaryFrequency: compForm.salaryFrequency,
+      reason: compForm.reason || undefined,
+      notes: compForm.notes || undefined,
+    });
+  };
+
+  const [payOpen, setPayOpen] = useState(false);
+  const [payForm, setPayForm] = useState({
+    paymentDate: "",
+    type: "salary" as "salary" | "bonus" | "commission" | "reimbursement" | "other",
+    amount: "",
+    paymentMethod: "direct_deposit" as "check" | "direct_deposit" | "wire" | "other",
+    notes: "",
+  });
+  const addPayment = trpc.employeePayments.create.useMutation({
+    onSuccess: () => {
+      toast.success("Payment recorded");
+      if (person.employeeId) utils.employeePayments.list.invalidate({ employeeId: person.employeeId });
+      setPayOpen(false);
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const handleAddPayment = () => {
+    if (!person.employeeId) return;
+    if (!payForm.paymentDate) {
+      toast.error("Payment date is required");
+      return;
+    }
+    if (!payForm.amount.trim()) {
+      toast.error("Amount is required");
+      return;
+    }
+    addPayment.mutate({
+      employeeId: person.employeeId,
+      paymentDate: new Date(payForm.paymentDate),
+      type: payForm.type,
+      amount: payForm.amount.trim(),
+      paymentMethod: payForm.paymentMethod,
+      notes: payForm.notes || undefined,
+    });
+  };
+
+  const { data: employeeSource } = trpc.employees.get.useQuery(
+    { id: person.employeeId! },
+    { enabled: !!person.employeeId }
+  );
+  const [editOpen, setEditOpen] = useState(false);
+  const [editForm, setEditForm] = useState({
+    firstName: "",
+    lastName: "",
+    email: "",
+    phone: "",
+    jobTitle: "",
+    departmentId: "",
+    status: "active" as "active" | "inactive" | "on_leave" | "terminated",
+    salary: "",
+    address: "",
+    notes: "",
+  });
+  const updateEmployee = trpc.employees.update.useMutation({
+    onSuccess: () => {
+      toast.success("Employee updated");
+      utils.employees.list.invalidate();
+      if (person.employeeId) utils.employees.get.invalidate({ id: person.employeeId });
+      setEditOpen(false);
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const openEdit = () => {
+    const e: any = employeeSource;
+    if (!e) return;
+    setEditForm({
+      firstName: e.firstName ?? "",
+      lastName: e.lastName ?? "",
+      email: e.email ?? "",
+      phone: e.phone ?? "",
+      jobTitle: e.jobTitle ?? "",
+      departmentId: e.departmentId != null ? String(e.departmentId) : "",
+      status: e.status || "active",
+      salary: e.salary != null ? String(e.salary) : "",
+      address: e.address ?? "",
+      notes: e.notes ?? "",
+    });
+    setEditOpen(true);
+  };
+  const handleUpdateEmployee = () => {
+    if (!person.employeeId) return;
+    if (!editForm.firstName.trim() || !editForm.lastName.trim()) {
+      toast.error("First and last name are required");
+      return;
+    }
+    updateEmployee.mutate({
+      id: person.employeeId,
+      firstName: editForm.firstName.trim(),
+      lastName: editForm.lastName.trim(),
+      email: editForm.email || undefined,
+      phone: editForm.phone || undefined,
+      jobTitle: editForm.jobTitle || undefined,
+      departmentId: editForm.departmentId ? Number(editForm.departmentId) : undefined,
+      status: editForm.status,
+      salary: editForm.salary || undefined,
+      address: editForm.address || undefined,
+      notes: editForm.notes || undefined,
+    });
+  };
+
   return (
                 <div className="space-y-5">
                   {/* Personal Information */}
                   <div>
-                    <h4 className="text-sm font-semibold text-muted-foreground mb-2">Personal Information</h4>
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="text-sm font-semibold text-muted-foreground">Personal Information</h4>
+                      {person.employeeId && (
+                        <Button size="sm" variant="outline" onClick={openEdit} disabled={!employeeSource}>
+                          <Pencil className="h-3.5 w-3.5 mr-1.5" />
+                          Edit
+                        </Button>
+                      )}
+                    </div>
                     <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
                       <div className="flex justify-between"><span className="text-muted-foreground">Name</span><span>{person.name}</span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Email</span><span>{person.email || "-"}</span></div>
@@ -1872,12 +2018,94 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
                         ) : "-"}
                       </span></div>
                     </div>
+                    <Dialog open={editOpen} onOpenChange={setEditOpen}>
+                      <DialogContent className="max-w-lg">
+                        <DialogHeader>
+                          <DialogTitle>Edit employee</DialogTitle>
+                          <DialogDescription>Update {person.name}'s employment details.</DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <Label>First name *</Label>
+                              <Input value={editForm.firstName} onChange={(e) => setEditForm({ ...editForm, firstName: e.target.value })} />
+                            </div>
+                            <div>
+                              <Label>Last name *</Label>
+                              <Input value={editForm.lastName} onChange={(e) => setEditForm({ ...editForm, lastName: e.target.value })} />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <Label>Email</Label>
+                              <Input value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} />
+                            </div>
+                            <div>
+                              <Label>Phone</Label>
+                              <Input value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <Label>Job title</Label>
+                              <Input value={editForm.jobTitle} onChange={(e) => setEditForm({ ...editForm, jobTitle: e.target.value })} />
+                            </div>
+                            <div>
+                              <Label>Status</Label>
+                              <Select value={editForm.status} onValueChange={(v) => setEditForm({ ...editForm, status: v as typeof editForm.status })}>
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="active">Active</SelectItem>
+                                  <SelectItem value="on_leave">On leave</SelectItem>
+                                  <SelectItem value="inactive">Inactive</SelectItem>
+                                  <SelectItem value="terminated">Terminated</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <Label>Department ID</Label>
+                              <Input type="number" value={editForm.departmentId} onChange={(e) => setEditForm({ ...editForm, departmentId: e.target.value })} />
+                            </div>
+                            <div>
+                              <Label>Salary</Label>
+                              <Input value={editForm.salary} onChange={(e) => setEditForm({ ...editForm, salary: e.target.value })} />
+                            </div>
+                          </div>
+                          <div>
+                            <Label>Address</Label>
+                            <Input value={editForm.address} onChange={(e) => setEditForm({ ...editForm, address: e.target.value })} />
+                          </div>
+                          <div>
+                            <Label>Notes</Label>
+                            <Textarea rows={2} value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} />
+                          </div>
+                        </div>
+                        <DialogFooter>
+                          <Button variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
+                          <Button onClick={handleUpdateEmployee} disabled={updateEmployee.isPending}>
+                            {updateEmployee.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                            Save changes
+                          </Button>
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
                   </div>
 
                   {/* Compensation History */}
                   {person.employeeId && (
                     <div>
-                      <h4 className="text-sm font-semibold text-muted-foreground mb-2">Compensation History</h4>
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-sm font-semibold text-muted-foreground">Compensation History</h4>
+                        <Button size="sm" variant="outline" onClick={() => {
+                          setCompForm({ effectiveDate: "", salary: "", salaryFrequency: "annual", reason: "", notes: "" });
+                          setCompOpen(true);
+                        }}>
+                          <Plus className="h-3.5 w-3.5 mr-1.5" />
+                          Add compensation
+                        </Button>
+                      </div>
                       {compHistory && (compHistory as any[]).length > 0 ? (
                         <div className="border rounded-lg overflow-hidden">
                           <Table className="text-sm">
@@ -1902,13 +2130,89 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
                       ) : (
                         <p className="text-sm text-muted-foreground italic">No compensation history recorded.</p>
                       )}
+                      <Dialog open={compOpen} onOpenChange={setCompOpen}>
+                        <DialogContent className="max-w-md">
+                          <DialogHeader>
+                            <DialogTitle>Add compensation</DialogTitle>
+                            <DialogDescription>Record a new compensation entry for {person.name}.</DialogDescription>
+                          </DialogHeader>
+                          <div className="space-y-4">
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <Label>Effective date *</Label>
+                                <Input
+                                  type="date"
+                                  value={compForm.effectiveDate}
+                                  onChange={(e) => setCompForm({ ...compForm, effectiveDate: e.target.value })}
+                                />
+                              </div>
+                              <div>
+                                <Label>Frequency</Label>
+                                <Select
+                                  value={compForm.salaryFrequency}
+                                  onValueChange={(v) => setCompForm({ ...compForm, salaryFrequency: v as typeof compForm.salaryFrequency })}
+                                >
+                                  <SelectTrigger><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="hourly">Hourly</SelectItem>
+                                    <SelectItem value="weekly">Weekly</SelectItem>
+                                    <SelectItem value="biweekly">Biweekly</SelectItem>
+                                    <SelectItem value="monthly">Monthly</SelectItem>
+                                    <SelectItem value="annual">Annual</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+                            <div>
+                              <Label>Salary *</Label>
+                              <Input
+                                value={compForm.salary}
+                                onChange={(e) => setCompForm({ ...compForm, salary: e.target.value })}
+                                placeholder="e.g. 120000"
+                              />
+                            </div>
+                            <div>
+                              <Label>Reason</Label>
+                              <Input
+                                value={compForm.reason}
+                                onChange={(e) => setCompForm({ ...compForm, reason: e.target.value })}
+                                placeholder="e.g. Annual raise, promotion"
+                              />
+                            </div>
+                            <div>
+                              <Label>Notes</Label>
+                              <Textarea
+                                rows={2}
+                                value={compForm.notes}
+                                onChange={(e) => setCompForm({ ...compForm, notes: e.target.value })}
+                              />
+                            </div>
+                          </div>
+                          <DialogFooter>
+                            <Button variant="outline" onClick={() => setCompOpen(false)}>Cancel</Button>
+                            <Button onClick={handleAddCompensation} disabled={addCompensation.isPending}>
+                              {addCompensation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                              Add
+                            </Button>
+                          </DialogFooter>
+                        </DialogContent>
+                      </Dialog>
                     </div>
                   )}
 
                   {/* Payments */}
                   {person.employeeId && (
                     <div>
-                      <h4 className="text-sm font-semibold text-muted-foreground mb-2">Payments</h4>
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-sm font-semibold text-muted-foreground">Payments</h4>
+                        <Button size="sm" variant="outline" onClick={() => {
+                          setPayForm({ paymentDate: "", type: "salary", amount: "", paymentMethod: "direct_deposit", notes: "" });
+                          setPayOpen(true);
+                        }}>
+                          <Plus className="h-3.5 w-3.5 mr-1.5" />
+                          Add payment
+                        </Button>
+                      </div>
                       {payments && (payments as any[]).length > 0 ? (
                         <div className="border rounded-lg overflow-hidden">
                           <Table className="text-sm">
@@ -1935,6 +2239,76 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
                       ) : (
                         <p className="text-sm text-muted-foreground italic">No payment records.</p>
                       )}
+                      <Dialog open={payOpen} onOpenChange={setPayOpen}>
+                        <DialogContent className="max-w-md">
+                          <DialogHeader>
+                            <DialogTitle>Record payment</DialogTitle>
+                            <DialogDescription>Log a payment to {person.name}.</DialogDescription>
+                          </DialogHeader>
+                          <div className="space-y-4">
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <Label>Payment date *</Label>
+                                <Input
+                                  type="date"
+                                  value={payForm.paymentDate}
+                                  onChange={(e) => setPayForm({ ...payForm, paymentDate: e.target.value })}
+                                />
+                              </div>
+                              <div>
+                                <Label>Type</Label>
+                                <Select value={payForm.type} onValueChange={(v) => setPayForm({ ...payForm, type: v as typeof payForm.type })}>
+                                  <SelectTrigger><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="salary">Salary</SelectItem>
+                                    <SelectItem value="bonus">Bonus</SelectItem>
+                                    <SelectItem value="commission">Commission</SelectItem>
+                                    <SelectItem value="reimbursement">Reimbursement</SelectItem>
+                                    <SelectItem value="other">Other</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <Label>Amount *</Label>
+                                <Input
+                                  value={payForm.amount}
+                                  onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })}
+                                  placeholder="e.g. 5000"
+                                />
+                              </div>
+                              <div>
+                                <Label>Method</Label>
+                                <Select value={payForm.paymentMethod} onValueChange={(v) => setPayForm({ ...payForm, paymentMethod: v as typeof payForm.paymentMethod })}>
+                                  <SelectTrigger><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="direct_deposit">Direct deposit</SelectItem>
+                                    <SelectItem value="check">Check</SelectItem>
+                                    <SelectItem value="wire">Wire</SelectItem>
+                                    <SelectItem value="other">Other</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+                            <div>
+                              <Label>Notes</Label>
+                              <Textarea
+                                rows={2}
+                                value={payForm.notes}
+                                onChange={(e) => setPayForm({ ...payForm, notes: e.target.value })}
+                              />
+                            </div>
+                          </div>
+                          <DialogFooter>
+                            <Button variant="outline" onClick={() => setPayOpen(false)}>Cancel</Button>
+                            <Button onClick={handleAddPayment} disabled={addPayment.isPending}>
+                              {addPayment.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                              Record payment
+                            </Button>
+                          </DialogFooter>
+                        </DialogContent>
+                      </Dialog>
                     </div>
                   )}
 
