@@ -272,14 +272,21 @@ async function getValidGoogleToken(userId: number): Promise<{ accessToken: strin
     const refreshed = await refreshGoogleToken(token.refreshToken);
     
     if (refreshed.accessToken && refreshed.expiresAt) {
-      // Update database with new token (preserve existing googleEmail via COALESCE)
-      await db.upsertGoogleOAuthToken({
-        userId,
-        accessToken: refreshed.accessToken,
-        refreshToken: token.refreshToken,
-        expiresAt: refreshed.expiresAt,
-        googleEmail: token.googleEmail,
-      });
+      // Persist the refreshed token, but never let a DB write failure block the
+      // request — the freshly refreshed token is valid whether or not we manage
+      // to store it. (Previously a failing upsert here aborted every Drive
+      // operation: sync AND the document-viewer proxy.)
+      try {
+        await db.upsertGoogleOAuthToken({
+          userId,
+          accessToken: refreshed.accessToken,
+          refreshToken: token.refreshToken,
+          expiresAt: refreshed.expiresAt,
+          googleEmail: token.googleEmail,
+        });
+      } catch (persistErr) {
+        console.error(`[GoogleToken] Failed to persist refreshed token for user ${userId} (using it anyway):`, persistErr);
+      }
       return { accessToken: refreshed.accessToken };
     }
     
