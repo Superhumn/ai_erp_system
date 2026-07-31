@@ -57,9 +57,10 @@ import {
   StickyNote,
   Headphones,
   Zap,
+  CalendarClock,
 } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { AICommandBar } from './AICommandBar';
 import { QuickNoteDialog } from './QuickNoteDialog';
@@ -510,6 +511,18 @@ function DashboardLayoutContent({
           </div>
           {!isExternalRole && <AICommandBar />}
           <div className="flex items-center gap-2 shrink-0">
+            {!isExternalRole && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Link href="/today">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Today planner">
+                      <CalendarClock className="h-4 w-4" />
+                    </Button>
+                  </Link>
+                </TooltipTrigger>
+                <TooltipContent>Today planner</TooltipContent>
+              </Tooltip>
+            )}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button

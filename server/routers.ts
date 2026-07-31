@@ -21,6 +21,9 @@ import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSumm
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import { fireAutomationEvent, testRunRule } from "./opsAutomationEngine";
+import { parseQuickAdd } from "./nlQuickAddService";
+import { suggestSlots, zonedWallTimeToUtcMs } from "./autoScheduleService";
+import { DEFAULT_PLANNER_TIMEZONE, type QuickAddIntent, type QuickAddResult } from "@shared/planner";
 import { agentRouter } from "./agent";
 import { parseNoteWithLLM } from "./notesParser";
 import type { NoteAppliedItem, NoteParseResult, NoteParsedItem } from "@shared/notes";
@@ -214,6 +217,61 @@ export async function createAuditLog(userId: number, action: 'create' | 'update'
     oldValues,
     newValues,
   });
+}
+
+// ---- Planner / quick-add helpers ----
+// Convert a wall-clock ISO (no offset) in `tz` to an absolute Date.
+function wallIsoToDate(wallIso: string | null | undefined, tz: string): Date | null {
+  if (!wallIso) return null;
+  const m = wallIso.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!m) { const d = new Date(wallIso); return isNaN(d.getTime()) ? null : d; }
+  const ms = zonedWallTimeToUtcMs(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], tz);
+  return new Date(ms);
+}
+// Add minutes to a wall-clock ISO, returning a wall-clock ISO (no offset).
+function addMinutesWall(wallIso: string, minutes: number): string {
+  const base = wallIso.endsWith("Z") ? wallIso : wallIso + "Z";
+  const d = new Date(base);
+  return new Date(d.getTime() + minutes * 60000).toISOString().replace(/\.\d{3}Z$/, "");
+}
+// Create the right record for a parsed quick-add intent.
+async function commitQuickAdd(userId: number, intent: QuickAddIntent, tz: string): Promise<QuickAddResult> {
+  if (intent.kind === "note") {
+    await db.createNote({ userId, title: intent.title.slice(0, 255), content: intent.description || intent.title, status: "draft" });
+    return { kind: "note", title: intent.title, detail: "Saved to Notes" };
+  }
+  if (intent.kind === "event") {
+    const token = await getValidGoogleToken(userId);
+    if (!token.error && intent.datetime) {
+      const startWall = intent.datetime;
+      const endWall = intent.endDatetime || addMinutesWall(startWall, intent.durationMinutes || 30);
+      const { createCalendarEvent } = await import("./calendarService");
+      await createCalendarEvent(token.accessToken, {
+        summary: intent.title,
+        description: intent.description || undefined,
+        start: { dateTime: startWall, timeZone: tz },
+        end: { dateTime: endWall, timeZone: tz },
+        attendees: intent.attendees?.map((email) => ({ email })),
+        location: intent.location || undefined,
+      });
+      return { kind: "event", title: intent.title, detail: "Added to Google Calendar" };
+    }
+    const projectId = await db.getOrCreateNotesInboxProject(userId);
+    await db.createProjectTask({
+      projectId, name: intent.title, description: intent.description || null,
+      dueDate: wallIsoToDate(intent.datetime, tz), status: "todo",
+      priority: intent.priority || "medium", sourceType: "manual", createdBy: userId,
+    });
+    return { kind: "event", title: intent.title, detail: "Google Calendar not connected — saved as a task", fellBackToTask: true };
+  }
+  // task or reminder → a project task (optionally with a due date)
+  const projectId = await db.getOrCreateNotesInboxProject(userId);
+  await db.createProjectTask({
+    projectId, name: intent.title, description: intent.description || null,
+    dueDate: wallIsoToDate(intent.datetime, tz), status: "todo",
+    priority: intent.priority || "medium", sourceType: "manual", createdBy: userId,
+  });
+  return { kind: intent.kind, title: intent.title, detail: intent.datetime ? "Added to Tasks with a due date" : "Added to Tasks" };
 }
 
 // Helper to refresh Google OAuth token
@@ -1037,6 +1095,113 @@ export const appRouter = router({
       .input(z.object({ id: z.number(), name: z.string().optional(), pivotConfig: z.any().optional() }))
       .mutation(async ({ input }) => { const { id, ...rest } = input; await db.updateSavedReport(id, rest as any); return { success: true }; }),
     delete: internalProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => { await db.deleteSavedReport(input.id); return { success: true }; }),
+  }),
+
+  // ============================================
+  // PLANNER — universal NL quick-add, auto-scheduling, unified Today agenda
+  // ============================================
+  quickAdd: router({
+    // Parse a free-text line into a structured intent (no side effects).
+    parse: protectedProcedure
+      .input(z.object({ text: z.string().min(1), timezone: z.string().optional() }))
+      .mutation(({ input }) => parseQuickAdd(input.text, new Date().toISOString(), input.timezone || DEFAULT_PLANNER_TIMEZONE)),
+    // Create the record for a (possibly user-edited) intent.
+    commit: protectedProcedure
+      .input(z.object({
+        intent: z.object({
+          kind: z.enum(["task", "event", "reminder", "note"]),
+          title: z.string().min(1),
+          description: z.string().nullish(),
+          datetime: z.string().nullish(),
+          endDatetime: z.string().nullish(),
+          durationMinutes: z.number().nullish(),
+          allDay: z.boolean().optional(),
+          priority: z.enum(["low", "medium", "high", "critical"]).nullish(),
+          location: z.string().nullish(),
+          attendees: z.array(z.string()).optional(),
+          recurrence: z.string().nullish(),
+        }),
+        timezone: z.string().optional(),
+      }))
+      .mutation(({ ctx, input }) => commitQuickAdd(ctx.user.id, input.intent as QuickAddIntent, input.timezone || DEFAULT_PLANNER_TIMEZONE)),
+  }),
+
+  scheduling: router({
+    // Suggest open time-blocks of a given length within a window.
+    suggest: protectedProcedure
+      .input(z.object({
+        durationMinutes: z.number().min(5).max(1440),
+        windowStartIso: z.string().optional(),
+        windowEndIso: z.string().optional(),
+        timezone: z.string().optional(),
+        maxResults: z.number().min(1).max(12).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const tz = input.timezone || DEFAULT_PLANNER_TIMEZONE;
+        const nowMs = Date.now();
+        const windowStartMs = input.windowStartIso ? Date.parse(input.windowStartIso) : nowMs;
+        const windowEndMs = input.windowEndIso ? Date.parse(input.windowEndIso) : nowMs + 7 * 24 * 3600 * 1000;
+        const token = await getValidGoogleToken(ctx.user.id);
+        const slots = await suggestSlots({
+          accessToken: token.error ? null : token.accessToken,
+          windowStartMs, windowEndMs, durationMin: input.durationMinutes,
+          tz, maxResults: input.maxResults ?? 6, nowMs,
+        });
+        return { googleConnected: !token.error, slots };
+      }),
+    // Book a chosen slot as a calendar time-block (falls back to a task).
+    book: protectedProcedure
+      .input(z.object({
+        title: z.string().min(1),
+        startIso: z.string(),
+        endIso: z.string(),
+        description: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const token = await getValidGoogleToken(ctx.user.id);
+        if (!token.error) {
+          const { createCalendarEvent } = await import("./calendarService");
+          await createCalendarEvent(token.accessToken, {
+            summary: input.title,
+            description: input.description,
+            start: { dateTime: input.startIso },
+            end: { dateTime: input.endIso },
+          });
+          return { booked: "calendar" as const, detail: "Time blocked on Google Calendar" };
+        }
+        const projectId = await db.getOrCreateNotesInboxProject(ctx.user.id);
+        await db.createProjectTask({
+          projectId, name: input.title, dueDate: new Date(input.startIso),
+          status: "todo", priority: "medium", sourceType: "manual", createdBy: ctx.user.id,
+        });
+        return { booked: "task" as const, detail: "Google Calendar not connected — saved as a task" };
+      }),
+  }),
+
+  planner: router({
+    // Calendar events for a date range (empty + googleConnected:false when not connected).
+    agenda: protectedProcedure
+      .input(z.object({ startIso: z.string(), endIso: z.string() }))
+      .query(async ({ ctx, input }) => {
+        const token = await getValidGoogleToken(ctx.user.id);
+        const empty = { googleConnected: false, events: [] as Array<{ id: string; title: string; startIso: string | null; endIso: string | null; allDay: boolean; location: string | null }> };
+        if (token.error) return empty;
+        try {
+          const { getCalendarEvents } = await import("./calendarService");
+          const json: any = await getCalendarEvents(token.accessToken, input.startIso, input.endIso, 100);
+          const events = (json?.items ?? []).map((ev: any, i: number) => ({
+            id: String(ev?.id ?? i),
+            title: ev?.summary || "(no title)",
+            startIso: ev?.start?.dateTime ?? ev?.start?.date ?? null,
+            endIso: ev?.end?.dateTime ?? ev?.end?.date ?? null,
+            allDay: !ev?.start?.dateTime,
+            location: ev?.location ?? null,
+          }));
+          return { googleConnected: true, events };
+        } catch {
+          return { googleConnected: true, events: [] };
+        }
+      }),
   }),
 
   auth: router({
