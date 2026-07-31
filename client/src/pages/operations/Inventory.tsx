@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -89,6 +90,7 @@ function InventorySummaryCards({ inventory }: { inventory: InventoryItem[] | und
 }
 
 export default function Inventory() {
+  const [, navigate] = useLocation();
   const [selectedRows, setSelectedRows] = useState<Set<number | string>>(new Set());
   const [bulkActionDialogOpen, setBulkActionDialogOpen] = useState(false);
   const [currentBulkAction, setCurrentBulkAction] = useState<BulkActionType>(null);
@@ -427,6 +429,7 @@ export default function Inventory() {
               onSelectionChange={setSelectedRows}
               bulkActions={bulkActions}
               onBulkAction={handleBulkAction}
+              onRowClick={(item) => navigate(`/operations/products/${item.productId}`)}
               showSearch={true}
               showExport={true}
               compact={false}

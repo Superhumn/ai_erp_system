@@ -129,7 +129,7 @@ Source: `server/routers.ts` (appRouter L771–L25965, 118 top-level keys).
 | `subsidiaryFundraising` | L25727–L25837 | 111 | ✗ legacy-only |
 | `brandAmbassadors` | L25838–L25964 | 127 | ✗ legacy-only |
 
-## Legacy-only (48)
+## Legacy-only (53)
 
 These exist only in `server/routers.ts` — the extracted `server/routers/` tree does not cover them.
 

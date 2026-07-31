@@ -36,6 +36,7 @@ import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
 import { getStatusColor } from "@/lib/statusColors";
 import { DetailSheet } from "@/components/DetailSheet";
+import InlineEdit from "@/components/InlineEdit";
 
 export default function Contracts() {
   const [search, setSearch] = useState("");
@@ -397,7 +398,13 @@ export default function Contracts() {
               </div>
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Value</p>
-                <p className="font-medium font-mono">{selectedContract.value ? formatCurrency(selectedContract.value) : "—"}</p>
+                <div className="font-medium font-mono">
+                  <InlineEdit
+                    value={selectedContract.value || "0"}
+                    type="number"
+                    onSave={(v) => updateContract.mutate({ id: selectedContract.id, value: v })}
+                  />
+                </div>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Start Date</p>
@@ -408,12 +415,14 @@ export default function Contracts() {
                 <p className="font-medium">{selectedContract.endDate ? format(new Date(selectedContract.endDate), "MMM d, yyyy") : "—"}</p>
               </div>
             </div>
-            {selectedContract.description && (
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Description</p>
-                <p className="text-sm whitespace-pre-wrap">{selectedContract.description}</p>
-              </div>
-            )}
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Description</p>
+              <InlineEdit
+                value={selectedContract.description || ""}
+                type="text"
+                onSave={(v) => updateContract.mutate({ id: selectedContract.id, description: v })}
+              />
+            </div>
 
             <div className="flex flex-wrap gap-2 pt-2 border-t">
               {(selectedContract.status === "draft" ||

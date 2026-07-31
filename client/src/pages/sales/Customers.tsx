@@ -152,6 +152,14 @@ export default function Customers() {
     onError: (error) => toast.error(error.message),
   });
 
+  const updateCustomer = trpc.customers.update.useMutation({
+    onSuccess: () => {
+      toast.success("Customer updated");
+      utils.customers.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   const syncShopify = trpc.customers.syncFromShopify.useMutation({
     onSuccess: (result) => {
       toast.success(`Shopify sync complete: ${result.imported} imported, ${result.updated} updated`);
@@ -211,6 +219,7 @@ export default function Customers() {
       header: "Status",
       type: "status",
       options: customerStatusOptions,
+      editable: true,
       filterable: true,
     },
     {
@@ -484,6 +493,11 @@ export default function Customers() {
             showFilters
             showExport
             onRowClick={(row) => setSelectedCustomer(row)}
+            onCellEdit={(rowId, key, value) => {
+              if (key === "status") {
+                updateCustomer.mutate({ id: Number(rowId), status: value });
+              }
+            }}
             expandedRowId={selectedCustomer?.id ?? null}
             compact
           />

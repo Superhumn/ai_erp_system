@@ -19,6 +19,8 @@ import NotFound from "@/pages/NotFound";
 
 // Lazy-loaded pages — split into separate chunks for smaller initial bundle
 const AIAssistant = lazy(() => import("./pages/AIAssistant"));
+// Superhumn design handoff — canonical screens gallery (standalone, scoped theme)
+const SuperhumnGallery = lazy(() => import("./pages/superhumn"));
 const Settings = lazy(() => import("./pages/Settings"));
 const GlobalSearch = lazy(() => import("./pages/GlobalSearch"));
 const Notifications = lazy(() => import("./pages/Notifications"));
@@ -83,6 +85,10 @@ const InventoryCosting = lazy(() => import("./pages/operations/InventoryCosting"
 const VendorNegotiations = lazy(() => import("./pages/operations/VendorNegotiations"));
 const SupplierPortal = lazy(() => import("./pages/SupplierPortal"));
 const MaterialSupply = lazy(() => import("./pages/operations/MaterialSupply"));
+
+// Ops Toolkit (Stackby-style views / forms / automations / reports)
+const OpsWorkspace = lazy(() => import("./pages/ops/OpsWorkspace"));
+const FormFill = lazy(() => import("./pages/ops/FormFill"));
 
 // Backend→frontend gap: pages wiring previously-orphaned routers
 const Costing = lazy(() => import("./pages/finance/Costing"));
@@ -471,6 +477,10 @@ function Router() {
           {/* Code */}
           <Route path="/code" component={CodeEditor} />
 
+          {/* Ops Toolkit — views / forms / automations / reports */}
+          <Route path="/ops/:tab" component={OpsWorkspace} />
+          <Route path="/ops" component={OpsWorkspace} />
+
           {/* Component Showcase */}
           <Route path="/showcase" component={ComponentShowcase} />
 
@@ -505,6 +515,10 @@ function App() {
                 <Route path="/dr/:code" component={DataRoomPublic} />
                 {/* Supplier Portal (public) */}
                 <Route path="/supplier-portal/:token" component={SupplierPortal} />
+                {/* Public intake form fill (Ops Toolkit) */}
+                <Route path="/f/:slug" component={FormFill} />
+                {/* Superhumn design handoff gallery (standalone, self-contained frames) */}
+                <Route path="/superhumn" component={SuperhumnGallery} />
                 {/* All other routes go through dashboard */}
                 <Route component={Router} />
               </Switch>
