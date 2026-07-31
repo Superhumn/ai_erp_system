@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Plus, Trash2, AlertTriangle } from "lucide-react";
+import { Loader2, Plus, Trash2, AlertTriangle, Check } from "lucide-react";
 import { toast } from "sonner";
 import { PmHeader, PmTabs, ProgressBar, PM_STATUSES, STATUS_LABEL, PM_PRIORITIES, fmtDate, fmtMoney, daysSince, type PmStatus, type PmPriority } from "./_shared";
 import InlineEdit from "@/components/InlineEdit";
@@ -15,24 +15,54 @@ export default function PmProject() {
   const params = useParams<{ id: string }>();
   const id = Number(params.id);
 
+  const utils = trpc.useUtils();
   const { data, isLoading, refetch } = trpc.pm.projects.get.useQuery({ id }, { enabled: !isNaN(id) });
   const { data: markets } = trpc.pm.markets.list.useQuery();
   const { data: functions } = trpc.pm.functions.list.useQuery();
+
+  // Dedicated per-project list queries (kept in sync with projects.get).
+  const enabled = !isNaN(id);
+  const tasksQ = trpc.pm.tasks.listByProject.useQuery({ projectId: id }, { enabled });
+  const milestonesQ = trpc.pm.milestones.listByProject.useQuery({ projectId: id }, { enabled });
+  const depsQ = trpc.pm.dependencies.listForProject.useQuery({ projectId: id }, { enabled });
+
+  const invalidateTasks = () => { refetch(); utils.pm.tasks.listByProject.invalidate({ projectId: id }); };
+  const invalidateMilestones = () => { refetch(); utils.pm.milestones.listByProject.invalidate({ projectId: id }); };
+  const invalidateDeps = () => { refetch(); utils.pm.dependencies.listForProject.invalidate({ projectId: id }); };
 
   const update = trpc.pm.projects.update.useMutation({
     onSuccess: () => { toast.success("Saved"); refetch(); },
     onError: (e) => toast.error(e.message),
   });
-  const createTask = trpc.pm.tasks.create.useMutation({ onSuccess: () => refetch() });
-  const updateTask = trpc.pm.tasks.update.useMutation({ onSuccess: () => refetch() });
-  const deleteTask = trpc.pm.tasks.delete.useMutation({ onSuccess: () => refetch() });
-  const createMilestone = trpc.pm.milestones.create.useMutation({ onSuccess: () => refetch() });
+  const createTask = trpc.pm.tasks.create.useMutation({ onSuccess: invalidateTasks });
+  const updateTask = trpc.pm.tasks.update.useMutation({ onSuccess: invalidateTasks });
+  const deleteTask = trpc.pm.tasks.delete.useMutation({ onSuccess: invalidateTasks });
+  const createMilestone = trpc.pm.milestones.create.useMutation({ onSuccess: invalidateMilestones });
+  const updateMilestone = trpc.pm.milestones.update.useMutation({
+    onSuccess: () => { invalidateMilestones(); toast.success("Milestone updated"); },
+    onError: (e) => toast.error(e.message),
+  });
+  const deleteMilestone = trpc.pm.milestones.delete.useMutation({
+    onSuccess: invalidateMilestones,
+    onError: (e) => toast.error(e.message),
+  });
+  const createDependency = trpc.pm.dependencies.create.useMutation({
+    onSuccess: () => { invalidateDeps(); toast.success("Dependency linked"); },
+    onError: (e) => toast.error(e.message),
+  });
+  const deleteDependency = trpc.pm.dependencies.delete.useMutation({
+    onSuccess: invalidateDeps,
+    onError: (e) => toast.error(e.message),
+  });
 
   const [newTaskName, setNewTaskName] = useState("");
   const [newMilestoneName, setNewMilestoneName] = useState("");
   const [newMilestoneDate, setNewMilestoneDate] = useState("");
   const [blockerEditOpen, setBlockerEditOpen] = useState(false);
   const [blockerReason, setBlockerReason] = useState("");
+  const [depOtherId, setDepOtherId] = useState("");
+  const [depDirection, setDepDirection] = useState("blocks");
+  const [depType, setDepType] = useState("blocks");
 
   if (isLoading || !data) {
     return (
@@ -43,7 +73,11 @@ export default function PmProject() {
     );
   }
 
-  const { project, tasks, milestones, dependencies } = data;
+  const { project } = data;
+  // Prefer the dedicated list queries; fall back to the projects.get payload.
+  const tasks = tasksQ.data ?? data.tasks;
+  const milestones = milestonesQ.data ?? data.milestones;
+  const dependencies = depsQ.data ?? data.dependencies;
   const market = markets?.find(m => m.id === project.marketId);
   const fn = functions?.find(f => f.id === project.functionId);
   const taskDone = tasks.filter(t => t.status === "done").length;

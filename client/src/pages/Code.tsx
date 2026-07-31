@@ -95,6 +95,7 @@ type AIAction = typeof AI_ACTIONS[number]["value"];
 
 export default function CodePage() {
   const codeApi = trpc.code;
+  const utils = trpc.useUtils();
   const [code, setCode] = useState("// Start coding here...\nconsole.log('Hello, World!');\n");
   const [language, setLanguage] = useState("typescript");
   const [activeTab, setActiveTab] = useState("editor");
@@ -122,6 +123,7 @@ export default function CodePage() {
     { enabled: searchQuery.length > 0 }
   );
   const executionsQuery = codeApi.executions.useQuery({});
+  const aiSessionsQuery = codeApi.aiSessions.useQuery({});
 
   // Mutations
   const executeMutation = codeApi.execute.useMutation({
@@ -141,6 +143,7 @@ export default function CodePage() {
     onSuccess: (data) => {
       setAiResult({ outputCode: data.outputCode ?? null, explanation: data.explanation ?? "" });
       setActiveTab("ai-result");
+      aiSessionsQuery.refetch();
       toast.success("AI response received");
     },
     onError: (err) => toast.error(err.message),
@@ -229,14 +232,22 @@ export default function CodePage() {
     });
   }, [snippetTitle, snippetDescription, language, code]);
 
-  const loadSnippet = useCallback((snippet: any) => {
-    setCode(snippet.code);
-    setLanguage(snippet.language);
-    setSnippetTitle(snippet.title);
-    setSnippetDescription(snippet.description || "");
-    setEditingSnippetId(snippet.id);
+  const loadSnippet = useCallback(async (snippet: any) => {
+    // Fetch the full record so we always load the latest code/description,
+    // falling back to the list row if the detail fetch fails.
+    let full: any = snippet;
+    try {
+      full = await utils.code.getSnippet.fetch({ id: snippet.id });
+    } catch {
+      full = snippet;
+    }
+    setCode(full.code);
+    setLanguage(full.language);
+    setSnippetTitle(full.title);
+    setSnippetDescription(full.description || "");
+    setEditingSnippetId(full.id);
     setActiveTab("editor");
-  }, []);
+  }, [utils]);
 
   const applyAiCode = useCallback(() => {
     if (aiResult?.outputCode) {
@@ -491,6 +502,10 @@ export default function CodePage() {
                   <Clock className="h-3 w-3 mr-1" />
                   History
                 </TabsTrigger>
+                <TabsTrigger value="ai-history" className="text-xs">
+                  <Wand2 className="h-3 w-3 mr-1" />
+                  AI History
+                </TabsTrigger>
               </TabsList>
 
               <TabsContent value="editor" className="flex-1 m-0 px-3 pb-2 overflow-hidden">
@@ -606,6 +621,47 @@ export default function CodePage() {
                           <span className="text-muted-foreground">
                             {exec.executionTimeMs ? `${exec.executionTimeMs}ms` : ""}
                           </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </ScrollArea>
+              </TabsContent>
+
+              <TabsContent value="ai-history" className="flex-1 m-0 overflow-hidden">
+                <ScrollArea className="h-full px-3 pb-2">
+                  {(aiSessionsQuery.data ?? []).length === 0 ? (
+                    <p className="text-xs text-muted-foreground py-4 text-center">
+                      No AI sessions yet. Run an AI action to see history.
+                    </p>
+                  ) : (
+                    <div className="space-y-1">
+                      {(aiSessionsQuery.data ?? []).slice(0, 20).map((session: any) => (
+                        <div
+                          key={session.id}
+                          className="flex items-center gap-2 text-xs py-1 px-2 rounded hover:bg-accent cursor-pointer"
+                          onClick={() => {
+                            setAiResult({
+                              outputCode: session.outputCode ?? null,
+                              explanation: session.explanation ?? "",
+                            });
+                            setActiveTab("ai-result");
+                          }}
+                        >
+                          <Badge variant="secondary" className="text-[10px] h-4 px-1">
+                            {session.action}
+                          </Badge>
+                          <span className="truncate flex-1">{session.prompt}</span>
+                          {session.model && (
+                            <span className="text-muted-foreground truncate max-w-[100px]">
+                              {session.model}
+                            </span>
+                          )}
+                          {session.tokensUsed != null && (
+                            <span className="text-muted-foreground">
+                              {session.tokensUsed} tok
+                            </span>
+                          )}
                         </div>
                       ))}
                     </div>

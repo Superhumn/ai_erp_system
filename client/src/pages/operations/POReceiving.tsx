@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Package, Truck, CheckCircle, ArrowRight } from "lucide-react";
+import { Package, Truck, CheckCircle, ArrowRight, History } from "lucide-react";
 import { toast } from "sonner";
 
 interface ReceivingItem {
@@ -28,6 +28,7 @@ export default function POReceiving() {
   const [selectedWarehouse, setSelectedWarehouse] = useState<number>(0);
   const [receivingItems, setReceivingItems] = useState<ReceivingItem[]>([]);
   const [isReceiveOpen, setIsReceiveOpen] = useState(false);
+  const [selectedReceivingId, setSelectedReceivingId] = useState<number | null>(null);
 
   const { data: purchaseOrders } = trpc.purchaseOrders.list.useQuery();
   const { data: poItems } = trpc.purchaseOrders.getItems.useQuery(
@@ -37,6 +38,15 @@ export default function POReceiving() {
   const { data: warehouses } = trpc.warehouses.list.useQuery();
   const { data: products } = trpc.products.list.useQuery();
   const { data: rawMaterials } = trpc.rawMaterials.list.useQuery();
+
+  const { data: receivingRecords } = trpc.poReceiving.getRecords.useQuery(
+    { purchaseOrderId: selectedPO || 0 },
+    { enabled: !!selectedPO }
+  );
+  const { data: receivingRecordItems } = trpc.poReceiving.getItems.useQuery(
+    { receivingRecordId: selectedReceivingId || 0 },
+    { enabled: !!selectedReceivingId }
+  );
 
   const receiveMutation = trpc.poReceiving.receive.useMutation({
     onSuccess: () => {
@@ -55,6 +65,7 @@ export default function POReceiving() {
   const handleSelectPO = (poId: string) => {
     setSelectedPO(parseInt(poId));
     setReceivingItems([]);
+    setSelectedReceivingId(null);
   };
 
   const initializeReceiving = () => {
@@ -235,6 +246,107 @@ export default function POReceiving() {
                   })}
                 </TableBody>
               </Table>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Receiving History */}
+        {selectedPO && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <History className="w-5 h-5" />
+                Receiving History - {selectedPOData?.poNumber}
+              </CardTitle>
+              <CardDescription>Past receiving records for this purchase order</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Record #</TableHead>
+                    <TableHead>Received Date</TableHead>
+                    <TableHead>Warehouse</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {!receivingRecords || receivingRecords.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                        No receiving records for this purchase order yet
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    receivingRecords.map((rec: any) => (
+                      <TableRow key={rec.id} className={selectedReceivingId === rec.id ? 'bg-muted' : ''}>
+                        <TableCell className="font-mono">{rec.receivingNumber || `#${rec.id}`}</TableCell>
+                        <TableCell>
+                          {rec.receivedDate ? new Date(rec.receivedDate).toLocaleDateString() : '-'}
+                        </TableCell>
+                        <TableCell>
+                          {warehouses?.find(wh => wh.id === rec.warehouseId)?.name || rec.warehouseId || '-'}
+                        </TableCell>
+                        <TableCell>
+                          <Badge className="bg-blue-500/8 text-blue-600 dark:text-blue-400">
+                            {rec.status || 'received'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            variant={selectedReceivingId === rec.id ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => setSelectedReceivingId(selectedReceivingId === rec.id ? null : rec.id)}
+                          >
+                            {selectedReceivingId === rec.id ? 'Hide Items' : 'View Items'}
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+
+              {selectedReceivingId && (
+                <div className="mt-4 border-t pt-4">
+                  <div className="text-sm font-medium mb-2">Received Items</div>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Item</TableHead>
+                        <TableHead>Quantity</TableHead>
+                        <TableHead>Unit</TableHead>
+                        <TableHead>Lot Number</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {!receivingRecordItems || receivingRecordItems.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={4} className="text-center py-6 text-muted-foreground">
+                            No items on this receiving record
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        receivingRecordItems.map((item: any) => {
+                          const product = products?.find(p => p.id === item.productId);
+                          const rm = rawMaterials?.find(r => r.id === item.rawMaterialId);
+                          return (
+                            <TableRow key={item.id}>
+                              <TableCell>
+                                {product?.name || rm?.name || `Item #${item.purchaseOrderItemId ?? item.id}`}
+                              </TableCell>
+                              <TableCell>{item.quantity}</TableCell>
+                              <TableCell>{item.unit || 'EA'}</TableCell>
+                              <TableCell>{item.lotNumber || '-'}</TableCell>
+                            </TableRow>
+                          );
+                        })
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
             </CardContent>
           </Card>
         )}

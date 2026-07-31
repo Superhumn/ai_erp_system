@@ -24,7 +24,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { ArrowLeft, Play, CheckCircle, Package, AlertTriangle, MoreHorizontal, Trash2, Ban, Loader2 } from "lucide-react";
+import { ArrowLeft, Play, CheckCircle, Package, AlertTriangle, MoreHorizontal, Trash2, Ban, Loader2, SlidersHorizontal, History } from "lucide-react";
 import { toast } from "sonner";
 import { Link, useParams, useLocation } from "wouter";
 
@@ -36,6 +36,10 @@ export default function WorkOrderDetail() {
   const [isCompleteOpen, setIsCompleteOpen] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [adjustMat, setAdjustMat] = useState<any>(null);
+  const [adjustQty, setAdjustQty] = useState("");
+  const [adjustNotes, setAdjustNotes] = useState("");
+  const [historyMat, setHistoryMat] = useState<any>(null);
 
   const { data: workOrder, isLoading, refetch } = trpc.workOrders.getById.useQuery({ id: workOrderId });
   const { data: materials } = trpc.workOrders.getMaterials.useQuery({ workOrderId });
@@ -43,6 +47,24 @@ export default function WorkOrderDetail() {
   const { data: warehouses } = trpc.warehouses.list.useQuery();
   const { data: rawMaterials } = trpc.rawMaterials.list.useQuery();
   const { data: rmInventory } = trpc.rawMaterialInventory.list.useQuery({ warehouseId: workOrder?.warehouseId || undefined });
+  const utils = trpc.useUtils();
+
+  const { data: rmTransactions, isLoading: isTxLoading } = trpc.rawMaterialInventory.getTransactions.useQuery(
+    { rawMaterialId: historyMat?.rawMaterialId ?? 0 },
+    { enabled: !!historyMat?.rawMaterialId }
+  );
+
+  const adjustMutation = trpc.rawMaterialInventory.adjust.useMutation({
+    onSuccess: () => {
+      toast.success("Inventory adjusted");
+      utils.rawMaterialInventory.list.invalidate();
+      utils.rawMaterialInventory.getTransactions.invalidate();
+      setAdjustMat(null);
+      setAdjustQty("");
+      setAdjustNotes("");
+    },
+    onError: (err) => toast.error(err.message),
+  });
 
   const startMutation = trpc.workOrders.startProduction.useMutation({
     onSuccess: () => {
@@ -252,12 +274,13 @@ export default function WorkOrderDetail() {
                   <TableHead>Available</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Consumed</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {materials?.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                       No materials assigned to this work order
                     </TableCell>
                   </TableRow>
@@ -297,6 +320,33 @@ export default function WorkOrderDetail() {
                         </TableCell>
                         <TableCell>
                           {mat.consumedQuantity ? `${mat.consumedQuantity} ${mat.unit}` : '-'}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {mat.rawMaterialId && (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="sm">
+                                  <MoreHorizontal className="w-4 h-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    setAdjustMat(mat);
+                                    setAdjustQty("");
+                                    setAdjustNotes("");
+                                  }}
+                                >
+                                  <SlidersHorizontal className="w-4 h-4 mr-2" />
+                                  Adjust Inventory
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => setHistoryMat(mat)}>
+                                  <History className="w-4 h-4 mr-2" />
+                                  Transaction History
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          )}
                         </TableCell>
                       </TableRow>
                     );
@@ -399,6 +449,102 @@ export default function WorkOrderDetail() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        <Dialog open={!!adjustMat} onOpenChange={(open) => !open && setAdjustMat(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Adjust Inventory</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Adjust on-hand quantity for <span className="font-medium text-foreground">{adjustMat?.name}</span> at {warehouse?.name || 'this location'}. Use a negative value to decrease.
+              </p>
+              <div>
+                <Label>Quantity Change</Label>
+                <Input
+                  type="number"
+                  value={adjustQty}
+                  onChange={e => setAdjustQty(e.target.value)}
+                  placeholder="e.g. 10 or -5"
+                />
+                <p className="text-xs text-muted-foreground mt-1">Unit: {adjustMat?.unit}</p>
+              </div>
+              <div>
+                <Label>Notes</Label>
+                <Input
+                  value={adjustNotes}
+                  onChange={e => setAdjustNotes(e.target.value)}
+                  placeholder="Reason for adjustment (optional)"
+                />
+              </div>
+              <Button
+                className="w-full"
+                disabled={adjustMutation.isPending || !adjustQty || !workOrder.warehouseId}
+                onClick={() => {
+                  if (!adjustMat?.rawMaterialId || !workOrder.warehouseId) return;
+                  adjustMutation.mutate({
+                    rawMaterialId: adjustMat.rawMaterialId,
+                    warehouseId: workOrder.warehouseId,
+                    quantity: parseFloat(adjustQty),
+                    unit: adjustMat.unit || 'unit',
+                    notes: adjustNotes || undefined,
+                  });
+                }}
+              >
+                {adjustMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Apply Adjustment
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={!!historyMat} onOpenChange={(open) => !open && setHistoryMat(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Transaction History — {historyMat?.name}</DialogTitle>
+            </DialogHeader>
+            {isTxLoading ? (
+              <div className="py-8 text-center text-muted-foreground">Loading...</div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Change</TableHead>
+                    <TableHead>New Qty</TableHead>
+                    <TableHead>Notes</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(!rmTransactions || rmTransactions.length === 0) ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                        No transactions recorded
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    rmTransactions.map((tx: any) => (
+                      <TableRow key={tx.id}>
+                        <TableCell className="text-sm">
+                          {tx.createdAt ? new Date(tx.createdAt).toLocaleString() : '-'}
+                        </TableCell>
+                        <TableCell>
+                          <Badge className="bg-blue-500/8 text-blue-600 dark:text-blue-400">
+                            {tx.transactionType}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{tx.quantity} {tx.unit}</TableCell>
+                        <TableCell>{tx.newQuantity} {tx.unit}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{tx.notes || '-'}</TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
   );
 }
