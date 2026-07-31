@@ -118,14 +118,6 @@ export default function CopackerPortal() {
   const [viewUpdateId, setViewUpdateId] = useState<number | null>(null);
   const [viewInvoiceId, setViewInvoiceId] = useState<number | null>(null);
   const [viewSharedRecipeId, setViewSharedRecipeId] = useState<number | null>(null);
-  const [viewClearanceId, setViewClearanceId] = useState<number | null>(null);
-
-  // --- Shipment document upload (uploadShipmentDocument) ---
-  const [showShipmentDoc, setShowShipmentDoc] = useState(false);
-  const [shipmentDocType, setShipmentDocType] = useState<string>("other");
-  const [shipmentDocName, setShipmentDocName] = useState("");
-  const [shipmentDocShipmentId, setShipmentDocShipmentId] = useState<string>("");
-  const [shipmentDocFile, setShipmentDocFile] = useState<File | null>(null);
 
   // ---- Queries ----
   const { data: warehouse } = trpc.copackerPortal.getWarehouse.useQuery();
@@ -147,11 +139,6 @@ export default function CopackerPortal() {
   const { data: invoiceDetail } = (trpc.copackerPortal as any).getInvoiceDetail.useQuery(
     { id: viewInvoiceId! },
     { enabled: !!viewInvoiceId }
-  );
-  const { data: customsClearances } = (trpc.copackerPortal as any).getCustomsClearances.useQuery();
-  const { data: customsDocuments } = (trpc.copackerPortal as any).getCustomsDocuments.useQuery(
-    { clearanceId: viewClearanceId! },
-    { enabled: !!viewClearanceId }
   );
 
   // ---- Work Orders query ----
@@ -205,16 +192,6 @@ export default function CopackerPortal() {
       refetchShipDocs();
     },
     onError: (error: any) => toast.error("Failed to upload document", { description: error.message }),
-  });
-
-  const uploadShipmentDoc = (trpc.copackerPortal as any).uploadShipmentDocument.useMutation({
-    onSuccess: () => {
-      toast.success("Shipment document uploaded");
-      setShowShipmentDoc(false);
-      resetShipmentDocForm();
-      refetchShipDocs();
-    },
-    onError: (error: any) => toast.error("Failed to upload shipment document", { description: error.message }),
   });
 
   const uploadInvoiceMutation = (trpc.copackerPortal as any).uploadInvoice.useMutation({
@@ -401,35 +378,6 @@ export default function CopackerPortal() {
     });
   };
 
-  // ---- Shipment doc upload (uploadShipmentDocument) ----
-  const resetShipmentDocForm = () => {
-    setShipmentDocType("other");
-    setShipmentDocName("");
-    setShipmentDocShipmentId("");
-    setShipmentDocFile(null);
-  };
-
-  const handleUploadShipmentDoc = async () => {
-    if (!shipmentDocFile) {
-      toast.error("Please select a file to upload");
-      return;
-    }
-    if (!shipmentDocShipmentId) {
-      toast.error("Please select a shipment");
-      return;
-    }
-    const buffer = await shipmentDocFile.arrayBuffer();
-    const fileData = arrayBufferToBase64(buffer);
-
-    uploadShipmentDoc.mutate({
-      shipmentId: parseInt(shipmentDocShipmentId),
-      documentType: shipmentDocType as "invoice" | "receipt" | "contract" | "legal" | "report" | "hr" | "other",
-      name: shipmentDocName || shipmentDocFile.name,
-      fileData,
-      mimeType: shipmentDocFile.type,
-    });
-  };
-
   // ---- Stats ----
   const stats = useMemo(() => {
     const totalProducts = inventory?.length || 0;
@@ -576,10 +524,6 @@ export default function CopackerPortal() {
           <Button variant="outline" onClick={() => setShowShipDocUpload(true)}>
             <Upload className="h-4 w-4 mr-1" />
             Upload Doc
-          </Button>
-          <Button variant="outline" onClick={() => setShowShipmentDoc(true)}>
-            <Truck className="h-4 w-4 mr-1" />
-            Shipment Doc
           </Button>
           <Button onClick={initUpdateForm} disabled={!inventory?.length}>
             <ClipboardList className="h-4 w-4 mr-2" />
@@ -914,195 +858,6 @@ export default function CopackerPortal() {
                       >
                         <Eye className="h-3 w-3 mr-1" />
                         View
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Invoices */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Invoices</CardTitle>
-          <CardDescription>Invoices submitted for copacking services</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {!invoices?.length ? (
-            <div className="text-center py-6 text-muted-foreground">No invoices submitted yet</div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Invoice #</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Due</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {invoices.map((inv: any) => (
-                  <TableRow key={inv.id}>
-                    <TableCell className="font-mono text-sm">{inv.invoiceNumber}</TableCell>
-                    <TableCell className="text-sm">{inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleDateString() : "--"}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{inv.dueDate ? new Date(inv.dueDate).toLocaleDateString() : "--"}</TableCell>
-                    <TableCell>
-                      <Badge variant={statusVariant(inv.status)} className="capitalize">{inv.status?.replace(/_/g, " ")}</Badge>
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-sm">
-                      ${parseFloat(inv.totalAmount || "0").toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setViewInvoiceId(inv.id)}>
-                        <Eye className="h-3 w-3 mr-1" />
-                        View
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Inventory Updates */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Inventory Updates</CardTitle>
-          <CardDescription>Biweekly inventory update submissions</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {!inventoryUpdates?.length ? (
-            <div className="text-center py-6 text-muted-foreground">No inventory updates yet</div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Period</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Submitted</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {inventoryUpdates.map((u: any) => (
-                  <TableRow key={u.id}>
-                    <TableCell className="text-sm">
-                      {new Date(u.periodStart).toLocaleDateString()} - {new Date(u.periodEnd).toLocaleDateString()}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={statusVariant(u.status)} className="capitalize">{u.status}</Badge>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {u.createdAt ? new Date(u.createdAt).toLocaleDateString() : "--"}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setViewUpdateId(u.id)}>
-                        <Eye className="h-3 w-3 mr-1" />
-                        View
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Shipping Documents */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Shipping Documents</CardTitle>
-          <CardDescription>Bills of lading, packing lists, and other shipping documents</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {!shippingDocs?.length ? (
-            <div className="text-center py-6 text-muted-foreground">No shipping documents uploaded yet</div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Uploaded</TableHead>
-                  <TableHead className="text-right">File</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {shippingDocs.map((d: any) => (
-                  <TableRow key={d.id}>
-                    <TableCell className="font-medium text-sm">{d.name}</TableCell>
-                    <TableCell className="text-sm capitalize">{d.documentType?.replace(/_/g, " ")}</TableCell>
-                    <TableCell>
-                      <Badge variant={statusVariant(d.status)} className="capitalize">{d.status}</Badge>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {d.createdAt ? new Date(d.createdAt).toLocaleDateString() : "--"}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {d.fileUrl ? (
-                        <a href={d.fileUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline text-sm">
-                          Open
-                        </a>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">--</span>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Customs Clearances */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Customs Clearances</CardTitle>
-          <CardDescription>Import/export clearances for your shipments</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {!customsClearances?.length ? (
-            <div className="text-center py-6 text-muted-foreground">No customs clearances found</div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Clearance #</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Port of Entry</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {customsClearances.map((c: any) => (
-                  <TableRow key={c.id}>
-                    <TableCell className="font-mono text-sm">{c.clearanceNumber}</TableCell>
-                    <TableCell className="text-sm capitalize">{c.type}</TableCell>
-                    <TableCell>
-                      <Badge variant={statusVariant(c.status)} className="capitalize">{c.status?.replace(/_/g, " ")}</Badge>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{c.portOfEntry || "--"}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">
-                      {c.totalAmount != null
-                        ? `$${parseFloat(c.totalAmount || "0").toLocaleString(undefined, { minimumFractionDigits: 2 })}`
-                        : "--"}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setViewClearanceId(c.id)}>
-                        <FileText className="h-3 w-3 mr-1" />
-                        Documents
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -1985,136 +1740,6 @@ export default function CopackerPortal() {
               </DialogFooter>
             </div>
           )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Customs Documents Dialog */}
-      <Dialog open={!!viewClearanceId} onOpenChange={() => setViewClearanceId(null)}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Customs Documents</DialogTitle>
-            <DialogDescription>Documents attached to this customs clearance</DialogDescription>
-          </DialogHeader>
-
-          {customsDocuments?.length ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">File</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {customsDocuments.map((doc: any) => (
-                  <TableRow key={doc.id}>
-                    <TableCell className="font-medium text-sm">{doc.name}</TableCell>
-                    <TableCell className="text-sm capitalize">{doc.documentType?.replace(/_/g, " ")}</TableCell>
-                    <TableCell>
-                      <Badge variant={statusVariant(doc.status)} className="capitalize">{doc.status}</Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {doc.fileUrl ? (
-                        <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline text-sm">
-                          Open
-                        </a>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">--</span>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          ) : (
-            <p className="text-muted-foreground text-center py-4">No documents found for this clearance</p>
-          )}
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setViewClearanceId(null)}>
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Upload Shipment Document Dialog (uploadShipmentDocument) */}
-      <Dialog open={showShipmentDoc} onOpenChange={setShowShipmentDoc}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Upload Shipment Document</DialogTitle>
-            <DialogDescription>
-              Attach a document directly to a shipment record
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label>Shipment *</Label>
-              <Select value={shipmentDocShipmentId} onValueChange={setShipmentDocShipmentId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select a shipment..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {shipments?.map((s: any) => (
-                    <SelectItem key={s.id} value={s.id.toString()}>
-                      {s.shipmentNumber} ({s.type})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Document Type *</Label>
-              <Select value={shipmentDocType} onValueChange={setShipmentDocType}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="invoice">Invoice</SelectItem>
-                  <SelectItem value="receipt">Receipt</SelectItem>
-                  <SelectItem value="contract">Contract</SelectItem>
-                  <SelectItem value="legal">Legal</SelectItem>
-                  <SelectItem value="report">Report</SelectItem>
-                  <SelectItem value="hr">HR</SelectItem>
-                  <SelectItem value="other">Other</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Document Name</Label>
-              <Input
-                value={shipmentDocName}
-                onChange={(e) => setShipmentDocName(e.target.value)}
-                placeholder="e.g., BOL-2024-001"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Select File *</Label>
-              <Input
-                type="file"
-                accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
-                onChange={(e) => setShipmentDocFile(e.target.files?.[0] || null)}
-              />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowShipmentDoc(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleUploadShipmentDoc}
-              disabled={uploadShipmentDoc.isPending || !shipmentDocFile}
-            >
-              <Upload className="h-4 w-4 mr-2" />
-              Upload
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
