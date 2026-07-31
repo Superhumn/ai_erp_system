@@ -219,14 +219,36 @@ export default function PmProject() {
               {milestones.length === 0 ? (
                 <div className="p-6 text-center text-muted-foreground text-sm">No milestones yet.</div>
               ) : milestones.map(m => (
-                <div key={m.id} className="p-3 flex items-center justify-between">
+                <div key={m.id} className="p-3 flex items-center justify-between gap-2">
                   <div>
                     <div className="text-sm font-medium">{m.name}</div>
                     {m.description && <div className="text-xs text-muted-foreground">{m.description}</div>}
                   </div>
-                  <div className="text-right text-xs">
-                    <div>Target {fmtDate(m.targetDate)}</div>
-                    {m.actualDate && <div className="text-success">Done {fmtDate(m.actualDate)}</div>}
+                  <div className="flex items-center gap-1">
+                    <div className="text-right text-xs mr-1">
+                      <div>Target {fmtDate(m.targetDate)}</div>
+                      {m.actualDate && <div className="text-success">Done {fmtDate(m.actualDate)}</div>}
+                    </div>
+                    {!m.actualDate && (
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        title="Mark done"
+                        disabled={updateMilestone.isPending}
+                        onClick={() => updateMilestone.mutate({ id: m.id, actualDate: new Date() })}
+                      >
+                        <Check className="w-4 h-4 text-success" />
+                      </Button>
+                    )}
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      title="Delete milestone"
+                      disabled={deleteMilestone.isPending}
+                      onClick={() => { if (confirm("Delete this milestone?")) deleteMilestone.mutate({ id: m.id }); }}
+                    >
+                      <Trash2 className="w-4 h-4 text-destructive" />
+                    </Button>
                   </div>
                 </div>
               ))}
@@ -235,6 +257,45 @@ export default function PmProject() {
 
           <Card className="p-0">
             <div className="px-4 py-3 border-b text-sm font-semibold">Dependencies ({dependencies.length})</div>
+            <div className="p-3 flex flex-wrap items-center gap-2 border-b bg-muted/30">
+              <Select value={depDirection} onValueChange={setDepDirection}>
+                <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="blocks">This blocks</SelectItem>
+                  <SelectItem value="blocked_by">Blocked by</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input
+                className="w-28"
+                type="number"
+                placeholder="Project #"
+                value={depOtherId}
+                onChange={(e) => setDepOtherId(e.target.value)}
+              />
+              <Select value={depType} onValueChange={setDepType}>
+                <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="blocks">blocks</SelectItem>
+                  <SelectItem value="related">related</SelectItem>
+                  <SelectItem value="informs">informs</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
+                size="sm"
+                disabled={createDependency.isPending}
+                onClick={() => {
+                  const other = Number(depOtherId);
+                  if (!other || isNaN(other)) { toast.error("Enter a project number"); return; }
+                  const payload = depDirection === "blocks"
+                    ? { predecessorProjectId: id, successorProjectId: other }
+                    : { predecessorProjectId: other, successorProjectId: id };
+                  createDependency.mutate({ ...payload, dependencyType: depType as "blocks" | "related" | "informs" });
+                  setDepOtherId("");
+                }}
+              >
+                <Plus className="w-4 h-4 mr-1" /> Link
+              </Button>
+            </div>
             <div className="divide-y">
               {dependencies.length === 0 ? (
                 <div className="p-6 text-center text-muted-foreground text-sm">No dependencies linked.</div>
