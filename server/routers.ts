@@ -330,14 +330,21 @@ async function getValidGoogleToken(userId: number): Promise<{ accessToken: strin
     const refreshed = await refreshGoogleToken(token.refreshToken);
     
     if (refreshed.accessToken && refreshed.expiresAt) {
-      // Update database with new token (preserve existing googleEmail via COALESCE)
-      await db.upsertGoogleOAuthToken({
-        userId,
-        accessToken: refreshed.accessToken,
-        refreshToken: token.refreshToken,
-        expiresAt: refreshed.expiresAt,
-        googleEmail: token.googleEmail,
-      });
+      // Persist the refreshed token, but never let a DB write failure block the
+      // request — the freshly refreshed token is valid whether or not we manage
+      // to store it. (Previously a failing upsert here aborted every Drive
+      // operation: sync AND the document-viewer proxy.)
+      try {
+        await db.upsertGoogleOAuthToken({
+          userId,
+          accessToken: refreshed.accessToken,
+          refreshToken: token.refreshToken,
+          expiresAt: refreshed.expiresAt,
+          googleEmail: token.googleEmail,
+        });
+      } catch (persistErr) {
+        console.error(`[GoogleToken] Failed to persist refreshed token for user ${userId} (using it anyway):`, persistErr);
+      }
       return { accessToken: refreshed.accessToken };
     }
     
@@ -7584,7 +7591,68 @@ Be concise and helpful. Always give actionable guidance.`;
           });
           return { success: true };
         }),
-      
+
+      // Inline approval for concierge errands: approve + run in a single step
+      // straight from the AI chat, instead of parking the task in the Approval
+      // Queue. Transitions directly to in_progress (skipping the 'approved'
+      // state the background scheduler watches) so the errand can never be
+      // double-executed.
+      approveAndExecute: adminProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const task = await db.getAiAgentTaskById(input.id);
+          if (!task) throw new TRPCError({ code: 'NOT_FOUND', message: 'Task not found' });
+          if (task.taskType !== 'concierge_errand') {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Inline approval is only supported for concierge errands' });
+          }
+          if (task.status !== 'pending_approval') {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: `Errand is not awaiting approval (status: ${task.status})` });
+          }
+
+          await db.updateAiAgentTask(input.id, {
+            status: 'in_progress',
+            approvedBy: ctx.user.id,
+            approvedAt: new Date(),
+          });
+          await db.createAiAgentLog({
+            taskId: input.id,
+            action: 'task_approved',
+            status: 'success',
+            message: `Errand approved inline by ${ctx.user.name}`,
+          });
+
+          try {
+            const { executeConciergeErrand } = await import('./conciergeErrandService');
+            const r = await executeConciergeErrand(task);
+            if (!r.success) throw new Error(r.error || 'Errand execution failed');
+            await db.updateAiAgentTask(input.id, {
+              status: 'completed',
+              executedAt: new Date(),
+              executionResult: JSON.stringify(r.data),
+            });
+            await db.createAiAgentLog({
+              taskId: input.id,
+              action: 'task_executed',
+              status: 'success',
+              message: 'Errand executed successfully (inline approval)',
+              details: JSON.stringify(r.data),
+            });
+            return { success: true, result: r.data };
+          } catch (error: any) {
+            await db.updateAiAgentTask(input.id, {
+              status: 'failed',
+              errorMessage: error.message,
+            });
+            await db.createAiAgentLog({
+              taskId: input.id,
+              action: 'task_failed',
+              status: 'error',
+              message: `Errand execution failed: ${error.message}`,
+            });
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
+          }
+        }),
+
       update: adminProcedure
         .input(z.object({ 
           id: z.number(), 
