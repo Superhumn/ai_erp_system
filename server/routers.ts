@@ -6923,6 +6923,49 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           });
         }
       }),
+
+    // Server-backed candidate pipeline (persisted so the Ops Toolkit
+    // views/reports can operate over recruiting like any other module).
+    candidates: router({
+      list: protectedProcedure.query(() => db.listRecruitingCandidates()),
+      create: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          email: z.string().optional(),
+          phone: z.string().optional(),
+          position: z.string().optional(),
+          stage: z.enum(["applied", "screening", "interview", "assessment", "offer", "hired", "rejected"]).optional(),
+          score: z.number().optional(),
+          resume: z.string().optional(),
+          notes: z.string().optional(),
+          source: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createRecruitingCandidate({ ...input, createdBy: ctx.user.id });
+          return { id: result.id };
+        }),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          email: z.string().optional(),
+          phone: z.string().optional(),
+          position: z.string().optional(),
+          stage: z.enum(["applied", "screening", "interview", "assessment", "offer", "hired", "rejected"]).optional(),
+          score: z.number().nullable().optional(),
+          resume: z.string().optional(),
+          notes: z.string().optional(),
+          source: z.string().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { id, ...rest } = input;
+          await db.updateRecruitingCandidate(id, rest as any);
+          return { success: true };
+        }),
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => { await db.deleteRecruitingCandidate(input.id); return { success: true }; }),
+    }),
   }),
 
   // ============================================

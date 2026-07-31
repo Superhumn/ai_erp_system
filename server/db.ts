@@ -189,6 +189,8 @@ import {
   pmTasks, InsertPmTask,
   pmDependencies, InsertPmDependency,
   pmMilestones, InsertPmMilestone,
+  // Recruiting
+  recruitingCandidates, InsertRecruitingCandidate,
   // Ops Toolkit
   savedViews, InsertSavedView,
   intakeForms, InsertIntakeForm,
@@ -15370,4 +15372,32 @@ export async function deleteSavedReport(id: number) {
   const db = await getDb();
   if (!db) return;
   await db.delete(savedReports).where(eq(savedReports.id, id));
+}
+
+// ============================================
+// RECRUITING CANDIDATES
+// ============================================
+export async function listRecruitingCandidates() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(recruitingCandidates).orderBy(desc(recruitingCandidates.appliedAt));
+}
+
+export async function createRecruitingCandidate(data: InsertRecruitingCandidate) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(recruitingCandidates).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateRecruitingCandidate(id: number, data: Partial<InsertRecruitingCandidate>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(recruitingCandidates).set({ ...data, updatedAt: new Date() } as any).where(eq(recruitingCandidates.id, id));
+}
+
+export async function deleteRecruitingCandidate(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(recruitingCandidates).where(eq(recruitingCandidates.id, id));
 }

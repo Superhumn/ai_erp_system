@@ -7745,3 +7745,31 @@ export const savedReports = mysqlTable("savedReports", {
 
 export type SavedReport = typeof savedReports.$inferSelect;
 export type InsertSavedReport = typeof savedReports.$inferInsert;
+
+// ============================================
+// RECRUITING CANDIDATES
+// Server-backed candidate pipeline (previously local-only on the Recruiting
+// page). Persisting these enables the Ops Toolkit views/reports over recruiting.
+// ============================================
+export const recruitingCandidates = mysqlTable("recruiting_candidates", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 200 }).notNull(),
+  email: varchar("email", { length: 320 }),
+  phone: varchar("phone", { length: 64 }),
+  position: varchar("position", { length: 200 }),
+  stage: mysqlEnum("stage", [
+    "applied", "screening", "interview", "assessment", "offer", "hired", "rejected",
+  ]).default("applied").notNull(),
+  score: int("score"),
+  resume: text("resume"),
+  notes: text("notes"),
+  source: varchar("source", { length: 64 }).default("other"),
+  appliedAt: timestamp("appliedAt").defaultNow().notNull(),
+  interviewDate: timestamp("interviewDate"),
+  createdBy: int("createdBy").references(() => users.id),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type RecruitingCandidate = typeof recruitingCandidates.$inferSelect;
+export type InsertRecruitingCandidate = typeof recruitingCandidates.$inferInsert;
