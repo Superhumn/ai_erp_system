@@ -166,7 +166,7 @@ Provide: 1) Score X/10, 2) Key strengths, 3) Concerns, 4) Recommendation (advanc
     if (stageFilter !== "all" && c.stage !== stageFilter) return false;
     if (!search) return true;
     const q = search.toLowerCase();
-    return c.name.toLowerCase().includes(q) || c.position.toLowerCase().includes(q) || c.email.toLowerCase().includes(q);
+    return c.name.toLowerCase().includes(q) || (c.position ?? "").toLowerCase().includes(q) || (c.email ?? "").toLowerCase().includes(q);
   });
 
   const stats = {
@@ -329,7 +329,7 @@ Provide: 1) Score X/10, 2) Key strengths, 3) Concerns, 4) Recommendation (advanc
                             </SelectContent>
                           </Select>
                           {c.email && (
-                            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { navigator.clipboard.writeText(c.email); toast.success("Email copied"); }}>
+                            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { navigator.clipboard.writeText(c.email ?? ""); toast.success("Email copied"); }}>
                               <Mail className="h-3 w-3 mr-1" /> Email
                             </Button>
                           )}
