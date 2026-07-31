@@ -994,7 +994,10 @@ export async function startOrchestrator(): Promise<void> {
   const db = await getDb();
   if (!db) return;
   try {
-    await db.execute(sql`SELECT 1 FROM supply_chain_workflows LIMIT 1`);
+    // Probe the workflow table via the Drizzle schema object so the table
+    // name always matches the real table ("supplyChainWorkflows"). A hardcoded
+    // snake_case name here silently disabled the orchestrator on every start.
+    await db.select({ id: supplyChainWorkflows.id }).from(supplyChainWorkflows).limit(1);
   } catch {
     console.log("[Orchestrator] Supply chain workflow tables not found — orchestrator disabled (this is expected)");
     return;

@@ -48,10 +48,12 @@ function KPICard({
   variant?: KPIVariant;
   trend?: "up" | "down" | null;
 }) {
+  // Superhumn scheme: electric blue is the only accent. Severity is expressed
+  // with ink weight, not color — so every KPI icon reads as muted ink.
   const iconColors: Record<KPIVariant, string> = {
-    green: "text-emerald-500",
-    amber: "text-amber-500",
-    blue: "text-blue-500",
+    green: "text-muted-foreground/50",
+    amber: "text-muted-foreground/50",
+    blue: "text-muted-foreground/50",
     default: "text-muted-foreground/50",
   };
 
@@ -76,14 +78,14 @@ function KPICard({
               <Icon className={`h-3.5 w-3.5 ${iconColors[variant]}`} />
             </div>
             <div className="flex items-baseline gap-2">
-              <span className="text-xl font-semibold tracking-[-0.02em]">
+              <span className="font-display text-2xl font-bold tracking-[-0.04em] tabular-nums">
                 {value}
               </span>
               {trend === "up" && (
-                <ArrowUpRight className="h-4 w-4 text-emerald-500" />
+                <ArrowUpRight className="h-4 w-4 text-muted-foreground/60" />
               )}
               {trend === "down" && (
-                <ArrowDownRight className="h-4 w-4 text-red-500" />
+                <ArrowDownRight className="h-4 w-4 text-muted-foreground/60" />
               )}
             </div>
             {subtitle && (
@@ -96,6 +98,32 @@ function KPICard({
       </CardContent>
     </Card>
   );
+}
+
+// Map an audit-log entity to the best in-app destination. Entities with a
+// detail route deep-link by id; the rest go to their list. Unknown types
+// return null and stay non-clickable (rather than guess a wrong route).
+function activityHref(entityType?: string, entityId?: number | null): string | null {
+  const t = (entityType || "").toLowerCase();
+  const withId = (base: string) => (entityId ? `${base}/${entityId}` : base);
+  switch (t) {
+    case "customer": return withId("/sales/customers");
+    case "order": return withId("/sales/orders");
+    case "product": return withId("/operations/products");
+    case "transfer":
+    case "inventory_transfer":
+    case "inventorytransfer": return withId("/operations/transfers");
+    case "invoice": return "/finance/invoices";
+    case "payment": return "/finance/payments";
+    case "vendor": return "/operations/vendors";
+    case "purchaseorder":
+    case "purchase_order": return "/operations/purchase-orders";
+    case "inventory": return "/operations/inventory";
+    case "employee": return "/hr/employees";
+    case "project":
+    case "projecttask": return "/projects";
+    default: return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -409,7 +437,9 @@ export default function Home() {
                 if (unit === "lbs") return v.toLocaleString() + " lbs";
                 return v.toLocaleString();
               };
-              const barColor = kpi.pct >= 80 ? "bg-emerald-500" : kpi.pct >= 50 ? "bg-amber-500" : kpi.pct > 0 ? "bg-blue-500" : "bg-gray-300";
+              // Single-accent meter: blue fill, darkening to ink near/over target.
+              // No emerald/amber/green severity.
+              const barColor = kpi.pct >= 85 ? "bg-[oklch(0.30_0.03_262)]" : kpi.pct > 0 ? "bg-primary" : "bg-muted-foreground/20";
               return (
                 <Card key={kpi.name}>
                   <CardContent className="pt-3 pb-2.5 px-3">
@@ -420,7 +450,7 @@ export default function Home() {
                       <Target className="h-3.5 w-3.5 text-muted-foreground/50" />
                     </div>
                     <div className="flex items-baseline gap-2 mb-1.5">
-                      <span className="text-lg font-semibold tracking-[-0.02em]">
+                      <span className="font-display text-lg font-bold tracking-[-0.03em] tabular-nums">
                         {fmtVal(kpi.actual, kpi.unit)}
                       </span>
                       <span className="text-xs text-muted-foreground">
@@ -454,10 +484,16 @@ export default function Home() {
               </p>
             ) : (
               <div className="divide-y divide-border/50">
-                {recentActivity.map((entry: any) => (
+                {recentActivity.map((entry: any) => {
+                  const href = activityHref(entry.entityType, entry.entityId);
+                  return (
                   <div
                     key={entry.id}
-                    className="flex items-start gap-3 py-2.5 first:pt-0 last:pb-0"
+                    onClick={href ? () => setLocation(href) : undefined}
+                    onKeyDown={href ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setLocation(href); } } : undefined}
+                    role={href ? "button" : undefined}
+                    tabIndex={href ? 0 : undefined}
+                    className={`flex items-start gap-3 py-2.5 first:pt-0 last:pb-0${href ? " cursor-pointer hover:bg-muted/40 -mx-2 px-2 rounded-md transition-colors" : ""}`}
                   >
                     <Activity className="h-3.5 w-3.5 text-muted-foreground/50 mt-0.5 shrink-0" />
                     <div className="flex-1 min-w-0">
@@ -484,7 +520,8 @@ export default function Home() {
                         : ""}
                     </span>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardContent>

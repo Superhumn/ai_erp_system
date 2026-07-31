@@ -36,9 +36,15 @@ const typeOptions = [
   { value: "expense", label: "Expense", color: "bg-amber-500/10 text-amber-600" },
 ];
 
-function AccountSummaryBody({ account }: { account: any }) {
+function AccountSummaryBody({ account, onUpdate }: { account: any; onUpdate: (patch: { name?: string; description?: string }) => void }) {
   return (
     <div className="space-y-4">
+      <div>
+        <div className="text-xs text-muted-foreground mb-1">Name</div>
+        <div className="font-medium">
+          <InlineEdit value={account.name ?? ""} type="text" onSave={(v) => onUpdate({ name: v })} />
+        </div>
+      </div>
       <div className="grid grid-cols-2 gap-3 text-sm">
         <div className="bg-muted/50 rounded-lg p-3">
           <div className="text-xs text-muted-foreground mb-1">Code</div>
@@ -53,14 +59,10 @@ function AccountSummaryBody({ account }: { account: any }) {
           <div className="font-mono text-lg font-semibold">{formatCurrency(account.balance)}</div>
         </div>
       </div>
-      {account.description && (
-        <div>
-          <h4 className="text-sm font-medium mb-1">Description</h4>
-          <p className="text-sm text-muted-foreground bg-muted/30 rounded p-2">
-            {account.description}
-          </p>
-        </div>
-      )}
+      <div>
+        <h4 className="text-sm font-medium mb-1">Description</h4>
+        <InlineEdit value={account.description ?? ""} type="text" placeholder="No description" onSave={(v) => onUpdate({ description: v })} />
+      </div>
     </div>
   );
 }
@@ -294,7 +296,15 @@ export default function Accounts() {
           )
         }
       >
-        {selectedAccount && <AccountSummaryBody account={selectedAccount} />}
+        {selectedAccount && (
+          <AccountSummaryBody
+            account={selectedAccount}
+            onUpdate={(patch) => {
+              updateAccount.mutate({ id: selectedAccount.id, ...patch });
+              setSelectedAccount((cur: any) => (cur ? { ...cur, ...patch } : cur));
+            }}
+          />
+        )}
       </DetailSheet>
 
       {/* Edit Account Dialog */}

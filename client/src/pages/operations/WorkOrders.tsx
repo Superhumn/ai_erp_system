@@ -249,7 +249,11 @@ export default function WorkOrders() {
                     const warehouse = warehouses?.find(w => w.id === wo.warehouseId);
                     return (
                       <TableRow key={wo.id}>
-                        <TableCell className="font-mono">{wo.workOrderNumber}</TableCell>
+                        <TableCell className="font-mono">
+                          <Link href={`/operations/work-orders/${wo.id}`}>
+                            <span className="hover:underline">{wo.workOrderNumber}</span>
+                          </Link>
+                        </TableCell>
                         <TableCell>{product?.name || `Product #${wo.productId}`}</TableCell>
                         <TableCell>{wo.quantity} {wo.unit}</TableCell>
                         <TableCell>{warehouse?.name || '-'}</TableCell>

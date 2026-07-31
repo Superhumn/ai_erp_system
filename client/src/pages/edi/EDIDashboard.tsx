@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -47,6 +48,7 @@ const statusColors: Record<string, string> = {
 };
 
 export default function EDIDashboard() {
+  const [, navigate] = useLocation();
   const { data: stats, isLoading } = trpc.edi.dashboardStats.useQuery();
   const { data: recentTransactions } = trpc.edi.transactions.list.useQuery({ limit: 10 });
   const { data: partners } = trpc.edi.partners.list.useQuery({});
@@ -101,6 +103,11 @@ export default function EDIDashboard() {
           <div><span className="text-muted-foreground">Errors</span> <span className="font-bold text-red-600">{(stats as any)?.errorTransactions || 0}</span></div>
         </div>
         <div className="flex gap-2">
+          <Link href="/edi/insights">
+            <Button variant="outline" size="sm">
+              AI Insights
+            </Button>
+          </Link>
           <Link href="/edi/partners">
             <Button variant="outline" size="sm">
               <Building2 className="h-4 w-4 mr-2" />
@@ -322,7 +329,14 @@ export default function EDIDashboard() {
                 </thead>
                 <tbody className="divide-y">
                   {recentTransactions.map((txn: any) => (
-                    <tr key={txn.id} className="hover:bg-muted/50">
+                    <tr
+                      key={txn.id}
+                      className="hover:bg-muted/50 cursor-pointer"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => navigate("/edi/transactions")}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate("/edi/transactions"); } }}
+                    >
                       <td className="py-0.5 text-sm">
                         <span className="font-mono font-medium">{txn.transactionSetCode}</span>
                         <span className="text-muted-foreground ml-2">{txnSetLabels[txn.transactionSetCode] || ""}</span>

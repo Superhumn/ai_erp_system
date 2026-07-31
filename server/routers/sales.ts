@@ -8,10 +8,14 @@ export const salesRouter = router({
   // ============================================
   // CUSTOMER MANAGEMENT
   // ============================================
+  // ⚠️ SECURITY: These customer reads are UNSCOPED and this extracted router is currently
+  // orphaned (not wired into the live app — see CLAUDE.md). The live equivalents in
+  // server/routers.ts use `scopedProcedure` + `ctx.scope` to enforce entity visibility.
+  // Before this tree is ever wired up, `list`/`get` MUST adopt the same server-derived scoping
+  // (see server/_core/scope.ts) or they will reintroduce the cross-entity data leak.
   customers: router({
     list: protectedProcedure
-      .input(z.object({ companyId: z.number().optional() }).optional())
-      .query(({ input }) => db.getCustomers(input?.companyId)),
+      .query(() => db.getCustomers()),
     get: protectedProcedure
       .input(z.object({ id: z.number() }))
       .query(({ input }) => db.getCustomerById(input.id)),

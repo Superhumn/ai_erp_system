@@ -138,55 +138,86 @@ export function getGoogleFullAccessAuthUrl(userId: number, returnTo?: string): s
 }
 
 /**
+ * Run a Drive `files.list` query with Shared Drive support and a safe fallback.
+ *
+ * Prefers the `allDrives` corpus so files that live in Shared/Team Drives are
+ * returned. Some Drive configurations reject `corpora=allDrives` with a 400 —
+ * it can't be combined with certain parameters (notably `orderBy`) and some
+ * account types disallow it. On a 400 we transparently retry against the
+ * default (user) corpus, which is the behaviour that worked before Shared Drive
+ * support was added, so a listing never fails outright merely because
+ * `allDrives` was requested.
+ *
+ * `orderBy` is deliberately NOT sent (incompatible with `allDrives`); callers
+ * sort client-side by name.
+ */
+async function driveFilesListAll(
+  accessToken: string,
+  query: string,
+  fields: string,
+): Promise<{ files: any[]; error?: string }> {
+  const collect = async (
+    useAllDrives: boolean,
+  ): Promise<{ files: any[]; ok: boolean; status: number; text: string }> => {
+    const files: any[] = [];
+    let pageToken: string | undefined;
+    do {
+      const params = new URLSearchParams({
+        q: query,
+        fields,
+        pageSize: "1000",
+        supportsAllDrives: "true",
+        includeItemsFromAllDrives: "true",
+      });
+      if (useAllDrives) params.set("corpora", "allDrives");
+      if (pageToken) params.set("pageToken", pageToken);
+
+      const response = await driveFetch(`${GOOGLE_DRIVE_API}/files?${params.toString()}`, accessToken);
+      if (!response.ok) {
+        return { files, ok: false, status: response.status, text: await response.text() };
+      }
+      const data = await response.json();
+      if (Array.isArray(data.files)) files.push(...data.files);
+      pageToken = data.nextPageToken;
+    } while (pageToken);
+    return { files, ok: true, status: 200, text: "" };
+  };
+
+  // Prefer allDrives; on a 400 (unsupported param combo / account type), fall
+  // back to the default corpus so we still return whatever is reachable.
+  let result = await collect(true);
+  if (!result.ok && result.status === 400) {
+    console.warn("[GoogleDrive] corpora=allDrives rejected (400); retrying with default corpus.");
+    result = await collect(false);
+  }
+  if (!result.ok) {
+    console.error("[GoogleDrive] files.list failed:", result.status, result.text);
+    const hint = result.status === 403 || result.status === 404 ? permissionHint() : "";
+    return { files: [], error: `Failed to list Drive contents: ${result.status}.${hint}` };
+  }
+  return { files: result.files };
+}
+
+const byName = (a: { name?: string }, b: { name?: string }) => (a.name || "").localeCompare(b.name || "");
+
+/**
  * List all folders in a Google Drive folder
  */
 export async function listDriveFolders(
   accessToken: string,
   parentFolderId?: string
 ): Promise<{ folders: DriveFolder[]; error?: string }> {
-  try {
-    let query = `mimeType='${FOLDER_MIME_TYPE}' and trashed=false`;
-    if (parentFolderId) {
-      query += ` and '${parentFolderId}' in parents`;
-    }
-
-    const folders: DriveFolder[] = [];
-    let pageToken: string | undefined;
-    do {
-      const params = new URLSearchParams({
-        q: query,
-        fields: "nextPageToken,files(id,name,mimeType,webViewLink,parents)",
-        orderBy: "name",
-        pageSize: "1000",
-        // corpora=allDrives (with supportsAllDrives + includeItemsFromAllDrives)
-        // is required for files.list to return items that live in Shared/Team
-        // Drives. Without it the default `user` corpus can silently omit Shared
-        // Drive contents, which showed up as folders syncing but no files.
-        corpora: "allDrives",
-        supportsAllDrives: "true",
-        includeItemsFromAllDrives: "true",
-      });
-      if (pageToken) params.set("pageToken", pageToken);
-
-      const response = await driveFetch(`${GOOGLE_DRIVE_API}/files?${params.toString()}`, accessToken);
-
-      if (!response.ok) {
-        const error = await response.text();
-        console.error("[GoogleDrive] Failed to list folders:", error);
-        const hint = response.status === 403 || response.status === 404 ? permissionHint() : "";
-        return { folders: [], error: `Failed to list folders: ${response.status}.${hint}` };
-      }
-
-      const data = await response.json();
-      if (Array.isArray(data.files)) folders.push(...data.files);
-      pageToken = data.nextPageToken;
-    } while (pageToken);
-
-    return { folders };
-  } catch (error: any) {
-    console.error("[GoogleDrive] Error listing folders:", error);
-    return { folders: [], error: error.message };
+  let query = `mimeType='${FOLDER_MIME_TYPE}' and trashed=false`;
+  if (parentFolderId) {
+    query += ` and '${parentFolderId}' in parents`;
   }
+  const { files, error } = await driveFilesListAll(
+    accessToken,
+    query,
+    "nextPageToken,files(id,name,mimeType,webViewLink,parents)",
+  );
+  if (error) return { folders: [], error };
+  return { folders: (files as DriveFolder[]).sort(byName) };
 }
 
 /**
@@ -196,46 +227,14 @@ export async function listDriveFiles(
   accessToken: string,
   folderId: string
 ): Promise<{ files: DriveFile[]; error?: string }> {
-  try {
-    const query = `'${folderId}' in parents and trashed=false and mimeType!='${FOLDER_MIME_TYPE}'`;
-
-    const files: DriveFile[] = [];
-    let pageToken: string | undefined;
-    do {
-      const params = new URLSearchParams({
-        q: query,
-        fields: "nextPageToken,files(id,name,mimeType,size,webViewLink,thumbnailLink,iconLink,createdTime,modifiedTime,parents)",
-        orderBy: "name",
-        pageSize: "1000",
-        // corpora=allDrives (with supportsAllDrives + includeItemsFromAllDrives)
-        // is required for files.list to return items that live in Shared/Team
-        // Drives. Without it the default `user` corpus can silently omit Shared
-        // Drive contents, which showed up as folders syncing but no files.
-        corpora: "allDrives",
-        supportsAllDrives: "true",
-        includeItemsFromAllDrives: "true",
-      });
-      if (pageToken) params.set("pageToken", pageToken);
-
-      const response = await driveFetch(`${GOOGLE_DRIVE_API}/files?${params.toString()}`, accessToken);
-
-      if (!response.ok) {
-        const error = await response.text();
-        console.error("[GoogleDrive] Failed to list files:", error);
-        const hint = response.status === 403 || response.status === 404 ? permissionHint() : "";
-        return { files: [], error: `Failed to list files: ${response.status}.${hint}` };
-      }
-
-      const data = await response.json();
-      if (Array.isArray(data.files)) files.push(...data.files);
-      pageToken = data.nextPageToken;
-    } while (pageToken);
-
-    return { files };
-  } catch (error: any) {
-    console.error("[GoogleDrive] Error listing files:", error);
-    return { files: [], error: error.message };
-  }
+  const query = `'${folderId}' in parents and trashed=false and mimeType!='${FOLDER_MIME_TYPE}'`;
+  const { files, error } = await driveFilesListAll(
+    accessToken,
+    query,
+    "nextPageToken,files(id,name,mimeType,size,webViewLink,thumbnailLink,iconLink,createdTime,modifiedTime,parents)",
+  );
+  if (error) return { files: [], error };
+  return { files: (files as DriveFile[]).sort(byName) };
 }
 
 /**
@@ -247,55 +246,24 @@ async function listDriveItems(
   accessToken: string,
   parentFolderId: string
 ): Promise<{ folders: DriveFolder[]; files: DriveFile[]; error?: string }> {
-  try {
-    const query = `'${parentFolderId}' in parents and trashed=false`;
+  const query = `'${parentFolderId}' in parents and trashed=false`;
+  const { files: items, error } = await driveFilesListAll(
+    accessToken,
+    query,
+    "nextPageToken,files(id,name,mimeType,size,webViewLink,thumbnailLink,iconLink,createdTime,modifiedTime,parents)",
+  );
+  if (error) return { folders: [], files: [], error };
 
-    const folders: DriveFolder[] = [];
-    const files: DriveFile[] = [];
-    let pageToken: string | undefined;
-    do {
-      const params = new URLSearchParams({
-        q: query,
-        fields: "nextPageToken,files(id,name,mimeType,size,webViewLink,thumbnailLink,iconLink,createdTime,modifiedTime,parents)",
-        orderBy: "name",
-        pageSize: "1000",
-        // corpora=allDrives (with supportsAllDrives + includeItemsFromAllDrives)
-        // is required for files.list to return items that live in Shared/Team
-        // Drives. Without it the default `user` corpus can silently omit Shared
-        // Drive contents, which showed up as folders syncing but no files.
-        corpora: "allDrives",
-        supportsAllDrives: "true",
-        includeItemsFromAllDrives: "true",
-      });
-      if (pageToken) params.set("pageToken", pageToken);
-
-      const response = await driveFetch(`${GOOGLE_DRIVE_API}/files?${params.toString()}`, accessToken);
-
-      if (!response.ok) {
-        const error = await response.text();
-        console.error("[GoogleDrive] Failed to list folder contents:", error);
-        const hint = response.status === 403 || response.status === 404 ? permissionHint() : "";
-        return { folders: [], files: [], error: `Failed to list folder contents: ${response.status}.${hint}` };
-      }
-
-      const data = await response.json();
-      if (Array.isArray(data.files)) {
-        for (const item of data.files) {
-          if (item.mimeType === FOLDER_MIME_TYPE) {
-            folders.push(item as DriveFolder);
-          } else {
-            files.push(item as DriveFile);
-          }
-        }
-      }
-      pageToken = data.nextPageToken;
-    } while (pageToken);
-
-    return { folders, files };
-  } catch (error: any) {
-    console.error("[GoogleDrive] Error listing folder contents:", error);
-    return { folders: [], files: [], error: error.message };
+  const folders: DriveFolder[] = [];
+  const files: DriveFile[] = [];
+  for (const item of items) {
+    if (item.mimeType === FOLDER_MIME_TYPE) {
+      folders.push(item as DriveFolder);
+    } else {
+      files.push(item as DriveFile);
+    }
   }
+  return { folders: folders.sort(byName), files: files.sort(byName) };
 }
 
 /**

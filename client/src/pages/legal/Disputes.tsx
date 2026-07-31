@@ -55,6 +55,8 @@ export default function Disputes() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [cardFilter, setCardFilter] = useState<string | null>(null);
+  const toggleCard = (key: string) => setCardFilter((cur) => (cur === key ? null : key));
   const [isOpen, setIsOpen] = useState(false);
   const [selectedDispute, setSelectedDispute] = useState<any | null>(null);
   const [editOpen, setEditOpen] = useState(false);
@@ -133,7 +135,12 @@ export default function Disputes() {
       (d.partyName || "").toLowerCase().includes(q);
     const matchStatus = statusFilter === "all" || d.status === statusFilter;
     const matchType = typeFilter === "all" || d.type === typeFilter;
-    return matchSearch && matchStatus && matchType;
+    const matchCard =
+      !cardFilter ||
+      (cardFilter === "active" && (d.status === "open" || d.status === "investigating" || d.status === "negotiating" || d.status === "escalated")) ||
+      (cardFilter === "resolved" && (d.status === "resolved" || d.status === "closed")) ||
+      (cardFilter === "critical" && (d.priority === "critical" || d.priority === "high"));
+    return matchSearch && matchStatus && matchType && matchCard;
   });
 
   // Stats
@@ -294,24 +301,26 @@ export default function Disputes() {
             <div className="text-2xl font-semibold">{stats.total}</div>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="pt-4 pb-4">
-            <div className="text-sm text-muted-foreground">Active</div>
-            <div className="text-2xl font-semibold text-blue-600">{stats.open}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4 pb-4">
-            <div className="text-sm text-muted-foreground">Resolved</div>
-            <div className="text-2xl font-semibold text-green-600">{stats.resolved}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4 pb-4">
-            <div className="text-sm text-muted-foreground">High Priority</div>
-            <div className="text-2xl font-semibold text-red-600">{stats.critical}</div>
-          </CardContent>
-        </Card>
+        {([
+          { key: "active", label: "Active", value: stats.open, color: "text-blue-600" },
+          { key: "resolved", label: "Resolved", value: stats.resolved, color: "text-green-600" },
+          { key: "critical", label: "High Priority", value: stats.critical, color: "text-red-600" },
+        ] as const).map((c) => (
+          <Card
+            key={c.key}
+            role="button"
+            tabIndex={0}
+            aria-pressed={cardFilter === c.key}
+            onClick={() => toggleCard(c.key)}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleCard(c.key); } }}
+            className={`cursor-pointer transition-colors hover:bg-muted/40 ${cardFilter === c.key ? "ring-2 ring-primary" : ""}`}
+          >
+            <CardContent className="pt-4 pb-4">
+              <div className="text-sm text-muted-foreground">{c.label}</div>
+              <div className={`text-2xl font-semibold ${c.color}`}>{c.value}</div>
+            </CardContent>
+          </Card>
+        ))}
         <Card>
           <CardContent className="pt-4 pb-4">
             <div className="text-sm text-muted-foreground">Total Exposure</div>

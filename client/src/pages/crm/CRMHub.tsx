@@ -354,12 +354,12 @@ export default function CRMHub() {
   };
 
   const stageColors: Record<string, string> = {
-    discovery: "bg-gray-500/10 text-gray-600",
-    qualified: "bg-purple-500/10 text-purple-600",
-    proposal: "bg-yellow-500/10 text-yellow-700",
-    negotiation: "bg-orange-500/10 text-orange-600",
-    closed_won: "bg-green-500/10 text-green-600",
-    closed_lost: "bg-red-500/10 text-red-600",
+    discovery: "bg-muted text-muted-foreground",
+    qualified: "bg-muted text-foreground",
+    proposal: "bg-muted text-foreground",
+    negotiation: "bg-muted text-foreground font-semibold",
+    closed_won: "bg-primary/10 text-primary",
+    closed_lost: "bg-[oklch(0.30_0.02_262)] text-white",
   };
 
   // Build contact lookup
@@ -438,7 +438,7 @@ export default function CRMHub() {
           <div className="h-4 w-px bg-border" />
           <div><span className="text-muted-foreground">Pipeline</span> <span className="font-bold">${openVal.toLocaleString()}</span></div>
           <div className="h-4 w-px bg-border" />
-          <div><span className="text-muted-foreground">Won</span> <span className="font-bold text-green-600">${wonVal.toLocaleString()}</span></div>
+          <div><span className="text-muted-foreground">Won</span> <span className="font-display font-bold tabular-nums text-foreground">${wonVal.toLocaleString()}</span></div>
           <div className="h-4 w-px bg-border" />
           <div><span className="text-muted-foreground">Open</span> <span className="font-bold">{dealStats?.open || 0}</span></div>
           <div className="h-4 w-px bg-border" />
@@ -916,7 +916,7 @@ export default function CRMHub() {
           <div className="flex items-center gap-4 text-xs border rounded-xl px-3 py-2 bg-card">
             <div><span className="text-muted-foreground">Pipeline</span> <span className="font-bold">${openVal.toLocaleString()}</span></div>
             <div className="h-5 w-px bg-border" />
-            <div><span className="text-muted-foreground">Won</span> <span className="font-bold text-green-600">${wonVal.toLocaleString()}</span></div>
+            <div><span className="text-muted-foreground">Won</span> <span className="font-display font-bold tabular-nums text-foreground">${wonVal.toLocaleString()}</span></div>
             <div className="h-5 w-px bg-border" />
             <div><span className="text-muted-foreground">Open</span> <span className="font-bold">{dealStats?.open || 0}</span></div>
             <div className="h-5 w-px bg-border" />
@@ -1054,7 +1054,7 @@ export default function CRMHub() {
                           ))}
                         </select>
                       </TableCell>
-                      <TableCell className="text-right font-semibold text-green-600" onClick={(e) => e.stopPropagation()}>
+                      <TableCell className="text-right font-semibold tabular-nums text-foreground" onClick={(e) => e.stopPropagation()}>
                         <InlineEdit value={deal._value || "0"} type="number" onSave={(v) => updateDeal.mutate({ id: deal.id, amount: v })} />
                       </TableCell>
                       <TableCell className="text-muted-foreground">
@@ -1071,7 +1071,7 @@ export default function CRMHub() {
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={() => setSelectedDealId(deal.id)}>View details</DropdownMenuItem>
                             <DropdownMenuItem
-                              className="text-red-600"
+                              className="text-foreground font-semibold"
                               onClick={() => {
                                 if (confirm(`Delete deal "${deal.name}"?`)) {
                                   deleteDeal.mutate({ id: deal.id });
@@ -1128,7 +1128,7 @@ export default function CRMHub() {
                             <div className="text-muted-foreground text-[11px] truncate">{deal._contactName}</div>
                           )}
                           <div className="flex items-center justify-between mt-1">
-                            <span className="text-green-600 font-semibold">
+                            <span className="text-foreground font-semibold tabular-nums">
                               ${Number(deal._value || 0).toLocaleString()}
                             </span>
                             {deal._lastContact && (
@@ -1179,7 +1179,7 @@ export default function CRMHub() {
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div>
                   <div className="text-xs text-muted-foreground">Value</div>
-                  <div className="font-semibold text-green-600">${Number(deal._value || 0).toLocaleString()}</div>
+                  <div className="font-semibold tabular-nums text-foreground">${Number(deal._value || 0).toLocaleString()}</div>
                 </div>
                 <div>
                   <div className="text-xs text-muted-foreground">Stage</div>
@@ -1208,7 +1208,7 @@ export default function CRMHub() {
               </div>
               <div className="border-t pt-3">
                 <div className="flex items-center gap-2 mb-3">
-                  <Sparkles className="h-4 w-4 text-purple-500" />
+                  <Sparkles className="h-4 w-4 text-primary" />
                   <h4 className="font-medium text-sm">AI-Recommended Next Steps</h4>
                 </div>
                 {nextStepsLoading ? (
@@ -1376,7 +1376,7 @@ export default function CRMHub() {
                         {contact.email ? (
                           <a
                             href={`mailto:${contact.email}`}
-                            className="text-blue-600 hover:underline"
+                            className="text-primary hover:underline"
                             onClick={(e) => e.stopPropagation()}
                           >
                             {contact.email}
@@ -1411,7 +1411,7 @@ export default function CRMHub() {
                               View Details
                             </DropdownMenuItem>
                             <DropdownMenuItem
-                              className="text-red-600"
+                              className="text-foreground font-semibold"
                               onClick={() => {
                                 if (confirm('Delete this contact?')) {
                                   deleteContact.mutate({ id: contact.id });
@@ -2040,7 +2040,7 @@ function PipelinesManagerDialog({ open, onClose }: { open: boolean; onClose: () 
                           <span className="font-medium text-sm">{p.name}</span>
                           <Badge variant="outline" className="text-[10px]">{p.type}</Badge>
                           {p.isDefault && (
-                            <Badge className="text-[10px] bg-blue-500/15 text-blue-700">default</Badge>
+                            <Badge className="text-[10px] bg-primary/10 text-primary">default</Badge>
                           )}
                         </div>
                         <div className="text-xs text-muted-foreground mt-0.5">

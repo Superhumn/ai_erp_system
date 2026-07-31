@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { DetailSheet } from "@/components/DetailSheet";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -68,6 +69,8 @@ export default function AccountsAndTransactions() {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [viewMode, setViewMode] = useState<"all" | "cogs">("all");
   const [isOpen, setIsOpen] = useState(false);
+  const [selectedAccount, setSelectedAccount] = useState<any | null>(null);
+  const [selectedTx, setSelectedTx] = useState<any | null>(null);
   const [formData, setFormData] = useState({
     code: "",
     name: "",
@@ -192,7 +195,15 @@ export default function AccountsAndTransactions() {
               </TableHeader>
               <TableBody>
                 {filteredAccounts.map((account) => (
-                  <TableRow key={account.id}>
+                  <TableRow
+                    key={account.id}
+                    className="cursor-pointer hover:bg-muted/50"
+                    data-state={selectedAccount?.id === account.id ? "selected" : undefined}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setSelectedAccount(account)}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedAccount(account); } }}
+                  >
                     <TableCell className="font-mono">{account.code}</TableCell>
                     <TableCell className="font-medium">{account.name}</TableCell>
                     <TableCell>
@@ -282,7 +293,15 @@ export default function AccountsAndTransactions() {
               </TableHeader>
               <TableBody>
                 {filteredTransactions.map((tx) => (
-                  <TableRow key={tx.id}>
+                  <TableRow
+                    key={tx.id}
+                    className="cursor-pointer hover:bg-muted/50"
+                    data-state={selectedTx?.id === tx.id ? "selected" : undefined}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setSelectedTx(tx)}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedTx(tx); } }}
+                  >
                     <TableCell className="font-mono">{tx.transactionNumber}</TableCell>
                     <TableCell>
                       {tx.date ? format(new Date(tx.date), "MMM d, yyyy") : "-"}
@@ -304,6 +323,56 @@ export default function AccountsAndTransactions() {
           )}
         </CardContent>
       </Card>
+
+      <DetailSheet
+        open={!!selectedAccount}
+        onOpenChange={(o) => !o && setSelectedAccount(null)}
+        title={selectedAccount?.name}
+        subtitle={selectedAccount ? `${selectedAccount.code} · ${selectedAccount.type}` : null}
+      >
+        {selectedAccount && (
+          <dl className="space-y-2 text-sm">
+            {([
+              ["Code", selectedAccount.code],
+              ["Type", selectedAccount.type],
+              ["Subtype", selectedAccount.subtype],
+              ["Balance", formatCurrency(selectedAccount.balance)],
+              ["Status", selectedAccount.isActive ? "Active" : "Inactive"],
+              ["Description", selectedAccount.description],
+            ] as [string, any][]).filter(([, v]) => v != null && v !== "").map(([k, v]) => (
+              <div key={k} className="grid grid-cols-3 gap-3">
+                <dt className="text-muted-foreground">{k}</dt>
+                <dd className="col-span-2 break-words">{v}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </DetailSheet>
+
+      <DetailSheet
+        open={!!selectedTx}
+        onOpenChange={(o) => !o && setSelectedTx(null)}
+        title={selectedTx?.transactionNumber}
+        subtitle={selectedTx ? formatCurrency(selectedTx.totalAmount) : null}
+      >
+        {selectedTx && (
+          <dl className="space-y-2 text-sm">
+            {([
+              ["Date", selectedTx.date ? format(new Date(selectedTx.date), "MMM d, yyyy") : null],
+              ["Description", selectedTx.description],
+              ["Type", selectedTx.type],
+              ["Amount", formatCurrency(selectedTx.totalAmount)],
+              ["Status", selectedTx.status],
+              ["Reference", selectedTx.reference],
+            ] as [string, any][]).filter(([, v]) => v != null && v !== "").map(([k, v]) => (
+              <div key={k} className="grid grid-cols-3 gap-3">
+                <dt className="text-muted-foreground">{k}</dt>
+                <dd className="col-span-2 break-words">{v}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </DetailSheet>
 
       {/* ── Add Account Dialog ── */}
       <Dialog open={isOpen} onOpenChange={setIsOpen}>

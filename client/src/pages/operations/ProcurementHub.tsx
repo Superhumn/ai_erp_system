@@ -68,12 +68,12 @@ function formatDate(value: string | Date | null | undefined) {
 }
 
 const poStatusOptions = [
-  { value: "draft", label: "Draft", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
-  { value: "sent", label: "Sent", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
-  { value: "confirmed", label: "Confirmed", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
-  { value: "shipped", label: "Shipped", color: "bg-violet-500/8 text-violet-600 dark:text-violet-400" },
-  { value: "received", label: "Received", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
-  { value: "cancelled", label: "Cancelled", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
+  { value: "draft", label: "Draft", color: "bg-muted text-muted-foreground" },
+  { value: "sent", label: "Sent", color: "bg-primary/10 text-primary" },
+  { value: "confirmed", label: "Confirmed", color: "bg-primary/10 text-primary" },
+  { value: "shipped", label: "Shipped", color: "bg-primary/10 text-primary" },
+  { value: "received", label: "Received", color: "bg-muted text-muted-foreground" },
+  { value: "cancelled", label: "Cancelled", color: "bg-[oklch(0.30_0.02_262)] text-white" },
 ];
 
 // Vendor Quotes Tab Component
@@ -201,14 +201,14 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
     { key: 'quantity', header: 'Qty', type: 'number', width: '100px', render: (v, row) => `${v} ${row.unit}` },
     { key: 'status', header: 'Status', type: 'text', width: '120px', render: (v) => {
       const colors: Record<string, string> = {
-        draft: 'bg-gray-500/8 text-gray-600 dark:text-gray-400',
-        sent: 'bg-blue-500/8 text-blue-600 dark:text-blue-400',
-        partially_received: 'bg-amber-500/8 text-amber-600 dark:text-amber-400',
-        all_received: 'bg-emerald-500/8 text-emerald-600 dark:text-emerald-400',
-        awarded: 'bg-violet-500/8 text-violet-600 dark:text-violet-400',
-        cancelled: 'bg-red-500/8 text-red-600 dark:text-red-400',
+        draft: 'bg-muted text-muted-foreground',
+        sent: 'bg-primary/10 text-primary',
+        partially_received: 'bg-muted text-foreground font-semibold',
+        all_received: 'bg-muted text-muted-foreground',
+        awarded: 'bg-primary/10 text-primary',
+        cancelled: 'bg-[oklch(0.30_0.02_262)] text-white',
       };
-      return <Badge className={colors[v] || 'bg-gray-100'}>{v?.replace(/_/g, ' ')}</Badge>;
+      return <Badge className={colors[v] || 'bg-muted text-muted-foreground'}>{v?.replace(/_/g, ' ')}</Badge>;
     }},
     { key: 'quoteDueDate', header: 'Due Date', type: 'date', width: '120px', render: (v) => formatDate(v) },
     { key: 'createdAt', header: 'Created', type: 'date', width: '120px', render: (v) => formatDate(v) },
@@ -427,7 +427,7 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                         </Button>
                       </div>
                       {selectedRfq.levelingSummary && (
-                        <div className="mb-2 rounded border border-blue-200 bg-blue-50 p-2 text-xs text-blue-900">
+                        <div className="mb-2 rounded border border-primary/20 bg-primary/10 p-2 text-xs text-foreground">
                           <div className="flex items-center gap-1 font-medium mb-0.5">
                             <Sparkles className="h-3.5 w-3.5" /> Bid leveling summary
                           </div>
@@ -459,10 +459,10 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                               })();
                               const highSeverity = deviations.some(d => d.severity === 'high');
                               return (
-                              <tr key={quote.id} className={`border-t ${idx === 0 ? 'bg-green-50' : ''}`}>
+                              <tr key={quote.id} className={`border-t ${idx === 0 ? 'bg-primary/10' : ''}`}>
                                 <td className="px-1.5 py-0.5">
                                   {idx === 0 ? (
-                                    <Badge className="bg-green-500">Best</Badge>
+                                    <Badge className="bg-primary text-primary-foreground">Best</Badge>
                                   ) : (
                                     <span className="text-muted-foreground">#{quote.leveledRank || quote.overallRank || idx + 1}</span>
                                   )}
@@ -480,11 +480,11 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                                 <td className="px-1.5 py-0.5 text-center">
                                   {quote.leveledAt ? (
                                     deviations.length === 0 ? (
-                                      <Badge variant="outline" className="text-green-600 border-green-300">OK</Badge>
+                                      <Badge variant="outline" className="text-muted-foreground">OK</Badge>
                                     ) : (
                                       <Badge
                                         variant={highSeverity ? 'destructive' : 'outline'}
-                                        className={highSeverity ? '' : 'text-amber-600 border-amber-300'}
+                                        className={highSeverity ? '!bg-[oklch(0.30_0.02_262)] !text-white !border-transparent font-semibold' : 'text-foreground font-semibold'}
                                         title={deviations.map(d => `${d.requirement}: ${d.finding} (${d.severity})`).join('\n')}
                                       >
                                         {deviations.length} flag{deviations.length === 1 ? '' : 's'}
@@ -502,7 +502,7 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                                       <Button
                                         size="sm"
                                         variant="ghost"
-                                        className="h-7 text-green-600 hover:text-green-700"
+                                        className="h-7 text-primary hover:text-primary/80"
                                         onClick={() => acceptQuote.mutate({ id: quote.id, createPO: true })}
                                         disabled={acceptQuote.isPending}
                                       >
@@ -511,7 +511,7 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                                       <Button
                                         size="sm"
                                         variant="ghost"
-                                        className="h-7 text-red-600 hover:text-red-700"
+                                        className="h-7 text-foreground hover:text-foreground/80"
                                         onClick={() => rejectQuote.mutate({ id: quote.id, sendNotification: true })}
                                         disabled={rejectQuote.isPending}
                                       >
@@ -519,9 +519,9 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                                       </Button>
                                     </div>
                                   )}
-                                  {quote.status === 'accepted' && <Badge className="bg-green-500">Accepted</Badge>}
-                                  {quote.status === 'rejected' && <Badge variant="destructive">Rejected</Badge>}
-                                  {quote.status === 'converted_to_po' && <Badge className="bg-purple-500">PO Created</Badge>}
+                                  {quote.status === 'accepted' && <Badge className="bg-primary text-primary-foreground">Accepted</Badge>}
+                                  {quote.status === 'rejected' && <Badge variant="destructive" className="!bg-[oklch(0.30_0.02_262)] !text-white">Rejected</Badge>}
+                                  {quote.status === 'converted_to_po' && <Badge className="bg-muted text-foreground font-medium">PO Created</Badge>}
                                 </td>
                               </tr>
                             );})}
@@ -1043,7 +1043,7 @@ function MaterialDetailPanel({ material, onClose }: { material: any; onClose: ()
           <h3 className="text-lg font-semibold flex items-center gap-2">
             {material.name}
             {isLowStock && (
-              <Badge variant="destructive" className="text-xs">
+              <Badge variant="destructive" className="text-xs !bg-[oklch(0.30_0.02_262)] !text-white !border-transparent">
                 <AlertCircle className="h-3 w-3 mr-1" />
                 Low Stock
               </Badge>
@@ -1346,29 +1346,29 @@ export default function ProcurementHub() {
     { key: "phone", header: "Phone", type: "text", editable: true },
     { key: "leadTimeDays", header: "Lead Time", type: "number", editable: true, render: (row) => `${row.leadTimeDays || 14} days` },
     { key: "status", header: "Status", type: "status", editable: true, options: [
-      { value: "active", label: "Active", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
-      { value: "inactive", label: "Inactive", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
+      { value: "active", label: "Active", color: "bg-primary/10 text-primary" },
+      { value: "inactive", label: "Inactive", color: "bg-muted text-muted-foreground" },
     ]},
   ];
 
   const receivingStatusOptions = [
-    { value: "none", label: "None", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
-    { value: "ordered", label: "Ordered", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
-    { value: "in_transit", label: "In Transit", color: "bg-violet-500/8 text-violet-600 dark:text-violet-400" },
-    { value: "received", label: "Received", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
-    { value: "inspected", label: "Inspected", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
+    { value: "none", label: "None", color: "bg-muted text-muted-foreground" },
+    { value: "ordered", label: "Ordered", color: "bg-primary/10 text-primary" },
+    { value: "in_transit", label: "In Transit", color: "bg-primary/10 text-primary" },
+    { value: "received", label: "Received", color: "bg-muted text-muted-foreground" },
+    { value: "inspected", label: "Inspected", color: "bg-muted text-muted-foreground" },
   ];
 
   const materialColumns: Column<any>[] = [
     { key: "name", header: "Material", type: "text", sortable: true, editable: true },
     { key: "sku", header: "SKU", type: "text", sortable: true, width: "80px", editable: true },
     { key: "quantityOnHand", header: "On Hand", type: "number", sortable: true, width: "80px", render: (row) => (
-      <span className={row.quantityOnHand < (row.reorderPoint || 0) ? "text-red-600 font-medium" : ""}>
+      <span className={row.quantityOnHand < (row.reorderPoint || 0) ? "text-foreground font-semibold" : ""}>
         {row.quantityOnHand || 0}
       </span>
     )},
     { key: "quantityOnOrder", header: "On Order", type: "number", sortable: true, width: "80px", render: (row) => (
-      <span className={parseFloat(row.quantityOnOrder || "0") > 0 ? "text-blue-600" : "text-muted-foreground"}>
+      <span className={parseFloat(row.quantityOnOrder || "0") > 0 ? "text-primary" : "text-muted-foreground"}>
         {parseFloat(row.quantityOnOrder || "0")}
       </span>
     )},
@@ -1480,7 +1480,7 @@ export default function ProcurementHub() {
                 <DropdownMenuLabel className="flex items-center gap-2">
                   External Services
                   {(integrationStatus?.sendgrid?.configured || integrationStatus?.google?.configured) && (
-                    <Badge variant="outline" className="ml-auto text-xs bg-green-50 text-green-700">Active</Badge>
+                    <Badge variant="outline" className="ml-auto text-xs bg-primary/10 text-primary">Active</Badge>
                   )}
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
@@ -1502,7 +1502,7 @@ export default function ProcurementHub() {
                     <Mail className="h-4 w-4 mr-2" />
                     Email Settings (SendGrid)
                     {integrationStatus?.sendgrid?.configured && (
-                      <Badge variant="outline" className="ml-auto text-xs bg-green-50 text-green-700">On</Badge>
+                      <Badge variant="outline" className="ml-auto text-xs bg-primary/10 text-primary">On</Badge>
                     )}
                   </Link>
                 </DropdownMenuItem>
@@ -1511,7 +1511,7 @@ export default function ProcurementHub() {
                     <ShoppingBag className="h-4 w-4 mr-2" />
                     Shopify Settings
                     {integrationStatus?.shopify?.configured && (
-                      <Badge variant="outline" className="ml-auto text-xs bg-green-50 text-green-700">On</Badge>
+                      <Badge variant="outline" className="ml-auto text-xs bg-primary/10 text-primary">On</Badge>
                     )}
                   </Link>
                 </DropdownMenuItem>
@@ -1535,31 +1535,31 @@ export default function ProcurementHub() {
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
           <Card className="p-4">
-            <div className="text-xl font-semibold tracking-[-0.02em]">{stats.totalPos}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{stats.totalPos}</div>
             <div className="text-xs text-muted-foreground">Total POs</div>
           </Card>
           <Card className="p-4">
-            <div className="text-xl font-semibold tracking-[-0.02em] text-blue-600">{stats.pendingPos}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-primary font-display tabular-nums">{stats.pendingPos}</div>
             <div className="text-xs text-muted-foreground">Pending POs</div>
           </Card>
           <Card className="p-4">
-            <div className="text-xl font-semibold tracking-[-0.02em]">{stats.totalVendors}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{stats.totalVendors}</div>
             <div className="text-xs text-muted-foreground">Vendors</div>
           </Card>
           <Card className="p-4">
-            <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{stats.activeVendors}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-foreground font-display tabular-nums">{stats.activeVendors}</div>
             <div className="text-xs text-muted-foreground">Active</div>
           </Card>
           <Card className="p-4">
-            <div className="text-xl font-semibold tracking-[-0.02em]">{stats.totalMaterials}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{stats.totalMaterials}</div>
             <div className="text-xs text-muted-foreground">Materials</div>
           </Card>
           <Card className="p-4">
-            <div className="text-xl font-semibold tracking-[-0.02em] text-orange-600">{stats.lowStock}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-foreground font-display tabular-nums">{stats.lowStock}</div>
             <div className="text-xs text-muted-foreground">Low Stock</div>
           </Card>
           <Card className="p-4">
-            <div className="text-xl font-semibold tracking-[-0.02em] text-purple-600">{stats.inTransit}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-primary font-display tabular-nums">{stats.inTransit}</div>
             <div className="text-xs text-muted-foreground">In Transit</div>
           </Card>
         </div>

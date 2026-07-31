@@ -48,11 +48,11 @@ export function NotificationCenter() {
 
   const { data: notifications, refetch } = trpc.notifications.list.useQuery(
     activeTab === "unread" ? { unreadOnly: true } : {},
-    { refetchInterval: 30000 } // Poll every 30 seconds
+    { refetchInterval: 60000 } // Poll every 60 seconds
   );
 
   const { data: unreadCount } = trpc.notifications.unreadCount.useQuery(undefined, {
-    refetchInterval: 15000, // Poll every 15 seconds
+    refetchInterval: 30000, // Poll every 30 seconds
   });
 
   const markReadMutation = trpc.notifications.markRead.useMutation({

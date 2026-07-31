@@ -56,18 +56,18 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 const taskStatusOptions = [
-  { value: "todo", label: "To Do", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
-  { value: "in_progress", label: "In Progress", color: "bg-amber-500/8 text-amber-600 dark:text-amber-400" },
-  { value: "review", label: "Review", color: "bg-violet-500/8 text-violet-600 dark:text-violet-400" },
-  { value: "completed", label: "Done", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
-  { value: "cancelled", label: "Cancelled", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
+  { value: "todo", label: "To Do", color: "bg-muted text-foreground" },
+  { value: "in_progress", label: "In Progress", color: "bg-muted text-foreground" },
+  { value: "review", label: "Review", color: "bg-muted text-foreground" },
+  { value: "completed", label: "Done", color: "bg-primary/10 text-primary" },
+  { value: "cancelled", label: "Cancelled", color: "bg-muted text-muted-foreground" },
 ];
 
 const priorityOptions = [
-  { value: "low", label: "Low", color: "text-gray-500" },
-  { value: "medium", label: "Medium", color: "text-blue-500" },
-  { value: "high", label: "High", color: "text-orange-500" },
-  { value: "critical", label: "Urgent", color: "text-red-500" },
+  { value: "low", label: "Low", color: "text-muted-foreground" },
+  { value: "medium", label: "Medium", color: "text-foreground" },
+  { value: "high", label: "High", color: "text-foreground font-medium" },
+  { value: "critical", label: "Urgent", color: "text-foreground font-semibold" },
 ];
 
 // AI agent task types that can take execution of a project task.
@@ -145,8 +145,8 @@ function getDeadlineStatus(dueDate: string | Date | null | undefined, status: st
 
 function deadlineIndicatorClass(dlStatus: DeadlineStatus): string {
   switch (dlStatus) {
-    case "overdue": return "text-red-600 border-red-300 bg-red-50";
-    case "approaching": return "text-amber-600 border-amber-300 bg-amber-50";
+    case "overdue": return "text-white bg-[oklch(0.30_0.02_262)] border-transparent";
+    case "approaching": return "text-foreground font-semibold border-border";
     default: return "";
   }
 }
@@ -157,10 +157,16 @@ function getInitials(name: string | undefined): string {
 }
 
 function avatarColor(name: string | undefined): string {
-  if (!name) return "bg-gray-300";
+  if (!name) return "bg-muted";
   const colors = [
-    "bg-blue-500", "bg-green-500", "bg-purple-500", "bg-pink-500",
-    "bg-indigo-500", "bg-teal-500", "bg-orange-500", "bg-cyan-500",
+    "bg-primary",
+    "bg-[oklch(0.30_0.02_262)]",
+    "bg-[oklch(0.40_0.08_262)]",
+    "bg-[oklch(0.50_0.12_262)]",
+    "bg-[oklch(0.35_0.05_262)]",
+    "bg-[oklch(0.45_0.10_262)]",
+    "bg-[oklch(0.55_0.14_262)]",
+    "bg-[oklch(0.30_0.03_262)]",
   ];
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
@@ -262,7 +268,7 @@ function ProjectSwimlane({
             <div className="flex items-center gap-2 ml-auto shrink-0">
               <div className="w-24 h-1.5 bg-muted rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-emerald-500 rounded-full transition-all"
+                  className="h-full bg-primary rounded-full transition-all"
                   style={{ width: `${progressPct}%` }}
                 />
               </div>
@@ -399,9 +405,9 @@ function KanbanCard({
     <Card
       className={cn(
         "cursor-pointer hover:shadow-md transition-all border",
-        dlStatus === "overdue" && "border-red-300 bg-red-50/50 dark:bg-red-950/20",
-        dlStatus === "approaching" && "border-amber-300 bg-amber-50/30 dark:bg-amber-950/20",
-        isAi && "border-violet-300/70 bg-violet-50/30 dark:bg-violet-950/20",
+        dlStatus === "overdue" && "border-foreground/40 bg-muted/50",
+        dlStatus === "approaching" && "border-border bg-muted/30",
+        isAi && "border-primary/40 bg-primary/5",
       )}
       onClick={onClick}
     >
@@ -499,7 +505,7 @@ function KanbanCard({
               </Badge>
             )}
             {isAi && (
-              <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-violet-600 border-violet-400/60 bg-violet-50 dark:bg-violet-950/30">
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-primary border-primary/40 bg-primary/10">
                 <Bot className="h-2.5 w-2.5 mr-0.5" />
                 AI
                 {task.aiConfidence != null && (
@@ -518,7 +524,7 @@ function KanbanCard({
           {/* Assignee avatar */}
           {isAi ? (
             <div
-              className="h-6 w-6 rounded-full flex items-center justify-center shrink-0 bg-violet-500 text-white"
+              className="h-6 w-6 rounded-full flex items-center justify-center shrink-0 bg-primary text-white"
               title="Assigned to AI agent"
             >
               <Bot className="h-3.5 w-3.5" />
@@ -573,7 +579,7 @@ function TaskDetailPanel({ task, onClose, onStatusChange, projects, onProjectCha
             {task.name}
             <Badge className={statusOption?.color}>{statusOption?.label}</Badge>
             {isAi && (
-              <Badge variant="outline" className="text-xs text-violet-600 border-violet-400/60 bg-violet-50">
+              <Badge variant="outline" className="text-xs text-primary border-primary/40 bg-primary/10">
                 <Bot className="h-3 w-3 mr-1" />
                 AI agent
               </Badge>
@@ -636,7 +642,7 @@ function TaskDetailPanel({ task, onClose, onStatusChange, projects, onProjectCha
             <Calendar className="h-3 w-3" />
             Due Date
           </div>
-          <div className={cn("font-semibold", isOverdue && "text-red-600")}>
+          <div className={cn("font-semibold", isOverdue && "text-foreground font-semibold")}>
             {formatDate(task.dueDate)}
           </div>
         </div>
@@ -668,17 +674,17 @@ function TaskDetailPanel({ task, onClose, onStatusChange, projects, onProjectCha
       )}
 
       {isAi && task.aiReasoning && (
-        <div className="border border-violet-300/60 rounded-lg bg-violet-50/60 dark:bg-violet-950/20 p-3">
+        <div className="border border-primary/30 rounded-lg bg-primary/5 p-3">
           <div className="flex items-center gap-2 mb-1">
-            <Sparkles className="h-3.5 w-3.5 text-violet-600" />
-            <h4 className="text-sm font-medium text-violet-900 dark:text-violet-200">AI reasoning</h4>
+            <Sparkles className="h-3.5 w-3.5 text-primary" />
+            <h4 className="text-sm font-medium text-foreground">AI reasoning</h4>
             {task.aiConfidence != null && (
-              <Badge variant="outline" className="text-[10px] text-violet-700 border-violet-400/60">
+              <Badge variant="outline" className="text-[10px] text-primary border-primary/40">
                 {Math.round(Number(task.aiConfidence))}% confidence
               </Badge>
             )}
           </div>
-          <p className="text-sm text-violet-900/80 dark:text-violet-200/80 whitespace-pre-wrap">
+          <p className="text-sm text-muted-foreground whitespace-pre-wrap">
             {task.aiReasoning}
           </p>
         </div>
@@ -936,8 +942,8 @@ export default function Projects() {
       const dlStatus = getDeadlineStatus(row.dueDate, row.status);
       return (
         <span className={cn(
-          dlStatus === "overdue" && "text-red-600 font-medium",
-          dlStatus === "approaching" && "text-amber-600 font-medium",
+          dlStatus === "overdue" && "text-foreground font-semibold",
+          dlStatus === "approaching" && "text-foreground font-medium",
         )}>
           {dlStatus === "overdue" && "!! "}
           {dlStatus === "approaching" && "! "}
@@ -1048,10 +1054,10 @@ export default function Projects() {
           <div className="flex items-center gap-4 text-sm text-muted-foreground">
             <span>{stats.total} tasks</span>
             {stats.overdue > 0 && (
-              <span className="text-red-600 font-medium">{stats.overdue} overdue</span>
+              <span className="text-foreground font-semibold">{stats.overdue} overdue</span>
             )}
             {stats.approaching > 0 && (
-              <span className="text-amber-600 font-medium">{stats.approaching} due soon</span>
+              <span className="text-foreground font-semibold">{stats.approaching} due soon</span>
             )}
           </div>
         </div>
@@ -1060,42 +1066,42 @@ export default function Projects() {
         <div className="grid grid-cols-5 gap-4">
           <Card className="p-3">
             <div className="flex items-center gap-2">
-              <Circle className="h-4 w-4 text-blue-500" />
+              <Circle className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm text-muted-foreground">To Do</span>
             </div>
-            <div className="text-xl font-semibold tracking-[-0.02em] mt-1">{stats.todo}</div>
+            <div className="font-display text-xl font-semibold tracking-[-0.02em] tabular-nums mt-1">{stats.todo}</div>
           </Card>
           <Card className="p-3">
             <div className="flex items-center gap-2">
-              <Clock className="h-4 w-4 text-yellow-500" />
+              <Clock className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm text-muted-foreground">In Progress</span>
             </div>
-            <div className="text-xl font-semibold tracking-[-0.02em] mt-1">{stats.inProgress}</div>
+            <div className="font-display text-xl font-semibold tracking-[-0.02em] tabular-nums mt-1">{stats.inProgress}</div>
           </Card>
           <Card className="p-3">
             <div className="flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 text-purple-500" />
+              <AlertCircle className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm text-muted-foreground">Review</span>
             </div>
-            <div className="text-xl font-semibold tracking-[-0.02em] mt-1">{stats.review}</div>
+            <div className="font-display text-xl font-semibold tracking-[-0.02em] tabular-nums mt-1">{stats.review}</div>
           </Card>
           <Card className="p-3">
             <div className="flex items-center gap-2">
-              <CheckCircle className="h-4 w-4 text-green-500" />
+              <CheckCircle className="h-4 w-4 text-primary" />
               <span className="text-sm text-muted-foreground">Done</span>
             </div>
-            <div className="text-xl font-semibold tracking-[-0.02em] mt-1">{stats.completed}</div>
+            <div className="font-display text-xl font-semibold tracking-[-0.02em] tabular-nums mt-1">{stats.completed}</div>
           </Card>
-          <Card className={cn("p-3", stats.overdue > 0 ? "border-red-200 bg-red-50/50" : stats.approaching > 0 ? "border-amber-200 bg-amber-50/50" : "")}>
+          <Card className={cn("p-3", stats.overdue > 0 ? "border-foreground/30 bg-muted" : stats.approaching > 0 ? "border-border bg-muted/50" : "")}>
             <div className="flex items-center gap-2">
-              <AlertCircle className={cn("h-4 w-4", stats.overdue > 0 ? "text-red-500" : "text-amber-500")} />
-              <span className={cn("text-sm", stats.overdue > 0 ? "text-red-600" : "text-amber-600")}>At Risk</span>
+              <AlertCircle className={cn("h-4 w-4", stats.overdue > 0 ? "text-foreground" : "text-muted-foreground")} />
+              <span className={cn("text-sm", stats.overdue > 0 ? "text-foreground font-semibold" : "text-muted-foreground")}>At Risk</span>
             </div>
             <div className="flex items-baseline gap-2 mt-1">
-              <div className={cn("text-xl font-semibold tracking-[-0.02em]", stats.overdue > 0 ? "text-red-600" : "text-muted-foreground")}>{stats.overdue}</div>
-              <span className="text-xs text-red-500">overdue</span>
-              <div className={cn("text-xl font-semibold tracking-[-0.02em]", stats.approaching > 0 ? "text-amber-600" : "text-muted-foreground")}>{stats.approaching}</div>
-              <span className="text-xs text-amber-500">due soon</span>
+              <div className={cn("font-display text-xl font-semibold tracking-[-0.02em] tabular-nums", stats.overdue > 0 ? "text-foreground" : "text-muted-foreground")}>{stats.overdue}</div>
+              <span className="text-xs text-muted-foreground">overdue</span>
+              <div className={cn("font-display text-xl font-semibold tracking-[-0.02em] tabular-nums", stats.approaching > 0 ? "text-foreground" : "text-muted-foreground")}>{stats.approaching}</div>
+              <span className="text-xs text-muted-foreground">due soon</span>
             </div>
           </Card>
         </div>
@@ -1113,10 +1119,8 @@ export default function Projects() {
                   return (
                     <div key={s.value} className="flex-1 min-w-[220px] max-w-[280px]">
                       <div className={cn("flex items-center gap-2 pb-2 border-b-2", {
-                        "border-blue-400": s.value === "todo",
-                        "border-amber-400": s.value === "in_progress",
-                        "border-violet-400": s.value === "review",
-                        "border-emerald-400": s.value === "completed",
+                        "border-border": s.value === "todo" || s.value === "in_progress" || s.value === "review",
+                        "border-primary": s.value === "completed",
                       })}>
                         <h3 className="font-semibold text-sm">{s.label}</h3>
                         <Badge variant="secondary" className="text-xs">{count}</Badge>
@@ -1370,7 +1374,7 @@ export default function Projects() {
           <DialogContent>
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
-                <Bot className="h-4 w-4 text-violet-600" />
+                <Bot className="h-4 w-4 text-primary" />
                 Assign to AI agent
               </DialogTitle>
               <DialogDescription>

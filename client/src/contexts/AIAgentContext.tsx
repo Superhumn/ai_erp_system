@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useMemo, ReactNode } from 'react';
 import { trpc } from '@/lib/trpc';
 
 // ============================================
@@ -328,7 +328,7 @@ export function AIAgentProvider({ children }: AIAgentProviderProps) {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [toggleAssistant, closeAssistant, state.isOpen]);
 
-  const contextValue: AIAgentContextType = {
+  const contextValue: AIAgentContextType = useMemo(() => ({
     ...state,
     openAssistant,
     closeAssistant,
@@ -341,7 +341,20 @@ export function AIAgentProvider({ children }: AIAgentProviderProps) {
     analyzeData,
     askQuestion,
     clearError,
-  };
+  }), [
+    state,
+    openAssistant,
+    closeAssistant,
+    toggleAssistant,
+    minimizeAssistant,
+    maximizeAssistant,
+    sendMessage,
+    clearConversation,
+    startNewConversation,
+    analyzeData,
+    askQuestion,
+    clearError,
+  ]);
 
   return (
     <AIAgentContext.Provider value={contextValue}>

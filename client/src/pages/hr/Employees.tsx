@@ -573,6 +573,21 @@ export default function PeopleAndEquity() {
     });
   }, [rows, search, typeFilter, statusFilter]);
 
+  // Batch-load stakeholder document counts for all people in one query, so the
+  // per-row DocumentsCell doesn't fetch on mount.
+  const stakeholderIds = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.stakeholderId).filter((id): id is number => id != null))),
+    [rows],
+  );
+  const { data: stakeholderDocCounts } = trpc.documents.countsByReferences.useQuery(
+    { referenceType: "stakeholder", referenceIds: stakeholderIds },
+    { enabled: stakeholderIds.length > 0 },
+  );
+  const docCountByStakeholder = useMemo(
+    () => new Map((stakeholderDocCounts ?? []).map((c) => [c.referenceId, c.count])),
+    [stakeholderDocCounts],
+  );
+
   const isLoading = loadingEmp || loadingSH || loadingGrants;
 
   // ── submit: add person (creates both employee + stakeholder) ──
@@ -1222,7 +1237,7 @@ export default function PeopleAndEquity() {
                       <TableCell className="py-1.5 px-3 text-right tabular-nums">{r.totalGrantValue > 0 ? fmt$(r.totalGrantValue) : "-"}</TableCell>
                       <TableCell className="py-1.5 px-3" onClick={(e) => e.stopPropagation()}>
                         {r.stakeholderId ? (
-                          <DocumentsCell referenceType="stakeholder" referenceId={r.stakeholderId} docTypeSet="hr" />
+                          <DocumentsCell referenceType="stakeholder" referenceId={r.stakeholderId} docTypeSet="hr" count={r.stakeholderId != null ? (docCountByStakeholder.get(r.stakeholderId) ?? 0) : 0} />
                         ) : "-"}
                       </TableCell>
                       <TableCell className="py-1.5 px-3" onClick={(e) => e.stopPropagation()}>

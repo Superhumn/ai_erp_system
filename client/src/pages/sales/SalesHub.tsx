@@ -23,35 +23,35 @@ import { Link, useLocation } from "wouter";
 // ── Status badge config ──
 
 const orderStatusColors: Record<string, string> = {
-  pending: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  confirmed: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
-  processing: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
-  shipped: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
-  delivered: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  cancelled: "bg-red-500/10 text-red-600 dark:text-red-400",
-  refunded: "bg-gray-500/10 text-gray-600 dark:text-gray-400",
+  pending: "bg-muted text-foreground font-semibold",
+  confirmed: "bg-muted text-foreground",
+  processing: "bg-muted text-foreground",
+  shipped: "bg-muted text-foreground",
+  delivered: "bg-primary/10 text-primary",
+  cancelled: "bg-[oklch(0.30_0.02_262)] text-white",
+  refunded: "bg-muted text-muted-foreground",
 };
 
 const invoiceStatusColors: Record<string, string> = {
-  draft: "bg-gray-500/10 text-gray-600 dark:text-gray-400",
-  sent: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
-  paid: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  partial: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  overdue: "bg-red-500/10 text-red-600 dark:text-red-400",
-  cancelled: "bg-gray-500/10 text-gray-600 dark:text-gray-400",
+  draft: "bg-muted text-muted-foreground",
+  sent: "bg-muted text-foreground",
+  paid: "bg-primary/10 text-primary",
+  partial: "bg-muted text-foreground font-semibold",
+  overdue: "bg-[oklch(0.30_0.02_262)] text-white",
+  cancelled: "bg-muted text-muted-foreground",
 };
 
 const shipStatusColors: Record<string, string> = {
-  pending: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  in_transit: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
-  delivered: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  returned: "bg-red-500/10 text-red-600 dark:text-red-400",
-  cancelled: "bg-gray-500/10 text-gray-600 dark:text-gray-400",
+  pending: "bg-muted text-foreground font-semibold",
+  in_transit: "bg-muted text-foreground",
+  delivered: "bg-primary/10 text-primary",
+  returned: "bg-[oklch(0.30_0.02_262)] text-white",
+  cancelled: "bg-muted text-muted-foreground",
 };
 
 function StatusBadge({ value, colorMap }: { value: string | null | undefined; colorMap: Record<string, string> }) {
   if (!value) return <span className="text-muted-foreground">&mdash;</span>;
-  const color = colorMap[value] ?? "bg-gray-500/10 text-gray-600";
+  const color = colorMap[value] ?? "bg-muted text-muted-foreground";
   return (
     <Badge variant="secondary" className={`${color} text-[11px] font-medium whitespace-nowrap`}>
       {value.replace(/_/g, " ")}
@@ -167,6 +167,7 @@ export default function SalesHub() {
     id: number;
     orderNumber: string;
     orderDate: string | Date | null;
+    customerId: number | null;
     customerName: string;
     customerEmail: string;
     itemCount: number | string;
@@ -209,6 +210,7 @@ export default function SalesHub() {
         id: order.id,
         orderNumber: order.orderNumber || "\u2014",
         orderDate: order.orderDate,
+        customerId: order.customerId ?? null,
         customerName: cust?.name || "\u2014",
         customerEmail: cust?.email || "\u2014",
         itemCount: order.items?.length || order.lineItems?.length || "\u2014",
@@ -328,9 +330,9 @@ export default function SalesHub() {
 
   // ── Channel badge colors ──
   const channelColors: Record<string, string> = {
-    Shopify: "bg-green-500/10 text-green-600 dark:text-green-400",
-    Manual: "bg-gray-500/10 text-gray-600 dark:text-gray-400",
-    Wholesale: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+    Shopify: "bg-primary/10 text-primary",
+    Manual: "bg-muted text-muted-foreground",
+    Wholesale: "bg-muted text-foreground",
   };
 
   // ── Render cell ──
@@ -357,11 +359,11 @@ export default function SalesHub() {
         return <Badge variant="secondary" className={`${channelColors[val] ?? channelColors.Manual} text-[11px] font-medium`}>{val}</Badge>;
       case "orderNumber":
         return val && val !== "\u2014" ? (
-          <span className="text-primary font-semibold">{val}</span>
+          <a href={`/sales/orders/${row.id}`} onClick={(e) => { e.preventDefault(); navigate(`/sales/orders/${row.id}`); }} className="text-primary font-semibold hover:underline cursor-pointer">{val}</a>
         ) : "\u2014";
       case "customerName":
         return val && val !== "\u2014" ? (
-          <a href="/crm/hub" onClick={(e) => { e.preventDefault(); navigate("/crm/hub"); }} className="text-primary hover:underline cursor-pointer">
+          <a href={row.customerId ? `/sales/customers/${row.customerId}` : "/crm/hub"} onClick={(e) => { e.preventDefault(); navigate(row.customerId ? `/sales/customers/${row.customerId}` : "/crm/hub"); }} className="text-primary hover:underline cursor-pointer">
             {val}
           </a>
         ) : "\u2014";
@@ -391,13 +393,13 @@ export default function SalesHub() {
         <div className="flex items-center gap-4 text-xs flex-wrap">
           <h1 className="text-sm font-bold tracking-[-0.02em]">Orders &amp; Sales</h1>
           <div className="h-4 w-px bg-border" />
-          <div><span className="text-muted-foreground">Revenue</span> <span className="font-bold text-green-600">${stats.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+          <div><span className="text-muted-foreground">Revenue</span> <span className="font-display font-bold tabular-nums text-foreground">${stats.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
           <div className="h-4 w-px bg-border" />
           <div><span className="text-muted-foreground">Orders</span> <span className="font-bold">{stats.totalOrders}</span></div>
           <div className="h-4 w-px bg-border" />
-          <div><span className="text-muted-foreground">Pending</span> <span className="font-bold text-amber-600">{stats.pendingOrders}</span></div>
+          <div><span className="text-muted-foreground">Pending</span> <span className="font-bold tabular-nums text-foreground">{stats.pendingOrders}</span></div>
           <div className="h-4 w-px bg-border" />
-          <div><span className="text-muted-foreground">Unpaid</span> <span className="font-bold text-red-600">{stats.unpaidInvoices}</span></div>
+          <div><span className="text-muted-foreground">Unpaid</span> <span className="font-bold tabular-nums text-foreground">{stats.unpaidInvoices}</span></div>
           <div className="h-4 w-px bg-border" />
           <div><span className="text-muted-foreground">Customers</span> <span className="font-bold">{stats.totalCustomers}</span></div>
         </div>
@@ -417,10 +419,10 @@ export default function SalesHub() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuLabel className="flex items-center gap-2">
-                <ShoppingBag className="h-4 w-4 text-green-600" />
+                <ShoppingBag className="h-4 w-4 text-muted-foreground" />
                 Shopify Sync
                 {integrationStatus?.shopify?.configured ? (
-                  <Badge variant="outline" className="ml-auto text-xs bg-green-50 text-green-700">Connected</Badge>
+                  <Badge variant="outline" className="ml-auto text-xs bg-primary/10 text-primary">Connected</Badge>
                 ) : (
                   <Badge variant="outline" className="ml-auto text-xs">Not Set Up</Badge>
                 )}
