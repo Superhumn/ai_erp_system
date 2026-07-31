@@ -242,6 +242,12 @@ export const companies = mysqlTable("companies", {
   locale: varchar("locale", { length: 10 }).notNull().default("en-US"),
   timezone: varchar("timezone", { length: 64 }).notNull().default("America/New_York"),
   taxRegime: mysqlEnum("taxRegime", ["vat", "gst", "sales_tax", "none"]).default("none").notNull(),
+  // Entity-tree attributes (multi-entity rollout STEP 1). `companies` IS the entity table:
+  // the holding company + regional operating companies live here, linked by parentCompanyId.
+  code: varchar("code", { length: 32 }).unique(),                    // stable key: 'GLOBAL','SA','US','ASIA','CO','IN'
+  entityType: mysqlEnum("entityType", ["holdco", "opco", "jv"]).default("opco").notNull(),
+  countryCode: varchar("countryCode", { length: 2 }),               // ISO 3166-1 alpha-2 (distinct from free-text `country`)
+  ownershipPctOfParent: decimal("ownershipPctOfParent", { precision: 7, scale: 4 }), // parent's % of this entity
   status: mysqlEnum("status", ["active", "inactive", "pending"]).default("active").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

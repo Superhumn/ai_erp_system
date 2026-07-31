@@ -493,6 +493,21 @@ export async function getCompanyIdsInRegion(regionId: number): Promise<number[]>
   return rows.map((r) => r.id);
 }
 
+// Entity tree (multi-entity STEP 1): a company plus all of its descendants, via the
+// `entity_tree` view (drizzle/manual/step1_entity_tree.sql). Lets a query scope to "this entity
+// and everything under it" — e.g. GLOBAL resolves to every operating company.
+export async function getDescendantCompanyIds(companyId: number): Promise<number[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const result: any = await db.execute(
+    sql`SELECT entity_id FROM entity_tree WHERE ancestor_id = ${companyId}`,
+  );
+  const rows: any[] = Array.isArray(result) ? (result[0] ?? []) : (result?.rows ?? result ?? []);
+  return rows
+    .map((r: any) => Number(r.entity_id))
+    .filter((n: number) => Number.isFinite(n));
+}
+
 export async function createCompany(data: InsertCompany) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
