@@ -7620,3 +7620,128 @@ export const brandAmbassadorActivities = mysqlTable("brand_ambassador_activities
 
 export type BrandAmbassadorActivity = typeof brandAmbassadorActivities.$inferSelect;
 export type InsertBrandAmbassadorActivity = typeof brandAmbassadorActivities.$inferInsert;
+
+// ============================================
+// OPS TOOLKIT
+// Stackby-style capabilities layered on top of the fixed ERP schema:
+//   1. savedViews          — grid/kanban/calendar/timeline configs per module
+//   2. intakeForms (+subs) — self-serve intake forms that capture into the ERP
+//   3. automationRules     — lightweight trigger -> condition -> action rules
+//   4. savedReports        — saved pivot/report configurations
+// These are team-shared (single-org) records; createdBy tracks authorship.
+// See shared/opsToolkit.ts for the JSON-column shapes.
+// ============================================
+
+// Item 1 — saved views over an existing ERP module's records.
+export const savedViews = mysqlTable("savedViews", {
+  id: int("id").autoincrement().primaryKey(),
+  module: varchar("module", { length: 64 }).notNull(),
+  name: varchar("name", { length: 128 }).notNull(),
+  viewType: mysqlEnum("viewType", ["grid", "kanban", "calendar", "timeline"]).default("grid").notNull(),
+  // ViewConfig from shared/opsToolkit.ts
+  config: json("config"),
+  isShared: boolean("isShared").default(true).notNull(),
+  isDefault: boolean("isDefault").default(false).notNull(),
+  createdBy: int("createdBy").notNull().references(() => users.id),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SavedView = typeof savedViews.$inferSelect;
+export type InsertSavedView = typeof savedViews.$inferInsert;
+
+// Item 2 — intake form definitions.
+export const intakeForms = mysqlTable("intakeForms", {
+  id: int("id").autoincrement().primaryKey(),
+  slug: varchar("slug", { length: 64 }).notNull().unique(),
+  name: varchar("name", { length: 160 }).notNull(),
+  description: text("description"),
+  // FormField[] from shared/opsToolkit.ts
+  fields: json("fields"),
+  // Optional ERP module submissions are intended for (informational routing).
+  targetModule: varchar("targetModule", { length: 64 }),
+  isPublished: boolean("isPublished").default(false).notNull(),
+  // When true, anonymous (unauthenticated) visitors may submit via the public link.
+  isPublic: boolean("isPublic").default(false).notNull(),
+  submitMessage: text("submitMessage"),
+  // Comma-separated notification recipients emailed on each submission.
+  notifyEmails: varchar("notifyEmails", { length: 500 }),
+  createdBy: int("createdBy").notNull().references(() => users.id),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type IntakeForm = typeof intakeForms.$inferSelect;
+export type InsertIntakeForm = typeof intakeForms.$inferInsert;
+
+// Item 2 — submissions captured by an intake form.
+export const intakeFormSubmissions = mysqlTable("intakeFormSubmissions", {
+  id: int("id").autoincrement().primaryKey(),
+  formId: int("formId").notNull().references(() => intakeForms.id),
+  // { [fieldId]: value } keyed by FormField.id
+  data: json("data"),
+  status: mysqlEnum("status", ["new", "reviewed", "archived"]).default("new").notNull(),
+  submittedByUserId: int("submittedByUserId"),
+  submittedByEmail: varchar("submittedByEmail", { length: 320 }),
+  submittedByName: varchar("submittedByName", { length: 160 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type IntakeFormSubmission = typeof intakeFormSubmissions.$inferSelect;
+export type InsertIntakeFormSubmission = typeof intakeFormSubmissions.$inferInsert;
+
+// Item 3 — automation rules (trigger -> conditions -> action).
+export const automationRules = mysqlTable("automationRules", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 160 }).notNull(),
+  description: text("description"),
+  module: varchar("module", { length: 64 }).notNull(),
+  triggerType: mysqlEnum("triggerType", [
+    "record_created", "record_updated", "field_changed", "form_submitted", "scheduled",
+  ]).notNull(),
+  // AutomationTriggerConfig from shared/opsToolkit.ts
+  triggerConfig: json("triggerConfig"),
+  // AutomationCondition[] from shared/opsToolkit.ts
+  conditions: json("conditions"),
+  actionType: mysqlEnum("actionType", ["send_email", "create_notification", "webhook"]).notNull(),
+  // AutomationActionConfig from shared/opsToolkit.ts
+  actionConfig: json("actionConfig"),
+  isActive: boolean("isActive").default(true).notNull(),
+  lastRunAt: timestamp("lastRunAt"),
+  runCount: int("runCount").default(0).notNull(),
+  createdBy: int("createdBy").notNull().references(() => users.id),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type AutomationRule = typeof automationRules.$inferSelect;
+export type InsertAutomationRule = typeof automationRules.$inferInsert;
+
+// Item 3 — per-execution log for automation rules.
+export const automationRuns = mysqlTable("automationRuns", {
+  id: int("id").autoincrement().primaryKey(),
+  ruleId: int("ruleId").notNull().references(() => automationRules.id),
+  status: mysqlEnum("status", ["success", "failed", "skipped"]).notNull(),
+  triggerContext: json("triggerContext"),
+  result: text("result"),
+  error: text("error"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type AutomationRun = typeof automationRuns.$inferSelect;
+export type InsertAutomationRun = typeof automationRuns.$inferInsert;
+
+// Item 4 — saved pivot/report configurations.
+export const savedReports = mysqlTable("savedReports", {
+  id: int("id").autoincrement().primaryKey(),
+  module: varchar("module", { length: 64 }).notNull(),
+  name: varchar("name", { length: 160 }).notNull(),
+  // PivotConfig from shared/opsToolkit.ts
+  pivotConfig: json("pivotConfig"),
+  createdBy: int("createdBy").notNull().references(() => users.id),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SavedReport = typeof savedReports.$inferSelect;
+export type InsertSavedReport = typeof savedReports.$inferInsert;

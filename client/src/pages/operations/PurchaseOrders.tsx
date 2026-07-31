@@ -46,7 +46,7 @@ import { getStatusColor } from "@/lib/statusColors";
 import WhatsAppDrawer from "@/components/WhatsAppDrawer";
 import LinkContactDialog from "@/components/LinkContactDialog";
 import PurchaseOrderDetailSheet from "./PurchaseOrderDetailSheet";
-import { useSearch, useLocation } from "wouter";
+import { useSearch, useLocation, Link } from "wouter";
 
 type LineItem = {
   productId?: number;
@@ -370,6 +370,11 @@ export default function PurchaseOrders() {
           <p className="text-muted-foreground mt-1">
             Manage vendor orders and track deliveries.
           </p>
+          <Link href="/ops/views">
+            <Button variant="outline" size="sm" className="mt-2">
+              Board / calendar views
+            </Button>
+          </Link>
         </div>
         <div className="flex gap-2">
           <Dialog open={isTextPOOpen} onOpenChange={(open) => {

@@ -86,6 +86,10 @@ const VendorNegotiations = lazy(() => import("./pages/operations/VendorNegotiati
 const SupplierPortal = lazy(() => import("./pages/SupplierPortal"));
 const MaterialSupply = lazy(() => import("./pages/operations/MaterialSupply"));
 
+// Ops Toolkit (Stackby-style views / forms / automations / reports)
+const OpsWorkspace = lazy(() => import("./pages/ops/OpsWorkspace"));
+const FormFill = lazy(() => import("./pages/ops/FormFill"));
+
 // Backend→frontend gap: pages wiring previously-orphaned routers
 const Costing = lazy(() => import("./pages/finance/Costing"));
 const EmailScanning = lazy(() => import("./pages/settings/EmailScanning"));
@@ -473,6 +477,10 @@ function Router() {
           {/* Code */}
           <Route path="/code" component={CodeEditor} />
 
+          {/* Ops Toolkit — views / forms / automations / reports */}
+          <Route path="/ops/:tab" component={OpsWorkspace} />
+          <Route path="/ops" component={OpsWorkspace} />
+
           {/* Component Showcase */}
           <Route path="/showcase" component={ComponentShowcase} />
 
@@ -507,6 +515,8 @@ function App() {
                 <Route path="/dr/:code" component={DataRoomPublic} />
                 {/* Supplier Portal (public) */}
                 <Route path="/supplier-portal/:token" component={SupplierPortal} />
+                {/* Public intake form fill (Ops Toolkit) */}
+                <Route path="/f/:slug" component={FormFill} />
                 {/* Superhumn design handoff gallery (standalone, self-contained frames) */}
                 <Route path="/superhumn" component={SuperhumnGallery} />
                 {/* All other routes go through dashboard */}
