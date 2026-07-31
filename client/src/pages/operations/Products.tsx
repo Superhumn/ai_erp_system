@@ -365,7 +365,11 @@ export default function Products() {
                         <span className="hover:underline">{product.sku}</span>
                       </Link>
                     </TableCell>
-                    <TableCell className="font-medium">{product.name}</TableCell>
+                    <TableCell className="font-medium">
+                      <Link href={`/operations/products/${product.id}`}>
+                        <span className="hover:underline">{product.name}</span>
+                      </Link>
+                    </TableCell>
                     <TableCell>{product.category || "-"}</TableCell>
                     <TableCell>
                       <Badge className={typeColors[product.type]}>{product.type}</Badge>

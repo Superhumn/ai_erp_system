@@ -609,7 +609,11 @@ export default function RFQs() {
               <TableBody>
                 {filteredRfqs.map((rfq) => (
                   <TableRow key={rfq.id}>
-                    <TableCell className="font-medium">{rfq.rfqNumber}</TableCell>
+                    <TableCell className="font-medium">
+                      <Link href={`/freight/rfqs/${rfq.id}`}>
+                        <span className="hover:underline">{rfq.rfqNumber}</span>
+                      </Link>
+                    </TableCell>
                     <TableCell>
                       <div>
                         <p>{rfq.title}</p>
