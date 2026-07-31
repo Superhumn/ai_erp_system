@@ -3871,6 +3871,14 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         referenceId: z.number().optional(),
       }).optional())
       .query(({ input }) => db.getDocuments(input)),
+    // Batched doc counts for many references at once, so a table can show a
+    // per-row count with one query instead of one query per row.
+    countsByReferences: protectedProcedure
+      .input(z.object({
+        referenceType: z.string(),
+        referenceIds: z.array(z.number()),
+      }))
+      .query(({ input }) => db.getDocumentCountsByReferences(input.referenceType, input.referenceIds)),
     upload: protectedProcedure
       .input(z.object({
         name: z.string().min(1),
@@ -7368,7 +7376,68 @@ Be concise and helpful. Always give actionable guidance.`;
           });
           return { success: true };
         }),
-      
+
+      // Inline approval for concierge errands: approve + run in a single step
+      // straight from the AI chat, instead of parking the task in the Approval
+      // Queue. Transitions directly to in_progress (skipping the 'approved'
+      // state the background scheduler watches) so the errand can never be
+      // double-executed.
+      approveAndExecute: adminProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const task = await db.getAiAgentTaskById(input.id);
+          if (!task) throw new TRPCError({ code: 'NOT_FOUND', message: 'Task not found' });
+          if (task.taskType !== 'concierge_errand') {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Inline approval is only supported for concierge errands' });
+          }
+          if (task.status !== 'pending_approval') {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: `Errand is not awaiting approval (status: ${task.status})` });
+          }
+
+          await db.updateAiAgentTask(input.id, {
+            status: 'in_progress',
+            approvedBy: ctx.user.id,
+            approvedAt: new Date(),
+          });
+          await db.createAiAgentLog({
+            taskId: input.id,
+            action: 'task_approved',
+            status: 'success',
+            message: `Errand approved inline by ${ctx.user.name}`,
+          });
+
+          try {
+            const { executeConciergeErrand } = await import('./conciergeErrandService');
+            const r = await executeConciergeErrand(task);
+            if (!r.success) throw new Error(r.error || 'Errand execution failed');
+            await db.updateAiAgentTask(input.id, {
+              status: 'completed',
+              executedAt: new Date(),
+              executionResult: JSON.stringify(r.data),
+            });
+            await db.createAiAgentLog({
+              taskId: input.id,
+              action: 'task_executed',
+              status: 'success',
+              message: 'Errand executed successfully (inline approval)',
+              details: JSON.stringify(r.data),
+            });
+            return { success: true, result: r.data };
+          } catch (error: any) {
+            await db.updateAiAgentTask(input.id, {
+              status: 'failed',
+              errorMessage: error.message,
+            });
+            await db.createAiAgentLog({
+              taskId: input.id,
+              action: 'task_failed',
+              status: 'error',
+              message: `Errand execution failed: ${error.message}`,
+            });
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
+          }
+        }),
+
       update: adminProcedure
         .input(z.object({ 
           id: z.number(), 
