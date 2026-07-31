@@ -26,6 +26,10 @@ const ROLE_LABELS: Record<string, string> = {
   user: "Basic User",
 };
 
+// Roles assignable via users.updateRole (must match the server enum). Linked roles
+// (vendor/copacker/contractor) require invite-time linkage and are not settable here.
+const ASSIGNABLE_ROLES = ["user", "admin", "finance", "ops", "legal", "exec", "sales"];
+
 const ROLE_DESCRIPTIONS: Record<string, string> = {
   admin: "Full access to all modules and settings",
   finance: "Access to accounts, invoices, payments, transactions",
@@ -140,6 +144,14 @@ export default function Team() {
   const deleteUserMutation = trpc.users.delete.useMutation({
     onSuccess: () => {
       toast.success("User deleted");
+      refetchMembers();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const updateRoleMutation = trpc.users.updateRole.useMutation({
+    onSuccess: () => {
+      toast.success("Role updated");
       refetchMembers();
     },
     onError: (err) => toast.error(err.message),
@@ -423,9 +435,29 @@ export default function Team() {
                           <TableCell className="font-medium">{member.name || "—"}</TableCell>
                           <TableCell>{member.email || "—"}</TableCell>
                           <TableCell>
-                            <Badge variant={getRoleBadgeVariant(member.role)}>
-                              {ROLE_LABELS[member.role] || member.role}
-                            </Badge>
+                            {ASSIGNABLE_ROLES.includes(member.role) ? (
+                              <Select
+                                value={member.role}
+                                onValueChange={(role) => {
+                                  if (role !== member.role) {
+                                    updateRoleMutation.mutate({ userId: member.id, role: role as any });
+                                  }
+                                }}
+                              >
+                                <SelectTrigger className="h-8 w-[150px]">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {ASSIGNABLE_ROLES.map((r) => (
+                                    <SelectItem key={r} value={r}>{ROLE_LABELS[r] || r}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <Badge variant={getRoleBadgeVariant(member.role)}>
+                                {ROLE_LABELS[member.role] || member.role}
+                              </Badge>
+                            )}
                           </TableCell>
                           <TableCell>
                             {member.linkedVendorId && (

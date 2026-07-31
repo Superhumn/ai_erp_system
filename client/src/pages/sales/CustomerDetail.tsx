@@ -1,20 +1,103 @@
+import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowLeft, User, Mail, Phone, Building2, MapPin, Calendar } from "lucide-react";
+import { ArrowLeft, User, Mail, Phone, Building2, MapPin, Calendar, Pencil, Loader2 } from "lucide-react";
 import { Link, useParams } from "wouter";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
+import { toast } from "sonner";
 
 export default function CustomerDetail() {
   const params = useParams<{ id: string }>();
   const customerId = parseInt(params.id || "0");
 
+  const utils = trpc.useUtils();
   const { data: customer, isLoading } = trpc.customers.get.useQuery({ id: customerId });
   const { data: orders } = trpc.orders.list.useQuery({ customerId });
+
+  const [editOpen, setEditOpen] = useState(false);
+  const [form, setForm] = useState({
+    name: "",
+    email: "",
+    phone: "",
+    status: "active",
+    address: "",
+    city: "",
+    state: "",
+    country: "",
+    creditLimit: "",
+    paymentTerms: "",
+    notes: "",
+  });
+
+  const updateCustomer = trpc.customers.update.useMutation({
+    onSuccess: () => {
+      toast.success("Customer updated");
+      utils.customers.get.invalidate({ id: customerId });
+      setEditOpen(false);
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const openEdit = () => {
+    if (!customer) return;
+    setForm({
+      name: customer.name ?? "",
+      email: customer.email ?? "",
+      phone: customer.phone ?? "",
+      status: (customer.status as string) || "active",
+      address: customer.address ?? "",
+      city: customer.city ?? "",
+      state: customer.state ?? "",
+      country: customer.country ?? "",
+      creditLimit: customer.creditLimit != null ? String(customer.creditLimit) : "",
+      paymentTerms: customer.paymentTerms != null ? String(customer.paymentTerms) : "",
+      notes: customer.notes ?? "",
+    });
+    setEditOpen(true);
+  };
+
+  const handleSaveEdit = () => {
+    if (!form.name.trim()) {
+      toast.error("Name is required");
+      return;
+    }
+    updateCustomer.mutate({
+      id: customerId,
+      name: form.name.trim(),
+      email: form.email || undefined,
+      phone: form.phone || undefined,
+      status: form.status as "active" | "inactive" | "prospect",
+      address: form.address || undefined,
+      city: form.city || undefined,
+      state: form.state || undefined,
+      country: form.country || undefined,
+      creditLimit: form.creditLimit || undefined,
+      paymentTerms: form.paymentTerms ? Number(form.paymentTerms) : undefined,
+      notes: form.notes || undefined,
+    });
+  };
 
   if (isLoading) {
     return (
@@ -80,6 +163,9 @@ export default function CustomerDetail() {
           <p className="text-muted-foreground">{customer.email || "No email"}</p>
         </div>
         <Badge className={getStatusColor(customer.status)}>{customer.status}</Badge>
+        <Button variant="outline" size="sm" onClick={openEdit}>
+          <Pencil className="w-4 h-4 mr-2" /> Edit
+        </Button>
       </div>
 
       <div className="grid gap-6 md:grid-cols-2">
@@ -243,6 +329,88 @@ export default function CustomerDetail() {
           </CardContent>
         </Card>
       )}
+
+      {/* Edit Customer Dialog */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit customer</DialogTitle>
+            <DialogDescription>Update this customer's details.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Name *</Label>
+                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              </div>
+              <div>
+                <Label>Status</Label>
+                <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="inactive">Inactive</SelectItem>
+                    <SelectItem value="prospect">Prospect</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Email</Label>
+                <Input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+              </div>
+              <div>
+                <Label>Phone</Label>
+                <Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+              </div>
+            </div>
+            <div>
+              <Label>Address</Label>
+              <Input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <Label>City</Label>
+                <Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} />
+              </div>
+              <div>
+                <Label>State</Label>
+                <Input value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })} />
+              </div>
+              <div>
+                <Label>Country</Label>
+                <Input value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Credit limit</Label>
+                <Input value={form.creditLimit} onChange={(e) => setForm({ ...form, creditLimit: e.target.value })} />
+              </div>
+              <div>
+                <Label>Payment terms (days)</Label>
+                <Input
+                  type="number"
+                  value={form.paymentTerms}
+                  onChange={(e) => setForm({ ...form, paymentTerms: e.target.value })}
+                />
+              </div>
+            </div>
+            <div>
+              <Label>Notes</Label>
+              <Textarea rows={3} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
+            <Button onClick={handleSaveEdit} disabled={updateCustomer.isPending}>
+              {updateCustomer.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Save changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
