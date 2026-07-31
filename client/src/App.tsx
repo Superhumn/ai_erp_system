@@ -67,6 +67,7 @@ const Recipes = lazy(() => import("./pages/operations/Recipes"));
 const BOMDetail = lazy(() => import("./pages/operations/BOMDetail"));
 const RawMaterials = lazy(() => import("./pages/operations/RawMaterials"));
 const WorkOrders = lazy(() => import("./pages/operations/WorkOrders"));
+const ProductionBatches = lazy(() => import("./pages/operations/ProductionBatches"));
 const WorkOrderDetail = lazy(() => import("./pages/operations/WorkOrderDetail"));
 const POReceiving = lazy(() => import("./pages/operations/POReceiving"));
 const Forecasting = lazy(() => import("./pages/operations/Forecasting"));
@@ -85,6 +86,10 @@ const InventoryCosting = lazy(() => import("./pages/operations/InventoryCosting"
 const VendorNegotiations = lazy(() => import("./pages/operations/VendorNegotiations"));
 const SupplierPortal = lazy(() => import("./pages/SupplierPortal"));
 const MaterialSupply = lazy(() => import("./pages/operations/MaterialSupply"));
+
+// Ops Toolkit (Stackby-style views / forms / automations / reports)
+const OpsWorkspace = lazy(() => import("./pages/ops/OpsWorkspace"));
+const FormFill = lazy(() => import("./pages/ops/FormFill"));
 
 // Backend→frontend gap: pages wiring previously-orphaned routers
 const Costing = lazy(() => import("./pages/finance/Costing"));
@@ -351,6 +356,7 @@ function Router() {
           <Route path="/operations/raw-materials" component={RawMaterials} />
           <Route path="/operations/work-orders" component={WorkOrders} />
           <Route path="/operations/work-orders/:id" component={WorkOrderDetail} />
+          <Route path="/operations/production-batches" component={ProductionBatches} />
           <Route path="/operations/receiving" component={POReceiving} />
           <Route path="/operations/forecasting" component={Forecasting} />
           <Route path="/operations/core" component={CoreOperations} />
@@ -473,6 +479,10 @@ function Router() {
           {/* Code */}
           <Route path="/code" component={CodeEditor} />
 
+          {/* Ops Toolkit — views / forms / automations / reports */}
+          <Route path="/ops/:tab" component={OpsWorkspace} />
+          <Route path="/ops" component={OpsWorkspace} />
+
           {/* Component Showcase */}
           <Route path="/showcase" component={ComponentShowcase} />
 
@@ -507,6 +517,8 @@ function App() {
                 <Route path="/dr/:code" component={DataRoomPublic} />
                 {/* Supplier Portal (public) */}
                 <Route path="/supplier-portal/:token" component={SupplierPortal} />
+                {/* Public intake form fill (Ops Toolkit) */}
+                <Route path="/f/:slug" component={FormFill} />
                 {/* Superhumn design handoff gallery (standalone, self-contained frames) */}
                 <Route path="/superhumn" component={SuperhumnGallery} />
                 {/* All other routes go through dashboard */}

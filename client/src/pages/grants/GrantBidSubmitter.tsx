@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -149,12 +150,17 @@ export default function GrantBidSubmitter() {
           <div className="h-4 w-px bg-border" />
           <div><span className="text-muted-foreground">Requested</span> <span className="font-bold text-emerald-600">{formatCurrency(stats?.totalRequested)}</span></div>
         </div>
-        <Dialog open={showCreate} onOpenChange={setShowCreate}>
-          <DialogTrigger asChild>
-            <Button size="sm"><Plus className="h-4 w-4 mr-2" /> New Application</Button>
-          </DialogTrigger>
-          <CreateApplicationDialog onClose={() => setShowCreate(false)} onCreated={(id) => { setShowCreate(false); setSelectedApp(id); refetchApps(); }} />
-        </Dialog>
+        <div className="flex items-center gap-2">
+          <Link href="/ops/views">
+            <Button size="sm" variant="outline">Board / calendar views</Button>
+          </Link>
+          <Dialog open={showCreate} onOpenChange={setShowCreate}>
+            <DialogTrigger asChild>
+              <Button size="sm"><Plus className="h-4 w-4 mr-2" /> New Application</Button>
+            </DialogTrigger>
+            <CreateApplicationDialog onClose={() => setShowCreate(false)} onCreated={(id) => { setShowCreate(false); setSelectedApp(id); refetchApps(); }} />
+          </Dialog>
+        </div>
       </div>
 
       {/* Main Tabs: Discover vs Applications */}

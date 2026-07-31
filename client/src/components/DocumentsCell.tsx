@@ -61,24 +61,33 @@ interface DocumentsCellProps {
   referenceType: string;
   referenceId: number;
   docTypeSet?: "default" | "hr";
+  /**
+   * Doc count supplied by the parent table (batch-loaded for all rows in one
+   * query). Used for the closed-state badge so this cell doesn't fetch on mount.
+   */
+  count?: number;
 }
 
-export default function DocumentsCell({ referenceType, referenceId, docTypeSet = "default" }: DocumentsCellProps) {
+export default function DocumentsCell({ referenceType, referenceId, docTypeSet = "default", count }: DocumentsCellProps) {
   const typeOptions = docTypeSet === "hr" ? HR_DOC_TYPES : DOC_TYPES;
   const [docType, setDocType] = useState<string>(typeOptions[0]);
+  const [open, setOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const utils = trpc.useUtils();
 
-  const { data: docs, isLoading } = trpc.documents.list.useQuery({
-    referenceType,
-    referenceId,
-  });
+  // Only fetch the full document list once the popover is opened — this avoids
+  // one query per row on table mount. The closed badge uses the `count` prop.
+  const { data: docs, isLoading } = trpc.documents.list.useQuery(
+    { referenceType, referenceId },
+    { enabled: open },
+  );
 
   const uploadMutation = trpc.documents.upload.useMutation({
     onSuccess: () => {
       toast.success("Document uploaded");
       utils.documents.list.invalidate({ referenceType, referenceId });
+      utils.documents.countsByReferences.invalidate();
       setUploading(false);
     },
     onError: (err) => {
@@ -114,10 +123,10 @@ export default function DocumentsCell({ referenceType, referenceId, docTypeSet =
     e.target.value = "";
   };
 
-  const docCount = docs?.length ?? 0;
+  const docCount = docs?.length ?? count ?? 0;
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium transition-colors hover:bg-muted cursor-pointer border border-transparent hover:border-border"
@@ -137,9 +146,13 @@ export default function DocumentsCell({ referenceType, referenceId, docTypeSet =
           </div>
 
           {/* Document list */}
-          {docCount > 0 ? (
+          {isLoading ? (
+            <div className="text-xs text-muted-foreground text-center py-3">
+              Loading…
+            </div>
+          ) : docs && docs.length > 0 ? (
             <div className="max-h-48 overflow-y-auto space-y-1">
-              {docs!.map((doc) => (
+              {docs.map((doc) => (
                 <div
                   key={doc.id}
                   className="flex items-center gap-2 text-xs py-1.5 px-2 rounded hover:bg-muted group"
