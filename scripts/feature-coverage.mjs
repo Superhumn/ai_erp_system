@@ -83,9 +83,13 @@ if (routers.size === 0) {
 }
 
 // --- Concatenate client source ---------------------------------------------
+// Normalize the `(trpc.X as any).proc` escape hatch → `trpc.X.proc` so the
+// literal-path scan below sees the procedure. Same for aliases: `(codeApi as
+// any).proc` → `codeApi.proc`. Without this, casted calls read as unreached.
 const clientText = listSource(CLIENT)
   .map((f) => readFileSync(f, "utf8"))
-  .join("\n");
+  .join("\n")
+  .replace(/\(\s*(trpc(?:\.\w+)+|\w+)\s+as\s+\w+\s*\)/g, "$1");
 
 // Router aliases: `const codeApi = trpc.code` then `codeApi.snippets.useQuery()`.
 // Without this the alias hides the router's procedures from the literal-path
