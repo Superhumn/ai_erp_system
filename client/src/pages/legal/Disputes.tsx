@@ -19,7 +19,7 @@ import {
 import {
   Scale, Plus, Search, Loader2,
   DollarSign, Gavel, Upload,
-  Calendar, Building2,
+  Calendar, Building2, Pencil,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -55,8 +55,16 @@ export default function Disputes() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [cardFilter, setCardFilter] = useState<string | null>(null);
+  const toggleCard = (key: string) => setCardFilter((cur) => (cur === key ? null : key));
   const [isOpen, setIsOpen] = useState(false);
   const [selectedDispute, setSelectedDispute] = useState<any | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editForm, setEditForm] = useState({
+    status: "open" as "open" | "investigating" | "negotiating" | "resolved" | "escalated" | "closed",
+    priority: "medium" as "low" | "medium" | "high" | "critical",
+    resolution: "",
+  });
   const [formData, setFormData] = useState({
     title: "",
     type: "customer" as "customer" | "vendor" | "employee" | "legal" | "regulatory" | "other",
@@ -89,6 +97,36 @@ export default function Disputes() {
     onError: (error) => toast.error(error.message),
   });
 
+  const updateDispute = trpc.disputes.update.useMutation({
+    onSuccess: () => {
+      toast.success("Case updated");
+      utils.disputes.list.invalidate();
+      setEditOpen(false);
+      setSelectedDispute(null);
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const openEdit = () => {
+    if (!selectedDispute) return;
+    setEditForm({
+      status: selectedDispute.status || "open",
+      priority: selectedDispute.priority || "medium",
+      resolution: selectedDispute.resolution || "",
+    });
+    setEditOpen(true);
+  };
+
+  const handleUpdateDispute = () => {
+    if (!selectedDispute) return;
+    updateDispute.mutate({
+      id: selectedDispute.id,
+      status: editForm.status,
+      priority: editForm.priority,
+      resolution: editForm.resolution || undefined,
+    });
+  };
+
   const filtered = disputes?.filter((d: any) => {
     const q = search.toLowerCase();
     const matchSearch = !search ||
@@ -97,7 +135,12 @@ export default function Disputes() {
       (d.partyName || "").toLowerCase().includes(q);
     const matchStatus = statusFilter === "all" || d.status === statusFilter;
     const matchType = typeFilter === "all" || d.type === typeFilter;
-    return matchSearch && matchStatus && matchType;
+    const matchCard =
+      !cardFilter ||
+      (cardFilter === "active" && (d.status === "open" || d.status === "investigating" || d.status === "negotiating" || d.status === "escalated")) ||
+      (cardFilter === "resolved" && (d.status === "resolved" || d.status === "closed")) ||
+      (cardFilter === "critical" && (d.priority === "critical" || d.priority === "high"));
+    return matchSearch && matchStatus && matchType && matchCard;
   });
 
   // Stats
@@ -258,24 +301,26 @@ export default function Disputes() {
             <div className="text-2xl font-semibold">{stats.total}</div>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="pt-4 pb-4">
-            <div className="text-sm text-muted-foreground">Active</div>
-            <div className="text-2xl font-semibold text-blue-600">{stats.open}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4 pb-4">
-            <div className="text-sm text-muted-foreground">Resolved</div>
-            <div className="text-2xl font-semibold text-green-600">{stats.resolved}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4 pb-4">
-            <div className="text-sm text-muted-foreground">High Priority</div>
-            <div className="text-2xl font-semibold text-red-600">{stats.critical}</div>
-          </CardContent>
-        </Card>
+        {([
+          { key: "active", label: "Active", value: stats.open, color: "text-blue-600" },
+          { key: "resolved", label: "Resolved", value: stats.resolved, color: "text-green-600" },
+          { key: "critical", label: "High Priority", value: stats.critical, color: "text-red-600" },
+        ] as const).map((c) => (
+          <Card
+            key={c.key}
+            role="button"
+            tabIndex={0}
+            aria-pressed={cardFilter === c.key}
+            onClick={() => toggleCard(c.key)}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleCard(c.key); } }}
+            className={`cursor-pointer transition-colors hover:bg-muted/40 ${cardFilter === c.key ? "ring-2 ring-primary" : ""}`}
+          >
+            <CardContent className="pt-4 pb-4">
+              <div className="text-sm text-muted-foreground">{c.label}</div>
+              <div className={`text-2xl font-semibold ${c.color}`}>{c.value}</div>
+            </CardContent>
+          </Card>
+        ))}
         <Card>
           <CardContent className="pt-4 pb-4">
             <div className="text-sm text-muted-foreground">Total Exposure</div>
@@ -385,6 +430,12 @@ export default function Disputes() {
             title={selectedDispute.title}
             subtitle={selectedDispute.disputeNumber}
             width="md"
+            actions={
+              <Button size="sm" variant="outline" onClick={openEdit}>
+                <Pencil className="h-4 w-4 mr-2" />
+                Update
+              </Button>
+            }
           >
             <div className="space-y-4 text-sm">
               <div className="flex flex-wrap gap-2">
@@ -458,6 +509,62 @@ export default function Disputes() {
           </DetailSheet>
         );
       })()}
+
+      {/* Update Case Dialog */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Update case</DialogTitle>
+            <DialogDescription>Change the status, priority, or record a resolution.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Status</Label>
+                <Select value={editForm.status} onValueChange={(v) => setEditForm({ ...editForm, status: v as typeof editForm.status })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="open">Open</SelectItem>
+                    <SelectItem value="investigating">Investigating</SelectItem>
+                    <SelectItem value="negotiating">Negotiating</SelectItem>
+                    <SelectItem value="escalated">Escalated</SelectItem>
+                    <SelectItem value="resolved">Resolved</SelectItem>
+                    <SelectItem value="closed">Closed</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Priority</Label>
+                <Select value={editForm.priority} onValueChange={(v) => setEditForm({ ...editForm, priority: v as typeof editForm.priority })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">Low</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                    <SelectItem value="critical">Critical</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div>
+              <Label>Resolution</Label>
+              <Textarea
+                rows={3}
+                placeholder="How was this case resolved?"
+                value={editForm.resolution}
+                onChange={(e) => setEditForm({ ...editForm, resolution: e.target.value })}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
+            <Button onClick={handleUpdateDispute} disabled={updateDispute.isPending}>
+              {updateDispute.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

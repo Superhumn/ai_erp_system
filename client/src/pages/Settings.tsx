@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Settings as SettingsIcon, User, Bell, Link, ExternalLink, Globe, Users, Lock, Loader2, Eye, EyeOff, Mail } from "lucide-react";
-import { Switch } from "@/components/ui/switch";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
@@ -131,19 +130,13 @@ export default function Settings() {
               <Bell className="h-4 w-4" /> Notifications
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2">
-            {[
-              { label: "Email notifications", key: "email" },
-              { label: "Task reminders", key: "tasks" },
-              { label: "Invoice alerts", key: "invoices" },
-              { label: "Inventory alerts", key: "inventory" },
-              { label: "Data Room activity", key: "dataroom" },
-            ].map((n) => (
-              <div key={n.key} className="flex items-center justify-between text-sm">
-                <span>{n.label}</span>
-                <Switch defaultChecked />
-              </div>
-            ))}
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Choose which events notify you and on which channels (in-app, email, push).
+            </p>
+            <Button variant="outline" size="sm" onClick={() => navigate("/settings/notifications")}>
+              Manage notification preferences
+            </Button>
           </CardContent>
         </Card>
 

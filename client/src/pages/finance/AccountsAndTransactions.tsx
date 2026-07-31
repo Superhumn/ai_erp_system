@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { DetailSheet } from "@/components/DetailSheet";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -68,12 +69,21 @@ export default function AccountsAndTransactions() {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [viewMode, setViewMode] = useState<"all" | "cogs">("all");
   const [isOpen, setIsOpen] = useState(false);
+  const [selectedAccount, setSelectedAccount] = useState<any | null>(null);
+  const [selectedTx, setSelectedTx] = useState<any | null>(null);
   const [formData, setFormData] = useState({
     code: "",
     name: "",
     type: "asset" as "asset" | "liability" | "equity" | "revenue" | "expense",
     subtype: "",
     description: "",
+  });
+  const [txOpen, setTxOpen] = useState(false);
+  const [txForm, setTxForm] = useState({
+    type: "journal" as "journal" | "invoice" | "payment" | "expense" | "transfer" | "adjustment",
+    date: "",
+    description: "",
+    totalAmount: "",
   });
 
   const utils = trpc.useUtils();
@@ -105,9 +115,37 @@ export default function AccountsAndTransactions() {
     return matchesSearch && matchesType && matchesCogs;
   });
 
+  const createTransaction = trpc.transactions.create.useMutation({
+    onSuccess: () => {
+      toast.success("Transaction created");
+      setTxOpen(false);
+      setTxForm({ type: "journal", date: "", description: "", totalAmount: "" });
+      utils.transactions.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     createAccount.mutate(formData);
+  };
+
+  const handleTxSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!txForm.date) {
+      toast.error("Date is required");
+      return;
+    }
+    if (!txForm.totalAmount.trim()) {
+      toast.error("Amount is required");
+      return;
+    }
+    createTransaction.mutate({
+      type: txForm.type,
+      date: new Date(txForm.date),
+      description: txForm.description || undefined,
+      totalAmount: txForm.totalAmount.trim(),
+    });
   };
 
   return (
@@ -157,7 +195,15 @@ export default function AccountsAndTransactions() {
               </TableHeader>
               <TableBody>
                 {filteredAccounts.map((account) => (
-                  <TableRow key={account.id}>
+                  <TableRow
+                    key={account.id}
+                    className="cursor-pointer hover:bg-muted/50"
+                    data-state={selectedAccount?.id === account.id ? "selected" : undefined}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setSelectedAccount(account)}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedAccount(account); } }}
+                  >
                     <TableCell className="font-mono">{account.code}</TableCell>
                     <TableCell className="font-medium">{account.name}</TableCell>
                     <TableCell>
@@ -218,6 +264,10 @@ export default function AccountsAndTransactions() {
               <DollarSign className="h-3 w-3" />
               COGS Only
             </button>
+            <Button size="sm" className="ml-auto" onClick={() => setTxOpen(true)}>
+              <Plus className="h-4 w-4 mr-1" />
+              Add transaction
+            </Button>
           </div>
         </CardHeader>
         <CardContent className="p-0">
@@ -243,7 +293,15 @@ export default function AccountsAndTransactions() {
               </TableHeader>
               <TableBody>
                 {filteredTransactions.map((tx) => (
-                  <TableRow key={tx.id}>
+                  <TableRow
+                    key={tx.id}
+                    className="cursor-pointer hover:bg-muted/50"
+                    data-state={selectedTx?.id === tx.id ? "selected" : undefined}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setSelectedTx(tx)}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedTx(tx); } }}
+                  >
                     <TableCell className="font-mono">{tx.transactionNumber}</TableCell>
                     <TableCell>
                       {tx.date ? format(new Date(tx.date), "MMM d, yyyy") : "-"}
@@ -265,6 +323,56 @@ export default function AccountsAndTransactions() {
           )}
         </CardContent>
       </Card>
+
+      <DetailSheet
+        open={!!selectedAccount}
+        onOpenChange={(o) => !o && setSelectedAccount(null)}
+        title={selectedAccount?.name}
+        subtitle={selectedAccount ? `${selectedAccount.code} · ${selectedAccount.type}` : null}
+      >
+        {selectedAccount && (
+          <dl className="space-y-2 text-sm">
+            {([
+              ["Code", selectedAccount.code],
+              ["Type", selectedAccount.type],
+              ["Subtype", selectedAccount.subtype],
+              ["Balance", formatCurrency(selectedAccount.balance)],
+              ["Status", selectedAccount.isActive ? "Active" : "Inactive"],
+              ["Description", selectedAccount.description],
+            ] as [string, any][]).filter(([, v]) => v != null && v !== "").map(([k, v]) => (
+              <div key={k} className="grid grid-cols-3 gap-3">
+                <dt className="text-muted-foreground">{k}</dt>
+                <dd className="col-span-2 break-words">{v}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </DetailSheet>
+
+      <DetailSheet
+        open={!!selectedTx}
+        onOpenChange={(o) => !o && setSelectedTx(null)}
+        title={selectedTx?.transactionNumber}
+        subtitle={selectedTx ? formatCurrency(selectedTx.totalAmount) : null}
+      >
+        {selectedTx && (
+          <dl className="space-y-2 text-sm">
+            {([
+              ["Date", selectedTx.date ? format(new Date(selectedTx.date), "MMM d, yyyy") : null],
+              ["Description", selectedTx.description],
+              ["Type", selectedTx.type],
+              ["Amount", formatCurrency(selectedTx.totalAmount)],
+              ["Status", selectedTx.status],
+              ["Reference", selectedTx.reference],
+            ] as [string, any][]).filter(([, v]) => v != null && v !== "").map(([k, v]) => (
+              <div key={k} className="grid grid-cols-3 gap-3">
+                <dt className="text-muted-foreground">{k}</dt>
+                <dd className="col-span-2 break-words">{v}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </DetailSheet>
 
       {/* ── Add Account Dialog ── */}
       <Dialog open={isOpen} onOpenChange={setIsOpen}>
@@ -311,6 +419,55 @@ export default function AccountsAndTransactions() {
               <Button type="button" variant="outline" onClick={() => setIsOpen(false)}>Cancel</Button>
               <Button type="submit" disabled={createAccount.isPending}>
                 {createAccount.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Create
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Add Transaction Dialog ── */}
+      <Dialog open={txOpen} onOpenChange={setTxOpen}>
+        <DialogContent>
+          <form onSubmit={handleTxSubmit}>
+            <DialogHeader>
+              <DialogTitle>Add Transaction</DialogTitle>
+              <DialogDescription>Record a new general-ledger transaction.</DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="txType">Type</Label>
+                  <Select value={txForm.type} onValueChange={(value: any) => setTxForm({ ...txForm, type: value })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="journal">Journal</SelectItem>
+                      <SelectItem value="invoice">Invoice</SelectItem>
+                      <SelectItem value="payment">Payment</SelectItem>
+                      <SelectItem value="expense">Expense</SelectItem>
+                      <SelectItem value="transfer">Transfer</SelectItem>
+                      <SelectItem value="adjustment">Adjustment</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="txDate">Date</Label>
+                  <Input id="txDate" type="date" value={txForm.date} onChange={(e) => setTxForm({ ...txForm, date: e.target.value })} required />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="txAmount">Amount</Label>
+                <Input id="txAmount" value={txForm.totalAmount} onChange={(e) => setTxForm({ ...txForm, totalAmount: e.target.value })} placeholder="1000.00" required />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="txDesc">Description (Optional)</Label>
+                <Input id="txDesc" value={txForm.description} onChange={(e) => setTxForm({ ...txForm, description: e.target.value })} placeholder="What is this transaction for?" />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setTxOpen(false)}>Cancel</Button>
+              <Button type="submit" disabled={createTransaction.isPending}>
+                {createTransaction.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 Create
               </Button>
             </DialogFooter>

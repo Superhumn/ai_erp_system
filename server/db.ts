@@ -11,6 +11,7 @@ import {
   contracts, contractKeyDates, disputes, documents,
   projects, projectMilestones, projectTasks,
   auditLogs, notifications, integrationConfigs, aiConversations, aiMessages,
+  backgroundTasks, BackgroundTask, InsertBackgroundTask,
   googleOAuthTokens, InsertGoogleOAuthToken,
   quickbooksOAuthTokens, InsertQuickBooksOAuthToken,
   quickbooksAccounts, InsertQuickBooksAccount,
@@ -188,6 +189,13 @@ import {
   pmTasks, InsertPmTask,
   pmDependencies, InsertPmDependency,
   pmMilestones, InsertPmMilestone,
+  // Ops Toolkit
+  savedViews, InsertSavedView,
+  intakeForms, InsertIntakeForm,
+  intakeFormSubmissions, InsertIntakeFormSubmission,
+  automationRules, InsertAutomationRule,
+  automationRuns, InsertAutomationRun,
+  savedReports, InsertSavedReport,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import {
@@ -2236,6 +2244,26 @@ export async function getDocuments(filters?: { companyId?: number; type?: string
     return db.select().from(documents).where(and(...conditions)).orderBy(desc(documents.createdAt));
   }
   return db.select().from(documents).orderBy(desc(documents.createdAt));
+}
+
+/**
+ * Batched document counts for many references of the same type, in one grouped
+ * query. Lets a table fetch every row's doc count at once instead of one query
+ * per row (the DocumentsCell N+1).
+ */
+export async function getDocumentCountsByReferences(
+  referenceType: string,
+  referenceIds: number[],
+): Promise<{ referenceId: number; count: number }[]> {
+  const db = await getDb();
+  if (!db) return [];
+  if (referenceIds.length === 0) return [];
+  const rows = await db
+    .select({ referenceId: documents.referenceId, docCount: count() })
+    .from(documents)
+    .where(and(eq(documents.referenceType, referenceType), inArray(documents.referenceId, referenceIds)))
+    .groupBy(documents.referenceId);
+  return rows.map((r) => ({ referenceId: Number(r.referenceId), count: Number(r.docCount) }));
 }
 
 export async function createDocument(data: InsertDocument) {
@@ -6408,6 +6436,148 @@ export async function createNotificationsForAllUsers(
   
   await db.insert(notifications).values(notificationValues);
   return notificationValues.length;
+}
+
+// ============================================
+// BACKGROUND TASKS
+// ============================================
+// Generic tracking for long-running, user-initiated operations that run detached
+// from the request that started them (see server/_core/backgroundTasks.ts). The
+// client polls these via the `backgroundTasks` tRPC router so work is visible
+// app-wide and survives navigation. All helpers are per-user scoped by callers.
+
+export interface CreateBackgroundTaskInput {
+  id: string;
+  userId: number;
+  type: string;
+  title: string;
+  description?: string | null;
+  total?: number;
+  message?: string | null;
+  entityType?: string | null;
+  entityId?: number | null;
+  link?: string | null;
+}
+
+export async function createBackgroundTask(input: CreateBackgroundTaskInput) {
+  const db = await getDb();
+  if (!db) return null;
+
+  await db.insert(backgroundTasks).values({
+    id: input.id,
+    userId: input.userId,
+    type: input.type,
+    title: input.title,
+    description: input.description ?? null,
+    status: "queued",
+    progress: 0,
+    processed: 0,
+    total: input.total ?? 0,
+    message: input.message ?? null,
+    entityType: input.entityType ?? null,
+    entityId: input.entityId ?? null,
+    link: input.link ?? null,
+  });
+
+  return input.id;
+}
+
+export async function updateBackgroundTask(
+  id: string,
+  data: Partial<Pick<InsertBackgroundTask,
+    | "status" | "progress" | "processed" | "total" | "message"
+    | "result" | "errorMessage" | "cancelRequested"
+    | "startedAt" | "finishedAt" | "link">>,
+) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(backgroundTasks).set(data).where(eq(backgroundTasks.id, id));
+}
+
+/**
+ * Tasks a user should currently see: everything still in flight, plus anything
+ * that finished recently and hasn't been dismissed. `finishedSince` bounds how
+ * far back completed tasks stay in the tray (default: last 6 hours).
+ */
+export async function listVisibleBackgroundTasks(
+  userId: number,
+  opts?: { finishedSince?: Date; limit?: number },
+): Promise<BackgroundTask[]> {
+  const db = await getDb();
+  if (!db) return [];
+
+  const since = opts?.finishedSince ?? new Date(Date.now() - 6 * 60 * 60 * 1000);
+  const rows = await db.select()
+    .from(backgroundTasks)
+    .where(and(
+      eq(backgroundTasks.userId, userId),
+      isNull(backgroundTasks.dismissedAt),
+      or(
+        inArray(backgroundTasks.status, ["queued", "running"]),
+        gte(backgroundTasks.updatedAt, since),
+      ),
+    ))
+    .orderBy(desc(backgroundTasks.createdAt))
+    .limit(opts?.limit ?? 50);
+
+  return rows;
+}
+
+export async function requestBackgroundTaskCancel(id: string, userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(backgroundTasks)
+    .set({ cancelRequested: true })
+    .where(and(eq(backgroundTasks.id, id), eq(backgroundTasks.userId, userId)));
+}
+
+export async function isBackgroundTaskCancelRequested(id: string): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  const [row] = await db.select({ cancelRequested: backgroundTasks.cancelRequested })
+    .from(backgroundTasks).where(eq(backgroundTasks.id, id)).limit(1);
+  return !!row?.cancelRequested;
+}
+
+/** Hide a finished task from the tray. Only affects the owner's rows. */
+export async function dismissBackgroundTask(id: string, userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(backgroundTasks)
+    .set({ dismissedAt: new Date() })
+    .where(and(eq(backgroundTasks.id, id), eq(backgroundTasks.userId, userId)));
+}
+
+/** Dismiss every finished (non-in-flight) task for a user in one shot. */
+export async function dismissFinishedBackgroundTasks(userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(backgroundTasks)
+    .set({ dismissedAt: new Date() })
+    .where(and(
+      eq(backgroundTasks.userId, userId),
+      isNull(backgroundTasks.dismissedAt),
+      inArray(backgroundTasks.status, ["success", "error", "cancelled"]),
+    ));
+}
+
+/**
+ * Boot recovery: the in-memory runner dies on server restart, so any task still
+ * marked queued/running is orphaned. Fail them so they don't spin forever in the
+ * client. Called once at startup.
+ */
+export async function failInterruptedBackgroundTasks(): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const result = await db.update(backgroundTasks)
+    .set({
+      status: "error",
+      errorMessage: "Interrupted by a server restart.",
+      message: "Interrupted by a server restart.",
+      finishedAt: new Date(),
+    })
+    .where(inArray(backgroundTasks.status, ["queued", "running"]));
+  return (result as any)[0]?.affectedRows ?? (result as any).rowsAffected ?? 0;
 }
 
 export async function getUserNotifications(userId: number, options?: {
@@ -15020,4 +15190,204 @@ export async function getMaterialSupplyOverview(opts?: { companyId?: number }): 
     inventoryLines,
     shipments: [],
   };
+}
+
+// ============================================
+// OPS TOOLKIT — saved views, intake forms, automations, saved reports
+// Team-shared (single-org) helpers. See shared/opsToolkit.ts for JSON shapes.
+// ============================================
+
+// ---- Item 1: saved views ----
+export async function listSavedViews(module?: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const q = db.select().from(savedViews);
+  const rows = module
+    ? await q.where(eq(savedViews.module, module)).orderBy(desc(savedViews.updatedAt))
+    : await q.orderBy(desc(savedViews.updatedAt));
+  return rows;
+}
+
+export async function createSavedView(data: InsertSavedView) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(savedViews).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateSavedView(id: number, data: Partial<InsertSavedView>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(savedViews).set({ ...data, updatedAt: new Date() } as any).where(eq(savedViews.id, id));
+}
+
+export async function deleteSavedView(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(savedViews).where(eq(savedViews.id, id));
+}
+
+// ---- Item 2: intake forms + submissions ----
+export async function listIntakeForms() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(intakeForms).orderBy(desc(intakeForms.updatedAt));
+}
+
+export async function getIntakeFormById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(intakeForms).where(eq(intakeForms.id, id)).limit(1);
+  return rows[0] || null;
+}
+
+export async function getIntakeFormBySlug(slug: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(intakeForms).where(eq(intakeForms.slug, slug)).limit(1);
+  return rows[0] || null;
+}
+
+export async function createIntakeForm(data: InsertIntakeForm) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(intakeForms).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateIntakeForm(id: number, data: Partial<InsertIntakeForm>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(intakeForms).set({ ...data, updatedAt: new Date() } as any).where(eq(intakeForms.id, id));
+}
+
+export async function deleteIntakeForm(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(intakeFormSubmissions).where(eq(intakeFormSubmissions.formId, id));
+  await db.delete(intakeForms).where(eq(intakeForms.id, id));
+}
+
+export async function createIntakeFormSubmission(data: InsertIntakeFormSubmission) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(intakeFormSubmissions).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function listIntakeFormSubmissions(formId: number, limit = 500) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(intakeFormSubmissions)
+    .where(eq(intakeFormSubmissions.formId, formId))
+    .orderBy(desc(intakeFormSubmissions.createdAt))
+    .limit(limit);
+}
+
+export async function updateIntakeFormSubmissionStatus(
+  id: number,
+  status: "new" | "reviewed" | "archived",
+) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(intakeFormSubmissions).set({ status }).where(eq(intakeFormSubmissions.id, id));
+}
+
+// ---- Item 3: automation rules + runs ----
+export async function listAutomationRules(module?: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = module
+    ? await db.select().from(automationRules).where(eq(automationRules.module, module)).orderBy(desc(automationRules.updatedAt))
+    : await db.select().from(automationRules).orderBy(desc(automationRules.updatedAt));
+  return rows;
+}
+
+export async function listActiveAutomationRules(module: string, triggerType: string) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(automationRules).where(and(
+    eq(automationRules.module, module),
+    eq(automationRules.triggerType, triggerType as any),
+    eq(automationRules.isActive, true),
+  ));
+}
+
+export async function getAutomationRuleById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(automationRules).where(eq(automationRules.id, id)).limit(1);
+  return rows[0] || null;
+}
+
+export async function createAutomationRule(data: InsertAutomationRule) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(automationRules).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateAutomationRule(id: number, data: Partial<InsertAutomationRule>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(automationRules).set({ ...data, updatedAt: new Date() } as any).where(eq(automationRules.id, id));
+}
+
+export async function deleteAutomationRule(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(automationRuns).where(eq(automationRuns.ruleId, id));
+  await db.delete(automationRules).where(eq(automationRules.id, id));
+}
+
+export async function recordAutomationRun(data: InsertAutomationRun) {
+  const db = await getDb();
+  if (!db) return;
+  await db.insert(automationRuns).values(data);
+}
+
+export async function markAutomationRuleRan(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(automationRules)
+    .set({ lastRunAt: new Date(), runCount: sql`${automationRules.runCount} + 1` })
+    .where(eq(automationRules.id, id));
+}
+
+export async function listAutomationRuns(ruleId: number, limit = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(automationRuns)
+    .where(eq(automationRuns.ruleId, ruleId))
+    .orderBy(desc(automationRuns.createdAt))
+    .limit(limit);
+}
+
+// ---- Item 4: saved reports ----
+export async function listSavedReports(module?: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = module
+    ? await db.select().from(savedReports).where(eq(savedReports.module, module)).orderBy(desc(savedReports.updatedAt))
+    : await db.select().from(savedReports).orderBy(desc(savedReports.updatedAt));
+  return rows;
+}
+
+export async function createSavedReport(data: InsertSavedReport) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(savedReports).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateSavedReport(id: number, data: Partial<InsertSavedReport>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(savedReports).set({ ...data, updatedAt: new Date() } as any).where(eq(savedReports.id, id));
+}
+
+export async function deleteSavedReport(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(savedReports).where(eq(savedReports.id, id));
 }
