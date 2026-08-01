@@ -254,6 +254,11 @@ export default function Orders() {
           <p className="text-muted-foreground mt-1">
             Manage customer orders — click any row for a summary, or open the full page.
           </p>
+          <Link href="/ops/views">
+            <Button variant="outline" size="sm" className="mt-2">
+              Board / calendar views
+            </Button>
+          </Link>
         </div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>

@@ -359,37 +359,16 @@ export default function DataRoomDetail() {
     },
   });
 
-  const syncFromDriveMutation = trpc.dataRoom.syncFromDrive.useMutation({
+  // Kick off the full folder sync as a background task: it returns immediately
+  // and keeps running server-side, so the sync continues even if the user leaves
+  // this page. The global task tray shows live progress and toasts on completion;
+  // the completion handler there also refreshes this room's data.
+  const syncFromDriveMutation = trpc.dataRoom.startDriveSync.useMutation({
     onSuccess: (data) => {
-      const where = data.folderName ? ` (${data.folderName})` : '';
-      const filesFound = data.filesFound ?? data.filesCreated;
-      const firstError = data.errors?.[0];
-      if (data.filesCreated === 0 && filesFound === 0) {
-        // Drive returned no files at all — usually a permissions/scope issue or
-        // an empty folder, not a successful sync. Don't show a green toast.
-        toast.error(
-          `No files found in the Google Drive folder${where}. ` +
-          `Check that the folder contains files and is shared with the connected account.`
-        );
-      } else if (data.filesCreated === 0 && filesFound > 0) {
-        // Files were found but none could be imported — surface the real reason.
-        toast.error(
-          `Found ${filesFound} file(s) but none could be imported${where}.` +
-          (firstError ? ` First error: ${firstError}` : '')
-        );
-      } else {
-        toast.success(
-          `Synced ${data.filesCreated} files and ${data.foldersCreated} folders from Google Drive${where}` +
-          ((data.filesUpdated || data.foldersUpdated) ? `, updated ${(data.filesUpdated ?? 0) + (data.foldersUpdated ?? 0)}` : '') +
-          ((data.filesRemoved || data.foldersRemoved) ? `, removed ${(data.filesRemoved ?? 0) + (data.foldersRemoved ?? 0)} deleted in Drive` : '') +
-          (data.filesFailed ? ` (${data.filesFailed} file(s) failed)` : '')
-        );
-      }
+      const where = data.folderName ? ` for "${data.folderName}"` : '';
+      toast.success(`Sync started${where} — it'll keep running in the background.`);
       setGoogleDriveSyncOpen(false);
       setSelectedDriveFolderId("");
-      refetchFolders();
-      refetchDocuments();
-      refetchRoom();
     },
     onError: (error) => {
       toast.error(error.message);
