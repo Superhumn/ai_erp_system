@@ -626,3 +626,342 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     }
     return result;
 }
+
+// ============================================
+// Streaming entry point (Anthropic SSE)
+// ============================================
+
+/**
+ * Assemble the Anthropic request payload from InvokeParams. Mirrors the payload
+ * building inside `invokeLLM` so the streaming path produces an identical request
+ * (tools, web search, tool_choice, response-format, prompt caching). Kept separate
+ * so the streaming variant can add `stream: true` without duplicating this logic
+ * or altering the heavily-depended-on `invokeLLM`.
+ */
+function buildAnthropicPayload(params: InvokeParams): Record<string, unknown> {
+  const {
+    messages,
+    tools,
+    toolChoice,
+    tool_choice,
+    maxTokens,
+    max_tokens,
+    outputSchema,
+    output_schema,
+    responseFormat,
+    response_format,
+    webSearch,
+    cache,
+    cache_control,
+  } = params;
+
+  const cacheConfig = resolveCacheOptions(cache ?? cache_control);
+  const converted = convertMessagesToAnthropic(messages);
+
+  const payload: Record<string, unknown> = {
+    model: ENV.llmModel || "claude-sonnet-4-20250514",
+    messages: converted.messages,
+    max_tokens: maxTokens ?? max_tokens ?? 8192,
+  };
+
+  if (converted.system) {
+    payload.system = converted.system;
+  }
+
+  const anthropicTools: unknown[] = [];
+  if (tools && tools.length > 0) {
+    anthropicTools.push(
+      ...convertToolsToAnthropic(tools, cacheConfig?.tools ? cacheConfig.control : undefined),
+    );
+  }
+  if (webSearch) {
+    const maxUses =
+      typeof webSearch === "object" && typeof webSearch.maxUses === "number"
+        ? webSearch.maxUses
+        : 5;
+    anthropicTools.push({ type: "web_search_20250305", name: "web_search", max_uses: maxUses });
+  }
+  if (anthropicTools.length > 0) {
+    payload.tools = anthropicTools;
+  }
+
+  const anthropicToolChoice = convertAnthropicToolChoice(toolChoice || tool_choice, tools);
+  if (anthropicToolChoice) {
+    payload.tool_choice = anthropicToolChoice;
+  }
+
+  const normalizedResponseFormat = normalizeResponseFormat({
+    responseFormat,
+    response_format,
+    outputSchema,
+    output_schema,
+  });
+
+  if (normalizedResponseFormat && normalizedResponseFormat.type === "json_schema") {
+    const schemaStr = JSON.stringify(normalizedResponseFormat.json_schema.schema, null, 2);
+    const jsonInstruction = `\n\nYou MUST respond with valid JSON matching this schema:\n${schemaStr}\n\nRespond ONLY with the JSON object, no other text.`;
+    payload.system = (converted.system ?? "") + jsonInstruction;
+  } else if (normalizedResponseFormat && normalizedResponseFormat.type === "json_object") {
+    const jsonInstruction = `\n\nYou MUST respond with valid JSON. Respond ONLY with the JSON object, no other text.`;
+    payload.system = (converted.system ?? "") + jsonInstruction;
+  }
+
+  if (cacheConfig?.system && typeof payload.system === "string" && payload.system.length > 0) {
+    payload.system = [
+      {
+        type: "text",
+        text: payload.system,
+        cache_control: cacheConfig.control,
+      },
+    ];
+  }
+
+  return payload;
+}
+
+/**
+ * A single event emitted while streaming an LLM turn: incremental text tokens,
+ * followed by exactly one terminal `result` carrying the fully aggregated
+ * InvokeResult (identical in shape to `invokeLLM`'s return).
+ */
+export type LLMStreamChunk =
+  | { type: "text"; delta: string }
+  | { type: "result"; result: InvokeResult };
+
+type StreamBlockAccumulator = {
+  type: string;
+  raw: Record<string, unknown>;
+  text: string;
+  jsonBuf: string;
+};
+
+/**
+ * Streaming counterpart to `invokeLLM`. Yields `{ type: "text", delta }` for each
+ * incremental text token as Anthropic produces it, then RETURNS the fully
+ * aggregated `InvokeResult` (identical in shape to `invokeLLM`'s) so callers can
+ * inspect tool calls / finish reason exactly as before.
+ *
+ * Supports tools and server-side web search: `pause_turn` (emitted mid web search)
+ * is handled by the same continuation strategy as `invokeLLM` — the partial
+ * assistant content is echoed back and the request re-issued, all while text
+ * deltas keep streaming. Pass `signal` to abort generation (e.g. a Stop button);
+ * the abort propagates to the underlying fetch and ends the stream promptly.
+ */
+export async function* invokeLLMStream(
+  params: InvokeParams & { signal?: AbortSignal },
+): AsyncGenerator<LLMStreamChunk, void, void> {
+  assertApiKey();
+
+  const payload = buildAnthropicPayload(params);
+  payload.stream = true;
+
+  const MAX_PAUSE_CONTINUATIONS = 4;
+  let continuations = 0;
+
+  // Accumulated across the whole (possibly multi-continuation) turn.
+  let fullText = "";
+  const toolCalls: ToolCall[] = [];
+  let respId = "";
+  let respModel = (payload.model as string) ?? "";
+  let stopReason: string | null = null;
+  const usage = {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_creation_input_tokens: 0,
+    cache_read_input_tokens: 0,
+  };
+
+  for (;;) {
+    const response = await fetch(resolveAnthropicUrl(), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": ENV.llmApiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify(payload),
+      signal: params.signal,
+    });
+
+    if (!response.ok || !response.body) {
+      const errorText = await response.text().catch(() => "");
+      throw new Error(
+        `LLM stream failed: ${response.status} ${response.statusText} – ${errorText}`,
+      );
+    }
+
+    // Blocks for THIS request only — reset each continuation so we can rebuild the
+    // assistant content array to echo back on pause_turn.
+    const blocks: Record<number, StreamBlockAccumulator> = {};
+    stopReason = null;
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+      buffer += decoder.decode(chunk, { stream: true });
+
+      // Anthropic SSE frames are separated by a blank line ("\n\n").
+      let sepIdx: number;
+      while ((sepIdx = buffer.indexOf("\n\n")) !== -1) {
+        const frame = buffer.slice(0, sepIdx);
+        buffer = buffer.slice(sepIdx + 2);
+
+        const dataStr = frame
+          .split("\n")
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).trim())
+          .join("");
+        if (!dataStr || dataStr === "[DONE]") continue;
+
+        let evt: any;
+        try {
+          evt = JSON.parse(dataStr);
+        } catch {
+          continue;
+        }
+
+        switch (evt.type) {
+          case "message_start": {
+            respId = evt.message?.id ?? respId;
+            respModel = evt.message?.model ?? respModel;
+            const u = evt.message?.usage;
+            if (u) {
+              usage.input_tokens = u.input_tokens ?? usage.input_tokens;
+              usage.cache_creation_input_tokens =
+                u.cache_creation_input_tokens ?? usage.cache_creation_input_tokens;
+              usage.cache_read_input_tokens =
+                u.cache_read_input_tokens ?? usage.cache_read_input_tokens;
+            }
+            break;
+          }
+          case "content_block_start": {
+            const cb = (evt.content_block ?? {}) as Record<string, unknown>;
+            blocks[evt.index] = {
+              type: (cb.type as string) ?? "text",
+              raw: cb,
+              text: "",
+              jsonBuf: "",
+            };
+            break;
+          }
+          case "content_block_delta": {
+            const d = evt.delta ?? {};
+            const b = blocks[evt.index];
+            if (d.type === "text_delta") {
+              fullText += d.text;
+              if (b) b.text += d.text;
+              yield { type: "text", delta: d.text as string };
+            } else if (d.type === "input_json_delta") {
+              if (b) b.jsonBuf += d.partial_json ?? "";
+            }
+            break;
+          }
+          case "content_block_stop": {
+            const b = blocks[evt.index];
+            if (b && b.type === "tool_use") {
+              let input: Record<string, unknown> = {};
+              try {
+                input = b.jsonBuf ? JSON.parse(b.jsonBuf) : {};
+              } catch {
+                input = {};
+              }
+              toolCalls.push({
+                id: (b.raw.id as string) ?? "",
+                type: "function",
+                function: {
+                  name: (b.raw.name as string) ?? "",
+                  arguments: JSON.stringify(input),
+                },
+              });
+            }
+            break;
+          }
+          case "message_delta": {
+            if (evt.delta?.stop_reason) stopReason = evt.delta.stop_reason;
+            if (evt.usage?.output_tokens != null) usage.output_tokens = evt.usage.output_tokens;
+            break;
+          }
+          case "error":
+            throw new Error(
+              `LLM stream error: ${evt.error?.type ?? "unknown"} – ${evt.error?.message ?? ""}`,
+            );
+          default:
+            break;
+        }
+      }
+    }
+
+    // Server-side tools (web search) pause the turn: echo the partial assistant
+    // content back and re-request, mirroring invokeLLM's continuation loop.
+    if (stopReason === "pause_turn" && continuations < MAX_PAUSE_CONTINUATIONS) {
+      continuations++;
+      const assistantContent = Object.keys(blocks)
+        .map((k) => Number(k))
+        .sort((a, b) => a - b)
+        .map((i) => {
+          const b = blocks[i];
+          if (b.type === "text") return { type: "text", text: b.text };
+          if (b.type === "tool_use" || b.type === "server_tool_use") {
+            let input: Record<string, unknown> = {};
+            try {
+              input = b.jsonBuf ? JSON.parse(b.jsonBuf) : (b.raw.input as Record<string, unknown>) ?? {};
+            } catch {
+              input = {};
+            }
+            return { ...b.raw, type: b.type, input };
+          }
+          // web_search_tool_result and any other server block: echo as delivered.
+          return b.raw;
+        });
+      (payload.messages as unknown[]).push({ role: "assistant", content: assistantContent });
+      continue;
+    }
+    break;
+  }
+
+  if (stopReason === "pause_turn") {
+    throw new Error(
+      `LLM stream did not complete: turn still paused after ${MAX_PAUSE_CONTINUATIONS} continuations`,
+    );
+  }
+
+  const promptTokens =
+    usage.input_tokens + usage.cache_creation_input_tokens + usage.cache_read_input_tokens;
+
+  yield {
+    type: "result",
+    result: {
+      id: respId || "stream",
+      created: Math.floor(Date.now() / 1000),
+      model: respModel,
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: fullText,
+            ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+          },
+          finish_reason:
+            stopReason === "end_turn"
+              ? "stop"
+              : stopReason === "tool_use"
+                ? "tool_calls"
+                : stopReason,
+        },
+      ],
+      usage: {
+        prompt_tokens: promptTokens,
+        completion_tokens: usage.output_tokens,
+        total_tokens: promptTokens + usage.output_tokens,
+        ...(usage.cache_creation_input_tokens > 0
+          ? { cache_creation_input_tokens: usage.cache_creation_input_tokens }
+          : {}),
+        ...(usage.cache_read_input_tokens > 0
+          ? { cache_read_input_tokens: usage.cache_read_input_tokens }
+          : {}),
+      },
+    },
+  };
+}

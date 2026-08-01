@@ -9,7 +9,7 @@ vi.mock('./env', () => ({
   },
 }));
 
-import { invokeLLM } from './llm';
+import { invokeLLM, invokeLLMStream } from './llm';
 
 type CapturedRequest = { url: string; body: any };
 
@@ -34,6 +34,96 @@ function mockFetch(usage?: Record<string, number>): {
   vi.stubGlobal('fetch', fetchMock);
   return { fetchMock, captured };
 }
+
+// Encode a list of Anthropic SSE events into a single byte chunk, then expose it
+// as an async-iterable body (what invokeLLMStream reads via `response.body`).
+function mockStreamFetch(events: any[]): ReturnType<typeof vi.fn> {
+  const enc = new TextEncoder();
+  const payload = events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join('');
+  const bytes = enc.encode(payload);
+  const body = {
+    async *[Symbol.asyncIterator]() {
+      yield bytes;
+    },
+  };
+  const fetchMock = vi.fn(async () => ({ ok: true, body }) as any);
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+
+// Drive the generator to completion, collecting yielded text deltas and the
+// returned aggregated InvokeResult.
+async function drain(
+  gen: AsyncGenerator<{ type: 'text'; delta: string } | { type: 'result'; result: any }, void, void>,
+): Promise<{ deltas: string[]; result: any }> {
+  const deltas: string[] = [];
+  let result: any;
+  for await (const chunk of gen) {
+    if (chunk.type === 'text') deltas.push(chunk.delta);
+    else result = chunk.result;
+  }
+  return { deltas, result };
+}
+
+describe('invokeLLMStream', () => {
+  beforeEach(() => vi.restoreAllMocks());
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('streams text deltas in order and aggregates the final message', async () => {
+    mockStreamFetch([
+      { type: 'message_start', message: { id: 'msg_1', model: 'claude-sonnet-4-20250514', usage: { input_tokens: 10 } } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Hello' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: ', ' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'world' } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 3 } },
+      { type: 'message_stop' },
+    ]);
+
+    const { deltas, result } = await drain(invokeLLMStream({ messages: [{ role: 'user', content: 'hi' }] }));
+
+    expect(deltas).toEqual(['Hello', ', ', 'world']);
+    expect(result.choices[0].message.content).toBe('Hello, world');
+    expect(result.choices[0].message.tool_calls).toBeUndefined();
+    expect(result.choices[0].finish_reason).toBe('stop');
+    expect(result.usage.completion_tokens).toBe(3);
+  });
+
+  it('sets stream: true on the request payload', async () => {
+    const fetchMock = mockStreamFetch([
+      { type: 'message_start', message: { id: 'm', model: 'x', usage: { input_tokens: 1 } } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'hi' } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } },
+    ]);
+    await drain(invokeLLMStream({ messages: [{ role: 'user', content: 'hi' }] }));
+    const body = JSON.parse((fetchMock.mock.calls[0] as any)[1].body);
+    expect(body.stream).toBe(true);
+  });
+
+  it('aggregates a streamed tool_use block into tool_calls', async () => {
+    mockStreamFetch([
+      { type: 'message_start', message: { id: 'msg_2', model: 'claude-sonnet-4-20250514', usage: { input_tokens: 12 } } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'tu_1', name: 'create_shipment', input: {} } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"orderId":' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '42}' } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 8 } },
+      { type: 'message_stop' },
+    ]);
+
+    const { deltas, result } = await drain(invokeLLMStream({ messages: [{ role: 'user', content: 'ship it' }] }));
+
+    expect(deltas).toEqual([]); // no text tokens on a pure tool turn
+    const toolCalls = result.choices[0].message.tool_calls;
+    expect(toolCalls).toHaveLength(1);
+    expect(toolCalls[0].function.name).toBe('create_shipment');
+    expect(JSON.parse(toolCalls[0].function.arguments)).toEqual({ orderId: 42 });
+    expect(result.choices[0].finish_reason).toBe('tool_calls');
+  });
+});
 
 describe('invokeLLM prompt caching', () => {
   beforeEach(() => vi.restoreAllMocks());
