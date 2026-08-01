@@ -19830,6 +19830,28 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
     listInvestments: protectedProcedure
       .input(z.object({ investorId: z.number().optional() }).optional())
       .query(({ input }) => db.getInvestorInvestments(input?.investorId)),
+    // Investors linked to a specific fundraising round (campaign).
+    listCampaignInvestors: protectedProcedure
+      .input(z.object({ campaignId: z.number() }))
+      .query(({ input }) => db.getCampaignInvestments(input.campaignId)),
+    addCampaignInvestment: protectedProcedure
+      .input(z.object({
+        campaignId: z.number(),
+        investorId: z.number(),
+        amount: z.string().min(1),
+        currency: z.string().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(({ input }) => db.createInvestment({
+        campaignId: input.campaignId,
+        investorId: input.investorId,
+        amount: input.amount,
+        currency: input.currency || "USD",
+        notes: input.notes,
+      })),
+    removeCampaignInvestment: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(({ input }) => db.deleteInvestment(input.id)),
     listReminders: protectedProcedure
       .input(z.object({ status: z.string().optional(), dueBefore: z.date().optional() }).optional())
       .query(({ input }) => db.getFundraisingReminders(input ? { status: input.status } : undefined)),

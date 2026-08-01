@@ -13,7 +13,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Plus, Loader2, Target, Edit, Building2 } from "lucide-react";
+import { Plus, Loader2, Target, Edit, Building2, Users, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 const NONE = "none";
@@ -36,6 +36,7 @@ export default function FundraisingCampaigns() {
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [formData, setFormData] = useState({ ...blankForm });
+  const [investorsRound, setInvestorsRound] = useState<any | null>(null);
 
   const { data: campaigns, isLoading, refetch } = (trpc.crm as any).listCampaigns.useQuery();
   const { data: companies } = (trpc as any).companies.list.useQuery();
@@ -225,9 +226,14 @@ export default function FundraisingCampaigns() {
                         {subsidiary || "Parent company"}
                       </div>
                     </div>
-                    <Button size="sm" variant="ghost" onClick={() => openEdit(round)}>
-                      <Edit className="h-4 w-4" />
-                    </Button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button size="sm" variant="ghost" onClick={() => setInvestorsRound(round)} title="Investors">
+                        <Users className="h-4 w-4" />
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => openEdit(round)} title="Edit round">
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
 
                   <div className="flex items-center justify-between text-sm">
@@ -251,6 +257,100 @@ export default function FundraisingCampaigns() {
       )}
 
       {dialog}
+      {investorsRound && (
+        <RoundInvestorsDialog round={investorsRound} onClose={() => setInvestorsRound(null)} />
+      )}
     </div>
+  );
+}
+
+// Investors linked to a single round, pulled from and added to the investor CRM.
+function RoundInvestorsDialog({ round, onClose }: { round: any; onClose: () => void }) {
+  const { data: links, refetch } = (trpc.crm as any).listCampaignInvestors.useQuery({ campaignId: round.id });
+  const { data: investors } = (trpc.crm as any).listInvestors.useQuery();
+  const [investorId, setInvestorId] = useState("");
+  const [amount, setAmount] = useState("");
+
+  const add = (trpc.crm as any).addCampaignInvestment.useMutation({
+    onSuccess: () => { toast.success("Investor added to round"); setInvestorId(""); setAmount(""); refetch(); },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const remove = (trpc.crm as any).removeCampaignInvestment.useMutation({
+    onSuccess: () => refetch(),
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const rows: any[] = links || [];
+  const total = rows.reduce((s, r) => s + (parseFloat(r.amount || "0") || 0), 0);
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Investors — {round.name}</DialogTitle>
+          <DialogDescription>
+            {rows.length} investor{rows.length === 1 ? "" : "s"} · ${total.toLocaleString()} committed
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          {rows.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">
+              No investors linked yet — add one from your CRM below.
+            </p>
+          ) : (
+            <div className="divide-y rounded-lg border">
+              {rows.map((r) => (
+                <div key={r.id} className="flex items-center justify-between gap-2 px-3 py-2">
+                  <div className="min-w-0">
+                    <div className="font-medium truncate">{r.investorName || `Investor #${r.investorId}`}</div>
+                    {r.investorStatus && <div className="text-xs text-muted-foreground capitalize">{r.investorStatus}</div>}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="font-mono text-sm">${(parseFloat(r.amount || "0") || 0).toLocaleString()}</span>
+                    <Button size="sm" variant="ghost" onClick={() => remove.mutate({ id: r.id })} title="Remove">
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="rounded-lg border p-3 space-y-2">
+            <Label className="text-xs">Add investor from CRM</Label>
+            <div className="flex gap-2">
+              <Select value={investorId} onValueChange={setInvestorId}>
+                <SelectTrigger className="flex-1"><SelectValue placeholder="Select investor" /></SelectTrigger>
+                <SelectContent>
+                  {(investors || []).map((inv: any) => (
+                    <SelectItem key={inv.id} value={String(inv.id)}>
+                      {inv.name}{inv.status ? ` · ${inv.status}` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                type="number" step="0.01" placeholder="Amount" className="w-32"
+                value={amount} onChange={(e) => setAmount(e.target.value)}
+              />
+              <Button
+                disabled={!investorId || !amount || add.isPending}
+                onClick={() => add.mutate({ campaignId: round.id, investorId: parseInt(investorId), amount })}
+              >
+                {add.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add"}
+              </Button>
+            </div>
+            {(!investors || investors.length === 0) && (
+              <p className="text-xs text-muted-foreground">No investors in your CRM yet — add them in the Investors area first.</p>
+            )}
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
