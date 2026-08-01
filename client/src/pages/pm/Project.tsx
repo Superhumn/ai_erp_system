@@ -50,10 +50,6 @@ export default function PmProject() {
     onSuccess: () => { invalidateDeps(); toast.success("Dependency linked"); },
     onError: (e) => toast.error(e.message),
   });
-  const deleteDependency = trpc.pm.dependencies.delete.useMutation({
-    onSuccess: invalidateDeps,
-    onError: (e) => toast.error(e.message),
-  });
 
   const [newTaskName, setNewTaskName] = useState("");
   const [newMilestoneName, setNewMilestoneName] = useState("");
