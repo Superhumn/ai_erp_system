@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Bot, Send, User, Loader2, Sparkles, MessageSquare, Square } from "lucide-react";
 import { Streamdown } from "streamdown";
-import type { AgentStreamEvent } from "../../../server/aiAgentService";
+import type { AgentStreamEvent } from "@shared/aiChat";
 
 interface Message {
   role: "user" | "assistant";

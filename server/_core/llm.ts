@@ -737,9 +737,10 @@ type StreamBlockAccumulator = {
 
 /**
  * Streaming counterpart to `invokeLLM`. Yields `{ type: "text", delta }` for each
- * incremental text token as Anthropic produces it, then RETURNS the fully
- * aggregated `InvokeResult` (identical in shape to `invokeLLM`'s) so callers can
- * inspect tool calls / finish reason exactly as before.
+ * incremental text token as Anthropic produces it, then yields exactly one
+ * terminal `{ type: "result", result }` chunk carrying the fully aggregated
+ * `InvokeResult` (identical in shape to `invokeLLM`'s) so callers can inspect
+ * tool calls / finish reason exactly as before.
  *
  * Supports tools and server-side web search: `pause_turn` (emitted mid web search)
  * is handled by the same continuation strategy as `invokeLLM` — the partial

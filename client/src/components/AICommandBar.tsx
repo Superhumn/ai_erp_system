@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { QuickCreateDialog } from "@/components/QuickCreateDialog";
-import type { AgentStreamEvent } from "../../../server/aiAgentService";
+import type { AgentStreamEvent } from "@shared/aiChat";
 
 interface AICommandBarProps {
   context?: string;

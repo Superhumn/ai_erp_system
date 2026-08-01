@@ -1,4 +1,9 @@
 import { invokeLLM, invokeLLMStream, Tool, Message, InvokeResult } from "./_core/llm";
+import type { AIAgentResponse, AIAgentAction, AgentStreamEvent } from "@shared/aiChat";
+
+// Re-exported for existing server importers; the canonical definitions live in
+// shared/ so the client can type streamed responses without importing this module.
+export type { AIAgentResponse, AIAgentAction, AgentStreamEvent } from "@shared/aiChat";
 import { getDb, createWorkOrder, createFreightRfq } from "./db";
 import { sendEmail, formatEmailHtml } from "./_core/email";
 import { getValidGoogleToken } from "./routers/middleware";
@@ -53,22 +58,8 @@ export interface AIAgentContext {
   executingErrand?: boolean;
 }
 
-export interface AIAgentResponse {
-  message: string;
-  actions?: AIAgentAction[];
-  data?: Record<string, any>;
-  suggestions?: string[];
-  /** True when `message` is a proposed plan awaiting user approval (plan-first mode). */
-  isPlan?: boolean;
-}
-
-export interface AIAgentAction {
-  type: string;
-  description: string;
-  status: "pending" | "completed" | "failed";
-  result?: any;
-  error?: string;
-}
+// AIAgentResponse and AIAgentAction are defined in shared/aiChat.ts (imported +
+// re-exported above) so the client chat surfaces can share them.
 
 // ============================================
 // TOOL DEFINITIONS FOR AI AGENT
@@ -2395,19 +2386,7 @@ export async function processAIAgentRequest(
 // STREAMING VARIANT
 // ============================================
 
-/** An incremental event emitted while the agent processes a request. */
-export type AgentStreamEvent =
-  // Live progress label shown while a tool runs (e.g. "Creating shipment…").
-  | { type: "status"; label: string }
-  // A chunk of the assistant's answer, to append to the in-progress message.
-  | { type: "token"; text: string }
-  // Discard tokens streamed so far this response — the turn turned out to be a
-  // tool call, so any preamble text was not the actual answer.
-  | { type: "reset" }
-  // A tool finished (completed or failed); mirrors AIAgentResponse.actions.
-  | { type: "action"; action: AIAgentAction }
-  // Terminal event carrying the same payload as the non-streaming response.
-  | { type: "done"; response: AIAgentResponse };
+// AgentStreamEvent is defined in shared/aiChat.ts (imported + re-exported above).
 
 // Friendly, present-tense labels for the status chip shown while a tool runs.
 const TOOL_STATUS_LABELS: Record<string, string> = {
@@ -2521,9 +2500,10 @@ export async function* processAIAgentRequestStream(
       });
 
       for (const toolCall of responseMessage.tool_calls) {
-        // If the user pressed Stop, halt before running any further tool so we
-        // don't perform side effects (creating POs, sending email, etc.) that
-        // they asked to cancel.
+        // If the user pressed Stop, halt before starting any further tool call.
+        // A tool already in flight will finish (individual tools don't take an
+        // abort signal), but no additional side effects (creating POs, sending
+        // email, etc.) are started after Stop.
         if (opts.signal?.aborted) return;
         const toolName = toolCall.function.name;
         yield { type: "status", label: statusLabelForTool(toolName) };
