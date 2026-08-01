@@ -51,6 +51,33 @@ function mockStreamFetch(events: any[]): ReturnType<typeof vi.fn> {
   return fetchMock;
 }
 
+// Like mockStreamFetch, but returns a different SSE body on each successive
+// fetch call — used to exercise the pause_turn continuation loop (each
+// continuation is a separate request). Also captures each request body.
+function mockStreamFetchSequence(eventLists: any[][]): {
+  fetchMock: ReturnType<typeof vi.fn>;
+  captured: any[];
+} {
+  const enc = new TextEncoder();
+  const captured: any[] = [];
+  let call = 0;
+  const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+    captured.push(JSON.parse(init.body as string));
+    const events = eventLists[Math.min(call, eventLists.length - 1)];
+    call++;
+    const payload = events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join('');
+    const bytes = enc.encode(payload);
+    const body = {
+      async *[Symbol.asyncIterator]() {
+        yield bytes;
+      },
+    };
+    return { ok: true, body } as any;
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return { fetchMock, captured };
+}
+
 // Drive the generator to completion, collecting yielded text deltas and the
 // returned aggregated InvokeResult.
 async function drain(
@@ -122,6 +149,41 @@ describe('invokeLLMStream', () => {
     expect(toolCalls[0].function.name).toBe('create_shipment');
     expect(JSON.parse(toolCalls[0].function.arguments)).toEqual({ orderId: 42 });
     expect(result.choices[0].finish_reason).toBe('tool_calls');
+  });
+
+  it('continues across a pause_turn and aggregates text from all requests', async () => {
+    const { fetchMock, captured } = mockStreamFetchSequence([
+      // First request pauses mid-turn (as server-side web search does).
+      [
+        { type: 'message_start', message: { id: 'msg_a', model: 'claude-sonnet-4-20250514', usage: { input_tokens: 10 } } },
+        { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Let me check. ' } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: 'pause_turn' }, usage: { output_tokens: 2 } },
+      ],
+      // Continuation completes the turn.
+      [
+        { type: 'message_start', message: { id: 'msg_b', model: 'claude-sonnet-4-20250514', usage: { input_tokens: 20 } } },
+        { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'The answer is 42.' } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } },
+        { type: 'message_stop' },
+      ],
+    ]);
+
+    const { deltas, result } = await drain(invokeLLMStream({ messages: [{ role: 'user', content: 'ask' }], webSearch: true }));
+
+    // Two requests were made (original + one continuation).
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // Tokens from both requests stream in order...
+    expect(deltas).toEqual(['Let me check. ', 'The answer is 42.']);
+    // ...and the aggregated result concatenates them and ends cleanly.
+    expect(result.choices[0].message.content).toBe('Let me check. The answer is 42.');
+    expect(result.choices[0].finish_reason).toBe('stop');
+    // The continuation echoes the paused assistant content back to the API.
+    const secondRequestMessages = captured[1].messages;
+    expect(secondRequestMessages[secondRequestMessages.length - 1].role).toBe('assistant');
   });
 });
 

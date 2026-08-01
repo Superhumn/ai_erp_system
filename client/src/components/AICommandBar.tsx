@@ -677,6 +677,10 @@ export function AICommandBar({ context }: AICommandBarProps) {
   const [isStreaming, setIsStreaming] = useState(false);
   // Live label shown while the agent runs a tool (e.g. "Creating shipment…").
   const [streamStatus, setStreamStatus] = useState<string | null>(null);
+  // True for the whole lifetime of a streamed agent request, so the Stop button
+  // only shows for streamed responses — not for other operations that share the
+  // same spinner (vendor enrichment, invoice/PO parsing, etc.).
+  const [streamActive, setStreamActive] = useState(false);
   // "plan" = propose a plan and wait for approval before acting; "act" = do it directly.
   const [agentMode, setAgentMode] = useState<"plan" | "act">(() => {
     try {
@@ -795,6 +799,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
       setIsLoading(true);
       setIsStreaming(false);
       setStreamStatus(null);
+      setStreamActive(true);
       setResponse(null);
       setAgentActions(null);
 
@@ -871,6 +876,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
         toast.error(`Agent error: ${error?.message ?? String(error)}`, { description: "Falling back to a direct answer." });
         aiQuery.mutate({ question: lastSubmittedQuery.current });
       } finally {
+        setStreamActive(false);
         if (streamAbortRef.current === controller) streamAbortRef.current = null;
       }
     },
@@ -1503,9 +1509,11 @@ export function AICommandBar({ context }: AICommandBarProps) {
                     ? "Drafting a plan — thinking it through and searching the web…"
                     : "Working on it — reasoning, checking your data, and searching the web…"}
               </span>
-              <Button variant="ghost" size="sm" onClick={stopStreaming} className="text-muted-foreground">
-                <Square className="h-3.5 w-3.5 mr-1" /> Stop
-              </Button>
+              {streamActive && (
+                <Button variant="ghost" size="sm" onClick={stopStreaming} className="text-muted-foreground">
+                  <Square className="h-3.5 w-3.5 mr-1" /> Stop
+                </Button>
+              )}
             </div>
           )}
 

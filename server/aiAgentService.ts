@@ -2465,6 +2465,8 @@ export async function* processAIAgentRequestStream(
 
   while (iterations < maxIterations) {
     iterations++;
+    // Honor a mid-flight Stop: don't start another LLM turn once aborted.
+    if (opts.signal?.aborted) return;
 
     // Stream this turn. Text tokens are forwarded live; the generator's return
     // value is the aggregated result (identical shape to invokeLLM) so the
@@ -2519,6 +2521,10 @@ export async function* processAIAgentRequestStream(
       });
 
       for (const toolCall of responseMessage.tool_calls) {
+        // If the user pressed Stop, halt before running any further tool so we
+        // don't perform side effects (creating POs, sending email, etc.) that
+        // they asked to cancel.
+        if (opts.signal?.aborted) return;
         const toolName = toolCall.function.name;
         yield { type: "status", label: statusLabelForTool(toolName) };
 
