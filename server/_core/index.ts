@@ -1151,17 +1151,21 @@ async function startServer() {
         return res.status(driveResponse.status || 502).send(`Drive fetch failed: ${driveResponse.status}. ${body}`);
       }
 
-      res.setHeader('Content-Type', driveResponse.headers.get('content-type') || outMime || 'application/octet-stream');
+      const effectiveType = (driveResponse.headers.get('content-type') || outMime || 'application/octet-stream').toLowerCase();
+      res.setHeader('Content-Type', effectiveType);
       const len = driveResponse.headers.get('content-length');
       if (len) res.setHeader('Content-Length', len);
       res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(doc.name || 'file')}"`);
-      // Sandbox the proxied document. The Content-Type comes from the uploaded
-      // file, so an HTML/SVG document would otherwise execute JavaScript in our
-      // origin when framed inline (X-Frame-Options: SAMEORIGIN above). A bare
-      // `sandbox` directive gives the response a unique opaque origin — scripts,
-      // forms, and same-origin access are all disabled — while browser-native
-      // rendering of PDFs/images is unaffected.
-      res.setHeader('Content-Security-Policy', 'sandbox');
+      // Sandbox the proxied document so an HTML/SVG file can't execute JavaScript
+      // in our origin when framed inline (X-Frame-Options: SAMEORIGIN above).
+      // Chrome's built-in PDF viewer, however, needs scripts + same-origin to
+      // render, so relax the sandbox ONLY for genuine PDFs (a PDF can't script
+      // our page). Everything else keeps the strict opaque-origin sandbox.
+      const isPdf = effectiveType.includes('application/pdf');
+      res.setHeader(
+        'Content-Security-Policy',
+        isPdf ? 'sandbox allow-scripts allow-same-origin allow-popups allow-downloads' : 'sandbox',
+      );
       res.setHeader('Cache-Control', 'private, max-age=60');
 
       // Pipe Drive's response body to the client. Node's fetch returns a web

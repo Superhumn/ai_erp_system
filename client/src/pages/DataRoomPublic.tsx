@@ -79,6 +79,16 @@ function getViewerSrc(doc: DocumentItem, linkCode?: string): { src: string | nul
   //    without exposing OAuth tokens to the browser and without requiring
   //    the viewer's browser to be signed into a Google account.
   if (doc.googleDriveFileId && doc.id != null) {
+    const mime = (doc.mimeType || "").toLowerCase();
+    const isGoogleNative = mime.startsWith("application/vnd.google-apps.");
+    // Real uploaded Office files (.docx/.xlsx/.pptx — not Google-native) stream
+    // as raw binary that a browser can't render in an <iframe>, so fall through
+    // to the download fallback (gated by allowDownload), same as S3 Office files.
+    // Google-native Docs/Sheets/Slides are exported to PDF by the proxy, and
+    // PDFs/images render directly — those keep using the inline proxy iframe.
+    if (isOffice && !isGoogleNative) {
+      return { src: null, isImg: false };
+    }
     const qs = linkCode ? `?linkCode=${encodeURIComponent(linkCode)}` : "";
     return { src: `/api/drive/proxy/${doc.id}${qs}`, isImg: false };
   }
@@ -536,7 +546,7 @@ export default function DataRoomPublic() {
             </div>
 
             <div className="flex items-center gap-2">
-              {permissions.allowDownload && (doc.storageUrl || doc.googleDriveWebViewLink) && (
+              {permissions.allowDownload && (doc.googleDriveFileId || doc.storageUrl || doc.googleDriveWebViewLink) && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -545,7 +555,15 @@ export default function DataRoomPublic() {
                     if (visitorId) {
                       recordViewMutation.mutate({ documentId: doc.id, visitorId, downloaded: true });
                     }
-                    window.open(doc.storageUrl || doc.googleDriveWebViewLink || '', "_blank");
+                    // For Drive files, download through our proxy (streams the
+                    // real bytes via the owner's token, gated by the visitor
+                    // session) — the Drive web link would require the visitor to
+                    // be signed into Google with access, which external viewers
+                    // are not. S3 files keep their direct storageUrl.
+                    const url = doc.googleDriveFileId && doc.id != null
+                      ? `/api/drive/proxy/${doc.id}${linkCode ? `?linkCode=${encodeURIComponent(linkCode)}` : ""}`
+                      : (doc.storageUrl || doc.googleDriveWebViewLink || '');
+                    window.open(url, "_blank");
                   }}
                 >
                   <Download className="h-4 w-4 mr-1.5" />
@@ -637,7 +655,10 @@ export default function DataRoomPublic() {
                 return (
                   <div className="flex flex-col items-center justify-center h-full text-gray-500">
                     <File className="h-16 w-16 mb-4 text-gray-600" />
-                    <p className="text-sm">Preview not available</p>
+                    <p className="text-sm">Inline preview isn't available for this file type.</p>
+                    {permissions.allowDownload && (doc.googleDriveFileId || doc.storageUrl) && (
+                      <p className="text-xs mt-1">Use the Download button above to open it.</p>
+                    )}
                   </div>
                 );
               })()}
