@@ -4,14 +4,15 @@ on:
   pull_request:
     branches: [main]
   workflow_call:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
-
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   typecheck:
     name: Type Check
