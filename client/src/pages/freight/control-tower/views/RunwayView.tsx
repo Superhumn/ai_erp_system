@@ -1,5 +1,5 @@
 import { Mark } from "../lib/Mark";
-import { v, FONT_MONO } from "../lib/tokens";
+import { v, FONT_MONO, rowActivate } from "../lib/tokens";
 import type { Palette } from "../lib/palette";
 import type { RunwayRow } from "../lib/selectors";
 
@@ -30,6 +30,7 @@ export function RunwayView({ rows, ticks, note, palette: C, onOpen }: Props) {
         <div
           key={r.sku}
           onClick={() => r.ref && onOpen(r.ref)}
+          {...(r.ref ? rowActivate(() => onOpen(r.ref!)) : {})}
           style={{ display: "grid", gridTemplateColumns: GRID, gap: 14, alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${v("line")}`, cursor: r.rowCursor }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>

@@ -1,5 +1,5 @@
 import { Glyph } from "../lib/Mark";
-import { v, FONT_MONO, FONT_SANS } from "../lib/tokens";
+import { v, FONT_MONO, FONT_SANS, rowActivate } from "../lib/tokens";
 import type { Palette } from "../lib/palette";
 import { HEADERS, GRID_COLS, type BoardGroup, type Cell, type Pivot } from "../lib/selectors";
 
@@ -85,6 +85,7 @@ export function BoardView({ groups, empty, palette: C, onOpen, onPivot, onDocs, 
               <div
                 key={r.ref}
                 onClick={() => onOpen(r.ref)}
+                {...rowActivate(() => onOpen(r.ref))}
                 style={{ display: "grid", gridTemplateColumns: GRID_COLS, gap: 12, padding: "11px 20px", borderBottom: `1px solid ${v("line")}`, cursor: "pointer", alignItems: "center", borderLeft: `2px solid ${r.riskBar}` }}
               >
                 {r.cells.map((c, i) => <CellView key={i} c={c} C={C} onPivot={onPivot} onDocs={onDocs} />)}

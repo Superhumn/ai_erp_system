@@ -1,5 +1,5 @@
 import { Mark } from "../lib/Mark";
-import { v, FONT_MONO } from "../lib/tokens";
+import { v, FONT_MONO, rowActivate } from "../lib/tokens";
 import type { Palette } from "../lib/palette";
 import type { JourneyRibbon } from "../lib/selectors";
 
@@ -28,6 +28,7 @@ export function JourneysView({ rows, ticks, todayLeft, palette: C, onOpen }: Pro
         <div
           key={rb.ref}
           onClick={() => onOpen(rb.ref)}
+          {...rowActivate(() => onOpen(rb.ref))}
           style={{ display: "grid", gridTemplateColumns: GRID, gap: 16, alignItems: "center", padding: "9px 0", borderBottom: `1px solid ${v("line")}`, cursor: "pointer" }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>

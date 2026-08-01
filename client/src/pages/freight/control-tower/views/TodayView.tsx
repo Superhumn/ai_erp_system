@@ -1,5 +1,5 @@
 import { Mark } from "../lib/Mark";
-import { v, FONT_MONO } from "../lib/tokens";
+import { v, FONT_MONO, rowActivate } from "../lib/tokens";
 import type { Palette } from "../lib/palette";
 import type { ClockRow, RunwayRow } from "../lib/selectors";
 
@@ -26,6 +26,7 @@ export function TodayView({ clock, runwayTop, runwayNote, palette: C, onOpen }: 
               <div
                 key={e.ref + e.label}
                 onClick={() => e.ref && onOpen(e.ref)}
+                {...rowActivate(() => { if (e.ref) onOpen(e.ref); })}
                 style={{ display: "grid", gridTemplateColumns: "52px 44px minmax(0, 1fr)", gap: 14, alignItems: "center", padding: "13px 15px", border: `1px solid ${e.border}`, borderRadius: 9, background: e.bg, cursor: "pointer" }}
               >
                 <div style={{ textAlign: "right" }}>
@@ -58,6 +59,7 @@ export function TodayView({ clock, runwayTop, runwayNote, palette: C, onOpen }: 
               <div
                 key={r.sku}
                 onClick={() => r.ref && onOpen(r.ref)}
+                {...(r.ref ? rowActivate(() => onOpen(r.ref!)) : {})}
                 style={{ display: "grid", gridTemplateColumns: "44px minmax(0, 1fr) 42px", gap: 11, alignItems: "center", padding: "9px 0", borderBottom: `1px solid ${v("line")}`, cursor: r.rowCursor }}
               >
                 <Mark sku={r.sku} palette={C} w={44} h={30} icon={14} code={11} radius={7} gap={4} />

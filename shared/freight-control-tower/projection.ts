@@ -48,9 +48,15 @@ export interface CoverProjection {
   credits: Record<number, number>;
 }
 
-/** Burn rate for a cover row: on-hand spread over its authored days of cover. */
+/**
+ * Burn rate for a cover row: on-hand spread over its authored days of cover.
+ * Guards non-positive / non-finite `days` (which production data can carry) so
+ * the projection never divides by zero into Infinity/NaN and corrupts the walk.
+ * With no usable burn signal we assume no consumption (0) rather than an
+ * instant, spurious stockout.
+ */
 export function burnRate(cover: CoverRow): number {
-  return cover.onHandN / cover.days;
+  return Number.isFinite(cover.days) && cover.days > 0 ? cover.onHandN / cover.days : 0;
 }
 
 /**
@@ -107,10 +113,19 @@ export function projectAll(
   shipments: Shipment[],
   opts: ProjectionOpts = {},
 ): Record<string, CoverProjection> {
+  // Group not-yet-received inbounds by SKU once (O(|shipments|)) so the
+  // per-SKU projection loop stays O(|cover| + |shipments|) rather than the
+  // product — this runs on every snapshot.
+  const bySku = new Map<string, Array<{ eta: string; qtyN: number }>>();
+  for (const r of shipments) {
+    if (r.prog >= 1) continue;
+    const list = bySku.get(r.sku);
+    if (list) list.push(r);
+    else bySku.set(r.sku, [r]);
+  }
   const out: Record<string, CoverProjection> = {};
   for (const sku of Object.keys(cover)) {
-    const inbounds = shipments.filter((r) => r.sku === sku && r.prog < 1);
-    out[sku] = projectSku(sku, cover[sku], inbounds, opts);
+    out[sku] = projectSku(sku, cover[sku], bySku.get(sku) ?? [], opts);
   }
   return out;
 }

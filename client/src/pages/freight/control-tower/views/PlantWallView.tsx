@@ -1,5 +1,5 @@
 import { Mark } from "../lib/Mark";
-import { v, FONT_MONO } from "../lib/tokens";
+import { v, FONT_MONO, rowActivate } from "../lib/tokens";
 import type { Palette } from "../lib/palette";
 import type { WallCard } from "../lib/selectors";
 
@@ -30,7 +30,7 @@ export function PlantWallView({ cards, palette: C, onOpen }: Props) {
             <div style={{ fontSize: 11.5, color: v("text-dim"), marginBottom: 14 }}>{p.name}</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {p.items.map((s) => (
-                <div key={s.sku} onClick={() => s.ref && onOpen(s.ref)} style={{ display: "flex", alignItems: "center", gap: 10, cursor: s.rowCursor }}>
+                <div key={s.sku} onClick={() => s.ref && onOpen(s.ref)} {...(s.ref ? rowActivate(() => onOpen(s.ref!)) : {})} style={{ display: "flex", alignItems: "center", gap: 10, cursor: s.rowCursor }}>
                   <Mark sku={s.sku} palette={C} w={44} h={32} icon={16} code={12} radius={7} gap={4} />
                   <div style={{ flex: 1, height: 9, borderRadius: 5, background: v("line"), position: "relative" }}>
                     <div style={{ position: "absolute", inset: "0 auto 0 0", width: s.barW, borderRadius: 5, background: s.color }} />

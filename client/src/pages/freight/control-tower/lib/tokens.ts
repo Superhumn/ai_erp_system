@@ -117,3 +117,20 @@ export function tint(name: ErpTokenName, pct: number): string {
 export const FONT_SANS =
   "'Space Grotesk', system-ui, -apple-system, sans-serif";
 export const FONT_MONO = "'IBM Plex Mono', ui-monospace, monospace";
+
+/**
+ * Props that make a clickable row keyboard-activatable — focusable and openable
+ * with Enter/Space — without changing its layout. Spread alongside `onClick`.
+ */
+export function rowActivate(fn: () => void) {
+  return {
+    role: "button" as const,
+    tabIndex: 0,
+    onKeyDown: (e: import("react").KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        fn();
+      }
+    },
+  };
+}

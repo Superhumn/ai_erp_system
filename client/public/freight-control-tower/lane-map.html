@@ -3,8 +3,11 @@
 <head>
 <meta charset="utf-8" />
 <title>Lane map</title>
-<script src="https://unpkg.com/d3@7.9.0/dist/d3.min.js" integrity="sha384-CjloA8y00+1SDAUkjs099PVfnY2KmDC2BZnws9kh8D/lX1s46w6EPhpXdqMfjK6i" crossorigin="anonymous"></script>
-<script src="https://unpkg.com/topojson-client@3.1.0/dist/topojson-client.min.js" integrity="sha384-Ukv1p/xTma6P4/2bY5KzWBw+ydSpXmhCMtyciIQVDJ1RmOxtCYNMF1uXT9T63H67" crossorigin="anonymous"></script>
+<!-- d3 7.9.0 + topojson-client 3.1.0 vendored locally (served from the ERP
+     origin) so the map has no runtime third-party fetches and works offline /
+     under a strict CSP. -->
+<script src="./vendor/d3.min.js"></script>
+<script src="./vendor/topojson-client.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <style>
   /* Chrome colours read from CSS vars so the parent theme (light/dark) drives them.
@@ -272,7 +275,7 @@ window.addEventListener('message', (ev) => {
   if (d && d.type === 'lane-map-data') { rows = d.rows || []; if (d.theme) applyTheme(d.theme); draw(); }
 });
 
-d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json').then((topo) => {
+d3.json('./vendor/countries-110m.json').then((topo) => {
   world = topojson.feature(topo, topo.objects.countries);
   resize();
   parent.postMessage({ type: 'lane-map-ready' }, window.location.origin);
