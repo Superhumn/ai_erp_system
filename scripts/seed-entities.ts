@@ -50,6 +50,9 @@ async function upsert(db: any, seed: Seed, parentId: number | null): Promise<num
   }
   await db.insert(companies).values(values);
   const created = (await db.select().from(companies).where(eq(companies.code, seed.code)).limit(1))[0];
+  if (!created) {
+    throw new Error(`Failed to reload seeded entity "${seed.code}" after insert — the insert may not have committed.`);
+  }
   console.log(`Created entity ${seed.code} (#${created.id}).`);
   return created.id;
 }

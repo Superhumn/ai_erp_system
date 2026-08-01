@@ -19,12 +19,17 @@ WITH RECURSIVE t AS (
   SELECT t.entity_id, c.parentCompanyId AS ancestor_id, t.depth + 1
   FROM t
   JOIN companies c ON c.id = t.ancestor_id
-  WHERE c.parentCompanyId IS NOT NULL
+  -- depth cap guards against a cycle in parentCompanyId (no DB constraint prevents one):
+  -- without it a cycle would hit MySQL's cte_max_recursion_depth and fail the whole query.
+  -- 64 is far deeper than any real entity hierarchy.
+  WHERE c.parentCompanyId IS NOT NULL AND t.depth < 64
 )
 SELECT entity_id, ancestor_id, depth FROM t;
 
 -- ============================== DOWN ==============================
--- Reverses STEP 1 in full (view + the columns added via schema.ts). Run manually to roll back.
+-- The statements below are INTENTIONALLY COMMENTED OUT so this file can be applied (the UP)
+-- without accidentally dropping anything. To roll STEP 1 back, copy these lines, uncomment them,
+-- and run them manually. They reverse STEP 1 in full (the view + the columns added via schema.ts).
 --
 -- DROP VIEW IF EXISTS entity_tree;
 -- ALTER TABLE companies
