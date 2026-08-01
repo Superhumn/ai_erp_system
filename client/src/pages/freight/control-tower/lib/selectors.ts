@@ -20,8 +20,8 @@ export function moneyN(s: unknown): number | null {
   const m = String(s).match(/-?[\d][\d,]*(\.\d+)?/);
   return m ? Number(m[0].replace(/,/g, "")) : null;
 }
-export function money(arr: Record<string, unknown>[], key: string): number {
-  return arr.reduce((n, r) => n + Number(String(r[key]).replace(/[^0-9.]/g, "") || 0), 0);
+export function money(arr: readonly unknown[], key: string): number {
+  return arr.reduce<number>((n, r) => n + Number(String((r as Record<string, unknown>)[key]).replace(/[^0-9.]/g, "") || 0), 0);
 }
 export function fmt(n: number): string {
   return n >= 1e6 ? "$" + (n / 1e6).toFixed(1) + "M"
