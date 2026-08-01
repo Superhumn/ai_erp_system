@@ -1,4 +1,8 @@
 @import url("https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400..800&family=Inter+Tight:wght@400;500;600;700&display=swap");
+/* Freight Control Tower faces — Space Grotesk (UI) + IBM Plex Mono (identifiers/figures).
+   Scoped to the control tower via the .fct-root font-family; the rest of the app keeps
+   DM Sans / Inter Tight. */
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
 @import "tailwindcss";
 @import "tw-animate-css";
 /* Superhumn design system â display/number face (DM Sans) + body/UI face (Inter Tight). */
@@ -105,6 +109,35 @@
   --sidebar-accent-foreground: oklch(0.135 0.012 220);
   --sidebar-border: oklch(0.918 0.006 220);
   --sidebar-ring: oklch(0.50 0.22 215);
+
+  /* ── Freight Control Tower theme contract (light) ─────────────────────
+     The board reads these once at mount via getComputedStyle and derives
+     tints by appending 8-digit-hex alpha (+ '16' / '4D') or via color-mix.
+     Keep every value 6-digit hex so the alpha-suffix trick stays valid. */
+  --erp-bg: #FFFFFF;
+  --erp-surface: #FAFAFA;
+  --erp-surface-2: #F4F4F5;
+  --erp-line: #EDEDED;
+  --erp-border: #E0E0E0;
+  --erp-border-strong: #D2D2D2;
+  --erp-control: #C0C0C0;
+  --erp-line-muted: #A6A6A6;
+  --erp-text: #18181B;
+  --erp-text-2: #3F3F46;
+  --erp-text-3: #52525B;
+  --erp-text-dim: #71717A;
+  --erp-text-faint: #A1A1AA;
+  --erp-success: #15803D;
+  --erp-warning: #B45309;
+  --erp-warning-2: #C2740D;
+  --erp-warning-dark: #92400E;
+  --erp-danger: #B91C1C;
+  --erp-danger-2: #DC2626;
+  --erp-info: #1D4ED8;
+  --erp-info-2: #3B82F6;
+  --erp-accent: #6D28D9;
+  --erp-teal: #0F766E;
+  --erp-magenta: #9D174D;
 }
 
 .dark {
@@ -149,6 +182,35 @@
   --sidebar-accent-foreground: oklch(0.930 0.005 220);
   --sidebar-border: oklch(0.180 0.009 220);
   --sidebar-ring: oklch(0.635 0.22 215);
+
+  /* ── Freight Control Tower theme contract (dark) ──────────────────────
+     Same token names, re-tuned for the charcoal shell: neutrals ramp up
+     from the app background, semantic hues brightened so fills and text
+     stay legible on dark. All 6-digit hex (alpha-suffix contract). */
+  --erp-bg: #0B0C0E;
+  --erp-surface: #131417;
+  --erp-surface-2: #1A1C20;
+  --erp-line: #24262B;
+  --erp-border: #2C2F35;
+  --erp-border-strong: #3A3E45;
+  --erp-control: #4A4E56;
+  --erp-line-muted: #5E636C;
+  --erp-text: #FAFAFA;
+  --erp-text-2: #D4D4D8;
+  --erp-text-3: #B4B4BC;
+  --erp-text-dim: #8E9299;
+  --erp-text-faint: #6B7079;
+  --erp-success: #4ADE80;
+  --erp-warning: #FBBF24;
+  --erp-warning-2: #F59E0B;
+  --erp-warning-dark: #D97706;
+  --erp-danger: #F87171;
+  --erp-danger-2: #EF4444;
+  --erp-info: #60A5FA;
+  --erp-info-2: #93C5FD;
+  --erp-accent: #A78BFA;
+  --erp-teal: #2DD4BF;
+  --erp-magenta: #F472B6;
 }
 
 @layer base {
@@ -470,6 +532,13 @@
     display: none !important;
   }
 }
+
+/* ============================================
+   FREIGHT CONTROL TOWER animations (scoped names)
+   ============================================ */
+@keyframes fctPulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.7); } }
+@keyframes fctSlideIn { from { transform: translateX(28px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes fctFadeUp { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
 /* ============================================
    LIGHTFIELD DARK DESIGN SYSTEM

@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Lane map</title>
+<script src="https://unpkg.com/d3@7.9.0/dist/d3.min.js" integrity="sha384-CjloA8y00+1SDAUkjs099PVfnY2KmDC2BZnws9kh8D/lX1s46w6EPhpXdqMfjK6i" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/topojson-client@3.1.0/dist/topojson-client.min.js" integrity="sha384-Ukv1p/xTma6P4/2bY5KzWBw+ydSpXmhCMtyciIQVDJ1RmOxtCYNMF1uXT9T63H67" crossorigin="anonymous"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  /* Chrome colours read from CSS vars so the parent theme (light/dark) drives them.
+     Defaults below are the prototype's original dark palette. */
+  :root {
+    --m-bg: #0B0E13; --m-text: #E6EBF2; --m-mid: #9AA7B8; --m-dim: #64717F; --m-faint: #4E5A69;
+    --m-panel: #12171F; --m-panel-border: #2E3846; --m-legend-bg: rgba(14,18,25,.86); --m-legend-border: #1D242F;
+  }
+  html, body { margin: 0; padding: 0; height: 100%; background: var(--m-bg); overflow: hidden;
+    font-family: 'Space Grotesk', system-ui, sans-serif; color: var(--m-text); }
+  #wrap { position: absolute; inset: 0; }
+  svg { display: block; cursor: grab; }
+  svg:active { cursor: grabbing; }
+  .mono { font-family: 'IBM Plex Mono', monospace; }
+  #tip { position: absolute; pointer-events: none; opacity: 0; transition: opacity 120ms ease;
+    background: var(--m-panel); border: 1px solid var(--m-panel-border); border-radius: 8px; padding: 10px 12px;
+    box-shadow: 0 12px 34px rgba(0,0,0,.6); max-width: 260px; z-index: 10; }
+  #legend { position: absolute; left: 16px; bottom: 14px; display: flex; flex-direction: column; gap: 7px;
+    background: var(--m-legend-bg); border: 1px solid var(--m-legend-border); border-radius: 8px; padding: 11px 13px; z-index: 5; }
+  #hint { position: absolute; right: 16px; bottom: 14px; font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px; color: var(--m-faint); z-index: 5; }
+  #empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--m-faint); font-size: 13px; }
+  @keyframes halo { 0% { r: 6; opacity: .55; } 100% { r: 17; opacity: 0; } }
+</style>
+</head>
+<body>
+<div id="wrap"><svg></svg></div>
+<div id="tip"></div>
+<div id="legend"></div>
+<div id="hint">scroll to zoom · drag to pan · click a vessel to open it</div>
+
+<script>
+// Accent palette (status colours). Overridden by the parent's resolved theme.
+let C = { amber:'#F0A22E', green:'#3FCF8E', red:'#F2545B', blue:'#5B9DF9', violet:'#A78BFA',
+  text:'#E6EBF2', mid:'#9AA7B8', dim:'#64717F', faint:'#4E5A69' };
+// SVG structural fills. Overridden by the parent's resolved theme.
+let T = { bg:'#0B0E13', sphere:'#0D1218', graticule:'#151B23', land:'#161C26', landStroke:'#232B37',
+  lane:'#2B3441', portFill:'#3A4453', portStroke:'#4E5A69', portText:'#5C6879', dotStroke:'#0B0E13', closedFill:'#0D1218' };
+
+const PORTS = {
+  CNNGB:[121.55,29.87,'Ningbo'], CNSHA:[121.80,31.23,'Shanghai'], CNYTN:[114.27,22.58,'Yantian'],
+  CNCAN:[113.26,23.13,'Guangzhou'], INMAA:[80.29,13.08,'Chennai'], INNSA:[72.95,18.95,'Nhava Sheva'],
+  INPNQ:[73.85,18.52,'Pune'], ZADUR:[31.02,-29.87,'Durban'], ZACPT:[18.42,-33.92,'Cape Town'],
+  USCHS:[-79.93,32.78,'Charleston'], USATL:[-84.39,33.75,'Atlanta'], SGSIN:[103.82,1.35,'Singapore'],
+  INCOK:[76.26,9.93,'Kochi']
+};
+
+const SUEZ_W = [[45,12],[38,20],[32.55,29.9],[28,33],[18,34],[-5.6,35.9],[-20,35],[-45,34],[-65,32]];
+const PANAMA_E = [[-160,35],[-130,28],[-105,16],[-85,11],[-79.55,9.0],[-77,15],[-76,24]];
+const ROUTES = {
+  'CNNGB|USCHS': [[121.55,29.87],[123,27],[118,18],[110,10],[105,4],[100,2],[90,5],[75,6],[60,10]].concat(SUEZ_W),
+  'CNSHA|USCHS': [[121.8,31.23],[126,31],[135,33],[155,37],[175,38]].concat(PANAMA_E),
+  'CNYTN|USCHS': [[114.27,22.58],[120,20],[130,25],[150,32],[172,36]].concat(PANAMA_E),
+  'INNSA|USCHS': [[72.95,18.95],[70,15],[62,13],[52,12]].concat(SUEZ_W),
+  'ZADUR|USCHS': [[31.02,-29.87],[26,-34],[18.5,-35.5],[8,-28],[-2,-15],[-18,-3],[-32,8],[-52,18],[-70,27]],
+  'CNNGB|SGSIN': [[121.55,29.87],[122,26],[117,18],[110,10],[106,4],[103.82,1.35]],
+  'INNSA|SGSIN': [[72.95,18.95],[74,12],[78,7],[86,5],[96,3],[100,2],[103.82,1.35]],
+  'INMAA|SGSIN': [[80.29,13.08],[84,9],[92,5],[99,2],[103.82,1.35]],
+  'ZACPT|CNNGB': [[18.42,-33.92],[24,-34],[38,-30],[55,-18],[72,-6],[88,2],[99,2],[105,7],[113,17],[121.55,29.87]],
+  'INMAA|USATL': [[80.29,13.08],[70,22],[55,32],[38,40],[18,45],[-5,48],[-32,47],[-56,42],[-84.39,33.75]],
+  'CNSHA|USATL': [[121.8,31.23],[135,40],[160,48],[-175,52],[-150,55],[-125,50],[-100,42],[-84.39,33.75]],
+  'CNCAN|INPNQ': [[113.26,23.13],[104,21],[95,20],[85,19],[73.85,18.52]],
+  'SGSIN|SGSIN': [[103.82,1.35],[103.70,1.32]],
+  'INCOK|SGSIN': [[76.26,9.93],[78,7],[85,5],[95,3],[100,2],[103.82,1.35]],
+  'INCOK|USATL': [[76.26,9.93],[68,18],[55,29],[38,38],[16,44],[-8,47],[-34,46],[-58,41],[-84.39,33.75]],
+  'SGSIN|USCHS': [[103.82,1.35],[100,2],[95,4],[85,5],[72,8],[60,11]].concat(SUEZ_W),
+  'ZACPT|SGSIN': [[18.42,-33.92],[24,-34],[40,-30],[60,-20],[78,-8],[92,-1],[100,1],[103.82,1.35]]
+};
+
+let world = null, rows = [], zoomT = d3.zoomIdentity;
+const svg = d3.select('svg');
+const tip = document.getElementById('tip');
+const projection = d3.geoNaturalEarth1();
+const path = d3.geoPath(projection);
+const graticule = d3.geoGraticule10();
+let gRoot;
+
+function routeFor(r) {
+  const k = r.originPort + '|' + r.destPort;
+  if (ROUTES[k]) return ROUTES[k];
+  const a = PORTS[r.originPort], b = PORTS[r.destPort];
+  if (!a || !b) return null;
+  return [[a[0], a[1]], [b[0], b[1]]];
+}
+
+function cumulative(coords) {
+  const d = [0];
+  for (let i = 1; i < coords.length; i++) d.push(d[i - 1] + d3.geoDistance(coords[i - 1], coords[i]));
+  return d;
+}
+
+function slice(coords, t) {
+  const d = cumulative(coords), total = d[d.length - 1];
+  if (!total) return { line: coords.slice(), pos: coords[coords.length - 1] };
+  const target = total * Math.max(0, Math.min(1, t));
+  for (let i = 1; i < d.length; i++) {
+    if (d[i] >= target) {
+      const f = (target - d[i - 1]) / (d[i] - d[i - 1] || 1);
+      const p = d3.geoInterpolate(coords[i - 1], coords[i])(f);
+      return { line: coords.slice(0, i).concat([p]), pos: p };
+    }
+  }
+  return { line: coords.slice(), pos: coords[coords.length - 1] };
+}
+
+function resize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  svg.attr('width', w).attr('height', h).attr('viewBox', '0 0 ' + w + ' ' + h);
+  projection.fitExtent([[18, 18], [w - 18, h - 40]], { type: 'Sphere' });
+  draw();
+}
+
+function draw() {
+  if (!world) return;
+  svg.selectAll('*').remove();
+  const w = +svg.attr('width'), h = +svg.attr('height');
+
+  svg.append('rect').attr('width', w).attr('height', h).attr('fill', T.bg);
+  gRoot = svg.append('g').attr('transform', zoomT.toString());
+
+  gRoot.append('path').datum({ type: 'Sphere' }).attr('d', path).attr('fill', T.sphere);
+  gRoot.append('path').datum(graticule).attr('d', path).attr('fill', 'none')
+    .attr('stroke', T.graticule).attr('stroke-width', 0.5 / zoomT.k);
+  gRoot.append('path').datum(world).attr('d', path).attr('fill', T.land)
+    .attr('stroke', T.landStroke).attr('stroke-width', 0.6 / zoomT.k);
+
+  const k = zoomT.k;
+  const active = rows.filter((r) => routeFor(r));
+
+  const used = {};
+  active.forEach((r) => { used[r.originPort] = 1; used[r.destPort] = 1; });
+  const gp = gRoot.append('g');
+  const placed = [];
+  const lw = 30 / k, lh = 11 / k;
+  Object.keys(used).forEach((code) => {
+    const p = PORTS[code]; if (!p) return;
+    const xy = projection([p[0], p[1]]); if (!xy) return;
+    gp.append('rect').attr('x', xy[0] - 2.4 / k).attr('y', xy[1] - 2.4 / k)
+      .attr('width', 4.8 / k).attr('height', 4.8 / k).attr('fill', T.portFill).attr('stroke', T.portStroke).attr('stroke-width', 0.6 / k);
+    const tries = [[6 / k, 3 / k], [6 / k, 13 / k], [6 / k, -7 / k], [-(lw + 4 / k), 3 / k]];
+    for (let i = 0; i < tries.length; i++) {
+      const bx = xy[0] + tries[i][0], by = xy[1] + tries[i][1] - lh * 0.8;
+      const hit = placed.some((r) => bx < r.x + r.w && bx + lw > r.x && by < r.y + r.h && by + lh > r.y);
+      if (hit) continue;
+      placed.push({ x: bx, y: by, w: lw, h: lh });
+      gp.append('text').attr('x', xy[0] + tries[i][0]).attr('y', xy[1] + tries[i][1])
+        .attr('class', 'mono').attr('font-size', 8.5 / k).attr('fill', T.portText).text(code);
+      break;
+    }
+  });
+
+  const gl = gRoot.append('g');
+  active.forEach((r) => {
+    const coords = routeFor(r);
+    const done = slice(coords, r.prog);
+    gl.append('path').datum({ type: 'LineString', coordinates: coords }).attr('d', path)
+      .attr('fill', 'none').attr('stroke', T.lane).attr('stroke-width', 1.1 / k)
+      .attr('stroke-dasharray', r.mode === 'AIR' ? (3 / k) + ' ' + (3 / k) : null);
+    gl.append('path').datum({ type: 'LineString', coordinates: done.line }).attr('d', path)
+      .attr('fill', 'none').attr('stroke', r.color).attr('stroke-width', 1.8 / k)
+      .attr('stroke-opacity', 0.85).attr('stroke-linecap', 'round');
+  });
+
+  const gv = gRoot.append('g');
+  active.forEach((r) => {
+    const coords = routeFor(r);
+    const pos = (r.gpsLon != null && r.gpsLat != null && r.prog > 0.25 && r.prog < 0.95)
+      ? [r.gpsLon, r.gpsLat] : slice(coords, r.prog).pos;
+    const xy = projection(pos); if (!xy) return;
+    const g = gv.append('g').attr('transform', 'translate(' + xy[0] + ',' + xy[1] + ')')
+      .style('cursor', 'pointer');
+    if (r.moving) {
+      g.append('circle').attr('r', 6 / k).attr('fill', 'none').attr('stroke', r.color).attr('stroke-width', 1.2 / k)
+        .append('animate').attr('attributeName', 'r').attr('from', 5 / k).attr('to', 18 / k)
+        .attr('dur', '2.4s').attr('repeatCount', 'indefinite');
+    }
+    if (r.flagged) {
+      g.append('circle').attr('r', 8.5 / k).attr('fill', 'none')
+        .attr('stroke', r.color).attr('stroke-width', 1 / k).attr('stroke-dasharray', (2 / k) + ' ' + (2 / k));
+    }
+    const closed = r.status === 'Received' || r.status === 'QC Hold';
+    g.append('circle').attr('r', 4.4 / k)
+      .attr('fill', closed ? T.closedFill : r.color)
+      .attr('stroke', closed ? r.color : T.dotStroke).attr('stroke-width', (closed ? 1.6 : 1.4) / k);
+    g.on('mousemove', (ev) => showTip(ev, r)).on('mouseleave', hideTip)
+      .on('click', () => parent.postMessage({ type: 'lane-map-select', ref: r.ref }, '*'));
+  });
+
+  legend(active);
+  document.getElementById('hint').style.display = active.length ? 'block' : 'none';
+  let e = document.getElementById('empty');
+  if (!active.length) {
+    if (!e) { e = document.createElement('div'); e.id = 'empty'; e.textContent = 'No movements in this view.'; document.body.appendChild(e); }
+  } else if (e) e.remove();
+}
+
+function showTip(ev, r) {
+  tip.innerHTML =
+    '<div class="mono" style="font-size:11px;color:' + r.color + '">' + r.ref + ' · ' + r.status + '</div>' +
+    '<div style="font-size:12.5px;font-weight:500;margin-top:6px">' + r.skuName + '</div>' +
+    '<div class="mono" style="font-size:10px;color:' + C.dim + ';margin-top:4px">' + r.qty + ' · ' + r.supplier + '</div>' +
+    '<div class="mono" style="font-size:10px;color:' + C.mid + ';margin-top:8px">' + r.originPort + ' → ' + r.destPort + ' · ETA ' + r.eta + '</div>' +
+    (r.vessel && r.vessel !== '—' ? '<div class="mono" style="font-size:10px;color:' + C.faint + ';margin-top:4px">' + r.vessel + '</div>' : '') +
+    (r.flagged ? '<div style="font-size:11.5px;color:' + r.color + ';margin-top:8px">' + r.flagKind + '</div>' : '');
+  tip.style.opacity = 1;
+  const b = tip.getBoundingClientRect();
+  tip.style.left = Math.min(window.innerWidth - b.width - 12, ev.clientX + 14) + 'px';
+  tip.style.top = Math.max(8, ev.clientY - b.height - 12) + 'px';
+}
+function hideTip() { tip.style.opacity = 0; }
+
+function legend(active) {
+  const order = ['In Transit', 'At Customs', 'Cleared', 'Ready to Ship', 'In Production', 'Received', 'QC Hold'];
+  const counts = {};
+  active.forEach((r) => { counts[r.status] = (counts[r.status] || 0) + 1; });
+  const el = document.getElementById('legend');
+  el.innerHTML = order.filter((s) => counts[s]).map((s) => {
+    const col = active.find((r) => r.status === s).color;
+    const done = s === 'Received' || s === 'QC Hold';
+    const dot = done
+      ? 'width:8px;height:8px;border-radius:50%;border:2px solid ' + col + ';box-sizing:border-box'
+      : 'width:8px;height:8px;border-radius:50%;background:' + col;
+    return '<div style="display:flex;align-items:center;gap:8px">' +
+      '<span style="' + dot + '"></span>' +
+      '<span style="font-size:11.5px;color:' + C.mid + '">' + s + (done ? ' · closed' : '') + '</span>' +
+      '<span class="mono" style="font-size:10.5px;color:' + C.faint + ';margin-left:auto">' + counts[s] + '</span></div>';
+  }).join('');
+}
+
+// Apply a theme payload from the parent: accent palette (C), SVG fills (T),
+// and the CSS chrome vars.
+function applyTheme(t) {
+  if (!t) return;
+  if (t.accent) C = Object.assign({}, C, t.accent);
+  if (t.svg) T = Object.assign({}, T, t.svg);
+  if (t.css) { const rs = document.documentElement.style; Object.keys(t.css).forEach((k) => rs.setProperty(k, t.css[k])); }
+}
+
+svg.call(d3.zoom().scaleExtent([1, 9]).on('zoom', (ev) => { zoomT = ev.transform; draw(); }));
+window.addEventListener('resize', resize);
+
+window.addEventListener('message', (ev) => {
+  const d = ev.data;
+  if (d && d.type === 'lane-map-data') { rows = d.rows || []; if (d.theme) applyTheme(d.theme); draw(); }
+});
+
+d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json').then((topo) => {
+  world = topojson.feature(topo, topo.objects.countries);
+  resize();
+  parent.postMessage({ type: 'lane-map-ready' }, '*');
+});
+</script>
+</body>
+</html>

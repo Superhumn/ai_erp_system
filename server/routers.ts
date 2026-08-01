@@ -15,6 +15,7 @@ import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, impor
 import { detectMaterialShortages, detectAnomalies, runShortageCheckAndNotify, runAnomalyCheckAndNotify } from "./materialShortageService";
 import { linkParsedEmailToEntities } from "./emailDocumentLinker";
 import { trackShipment, getFreightRates, getShippingLines, getVesselSchedules } from "./searatesService";
+import { freightControlTowerRouter } from "./freightControlTowerRouter";
 import { generateVendorEmail, sendVendorEmail, sendBulkEmail, checkAndSendPoFollowups } from "./vendorEmailAutomation";
 import { processAIAgentRequest, planAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
@@ -797,6 +798,9 @@ const investorCompanyIdInput = z.object({ companyId: z.number().optional() }).op
 
 export const appRouter = router({
   system: systemRouter,
+
+  // Freight Control Tower — Meridian shipment & inventory control tower
+  freightControlTower: freightControlTowerRouter,
 
   // Autonomous Supply Chain Workflows
   autonomousWorkflows: autonomousWorkflowRouter,
