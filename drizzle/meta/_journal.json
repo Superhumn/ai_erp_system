@@ -386,6 +386,13 @@
 			"when": 1781786404000,
 			"tag": "0054_widen_google_oauth_tokens",
 			"breakpoints": true
+		},
+		{
+			"idx": 55,
+			"version": "5",
+			"when": 1781900000000,
+			"tag": "0055_ensure_investor_investments_schema",
+			"breakpoints": true
 		}
 	]
 }

@@ -13651,6 +13651,44 @@ export async function getInvestorInvestments(investorId?: number) {
   return db.select().from(investorInvestments);
 }
 
+// Investors linked to a specific fundraising round (campaign), joined with the
+// CRM investor record so the round view can show who is in the round.
+export async function getCampaignInvestments(campaignId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select({
+      id: investorInvestments.id,
+      investorId: investorInvestments.investorId,
+      amount: investorInvestments.amount,
+      currency: investorInvestments.currency,
+      investedAt: investorInvestments.investedAt,
+      notes: investorInvestments.notes,
+      investorName: investors.name,
+      investorStatus: investors.status,
+      investorType: investors.type,
+      investorEmail: investors.email,
+    })
+    .from(investorInvestments)
+    .leftJoin(investors, eq(investorInvestments.investorId, investors.id))
+    .where(eq(investorInvestments.campaignId, campaignId))
+    .orderBy(desc(investorInvestments.investedAt));
+}
+
+export async function createInvestment(data: InsertInvestorInvestment) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(investorInvestments).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function deleteInvestment(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(investorInvestments).where(eq(investorInvestments.id, id));
+  return { success: true };
+}
+
 export async function getFundraisingReminders(filters?: { status?: string; investorId?: number }) {
   const db = await getDb();
   if (!db) return [];
