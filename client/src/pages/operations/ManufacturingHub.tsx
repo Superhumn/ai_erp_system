@@ -7,9 +7,10 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import SpreadsheetTable, { Column } from "@/components/SpreadsheetTable";
 import { QuickCreateButton, QuickCreateDialog } from "@/components/QuickCreateDialog";
+import { Link } from "wouter";
 import { DetailSheet } from "@/components/DetailSheet";
 import {
-  Search, Plus, Clock, Play, Pause, CheckCircle, X, ClipboardList
+  Search, Plus, Clock, Play, Pause, CheckCircle, X, ClipboardList, Factory
 } from "lucide-react";
 
 // Status options
@@ -196,6 +197,12 @@ export default function ManufacturingHub() {
                 className="pl-9 w-64"
               />
             </div>
+            <Link href="/operations/production-batches">
+              <Button variant="outline">
+                <Factory className="h-4 w-4 mr-2" />
+                Production Batches
+              </Button>
+            </Link>
             <Button onClick={() => setShowWorkOrderDialog(true)}>
               <Plus className="h-4 w-4 mr-2" />
               New Work Order

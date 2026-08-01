@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useAIAgent, AIMessage, AIAction } from '@/contexts/AIAgentContext';
+import { trpc } from '@/lib/trpc';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -97,11 +98,102 @@ function SuggestionChip({ suggestion, onClick }: { suggestion: string; onClick: 
 }
 
 // ============================================
+// ERRAND APPROVAL CARD (inline, in-chat)
+// ============================================
+
+// Rendered when the agent planned a medium/high-risk errand that needs the
+// user's go-ahead. Approving runs it right here — no trip to the Approval Queue.
+function ErrandApprovalCard({ errand }: { errand: any }) {
+  const [phase, setPhase] = useState<'idle' | 'running' | 'done' | 'rejected' | 'error'>('idle');
+  const [summary, setSummary] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
+  const approveAndExecute = trpc.aiAgent.tasks.approveAndExecute.useMutation();
+  const reject = trpc.aiAgent.tasks.reject.useMutation();
+
+  const steps: string[] = Array.isArray(errand?.steps)
+    ? errand.steps.filter((s: any) => typeof s === 'string' && s.trim())
+    : [];
+
+  const onApprove = async () => {
+    setPhase('running');
+    try {
+      const res = await approveAndExecute.mutateAsync({ id: errand.taskId });
+      setSummary(res?.result?.summary || 'Done.');
+      setPhase('done');
+    } catch (e: any) {
+      setErrorMsg(e?.message || 'Something went wrong running the errand.');
+      setPhase('error');
+    }
+  };
+
+  const onReject = async () => {
+    try {
+      await reject.mutateAsync({ id: errand.taskId });
+    } catch {
+      /* reflect rejected regardless of a late server error */
+    }
+    setPhase('rejected');
+  };
+
+  return (
+    <div className="rounded-lg border border-amber-300/60 bg-amber-50/60 dark:bg-amber-500/5 p-3 space-y-2">
+      <div className="flex items-center gap-2 text-xs font-medium text-amber-700 dark:text-amber-400">
+        <ClipboardList className="h-4 w-4" />
+        Approval needed{errand?.riskLevel ? ` · ${errand.riskLevel} risk` : ''}
+      </div>
+      {errand?.title && <p className="text-sm font-medium">{errand.title}</p>}
+      {steps.length > 0 && (
+        <ol className="list-decimal list-inside space-y-0.5 text-sm text-muted-foreground">
+          {steps.map((s, i) => (
+            <li key={i}>{s}</li>
+          ))}
+        </ol>
+      )}
+
+      {phase === 'idle' && (
+        <div className="flex gap-2 pt-1">
+          <Button size="sm" onClick={onApprove} className="h-7">
+            <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Approve &amp; run
+          </Button>
+          <Button size="sm" variant="outline" onClick={onReject} className="h-7">
+            <XCircle className="h-3.5 w-3.5 mr-1" /> Reject
+          </Button>
+        </div>
+      )}
+      {phase === 'running' && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground pt-1">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Running the plan…
+        </div>
+      )}
+      {phase === 'done' && (
+        <div className="flex items-start gap-2 text-sm text-green-700 dark:text-green-400 pt-1">
+          <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
+          <span>{summary}</span>
+        </div>
+      )}
+      {phase === 'rejected' && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground pt-1">
+          <XCircle className="h-4 w-4" /> Rejected — nothing was run.
+        </div>
+      )}
+      {phase === 'error' && (
+        <div className="flex items-start gap-2 text-sm text-red-600 dark:text-red-400 pt-1">
+          <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+          <span>{errorMsg}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================
 // MESSAGE COMPONENT
 // ============================================
 
 function MessageBubble({ message, onSuggestionClick }: { message: AIMessage; onSuggestionClick: (s: string) => void }) {
   const isUser = message.role === 'user';
+  const errand = message.data?.plan_errand;
+  const needsApproval = !isUser && errand?.requiresApproval && errand?.status === 'pending_approval';
 
   return (
     <div className={cn('flex gap-3', isUser ? 'justify-end' : 'justify-start')}>
@@ -126,6 +218,9 @@ function MessageBubble({ message, onSuggestionClick }: { message: AIMessage; onS
             </div>
           )}
         </div>
+
+        {/* Inline errand approval — approve/run right here */}
+        {needsApproval && <ErrandApprovalCard errand={errand} />}
 
         {/* Actions performed */}
         {message.actions && message.actions.length > 0 && (

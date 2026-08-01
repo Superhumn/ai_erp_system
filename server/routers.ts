@@ -20,6 +20,7 @@ import { processAIAgentRequest, planAIAgentRequest, getQuickAnalysis, getSystemO
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
+import { fireAutomationEvent, testRunRule } from "./opsAutomationEngine";
 import { agentRouter } from "./agent";
 import { parseNoteWithLLM } from "./notesParser";
 import type { NoteAppliedItem, NoteParseResult, NoteParsedItem } from "@shared/notes";
@@ -271,14 +272,21 @@ async function getValidGoogleToken(userId: number): Promise<{ accessToken: strin
     const refreshed = await refreshGoogleToken(token.refreshToken);
     
     if (refreshed.accessToken && refreshed.expiresAt) {
-      // Update database with new token (preserve existing googleEmail via COALESCE)
-      await db.upsertGoogleOAuthToken({
-        userId,
-        accessToken: refreshed.accessToken,
-        refreshToken: token.refreshToken,
-        expiresAt: refreshed.expiresAt,
-        googleEmail: token.googleEmail,
-      });
+      // Persist the refreshed token, but never let a DB write failure block the
+      // request — the freshly refreshed token is valid whether or not we manage
+      // to store it. (Previously a failing upsert here aborted every Drive
+      // operation: sync AND the document-viewer proxy.)
+      try {
+        await db.upsertGoogleOAuthToken({
+          userId,
+          accessToken: refreshed.accessToken,
+          refreshToken: token.refreshToken,
+          expiresAt: refreshed.expiresAt,
+          googleEmail: token.googleEmail,
+        });
+      } catch (persistErr) {
+        console.error(`[GoogleToken] Failed to persist refreshed token for user ${userId} (using it anyway):`, persistErr);
+      }
       return { accessToken: refreshed.accessToken };
     }
     
@@ -808,6 +816,235 @@ export const appRouter = router({
 
   // Admin-only AI code IDE (snippets, sandboxed execution, AI actions)
   code: codeRouter,
+
+  // Generic background-task tracking — long-running, user-initiated operations
+  // (e.g. Data Room ↔ Google Drive sync) that continue running after the user
+  // navigates away and are surfaced app-wide via the global task tray.
+  backgroundTasks: router({
+    // Everything the current user should currently see: in-flight tasks plus
+    // anything finished recently that hasn't been dismissed. Polled by the client.
+    list: protectedProcedure.query(({ ctx }) =>
+      db.listVisibleBackgroundTasks(ctx.user.id),
+    ),
+
+    // Cooperative cancel — flags the task; the worker stops at its next checkpoint.
+    cancel: protectedProcedure
+      .input(z.object({ id: z.string() }))
+      .mutation(async ({ ctx, input }) => {
+        await db.requestBackgroundTaskCancel(input.id, ctx.user.id);
+        return { ok: true };
+      }),
+
+    // Hide a finished task from the tray.
+    dismiss: protectedProcedure
+      .input(z.object({ id: z.string() }))
+      .mutation(async ({ ctx, input }) => {
+        await db.dismissBackgroundTask(input.id, ctx.user.id);
+        return { ok: true };
+      }),
+
+    // Clear all finished tasks from the tray at once.
+    dismissAllFinished: protectedProcedure.mutation(async ({ ctx }) => {
+      await db.dismissFinishedBackgroundTasks(ctx.user.id);
+      return { ok: true };
+    }),
+  }),
+
+  // ============================================
+  // OPS TOOLKIT (Stackby-style capabilities layered on the ERP)
+  //   opsViews       — saved grid/kanban/calendar/timeline views per module
+  //   opsForms       — intake form builder + submissions (+ public endpoints)
+  //   opsAutomations — lightweight trigger -> condition -> action rules
+  //   opsReports     — saved pivot/report configurations
+  // Internal-staff tools (internalProcedure) except the two public form
+  // endpoints used by the shareable /f/:slug link.
+  // ============================================
+  opsViews: router({
+    list: internalProcedure
+      .input(z.object({ module: z.string().optional() }).optional())
+      .query(({ input }) => db.listSavedViews(input?.module)),
+    create: internalProcedure
+      .input(z.object({
+        module: z.string(),
+        name: z.string().min(1),
+        viewType: z.enum(["grid", "kanban", "calendar", "timeline"]),
+        config: z.any().optional(),
+        isShared: z.boolean().optional(),
+        isDefault: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createSavedView({ ...input, config: input.config ?? {}, createdBy: ctx.user.id });
+        return { id: result.id };
+      }),
+    update: internalProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        viewType: z.enum(["grid", "kanban", "calendar", "timeline"]).optional(),
+        config: z.any().optional(),
+        isShared: z.boolean().optional(),
+        isDefault: z.boolean().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...rest } = input;
+        await db.updateSavedView(id, rest as any);
+        return { success: true };
+      }),
+    delete: internalProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => { await db.deleteSavedView(input.id); return { success: true }; }),
+  }),
+
+  opsForms: router({
+    list: internalProcedure.query(() => db.listIntakeForms()),
+    get: internalProcedure.input(z.object({ id: z.number() })).query(({ input }) => db.getIntakeFormById(input.id)),
+    create: internalProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        description: z.string().optional(),
+        fields: z.any().optional(),
+        targetModule: z.string().optional(),
+        isPublished: z.boolean().optional(),
+        isPublic: z.boolean().optional(),
+        submitMessage: z.string().optional(),
+        notifyEmails: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const slug = nanoid(10);
+        const result = await db.createIntakeForm({ ...input, fields: input.fields ?? [], slug, createdBy: ctx.user.id });
+        return { id: result.id, slug };
+      }),
+    update: internalProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        description: z.string().optional(),
+        fields: z.any().optional(),
+        targetModule: z.string().optional(),
+        isPublished: z.boolean().optional(),
+        isPublic: z.boolean().optional(),
+        submitMessage: z.string().optional(),
+        notifyEmails: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...rest } = input;
+        await db.updateIntakeForm(id, rest as any);
+        return { success: true };
+      }),
+    delete: internalProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => { await db.deleteIntakeForm(input.id); return { success: true }; }),
+    submissions: internalProcedure.input(z.object({ formId: z.number() })).query(({ input }) => db.listIntakeFormSubmissions(input.formId)),
+    updateSubmissionStatus: internalProcedure
+      .input(z.object({ id: z.number(), status: z.enum(["new", "reviewed", "archived"]) }))
+      .mutation(async ({ input }) => { await db.updateIntakeFormSubmissionStatus(input.id, input.status); return { success: true }; }),
+
+    // ---- Public (unauthenticated) endpoints for the shareable form link ----
+    getPublic: publicProcedure
+      .input(z.object({ slug: z.string() }))
+      .query(async ({ input }) => {
+        const form = await db.getIntakeFormBySlug(input.slug);
+        if (!form || !form.isPublished) return null;
+        return {
+          id: form.id, slug: form.slug, name: form.name, description: form.description,
+          fields: form.fields, submitMessage: form.submitMessage, isPublic: form.isPublic,
+        };
+      }),
+    submit: publicProcedure
+      .input(z.object({
+        slug: z.string(),
+        data: z.record(z.string(), z.any()),
+        submittedByName: z.string().optional(),
+        submittedByEmail: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const form = await db.getIntakeFormBySlug(input.slug);
+        if (!form || !form.isPublished) throw new TRPCError({ code: "NOT_FOUND", message: "Form not found" });
+        // Anonymous submissions are only allowed when the form is explicitly public.
+        if (!ctx.user && !form.isPublic) throw new TRPCError({ code: "FORBIDDEN", message: "This form requires sign-in" });
+        const result = await db.createIntakeFormSubmission({
+          formId: form.id,
+          data: input.data,
+          submittedByUserId: ctx.user?.id ?? null,
+          submittedByName: input.submittedByName ?? null,
+          submittedByEmail: input.submittedByEmail ?? null,
+        });
+        // Best-effort: email notifications + fire "form_submitted" automations.
+        try {
+          if (form.notifyEmails) {
+            const summary = Object.entries(input.data).map(([k, v]) => `${k}: ${String(v)}`).join("\n");
+            for (const to of form.notifyEmails.split(",").map((s) => s.trim()).filter(Boolean)) {
+              await sendEmail({ to, subject: `New submission: ${form.name}`, text: summary });
+            }
+          }
+        } catch { /* ignore email errors */ }
+        try {
+          await fireAutomationEvent({
+            module: form.targetModule || "custom",
+            triggerType: "form_submitted",
+            record: { ...input.data, formId: form.id, __formName: form.name },
+          });
+        } catch { /* ignore automation errors */ }
+        return { id: result.id, submitMessage: form.submitMessage ?? null };
+      }),
+  }),
+
+  opsAutomations: router({
+    list: internalProcedure.input(z.object({ module: z.string().optional() }).optional()).query(({ input }) => db.listAutomationRules(input?.module)),
+    get: internalProcedure.input(z.object({ id: z.number() })).query(({ input }) => db.getAutomationRuleById(input.id)),
+    create: internalProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        description: z.string().optional(),
+        module: z.string(),
+        triggerType: z.enum(["record_created", "record_updated", "field_changed", "form_submitted", "scheduled"]),
+        triggerConfig: z.any().optional(),
+        conditions: z.any().optional(),
+        actionType: z.enum(["send_email", "create_notification", "webhook"]),
+        actionConfig: z.any().optional(),
+        isActive: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createAutomationRule({
+          ...input,
+          triggerConfig: input.triggerConfig ?? {},
+          conditions: input.conditions ?? [],
+          actionConfig: input.actionConfig ?? {},
+          createdBy: ctx.user.id,
+        });
+        return { id: result.id };
+      }),
+    update: internalProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        description: z.string().optional(),
+        triggerType: z.enum(["record_created", "record_updated", "field_changed", "form_submitted", "scheduled"]).optional(),
+        triggerConfig: z.any().optional(),
+        conditions: z.any().optional(),
+        actionType: z.enum(["send_email", "create_notification", "webhook"]).optional(),
+        actionConfig: z.any().optional(),
+        isActive: z.boolean().optional(),
+      }))
+      .mutation(async ({ input }) => { const { id, ...rest } = input; await db.updateAutomationRule(id, rest as any); return { success: true }; }),
+    delete: internalProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => { await db.deleteAutomationRule(input.id); return { success: true }; }),
+    runs: internalProcedure.input(z.object({ ruleId: z.number() })).query(({ input }) => db.listAutomationRuns(input.ruleId)),
+    testRun: internalProcedure
+      .input(z.object({ ruleId: z.number(), sampleRecord: z.record(z.string(), z.any()) }))
+      .mutation(async ({ input, ctx }) => {
+        const detail = await testRunRule(input.ruleId, input.sampleRecord, ctx.user.id);
+        return { detail };
+      }),
+  }),
+
+  opsReports: router({
+    list: internalProcedure.input(z.object({ module: z.string().optional() }).optional()).query(({ input }) => db.listSavedReports(input?.module)),
+    create: internalProcedure
+      .input(z.object({ module: z.string(), name: z.string().min(1), pivotConfig: z.any() }))
+      .mutation(async ({ input, ctx }) => { const result = await db.createSavedReport({ ...input, createdBy: ctx.user.id }); return { id: result.id }; }),
+    update: internalProcedure
+      .input(z.object({ id: z.number(), name: z.string().optional(), pivotConfig: z.any().optional() }))
+      .mutation(async ({ input }) => { const { id, ...rest } = input; await db.updateSavedReport(id, rest as any); return { success: true }; }),
+    delete: internalProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => { await db.deleteSavedReport(input.id); return { success: true }; }),
+  }),
 
   auth: router({
     me: publicProcedure.query(opts => {
@@ -3641,6 +3878,14 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         referenceId: z.number().optional(),
       }).optional())
       .query(({ input }) => db.getDocuments(input)),
+    // Batched doc counts for many references at once, so a table can show a
+    // per-row count with one query instead of one query per row.
+    countsByReferences: protectedProcedure
+      .input(z.object({
+        referenceType: z.string(),
+        referenceIds: z.array(z.number()),
+      }))
+      .query(({ input }) => db.getDocumentCountsByReferences(input.referenceType, input.referenceIds)),
     upload: protectedProcedure
       .input(z.object({
         name: z.string().min(1),
@@ -7138,7 +7383,68 @@ Be concise and helpful. Always give actionable guidance.`;
           });
           return { success: true };
         }),
-      
+
+      // Inline approval for concierge errands: approve + run in a single step
+      // straight from the AI chat, instead of parking the task in the Approval
+      // Queue. Transitions directly to in_progress (skipping the 'approved'
+      // state the background scheduler watches) so the errand can never be
+      // double-executed.
+      approveAndExecute: adminProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const task = await db.getAiAgentTaskById(input.id);
+          if (!task) throw new TRPCError({ code: 'NOT_FOUND', message: 'Task not found' });
+          if (task.taskType !== 'concierge_errand') {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Inline approval is only supported for concierge errands' });
+          }
+          if (task.status !== 'pending_approval') {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: `Errand is not awaiting approval (status: ${task.status})` });
+          }
+
+          await db.updateAiAgentTask(input.id, {
+            status: 'in_progress',
+            approvedBy: ctx.user.id,
+            approvedAt: new Date(),
+          });
+          await db.createAiAgentLog({
+            taskId: input.id,
+            action: 'task_approved',
+            status: 'success',
+            message: `Errand approved inline by ${ctx.user.name}`,
+          });
+
+          try {
+            const { executeConciergeErrand } = await import('./conciergeErrandService');
+            const r = await executeConciergeErrand(task);
+            if (!r.success) throw new Error(r.error || 'Errand execution failed');
+            await db.updateAiAgentTask(input.id, {
+              status: 'completed',
+              executedAt: new Date(),
+              executionResult: JSON.stringify(r.data),
+            });
+            await db.createAiAgentLog({
+              taskId: input.id,
+              action: 'task_executed',
+              status: 'success',
+              message: 'Errand executed successfully (inline approval)',
+              details: JSON.stringify(r.data),
+            });
+            return { success: true, result: r.data };
+          } catch (error: any) {
+            await db.updateAiAgentTask(input.id, {
+              status: 'failed',
+              errorMessage: error.message,
+            });
+            await db.createAiAgentLog({
+              taskId: input.id,
+              action: 'task_failed',
+              status: 'error',
+              message: `Errand execution failed: ${error.message}`,
+            });
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
+          }
+        }),
+
       update: adminProcedure
         .input(z.object({ 
           id: z.number(), 
@@ -15408,6 +15714,123 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
         };
       }),
 
+    // Kick off a Drive → Data Room sync as a background task and return
+    // immediately with a taskId. The heavy reconcile runs detached from this
+    // request so it keeps going — and stays visible in the global task tray —
+    // after the user navigates away. Pre-flight validation (ownership, OAuth,
+    // folder resolution) still happens synchronously so obvious errors surface
+    // to the caller right away.
+    startDriveSync: protectedProcedure
+      .input(z.object({
+        dataRoomId: z.number(),
+        driveFolderId: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const room = await db.getDataRoomById(input.dataRoomId);
+        if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+        if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+        }
+
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+        }
+
+        let folderId = input.driveFolderId || room.googleDriveFolderId;
+        if (!folderId) {
+          const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
+            "name contains 'Data Room' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+          )}&fields=files(id,name)&pageSize=5`;
+          const searchResponse = await fetch(searchUrl, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          if (searchResponse.ok) {
+            const searchData = await searchResponse.json();
+            if (searchData.files?.length > 0) {
+              folderId = searchData.files[0].id;
+            }
+          }
+          if (!folderId) {
+            throw new TRPCError({
+              code: 'NOT_FOUND',
+              message: 'No Google Drive folder specified and no "Data Room" folder found in Google Drive. Please provide a folder ID or create a folder named "Data Room" in your Google Drive.',
+            });
+          }
+        }
+
+        const folderInfo = await getFolderInfo(accessToken, folderId);
+        if (folderInfo.error || !folderInfo.folder) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: folderInfo.error || 'Folder not found in Google Drive' });
+        }
+
+        // Capture non-null values for the detached closure.
+        const resolvedFolderId = folderId;
+        const userId = ctx.user.id;
+        const { dataRoomId } = input;
+
+        const { runBackgroundTask } = await import('./_core/backgroundTasks');
+        const { reconcileDataRoomFromDrive } = await import('./googleDriveSyncService');
+
+        const { taskId } = await runBackgroundTask(
+          {
+            userId,
+            type: 'data_room_drive_sync',
+            title: `Syncing "${room.name}" from Google Drive`,
+            description: folderInfo.folder.name ? `Drive folder: ${folderInfo.folder.name}` : undefined,
+            message: 'Starting…',
+            entityType: 'data_room',
+            entityId: dataRoomId,
+            link: `/data-rooms/${dataRoomId}`,
+          },
+          async (handle) => {
+            const recon = await reconcileDataRoomFromDrive({
+              dataRoomId,
+              rootFolderId: resolvedFolderId,
+              accessToken,
+              uploadedBy: userId,
+              allowDelete: true,
+              onProgress: (u) => handle.report(u),
+            });
+
+            await db.updateDataRoom(dataRoomId, {
+              googleDriveFolderId: resolvedFolderId,
+              ...(recon.partial ? {} : { lastSyncedAt: new Date() }),
+            });
+
+            const summaryParts: string[] = [];
+            if (recon.filesCreated) summaryParts.push(`${recon.filesCreated} added`);
+            if (recon.filesUpdated) summaryParts.push(`${recon.filesUpdated} updated`);
+            if (recon.filesRemoved) summaryParts.push(`${recon.filesRemoved} removed`);
+            if (recon.filesFailed) summaryParts.push(`${recon.filesFailed} failed`);
+            const summaryMsg = summaryParts.length
+              ? `Synced ${folderInfo.folder!.name}: ${summaryParts.join(', ')}`
+              : `${folderInfo.folder!.name} is already up to date`;
+
+            return {
+              message: recon.partial ? `${summaryMsg} (partial)` : summaryMsg,
+              result: {
+                totalSynced: recon.filesCreated,
+                foldersCreated: recon.foldersCreated,
+                foldersUpdated: recon.foldersUpdated,
+                filesCreated: recon.filesCreated,
+                filesUpdated: recon.filesUpdated,
+                filesRemoved: recon.filesRemoved,
+                foldersRemoved: recon.foldersRemoved,
+                filesFound: recon.filesFound,
+                foldersFound: recon.foldersFound,
+                filesFailed: recon.filesFailed,
+                partial: recon.partial,
+                errors: recon.errors,
+                folderName: folderInfo.folder!.name,
+              },
+            };
+          },
+        );
+
+        return { taskId, folderName: folderInfo.folder.name };
+      }),
+
     // Google Drive sync
     googleDrive: router({
       // List files (non-folders) inside a Google Drive folder
@@ -19407,6 +19830,28 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
     listInvestments: protectedProcedure
       .input(z.object({ investorId: z.number().optional() }).optional())
       .query(({ input }) => db.getInvestorInvestments(input?.investorId)),
+    // Investors linked to a specific fundraising round (campaign).
+    listCampaignInvestors: protectedProcedure
+      .input(z.object({ campaignId: z.number() }))
+      .query(({ input }) => db.getCampaignInvestments(input.campaignId)),
+    addCampaignInvestment: protectedProcedure
+      .input(z.object({
+        campaignId: z.number(),
+        investorId: z.number(),
+        amount: z.string().regex(/^\d+(\.\d{1,2})?$/, "Amount must be a positive number (up to 2 decimals)"),
+        currency: z.string().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(({ input }) => db.createInvestment({
+        campaignId: input.campaignId,
+        investorId: input.investorId,
+        amount: input.amount,
+        currency: input.currency || "USD",
+        notes: input.notes,
+      })),
+    removeCampaignInvestment: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(({ input }) => db.deleteInvestment(input.id)),
     listReminders: protectedProcedure
       .input(z.object({ status: z.string().optional(), dueBefore: z.date().optional() }).optional())
       .query(({ input }) => db.getFundraisingReminders(input ? { status: input.status } : undefined)),
