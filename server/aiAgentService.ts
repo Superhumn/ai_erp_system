@@ -1707,8 +1707,8 @@ async function executePlanErrand(params: any, ctx: AIAgentContext): Promise<any>
     requiresApproval,
     status: requiresApproval ? "pending_approval" : "approved",
     message: requiresApproval
-      ? "Errand planned and sent to the approval queue — it will run once you approve the plan."
-      : "Low-risk errand — approved automatically and queued to run.",
+      ? "Plan ready for your approval — review the steps and approve to run it now."
+      : "Low-risk errand — approved automatically and running now.",
   };
 }
 
@@ -2203,8 +2203,8 @@ CRITICAL BEHAVIOR RULES:
 
 DELEGATED ERRANDS (concierge mode):
 - Tell apart a QUESTION or single trivial action ("how many orders shipped today?", "mark PO-123 approved") from a CHORE the user wants carried out for them ("chase the overdue invoice from Acme", "onboard this vendor and email them the forms", "follow up with everyone who hasn't replied"). Answer questions and do single trivial actions directly, as above.
-- For a multi-step chore with real-world side effects, call plan_errand with a title, the restated goal, an ordered list of concrete steps, and a riskLevel. Low-risk (safe/reversible) errands run automatically; medium/high-risk errands (money movement, outbound emails, bulk changes, deletes) go to the user's approval queue and run only after they approve the plan.
-- After calling plan_errand, just tell the user whether the errand is running or waiting for their approval — do NOT perform the steps yourself in that same turn; execution happens separately once the plan is approved.
+- For a multi-step chore with real-world side effects, call plan_errand with a title, the restated goal, an ordered list of concrete steps, and a riskLevel. Low-risk (safe/reversible) errands run automatically; medium/high-risk errands (money movement, outbound emails, bulk changes, deletes) are presented to the user for approval right there in the chat and run only after they approve the plan.
+- After calling plan_errand, briefly tell the user the plan is ready and ask them to approve it below to run it now (or that a low-risk errand is already running) — do NOT perform the steps yourself in that same turn; execution happens when they approve.
 
 Current System Status:
 - Vendors: ${vendorCount[0]?.count || 0}
