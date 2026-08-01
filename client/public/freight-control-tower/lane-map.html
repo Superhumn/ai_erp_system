@@ -191,7 +191,7 @@ function draw() {
       .attr('fill', closed ? T.closedFill : r.color)
       .attr('stroke', closed ? r.color : T.dotStroke).attr('stroke-width', (closed ? 1.6 : 1.4) / k);
     g.on('mousemove', (ev) => showTip(ev, r)).on('mouseleave', hideTip)
-      .on('click', () => parent.postMessage({ type: 'lane-map-select', ref: r.ref }, '*'));
+      .on('click', () => parent.postMessage({ type: 'lane-map-select', ref: r.ref }, window.location.origin));
   });
 
   legend(active);
@@ -202,14 +202,23 @@ function draw() {
   } else if (e) e.remove();
 }
 
+// Build the tooltip with DOM nodes + textContent (never innerHTML) so the
+// postMessage-delivered row data can never be interpreted as markup.
+function tipLine(text, cls, style) {
+  const d = document.createElement('div');
+  if (cls) d.className = cls;
+  if (style) Object.assign(d.style, style);
+  d.textContent = text;
+  tip.appendChild(d);
+}
 function showTip(ev, r) {
-  tip.innerHTML =
-    '<div class="mono" style="font-size:11px;color:' + r.color + '">' + r.ref + ' · ' + r.status + '</div>' +
-    '<div style="font-size:12.5px;font-weight:500;margin-top:6px">' + r.skuName + '</div>' +
-    '<div class="mono" style="font-size:10px;color:' + C.dim + ';margin-top:4px">' + r.qty + ' · ' + r.supplier + '</div>' +
-    '<div class="mono" style="font-size:10px;color:' + C.mid + ';margin-top:8px">' + r.originPort + ' → ' + r.destPort + ' · ETA ' + r.eta + '</div>' +
-    (r.vessel && r.vessel !== '—' ? '<div class="mono" style="font-size:10px;color:' + C.faint + ';margin-top:4px">' + r.vessel + '</div>' : '') +
-    (r.flagged ? '<div style="font-size:11.5px;color:' + r.color + ';margin-top:8px">' + r.flagKind + '</div>' : '');
+  while (tip.firstChild) tip.removeChild(tip.firstChild);
+  tipLine(r.ref + ' · ' + r.status, 'mono', { fontSize: '11px', color: r.color });
+  tipLine(r.skuName, null, { fontSize: '12.5px', fontWeight: '500', marginTop: '6px' });
+  tipLine(r.qty + ' · ' + r.supplier, 'mono', { fontSize: '10px', color: C.dim, marginTop: '4px' });
+  tipLine(r.originPort + ' → ' + r.destPort + ' · ETA ' + r.eta, 'mono', { fontSize: '10px', color: C.mid, marginTop: '8px' });
+  if (r.vessel && r.vessel !== '—') tipLine(r.vessel, 'mono', { fontSize: '10px', color: C.faint, marginTop: '4px' });
+  if (r.flagged) tipLine(r.flagKind, null, { fontSize: '11.5px', color: r.color, marginTop: '8px' });
   tip.style.opacity = 1;
   const b = tip.getBoundingClientRect();
   tip.style.left = Math.min(window.innerWidth - b.width - 12, ev.clientX + 14) + 'px';
@@ -222,17 +231,26 @@ function legend(active) {
   const counts = {};
   active.forEach((r) => { counts[r.status] = (counts[r.status] || 0) + 1; });
   const el = document.getElementById('legend');
-  el.innerHTML = order.filter((s) => counts[s]).map((s) => {
+  while (el.firstChild) el.removeChild(el.firstChild);
+  order.filter((s) => counts[s]).forEach((s) => {
     const col = active.find((r) => r.status === s).color;
     const done = s === 'Received' || s === 'QC Hold';
-    const dot = done
-      ? 'width:8px;height:8px;border-radius:50%;border:2px solid ' + col + ';box-sizing:border-box'
-      : 'width:8px;height:8px;border-radius:50%;background:' + col;
-    return '<div style="display:flex;align-items:center;gap:8px">' +
-      '<span style="' + dot + '"></span>' +
-      '<span style="font-size:11.5px;color:' + C.mid + '">' + s + (done ? ' · closed' : '') + '</span>' +
-      '<span class="mono" style="font-size:10.5px;color:' + C.faint + ';margin-left:auto">' + counts[s] + '</span></div>';
-  }).join('');
+    const row = document.createElement('div');
+    Object.assign(row.style, { display: 'flex', alignItems: 'center', gap: '8px' });
+    const dot = document.createElement('span');
+    Object.assign(dot.style, done
+      ? { width: '8px', height: '8px', borderRadius: '50%', border: '2px solid ' + col, boxSizing: 'border-box' }
+      : { width: '8px', height: '8px', borderRadius: '50%', background: col });
+    const name = document.createElement('span');
+    Object.assign(name.style, { fontSize: '11.5px', color: C.mid });
+    name.textContent = s + (done ? ' · closed' : '');
+    const cnt = document.createElement('span');
+    cnt.className = 'mono';
+    Object.assign(cnt.style, { fontSize: '10.5px', color: C.faint, marginLeft: 'auto' });
+    cnt.textContent = String(counts[s]);
+    row.appendChild(dot); row.appendChild(name); row.appendChild(cnt);
+    el.appendChild(row);
+  });
 }
 
 // Apply a theme payload from the parent: accent palette (C), SVG fills (T),
@@ -248,6 +266,8 @@ svg.call(d3.zoom().scaleExtent([1, 9]).on('zoom', (ev) => { zoomT = ev.transform
 window.addEventListener('resize', resize);
 
 window.addEventListener('message', (ev) => {
+  // Only accept messages from the same-origin embedding parent.
+  if (ev.origin !== window.location.origin || ev.source !== parent) return;
   const d = ev.data;
   if (d && d.type === 'lane-map-data') { rows = d.rows || []; if (d.theme) applyTheme(d.theme); draw(); }
 });
@@ -255,7 +275,7 @@ window.addEventListener('message', (ev) => {
 d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json').then((topo) => {
   world = topojson.feature(topo, topo.objects.countries);
   resize();
-  parent.postMessage({ type: 'lane-map-ready' }, '*');
+  parent.postMessage({ type: 'lane-map-ready' }, window.location.origin);
 });
 </script>
 </body>

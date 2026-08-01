@@ -63,6 +63,8 @@ export default function ControlTower() {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 2600);
   };
+  // Clear any pending toast timer on unmount so it can't setState after teardown.
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
   // restore persisted view
   useEffect(() => {
@@ -184,7 +186,7 @@ export default function ControlTower() {
 
   return (
     <div
-      className="not-compact"
+      className="not-compact fct-root"
       style={{ height: "calc(100vh - 5rem)", minHeight: 640, display: "flex", flexDirection: "column", position: "relative", overflow: "hidden", background: v("bg"), color: v("text"), fontFamily: FONT_SANS, fontSize: 13, border: `1px solid ${v("border")}`, borderRadius: 12 }}
     >
       {/* header */}
@@ -199,7 +201,7 @@ export default function ControlTower() {
           {VIEWS.map(([k, lbl]) => {
             const active = view === k;
             return (
-              <div key={k} onClick={() => pickView(k)} style={{ padding: "7px 13px", borderRadius: 7, fontSize: 12.5, fontWeight: active ? 600 : 500, color: active ? v("text") : v("text-3"), background: active ? v("surface-2") : "transparent", boxShadow: active ? `inset 0 0 0 1px ${v("border")}` : "none", cursor: "pointer", whiteSpace: "nowrap" }}>{lbl}</div>
+              <button key={k} type="button" role="tab" aria-selected={active} onClick={() => pickView(k)} style={{ appearance: "none", font: "inherit", border: "none", padding: "7px 13px", borderRadius: 7, fontSize: 12.5, fontWeight: active ? 600 : 500, color: active ? v("text") : v("text-3"), background: active ? v("surface-2") : "transparent", boxShadow: active ? `inset 0 0 0 1px ${v("border")}` : "none", cursor: "pointer", whiteSpace: "nowrap" }}>{lbl}</button>
             );
           })}
         </div>
@@ -208,9 +210,9 @@ export default function ControlTower() {
           <span style={{ fontFamily: FONT_MONO, fontSize: 11, color: v("text-faint") }}>⌕</span>
           <input value={query} onChange={(e) => onQuery(e.target.value)} placeholder="Ref, PO, SKU, supplier, port…" style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: v("text"), fontFamily: FONT_MONO, fontSize: 11.5, minWidth: 0 }} />
         </div>
-        <div onClick={() => setDock((d) => !d)} style={{ display: "flex", alignItems: "center", gap: 7, padding: "7px 12px", borderRadius: 7, border: `1px solid ${v("control")}`, cursor: "pointer", fontSize: 12, fontWeight: 500, color: v("text-3") }}>
+        <button type="button" aria-pressed={dock} onClick={() => setDock((d) => !d)} style={{ appearance: "none", font: "inherit", display: "flex", alignItems: "center", gap: 7, padding: "7px 12px", borderRadius: 7, border: `1px solid ${v("control")}`, background: "transparent", cursor: "pointer", fontSize: 12, fontWeight: 500, color: v("text-3") }}>
           <span style={{ fontFamily: FONT_MONO, fontSize: 11 }}>▤</span> Dock
-        </div>
+        </button>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "none", whiteSpace: "nowrap", fontFamily: FONT_MONO, fontSize: 10, color: v("text-dim") }}>
           <span style={{ width: 6, height: 6, borderRadius: "50%", flex: "none", background: v("success"), animation: "fctPulse 2.4s ease-in-out infinite" }} />{FEED_TIME}
         </div>

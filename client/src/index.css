@@ -539,6 +539,8 @@
 @keyframes fctPulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.7); } }
 @keyframes fctSlideIn { from { transform: translateX(28px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 @keyframes fctFadeUp { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+/* The control tower's UI face; mono identifiers/figures opt in per element. */
+.fct-root { font-family: "Space Grotesk", system-ui, -apple-system, sans-serif; }
 
 /* ============================================
    LIGHTFIELD DARK DESIGN SYSTEM

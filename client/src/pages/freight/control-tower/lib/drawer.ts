@@ -4,7 +4,7 @@
 // ============================================================================
 
 import {
-  VENDORS, CONTACTS, BROKER, UNDERWRITER, QA, BUYER, BUYER_ADDR, SUP_ADDR,
+  VENDORS, CONTACTS, BROKER, UNDERWRITER, QA, BUYER,
   type Contact,
 } from "@shared/freight-control-tower/fixtures";
 import { STATUS_TONE } from "@shared/freight-control-tower/marks";

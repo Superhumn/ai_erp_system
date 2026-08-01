@@ -194,10 +194,12 @@ export function runway(
     const cv = cover[sku];
     const burn = cv.onHandN / cv.days;
     const src = all.find((r) => r.sku === sku);
+    // Clamp inbound day offsets to >= 1, exactly as projectSku credits them,
+    // so Runway/Today/Plant-wall geometry never contradicts the projection
+    // (a past-dated but not-yet-received ETA lands "tomorrow", not today).
     const inb = all
       .filter((r) => r.sku === sku && r.prog < 1 && parseDay(r.eta) != null)
-      .map((r) => ({ d: Math.round((parseDay(r.eta)! - TODAY) / DAY), qty: r.qtyN, ref: r.ref }))
-      .filter((x) => x.d >= 0)
+      .map((r) => ({ d: Math.max(1, Math.round((parseDay(r.eta)! - TODAY) / DAY)), qty: r.qtyN, ref: r.ref }))
       .sort((a, b) => a.d - b.d);
     const arr = inb.length ? inb[0] : null;
     const pl = proj[sku];
@@ -278,6 +280,9 @@ export function journeys(all: Decorated[], C: Palette): { rows: JourneyRibbon[];
   };
   const flight = all.filter((r) => r.prog < 1 || r.status === "QC Hold");
   const jDays = flight.map((r) => [parseDay(r.etd), parseDay(r.eta)]).filter((x) => x[0] && x[1]) as [number, number][];
+  // No parseable journey dates (empty/over-filtered snapshot): Math.min/max of
+  // [] would be ±Infinity and jpct would divide by zero → return a safe empty model.
+  if (jDays.length === 0) return { rows: [], ticks: [], todayLeft: "0%" };
   const JMIN = Math.min(...jDays.map((x) => x[0]));
   const JMAX = Math.max(...jDays.map((x) => x[1]));
   const jpct = (ms: number) => ((ms - JMIN) / (JMAX - JMIN)) * 100;
@@ -406,7 +411,7 @@ export function board(rows: Decorated[], group: GroupKey, collapsed: Record<stri
     const rs = bucket[k];
     const flagged = rs.filter((r) => r.flag).length;
     const cnt = (state: string) => rs.filter((r) => r.state === state).length;
-    let tag = "", tagColor = C.mid, title = k, meta = mv(rs.length), stats: GroupStat[] = [], drill: Pivot | undefined;
+    let tag = "", tagColor = C.mid, title: string, meta: string, stats: GroupStat[] = [], drill: Pivot | undefined;
 
     if (group === "lane") {
       tag = "LANE"; title = k; meta = `${rs[0].origin} → ${rs[0].dest} · ${mv(rs.length)}`;

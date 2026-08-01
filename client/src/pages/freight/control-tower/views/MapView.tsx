@@ -38,11 +38,14 @@ export function MapView({ rows, palette: C, onSelect }: Props) {
   const push = () => {
     const win = iframeRef.current?.contentWindow;
     if (!liveRef.current || !win) return;
-    win.postMessage({ type: "lane-map-data", rows: mapRows(rows), theme: themePayload(C) }, "*");
+    // Same-origin asset — target our own origin rather than "*".
+    win.postMessage({ type: "lane-map-data", rows: mapRows(rows), theme: themePayload(C) }, window.location.origin);
   };
 
   useEffect(() => {
     const onMsg = (ev: MessageEvent) => {
+      // Only trust messages from our own origin, sent by the lane-map iframe.
+      if (ev.origin !== window.location.origin || ev.source !== iframeRef.current?.contentWindow) return;
       const d = ev.data || {};
       if (d.type === "lane-map-ready") { liveRef.current = true; push(); }
       if (d.type === "lane-map-select" && d.ref) onSelect(d.ref);

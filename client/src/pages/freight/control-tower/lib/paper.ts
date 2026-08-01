@@ -36,7 +36,6 @@ function unit(v: string, q: string): string {
 }
 
 export function paperFor(r: Decorated, docName: string, status: DocStatus, C: Palette): Paper {
-  const incotermWord = r.incoterm.split(" ")[0];
   const seller = P("Seller / exporter", r.supplier, SUP_ADDR[r.supplier] || "");
   const consignee = P("Consignee", "", BUYER_ADDR[r.dest] || "");
   const itemHead: LineHead[] = [H("SKU / description"), H("HS"), H("Qty", "right"), H("Unit", "right"), H("Amount", "right")];
