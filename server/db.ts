@@ -2246,6 +2246,26 @@ export async function getDocuments(filters?: { companyId?: number; type?: string
   return db.select().from(documents).orderBy(desc(documents.createdAt));
 }
 
+/**
+ * Batched document counts for many references of the same type, in one grouped
+ * query. Lets a table fetch every row's doc count at once instead of one query
+ * per row (the DocumentsCell N+1).
+ */
+export async function getDocumentCountsByReferences(
+  referenceType: string,
+  referenceIds: number[],
+): Promise<{ referenceId: number; count: number }[]> {
+  const db = await getDb();
+  if (!db) return [];
+  if (referenceIds.length === 0) return [];
+  const rows = await db
+    .select({ referenceId: documents.referenceId, docCount: count() })
+    .from(documents)
+    .where(and(eq(documents.referenceType, referenceType), inArray(documents.referenceId, referenceIds)))
+    .groupBy(documents.referenceId);
+  return rows.map((r) => ({ referenceId: Number(r.referenceId), count: Number(r.docCount) }));
+}
+
 export async function createDocument(data: InsertDocument) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -13629,6 +13649,44 @@ export async function getInvestorInvestments(investorId?: number) {
   if (!db) return [];
   if (investorId) return db.select().from(investorInvestments).where(eq(investorInvestments.investorId, investorId));
   return db.select().from(investorInvestments);
+}
+
+// Investors linked to a specific fundraising round (campaign), joined with the
+// CRM investor record so the round view can show who is in the round.
+export async function getCampaignInvestments(campaignId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select({
+      id: investorInvestments.id,
+      investorId: investorInvestments.investorId,
+      amount: investorInvestments.amount,
+      currency: investorInvestments.currency,
+      investedAt: investorInvestments.investedAt,
+      notes: investorInvestments.notes,
+      investorName: investors.name,
+      investorStatus: investors.status,
+      investorType: investors.type,
+      investorEmail: investors.email,
+    })
+    .from(investorInvestments)
+    .leftJoin(investors, eq(investorInvestments.investorId, investors.id))
+    .where(eq(investorInvestments.campaignId, campaignId))
+    .orderBy(desc(investorInvestments.investedAt));
+}
+
+export async function createInvestment(data: InsertInvestorInvestment) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(investorInvestments).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function deleteInvestment(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(investorInvestments).where(eq(investorInvestments.id, id));
+  return { success: true };
 }
 
 export async function getFundraisingReminders(filters?: { status?: string; investorId?: number }) {

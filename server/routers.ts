@@ -272,14 +272,21 @@ async function getValidGoogleToken(userId: number): Promise<{ accessToken: strin
     const refreshed = await refreshGoogleToken(token.refreshToken);
     
     if (refreshed.accessToken && refreshed.expiresAt) {
-      // Update database with new token (preserve existing googleEmail via COALESCE)
-      await db.upsertGoogleOAuthToken({
-        userId,
-        accessToken: refreshed.accessToken,
-        refreshToken: token.refreshToken,
-        expiresAt: refreshed.expiresAt,
-        googleEmail: token.googleEmail,
-      });
+      // Persist the refreshed token, but never let a DB write failure block the
+      // request — the freshly refreshed token is valid whether or not we manage
+      // to store it. (Previously a failing upsert here aborted every Drive
+      // operation: sync AND the document-viewer proxy.)
+      try {
+        await db.upsertGoogleOAuthToken({
+          userId,
+          accessToken: refreshed.accessToken,
+          refreshToken: token.refreshToken,
+          expiresAt: refreshed.expiresAt,
+          googleEmail: token.googleEmail,
+        });
+      } catch (persistErr) {
+        console.error(`[GoogleToken] Failed to persist refreshed token for user ${userId} (using it anyway):`, persistErr);
+      }
       return { accessToken: refreshed.accessToken };
     }
     
@@ -3872,6 +3879,14 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         referenceId: z.number().optional(),
       }).optional())
       .query(({ input }) => db.getDocuments(input)),
+    // Batched doc counts for many references at once, so a table can show a
+    // per-row count with one query instead of one query per row.
+    countsByReferences: protectedProcedure
+      .input(z.object({
+        referenceType: z.string(),
+        referenceIds: z.array(z.number()),
+      }))
+      .query(({ input }) => db.getDocumentCountsByReferences(input.referenceType, input.referenceIds)),
     upload: protectedProcedure
       .input(z.object({
         name: z.string().min(1),
@@ -5436,7 +5451,12 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         return { url: null, error: 'Google OAuth not configured' };
       }
       
-      const redirectUri = `${process.env.VITE_APP_URL || 'http://localhost:3000'}/api/google/callback`;
+      // Use the same canonical redirect URI as every other Google OAuth flow
+      // (Drive full-access, Gmail, Workspace, Chat) so a single URI needs to be
+      // registered in the Google Cloud Console. The matching callback handler
+      // lives at /api/oauth/google/callback in server/_core/index.ts. Honors the
+      // GOOGLE_REDIRECT_URI override just like that handler does.
+      const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${process.env.VITE_APP_URL || process.env.APP_URL || 'http://localhost:3000'}/api/oauth/google/callback`;
       const scope = encodeURIComponent('https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets.readonly');
       const { createSignedOAuthState } = await import('./_core/crypto');
       const state = createSignedOAuthState({ userId: ctx.user.id, provider: 'google' });
@@ -7369,7 +7389,68 @@ Be concise and helpful. Always give actionable guidance.`;
           });
           return { success: true };
         }),
-      
+
+      // Inline approval for concierge errands: approve + run in a single step
+      // straight from the AI chat, instead of parking the task in the Approval
+      // Queue. Transitions directly to in_progress (skipping the 'approved'
+      // state the background scheduler watches) so the errand can never be
+      // double-executed.
+      approveAndExecute: adminProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const task = await db.getAiAgentTaskById(input.id);
+          if (!task) throw new TRPCError({ code: 'NOT_FOUND', message: 'Task not found' });
+          if (task.taskType !== 'concierge_errand') {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Inline approval is only supported for concierge errands' });
+          }
+          if (task.status !== 'pending_approval') {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: `Errand is not awaiting approval (status: ${task.status})` });
+          }
+
+          await db.updateAiAgentTask(input.id, {
+            status: 'in_progress',
+            approvedBy: ctx.user.id,
+            approvedAt: new Date(),
+          });
+          await db.createAiAgentLog({
+            taskId: input.id,
+            action: 'task_approved',
+            status: 'success',
+            message: `Errand approved inline by ${ctx.user.name}`,
+          });
+
+          try {
+            const { executeConciergeErrand } = await import('./conciergeErrandService');
+            const r = await executeConciergeErrand(task);
+            if (!r.success) throw new Error(r.error || 'Errand execution failed');
+            await db.updateAiAgentTask(input.id, {
+              status: 'completed',
+              executedAt: new Date(),
+              executionResult: JSON.stringify(r.data),
+            });
+            await db.createAiAgentLog({
+              taskId: input.id,
+              action: 'task_executed',
+              status: 'success',
+              message: 'Errand executed successfully (inline approval)',
+              details: JSON.stringify(r.data),
+            });
+            return { success: true, result: r.data };
+          } catch (error: any) {
+            await db.updateAiAgentTask(input.id, {
+              status: 'failed',
+              errorMessage: error.message,
+            });
+            await db.createAiAgentLog({
+              taskId: input.id,
+              action: 'task_failed',
+              status: 'error',
+              message: `Errand execution failed: ${error.message}`,
+            });
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
+          }
+        }),
+
       update: adminProcedure
         .input(z.object({ 
           id: z.number(), 
@@ -19801,6 +19882,28 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
     listInvestments: protectedProcedure
       .input(z.object({ investorId: z.number().optional() }).optional())
       .query(({ input }) => db.getInvestorInvestments(input?.investorId)),
+    // Investors linked to a specific fundraising round (campaign).
+    listCampaignInvestors: protectedProcedure
+      .input(z.object({ campaignId: z.number() }))
+      .query(({ input }) => db.getCampaignInvestments(input.campaignId)),
+    addCampaignInvestment: protectedProcedure
+      .input(z.object({
+        campaignId: z.number(),
+        investorId: z.number(),
+        amount: z.string().regex(/^\d+(\.\d{1,2})?$/, "Amount must be a positive number (up to 2 decimals)"),
+        currency: z.string().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(({ input }) => db.createInvestment({
+        campaignId: input.campaignId,
+        investorId: input.investorId,
+        amount: input.amount,
+        currency: input.currency || "USD",
+        notes: input.notes,
+      })),
+    removeCampaignInvestment: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(({ input }) => db.deleteInvestment(input.id)),
     listReminders: protectedProcedure
       .input(z.object({ status: z.string().optional(), dueBefore: z.date().optional() }).optional())
       .query(({ input }) => db.getFundraisingReminders(input ? { status: input.status } : undefined)),
