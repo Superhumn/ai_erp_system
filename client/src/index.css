@@ -1,7 +1,7 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400..800&family=Inter+Tight:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
 @import "tw-animate-css";
-/* Superhumn design system — display/number face (DM Sans) + body/UI face (Inter Tight). */
-@import url("https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400..800&family=Inter+Tight:wght@400;500;600;700&display=swap");
+/* Superhumn design system â display/number face (DM Sans) + body/UI face (Inter Tight). */
 
 @custom-variant dark (&:is(.dark *));
 
@@ -63,13 +63,13 @@
    ============================================ */
 
 :root {
-  /* Primary: Ocean blue — confident, professional */
-  /* Superhumn electric blue — the single accent (actions / live / selected). */
+  /* Primary: Ocean blue â confident, professional */
+  /* Superhumn electric blue â the single accent (actions / live / selected). */
   --primary: oklch(0.47 0.21 255);
   --primary-foreground: oklch(0.985 0.004 255);
   --sidebar-primary: oklch(0.47 0.21 255);
   --sidebar-primary-foreground: oklch(0.985 0.004 255);
-  /* Chart palette — blue-teal family */
+  /* Chart palette â blue-teal family */
   --chart-1: oklch(0.50 0.22 215);
   --chart-2: oklch(0.58 0.18 195);
   --chart-3: oklch(0.65 0.16 230);
@@ -173,7 +173,7 @@
   input[type="radio"]:not(:disabled) {
     @apply cursor-pointer;
   }
-  /* Typography scale — headings + numeric displays use DM Sans (display face). */
+  /* Typography scale â headings + numeric displays use DM Sans (display face). */
   h1, h2, h3, h4 { font-family: var(--font-display); }
   h1 { @apply text-[1.875rem] font-bold tracking-[-0.035em] leading-tight; }
   h2 { @apply text-xl font-bold tracking-[-0.035em] leading-tight; }
@@ -246,7 +246,7 @@
 .density-compact :where(select.h-9:not(.not-compact *)),
 .density-compact :where([data-slot="input"]:not(.not-compact *))  { height: 1.75rem; padding-top: 0.125rem; padding-bottom: 0.125rem; }
 
-/* Page titles — most pages use text-lg/text-xl/text-2xl for h1 */
+/* Page titles â most pages use text-lg/text-xl/text-2xl for h1 */
 .density-compact :where(h1.text-2xl:not(.not-compact *)) { font-size: 1.125rem; line-height: 1.5rem; }
 .density-compact :where(h1.text-xl:not(.not-compact *))  { font-size: 1rem;     line-height: 1.375rem; }
 .density-compact :where(h1.text-lg:not(.not-compact *))  { font-size: 0.9375rem; }
@@ -256,7 +256,7 @@
 .density-compact :where(table:not(.not-compact *) th)  { padding-top: 0.25rem; padding-bottom: 0.25rem; }
 .density-compact :where(table:not(.not-compact *) td)  { padding-top: 0.25rem; padding-bottom: 0.25rem; }
 
-/* Recharts — shrink default chart heights by 20-25% */
+/* Recharts â shrink default chart heights by 20-25% */
 .density-compact :where(.recharts-responsive-container:not(.not-compact *)) {
   max-height: 200px;
 }
@@ -768,7 +768,7 @@ main h1[class*="text-[1.875rem]"] {
   gap: 0.5rem !important;
 }
 
-/* ── Mobile-compact: fit each page on screen without scrolling ── */
+/* ââ Mobile-compact: fit each page on screen without scrolling ââ */
 @media (max-width: 768px) {
   /* Shrink page titles */
   h1[class*="text-[1.75rem]"], h1[class*="text-xl"] {
