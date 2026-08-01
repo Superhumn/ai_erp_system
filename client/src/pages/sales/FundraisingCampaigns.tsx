@@ -227,10 +227,10 @@ export default function FundraisingCampaigns() {
                       </div>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
-                      <Button size="sm" variant="ghost" onClick={() => setInvestorsRound(round)} title="Investors">
+                      <Button size="sm" variant="ghost" onClick={() => setInvestorsRound(round)} title="Investors" aria-label="Investors">
                         <Users className="h-4 w-4" />
                       </Button>
-                      <Button size="sm" variant="ghost" onClick={() => openEdit(round)} title="Edit round">
+                      <Button size="sm" variant="ghost" onClick={() => openEdit(round)} title="Edit round" aria-label="Edit round">
                         <Edit className="h-4 w-4" />
                       </Button>
                     </div>
@@ -308,7 +308,7 @@ function RoundInvestorsDialog({ round, onClose }: { round: any; onClose: () => v
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="font-mono text-sm">${(parseFloat(r.amount || "0") || 0).toLocaleString()}</span>
-                    <Button size="sm" variant="ghost" onClick={() => remove.mutate({ id: r.id })} title="Remove">
+                    <Button size="sm" variant="ghost" onClick={() => remove.mutate({ id: r.id })} title="Remove" aria-label={`Remove ${r.investorName || "investor"}`}>
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>

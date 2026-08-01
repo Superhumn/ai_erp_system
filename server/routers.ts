@@ -19838,7 +19838,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
       .input(z.object({
         campaignId: z.number(),
         investorId: z.number(),
-        amount: z.string().min(1),
+        amount: z.string().regex(/^\d+(\.\d{1,2})?$/, "Amount must be a positive number (up to 2 decimals)"),
         currency: z.string().optional(),
         notes: z.string().optional(),
       }))

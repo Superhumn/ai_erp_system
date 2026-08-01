@@ -13675,16 +13675,10 @@ export async function getCampaignInvestments(campaignId: number) {
     .orderBy(desc(investorInvestments.investedAt));
 }
 
-export async function createInvestment(data: {
-  investorId: number;
-  campaignId: number;
-  amount: string;
-  currency?: string;
-  notes?: string;
-}) {
+export async function createInvestment(data: InsertInvestorInvestment) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.insert(investorInvestments).values(data as any);
+  const result = await db.insert(investorInvestments).values(data);
   return { id: result[0].insertId };
 }
 
