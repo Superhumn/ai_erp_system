@@ -151,6 +151,23 @@ describe('invokeLLMStream', () => {
     expect(result.choices[0].finish_reason).toBe('tool_calls');
   });
 
+  it('falls back to content_block_start input when no json deltas are streamed', async () => {
+    mockStreamFetch([
+      { type: 'message_start', message: { id: 'msg_c', model: 'claude-sonnet-4-20250514', usage: { input_tokens: 5 } } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'tu_2', name: 'query_system', input: { module: 'inventory' } } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 4 } },
+      { type: 'message_stop' },
+    ]);
+
+    const { result } = await drain(invokeLLMStream({ messages: [{ role: 'user', content: 'check inventory' }] }));
+
+    const toolCalls = result.choices[0].message.tool_calls;
+    expect(toolCalls).toHaveLength(1);
+    // No input_json_delta was sent, so the input must come from content_block_start.
+    expect(JSON.parse(toolCalls[0].function.arguments)).toEqual({ module: 'inventory' });
+  });
+
   it('continues across a pause_turn and aggregates text from all requests', async () => {
     const { fetchMock, captured } = mockStreamFetchSequence([
       // First request pauses mid-turn (as server-side web search does).

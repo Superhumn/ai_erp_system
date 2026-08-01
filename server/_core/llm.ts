@@ -861,11 +861,16 @@ export async function* invokeLLMStream(
           case "content_block_stop": {
             const b = blocks[evt.index];
             if (b && b.type === "tool_use") {
+              // Prefer the streamed input_json_delta buffer, but fall back to the
+              // `input` delivered on content_block_start if no deltas arrived, so
+              // streamed tool_calls match the non-streaming convertAnthropicResponse.
               let input: Record<string, unknown> = {};
               try {
-                input = b.jsonBuf ? JSON.parse(b.jsonBuf) : {};
+                input = b.jsonBuf
+                  ? JSON.parse(b.jsonBuf)
+                  : ((b.raw.input as Record<string, unknown>) ?? {});
               } catch {
-                input = {};
+                input = (b.raw.input as Record<string, unknown>) ?? {};
               }
               toolCalls.push({
                 id: (b.raw.id as string) ?? "",
