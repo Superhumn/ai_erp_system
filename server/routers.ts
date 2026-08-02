@@ -17,7 +17,7 @@ import { linkParsedEmailToEntities } from "./emailDocumentLinker";
 import { trackShipment, getFreightRates, getShippingLines, getVesselSchedules } from "./searatesService";
 import { freightControlTowerRouter } from "./freightControlTowerRouter";
 import { generateVendorEmail, sendVendorEmail, sendBulkEmail, checkAndSendPoFollowups } from "./vendorEmailAutomation";
-import { processAIAgentRequest, planAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
+import { processAIAgentRequest, processAIAgentRequestStream, planAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
@@ -7142,6 +7142,52 @@ Be concise and helpful. Always give actionable guidance.`;
         const result = await processAIAgentRequest(message, history, agentContext);
 
         return result;
+      }),
+
+    // Streaming version of agentChat — same inputs and semantics, but the answer
+    // is delivered token-by-token (async generator) so the UI can type it out
+    // live. Consumed via the vanilla client's `.mutate()` (react-query's
+    // useMutation cannot iterate an async iterable). Plan mode returns a single
+    // terminal `done` event carrying the plan, matching agentChat's shape.
+    agentChatStream: protectedProcedure
+      .input(z.object({
+        message: z.string().min(1).max(10000),
+        conversationHistory: z.array(z.object({
+          role: z.enum(['user', 'assistant']),
+          content: z.string().max(10000),
+        })).max(50).optional(),
+        mode: z.enum(['act', 'plan']).optional(),
+        approvedPlan: z.string().max(20000).optional(),
+      }))
+      .mutation(async function* ({ input, ctx, signal }) {
+        const agentContext: AIAgentContext = {
+          userId: ctx.user.id,
+          userName: ctx.user.name || 'User',
+          userRole: ctx.user.role,
+          companyId: (ctx.user as any).companyId,
+        };
+
+        const history = input.conversationHistory || [];
+
+        // Plan-first mode: build the plan (non-streamed) and emit it as the single
+        // terminal event. The client handles isPlan exactly as with agentChat.
+        if (input.mode === 'plan') {
+          const plan = await planAIAgentRequest(input.message, history, agentContext);
+          yield { type: 'done' as const, response: plan };
+          return;
+        }
+
+        const MAX_PLAN_CHARS = 8000;
+        const planText = input.approvedPlan
+          ? (input.approvedPlan.length > MAX_PLAN_CHARS
+              ? `${input.approvedPlan.slice(0, MAX_PLAN_CHARS)}…`
+              : input.approvedPlan)
+          : undefined;
+        const message = planText
+          ? `${input.message}\n\nThe user reviewed and approved the following plan. Follow it as closely as possible, adjusting only where necessary:\n${planText}`
+          : input.message;
+
+        yield* processAIAgentRequestStream(message, history, agentContext, { signal });
       }),
 
     // Quick analysis endpoint for data insights
