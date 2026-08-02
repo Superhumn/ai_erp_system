@@ -39,7 +39,7 @@ vi.mock("./db", () => {
 });
 
 // Drive the LLM: first turn asks to call search_inbox, second turn answers.
-const invokeLLM = vi.fn();
+const { invokeLLM } = vi.hoisted(() => ({ invokeLLM: vi.fn() }));
 vi.mock("./_core/llm", () => ({
   invokeLLM: (...args: any[]) => invokeLLM(...args),
 }));
