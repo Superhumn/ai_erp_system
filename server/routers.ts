@@ -5457,7 +5457,12 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         return { url: null, error: 'Google OAuth not configured' };
       }
       
-      const redirectUri = `${process.env.VITE_APP_URL || 'http://localhost:3000'}/api/google/callback`;
+      // Use the same canonical redirect URI as every other Google OAuth flow
+      // (Drive full-access, Gmail, Workspace, Chat) so a single URI needs to be
+      // registered in the Google Cloud Console. The matching callback handler
+      // lives at /api/oauth/google/callback in server/_core/index.ts. Honors the
+      // GOOGLE_REDIRECT_URI override just like that handler does.
+      const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${process.env.VITE_APP_URL || process.env.APP_URL || 'http://localhost:3000'}/api/oauth/google/callback`;
       const scope = encodeURIComponent('https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets.readonly');
       const { createSignedOAuthState } = await import('./_core/crypto');
       const state = createSignedOAuthState({ userId: ctx.user.id, provider: 'google' });
