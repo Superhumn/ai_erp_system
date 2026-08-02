@@ -9,10 +9,11 @@ import { Streamdown } from "streamdown";
 import {
   Search, Loader2, Sparkles, ArrowRight, Command,
   FileText, Package, Users, DollarSign, Truck, ClipboardList,
-  Send, X, CheckCircle, Clock, Building, AlertCircle, Box, Mail, Mic, MicOff
+  Send, X, CheckCircle, Clock, Building, AlertCircle, Box, Mail, Mic, MicOff, Square
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { QuickCreateDialog } from "@/components/QuickCreateDialog";
+import type { AgentStreamEvent } from "@shared/aiChat";
 
 interface AICommandBarProps {
   context?: string;
@@ -672,6 +673,14 @@ export function AICommandBar({ context }: AICommandBarProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [response, setResponse] = useState<string | null>(null);
   const [agentActions, setAgentActions] = useState<Array<{ type: string; description?: string; status?: string; error?: string }> | null>(null);
+  // True while the answer is actively typing out; drives the Stop button + cursor.
+  const [isStreaming, setIsStreaming] = useState(false);
+  // Live label shown while the agent runs a tool (e.g. "Creating shipment…").
+  const [streamStatus, setStreamStatus] = useState<string | null>(null);
+  // True for the whole lifetime of a streamed agent request, so the Stop button
+  // only shows for streamed responses — not for other operations that share the
+  // same spinner (vendor enrichment, invoice/PO parsing, etc.).
+  const [streamActive, setStreamActive] = useState(false);
   // "plan" = propose a plan and wait for approval before acting; "act" = do it directly.
   const [agentMode, setAgentMode] = useState<"plan" | "act">(() => {
     try {
@@ -711,6 +720,8 @@ export function AICommandBar({ context }: AICommandBarProps) {
   const [showQuickCreateCustomer, setShowQuickCreateCustomer] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const lastSubmittedQuery = useRef<string>("");
+  // Lets the Stop button abort an in-flight streamed response mid-generation.
+  const streamAbortRef = useRef<AbortController | null>(null);
   const [, setLocation] = useLocation();
   const utils = trpc.useUtils();
 
@@ -779,32 +790,103 @@ export function AICommandBar({ context }: AICommandBarProps) {
   // the live web, and takes actions via tools, then returns a written answer plus
   // the list of actions it performed. This is what makes the bar actually AI-driven
   // rather than keyword matching.
-  const agentChat = trpc.ai.agentChat.useMutation({
-    onSuccess: (data) => {
-      setIsLoading(false);
-      // Plan-first mode: the model returned a plan to approve, not a result.
-      if ((data as { isPlan?: boolean }).isPlan) {
-        setPendingPlan(data.message || "");
-        return;
-      }
-      setResponse(data.message || "Done.");
-      const actions =
-        Array.isArray(data.actions) && data.actions.length > 0
-          ? (data.actions as Array<{ type: string; description?: string; status?: string; error?: string }>)
-          : null;
-      setAgentActions(actions);
-      // Only refresh caches when the agent actually took actions — a plain answer
-      // changes nothing, so a full invalidate would just cause needless refetches.
-      if (actions) {
-        utils.invalidate();
+  // Streamed agentic chat: drives ai.agentChatStream via the vanilla tRPC client
+  // (react-query's useMutation can't consume an async iterable) and appends tokens
+  // to `response` as they arrive, so the answer types out live. The Stop button
+  // aborts mid-stream via streamAbortRef. Falls back to a plain answer on error.
+  const streamAgentChat = useCallback(
+    async (params: { message: string; mode: "plan" | "act"; approvedPlan?: string }) => {
+      setIsLoading(true);
+      setIsStreaming(false);
+      setStreamStatus(null);
+      setStreamActive(true);
+      setResponse(null);
+      setAgentActions(null);
+
+      const controller = new AbortController();
+      streamAbortRef.current = controller;
+
+      let acc = "";
+      let started = false;
+      const collectedActions: Array<{ type: string; description?: string; status?: string; error?: string }> = [];
+
+      try {
+        const iterable = (await utils.client.ai.agentChatStream.mutate(params, {
+          signal: controller.signal,
+        })) as AsyncIterable<AgentStreamEvent>;
+        for await (const ev of iterable) {
+          if (ev.type === "token") {
+            if (!started) {
+              started = true;
+              setIsLoading(false);
+              setIsStreaming(true);
+              setStreamStatus(null);
+            }
+            acc += ev.text;
+            setResponse(acc);
+          } else if (ev.type === "reset") {
+            // The streamed text was a preamble to a tool call — clear it and go
+            // back to a "working" state until the real answer streams.
+            acc = "";
+            started = false;
+            setResponse(null);
+            setIsStreaming(false);
+            setIsLoading(true);
+          } else if (ev.type === "status") {
+            setStreamStatus(ev.label);
+          } else if (ev.type === "action") {
+            collectedActions.push(ev.action);
+            setAgentActions([...collectedActions]);
+          } else if (ev.type === "done") {
+            const data = ev.response;
+            setIsLoading(false);
+            setIsStreaming(false);
+            setStreamStatus(null);
+            // Plan-first mode: the model returned a plan to approve, not a result.
+            if ((data as { isPlan?: boolean }).isPlan) {
+              setPendingPlan(data.message || "");
+              setResponse(null);
+              return;
+            }
+            setResponse(data.message || acc || "Done.");
+            const actions =
+              Array.isArray(data.actions) && data.actions.length > 0
+                ? (data.actions as Array<{ type: string; description?: string; status?: string; error?: string }>)
+                : collectedActions.length > 0
+                  ? collectedActions
+                  : null;
+            setAgentActions(actions);
+            // Only refresh caches when the agent actually took actions — a plain
+            // answer changes nothing, so a full invalidate would just churn refetches.
+            if (actions) {
+              utils.invalidate();
+            }
+          }
+        }
+      } catch (error: any) {
+        setIsLoading(false);
+        setIsStreaming(false);
+        setStreamStatus(null);
+        // User pressed Stop — keep whatever streamed so far so they can build on it.
+        if (controller.signal.aborted) {
+          if (acc) setResponse(acc);
+          return;
+        }
+        // Fall back to a plain answer so the user still gets a response.
+        toast.error(`Agent error: ${error?.message ?? String(error)}`, { description: "Falling back to a direct answer." });
+        aiQuery.mutate({ question: lastSubmittedQuery.current });
+      } finally {
+        setStreamActive(false);
+        if (streamAbortRef.current === controller) streamAbortRef.current = null;
       }
     },
-    onError: (error) => {
-      // Fall back to a plain answer so the user still gets a response.
-      toast.error(`Agent error: ${error.message}`, { description: "Falling back to a direct answer." });
-      aiQuery.mutate({ question: lastSubmittedQuery.current });
-    },
-  });
+    [utils, aiQuery],
+  );
+
+  // Stop an in-flight streamed response (the partial answer is kept).
+  const stopStreaming = useCallback(() => {
+    streamAbortRef.current?.abort();
+  }, []);
 
   // Persist the chosen mode so it sticks across sessions.
   useEffect(() => {
@@ -816,9 +898,8 @@ export function AICommandBar({ context }: AICommandBarProps) {
     if (!pendingPlan) return;
     const plan = pendingPlan;
     setPendingPlan(null);
-    setIsLoading(true);
-    agentChat.mutate({ message: lastSubmittedQuery.current, mode: "act", approvedPlan: plan });
-  }, [pendingPlan, agentChat]);
+    void streamAgentChat({ message: lastSubmittedQuery.current, mode: "act", approvedPlan: plan });
+  }, [pendingPlan, streamAgentChat]);
 
   // AI Agent task creation mutation
   const createTask = trpc.aiAgent.tasks.create.useMutation({
@@ -1096,7 +1177,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
         fullQuery = `[Context: ${context}]\n\n${q}`;
       }
       lastSubmittedQuery.current = fullQuery;
-      agentChat.mutate({ message: fullQuery, mode: agentMode });
+      void streamAgentChat({ message: fullQuery, mode: agentMode });
       return;
     }
     
@@ -1197,7 +1278,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
       setShowMaterialDropdown(true);
     }
     setShowDraftPreview(true);
-  }, [context, agentChat, agentMode, enrichVendor, vendorSuggestion, selectedVendorId, vendorsQuery.data, selectedMaterial]);
+  }, [context, streamAgentChat, agentMode, enrichVendor, vendorSuggestion, selectedVendorId, vendorsQuery.data, selectedMaterial]);
 
   // Submit the draft after preview/editing
   const handleSubmitDraft = useCallback(async () => {
@@ -1419,15 +1500,20 @@ export function AICommandBar({ context }: AICommandBarProps) {
 
         <ScrollArea className="max-h-[60vh]">
           {isLoading && (
-            <div className="p-6 flex items-center justify-center">
-              <Loader2 className="h-6 w-6 animate-spin text-primary mr-3" />
+            <div className="p-6 flex items-center justify-center gap-3">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
               <span className="text-muted-foreground">
-                {agentChat.isPending
-                  ? agentMode === "plan" && !pendingPlan
+                {streamStatus
+                  ? streamStatus
+                  : agentMode === "plan" && !pendingPlan
                     ? "Drafting a plan — thinking it through and searching the web…"
-                    : "Working on it — reasoning, checking your data, and searching the web…"
-                  : "Processing…"}
+                    : "Working on it — reasoning, checking your data, and searching the web…"}
               </span>
+              {streamActive && (
+                <Button variant="ghost" size="sm" onClick={stopStreaming} className="text-muted-foreground">
+                  <Square className="h-3.5 w-3.5 mr-1" /> Stop
+                </Button>
+              )}
             </div>
           )}
 
@@ -1825,6 +1911,12 @@ export function AICommandBar({ context }: AICommandBarProps) {
             <div className="p-4">
               <div className="prose prose-sm dark:prose-invert max-w-none">
                 <Streamdown>{response}</Streamdown>
+                {isStreaming && (
+                  <span
+                    className="inline-block h-4 w-[2px] ml-0.5 align-middle bg-primary/70 animate-pulse rounded-sm"
+                    aria-hidden
+                  />
+                )}
               </div>
               {agentActions && agentActions.length > 0 && (
                 <div className="mt-3 rounded-md border border-border/60 bg-muted/40 p-3">
@@ -1861,28 +1953,36 @@ export function AICommandBar({ context }: AICommandBarProps) {
                 </div>
               )}
               <div className="mt-4 flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setResponse(null);
-                    setAgentActions(null);
-                    setShowSuggestions(true);
-                    setQuery("");
-                  }}
-                >
-                  <X className="h-4 w-4 mr-1" /> Clear
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    navigator.clipboard.writeText(response);
-                    toast.success("Copied to clipboard");
-                  }}
-                >
-                  Copy response
-                </Button>
+                {isStreaming ? (
+                  <Button variant="outline" size="sm" onClick={stopStreaming}>
+                    <Square className="h-4 w-4 mr-1" /> Stop
+                  </Button>
+                ) : (
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setResponse(null);
+                        setAgentActions(null);
+                        setShowSuggestions(true);
+                        setQuery("");
+                      }}
+                    >
+                      <X className="h-4 w-4 mr-1" /> Clear
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        navigator.clipboard.writeText(response);
+                        toast.success("Copied to clipboard");
+                      }}
+                    >
+                      Copy response
+                    </Button>
+                  </>
+                )}
               </div>
             </div>
           )}
