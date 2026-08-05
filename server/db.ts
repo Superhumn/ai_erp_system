@@ -501,9 +501,20 @@ export async function getCompanyIdsInRegion(regionId: number): Promise<number[]>
 export async function getEntityAndDescendantCompanyIds(companyId: number): Promise<number[]> {
   const db = await getDb();
   if (!db) return [];
-  const result: any = await db.execute(
-    sql`SELECT DISTINCT entity_id FROM entity_tree WHERE ancestor_id = ${companyId}`,
-  );
+  let result: any;
+  try {
+    result = await db.execute(
+      sql`SELECT DISTINCT entity_id FROM entity_tree WHERE ancestor_id = ${companyId}`,
+    );
+  } catch (err) {
+    // The entity_tree view is applied out-of-band (drizzle-kit can't manage views). Surface an
+    // actionable message instead of a raw "table 'entity_tree' doesn't exist" SQL error.
+    throw new Error(
+      `getEntityAndDescendantCompanyIds: querying the 'entity_tree' view failed — has it been ` +
+        `applied? Run drizzle/manual/step1_entity_tree.sql in this environment. ` +
+        `Underlying error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
   const rows: any[] = Array.isArray(result) ? (result[0] ?? []) : (result?.rows ?? result ?? []);
   return rows
     .map((r: any) => Number(r.entity_id))
