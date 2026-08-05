@@ -292,9 +292,9 @@ function KpiCard({
   tone?: "default" | "good" | "bad" | "warn";
 }) {
   const toneCls =
-    tone === "good" ? "text-emerald-600 dark:text-emerald-400" :
-    tone === "bad" ? "text-red-600 dark:text-red-400" :
-    tone === "warn" ? "text-amber-600 dark:text-amber-400" :
+    tone === "good" ? "text-primary" :
+    tone === "bad" ? "text-foreground" :
+    tone === "warn" ? "text-foreground" :
     "text-foreground";
   return (
     <Card>
@@ -305,7 +305,7 @@ function KpiCard({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className={`text-2xl font-semibold tracking-[-0.02em] ${toneCls}`}>{value}</div>
+        <div className={`text-2xl font-semibold tracking-[-0.02em] font-display tabular-nums ${toneCls}`}>{value}</div>
         {sub && <div className="text-xs text-muted-foreground mt-1">{sub}</div>}
       </CardContent>
     </Card>
@@ -599,7 +599,7 @@ export default function DashboardGenerator() {
           <p className="text-muted-foreground mt-1 max-w-2xl">
             Turn your 5-year financial projections into a polished, investor-grade dashboard in seconds.
             Fill the Excel template, drop the file, and the dashboard appears instantly.{" "}
-            <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground font-medium">
               <ShieldCheck className="h-3.5 w-3.5" />
               Your data never leaves your device.
             </span>
@@ -688,7 +688,7 @@ export default function DashboardGenerator() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground mt-2">
-                  <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+                  <ShieldCheck className="h-3.5 w-3.5 text-muted-foreground" />
                   Parsed in your browser. Nothing is uploaded.
                 </div>
               </div>
@@ -702,7 +702,7 @@ export default function DashboardGenerator() {
             </div>
 
             {parseError && (
-              <div className="mx-6 mb-6 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+              <div className="mx-6 mb-6 flex items-start gap-3 rounded-lg border border-border bg-muted p-3 text-sm text-foreground">
                 <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                 <div>
                   <div className="font-medium">Couldn't read that file</div>
@@ -882,8 +882,8 @@ function Dashboard({
       {metrics.lastBurn > 0 && Number.isFinite(metrics.runwayMonths) && (
         <Card className="border-dashed">
           <CardContent className="p-4 flex items-center gap-4 flex-wrap">
-            <div className="h-10 w-10 rounded-lg bg-amber-100 dark:bg-amber-950 flex items-center justify-center">
-              <Clock className="h-5 w-5 text-amber-600" />
+            <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center">
+              <Clock className="h-5 w-5 text-foreground" />
             </div>
             <div className="flex-1 min-w-[240px]">
               <div className="font-medium text-sm">Runway at period-end burn</div>
@@ -1040,7 +1040,7 @@ function Dashboard({
                     <TableCell className="text-right">{fmtMoney(r.grossProfit, currency)}</TableCell>
                     <TableCell className="text-right">{fmtPct(r.grossMargin)}</TableCell>
                     <TableCell className="text-right">{fmtMoney(r.opex, currency)}</TableCell>
-                    <TableCell className={`text-right ${(r.netIncome ?? 0) < 0 ? "text-red-600" : "text-emerald-600"}`}>
+                    <TableCell className={`text-right ${(r.netIncome ?? 0) < 0 ? "text-foreground font-semibold" : "text-muted-foreground"}`}>
                       {fmtMoney(r.netIncome, currency)}
                     </TableCell>
                     <TableCell className="text-right">{fmtPct(r.netMargin)}</TableCell>

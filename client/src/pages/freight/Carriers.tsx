@@ -376,7 +376,7 @@ export default function Carriers() {
                       </div>
                       <div className="shrink-0 flex items-center gap-1">
                         {carrier.rating && (
-                          <div className="flex items-center gap-0.5 text-xs text-amber-500">
+                          <div className="flex items-center gap-0.5 text-xs text-muted-foreground">
                             <Star className="h-3 w-3 fill-current" />{carrier.rating}
                           </div>
                         )}
@@ -451,7 +451,7 @@ export default function Carriers() {
                     <TableCell>
                       <div className="flex items-center gap-2">
                         {carrier.isPreferred && (
-                          <Star className="h-4 w-4 text-yellow-500 fill-yellow-500" />
+                          <Star className="h-4 w-4 text-primary fill-primary" />
                         )}
                         <div>
                           <p className="font-medium">{carrier.name}</p>
@@ -494,8 +494,8 @@ export default function Carriers() {
                               key={i}
                               className={`h-4 w-4 ${
                                 i < carrier.rating!
-                                  ? "text-yellow-500 fill-yellow-500"
-                                  : "text-gray-300"
+                                  ? "text-primary fill-primary"
+                                  : "text-muted-foreground/30"
                               }`}
                             />
                           ))}
@@ -528,8 +528,8 @@ export default function Carriers() {
                           <Star
                             className={`h-4 w-4 ${
                               carrier.isPreferred
-                                ? "text-yellow-500 fill-yellow-500"
-                                : "text-gray-400"
+                                ? "text-primary fill-primary"
+                                : "text-muted-foreground"
                             }`}
                           />
                         </Button>

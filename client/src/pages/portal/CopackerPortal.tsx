@@ -534,16 +534,16 @@ export default function CopackerPortal() {
 
       {/* Biweekly Prompt Banner */}
       {currentPeriod?.isDue && (
-        <Alert variant="destructive" className="border-orange-500 bg-orange-50 dark:bg-orange-950/20">
-          <AlertTriangle className="h-4 w-4 text-orange-600" />
-          <AlertTitle className="text-orange-800 dark:text-orange-400">Inventory Update Due</AlertTitle>
-          <AlertDescription className="text-orange-700 dark:text-orange-300">
+        <Alert variant="destructive" className="border-foreground/25 bg-muted">
+          <AlertTriangle className="h-4 w-4 text-foreground" />
+          <AlertTitle className="text-foreground font-semibold">Inventory Update Due</AlertTitle>
+          <AlertDescription className="text-muted-foreground">
             Your biweekly inventory update for <strong>{currentPeriod.periodLabel}</strong> is due
             in {currentPeriod.daysLeft} day{currentPeriod.daysLeft !== 1 ? "s" : ""}.
             <Button
               variant="outline"
               size="sm"
-              className="ml-3 border-orange-500 text-orange-700 hover:bg-orange-100"
+              className="ml-3 text-foreground hover:bg-muted"
               onClick={initUpdateForm}
             >
               <ClipboardList className="h-3 w-3 mr-1" />
@@ -558,10 +558,10 @@ export default function CopackerPortal() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
-              <Package className="h-8 w-8 text-blue-500" />
+              <Package className="h-8 w-8 text-muted-foreground" />
               <div>
                 <p className="text-sm text-muted-foreground">Products Tracked</p>
-                <p className="text-xl font-semibold tracking-[-0.02em]">{stats.totalProducts}</p>
+                <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{stats.totalProducts}</p>
               </div>
             </div>
           </CardContent>
@@ -569,10 +569,10 @@ export default function CopackerPortal() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
-              <Clock className="h-8 w-8 text-orange-500" />
+              <Clock className="h-8 w-8 text-muted-foreground" />
               <div>
                 <p className="text-sm text-muted-foreground">Draft Updates</p>
-                <p className="text-xl font-semibold tracking-[-0.02em]">{stats.pendingUpdates}</p>
+                <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{stats.pendingUpdates}</p>
               </div>
             </div>
           </CardContent>
@@ -580,10 +580,10 @@ export default function CopackerPortal() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
-              <DollarSign className="h-8 w-8 text-green-500" />
+              <DollarSign className="h-8 w-8 text-muted-foreground" />
               <div>
                 <p className="text-sm text-muted-foreground">Total Invoices</p>
-                <p className="text-xl font-semibold tracking-[-0.02em]">{stats.totalInvoices}</p>
+                <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{stats.totalInvoices}</p>
               </div>
             </div>
           </CardContent>
@@ -591,10 +591,10 @@ export default function CopackerPortal() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
-              <FileText className="h-8 w-8 text-yellow-500" />
+              <FileText className="h-8 w-8 text-muted-foreground" />
               <div>
                 <p className="text-sm text-muted-foreground">Pending Invoices</p>
-                <p className="text-xl font-semibold tracking-[-0.02em]">{stats.pendingInvoices}</p>
+                <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{stats.pendingInvoices}</p>
               </div>
             </div>
           </CardContent>
@@ -602,10 +602,10 @@ export default function CopackerPortal() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
-              <Truck className="h-8 w-8 text-purple-500" />
+              <Truck className="h-8 w-8 text-muted-foreground" />
               <div>
                 <p className="text-sm text-muted-foreground">Shipping Docs</p>
-                <p className="text-xl font-semibold tracking-[-0.02em]">{stats.totalDocs}</p>
+                <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{stats.totalDocs}</p>
               </div>
             </div>
           </CardContent>
@@ -1500,7 +1500,7 @@ export default function CopackerPortal() {
                       href={invoiceDetail.invoice.fileUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-blue-600 hover:underline"
+                      className="text-primary hover:underline"
                     >
                       {invoiceDetail.invoice.fileName || "View File"}
                     </a>

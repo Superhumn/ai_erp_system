@@ -73,16 +73,16 @@ function getStatusColor(status: string): string {
     case "active":
     case "approved":
     case "completed":
-      return "bg-green-100 text-green-800";
+      return "bg-muted text-muted-foreground";
     case "pending":
     case "partially_vested":
-      return "bg-yellow-100 text-yellow-800";
+      return "bg-muted text-foreground font-semibold";
     case "denied":
     case "cancelled":
     case "expired":
-      return "bg-red-100 text-red-800";
+      return "bg-[oklch(0.30_0.02_262)] text-white";
     case "fully_vested":
-      return "bg-blue-100 text-blue-800";
+      return "bg-primary/10 text-primary";
     default:
       return "bg-gray-100 text-gray-800";
   }
@@ -333,19 +333,19 @@ export default function EquityPortal() {
         <Card>
           <CardContent className="pt-6">
             <div className="text-sm text-muted-foreground">Total Shares Granted</div>
-            <div className="text-2xl font-bold">{fmtNum(equitySummary.totalGranted)}</div>
+            <div className="text-2xl font-bold font-display tabular-nums">{fmtNum(equitySummary.totalGranted)}</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
             <div className="text-sm text-muted-foreground">Shares Vested</div>
-            <div className="text-2xl font-bold text-green-600">{fmtNum(equitySummary.totalVested)}</div>
+            <div className="text-2xl font-bold font-display tabular-nums">{fmtNum(equitySummary.totalVested)}</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
             <div className="text-sm text-muted-foreground">Shares Unvested</div>
-            <div className="text-2xl font-bold text-yellow-600">{fmtNum(equitySummary.totalUnvested)}</div>
+            <div className="text-2xl font-bold font-display tabular-nums">{fmtNum(equitySummary.totalUnvested)}</div>
           </CardContent>
         </Card>
         <Card>
@@ -353,14 +353,14 @@ export default function EquityPortal() {
             <div className="text-sm text-muted-foreground flex items-center gap-1">
               Current Value <span className="text-xs">(409A FMV)</span>
             </div>
-            <div className="text-2xl font-bold text-blue-600">{fmt$(equitySummary.totalValue)}</div>
+            <div className="text-2xl font-bold font-display tabular-nums text-primary">{fmt$(equitySummary.totalValue)}</div>
             <div className="text-xs text-muted-foreground">@ {fmt$(latestFMV)}/share</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
             <div className="text-sm text-muted-foreground">Exercised / Unexercised</div>
-            <div className="text-2xl font-bold">
+            <div className="text-2xl font-bold font-display tabular-nums">
               {fmtNum(equitySummary.totalExercised)} / {fmtNum(equitySummary.totalUnexercised)}
             </div>
           </CardContent>
@@ -420,17 +420,17 @@ export default function EquityPortal() {
               <Card className="bg-muted/50">
                 <CardContent className="pt-4">
                   <div className="text-sm text-muted-foreground">Value Per Share</div>
-                  <div className="text-xl font-bold text-blue-600">{fmt$(calculatorValues.valuePerShare)}</div>
+                  <div className="text-xl font-bold font-display tabular-nums text-primary">{fmt$(calculatorValues.valuePerShare)}</div>
                   <div className="text-xs text-muted-foreground">at {fmt$(exitValuation)} valuation</div>
                 </CardContent>
               </Card>
-              <Card className="bg-green-50 dark:bg-green-950/20 border-green-200">
+              <Card className="bg-primary/5 dark:bg-primary/10 border-primary/20">
                 <CardContent className="pt-4">
                   <div className="text-sm text-muted-foreground flex items-center gap-1">
                     <TrendingUp className="h-4 w-4" />
                     Your Estimated Payout
                   </div>
-                  <div className="text-2xl font-bold text-green-700 dark:text-green-400">{fmt$(calculatorValues.totalValue)}</div>
+                  <div className="text-2xl font-bold font-display tabular-nums text-primary">{fmt$(calculatorValues.totalValue)}</div>
                   <div className="text-xs text-muted-foreground">
                     {fmtNum(equitySummary.totalGranted)} shares x {fmt$(calculatorValues.valuePerShare)}
                   </div>
@@ -471,13 +471,13 @@ export default function EquityPortal() {
               {/* Chart Legend */}
               <div className="flex gap-4 text-xs mb-4">
                 <span className="flex items-center gap-1">
-                  <span className="w-3 h-3 rounded bg-blue-500 inline-block" /> Vested shares
+                  <span className="w-3 h-3 rounded bg-primary inline-block" /> Vested shares
                 </span>
                 <span className="flex items-center gap-1">
-                  <span className="w-3 h-3 rounded bg-orange-500 inline-block" /> Cliff
+                  <span className="w-3 h-3 rounded bg-[oklch(0.30_0.03_262)] inline-block" /> Cliff
                 </span>
                 <span className="flex items-center gap-1">
-                  <span className="w-3 h-3 rounded border-2 border-green-500 border-dashed inline-block" /> Today
+                  <span className="w-3 h-3 rounded border-2 border-foreground border-dashed inline-block" /> Today
                 </span>
               </div>
 
@@ -495,16 +495,16 @@ export default function EquityPortal() {
                       <div className="absolute bottom-full mb-1 hidden group-hover:block bg-popover text-popover-foreground border rounded px-2 py-1 text-xs whitespace-nowrap z-10 shadow-md">
                         <div className="font-medium">{point.label}</div>
                         <div>{fmtNum(point.vestedCumulative)} shares vested</div>
-                        {point.isCliff && <div className="text-orange-600 font-medium">Cliff date</div>}
+                        {point.isCliff && <div className="text-foreground font-medium">Cliff date</div>}
                       </div>
                       {/* Bar */}
                       <div
                         className={`w-full rounded-t transition-all ${
                           point.isCliff
-                            ? "bg-orange-500"
+                            ? "bg-[oklch(0.30_0.03_262)]"
                             : isToday
-                              ? "bg-green-500 border-2 border-dashed border-green-700"
-                              : "bg-blue-500"
+                              ? "bg-foreground border-2 border-dashed border-foreground"
+                              : "bg-primary"
                         }`}
                         style={{ height: `${Math.max(heightPct, 2)}%` }}
                       />
@@ -535,7 +535,7 @@ export default function EquityPortal() {
             <p className="text-sm text-muted-foreground">Showing grants for {myStakeholder.name}</p>
           )}
           {!isAdmin && !myStakeholder && currentUser && (
-            <p className="text-sm text-yellow-600">No stakeholder record found matching your email ({currentUser.email}). Contact your admin.</p>
+            <p className="text-sm text-foreground font-semibold">No stakeholder record found matching your email ({currentUser.email}). Contact your admin.</p>
           )}
         </CardHeader>
         <CardContent>
@@ -567,8 +567,8 @@ export default function EquityPortal() {
                         <Badge variant="outline">{grant.grantType?.replace(/_/g, " ").toUpperCase()}</Badge>
                       </TableCell>
                       <TableCell className="text-right font-medium">{fmtNum(shares)}</TableCell>
-                      <TableCell className="text-right text-green-600">{fmtNum(vested)}</TableCell>
-                      <TableCell className="text-right text-yellow-600">{fmtNum(unvested)}</TableCell>
+                      <TableCell className="text-right text-foreground">{fmtNum(vested)}</TableCell>
+                      <TableCell className="text-right text-muted-foreground">{fmtNum(unvested)}</TableCell>
                       <TableCell className="text-right">{fmt$(grant.exercisePrice || grant.pricePerShare)}</TableCell>
                       <TableCell>
                         <Badge className={getStatusColor(grant.status || "active")}>
@@ -773,7 +773,7 @@ export default function EquityPortal() {
                 </div>
 
                 {parseFloat(sharesToExercise || "0") > 0 && (
-                  <div className="rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 p-3 space-y-1">
+                  <div className="rounded-md bg-primary/5 dark:bg-primary/10 border border-primary/20 p-3 space-y-1">
                     <div className="font-medium text-sm">Exercise Summary</div>
                     <div className="flex justify-between text-sm">
                       <span>Shares:</span>
