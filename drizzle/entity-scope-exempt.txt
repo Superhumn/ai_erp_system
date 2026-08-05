@@ -26,6 +26,7 @@ companies
 compensationHistory
 contactCaptures
 contractKeyDates
+contractorFolderGrants
 copackerInventoryUpdateItems
 copackerInvoiceItems
 copackerShippingDocuments
@@ -65,6 +66,7 @@ emailMessages
 emailScanLogs
 emailSequenceSteps
 emailSequences
+emailThreadFollowups
 employeeBenefits
 employeeEmergencyContacts
 exceptionLog
@@ -90,6 +92,7 @@ influencerOutreach
 ingredientCostAlerts
 ingredientCostHistory
 ingredientQuoteRequests
+ingredientVendors
 intakeFormSubmissions
 intakeForms
 inventoryReservations
@@ -107,6 +110,7 @@ moistureProfiles
 ndaDocuments
 ndaSignatureAuditLog
 ndaSignatures
+negotiationRounds
 notes
 notificationPreferences
 notifications
@@ -127,12 +131,15 @@ productRegionalSkus
 productVolumeDiscounts
 projectMilestones
 projectTasks
+ptoBalances
 purchaseOrderItems
 purchaseOrderRawMaterials
 quickbooksOAuthTokens
 rawMaterialTransactions
 rdExpenses
 rdProjects
+recipeAccessGrants
+recipeCopackerShares
 recipeLines
 recipeProcedures
 recommendations

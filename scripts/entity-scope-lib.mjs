@@ -18,7 +18,9 @@ export function tablesWithoutCompanyColumn(src) {
       if (line.includes('companyId: int("companyId")') || line.includes('ownerCompanyId: int("ownerCompanyId")')) {
         hasCol = true;
       }
-      if (line === "});") {
+      // A table ends with `});` OR — when it has an index/config callback — `}));` (any paren depth).
+      // Anchored at column 0 so indented closings inside the body don't match.
+      if (/^\}\)*;/.test(line)) {
         if (!hasCol) without.push(current);
         current = null;
       }

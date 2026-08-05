@@ -22,7 +22,8 @@ function tablesWithoutCompanyColumn(src: string): string[] {
     if (m) { current = m[1]; hasCol = false; continue; }
     if (current) {
       if (line.includes('companyId: int("companyId")') || line.includes('ownerCompanyId: int("ownerCompanyId")')) hasCol = true;
-      if (line === "});") { if (!hasCol) without.push(current); current = null; }
+      // Tables end with `});` or, when they have an index/config callback, `}));` (any paren depth).
+      if (/^\}\)*;/.test(line)) { if (!hasCol) without.push(current); current = null; }
     }
   }
   return without;
