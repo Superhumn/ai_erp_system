@@ -135,7 +135,7 @@ export default function DataRooms() {
             <div className="h-4 w-px bg-border" />
             <div><span className="text-muted-foreground">Total</span> <span className="font-bold">{dataRooms?.length || 0}</span></div>
             <div className="h-4 w-px bg-border" />
-            <div><span className="text-muted-foreground">Active</span> <span className="font-bold text-green-600">{dataRooms?.filter(r => r.status === 'active').length || 0}</span></div>
+            <div><span className="text-muted-foreground">Active</span> <span className="font-bold text-primary">{dataRooms?.filter(r => r.status === 'active').length || 0}</span></div>
             <div className="h-4 w-px bg-border" />
             <div><span className="text-muted-foreground">Password</span> <span className="font-bold">{dataRooms?.filter(r => r.password).length || 0}</span></div>
             <div className="h-4 w-px bg-border" />

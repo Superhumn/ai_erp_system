@@ -33,7 +33,7 @@ export default function FinanceAI() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2">
-            <Brain className="h-8 w-8 text-blue-600" />
+            <Brain className="h-8 w-8 text-primary" />
             Finance AI Analytics
           </h1>
           <p className="text-muted-foreground mt-1">
@@ -149,9 +149,9 @@ export default function FinanceAI() {
                       {revenueMutation.data.forecasts.map((f, i) => (
                         <TableRow key={i}>
                           <TableCell className="font-medium">{f.month}</TableCell>
-                          <TableCell className="text-green-600">${f.predictedRevenue.toLocaleString()}</TableCell>
-                          <TableCell className="text-red-600">${f.predictedExpenses.toLocaleString()}</TableCell>
-                          <TableCell className={f.predictedProfit >= 0 ? "text-green-600" : "text-red-600"}>${f.predictedProfit.toLocaleString()}</TableCell>
+                          <TableCell className="text-foreground">${f.predictedRevenue.toLocaleString()}</TableCell>
+                          <TableCell className="text-foreground">${f.predictedExpenses.toLocaleString()}</TableCell>
+                          <TableCell className={f.predictedProfit >= 0 ? "text-foreground" : "text-foreground font-semibold"}>${f.predictedProfit.toLocaleString()}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
                               <Progress value={f.confidence} className="w-16" />
@@ -166,7 +166,7 @@ export default function FinanceAI() {
                   <div className="grid grid-cols-2 gap-4">
                     {revenueMutation.data.risks.length > 0 && (
                       <div>
-                        <h4 className="font-medium mb-2 flex items-center gap-1"><AlertTriangle className="h-4 w-4 text-orange-500" /> Risks</h4>
+                        <h4 className="font-medium mb-2 flex items-center gap-1"><AlertTriangle className="h-4 w-4 text-muted-foreground" /> Risks</h4>
                         <ul className="list-disc pl-5 text-sm space-y-1">
                           {revenueMutation.data.risks.map((r, i) => <li key={i}>{r}</li>)}
                         </ul>
@@ -174,7 +174,7 @@ export default function FinanceAI() {
                     )}
                     {revenueMutation.data.opportunities.length > 0 && (
                       <div>
-                        <h4 className="font-medium mb-2 flex items-center gap-1"><TrendingUp className="h-4 w-4 text-green-500" /> Opportunities</h4>
+                        <h4 className="font-medium mb-2 flex items-center gap-1"><TrendingUp className="h-4 w-4 text-muted-foreground" /> Opportunities</h4>
                         <ul className="list-disc pl-5 text-sm space-y-1">
                           {revenueMutation.data.opportunities.map((o, i) => <li key={i}>{o}</li>)}
                         </ul>
@@ -210,9 +210,9 @@ export default function FinanceAI() {
                   {cashFlowMutation.data.alerts.length > 0 && (
                     <div className="space-y-2">
                       {cashFlowMutation.data.alerts.map((alert, i) => (
-                        <div key={i} className={`p-3 rounded-lg border ${alert.severity === "high" ? "border-red-300 bg-red-50" : alert.severity === "medium" ? "border-orange-300 bg-orange-50" : "border-blue-300 bg-blue-50"}`}>
+                        <div key={i} className={`p-3 rounded-lg border ${alert.severity === "high" ? "border-foreground/40 bg-muted" : alert.severity === "medium" ? "border-border bg-muted/50" : "border-primary/30 bg-primary/10"}`}>
                           <div className="flex items-center gap-2">
-                            <AlertTriangle className={`h-4 w-4 ${alert.severity === "high" ? "text-red-600" : "text-orange-600"}`} />
+                            <AlertTriangle className={`h-4 w-4 ${alert.severity === "high" ? "text-foreground" : "text-muted-foreground"}`} />
                             <span className="font-medium text-sm">{alert.description}</span>
                           </div>
                           <p className="text-xs mt-1 text-muted-foreground">{alert.suggestedAction}</p>
@@ -236,10 +236,10 @@ export default function FinanceAI() {
                       {cashFlowMutation.data.predictions.map((p, i) => (
                         <TableRow key={i}>
                           <TableCell className="font-medium">{p.week}</TableCell>
-                          <TableCell className="text-green-600">${p.expectedInflows.toLocaleString()}</TableCell>
-                          <TableCell className="text-red-600">${p.expectedOutflows.toLocaleString()}</TableCell>
-                          <TableCell className={p.netCashFlow >= 0 ? "text-green-600" : "text-red-600"}>${p.netCashFlow.toLocaleString()}</TableCell>
-                          <TableCell className={p.cumulativeBalance >= 0 ? "text-green-600" : "text-red-600 font-bold"}>${p.cumulativeBalance.toLocaleString()}</TableCell>
+                          <TableCell className="text-foreground">${p.expectedInflows.toLocaleString()}</TableCell>
+                          <TableCell className="text-foreground">${p.expectedOutflows.toLocaleString()}</TableCell>
+                          <TableCell className={p.netCashFlow >= 0 ? "text-foreground" : "text-foreground font-semibold"}>${p.netCashFlow.toLocaleString()}</TableCell>
+                          <TableCell className={p.cumulativeBalance >= 0 ? "text-foreground" : "text-foreground font-bold"}>${p.cumulativeBalance.toLocaleString()}</TableCell>
                           <TableCell>{p.confidence}%</TableCell>
                         </TableRow>
                       ))}

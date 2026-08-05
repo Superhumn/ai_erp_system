@@ -292,7 +292,7 @@ export default function CodePage() {
       <div className="flex items-center justify-between flex-shrink-0">
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2">
-            <Code2 className="h-8 w-8 text-emerald-500" />
+            <Code2 className="h-8 w-8 text-primary" />
             Claude Code
           </h1>
           <p className="text-muted-foreground mt-1">
@@ -620,7 +620,7 @@ export default function CodePage() {
         <Card className="w-80 flex-shrink-0 flex flex-col">
           <CardHeader className="py-3 px-3">
             <CardTitle className="text-sm flex items-center gap-1">
-              <Sparkles className="h-4 w-4 text-violet-500" />
+              <Sparkles className="h-4 w-4 text-primary" />
               Claude AI Assistant
             </CardTitle>
             <CardDescription className="text-xs">

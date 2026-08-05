@@ -26,7 +26,7 @@ export default function ProjectsAI() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold flex items-center gap-2">
-          <Brain className="h-8 w-8 text-teal-600" />
+          <Brain className="h-8 w-8 text-muted-foreground" />
           Project AI Analytics
         </h1>
         <p className="text-muted-foreground mt-1">
@@ -170,7 +170,7 @@ export default function ProjectsAI() {
                         <TableRow key={i}>
                           <TableCell className="font-medium">{a.projectName}</TableCell>
                           <TableCell>{a.currentAllocation}</TableCell>
-                          <TableCell className={a.recommendedAllocation > a.currentAllocation ? "text-orange-600 font-medium" : ""}>{a.recommendedAllocation}</TableCell>
+                          <TableCell className={a.recommendedAllocation > a.currentAllocation ? "text-foreground font-semibold" : ""}>{a.recommendedAllocation}</TableCell>
                           <TableCell className="text-sm">{a.skillsNeeded.join(", ")}</TableCell>
                           <TableCell className="max-w-xs text-sm">{a.reasoning}</TableCell>
                         </TableRow>

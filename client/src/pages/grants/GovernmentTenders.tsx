@@ -50,16 +50,16 @@ const STATUSES = [
 type StatusValue = typeof STATUSES[number];
 
 const STATUS_COLORS: Record<string, string> = {
-  watching: "bg-gray-500/10 text-gray-700 border-gray-200",
-  qualifying: "bg-blue-500/10 text-blue-700 border-blue-200",
-  preparing: "bg-amber-500/10 text-amber-700 border-amber-200",
-  submitted: "bg-indigo-500/10 text-indigo-700 border-indigo-200",
-  under_review: "bg-purple-500/10 text-purple-700 border-purple-200",
-  shortlisted: "bg-teal-500/10 text-teal-700 border-teal-200",
-  awarded: "bg-emerald-500/10 text-emerald-700 border-emerald-200",
-  lost: "bg-red-500/10 text-red-700 border-red-200",
-  withdrawn: "bg-gray-500/10 text-gray-600 border-gray-200",
-  cancelled: "bg-gray-500/10 text-gray-600 border-gray-200",
+  watching: "bg-muted text-muted-foreground border-border",
+  qualifying: "bg-muted text-muted-foreground border-border",
+  preparing: "bg-muted text-foreground border-border",
+  submitted: "bg-muted text-foreground border-border",
+  under_review: "bg-muted text-foreground border-border",
+  shortlisted: "bg-primary/10 text-primary border-primary/20",
+  awarded: "bg-muted text-foreground font-semibold border-border",
+  lost: "bg-[oklch(0.30_0.02_262)] text-white border-transparent",
+  withdrawn: "bg-muted text-muted-foreground border-border",
+  cancelled: "bg-muted text-muted-foreground border-border",
 };
 
 function formatMoney(value: string | number | null | undefined, currency: string): string {
@@ -154,14 +154,14 @@ export default function GovernmentTenders() {
           <div className="h-4 w-px bg-border" />
           <div><span className="text-muted-foreground">Total</span> <span className="font-bold">{stats.total}</span></div>
           <div className="h-4 w-px bg-border" />
-          <div><span className="text-muted-foreground">Live</span> <span className="font-bold text-indigo-600">{stats.live}</span></div>
+          <div><span className="text-muted-foreground">Live</span> <span className="font-bold text-foreground">{stats.live}</span></div>
           <div className="h-4 w-px bg-border" />
-          <div><span className="text-muted-foreground">Awarded</span> <span className="font-bold text-emerald-600">{stats.awarded}</span></div>
+          <div><span className="text-muted-foreground">Awarded</span> <span className="font-bold text-foreground">{stats.awarded}</span></div>
           <div className="h-4 w-px bg-border" />
           <div className="flex items-center gap-1">
             <span className="text-muted-foreground">Urgent</span>
-            <span className={`font-bold ${stats.urgent > 0 ? "text-red-600" : ""}`}>{stats.urgent}</span>
-            {stats.urgent > 0 && <AlertTriangle className="h-3 w-3 text-red-600" />}
+            <span className={`font-bold ${stats.urgent > 0 ? "text-foreground" : ""}`}>{stats.urgent}</span>
+            {stats.urgent > 0 && <AlertTriangle className="h-3 w-3 text-foreground" />}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -382,7 +382,7 @@ export default function GovernmentTenders() {
                       </TableCell>
                       <TableCell className="text-xs">
                         {t.submissionDeadline ? (
-                          <span className={urgent ? "text-red-600 font-medium" : ""}>
+                          <span className={urgent ? "text-foreground font-semibold" : ""}>
                             {new Date(t.submissionDeadline).toLocaleDateString()}
                             {days !== null && days >= 0 && <span className="ml-1 text-muted-foreground">({days}d)</span>}
                             {days !== null && days < 0 && <span className="ml-1 text-muted-foreground">(past)</span>}
@@ -474,7 +474,7 @@ function TenderDetailDialog({ id, onClose, onChanged }: { id: number; onClose: (
           </div>
           {tender.notes && <p className="text-sm whitespace-pre-wrap text-muted-foreground">{tender.notes}</p>}
           {tender.portalUrl && (
-            <a href={tender.portalUrl} target="_blank" rel="noreferrer" className="text-sm text-blue-600 underline">
+            <a href={tender.portalUrl} target="_blank" rel="noreferrer" className="text-sm text-primary underline">
               Open portal
             </a>
           )}

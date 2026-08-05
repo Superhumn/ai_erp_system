@@ -513,10 +513,10 @@ function RoundCard({ round, companyId }: { round: RoundShape; companyId?: number
 
       {/* Indication state machine: previously-signaled (compact) vs editable form. */}
       {!editing && round.myIndication?.status === "interested" ? (
-        <div className="rounded-md border bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900 p-3">
+        <div className="rounded-md border bg-primary/10 border-primary/20 p-3">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-sm font-medium flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400">
+              <p className="text-sm font-medium flex items-center gap-1.5 text-primary">
                 <CheckCircle2 className="h-4 w-4" />
                 Interest signaled
               </p>
@@ -642,7 +642,7 @@ function CapTableSummarySection({ companyId }: { companyId?: number }) {
           <p className="text-xs uppercase tracking-wider text-muted-foreground mb-1">
             Total shares outstanding
           </p>
-          <p className="text-lg font-semibold">{formatShares(data.totalSharesOutstanding)}</p>
+          <p className="font-display text-lg font-semibold tabular-nums">{formatShares(data.totalSharesOutstanding)}</p>
           {data.optionPool && (
             <p className="text-xs text-muted-foreground mt-0.5">
               Option pool: {formatShares(data.optionPool.sharesIssued)} ({data.optionPool.ownershipPct.toFixed(2)}%)
@@ -1002,7 +1002,7 @@ function KpiTile({
         {icon}
         <span>{label}</span>
       </div>
-      <p className="text-lg font-semibold tracking-tight">{value}</p>
+      <p className="font-display text-lg font-semibold tracking-tight tabular-nums">{value}</p>
       {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
     </div>
   );
@@ -1020,7 +1020,7 @@ function TrendPanel({
   tone: "positive" | "negative";
 }) {
   const max = Math.max(1, ...items.map((i) => i.amount));
-  const color = tone === "positive" ? "bg-emerald-500" : "bg-red-500";
+  const color = tone === "positive" ? "bg-primary" : "bg-[oklch(0.30_0.03_262)]";
   return (
     <div className="rounded-lg border p-4">
       <p className="text-xs uppercase tracking-wider text-muted-foreground mb-3">{title}</p>
