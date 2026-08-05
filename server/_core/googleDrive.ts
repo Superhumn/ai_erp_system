@@ -302,13 +302,38 @@ export async function searchDriveFoldersByName(
 ): Promise<{ folders: DriveFolder[]; error?: string }> {
   const safe = nameContains.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
   const query = `name contains '${safe}' and mimeType='${FOLDER_MIME_TYPE}' and trashed=false`;
-  const { files, error } = await driveFilesListAll(
-    accessToken,
-    query,
-    "nextPageToken,files(id,name,mimeType,webViewLink,parents)",
-  );
-  if (error) return { folders: [], error };
-  return { folders: (files as DriveFolder[]).slice(0, pageSize).sort(byName) };
+  const fields = "incompleteSearch,files(id,name,mimeType,webViewLink,parents)";
+
+  const run = async (useAllDrives: boolean) => {
+    const params = new URLSearchParams({
+      q: query,
+      fields,
+      pageSize: String(pageSize),
+      supportsAllDrives: "true",
+      includeItemsFromAllDrives: "true",
+    });
+    if (useAllDrives) params.set("corpora", "allDrives");
+    return driveFetch(`${GOOGLE_DRIVE_API}/files?${params.toString()}`, accessToken);
+  };
+
+  let res = await run(true);
+  if (!res.ok && res.status === 400) {
+    console.warn("[GoogleDrive] corpora=allDrives rejected (400); retrying with default corpus.");
+    res = await run(false);
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    console.error("[GoogleDrive] folder search failed:", res.status, text);
+    const hint = res.status === 403 || res.status === 404 ? permissionHint() : "";
+    return { folders: [], error: `Failed to search Drive folders: ${res.status}.${hint}` };
+  }
+
+  const data = await res.json();
+  if (data.incompleteSearch) {
+    console.warn("[GoogleDrive] files.list returned incompleteSearch=true during folder search.");
+  }
+  const files = Array.isArray(data.files) ? (data.files as DriveFolder[]) : [];
+  return { folders: files.sort(byName) };
 }
 
 /**
