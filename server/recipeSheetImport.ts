@@ -159,7 +159,7 @@ function normalizeColumnMapping(
   const out: Partial<Record<ColumnKey, number>> = {};
   for (const key of COLUMN_KEYS) {
     const idx = mapping[key];
-    if (typeof idx === "number" && idx >= 0 && idx < width) out[key] = idx;
+    if (typeof idx === "number" && Number.isInteger(idx) && idx >= 0 && idx < width) out[key] = idx;
   }
   return out;
 }
