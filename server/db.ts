@@ -353,15 +353,14 @@ export async function changeUserPassword(userId: number, currentPassword: string
   // Find local auth record
   const [localAuth] = await db.select().from(localAuthCredentials).where(eq(localAuthCredentials.openId, user.openId));
   if (!localAuth) throw new Error("No password set for this account. Use your SSO provider to change your password.");
-  // Verify current password
-  const crypto = await import("crypto");
-  const currentHash = crypto.pbkdf2Sync(currentPassword, localAuth.salt, 100000, 64, "sha512").toString("hex");
-  const hashesMatch = currentHash.length === localAuth.passwordHash.length &&
-    crypto.timingSafeEqual(Buffer.from(currentHash, 'hex'), Buffer.from(localAuth.passwordHash, 'hex'));
-  if (!hashesMatch) throw new Error("Current password is incorrect");
-  // Set new password
-  const newSalt = crypto.randomBytes(32).toString("hex");
-  const newHash = crypto.pbkdf2Sync(newPassword, newSalt, 100000, 64, "sha512").toString("hex");
+
+  // Verify with current (600k) + legacy (100k) iteration counts, then write at 600k
+  const { verifyPassword, hashPassword, generateSalt } = await import("./_core/passwordHash");
+  const { valid } = await verifyPassword(currentPassword, localAuth.salt, localAuth.passwordHash);
+  if (!valid) throw new Error("Current password is incorrect");
+
+  const newSalt = generateSalt();
+  const newHash = await hashPassword(newPassword, newSalt);
   await db.update(localAuthCredentials).set({ passwordHash: newHash, salt: newSalt }).where(eq(localAuthCredentials.openId, user.openId));
 }
 

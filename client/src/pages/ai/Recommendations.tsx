@@ -47,11 +47,11 @@ export default function Recommendations() {
 
   const getTypeColor = (type: string) => {
     switch (type) {
-      case "reorder": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
-      case "production": return "bg-violet-500/8 text-violet-600 dark:text-violet-400";
-      case "pricing": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
-      case "allocation": return "bg-orange-500/8 text-orange-600 dark:text-orange-400";
-      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "reorder": return "bg-primary/10 text-primary";
+      case "production": return "bg-muted text-foreground";
+      case "pricing": return "bg-muted text-muted-foreground";
+      case "allocation": return "bg-muted text-foreground";
+      default: return "bg-muted text-muted-foreground";
     }
   };
 

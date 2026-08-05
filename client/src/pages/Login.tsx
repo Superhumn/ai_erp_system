@@ -17,13 +17,16 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [inviteToken, setInviteToken] = useState<string | null>(null);
 
-  // Check for invite token in URL on mount
+  // Check for invite token / email-verified flag in URL on mount
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const invite = params.get("invite");
     if (invite) {
       setInviteToken(invite);
       setMode("register");
+    }
+    if (params.get("verified") === "true") {
+      setSuccessMessage("Email verified. You can sign in now.");
     }
   }, []);
 
@@ -69,6 +72,11 @@ export default function Login() {
 
         if (!res.ok) {
           setError(data.error || "Authentication failed");
+          // Guide users with accounts but no password toward forgot-password
+          if (data.recovery === "reset_password") {
+            setMode("forgotPassword");
+            setPassword("");
+          }
           return;
         }
 
@@ -104,11 +112,11 @@ export default function Login() {
     <div className="flex min-h-screen items-center justify-center bg-background">
       <div className="w-full max-w-sm space-y-6 p-8 animate-fade-in">
         {inviteToken && (
-          <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-4 text-center dark:border-indigo-800 dark:bg-indigo-950">
-            <p className="text-sm font-medium text-indigo-700 dark:text-indigo-300">
+          <div className="rounded-lg border border-primary/20 bg-primary/10 p-4 text-center">
+            <p className="text-sm font-medium text-primary">
               You've been invited to join Superhumn
             </p>
-            <p className="mt-1 text-xs text-indigo-600 dark:text-indigo-400">
+            <p className="mt-1 text-xs text-primary/80">
               Create your account below to get started
             </p>
           </div>
@@ -180,7 +188,7 @@ export default function Login() {
           )}
 
           {successMessage && (
-            <p className="text-sm text-green-600 dark:text-green-400">{successMessage}</p>
+            <p className="text-sm text-primary">{successMessage}</p>
           )}
 
           <Button type="submit" className="w-full" disabled={loading}>

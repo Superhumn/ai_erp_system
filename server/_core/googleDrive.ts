@@ -90,6 +90,17 @@ const GOOGLE_DOCS_EXPORT_TYPES: Record<string, { mimeType: string; extension: st
   "application/vnd.google-apps.drawing": { mimeType: "image/png", extension: "png" },
 };
 
+// Export targets for the INLINE VIEWER (proxy streaming). Everything a browser
+// can render in an <iframe>: Docs/Sheets/Slides → PDF, Drawings → PNG. This
+// differs from GOOGLE_DOCS_EXPORT_TYPES (used for downloads) where a Sheet
+// exports to xlsx — an xlsx can't be previewed in an iframe.
+const GOOGLE_DOCS_VIEW_EXPORT_TYPES: Record<string, { mimeType: string }> = {
+  "application/vnd.google-apps.document": { mimeType: "application/pdf" },
+  "application/vnd.google-apps.spreadsheet": { mimeType: "application/pdf" },
+  "application/vnd.google-apps.presentation": { mimeType: "application/pdf" },
+  "application/vnd.google-apps.drawing": { mimeType: "image/png" },
+};
+
 /**
  * Get OAuth URL for Google Drive access
  */
@@ -403,7 +414,7 @@ export async function getFileMetadata(
  * without the server having to buffer it.
  */
 export function resolveDriveStreamUrl(fileId: string, mimeType: string): { url: string; outMime: string } {
-  const exportType = GOOGLE_DOCS_EXPORT_TYPES[mimeType];
+  const exportType = GOOGLE_DOCS_VIEW_EXPORT_TYPES[mimeType];
   if (exportType) {
     return {
       url: `${GOOGLE_DRIVE_API}/files/${fileId}/export?mimeType=${encodeURIComponent(exportType.mimeType)}`,

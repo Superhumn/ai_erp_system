@@ -24,11 +24,11 @@ const STATUS_OPTIONS: { value: BatchStatus; label: string }[] = [
 
 function statusColor(status: string) {
   switch (status) {
-    case "planned": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
-    case "in_progress": return "bg-amber-500/8 text-amber-600 dark:text-amber-400";
-    case "completed": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
-    case "cancelled": return "bg-red-500/8 text-red-600 dark:text-red-400";
-    default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+    case "planned": return "bg-primary/10 text-primary";
+    case "in_progress": return "bg-primary/10 text-primary";
+    case "completed": return "bg-muted text-muted-foreground";
+    case "cancelled": return "bg-[oklch(0.30_0.02_262)] text-white";
+    default: return "bg-muted text-muted-foreground";
   }
 }
 

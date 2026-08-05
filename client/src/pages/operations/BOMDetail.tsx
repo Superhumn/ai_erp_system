@@ -133,11 +133,11 @@ export default function BOMDetail() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "active":
-        return <Badge className="bg-emerald-500/8 text-emerald-600 dark:text-emerald-400">Active</Badge>;
+        return <Badge className="bg-primary/10 text-primary">Active</Badge>;
       case "draft":
-        return <Badge className="bg-amber-500/8 text-amber-600 dark:text-amber-400">Draft</Badge>;
+        return <Badge className="bg-muted text-muted-foreground">Draft</Badge>;
       case "obsolete":
-        return <Badge className="bg-gray-500/8 text-gray-600 dark:text-gray-400">Obsolete</Badge>;
+        return <Badge className="bg-muted text-muted-foreground">Obsolete</Badge>;
       default:
         return <Badge>{status}</Badge>;
     }
@@ -441,7 +441,7 @@ export default function BOMDetail() {
                                 }
                               }}
                             >
-                              <Trash2 className="h-4 w-4 text-red-500" />
+                              <Trash2 className="h-4 w-4 text-muted-foreground" />
                             </Button>
                           </TableCell>
                         </TableRow>
@@ -461,7 +461,7 @@ export default function BOMDetail() {
                   <CardTitle className="text-sm font-medium text-muted-foreground">Material Cost</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <span className="text-xl font-semibold tracking-[-0.02em]">${materialCost.toFixed(2)}</span>
+                  <span className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">${materialCost.toFixed(2)}</span>
                 </CardContent>
               </Card>
               <Card>
@@ -469,7 +469,7 @@ export default function BOMDetail() {
                   <CardTitle className="text-sm font-medium text-muted-foreground">Labor Cost</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <span className="text-xl font-semibold tracking-[-0.02em]">${laborCost.toFixed(2)}</span>
+                  <span className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">${laborCost.toFixed(2)}</span>
                 </CardContent>
               </Card>
               <Card>
@@ -477,7 +477,7 @@ export default function BOMDetail() {
                   <CardTitle className="text-sm font-medium text-muted-foreground">Overhead Cost</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <span className="text-xl font-semibold tracking-[-0.02em]">${overheadCost.toFixed(2)}</span>
+                  <span className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">${overheadCost.toFixed(2)}</span>
                 </CardContent>
               </Card>
               <Card className="bg-primary/5">
@@ -485,7 +485,7 @@ export default function BOMDetail() {
                   <CardTitle className="text-sm font-medium">Total Cost per Batch</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <span className="text-xl font-semibold tracking-[-0.02em] text-primary">${totalCost.toFixed(2)}</span>
+                  <span className="text-xl font-semibold tracking-[-0.02em] text-primary font-display tabular-nums">${totalCost.toFixed(2)}</span>
                   <p className="text-sm text-muted-foreground">
                     Per {bom.batchSize} {bom.batchUnit}
                   </p>
