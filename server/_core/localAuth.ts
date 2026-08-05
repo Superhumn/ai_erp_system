@@ -541,8 +541,19 @@ export function registerLocalAuthRoutes(app: Express) {
       const normalizedEmail = email.toLowerCase();
       // Key off the users row so OAuth-only / orphaned accounts can recover
       // by creating localAuthCredentials on reset.
-      const user = await db.getUserByEmail(normalizedEmail);
-
+      let user = await db.getUserByEmail(normalizedEmail);
+      if (!user) {
+        // Also handle credential-only orphans (credentials row exists, users row missing)
+        const credential = await db.getLocalAuthCredentialByEmail(normalizedEmail);
+        if (credential) {
+          await db.upsertUser({
+            openId: credential.openId,
+            email: normalizedEmail,
+            loginMethod: "email",
+          });
+          user = await db.getUserByOpenId(credential.openId);
+        }
+      }
       if (user) {
         // Generate a secure reset token (32 bytes hex)
         const token = randomBytes(32).toString("hex");
