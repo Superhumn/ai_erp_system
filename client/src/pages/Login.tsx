@@ -68,7 +68,10 @@ export default function Login() {
         const data = await res.json();
 
         if (!res.ok) {
-          setError(data.error || "Authentication failed");
+          const detail = typeof data.reason === "string" && data.reason
+            ? `: ${data.reason}`
+            : "";
+          setError((data.error || "Authentication failed") + detail);
           return;
         }
 
