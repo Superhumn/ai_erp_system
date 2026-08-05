@@ -79,19 +79,19 @@ export default function InventoryPlanning() {
 
   const getPoStatusColor = (status: string) => {
     switch (status) {
-      case "received": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
-      case "ordered": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
-      case "not_started": return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
-      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "received": return "bg-muted text-muted-foreground";
+      case "ordered": return "bg-primary/10 text-primary";
+      case "not_started": return "bg-muted text-muted-foreground";
+      default: return "bg-muted text-muted-foreground";
     }
   };
 
   const getFreightStatusColor = (status: string) => {
     switch (status) {
-      case "delivered": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
-      case "in_transit": return "bg-orange-500/8 text-orange-600 dark:text-orange-400";
-      case "pending": return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
-      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "delivered": return "bg-muted text-muted-foreground";
+      case "in_transit": return "bg-primary/10 text-primary";
+      case "pending": return "bg-muted text-muted-foreground";
+      default: return "bg-muted text-muted-foreground";
     }
   };
 

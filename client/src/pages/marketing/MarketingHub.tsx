@@ -55,7 +55,7 @@ function StatCard({ label, value, icon: Icon, hint }: { label: string; value: st
           <div className="rounded-md bg-muted p-2"><Icon className="h-4 w-4" /></div>
           <div className="min-w-0">
             <div className="text-xs text-muted-foreground truncate">{label}</div>
-            <div className="text-lg font-semibold leading-tight">{value}</div>
+            <div className="text-lg font-semibold leading-tight font-display tabular-nums">{value}</div>
             {hint && <div className="text-[11px] text-muted-foreground truncate">{hint}</div>}
           </div>
         </div>
@@ -72,8 +72,8 @@ function ProviderBanner() {
   const { data } = m.marketing.providerStatus.useQuery();
   if (!data || data.configured) return null;
   return (
-    <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs">
-      <AlertTriangle className="h-4 w-4 mt-0.5 text-amber-600 shrink-0" />
+    <div className="flex items-start gap-2 rounded-md border border-border bg-muted px-3 py-2 text-xs">
+      <AlertTriangle className="h-4 w-4 mt-0.5 text-foreground shrink-0" />
       <div>
         <div className="font-medium">Social provider in simulation mode</div>
         <div className="text-muted-foreground">
@@ -411,7 +411,7 @@ function EngagementTab() {
                   <span className="text-muted-foreground">
                     {e.occurredAt ? format(new Date(e.occurredAt), "MMM d, h:mm a") : ""}
                   </span>
-                  {e.repliedAt && <Badge className="bg-emerald-600">Replied</Badge>}
+                  {e.repliedAt && <Badge className="bg-muted text-foreground">Replied</Badge>}
                 </div>
                 <div className="text-sm">{e.body ?? `(${e.type})`}</div>
                 <div className="flex items-center gap-2 text-xs">
@@ -1048,7 +1048,7 @@ function InfluencersTab() {
                   onClick={() => setStatusFilter(active ? "all" : s.value)}
                 >
                   <div className="text-[10px] text-muted-foreground uppercase tracking-wide">{s.label}</div>
-                  <div className="text-lg font-semibold">{count}</div>
+                  <div className="text-lg font-semibold font-display tabular-nums">{count}</div>
                 </button>
               );
             })}

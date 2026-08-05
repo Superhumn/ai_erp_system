@@ -77,13 +77,13 @@ export default function ExceptionsPage() {
   const getSeverityBadge = (severity: string) => {
     switch (severity) {
       case "low":
-        return <Badge className="bg-blue-500/20 text-blue-600">Low</Badge>;
+        return <Badge className="bg-muted text-muted-foreground">Low</Badge>;
       case "medium":
-        return <Badge className="bg-amber-500/20 text-amber-600">Medium</Badge>;
+        return <Badge className="bg-muted text-foreground font-semibold">Medium</Badge>;
       case "high":
-        return <Badge className="bg-orange-500/20 text-orange-600">High</Badge>;
+        return <Badge className="bg-[oklch(0.30_0.02_262)] text-white">High</Badge>;
       case "critical":
-        return <Badge className="bg-red-600 text-white">Critical</Badge>;
+        return <Badge className="bg-[oklch(0.30_0.02_262)] text-white font-semibold">Critical</Badge>;
       default:
         return <Badge variant="secondary">{severity}</Badge>;
     }
@@ -94,11 +94,11 @@ export default function ExceptionsPage() {
       case "open":
         return <Badge variant="destructive">Open</Badge>;
       case "in_progress":
-        return <Badge className="bg-blue-500/20 text-blue-600">In Progress</Badge>;
+        return <Badge className="bg-primary/10 text-primary">In Progress</Badge>;
       case "resolved":
-        return <Badge className="bg-green-500/20 text-green-600">Resolved</Badge>;
+        return <Badge className="bg-muted text-muted-foreground">Resolved</Badge>;
       case "escalated":
-        return <Badge className="bg-red-500/20 text-red-600">Escalated</Badge>;
+        return <Badge className="bg-[oklch(0.30_0.02_262)] text-white">Escalated</Badge>;
       case "ignored":
         return <Badge variant="secondary">Ignored</Badge>;
       default:
@@ -126,14 +126,14 @@ export default function ExceptionsPage() {
 
       {/* Stats */}
       <div className="grid gap-4 md:grid-cols-4">
-        <Card className={openCount > 0 ? "border-red-500" : ""}>
+        <Card className={openCount > 0 ? "border-primary" : ""}>
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Open</p>
-                <p className="text-xl font-semibold tracking-[-0.02em]">{openCount}</p>
+                <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{openCount}</p>
               </div>
-              <AlertTriangle className="h-8 w-8 text-red-500" />
+              <AlertTriangle className="h-8 w-8 text-muted-foreground" />
             </div>
           </CardContent>
         </Card>
@@ -142,9 +142,9 @@ export default function ExceptionsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Escalated</p>
-                <p className="text-xl font-semibold tracking-[-0.02em]">{escalatedCount}</p>
+                <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{escalatedCount}</p>
               </div>
-              <ArrowUp className="h-8 w-8 text-orange-500" />
+              <ArrowUp className="h-8 w-8 text-muted-foreground" />
             </div>
           </CardContent>
         </Card>
@@ -153,11 +153,11 @@ export default function ExceptionsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">In Progress</p>
-                <p className="text-xl font-semibold tracking-[-0.02em]">
+                <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">
                   {exceptionsQuery.data?.filter((e) => e.status === "in_progress").length || 0}
                 </p>
               </div>
-              <div className="h-8 w-8 rounded-full border-4 border-blue-500 border-t-transparent animate-spin" />
+              <div className="h-8 w-8 rounded-full border-4 border-primary border-t-transparent animate-spin" />
             </div>
           </CardContent>
         </Card>
@@ -166,7 +166,7 @@ export default function ExceptionsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Resolved Today</p>
-                <p className="text-xl font-semibold tracking-[-0.02em]">
+                <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">
                   {exceptionsQuery.data?.filter(
                     (e) =>
                       e.status === "resolved" &&
@@ -175,7 +175,7 @@ export default function ExceptionsPage() {
                   ).length || 0}
                 </p>
               </div>
-              <CheckCircle2 className="h-8 w-8 text-green-500" />
+              <CheckCircle2 className="h-8 w-8 text-muted-foreground" />
             </div>
           </CardContent>
         </Card>
@@ -241,7 +241,7 @@ export default function ExceptionsPage() {
         <CardContent>
           {!exceptionsQuery.data?.length ? (
             <div className="text-center py-12 text-muted-foreground">
-              <CheckCircle2 className="h-12 w-12 mx-auto mb-4 text-green-500" />
+              <CheckCircle2 className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
               <p>No exceptions to display</p>
             </div>
           ) : (
@@ -263,9 +263,9 @@ export default function ExceptionsPage() {
                     key={exception.id}
                     className={
                       exception.severity === "critical"
-                        ? "bg-red-50 dark:bg-red-950/20"
+                        ? "bg-primary/5"
                         : exception.severity === "high"
-                        ? "bg-orange-50 dark:bg-orange-950/10"
+                        ? "bg-muted/50"
                         : ""
                     }
                   >
@@ -289,7 +289,7 @@ export default function ExceptionsPage() {
                     </TableCell>
                     <TableCell>
                       {exception.financialImpact && (
-                        <span className="text-red-600 font-mono">
+                        <span className="text-foreground font-semibold font-mono">
                           ${parseFloat(exception.financialImpact).toLocaleString()}
                         </span>
                       )}

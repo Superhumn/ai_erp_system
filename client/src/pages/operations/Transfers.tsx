@@ -84,12 +84,12 @@ export default function Transfers() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "draft": return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
-      case "pending": return "bg-amber-500/8 text-amber-600 dark:text-amber-400";
-      case "in_transit": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
-      case "received": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
-      case "cancelled": return "bg-red-500/8 text-red-600 dark:text-red-400";
-      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "draft": return "bg-muted text-muted-foreground";
+      case "pending": return "bg-muted text-foreground font-semibold";
+      case "in_transit": return "bg-primary/10 text-primary";
+      case "received": return "bg-muted text-muted-foreground";
+      case "cancelled": return "bg-[oklch(0.30_0.02_262)] text-white";
+      default: return "bg-muted text-muted-foreground";
     }
   };
 
@@ -200,7 +200,7 @@ export default function Transfers() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Draft</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-xl font-semibold tracking-[-0.02em]">
+              <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">
                 {transfers?.filter((t: any) => t.status === "draft").length || 0}
               </p>
             </CardContent>
@@ -210,7 +210,7 @@ export default function Transfers() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Pending</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-xl font-semibold tracking-[-0.02em]">
+              <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">
                 {transfers?.filter((t: any) => t.status === "pending").length || 0}
               </p>
             </CardContent>
@@ -220,7 +220,7 @@ export default function Transfers() {
               <CardTitle className="text-sm font-medium text-muted-foreground">In Transit</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-xl font-semibold tracking-[-0.02em] text-blue-600">
+              <p className="text-xl font-semibold tracking-[-0.02em] text-primary font-display tabular-nums">
                 {transfers?.filter((t: any) => t.status === "in_transit").length || 0}
               </p>
             </CardContent>
@@ -230,7 +230,7 @@ export default function Transfers() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Received</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-xl font-semibold tracking-[-0.02em] text-green-600">
+              <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">
                 {transfers?.filter((t: any) => t.status === "received").length || 0}
               </p>
             </CardContent>

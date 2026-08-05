@@ -22,7 +22,7 @@ export function OfflineIndicator() {
           <TooltipTrigger asChild>
             <Badge
               variant="outline"
-              className="gap-1 border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+              className="gap-1 border-border bg-muted text-foreground font-semibold"
             >
               <CloudOff className="h-3 w-3" />
               <span className="hidden sm:inline">Offline</span>
@@ -39,7 +39,7 @@ export function OfflineIndicator() {
           <TooltipTrigger asChild>
             <Badge
               variant="outline"
-              className="gap-1 border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300"
+              className="gap-1 border-primary/30 bg-primary/10 text-primary"
             >
               <RefreshCcw className={`h-3 w-3 ${online ? "animate-spin" : ""}`} />
               <span>{pending}</span>

@@ -503,11 +503,11 @@ export default function RFQDetail() {
                   const carrier = carriers?.find(c => c.id === quote.carrierId);
                   
                   return (
-                    <TableRow key={quote.id} className={quote.aiRecommendation === 'Recommended' ? 'bg-green-50' : ''}>
+                    <TableRow key={quote.id} className={quote.aiRecommendation === 'Recommended' ? 'bg-primary/10' : ''}>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           {quote.aiRecommendation === 'Recommended' && (
-                            <Star className="h-4 w-4 text-yellow-500 fill-yellow-500" />
+                            <Star className="h-4 w-4 text-primary fill-primary" />
                           )}
                           <div>
                             <p className="font-medium">{carrier?.name || `Carrier #${quote.carrierId}`}</p>
@@ -535,9 +535,9 @@ export default function RFQDetail() {
                       <TableCell>
                         {quote.aiScore ? (
                           <div className="flex items-center gap-2">
-                            <div className="w-16 bg-gray-200 rounded-full h-2">
+                            <div className="w-16 bg-muted rounded-full h-2">
                               <div
-                                className="bg-blue-600 h-2 rounded-full"
+                                className="bg-primary h-2 rounded-full"
                                 style={{ width: `${quote.aiScore}%` }}
                               />
                             </div>
@@ -588,7 +588,7 @@ export default function RFQDetail() {
                           </div>
                         )}
                         {quote.status === 'accepted' && (
-                          <Badge variant="default" className="bg-green-600">
+                          <Badge variant="default" className="bg-primary text-primary-foreground">
                             <CheckCircle className="h-3 w-3 mr-1" />
                             Winner
                           </Badge>
@@ -630,7 +630,7 @@ export default function RFQDetail() {
             <div className="space-y-3">
               {emails.map((email) => (
                 <div key={email.id} className="flex items-start gap-3 p-3 rounded-lg border">
-                  <Mail className={`h-5 w-5 mt-0.5 ${email.direction === 'outbound' ? 'text-blue-500' : 'text-green-500'}`} />
+                  <Mail className={`h-5 w-5 mt-0.5 ${email.direction === 'outbound' ? 'text-primary' : 'text-muted-foreground'}`} />
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
                       <span className="font-medium">{email.subject}</span>
@@ -693,7 +693,7 @@ export default function RFQDetail() {
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{carrier.name}</span>
                         {carrier.isPreferred && (
-                          <Star className="h-4 w-4 text-yellow-500 fill-yellow-500" />
+                          <Star className="h-4 w-4 text-primary fill-primary" />
                         )}
                       </div>
                       <p className="text-sm text-muted-foreground">

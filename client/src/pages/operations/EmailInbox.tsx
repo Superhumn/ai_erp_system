@@ -64,15 +64,15 @@ const formatBytes = (n?: number | null) => {
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 const categoryConfig: Record<string, { label: string; dot: string }> = {
-  receipt: { label: "Receipt", dot: "bg-emerald-500" },
-  purchase_order: { label: "PO", dot: "bg-blue-500" },
-  invoice: { label: "Invoice", dot: "bg-orange-500" },
-  shipping_confirmation: { label: "Shipping", dot: "bg-violet-500" },
-  freight_quote: { label: "Freight", dot: "bg-cyan-500" },
-  delivery_notification: { label: "Delivery", dot: "bg-emerald-400" },
-  order_confirmation: { label: "Order", dot: "bg-indigo-500" },
-  payment_confirmation: { label: "Payment", dot: "bg-teal-500" },
-  general: { label: "General", dot: "bg-gray-400" },
+  receipt: { label: "Receipt", dot: "bg-muted-foreground" },
+  purchase_order: { label: "PO", dot: "bg-muted-foreground" },
+  invoice: { label: "Invoice", dot: "bg-muted-foreground" },
+  shipping_confirmation: { label: "Shipping", dot: "bg-muted-foreground" },
+  freight_quote: { label: "Freight", dot: "bg-muted-foreground" },
+  delivery_notification: { label: "Delivery", dot: "bg-muted-foreground" },
+  order_confirmation: { label: "Order", dot: "bg-muted-foreground" },
+  payment_confirmation: { label: "Payment", dot: "bg-muted-foreground" },
+  general: { label: "General", dot: "bg-muted-foreground" },
 };
 
 function formatEmailDate(date: string | Date): string {
@@ -355,10 +355,10 @@ export default function EmailInbox() {
   ];
   const userFolders = ["2026 Q2 GTM", "Series B Raise", "Hiring"];
   const userLabels = [
-    { label: "Investors", color: "bg-violet-500" }, { label: "LinkedIn", color: "bg-blue-600" },
-    { label: "Product", color: "bg-emerald-500" }, { label: "Engineering", color: "bg-orange-500" },
-    { label: "Legal", color: "bg-red-500" }, { label: "Partnerships", color: "bg-amber-500" },
-    { label: "Board", color: "bg-gray-500" }, { label: "Recruiting", color: "bg-pink-500" },
+    { label: "Investors", color: "bg-muted-foreground" }, { label: "LinkedIn", color: "bg-muted-foreground" },
+    { label: "Product", color: "bg-muted-foreground" }, { label: "Engineering", color: "bg-muted-foreground" },
+    { label: "Legal", color: "bg-muted-foreground" }, { label: "Partnerships", color: "bg-muted-foreground" },
+    { label: "Board", color: "bg-muted-foreground" }, { label: "Recruiting", color: "bg-muted-foreground" },
   ];
 
   const EmailRow = ({ email }: { email: any }) => {
@@ -385,12 +385,12 @@ export default function EmailInbox() {
           <p className={`text-sm truncate ${isUnread ? "text-foreground" : "text-muted-foreground"}`}>{email.subject || "(No subject)"}</p>
           <p className="text-xs text-muted-foreground truncate mt-0.5">{(email.bodyText || "").substring(0, 80)}</p>
           <div className="flex items-center gap-2 mt-1">
-            {replyToday && <span className="inline-flex items-center gap-1 text-xs text-orange-500 font-medium"><span className="h-1.5 w-1.5 rounded-full bg-orange-500 animate-pulse" />Reply Today</span>}
+            {replyToday && <span className="inline-flex items-center gap-1 text-xs text-primary font-medium"><span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />Reply Today</span>}
             {email.suggestedAction && <span className="text-xs text-primary/70 truncate flex items-center gap-1"><Sparkles className="h-2.5 w-2.5 shrink-0" />{email.suggestedAction}</span>}
           </div>
         </div>
         <div className="hidden group-hover:flex flex-col gap-0.5 shrink-0" onClick={e => e.stopPropagation()}>
-          <button className="h-5 w-5 flex items-center justify-center rounded hover:bg-accent" title="Star" onClick={e => toggleStar(e, email.id)}><Star className={`h-3 w-3 ${isStarred ? "text-yellow-400 fill-yellow-400" : "text-muted-foreground"}`} /></button>
+          <button className="h-5 w-5 flex items-center justify-center rounded hover:bg-accent" title="Star" onClick={e => toggleStar(e, email.id)}><Star className={`h-3 w-3 ${isStarred ? "text-primary fill-primary" : "text-muted-foreground"}`} /></button>
           <button className="h-5 w-5 flex items-center justify-center rounded hover:bg-accent" title="Pin" onClick={e => togglePin(e, email.id)}><span className="text-xs">📌</span></button>
           <button className="h-5 w-5 flex items-center justify-center rounded hover:bg-accent" title="Archive" onClick={e => { e.stopPropagation(); archiveEmailMutation.mutate({ id: email.id }); }}><Archive className="h-3 w-3 text-muted-foreground" /></button>
         </div>
@@ -433,7 +433,7 @@ export default function EmailInbox() {
                   <p className="text-sm font-medium truncate">{seq.name}</p>
                   {seq.description && <p className="text-xs text-muted-foreground truncate mt-0.5">{seq.description}</p>}
                 </div>
-                <Badge variant="outline" className={`text-xs shrink-0 ${seq.status === "active" ? "border-emerald-500 text-emerald-600" : seq.status === "paused" ? "border-orange-500 text-orange-600" : "text-muted-foreground"}`}>{seq.status}</Badge>
+                <Badge variant="outline" className={`text-xs shrink-0 ${seq.status === "active" ? "border-primary text-primary" : seq.status === "paused" ? "border-foreground text-foreground font-semibold" : "text-muted-foreground"}`}>{seq.status}</Badge>
               </div>
               <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
                 <span>{seq.stepCount ?? 0} step{(seq.stepCount ?? 0) !== 1 ? "s" : ""}</span>
@@ -459,9 +459,9 @@ export default function EmailInbox() {
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 {selectedSeq.status !== "active" ? (
-                  <Button size="sm" variant="outline" className="h-8 gap-1.5 text-emerald-600 border-emerald-500 hover:bg-emerald-50" onClick={() => updateSeqMutation.mutate({ id: selectedSeq.id, status: "active" })}><Play className="h-3.5 w-3.5" /> Activate</Button>
+                  <Button size="sm" variant="outline" className="h-8 gap-1.5 text-primary border-primary hover:bg-primary/10" onClick={() => updateSeqMutation.mutate({ id: selectedSeq.id, status: "active" })}><Play className="h-3.5 w-3.5" /> Activate</Button>
                 ) : (
-                  <Button size="sm" variant="outline" className="h-8 gap-1.5 text-orange-600 border-orange-400" onClick={() => updateSeqMutation.mutate({ id: selectedSeq.id, status: "paused" })}><Pause className="h-3.5 w-3.5" /> Pause</Button>
+                  <Button size="sm" variant="outline" className="h-8 gap-1.5 text-foreground" onClick={() => updateSeqMutation.mutate({ id: selectedSeq.id, status: "paused" })}><Pause className="h-3.5 w-3.5" /> Pause</Button>
                 )}
                 <Button size="sm" variant="ghost" className="h-8 text-destructive hover:text-destructive" onClick={() => { if (confirm("Delete this sequence?")) deleteSeqMutation.mutate({ id: selectedSeq.id }); }}><Trash2 className="h-4 w-4" /></Button>
               </div>
@@ -525,7 +525,7 @@ export default function EmailInbox() {
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
         <div className="border-b px-4 py-2.5 flex items-center gap-2 bg-background shrink-0">
           <h2 className="font-semibold flex-1 truncate text-sm">{selectedEmail.subject || "(No subject)"}</h2>
-          <button className="h-7 w-7 flex items-center justify-center rounded hover:bg-accent" onClick={e => toggleStar(e, selectedEmail.id)}><Star className={`h-4 w-4 ${starredEmails.has(selectedEmail.id) ? "text-yellow-400 fill-yellow-400" : "text-muted-foreground"}`} /></button>
+          <button className="h-7 w-7 flex items-center justify-center rounded hover:bg-accent" onClick={e => toggleStar(e, selectedEmail.id)}><Star className={`h-4 w-4 ${starredEmails.has(selectedEmail.id) ? "text-primary fill-primary" : "text-muted-foreground"}`} /></button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" className="h-7 w-7" title="Download" disabled={exportEmailsMutation.isPending}>
@@ -585,7 +585,7 @@ export default function EmailInbox() {
                         <p className="text-[11px] text-muted-foreground truncate">
                           {att.mimeType || "file"}{att.size ? ` · ${formatBytes(att.size)}` : ""}
                           {att.isProcessed && meta.documentType && (
-                            <span className={meta.imported ? "ml-1 text-emerald-600" : "ml-1 text-amber-600"}>
+                            <span className={meta.imported ? "ml-1 text-muted-foreground" : "ml-1 text-foreground font-semibold"}>
                               {" · "}{String(meta.documentType).replace(/_/g, " ")}{meta.imported ? " imported" : meta.parseError ? " (parse failed)" : ""}
                             </span>
                           )}
@@ -618,7 +618,7 @@ export default function EmailInbox() {
             <div className="flex items-center gap-2 text-sm">
               <Reply className="h-4 w-4 text-muted-foreground shrink-0" />
               <span className="text-muted-foreground text-xs">Reply to <span className="font-medium text-foreground">{selectedEmail.fromName || selectedEmail.fromEmail}</span></span>
-              <Button variant="ghost" size="sm" className="ml-auto h-7 gap-1.5 text-xs bg-gradient-to-r from-violet-600 to-indigo-600 text-white hover:from-violet-700 hover:to-indigo-700" onClick={() => handleGenerateAiReply(selectedEmail)} disabled={isGeneratingReply && aiReplyEmailId === selectedEmail.id}>
+              <Button variant="ghost" size="sm" className="ml-auto h-7 gap-1.5 text-xs bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => handleGenerateAiReply(selectedEmail)} disabled={isGeneratingReply && aiReplyEmailId === selectedEmail.id}>
                 {isGeneratingReply && aiReplyEmailId === selectedEmail.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}AI Reply
               </Button>
             </div>
@@ -715,7 +715,7 @@ export default function EmailInbox() {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            <div className="ml-auto flex items-center pr-1"><div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" /></div>
+            <div className="ml-auto flex items-center pr-1"><div className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" /></div>
           </div>
         </div>
 
@@ -738,7 +738,7 @@ export default function EmailInbox() {
               {activeFolder === "inbox" && (
                 <div className="px-3 py-1.5 border-b flex items-center gap-3 text-xs text-muted-foreground shrink-0">
                   <span className="font-medium text-foreground">All {tabEmails.length}</span>
-                  <span>• <span className="text-orange-500 font-medium">Reply Today {tabEmails.filter((e: any) => isReplyToday(e)).length}</span></span>
+                  <span>• <span className="text-primary font-medium">Reply Today {tabEmails.filter((e: any) => isReplyToday(e)).length}</span></span>
                 </div>
               )}
               <div className="flex-1 overflow-y-auto">
@@ -790,9 +790,9 @@ export default function EmailInbox() {
               </div>
             </div>
             {(selectedPreset === "gmail" || selectedPreset === "outlook") && (
-              <div className="rounded-md bg-amber-50 dark:bg-amber-950 p-3 text-sm">
-                <p className="font-medium text-amber-800 dark:text-amber-200">Note for {selectedPreset === "gmail" ? "Gmail" : "Outlook"}:</p>
-                <p className="text-amber-700 dark:text-amber-300 mt-1">{selectedPreset === "gmail" ? "Use an App Password. Go to Google Account › Security › 2-Step Verification › App passwords." : "Enable IMAP in Outlook and use an App Password if 2FA is enabled."}</p>
+              <div className="rounded-md bg-muted p-3 text-sm">
+                <p className="font-medium text-foreground">Note for {selectedPreset === "gmail" ? "Gmail" : "Outlook"}:</p>
+                <p className="text-muted-foreground mt-1">{selectedPreset === "gmail" ? "Use an App Password. Go to Google Account › Security › 2-Step Verification › App passwords." : "Enable IMAP in Outlook and use an App Password if 2FA is enabled."}</p>
               </div>
             )}
           </div>
@@ -806,7 +806,7 @@ export default function EmailInbox() {
       {/* AI Reply Dialog */}
       <Dialog open={showAiReplyDialog} onOpenChange={setShowAiReplyDialog}>
         <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle className="flex items-center gap-2"><Sparkles className="h-5 w-5 text-violet-500" />AI-Generated Reply</DialogTitle><DialogDescription>Review and send the AI-generated reply</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><Sparkles className="h-5 w-5 text-primary" />AI-Generated Reply</DialogTitle><DialogDescription>Review and send the AI-generated reply</DialogDescription></DialogHeader>
           {generatedReply && (
             <div className="space-y-4">
               <div className="flex items-center gap-4 text-sm"><Badge variant="outline" className="capitalize">{generatedReply.tone} tone</Badge><span className="text-muted-foreground">Confidence: {generatedReply.confidence}%</span></div>
@@ -817,7 +817,7 @@ export default function EmailInbox() {
           )}
           <DialogFooter className="gap-2 sm:gap-0">
             <Button variant="outline" onClick={() => handleSendReply(false)} disabled={createReplyTaskMutation.isPending}>{createReplyTaskMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Clock className="h-4 w-4 mr-2" />}Queue for Approval</Button>
-            <Button onClick={() => handleSendReply(true)} disabled={sendReplyMutation.isPending} className="bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700">{sendReplyMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}Send Now</Button>
+            <Button onClick={() => handleSendReply(true)} disabled={sendReplyMutation.isPending} className="bg-primary hover:bg-primary/90">{sendReplyMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}Send Now</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1217,7 +1217,7 @@ function AutoReplyRulesDialog({ open, onClose }: { open: boolean; onClose: () =>
                           <span className="font-medium text-sm">{r.name}</span>
                           <Badge variant="outline" className="text-[10px]">{r.category}</Badge>
                           {r.autoSend ? (
-                            <Badge className="text-[10px] bg-amber-500/15 text-amber-700">auto-send</Badge>
+                            <Badge className="text-[10px] bg-primary/10 text-primary">auto-send</Badge>
                           ) : (
                             <Badge variant="outline" className="text-[10px]">draft</Badge>
                           )}

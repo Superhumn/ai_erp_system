@@ -112,11 +112,11 @@ export default function Login() {
     <div className="flex min-h-screen items-center justify-center bg-background">
       <div className="w-full max-w-sm space-y-6 p-8 animate-fade-in">
         {inviteToken && (
-          <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-4 text-center dark:border-indigo-800 dark:bg-indigo-950">
-            <p className="text-sm font-medium text-indigo-700 dark:text-indigo-300">
+          <div className="rounded-lg border border-primary/20 bg-primary/10 p-4 text-center">
+            <p className="text-sm font-medium text-primary">
               You've been invited to join Superhumn
             </p>
-            <p className="mt-1 text-xs text-indigo-600 dark:text-indigo-400">
+            <p className="mt-1 text-xs text-primary/80">
               Create your account below to get started
             </p>
           </div>
@@ -188,7 +188,7 @@ export default function Login() {
           )}
 
           {successMessage && (
-            <p className="text-sm text-green-600 dark:text-green-400">{successMessage}</p>
+            <p className="text-sm text-primary">{successMessage}</p>
           )}
 
           <Button type="submit" className="w-full" disabled={loading}>

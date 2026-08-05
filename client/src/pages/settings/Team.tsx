@@ -476,12 +476,12 @@ export default function Team() {
                           </TableCell>
                           <TableCell>
                             {member.isActive !== false ? (
-                              <Badge variant="outline" className="text-green-600">
+                              <Badge variant="outline" className="text-primary">
                                 <CheckCircle className="h-3 w-3 mr-1" />
                                 Active
                               </Badge>
                             ) : (
-                              <Badge variant="outline" className="text-red-600">
+                              <Badge variant="outline" className="text-foreground font-semibold">
                                 <XCircle className="h-3 w-3 mr-1" />
                                 Inactive
                               </Badge>
@@ -522,7 +522,7 @@ export default function Team() {
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  className="text-red-600"
+                                  className="text-destructive"
                                   onClick={() => deactivateMember.mutate({ id: member.id })}
                                 >
                                   Deactivate
@@ -531,7 +531,7 @@ export default function Team() {
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  className="text-green-600"
+                                  className="text-primary"
                                   onClick={() => reactivateMember.mutate({ id: member.id })}
                                 >
                                   Reactivate
@@ -599,25 +599,25 @@ export default function Team() {
                           </TableCell>
                           <TableCell>
                             {invite.status === "pending" && (
-                              <Badge variant="outline" className="text-yellow-600">
+                              <Badge variant="outline" className="text-muted-foreground">
                                 <Clock className="h-3 w-3 mr-1" />
                                 Pending
                               </Badge>
                             )}
                             {invite.status === "accepted" && (
-                              <Badge variant="outline" className="text-green-600">
+                              <Badge variant="outline" className="text-primary">
                                 <CheckCircle className="h-3 w-3 mr-1" />
                                 Accepted
                               </Badge>
                             )}
                             {invite.status === "expired" && (
-                              <Badge variant="outline" className="text-red-600">
+                              <Badge variant="outline" className="text-foreground font-semibold">
                                 <AlertCircle className="h-3 w-3 mr-1" />
                                 Expired
                               </Badge>
                             )}
                             {invite.status === "cancelled" && (
-                              <Badge variant="outline" className="text-gray-600">
+                              <Badge variant="outline" className="text-muted-foreground">
                                 <XCircle className="h-3 w-3 mr-1" />
                                 Cancelled
                               </Badge>
@@ -641,7 +641,7 @@ export default function Team() {
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  className="text-red-600"
+                                  className="text-destructive"
                                   onClick={() => cancelEmailInvite.mutate({ id: invite.id })}
                                 >
                                   Cancel
@@ -710,25 +710,25 @@ export default function Team() {
                           </TableCell>
                           <TableCell>
                             {invite.status === "pending" && (
-                              <Badge variant="outline" className="text-yellow-600">
+                              <Badge variant="outline" className="text-muted-foreground">
                                 <Clock className="h-3 w-3 mr-1" />
                                 Pending
                               </Badge>
                             )}
                             {invite.status === "accepted" && (
-                              <Badge variant="outline" className="text-green-600">
+                              <Badge variant="outline" className="text-primary">
                                 <CheckCircle className="h-3 w-3 mr-1" />
                                 Accepted
                               </Badge>
                             )}
                             {invite.status === "expired" && (
-                              <Badge variant="outline" className="text-red-600">
+                              <Badge variant="outline" className="text-foreground font-semibold">
                                 <AlertCircle className="h-3 w-3 mr-1" />
                                 Expired
                               </Badge>
                             )}
                             {invite.status === "revoked" && (
-                              <Badge variant="outline" className="text-gray-600">
+                              <Badge variant="outline" className="text-muted-foreground">
                                 <XCircle className="h-3 w-3 mr-1" />
                                 Revoked
                               </Badge>
@@ -742,7 +742,7 @@ export default function Team() {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                className="text-red-600"
+                                className="text-destructive"
                                 onClick={() => revokeInvitation.mutate({ id: invite.id })}
                               >
                                 Revoke
@@ -773,60 +773,60 @@ export default function Team() {
                     </p>
                     <div className="text-xs space-y-1">
                       {role === "admin" && (
-                        <p className="text-green-600">✓ Full system access</p>
+                        <p className="text-foreground">✓ Full system access</p>
                       )}
                       {role === "finance" && (
                         <>
-                          <p className="text-green-600">✓ Accounts, Invoices, Payments</p>
-                          <p className="text-green-600">✓ Transactions, Financial Reports</p>
-                          <p className="text-yellow-600">○ Read-only: Customers, Vendors</p>
+                          <p className="text-foreground">✓ Accounts, Invoices, Payments</p>
+                          <p className="text-foreground">✓ Transactions, Financial Reports</p>
+                          <p className="text-muted-foreground">○ Read-only: Customers, Vendors</p>
                         </>
                       )}
                       {role === "ops" && (
                         <>
-                          <p className="text-green-600">✓ Products, Inventory, Orders</p>
-                          <p className="text-green-600">✓ Purchase Orders, Shipments</p>
-                          <p className="text-green-600">✓ Vendors, Warehouses</p>
+                          <p className="text-foreground">✓ Products, Inventory, Orders</p>
+                          <p className="text-foreground">✓ Purchase Orders, Shipments</p>
+                          <p className="text-foreground">✓ Vendors, Warehouses</p>
                         </>
                       )}
                       {role === "legal" && (
                         <>
-                          <p className="text-green-600">✓ Contracts, Disputes, Documents</p>
-                          <p className="text-yellow-600">○ Read-only: Customers, Vendors</p>
+                          <p className="text-foreground">✓ Contracts, Disputes, Documents</p>
+                          <p className="text-muted-foreground">○ Read-only: Customers, Vendors</p>
                         </>
                       )}
                       {role === "exec" && (
                         <>
-                          <p className="text-green-600">✓ Dashboard, Reports, AI</p>
-                          <p className="text-yellow-600">○ Read-only: All modules</p>
+                          <p className="text-foreground">✓ Dashboard, Reports, AI</p>
+                          <p className="text-muted-foreground">○ Read-only: All modules</p>
                         </>
                       )}
                       {role === "copacker" && (
                         <>
-                          <p className="text-green-600">✓ Update inventory (assigned warehouse)</p>
-                          <p className="text-green-600">✓ Upload shipment documents</p>
-                          <p className="text-red-600">✗ No access to other modules</p>
+                          <p className="text-foreground">✓ Update inventory (assigned warehouse)</p>
+                          <p className="text-foreground">✓ Upload shipment documents</p>
+                          <p className="text-foreground font-semibold">✗ No access to other modules</p>
                         </>
                       )}
                       {role === "vendor" && (
                         <>
-                          <p className="text-green-600">✓ View own purchase orders</p>
-                          <p className="text-green-600">✓ Update PO status, upload docs</p>
-                          <p className="text-red-600">✗ No access to other modules</p>
+                          <p className="text-foreground">✓ View own purchase orders</p>
+                          <p className="text-foreground">✓ Update PO status, upload docs</p>
+                          <p className="text-foreground font-semibold">✗ No access to other modules</p>
                         </>
                       )}
                       {role === "contractor" && (
                         <>
-                          <p className="text-green-600">✓ Assigned projects only</p>
-                          <p className="text-green-600">✓ Upload project documents</p>
-                          <p className="text-red-600">✗ No access to other modules</p>
+                          <p className="text-foreground">✓ Assigned projects only</p>
+                          <p className="text-foreground">✓ Upload project documents</p>
+                          <p className="text-foreground font-semibold">✗ No access to other modules</p>
                         </>
                       )}
                       {role === "user" && (
                         <>
-                          <p className="text-green-600">✓ Dashboard view</p>
-                          <p className="text-green-600">✓ AI queries</p>
-                          <p className="text-red-600">✗ No module access</p>
+                          <p className="text-foreground">✓ Dashboard view</p>
+                          <p className="text-foreground">✓ AI queries</p>
+                          <p className="text-foreground font-semibold">✗ No module access</p>
                         </>
                       )}
                     </div>

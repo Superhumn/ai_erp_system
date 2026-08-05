@@ -51,19 +51,19 @@ const typeLabels: Record<string, string> = {
 };
 
 const statusColors: Record<string, string> = {
-  open: "bg-blue-500/10 text-blue-600",
-  pending: "bg-yellow-500/10 text-yellow-600",
-  in_review: "bg-purple-500/10 text-purple-600",
-  resolved: "bg-emerald-500/10 text-emerald-600",
-  closed: "bg-gray-500/10 text-gray-600",
-  dismissed: "bg-gray-500/10 text-gray-500",
+  open: "bg-primary/10 text-primary",
+  pending: "bg-muted text-foreground font-semibold",
+  in_review: "bg-primary/10 text-primary",
+  resolved: "bg-muted text-muted-foreground",
+  closed: "bg-muted text-muted-foreground",
+  dismissed: "bg-muted text-muted-foreground",
 };
 
 const priorityColors: Record<string, string> = {
-  low: "bg-gray-500/10 text-gray-600",
-  medium: "bg-blue-500/10 text-blue-600",
-  high: "bg-orange-500/10 text-orange-600",
-  critical: "bg-red-500/10 text-red-600",
+  low: "bg-muted text-muted-foreground",
+  medium: "bg-muted text-muted-foreground",
+  high: "bg-muted text-foreground font-semibold",
+  critical: "bg-[oklch(0.30_0.02_262)] text-white",
 };
 
 export default function CaseTracker() {
@@ -279,10 +279,10 @@ export default function CaseTracker() {
       {/* Summary cards — click to filter the list */}
       <div className="grid grid-cols-4 gap-4">
         {([
-          { key: "open", label: "Open Cases", value: openCount, color: "text-blue-600" },
-          { key: "pending", label: "Pending / In Review", value: pendingCount, color: "text-yellow-600" },
-          { key: "resolved", label: "Resolved / Closed", value: resolvedCount, color: "text-emerald-600" },
-          { key: "critical", label: "High / Critical", value: criticalCount, color: "text-red-600" },
+          { key: "open", label: "Open Cases", value: openCount, color: "text-primary" },
+          { key: "pending", label: "Pending / In Review", value: pendingCount, color: "text-foreground" },
+          { key: "resolved", label: "Resolved / Closed", value: resolvedCount, color: "text-muted-foreground" },
+          { key: "critical", label: "High / Critical", value: criticalCount, color: "text-foreground" },
         ] as const).map((c) => (
           <Card
             key={c.key}
@@ -295,7 +295,7 @@ export default function CaseTracker() {
           >
             <CardContent className="pt-4 pb-4">
               <div className="text-sm text-muted-foreground">{c.label}</div>
-              <div className={`text-2xl font-semibold ${c.color}`}>{c.value}</div>
+              <div className={`text-2xl font-semibold font-display tabular-nums ${c.color}`}>{c.value}</div>
             </CardContent>
           </Card>
         ))}
@@ -368,12 +368,12 @@ export default function CaseTracker() {
                         <Badge variant="outline">{typeLabels[c.type] || c.type}</Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge className={statusColors[c.status] || "bg-gray-500/10 text-gray-600"}>
+                        <Badge className={statusColors[c.status] || "bg-muted text-muted-foreground"}>
                           {c.status?.replace(/_/g, " ")}
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge className={priorityColors[c.priority] || "bg-gray-500/10 text-gray-600"}>
+                        <Badge className={priorityColors[c.priority] || "bg-muted text-muted-foreground"}>
                           {c.priority}
                         </Badge>
                       </TableCell>

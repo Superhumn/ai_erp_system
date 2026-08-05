@@ -40,15 +40,15 @@ const txnSetLabels: Record<string, string> = {
 };
 
 const statusColors: Record<string, string> = {
-  received: "bg-blue-500/8 text-blue-600 dark:text-blue-400",
-  parsing: "bg-amber-500/8 text-amber-600 dark:text-amber-400",
-  parsed: "bg-indigo-500/8 text-indigo-600 dark:text-indigo-400",
-  validated: "bg-violet-500/8 text-violet-600 dark:text-violet-400",
-  processing: "bg-orange-500/8 text-orange-600 dark:text-orange-400",
-  processed: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400",
-  error: "bg-red-500/8 text-red-600 dark:text-red-400",
-  rejected: "bg-red-500/8 text-red-600 dark:text-red-400",
-  acknowledged: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400",
+  received: "bg-muted text-muted-foreground",
+  parsing: "bg-muted text-muted-foreground",
+  parsed: "bg-muted text-muted-foreground",
+  validated: "bg-primary/10 text-primary",
+  processing: "bg-muted text-muted-foreground",
+  processed: "bg-primary/10 text-primary",
+  error: "bg-[oklch(0.30_0.02_262)] text-white",
+  rejected: "bg-[oklch(0.30_0.02_262)] text-white",
+  acknowledged: "bg-primary/10 text-primary",
 };
 
 export default function EDITransactions() {
@@ -171,7 +171,7 @@ export default function EDITransactions() {
                 <span className="text-muted-foreground">PO Number:</span>
                 <span className="font-mono">{txnAny.purchaseOrderNumber || "-"}</span>
                 <span className="text-muted-foreground">Linked Order:</span>
-                <span>{txnAny.orderId ? <Link href={`/sales/orders/${txnAny.orderId}`} className="text-blue-600 underline">Order #{txnAny.orderId}</Link> : "-"}</span>
+                <span>{txnAny.orderId ? <Link href={`/sales/orders/${txnAny.orderId}`} className="text-primary underline">Order #{txnAny.orderId}</Link> : "-"}</span>
                 <span className="text-muted-foreground">Created:</span>
                 <span>{new Date(selectedTxn.createdAt).toLocaleString()}</span>
                 <span className="text-muted-foreground">Processed:</span>
@@ -207,12 +207,12 @@ export default function EDITransactions() {
 
               {/* Error info */}
               {txnAny.errorMessage && (
-                <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded text-sm">
-                  <div className="flex items-center gap-2 font-medium text-red-800 mb-1">
+                <div className="mt-4 p-3 bg-muted border border-foreground/40 rounded text-sm">
+                  <div className="flex items-center gap-2 font-semibold text-foreground mb-1">
                     <AlertTriangle className="h-4 w-4" />
                     Error
                   </div>
-                  <p className="text-red-700">{txnAny.errorMessage}</p>
+                  <p className="text-foreground">{txnAny.errorMessage}</p>
                 </div>
               )}
             </CardContent>
@@ -272,9 +272,9 @@ export default function EDITransactions() {
                         <td className="py-0.5 text-sm font-medium">${item.totalAmount || "0"}</td>
                         <td className="py-0.5 text-sm">
                           {item.productId ? (
-                            <CheckCircle2 className="h-4 w-4 text-green-600" />
+                            <CheckCircle2 className="h-4 w-4 text-muted-foreground" />
                           ) : (
-                            <AlertTriangle className="h-4 w-4 text-yellow-500" />
+                            <AlertTriangle className="h-4 w-4 text-foreground" />
                           )}
                         </td>
                       </tr>
@@ -458,9 +458,9 @@ export default function EDITransactions() {
                       <td className="py-0.5 text-sm">
                         {txn.ackRequired ? (
                           <Badge variant="outline" className={
-                            txn.ackStatus === "received" ? "bg-green-50 text-green-700" :
-                            txn.ackStatus === "pending" ? "bg-yellow-50 text-yellow-700" :
-                            txn.ackStatus === "overdue" ? "bg-red-50 text-red-700" :
+                            txn.ackStatus === "received" ? "bg-primary/10 text-primary" :
+                            txn.ackStatus === "pending" ? "bg-muted text-muted-foreground" :
+                            txn.ackStatus === "overdue" ? "bg-[oklch(0.30_0.02_262)] text-white" :
                             ""
                           }>
                             {txn.ackStatus || "n/a"}

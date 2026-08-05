@@ -367,9 +367,9 @@ export default function Vendors() {
   });
 
   const typeColors: Record<string, string> = {
-    supplier: "bg-blue-500/10 text-blue-600",
-    contractor: "bg-purple-500/10 text-purple-600",
-    service: "bg-amber-500/10 text-amber-600",
+    supplier: "bg-primary/10 text-primary",
+    contractor: "bg-muted text-foreground",
+    service: "bg-muted text-muted-foreground",
   };
 
   const handleSubmitVendor = (e: React.FormEvent) => {
@@ -627,7 +627,7 @@ export default function Vendors() {
             {alibabaResults.length > 0 && (
               <div className="space-y-2">
                 {alibabaUsedFallback && (
-                  <div className="rounded-md border border-amber-300/50 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  <div className="rounded-md border border-border bg-muted px-3 py-2 text-xs text-foreground font-semibold">
                     Live Alibaba lookup is temporarily overloaded. Showing backup AI-generated supplier matches.
                   </div>
                 )}
@@ -642,7 +642,7 @@ export default function Vendors() {
                           <div className="flex items-center gap-2">
                             <span className="font-medium text-sm">{supplier.companyName}</span>
                             {supplier.verified && (
-                              <Badge className="bg-blue-500/10 text-blue-600 text-[10px] px-1.5 py-0 flex items-center gap-0.5">
+                              <Badge className="bg-primary/10 text-primary text-[10px] px-1.5 py-0 flex items-center gap-0.5">
                                 <CheckCircle2 className="h-2.5 w-2.5" />
                                 Verified
                               </Badge>
@@ -680,7 +680,7 @@ export default function Vendors() {
                         <span>{supplier.yearsInBusiness} yrs in business</span>
                         <span>Response: {supplier.responseRate}</span>
                         <span className="flex items-center gap-0.5">
-                          <Star className="h-3 w-3 text-amber-500 fill-amber-500" />
+                          <Star className="h-3 w-3 text-muted-foreground fill-muted-foreground" />
                           {supplier.rating}
                         </span>
                       </div>
@@ -803,7 +803,7 @@ export default function Vendors() {
                           {agg && agg.lastPODate ? formatCurrency(agg.lastPOAmount) : "-"}
                         </TableCell>
                         <TableCell className="text-sm whitespace-nowrap">
-                          <Badge className={negStatus === "active" ? "bg-amber-500/10 text-amber-600" : "bg-gray-500/10 text-gray-500"}>
+                          <Badge className={negStatus === "active" ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}>
                             {negStatus}
                           </Badge>
                         </TableCell>
@@ -823,7 +823,7 @@ export default function Vendors() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-8 w-8 text-muted-foreground hover:text-green-600"
+                              className="h-8 w-8 text-muted-foreground hover:text-primary"
                               onClick={(e) => handleOpenChat(vendor, e)}
                               disabled={autoLinkMutation.isPending && (autoLinkMutation.variables as { vendorId: number } | undefined)?.vendorId === vendor.id}
                               aria-label={`Chat on WhatsApp with ${vendor.name}`}

@@ -113,35 +113,35 @@ export default function CustomerDetail() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "active": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
-      case "inactive": return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
-      case "suspended": return "bg-red-500/8 text-red-600 dark:text-red-400";
-      case "pending": return "bg-amber-500/8 text-amber-600 dark:text-amber-400";
-      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "active": return "bg-muted text-foreground";
+      case "inactive": return "bg-muted text-muted-foreground";
+      case "suspended": return "bg-[oklch(0.30_0.02_262)] text-white";
+      case "pending": return "bg-muted text-foreground";
+      default: return "bg-muted text-muted-foreground";
     }
   };
 
   const getOrderStatusColor = (status: string) => {
     switch (status) {
-      case "draft": return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
-      case "pending": return "bg-amber-500/8 text-amber-600 dark:text-amber-400";
-      case "confirmed": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
-      case "processing": return "bg-violet-500/8 text-violet-600 dark:text-violet-400";
-      case "shipped": return "bg-indigo-500/8 text-indigo-600 dark:text-indigo-400";
-      case "delivered": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
-      case "cancelled": return "bg-red-500/8 text-red-600 dark:text-red-400";
-      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "draft": return "bg-muted text-muted-foreground";
+      case "pending": return "bg-muted text-foreground";
+      case "confirmed": return "bg-primary/10 text-primary";
+      case "processing": return "bg-primary/10 text-primary";
+      case "shipped": return "bg-primary/10 text-primary";
+      case "delivered": return "bg-muted text-foreground";
+      case "cancelled": return "bg-[oklch(0.30_0.02_262)] text-white";
+      default: return "bg-muted text-muted-foreground";
     }
   };
 
   const getSourceBadge = (customer: any) => {
     if (!customer.syncSource) return null;
     const colors: Record<string, string> = {
-      quickbooks: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400",
-      shopify: "bg-teal-500/8 text-teal-600 dark:text-teal-400",
+      quickbooks: "bg-muted text-foreground",
+      shopify: "bg-muted text-foreground",
     };
     return (
-      <Badge className={colors[customer.syncSource] || "bg-gray-500/8 text-gray-600 dark:text-gray-400"}>
+      <Badge className={colors[customer.syncSource] || "bg-muted text-muted-foreground"}>
         {customer.syncSource}
       </Badge>
     );

@@ -1361,7 +1361,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
           }}
           className={`shrink-0 p-0.5 rounded transition-colors ${
             isListening
-              ? "text-red-500 animate-pulse"
+              ? "text-primary animate-pulse"
               : "text-muted-foreground hover:text-foreground"
           }`}
           title={isListening ? "Stop listening" : "Voice input"}
@@ -1410,12 +1410,12 @@ export function AICommandBar({ context }: AICommandBarProps) {
 
         {/* Vendor Suggestion Display */}
         {vendorSuggestion?.material && !isLoading && !taskCreated && !response && (
-          <div className="px-4 py-3 bg-blue-50 border-b border-blue-100">
+          <div className="px-4 py-3 bg-primary/10 border-b border-primary/20">
             <div className="flex items-start gap-3">
-              <Package className="h-5 w-5 text-blue-600 mt-0.5" />
+              <Package className="h-5 w-5 text-primary mt-0.5" />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-medium text-blue-900">{vendorSuggestion.material.name}</span>
+                  <span className="font-medium text-foreground">{vendorSuggestion.material.name}</span>
                   {vendorSuggestion.material.sku && (
                     <Badge variant="outline" className="text-xs">{vendorSuggestion.material.sku}</Badge>
                   )}
@@ -1424,8 +1424,8 @@ export function AICommandBar({ context }: AICommandBarProps) {
                 {/* Vendor Suggestion */}
                 {vendorSuggestion.suggestedVendor ? (
                   <div className="mt-2 flex items-center gap-2 text-sm">
-                    <Building className="h-4 w-4 text-green-600" />
-                    <span className="text-green-700 font-medium">
+                    <Building className="h-4 w-4 text-primary" />
+                    <span className="text-primary font-medium">
                       Suggested: {vendorSuggestion.suggestedVendor.name}
                     </span>
                     <span className="text-muted-foreground">
@@ -1434,14 +1434,14 @@ export function AICommandBar({ context }: AICommandBarProps) {
                   </div>
                 ) : vendorSuggestion.preferredVendor ? (
                   <div className="mt-2 flex items-center gap-2 text-sm">
-                    <Building className="h-4 w-4 text-blue-600" />
-                    <span className="text-blue-700 font-medium">
+                    <Building className="h-4 w-4 text-primary" />
+                    <span className="text-primary font-medium">
                       Preferred: {vendorSuggestion.preferredVendor.name}
                     </span>
                   </div>
                 ) : (
                   <div className="mt-2 space-y-2">
-                    <div className="flex items-center gap-2 text-sm text-amber-600">
+                    <div className="flex items-center gap-2 text-sm text-foreground font-semibold">
                       <AlertCircle className="h-4 w-4" />
                       <span>No vendor history found</span>
                     </div>
@@ -1453,7 +1453,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
                           setSelectedVendorId(e.target.value ? Number(e.target.value) : null);
                         }}
                         onFocus={() => setShowVendorDropdown(true)}
-                        className="flex-1 px-3 py-1.5 text-sm border rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="flex-1 px-3 py-1.5 text-sm border rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-primary"
                       >
                         <option value="">Select a vendor...</option>
                         {vendorsQuery.data?.map((vendor) => (
@@ -1474,7 +1474,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
                       )}
                     </div>
                     {selectedVendorId && (
-                      <div className="flex items-center gap-2 text-sm text-green-600">
+                      <div className="flex items-center gap-2 text-sm text-primary">
                         <CheckCircle className="h-4 w-4" />
                         <span>Vendor selected: {vendorsQuery.data?.find(v => v.id === selectedVendorId)?.name}</span>
                       </div>
@@ -1519,11 +1519,11 @@ export function AICommandBar({ context }: AICommandBarProps) {
 
           {taskCreated && !isLoading && (
             <div className="p-4">
-              <div className="flex items-center gap-3 p-4 bg-green-50 border border-green-200 rounded-lg">
-                <CheckCircle className="h-6 w-6 text-green-600" />
+              <div className="flex items-center gap-3 p-4 bg-muted border border-border rounded-lg">
+                <CheckCircle className="h-6 w-6 text-primary" />
                 <div className="flex-1">
-                  <p className="font-medium text-green-800">AI Task Created</p>
-                  <p className="text-sm text-green-600">
+                  <p className="font-medium text-foreground">AI Task Created</p>
+                  <p className="text-sm text-muted-foreground">
                     {taskCreated.status === "pending_approval" 
                       ? "Task is awaiting approval in the Approval Queue" 
                       : "Task has been queued for execution"}
@@ -1646,7 +1646,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
             <div className="p-4 space-y-4">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
-                  <FileText className="h-5 w-5 text-blue-600" />
+                  <FileText className="h-5 w-5 text-primary" />
                   <h3 className="font-semibold text-lg">Review Draft {draftData.taskType === 'generate_po' ? 'Purchase Order' : draftData.taskType === 'send_rfq' ? 'RFQ' : 'Task'}</h3>
                 </div>
                 <button onClick={() => { setShowDraftPreview(false); setDraftData(null); setShowSuggestions(true); }} className="text-muted-foreground hover:text-foreground">
@@ -1659,7 +1659,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
                     <Package className="h-4 w-4" /> Material
-                    {!draftData.material && <span className="text-red-500 text-xs">* Required</span>}
+                    {!draftData.material && <span className="text-foreground font-semibold text-xs">* Required</span>}
                   </label>
                   {draftData.material ? (
                     <div className="flex items-center gap-2">
@@ -1713,7 +1713,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
                           ))}
                           {/* Create New option at bottom */}
                           <button
-                            className="w-full px-3 py-2 text-left hover:bg-blue-50 flex items-center gap-2 border-t text-blue-600 font-medium"
+                            className="w-full px-3 py-2 text-left hover:bg-primary/10 flex items-center gap-2 border-t text-primary font-medium"
                             onClick={() => {
                               setShowMaterialDropdown(false);
                               setShowQuickCreateMaterial(true);
@@ -1747,7 +1747,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
                     <Building className="h-4 w-4" /> Vendor
-                    {!draftData.vendor && <span className="text-amber-500 text-xs">(Optional - can be assigned later)</span>}
+                    {!draftData.vendor && <span className="text-muted-foreground text-xs">(Optional - can be assigned later)</span>}
                   </label>
                   <div className="flex gap-2">
                     <select
@@ -1760,7 +1760,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
                           vendor: vendor ? { id: vendor.id, name: vendor.name, email: vendor.email || null } : null
                         });
                       }}
-                      className="flex-1 px-3 py-2 border rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="flex-1 px-3 py-2 border rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-primary"
                     >
                       <option value="">Select a vendor (optional)...</option>
                       {vendorsQuery.data?.map((vendor) => (
@@ -1784,7 +1784,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
                     <ClipboardList className="h-4 w-4" /> Quantity
-                    {!editingQuantity && <span className="text-red-500 text-xs">* Required</span>}
+                    {!editingQuantity && <span className="text-foreground font-semibold text-xs">* Required</span>}
                   </label>
                   <div className="flex items-center gap-2">
                     <Input
@@ -1819,7 +1819,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
                   <div className="pt-2 border-t">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">Estimated Total:</span>
-                      <span className="font-semibold text-lg">${draftData.estimatedPrice.toFixed(2)}</span>
+                      <span className="font-semibold text-lg font-display tabular-nums">${draftData.estimatedPrice.toFixed(2)}</span>
                     </div>
                   </div>
                 )}
@@ -1827,12 +1827,12 @@ export function AICommandBar({ context }: AICommandBarProps) {
 
               {/* Validation Messages */}
               {(!draftData.material || !editingQuantity) && (
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <div className="bg-muted border border-border rounded-lg p-3">
                   <div className="flex items-start gap-2">
-                    <AlertCircle className="h-5 w-5 text-amber-600 mt-0.5" />
+                    <AlertCircle className="h-5 w-5 text-foreground mt-0.5" />
                     <div className="text-sm">
-                      <p className="font-medium text-amber-800">Missing required information:</p>
-                      <ul className="mt-1 text-amber-700 list-disc list-inside">
+                      <p className="font-semibold text-foreground">Missing required information:</p>
+                      <ul className="mt-1 text-muted-foreground list-disc list-inside">
                         {!draftData.material && <li>Please select a material</li>}
                         {!editingQuantity && <li>Please enter a quantity</li>}
                       </ul>
@@ -1929,10 +1929,10 @@ export function AICommandBar({ context }: AICommandBarProps) {
                         <span
                           className={
                             action.status === "failed"
-                              ? "text-red-500"
+                              ? "text-foreground font-semibold"
                               : action.status === "completed"
-                                ? "text-green-600 dark:text-green-500"
-                                : "text-amber-500"
+                                ? "text-muted-foreground"
+                                : "text-muted-foreground"
                           }
                         >
                           {action.status === "failed"
@@ -1945,7 +1945,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
                           {action.description || action.type}
                         </span>
                         {action.error && (
-                          <span className="text-xs text-red-500">— {action.error}</span>
+                          <span className="text-xs text-foreground font-semibold">— {action.error}</span>
                         )}
                       </li>
                     ))}
@@ -2054,7 +2054,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
             <div className="flex items-center gap-2">
               <span>Vendor "{vendor.name}" created!</span>
               <button
-                className="text-blue-600 hover:underline font-medium"
+                className="text-primary hover:underline font-medium"
                 onClick={() => {
                   setLocation("/procurement");
                   setIsExpanded(false);
@@ -2086,7 +2086,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
             <div className="flex items-center gap-2">
               <span>Material "{material.name}" created!</span>
               <button
-                className="text-blue-600 hover:underline font-medium"
+                className="text-primary hover:underline font-medium"
                 onClick={() => {
                   setLocation("/procurement");
                   setIsExpanded(false);
@@ -2108,7 +2108,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
             <div className="flex items-center gap-2">
               <span>Product created!</span>
               <button
-                className="text-blue-600 hover:underline font-medium"
+                className="text-primary hover:underline font-medium"
                 onClick={() => {
                   setLocation("/sales");
                   setIsExpanded(false);
@@ -2130,7 +2130,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
             <div className="flex items-center gap-2">
               <span>Customer created!</span>
               <button
-                className="text-blue-600 hover:underline font-medium"
+                className="text-primary hover:underline font-medium"
                 onClick={() => {
                   setLocation("/sales");
                   setIsExpanded(false);
