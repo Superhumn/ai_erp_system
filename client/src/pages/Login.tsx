@@ -71,9 +71,10 @@ export default function Login() {
         const data = await res.json();
 
         if (!res.ok) {
-          const detail = typeof data.reason === "string" && data.reason
-            ? `: ${data.reason}`
-            : "";
+          const detail =
+            import.meta.env.DEV && typeof data.reason === "string" && data.reason
+              ? `: ${data.reason}`
+              : "";
           setError((data.error || "Authentication failed") + detail);
           // Guide users with accounts but no password toward forgot-password
           if (data.recovery === "reset_password") {
