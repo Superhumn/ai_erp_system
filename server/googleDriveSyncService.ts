@@ -7,6 +7,7 @@ import {
   syncDriveFolder,
   listDriveFolders,
   getSimpleFileType,
+  type DriveAccessToken,
 } from './_core/googleDrive';
 import * as db from './db';
 
@@ -290,7 +291,8 @@ function errMessage(err: unknown): string {
 export async function reconcileDataRoomFromDrive(params: {
   dataRoomId: number;
   rootFolderId: string;
-  accessToken: string;
+  /** Static token or a getter refreshed before each Drive listing. */
+  accessToken: DriveAccessToken;
   uploadedBy?: number;
   allowDelete?: boolean;
   /**
@@ -550,6 +552,30 @@ export async function reconcileDataRoomFromDrive(params: {
     partial: !!sync.partial,
     errors,
   };
+}
+
+/**
+ * True when Drive returned files but every create/update attempt failed — the
+ * sync must not be reported as success (historical regression: green toast /
+ * background-task "success" with 0 imports).
+ */
+export function isTotalDriveImportFailure(recon: Pick<ReconcileResult, 'filesFound' | 'filesCreated' | 'filesUpdated' | 'filesFailed'>): boolean {
+  return (
+    recon.filesFound > 0 &&
+    recon.filesCreated === 0 &&
+    recon.filesUpdated === 0 &&
+    recon.filesFailed > 0
+  );
+}
+
+/**
+ * Build a user-facing error for a total import failure.
+ */
+export function totalDriveImportFailureMessage(
+  recon: Pick<ReconcileResult, 'filesFound' | 'errors'>,
+): string {
+  const detail = recon.errors[0] ? ` ${recon.errors[0]}` : '';
+  return `Found ${recon.filesFound} file(s) in Google Drive but failed to import any.${detail}`;
 }
 
 /**

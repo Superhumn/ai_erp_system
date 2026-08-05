@@ -393,6 +393,13 @@
 			"when": 1781900000000,
 			"tag": "0055_ensure_investor_investments_schema",
 			"breakpoints": true
+		},
+		{
+			"idx": 56,
+			"version": "5",
+			"when": 1785924000000,
+			"tag": "0056_data_room_drive_sync_tables",
+			"breakpoints": true
 		}
 	]
 }
