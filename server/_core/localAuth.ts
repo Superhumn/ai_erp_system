@@ -261,9 +261,15 @@ export function registerLocalAuthRoutes(app: Express) {
         }
       }
 
-      // Skip email verification for invited users — they were invited via email
+      // Skip email verification for invited users — they were invited via email.
+      // Account + session already exist at this point; verification bookkeeping
+      // must not turn a successful signup into a 500.
       if (inviteAccepted) {
-        await db.setUserEmailVerified(normalizedEmail, true);
+        try {
+          await db.setUserEmailVerified(normalizedEmail, true);
+        } catch (verifyErr) {
+          console.warn("[Local Auth] Failed to mark invited email verified:", verifyErr);
+        }
 
         return res.status(201).json({
           success: true,
@@ -272,29 +278,34 @@ export function registerLocalAuthRoutes(app: Express) {
         });
       }
 
-      // Generate email verification token (24-hour expiry)
-      const verificationToken = randomBytes(32).toString("hex");
-      await db.createAuthToken({
-        token: verificationToken,
-        type: "email_verification",
-        email: normalizedEmail,
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-      });
-
-      // Send verification email if SendGrid is configured, otherwise log to console
-      const verifyUrl = `${ENV.publicAppUrl}/api/auth/verify-email?token=${verificationToken}`;
-      if (isEmailConfigured()) {
-        sendEmail({
-          to: normalizedEmail,
-          subject: "Verify your email address",
-          text: `Please verify your email by visiting: ${verifyUrl}`,
-          html: `<p>Please verify your email address by clicking the link below:</p><p><a href="${verifyUrl}">Verify Email</a></p><p>This link expires in 24 hours.</p>`,
-        }).catch((err) => {
-          console.error("[Local Auth] Failed to send verification email:", err);
+      // Generate email verification token (24-hour expiry). Soft-fail: the
+      // account is already usable via the session cookie we just set.
+      try {
+        const verificationToken = randomBytes(32).toString("hex");
+        await db.createAuthToken({
+          token: verificationToken,
+          type: "email_verification",
+          email: normalizedEmail,
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         });
-      } else {
-        console.log(`[Local Auth] Email verification token for ${normalizedEmail}: ${verificationToken}`);
-        console.log(`[Local Auth] Verify URL: ${verifyUrl}`);
+
+        // Send verification email if SendGrid is configured, otherwise log to console
+        const verifyUrl = `${ENV.publicAppUrl}/api/auth/verify-email?token=${verificationToken}`;
+        if (isEmailConfigured()) {
+          sendEmail({
+            to: normalizedEmail,
+            subject: "Verify your email address",
+            text: `Please verify your email by visiting: ${verifyUrl}`,
+            html: `<p>Please verify your email address by clicking the link below:</p><p><a href="${verifyUrl}">Verify Email</a></p><p>This link expires in 24 hours.</p>`,
+          }).catch((err) => {
+            console.error("[Local Auth] Failed to send verification email:", err);
+          });
+        } else {
+          console.log(`[Local Auth] Email verification token for ${normalizedEmail}: ${verificationToken}`);
+          console.log(`[Local Auth] Verify URL: ${verifyUrl}`);
+        }
+      } catch (tokenErr) {
+        console.error("[Local Auth] Failed to create/send verification token after signup:", tokenErr);
       }
 
       return res.status(201).json({
