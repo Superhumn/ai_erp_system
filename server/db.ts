@@ -515,7 +515,12 @@ export async function getEntityAndDescendantCompanyIds(companyId: number): Promi
         `Underlying error: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
-  const rows: any[] = Array.isArray(result) ? (result[0] ?? []) : (result?.rows ?? result ?? []);
+  // db.execute may return `[rows, fields]` (mysql2) or a plain `rows[]` depending on driver/version.
+  // Disambiguate: if result[0] is itself an array it's the [rows, fields] tuple; otherwise `result`
+  // already IS the rows array (result[0] would be a row object).
+  const rows: any[] = Array.isArray(result)
+    ? (Array.isArray(result[0]) ? result[0] : result)
+    : (result?.rows ?? []);
   return rows
     .map((r: any) => Number(r.entity_id))
     .filter((n: number) => Number.isFinite(n));
