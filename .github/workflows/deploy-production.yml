@@ -55,16 +55,28 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
-
       - name: Deploy to Railway production
+        # Preflight the Railway config before invoking the CLI so a
+        # misconfiguration surfaces as a clear, actionable message instead of
+        # the CLI's cryptic "error decoding response body / expected ident".
+        # NB: DB migrations already ran in the step above, so a deploy that
+        # fails here leaves the DB migrated but the app un-updated — fix the
+        # config and re-run rather than rolling back migrations.
         run: |
-          if [ -n "$RAILWAY_SERVICE_ID" ]; then
-            railway up --service "$RAILWAY_SERVICE_ID"
-          else
-            railway up
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "::error title=Railway token missing::RAILWAY_TOKEN secret is not set for the 'production' environment. Add it in GitHub → Settings → Secrets and variables → Actions → Secrets (generate a project/service token in the Railway dashboard)."
+            exit 1
           fi
+          if [ -z "$RAILWAY_SERVICE_ID" ]; then
+            echo "::error title=Railway service id missing::RAILWAY_SERVICE_ID variable is not set, so 'railway up' cannot target a service. Add it in GitHub → Settings → Secrets and variables → Actions → Variables (copy the service ID from the Railway dashboard)."
+            exit 1
+          fi
+          # Pin the CLI so a surprise upstream release can't change deploy behavior.
+          npm install -g @railway/cli@^4 || {
+            echo "::error title=Railway CLI install failed::Could not install @railway/cli."
+            exit 1
+          }
+          railway up --service "$RAILWAY_SERVICE_ID"
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
