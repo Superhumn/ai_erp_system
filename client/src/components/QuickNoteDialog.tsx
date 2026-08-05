@@ -24,10 +24,10 @@ interface QuickNoteDialogProps {
 }
 
 const KIND_META: Record<NoteParsedItem["kind"], { label: string; icon: typeof ListTodo; tone: string }> = {
-  task: { label: "Task", icon: ListTodo, tone: "bg-blue-500/15 text-blue-600 border-blue-500/30" },
-  crm_contact: { label: "CRM Contact", icon: Users, tone: "bg-purple-500/15 text-purple-600 border-purple-500/30" },
-  reminder: { label: "Reminder", icon: Bell, tone: "bg-amber-500/15 text-amber-600 border-amber-500/30" },
-  idea: { label: "Idea", icon: Lightbulb, tone: "bg-emerald-500/15 text-emerald-600 border-emerald-500/30" },
+  task: { label: "Task", icon: ListTodo, tone: "bg-primary/10 text-primary border-primary/20" },
+  crm_contact: { label: "CRM Contact", icon: Users, tone: "bg-muted text-foreground border-border" },
+  reminder: { label: "Reminder", icon: Bell, tone: "bg-muted text-muted-foreground border-border" },
+  idea: { label: "Idea", icon: Lightbulb, tone: "bg-muted text-foreground border-border" },
 };
 
 export function QuickNoteDialog({ open, onOpenChange }: QuickNoteDialogProps) {
@@ -155,10 +155,10 @@ export function QuickNoteDialog({ open, onOpenChange }: QuickNoteDialogProps) {
         {stage === "review" && (
           <div className="space-y-3">
             {parseFailed && (
-              <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
-                <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+              <div className="flex items-start gap-2 rounded-md border border-border bg-muted p-3 text-sm">
+                <AlertCircle className="h-4 w-4 text-foreground mt-0.5 shrink-0" />
                 <div className="flex-1">
-                  <div className="font-medium text-amber-900 dark:text-amber-200">Could not parse note</div>
+                  <div className="font-semibold text-foreground">Could not parse note</div>
                   <div className="text-xs text-muted-foreground">
                     The note was saved. You can still re-try parsing or open the Notes page.
                   </div>
