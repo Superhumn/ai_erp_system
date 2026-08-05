@@ -79,4 +79,9 @@ fi
 echo "[install] Applying database schema (idempotent)..."
 node scripts/cloud-db-setup.mjs
 
+# Cleanly stop MySQL so the datadir baked into the environment build snapshot is
+# consistent. The per-boot start script brings it back up (see cloud-agent-start.sh).
+echo "[install] Stopping MySQL for a clean snapshot..."
+sudo service mysql stop >/dev/null 2>&1 || true
+
 echo "[install] Done."
