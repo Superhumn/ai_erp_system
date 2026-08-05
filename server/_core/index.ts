@@ -113,6 +113,65 @@ async function verifyDatabaseReadiness() {
     );
   }
 }
+
+/**
+ * Auth-critical schema must exist before we accept login/signup traffic.
+ * Runs ahead of the heavier ensureTables() sweep, uses INSTANT where possible
+ * so a near-full disk (which previously blocked CREATE TABLE regions) does not
+ * leave users.emailVerified / companyId / regionScope missing.
+ */
+async function ensureAuthSchema() {
+  const database = await db.getDb();
+  if (!database) return;
+
+  const exec = async (statement: string, label: string) => {
+    try {
+      await database.execute(sql.raw(statement));
+      console.log(`[Startup] ensureAuthSchema ok: ${label}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Duplicate column / table already exists is fine
+      if (/Duplicate column|already exists|ER_DUP_FIELDNAME|ER_TABLE_EXISTS/i.test(message)) {
+        return;
+      }
+      console.warn(`[Startup] ensureAuthSchema failed (${label}):`, message);
+    }
+  };
+
+  // Prefer INSTANT DDL (MySQL 8+) so we don't need free tablespace for a copy.
+  // If INSTANT is rejected, retry without ALGORITHM.
+  const addColumn = async (table: string, definition: string, label: string) => {
+    const instant = `ALTER TABLE ${table} ADD COLUMN ${definition}, ALGORITHM=INSTANT`;
+    const plain = `ALTER TABLE ${table} ADD COLUMN ${definition}`;
+    try {
+      await database.execute(sql.raw(instant));
+      console.log(`[Startup] ensureAuthSchema ok: ${label} (INSTANT)`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (/Duplicate column|ER_DUP_FIELDNAME/i.test(message)) return;
+      // INSTANT unsupported or column issue — try plain ALTER
+      await exec(plain, label);
+    }
+  };
+
+  await addColumn("users", "emailVerified BOOLEAN NOT NULL DEFAULT false", "users.emailVerified");
+  await addColumn("users", "companyId INT", "users.companyId");
+  await addColumn(
+    "users",
+    "regionScope ENUM('entity','region','global') NOT NULL DEFAULT 'global'",
+    "users.regionScope"
+  );
+  await exec(
+    `CREATE TABLE IF NOT EXISTS authTokens (
+      token VARCHAR(128) PRIMARY KEY,
+      type ENUM('email_verification','password_reset') NOT NULL,
+      email VARCHAR(320) NOT NULL,
+      expiresAt TIMESTAMP NOT NULL,
+      createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
+    "authTokens"
+  );
+}
 import { ENV, validateEmailConfig, validateCriticalConfig, validateRequiredSecrets } from "./env";
 import { registerTwilioWebhooks } from "./twilioWebhooks";
 import * as sendgridProvider from "./sendgridProvider";
@@ -528,6 +587,10 @@ async function ensureTables() {
     ];
     // Add missing columns to existing tables
     const alterColumns = [
+      // Auth-critical first (same as ensureAuthSchema) — keep in sync.
+      "ALTER TABLE users ADD COLUMN emailVerified BOOLEAN NOT NULL DEFAULT false, ALGORITHM=INSTANT",
+      "ALTER TABLE users ADD COLUMN companyId INT, ALGORITHM=INSTANT",
+      "ALTER TABLE users ADD COLUMN regionScope ENUM('entity','region','global') NOT NULL DEFAULT 'global', ALGORITHM=INSTANT",
       "ALTER TABLE kpi_goals ADD COLUMN status ENUM('not_started','on_track','at_risk','behind','exceeded') DEFAULT 'not_started'",
       "ALTER TABLE kpi_goals ADD COLUMN notes TEXT",
       "ALTER TABLE kpi_goals ADD COLUMN companyId INT",
@@ -535,10 +598,6 @@ async function ensureTables() {
       "ALTER TABLE fundraising_campaigns ADD COLUMN dataRoomId INT",
       "ALTER TABLE fundraising_campaigns ADD COLUMN createdBy INT",
       "ALTER TABLE fundraising_campaigns ADD COLUMN companyId INT",
-      // Signup SELECTs every users column — missing any of these 500s registration.
-      "ALTER TABLE users ADD COLUMN emailVerified BOOLEAN NOT NULL DEFAULT false",
-      "ALTER TABLE users ADD COLUMN companyId INT",
-      "ALTER TABLE users ADD COLUMN regionScope ENUM('entity','region','global') NOT NULL DEFAULT 'global'",
       "ALTER TABLE companies ADD COLUMN regionId INT",
       "ALTER TABLE companies ADD COLUMN functionalCurrency VARCHAR(3) NOT NULL DEFAULT 'USD'",
       "ALTER TABLE companies ADD COLUMN locale VARCHAR(10) NOT NULL DEFAULT 'en-US'",
@@ -658,6 +717,9 @@ async function startServer() {
   await autoMergeCrmContacts();
 
   await runMigrationsAtStartup();
+  // Auth columns/tables before readiness + listen — login/signup SELECTs every
+  // users column; missing emailVerified/companyId/regionScope 500s auth.
+  await ensureAuthSchema();
   await verifyDatabaseReadiness();
 
   // Ensure critical tables exist + cleanup placeholders

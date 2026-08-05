@@ -15,67 +15,18 @@
 -- Idempotent: each ADD / CREATE is guarded via INFORMATION_SCHEMA so re-runs
 -- are safe. Foreign keys are intentionally omitted so a partial deploy
 -- cannot fail the migration if a referenced table is mid-backfill.
+--
+-- Ordering matters: auth-critical users columns + authTokens run FIRST.
+-- Creating `regions` previously ran first and failed with ER_DISK_FULL on
+-- Railway, aborting the procedure before auth columns were added — which
+-- left login/signup broken and blocked deploy. Non-critical CREATE/ALTER
+-- steps use CONTINUE HANDLER so disk pressure cannot block auth recovery.
 
 DROP PROCEDURE IF EXISTS `_ensure_auth_and_user_region_schema`;
 --> statement-breakpoint
 CREATE PROCEDURE `_ensure_auth_and_user_region_schema`()
 BEGIN
-  -- regions (multi-region foundation)
-  IF NOT EXISTS (
-    SELECT 1 FROM INFORMATION_SCHEMA.TABLES
-    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'regions'
-  ) THEN
-    CREATE TABLE `regions` (
-      `id` int AUTO_INCREMENT NOT NULL,
-      `code` varchar(16) NOT NULL,
-      `name` varchar(128) NOT NULL,
-      `baseCurrency` varchar(3) NOT NULL DEFAULT 'USD',
-      `status` enum('active','inactive') NOT NULL DEFAULT 'active',
-      `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      `updatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      CONSTRAINT `regions_id` PRIMARY KEY(`id`),
-      CONSTRAINT `regions_code_unique` UNIQUE(`code`)
-    );
-  END IF;
-
-  -- companies multi-region columns
-  IF EXISTS (
-    SELECT 1 FROM INFORMATION_SCHEMA.TABLES
-    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies'
-  ) THEN
-    IF NOT EXISTS (
-      SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'regionId'
-    ) THEN
-      ALTER TABLE `companies` ADD COLUMN `regionId` int;
-    END IF;
-    IF NOT EXISTS (
-      SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'functionalCurrency'
-    ) THEN
-      ALTER TABLE `companies` ADD COLUMN `functionalCurrency` varchar(3) NOT NULL DEFAULT 'USD';
-    END IF;
-    IF NOT EXISTS (
-      SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'locale'
-    ) THEN
-      ALTER TABLE `companies` ADD COLUMN `locale` varchar(10) NOT NULL DEFAULT 'en-US';
-    END IF;
-    IF NOT EXISTS (
-      SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'timezone'
-    ) THEN
-      ALTER TABLE `companies` ADD COLUMN `timezone` varchar(64) NOT NULL DEFAULT 'America/New_York';
-    END IF;
-    IF NOT EXISTS (
-      SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'taxRegime'
-    ) THEN
-      ALTER TABLE `companies` ADD COLUMN `taxRegime` enum('vat','gst','sales_tax','none') NOT NULL DEFAULT 'none';
-    END IF;
-  END IF;
-
-  -- users columns used by auth + multi-region scoping
+  -- 1) users columns used by auth + multi-region scoping (CRITICAL for login/signup)
   IF EXISTS (
     SELECT 1 FROM INFORMATION_SCHEMA.TABLES
     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users'
@@ -100,7 +51,7 @@ BEGIN
     END IF;
   END IF;
 
-  -- authTokens (email verification + password reset)
+  -- 2) authTokens (email verification + password reset) — CRITICAL
   IF NOT EXISTS (
     SELECT 1 FROM INFORMATION_SCHEMA.TABLES
     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'authTokens'
@@ -114,6 +65,67 @@ BEGIN
       CONSTRAINT `authTokens_token` PRIMARY KEY(`token`)
     );
   END IF;
+
+  -- 3) companies multi-region columns (non-critical for auth — never fail the migration)
+  IF EXISTS (
+    SELECT 1 FROM INFORMATION_SCHEMA.TABLES
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies'
+  ) THEN
+    BEGIN
+      DECLARE CONTINUE HANDLER FOR SQLEXCEPTION BEGIN END;
+      IF NOT EXISTS (
+        SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'regionId'
+      ) THEN
+        ALTER TABLE `companies` ADD COLUMN `regionId` int;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'functionalCurrency'
+      ) THEN
+        ALTER TABLE `companies` ADD COLUMN `functionalCurrency` varchar(3) NOT NULL DEFAULT 'USD';
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'locale'
+      ) THEN
+        ALTER TABLE `companies` ADD COLUMN `locale` varchar(10) NOT NULL DEFAULT 'en-US';
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'timezone'
+      ) THEN
+        ALTER TABLE `companies` ADD COLUMN `timezone` varchar(64) NOT NULL DEFAULT 'America/New_York';
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'companies' AND COLUMN_NAME = 'taxRegime'
+      ) THEN
+        ALTER TABLE `companies` ADD COLUMN `taxRegime` enum('vat','gst','sales_tax','none') NOT NULL DEFAULT 'none';
+      END IF;
+    END;
+  END IF;
+
+  -- 4) regions table last — optional for auth; disk-full must not abort
+  BEGIN
+    DECLARE CONTINUE HANDLER FOR SQLEXCEPTION BEGIN END;
+    IF NOT EXISTS (
+      SELECT 1 FROM INFORMATION_SCHEMA.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'regions'
+    ) THEN
+      CREATE TABLE `regions` (
+        `id` int AUTO_INCREMENT NOT NULL,
+        `code` varchar(16) NOT NULL,
+        `name` varchar(128) NOT NULL,
+        `baseCurrency` varchar(3) NOT NULL DEFAULT 'USD',
+        `status` enum('active','inactive') NOT NULL DEFAULT 'active',
+        `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        `updatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        CONSTRAINT `regions_id` PRIMARY KEY(`id`),
+        CONSTRAINT `regions_code_unique` UNIQUE(`code`)
+      );
+    END IF;
+  END;
 END;
 --> statement-breakpoint
 CALL `_ensure_auth_and_user_region_schema`();

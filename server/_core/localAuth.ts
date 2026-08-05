@@ -449,7 +449,12 @@ export function registerLocalAuthRoutes(app: Express) {
       });
     } catch (error) {
       console.error("[Local Auth] Login failed", error);
-      return res.status(500).json({ error: "Login failed" });
+      const err = error as { message?: string; code?: string; cause?: { message?: string } };
+      return res.status(500).json({
+        error: "Login failed",
+        reason: err?.cause?.message || err?.message,
+        code: err?.code,
+      });
     }
   });
 

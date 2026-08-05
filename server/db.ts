@@ -284,6 +284,50 @@ export async function upsertUser(user: InsertUser): Promise<void> {
   }
 }
 
+/** True when MySQL rejected a query for a missing column (schema drift). */
+function isUnknownColumnError(error: unknown): boolean {
+  const err = error as {
+    code?: string;
+    errno?: number;
+    message?: string;
+    cause?: { code?: string; errno?: number; message?: string };
+  };
+  const code = err?.code || err?.cause?.code;
+  const errno = err?.errno ?? err?.cause?.errno;
+  const message = `${err?.message || ""} ${err?.cause?.message || ""}`;
+  return code === "ER_BAD_FIELD_ERROR" || errno === 1054 || /Unknown column/i.test(message);
+}
+
+/**
+ * Core users columns that existed before emailVerified / multi-region.
+ * Used when the full Drizzle select fails due to missing columns so auth
+ * can keep working until ensureAuthSchema / migration 0056 catches up.
+ */
+function padUserRow(row: Record<string, unknown>) {
+  return {
+    ...row,
+    companyId: (row.companyId as number | null | undefined) ?? null,
+    regionScope: (row.regionScope as "entity" | "region" | "global" | undefined) ?? "global",
+    emailVerified: Boolean(row.emailVerified ?? false),
+  } as typeof users.$inferSelect;
+}
+
+function rowsFromExecute(result: unknown): Record<string, unknown>[] {
+  if (Array.isArray(result)) {
+    const first = result[0];
+    if (Array.isArray(first)) return first as Record<string, unknown>[];
+    if (first && typeof first === "object" && "id" in (first as object)) {
+      return result as Record<string, unknown>[];
+    }
+  }
+  const rows = (result as { rows?: Record<string, unknown>[] })?.rows;
+  return Array.isArray(rows) ? rows : [];
+}
+
+const USER_CORE_SELECT_SQL = `id, openId, name, email, loginMethod, role, departmentId,
+  avatarUrl, phone, linkedVendorId, linkedWarehouseId, isActive,
+  invitedBy, invitedAt, createdAt, updatedAt, lastSignedIn`;
+
 export async function getUserByOpenId(openId: string) {
   const db = await getDb();
   if (!db) {
@@ -291,8 +335,18 @@ export async function getUserByOpenId(openId: string) {
     return undefined;
   }
 
-  const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
+  try {
+    const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
+    return result.length > 0 ? result[0] : undefined;
+  } catch (error) {
+    if (!isUnknownColumnError(error)) throw error;
+    console.warn("[Database] getUserByOpenId falling back to core columns (schema drift)");
+    const result = await db.execute(
+      sql`SELECT ${sql.raw(USER_CORE_SELECT_SQL)} FROM users WHERE openId = ${openId} LIMIT 1`
+    );
+    const rows = rowsFromExecute(result);
+    return rows[0] ? padUserRow(rows[0]) : undefined;
+  }
 }
 
 export async function getUserByEmail(email: string) {
@@ -301,14 +355,33 @@ export async function getUserByEmail(email: string) {
     console.warn("[Database] Cannot get user by email: database not available");
     return undefined;
   }
-  const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
+  try {
+    const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
+    return result.length > 0 ? result[0] : undefined;
+  } catch (error) {
+    if (!isUnknownColumnError(error)) throw error;
+    console.warn("[Database] getUserByEmail falling back to core columns (schema drift)");
+    const result = await db.execute(
+      sql`SELECT ${sql.raw(USER_CORE_SELECT_SQL)} FROM users WHERE email = ${email} LIMIT 1`
+    );
+    const rows = rowsFromExecute(result);
+    return rows[0] ? padUserRow(rows[0]) : undefined;
+  }
 }
 
 export async function getAllUsers() {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(users).orderBy(desc(users.createdAt));
+  try {
+    return await db.select().from(users).orderBy(desc(users.createdAt));
+  } catch (error) {
+    if (!isUnknownColumnError(error)) throw error;
+    console.warn("[Database] getAllUsers falling back to core columns (schema drift)");
+    const result = await db.execute(
+      sql`SELECT ${sql.raw(USER_CORE_SELECT_SQL)} FROM users ORDER BY createdAt DESC`
+    );
+    return rowsFromExecute(result).map(padUserRow);
+  }
 }
 
 /**
