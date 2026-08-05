@@ -24,7 +24,7 @@ export default function ManufacturingAI() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold flex items-center gap-2">
-          <Brain className="h-8 w-8 text-orange-600" />
+          <Brain className="h-8 w-8 text-primary" />
           Manufacturing AI
         </h1>
         <p className="text-muted-foreground mt-1">
@@ -77,9 +77,9 @@ export default function ManufacturingAI() {
                         <TableRow key={i}>
                           <TableCell className="font-medium">{p.productName}</TableCell>
                           <TableCell>{p.workOrderId || "-"}</TableCell>
-                          <TableCell className="text-green-600">{p.expectedYieldPercent}%</TableCell>
+                          <TableCell className="text-foreground">{p.expectedYieldPercent}%</TableCell>
                           <TableCell>{p.predictedOutputQty}</TableCell>
-                          <TableCell className="text-orange-600">{p.wasteEstimatePercent}%</TableCell>
+                          <TableCell className="text-foreground font-semibold">{p.wasteEstimatePercent}%</TableCell>
                           <TableCell>{p.confidence}%</TableCell>
                         </TableRow>
                       ))}
@@ -123,7 +123,7 @@ export default function ManufacturingAI() {
                         <TableRow key={i}>
                           <TableCell className="font-medium">{f.productName}</TableCell>
                           <TableCell>{f.qualityScore}/100</TableCell>
-                          <TableCell className={f.defectRiskPercent > 10 ? "text-red-600" : ""}>{f.defectRiskPercent}%</TableCell>
+                          <TableCell className={f.defectRiskPercent > 10 ? "text-foreground font-semibold" : ""}>{f.defectRiskPercent}%</TableCell>
                           <TableCell className="max-w-xs text-sm">{f.criticalControlPoints.join(", ")}</TableCell>
                         </TableRow>
                       ))}
@@ -234,7 +234,7 @@ export default function ManufacturingAI() {
                           <TableCell><Badge variant={p.riskLevel === "critical" || p.riskLevel === "high" ? "destructive" : "outline"}>{p.riskLevel}</Badge></TableCell>
                           <TableCell>{p.estimatedTimeToFailure}</TableCell>
                           <TableCell className="max-w-xs text-sm">{p.recommendedAction}</TableCell>
-                          <TableCell className="text-sm text-orange-600">{p.costOfInaction}</TableCell>
+                          <TableCell className="text-sm text-foreground font-semibold">{p.costOfInaction}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>

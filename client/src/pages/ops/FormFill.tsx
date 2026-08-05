@@ -37,7 +37,7 @@ export default function FormFill() {
           </CardContent></Card>
         ) : done ? (
           <Card><CardContent className="py-16 text-center">
-            <CheckCircle2 className="mx-auto mb-3 h-10 w-10 text-green-500" />
+            <CheckCircle2 className="mx-auto mb-3 h-10 w-10 text-primary" />
             <p className="text-lg font-medium">{done}</p>
           </CardContent></Card>
         ) : (

@@ -219,10 +219,10 @@ export default function CustomsDetail() {
 
       {/* AI Summary */}
       {aiSummary && (
-        <Card className="border-blue-200 bg-blue-50/50">
+        <Card className="border-primary/20 bg-primary/10">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-blue-600" />
+              <Sparkles className="h-5 w-5 text-primary" />
               AI Status Summary
             </CardTitle>
           </CardHeader>
@@ -343,7 +343,7 @@ export default function CustomsDetail() {
             {clearance.actualClearanceDate && (
               <div className="text-center">
                 <p className="text-sm text-muted-foreground">Cleared</p>
-                <p className="font-medium text-green-600">{new Date(clearance.actualClearanceDate).toLocaleDateString()}</p>
+                <p className="font-medium text-foreground">{new Date(clearance.actualClearanceDate).toLocaleDateString()}</p>
               </div>
             )}
           </div>

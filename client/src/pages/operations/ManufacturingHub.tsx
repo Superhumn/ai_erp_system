@@ -15,11 +15,11 @@ import {
 
 // Status options
 const workOrderStatuses = [
-  { value: "pending", label: "Pending", color: "bg-amber-500/8 text-amber-600 dark:text-amber-400" },
-  { value: "scheduled", label: "Scheduled", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
-  { value: "in_progress", label: "In Progress", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
-  { value: "completed", label: "Completed", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
-  { value: "cancelled", label: "Cancelled", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
+  { value: "pending", label: "Pending", color: "bg-muted text-muted-foreground" },
+  { value: "scheduled", label: "Scheduled", color: "bg-primary/10 text-primary" },
+  { value: "in_progress", label: "In Progress", color: "bg-primary/10 text-primary" },
+  { value: "completed", label: "Completed", color: "bg-muted text-muted-foreground" },
+  { value: "cancelled", label: "Cancelled", color: "bg-[oklch(0.30_0.02_262)] text-white" },
 ];
 
 // Side-sheet body for a work order (pure presentation)
@@ -228,9 +228,9 @@ export default function ManufacturingHub() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">In Progress</p>
-                  <p className="text-xl font-semibold tracking-[-0.02em] text-blue-600">{stats.inProgress}</p>
+                  <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums text-primary">{stats.inProgress}</p>
                 </div>
-                <Play className="h-8 w-8 text-blue-500" />
+                <Play className="h-8 w-8 text-muted-foreground" />
               </div>
             </CardContent>
           </Card>
@@ -239,9 +239,9 @@ export default function ManufacturingHub() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">Pending / Scheduled</p>
-                  <p className="text-xl font-semibold tracking-[-0.02em] text-amber-600">{stats.pending}</p>
+                  <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums text-foreground">{stats.pending}</p>
                 </div>
-                <Clock className="h-8 w-8 text-amber-500" />
+                <Clock className="h-8 w-8 text-muted-foreground" />
               </div>
             </CardContent>
           </Card>
@@ -250,9 +250,9 @@ export default function ManufacturingHub() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">Completed This Month</p>
-                  <p className="text-xl font-semibold tracking-[-0.02em] text-emerald-600">{stats.completedThisMonth}</p>
+                  <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums text-foreground">{stats.completedThisMonth}</p>
                 </div>
-                <CheckCircle className="h-8 w-8 text-emerald-500" />
+                <CheckCircle className="h-8 w-8 text-muted-foreground" />
               </div>
             </CardContent>
           </Card>

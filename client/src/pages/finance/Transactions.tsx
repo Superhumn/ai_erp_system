@@ -24,19 +24,19 @@ function isCOGSTransaction(tx: any): boolean {
 }
 
 const typeOptions = [
-  { value: "journal", label: "Journal", color: "bg-blue-500/10 text-blue-600" },
-  { value: "invoice", label: "Invoice", color: "bg-green-500/10 text-green-600" },
-  { value: "payment", label: "Payment", color: "bg-purple-500/10 text-purple-600" },
-  { value: "expense", label: "Expense", color: "bg-red-500/10 text-red-600" },
-  { value: "transfer", label: "Transfer", color: "bg-amber-500/10 text-amber-600" },
-  { value: "adjustment", label: "Adjustment", color: "bg-gray-500/10 text-gray-600" },
+  { value: "journal", label: "Journal", color: "bg-muted text-muted-foreground" },
+  { value: "invoice", label: "Invoice", color: "bg-primary/10 text-primary" },
+  { value: "payment", label: "Payment", color: "bg-muted text-muted-foreground" },
+  { value: "expense", label: "Expense", color: "bg-muted text-muted-foreground" },
+  { value: "transfer", label: "Transfer", color: "bg-muted text-muted-foreground" },
+  { value: "adjustment", label: "Adjustment", color: "bg-muted text-muted-foreground" },
 ];
 
 const statusOptions = [
-  { value: "draft", label: "Draft", color: "bg-gray-500/8 text-gray-600" },
-  { value: "posted", label: "Posted", color: "bg-emerald-500/8 text-emerald-600" },
-  { value: "void", label: "Void", color: "bg-red-500/8 text-red-600" },
-  { value: "reconciled", label: "Reconciled", color: "bg-blue-500/8 text-blue-600" },
+  { value: "draft", label: "Draft", color: "bg-muted text-muted-foreground" },
+  { value: "posted", label: "Posted", color: "bg-muted text-muted-foreground" },
+  { value: "void", label: "Void", color: "bg-[oklch(0.30_0.02_262)] text-white" },
+  { value: "reconciled", label: "Reconciled", color: "bg-primary/10 text-primary" },
 ];
 
 function TransactionSummaryBody({ tx }: { tx: any }) {

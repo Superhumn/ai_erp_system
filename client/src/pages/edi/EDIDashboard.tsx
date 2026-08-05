@@ -36,15 +36,15 @@ const txnSetLabels: Record<string, string> = {
 };
 
 const statusColors: Record<string, string> = {
-  received: "bg-blue-500/8 text-blue-600 dark:text-blue-400",
-  parsing: "bg-amber-500/8 text-amber-600 dark:text-amber-400",
-  parsed: "bg-indigo-500/8 text-indigo-600 dark:text-indigo-400",
-  validated: "bg-violet-500/8 text-violet-600 dark:text-violet-400",
-  processing: "bg-orange-500/8 text-orange-600 dark:text-orange-400",
-  processed: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400",
-  error: "bg-red-500/8 text-red-600 dark:text-red-400",
-  rejected: "bg-red-500/8 text-red-600 dark:text-red-400",
-  acknowledged: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400",
+  received: "bg-primary/10 text-primary",
+  parsing: "bg-muted text-foreground",
+  parsed: "bg-muted text-foreground",
+  validated: "bg-muted text-foreground",
+  processing: "bg-muted text-foreground",
+  processed: "bg-muted text-muted-foreground",
+  error: "bg-[oklch(0.30_0.02_262)] text-white",
+  rejected: "bg-[oklch(0.30_0.02_262)] text-white",
+  acknowledged: "bg-muted text-muted-foreground",
 };
 
 export default function EDIDashboard() {
@@ -92,7 +92,7 @@ export default function EDIDashboard() {
           <div className="h-4 w-px bg-border" />
           <div><span className="text-muted-foreground">Partners</span> <span className="font-bold">{stats?.totalPartners || 0}</span></div>
           <div className="h-4 w-px bg-border" />
-          <div><span className="text-muted-foreground">Active</span> <span className="font-bold text-green-600">{stats?.activePartners || 0}</span></div>
+          <div><span className="text-muted-foreground">Active</span> <span className="font-bold text-foreground">{stats?.activePartners || 0}</span></div>
           <div className="h-4 w-px bg-border" />
           <div><span className="text-muted-foreground">Transactions</span> <span className="font-bold">{stats?.totalTransactions || 0}</span></div>
           <div className="h-4 w-px bg-border" />
@@ -100,7 +100,7 @@ export default function EDIDashboard() {
           <div className="h-4 w-px bg-border" />
           <div><span className="text-muted-foreground">Pending</span> <span className="font-bold">{(stats as any)?.pendingAcks || 0}</span></div>
           <div className="h-4 w-px bg-border" />
-          <div><span className="text-muted-foreground">Errors</span> <span className="font-bold text-red-600">{(stats as any)?.errorTransactions || 0}</span></div>
+          <div><span className="text-muted-foreground">Errors</span> <span className="font-bold text-foreground">{(stats as any)?.errorTransactions || 0}</span></div>
         </div>
         <div className="flex gap-2">
           <Link href="/edi/insights">
@@ -135,7 +135,7 @@ export default function EDIDashboard() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="border rounded-lg p-4 space-y-2">
                 <div className="flex items-center gap-2">
-                  <ShoppingCart className="h-5 w-5 text-blue-600" />
+                  <ShoppingCart className="h-5 w-5 text-muted-foreground" />
                   <h3 className="font-semibold">850 - Purchase Order</h3>
                 </div>
                 <p className="text-sm text-muted-foreground">Inbound POs from retail partners. Auto-parsed into sales orders.</p>
@@ -144,7 +144,7 @@ export default function EDIDashboard() {
 
               <div className="border rounded-lg p-4 space-y-2">
                 <div className="flex items-center gap-2">
-                  <CheckCircle2 className="h-5 w-5 text-green-600" />
+                  <CheckCircle2 className="h-5 w-5 text-muted-foreground" />
                   <h3 className="font-semibold">855 - PO Acknowledgment</h3>
                 </div>
                 <p className="text-sm text-muted-foreground">Confirm, accept, or reject PO line items to the retailer.</p>
@@ -153,7 +153,7 @@ export default function EDIDashboard() {
 
               <div className="border rounded-lg p-4 space-y-2">
                 <div className="flex items-center gap-2">
-                  <FileOutput className="h-5 w-5 text-purple-600" />
+                  <FileOutput className="h-5 w-5 text-muted-foreground" />
                   <h3 className="font-semibold">810 - Invoice</h3>
                 </div>
                 <p className="text-sm text-muted-foreground">Send electronic invoices matching shipped quantities.</p>
@@ -162,7 +162,7 @@ export default function EDIDashboard() {
 
               <div className="border rounded-lg p-4 space-y-2">
                 <div className="flex items-center gap-2">
-                  <Truck className="h-5 w-5 text-orange-600" />
+                  <Truck className="h-5 w-5 text-muted-foreground" />
                   <h3 className="font-semibold">856 - Advance Ship Notice</h3>
                 </div>
                 <p className="text-sm text-muted-foreground">Notify retailer of incoming shipment details and contents.</p>
@@ -195,10 +195,10 @@ export default function EDIDashboard() {
                   <Badge
                     variant="outline"
                     className={
-                      partner.status === "active" ? "bg-green-50 text-green-700 border-green-200" :
-                      partner.status === "testing" ? "bg-yellow-50 text-yellow-700 border-yellow-200" :
-                      partner.status === "onboarding" ? "bg-blue-50 text-blue-700 border-blue-200" :
-                      "bg-gray-50 text-gray-700 border-gray-200"
+                      partner.status === "active" ? "bg-primary/10 text-primary border-primary/20" :
+                      partner.status === "testing" ? "bg-muted text-foreground" :
+                      partner.status === "onboarding" ? "bg-muted text-foreground" :
+                      "bg-muted text-muted-foreground"
                     }
                   >
                     {partner.status}
@@ -245,7 +245,7 @@ export default function EDIDashboard() {
               </div>
               <div>
                 <span className="text-muted-foreground">Auto-997:</span>
-                <Badge variant="outline" className={(ediSettings as any).autoSend997 ? "bg-green-50 text-green-700 ml-2" : "bg-gray-50 text-gray-700 ml-2"}>
+                <Badge variant="outline" className={(ediSettings as any).autoSend997 ? "bg-primary/10 text-primary ml-2" : "bg-muted text-muted-foreground ml-2"}>
                   {(ediSettings as any).autoSend997 ? "Enabled" : "Disabled"}
                 </Badge>
               </div>
@@ -349,7 +349,7 @@ export default function EDIDashboard() {
                       <td className="py-0.5 text-sm font-mono">{txn.purchaseOrderNumber || "-"}</td>
                       <td className="py-0.5 text-sm font-mono text-muted-foreground">{txn.interchangeControlNumber || "-"}</td>
                       <td className="py-0.5">
-                        <Badge className={statusColors[txn.status] || "bg-gray-500/8 text-gray-600 dark:text-gray-400"} variant="outline">
+                        <Badge className={statusColors[txn.status] || "bg-muted text-muted-foreground"} variant="outline">
                           {txn.status}
                         </Badge>
                       </td>

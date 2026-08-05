@@ -27,19 +27,19 @@ import { Link } from "wouter";
 import { formatDistanceToNow } from "date-fns";
 
 const notificationIcons: Record<string, React.ReactNode> = {
-  shipping_update: <Truck className="h-4 w-4 text-blue-500" />,
-  inventory_low: <AlertTriangle className="h-4 w-4 text-amber-500" />,
-  inventory_update: <Box className="h-4 w-4 text-green-500" />,
-  po_received: <Package className="h-4 w-4 text-emerald-500" />,
-  po_approved: <ClipboardList className="h-4 w-4 text-indigo-500" />,
-  work_order_completed: <CheckCheck className="h-4 w-4 text-green-500" />,
-  system: <Settings className="h-4 w-4 text-gray-500" />,
+  shipping_update: <Truck className="h-4 w-4 text-muted-foreground" />,
+  inventory_low: <AlertTriangle className="h-4 w-4 text-foreground" />,
+  inventory_update: <Box className="h-4 w-4 text-muted-foreground" />,
+  po_received: <Package className="h-4 w-4 text-muted-foreground" />,
+  po_approved: <ClipboardList className="h-4 w-4 text-muted-foreground" />,
+  work_order_completed: <CheckCheck className="h-4 w-4 text-muted-foreground" />,
+  system: <Settings className="h-4 w-4 text-muted-foreground" />,
 };
 
 const severityColors: Record<string, string> = {
-  info: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
-  warning: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
-  critical: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
+  info: "bg-muted text-muted-foreground",
+  warning: "bg-muted text-foreground font-semibold",
+  critical: "bg-[oklch(0.30_0.02_262)] text-white",
 };
 
 export function NotificationCenter() {

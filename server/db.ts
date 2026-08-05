@@ -492,6 +492,39 @@ export async function getCompanyIdsInRegion(regionId: number): Promise<number[]>
   return rows.map((r) => r.id);
 }
 
+// Entity tree (multi-entity STEP 1): a company PLUS all of its descendants (the input entity is
+// INCLUDED — entity_tree carries a depth=0 self-row), via the `entity_tree` view
+// (drizzle/manual/step1_entity_tree.sql). Lets a query scope to "this entity and everything under
+// it" — e.g. GLOBAL resolves to every operating company including GLOBAL itself. This
+// include-self behavior is intentional for scoping; the name says so explicitly.
+export async function getEntityAndDescendantCompanyIds(companyId: number): Promise<number[]> {
+  const db = await getDb();
+  if (!db) return [];
+  let result: any;
+  try {
+    result = await db.execute(
+      sql`SELECT DISTINCT entity_id FROM entity_tree WHERE ancestor_id = ${companyId}`,
+    );
+  } catch (err) {
+    // The entity_tree view is applied out-of-band (drizzle-kit can't manage views). Surface an
+    // actionable message instead of a raw "table 'entity_tree' doesn't exist" SQL error.
+    throw new Error(
+      `getEntityAndDescendantCompanyIds: querying the 'entity_tree' view failed — has it been ` +
+        `applied? Run drizzle/manual/step1_entity_tree.sql in this environment. ` +
+        `Underlying error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  // db.execute may return `[rows, fields]` (mysql2) or a plain `rows[]` depending on driver/version.
+  // Disambiguate: if result[0] is itself an array it's the [rows, fields] tuple; otherwise `result`
+  // already IS the rows array (result[0] would be a row object).
+  const rows: any[] = Array.isArray(result)
+    ? (Array.isArray(result[0]) ? result[0] : result)
+    : (result?.rows ?? []);
+  return rows
+    .map((r: any) => Number(r.entity_id))
+    .filter((n: number) => Number.isFinite(n));
+}
+
 export async function createCompany(data: InsertCompany) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");

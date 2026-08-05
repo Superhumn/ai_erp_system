@@ -94,12 +94,12 @@ export default function WorkOrderDetail() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "draft": return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
-      case "scheduled": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
-      case "in_progress": return "bg-amber-500/8 text-amber-600 dark:text-amber-400";
-      case "completed": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
-      case "cancelled": return "bg-red-500/8 text-red-600 dark:text-red-400";
-      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "draft": return "bg-muted text-muted-foreground";
+      case "scheduled": return "bg-muted text-muted-foreground";
+      case "in_progress": return "bg-primary/10 text-primary";
+      case "completed": return "bg-muted text-muted-foreground";
+      case "cancelled": return "bg-[oklch(0.30_0.02_262)] text-white";
+      default: return "bg-muted text-muted-foreground";
     }
   };
 
@@ -201,9 +201,9 @@ export default function WorkOrderDetail() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Quantity</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-xl font-semibold tracking-[-0.02em]">{workOrder.quantity} {workOrder.unit}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{workOrder.quantity} {workOrder.unit}</div>
               {workOrder.completedQuantity && (
-                <p className="text-sm text-green-600">Completed: {workOrder.completedQuantity}</p>
+                <p className="text-sm text-muted-foreground">Completed: {workOrder.completedQuantity}</p>
               )}
             </CardContent>
           </Card>
@@ -222,9 +222,9 @@ export default function WorkOrderDetail() {
             </CardHeader>
             <CardContent>
               <Badge className={
-                workOrder.priority === 'urgent' ? 'bg-red-500/8 text-red-600 dark:text-red-400' :
-                workOrder.priority === 'high' ? 'bg-orange-500/8 text-orange-600 dark:text-orange-400' :
-                'bg-blue-500/8 text-blue-600 dark:text-blue-400'
+                workOrder.priority === 'urgent' ? 'bg-[oklch(0.30_0.02_262)] text-white' :
+                workOrder.priority === 'high' ? 'bg-muted text-foreground font-semibold' :
+                'bg-muted text-muted-foreground'
               }>
                 {workOrder.priority}
               </Badge>
@@ -274,23 +274,23 @@ export default function WorkOrderDetail() {
                         </TableCell>
                         <TableCell>{mat.requiredQuantity} {mat.unit}</TableCell>
                         <TableCell>
-                          <span className={qty < required ? 'text-red-600 font-medium' : ''}>
+                          <span className={qty < required ? 'text-foreground font-semibold' : ''}>
                             {qty.toFixed(2)} {mat.unit}
                           </span>
                         </TableCell>
                         <TableCell>
                           {mat.status === 'consumed' ? (
-                            <Badge className="bg-emerald-500/8 text-emerald-600 dark:text-emerald-400">Consumed</Badge>
+                            <Badge className="bg-muted text-muted-foreground">Consumed</Badge>
                           ) : mat.status === 'partial' ? (
-                            <Badge className="bg-amber-500/8 text-amber-600 dark:text-amber-400">Partial</Badge>
+                            <Badge className="bg-muted text-foreground font-semibold">Partial</Badge>
                           ) : mat.status === 'shortage' ? (
-                            <Badge className="bg-red-500/8 text-red-600 dark:text-red-400">
+                            <Badge className="bg-[oklch(0.30_0.02_262)] text-white">
                               <AlertTriangle className="w-3 h-3 mr-1" /> Shortage
                             </Badge>
                           ) : available ? (
-                            <Badge className="bg-blue-500/8 text-blue-600 dark:text-blue-400">Ready</Badge>
+                            <Badge className="bg-muted text-muted-foreground">Ready</Badge>
                           ) : (
-                            <Badge className="bg-red-500/8 text-red-600 dark:text-red-400">
+                            <Badge className="bg-[oklch(0.30_0.02_262)] text-white">
                               <AlertTriangle className="w-3 h-3 mr-1" /> Low Stock
                             </Badge>
                           )}
@@ -315,7 +315,7 @@ export default function WorkOrderDetail() {
           <CardContent>
             <div className="space-y-4">
               <div className="flex items-center gap-4">
-                <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                <div className="w-3 h-3 rounded-full bg-muted-foreground"></div>
                 <div>
                   <p className="font-medium">Created</p>
                   <p className="text-sm text-muted-foreground">
@@ -325,7 +325,7 @@ export default function WorkOrderDetail() {
               </div>
               {workOrder.actualStartDate && (
                 <div className="flex items-center gap-4">
-                  <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+                  <div className="w-3 h-3 rounded-full bg-muted-foreground"></div>
                   <div>
                     <p className="font-medium">Production Started</p>
                     <p className="text-sm text-muted-foreground">
@@ -336,7 +336,7 @@ export default function WorkOrderDetail() {
               )}
               {workOrder.actualEndDate && (
                 <div className="flex items-center gap-4">
-                  <div className="w-3 h-3 rounded-full bg-blue-500"></div>
+                  <div className="w-3 h-3 rounded-full bg-primary"></div>
                   <div>
                     <p className="font-medium">Production Completed</p>
                     <p className="text-sm text-muted-foreground">

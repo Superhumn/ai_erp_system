@@ -146,7 +146,7 @@ export default function Notes() {
                 <p className="text-sm whitespace-pre-wrap line-clamp-4">{note.content}</p>
 
                 {note.parseError && (
-                  <p className="text-xs text-amber-600">Parse failed: {note.parseError}</p>
+                  <p className="text-xs text-foreground font-semibold">Parse failed: {note.parseError}</p>
                 )}
 
                 {parsed && parsed.items.length > 0 && (
@@ -158,11 +158,11 @@ export default function Notes() {
                         <Badge
                           key={item.id}
                           variant="outline"
-                          className={isApplied ? "bg-emerald-500/15 border-emerald-500/30" : ""}
+                          className={isApplied ? "bg-primary/10 border-primary/20" : ""}
                         >
                           <Icon className="h-3 w-3 mr-1" />
                           {item.kind.replace("_", " ")}
-                          {isApplied && <CheckCircle2 className="h-3 w-3 ml-1 text-emerald-600" />}
+                          {isApplied && <CheckCircle2 className="h-3 w-3 ml-1 text-primary" />}
                         </Badge>
                       );
                     })}

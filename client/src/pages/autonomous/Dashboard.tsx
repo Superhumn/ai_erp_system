@@ -59,28 +59,28 @@ export default function AutonomousDashboard() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case "completed":
-        return "bg-green-500";
+        return "bg-muted-foreground";
       case "running":
-        return "bg-blue-500";
+        return "bg-primary";
       case "failed":
-        return "bg-red-500";
+        return "bg-[oklch(0.30_0.03_262)]";
       case "awaiting_approval":
-        return "bg-amber-500";
+        return "bg-foreground";
       default:
-        return "bg-gray-500";
+        return "bg-muted-foreground";
     }
   };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "completed":
-        return <Badge className="bg-green-500/20 text-green-600">Completed</Badge>;
+        return <Badge className="bg-muted text-muted-foreground">Completed</Badge>;
       case "running":
-        return <Badge className="bg-blue-500/20 text-blue-600">Running</Badge>;
+        return <Badge className="bg-primary/10 text-primary">Running</Badge>;
       case "failed":
-        return <Badge className="bg-red-500/20 text-red-600">Failed</Badge>;
+        return <Badge className="bg-[oklch(0.30_0.02_262)] text-white">Failed</Badge>;
       case "awaiting_approval":
-        return <Badge className="bg-amber-500/20 text-amber-600">Awaiting Approval</Badge>;
+        return <Badge className="bg-muted text-foreground font-semibold">Awaiting Approval</Badge>;
       default:
         return <Badge variant="secondary">{status}</Badge>;
     }
@@ -135,7 +135,7 @@ export default function AutonomousDashboard() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Agent Status</CardTitle>
-            <div className={`h-3 w-3 rounded-full ${isRunning ? "bg-green-500 animate-pulse" : "bg-red-500"}`} />
+            <div className={`h-3 w-3 rounded-full ${isRunning ? "bg-primary animate-pulse" : "bg-[oklch(0.30_0.03_262)]"}`} />
           </CardHeader>
           <CardContent>
             <div className="text-xl font-semibold tracking-[-0.02em]">{isRunning ? "Running" : "Stopped"}</div>
@@ -151,7 +151,7 @@ export default function AutonomousDashboard() {
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{statusQuery.data?.todayMetrics?.totalRuns || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{statusQuery.data?.todayMetrics?.totalRuns || 0}</div>
             <p className="text-xs text-muted-foreground">
               {statusQuery.data?.todayMetrics?.completed || 0} completed, {statusQuery.data?.todayMetrics?.failed || 0} failed
             </p>
@@ -170,7 +170,7 @@ export default function AutonomousDashboard() {
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{statusQuery.data?.pendingApprovals || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{statusQuery.data?.pendingApprovals || 0}</div>
             <p className="text-xs text-muted-foreground">Waiting for review</p>
           </CardContent>
         </Card>
@@ -187,7 +187,7 @@ export default function AutonomousDashboard() {
             <AlertTriangle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{statusQuery.data?.openExceptions || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{statusQuery.data?.openExceptions || 0}</div>
             <p className="text-xs text-muted-foreground">Requires attention</p>
           </CardContent>
         </Card>
@@ -202,23 +202,23 @@ export default function AutonomousDashboard() {
           <CardContent>
             <div className="grid gap-4 md:grid-cols-5">
               <div className="text-center p-4 rounded-lg bg-muted/50">
-                <div className="text-[1.875rem] font-semibold tracking-[-0.025em] text-blue-600">{metricsQuery.data.totalRuns || 0}</div>
+                <div className="text-[1.875rem] font-semibold tracking-[-0.025em] text-primary font-display tabular-nums">{metricsQuery.data.totalRuns || 0}</div>
                 <div className="text-sm text-muted-foreground">Total Runs</div>
               </div>
               <div className="text-center p-4 rounded-lg bg-muted/50">
-                <div className="text-[1.875rem] font-semibold tracking-[-0.025em] text-green-600">{metricsQuery.data.successfulRuns || 0}</div>
+                <div className="text-[1.875rem] font-semibold tracking-[-0.025em] text-foreground font-display tabular-nums">{metricsQuery.data.successfulRuns || 0}</div>
                 <div className="text-sm text-muted-foreground">Successful</div>
               </div>
               <div className="text-center p-4 rounded-lg bg-muted/50">
-                <div className="text-[1.875rem] font-semibold tracking-[-0.025em] text-purple-600">{metricsQuery.data.aiDecisions || 0}</div>
+                <div className="text-[1.875rem] font-semibold tracking-[-0.025em] text-muted-foreground font-display tabular-nums">{metricsQuery.data.aiDecisions || 0}</div>
                 <div className="text-sm text-muted-foreground">AI Decisions</div>
               </div>
               <div className="text-center p-4 rounded-lg bg-muted/50">
-                <div className="text-[1.875rem] font-semibold tracking-[-0.025em] text-amber-600">{metricsQuery.data.itemsProcessed || 0}</div>
+                <div className="text-[1.875rem] font-semibold tracking-[-0.025em] text-foreground font-display tabular-nums">{metricsQuery.data.itemsProcessed || 0}</div>
                 <div className="text-sm text-muted-foreground">Items Processed</div>
               </div>
               <div className="text-center p-4 rounded-lg bg-muted/50">
-                <div className="text-[1.875rem] font-semibold tracking-[-0.025em] text-emerald-600">
+                <div className="text-[1.875rem] font-semibold tracking-[-0.025em] text-primary font-display tabular-nums">
                   ${((metricsQuery.data.totalValue || 0) / 1000).toFixed(0)}k
                 </div>
                 <div className="text-sm text-muted-foreground">Value Processed</div>
@@ -270,7 +270,7 @@ export default function AutonomousDashboard() {
                         <TableCell className="capitalize">{workflow.triggerType}</TableCell>
                         <TableCell>
                           {workflow.isActive ? (
-                            <Badge className="bg-green-500/20 text-green-600">Active</Badge>
+                            <Badge className="bg-primary/10 text-primary">Active</Badge>
                           ) : (
                             <Badge variant="secondary">Disabled</Badge>
                           )}
@@ -335,9 +335,9 @@ export default function AutonomousDashboard() {
                         {run.durationMs ? `${(run.durationMs / 1000).toFixed(1)}s` : "-"}
                       </TableCell>
                       <TableCell>
-                        <span className="text-green-600">{run.itemsSucceeded}</span>
+                        <span className="text-foreground">{run.itemsSucceeded}</span>
                         {(run.itemsFailed ?? 0) > 0 && (
-                          <span className="text-red-600 ml-1">/ {run.itemsFailed}</span>
+                          <span className="text-foreground font-semibold ml-1">/ {run.itemsFailed}</span>
                         )}
                       </TableCell>
                       <TableCell>
