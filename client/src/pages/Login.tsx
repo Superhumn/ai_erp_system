@@ -17,13 +17,16 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [inviteToken, setInviteToken] = useState<string | null>(null);
 
-  // Check for invite token in URL on mount
+  // Check for invite token / email-verified flag in URL on mount
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const invite = params.get("invite");
     if (invite) {
       setInviteToken(invite);
       setMode("register");
+    }
+    if (params.get("verified") === "true") {
+      setSuccessMessage("Email verified. You can sign in now.");
     }
   }, []);
 
@@ -69,6 +72,11 @@ export default function Login() {
 
         if (!res.ok) {
           setError(data.error || "Authentication failed");
+          // Guide users with accounts but no password toward forgot-password
+          if (data.recovery === "reset_password") {
+            setMode("forgotPassword");
+            setPassword("");
+          }
           return;
         }
 
