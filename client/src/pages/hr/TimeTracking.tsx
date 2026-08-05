@@ -49,11 +49,11 @@ const CATEGORIES = [
 
 const STATUS_COLORS: Record<string, string> = {
   draft: "bg-gray-100 text-gray-700",
-  submitted: "bg-blue-100 text-blue-700",
-  approved: "bg-green-100 text-green-700",
-  invoiced: "bg-purple-100 text-purple-700",
-  paid: "bg-emerald-100 text-emerald-700",
-  sent: "bg-indigo-100 text-indigo-700",
+  submitted: "bg-primary/10 text-primary",
+  approved: "bg-muted text-muted-foreground",
+  invoiced: "bg-muted text-foreground",
+  paid: "bg-primary/10 text-primary",
+  sent: "bg-muted text-foreground",
 };
 
 function formatCurrency(value: string | number | null | undefined) {
@@ -220,10 +220,10 @@ export default function TimeTracking() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
-              <Clock className="h-8 w-8 text-blue-500" />
+              <Clock className="h-8 w-8 text-muted-foreground" />
               <div>
                 <p className="text-sm text-muted-foreground">This Week</p>
-                <p className="text-2xl font-bold">{totalHoursThisWeek.toFixed(1)}h</p>
+                <p className="text-2xl font-bold font-display tabular-nums">{totalHoursThisWeek.toFixed(1)}h</p>
               </div>
             </div>
           </CardContent>
@@ -231,10 +231,10 @@ export default function TimeTracking() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
-              <FileText className="h-8 w-8 text-amber-500" />
+              <FileText className="h-8 w-8 text-muted-foreground" />
               <div>
                 <p className="text-sm text-muted-foreground">Draft Entries</p>
-                <p className="text-2xl font-bold">{totalDraftEntries}</p>
+                <p className="text-2xl font-bold font-display tabular-nums">{totalDraftEntries}</p>
               </div>
             </div>
           </CardContent>
@@ -242,10 +242,10 @@ export default function TimeTracking() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
-              <DollarSign className="h-8 w-8 text-green-500" />
+              <DollarSign className="h-8 w-8 text-muted-foreground" />
               <div>
                 <p className="text-sm text-muted-foreground">Pending Amount</p>
-                <p className="text-2xl font-bold">{formatCurrency(totalPendingAmount)}</p>
+                <p className="text-2xl font-bold font-display tabular-nums">{formatCurrency(totalPendingAmount)}</p>
               </div>
             </div>
           </CardContent>
@@ -382,7 +382,7 @@ export default function TimeTracking() {
                           {entry.category || "other"}
                         </Badge>
                       </TableCell>
-                      <TableCell>{entry.billable ? <CheckCircle className="h-4 w-4 text-green-500" /> : "-"}</TableCell>
+                      <TableCell>{entry.billable ? <CheckCircle className="h-4 w-4 text-muted-foreground" /> : "-"}</TableCell>
                       <TableCell>
                         <Badge className={STATUS_COLORS[entry.status] || ""}>{entry.status}</Badge>
                       </TableCell>
@@ -421,7 +421,7 @@ export default function TimeTracking() {
                                 onClick={() => deleteEntry.mutate({ id: entry.id })}
                                 disabled={deleteEntry.isPending}
                               >
-                                <Trash2 className="h-3 w-3 text-red-500" />
+                                <Trash2 className="h-3 w-3 text-destructive" />
                               </Button>
                             </>
                           )}
@@ -539,7 +539,7 @@ export default function TimeTracking() {
                           )}
                           {inv.status === "sent" && (
                             <span className="text-xs text-muted-foreground flex items-center gap-1">
-                              <CheckCircle className="h-3 w-3 text-green-500" /> Sent to {inv.sentTo}
+                              <CheckCircle className="h-3 w-3 text-muted-foreground" /> Sent to {inv.sentTo}
                             </span>
                           )}
                         </TableCell>

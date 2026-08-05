@@ -43,18 +43,18 @@ interface Ticket {
 // ── Color maps ──
 
 const priorityColors: Record<Priority, string> = {
-  low: "bg-gray-500/10 text-gray-600 dark:text-gray-400",
-  medium: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
-  high: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  urgent: "bg-red-500/10 text-red-600 dark:text-red-400",
+  low: "bg-muted text-muted-foreground",
+  medium: "bg-muted text-foreground",
+  high: "bg-muted text-foreground font-semibold",
+  urgent: "bg-[oklch(0.30_0.02_262)] text-white",
 };
 
 const statusColors: Record<Status, string> = {
-  open: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
-  in_progress: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
-  waiting: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  resolved: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  closed: "bg-gray-500/10 text-gray-600 dark:text-gray-400",
+  open: "bg-primary/10 text-primary",
+  in_progress: "bg-muted text-foreground",
+  waiting: "bg-muted text-muted-foreground",
+  resolved: "bg-muted text-muted-foreground",
+  closed: "bg-muted text-muted-foreground",
 };
 
 const channelIcons: Record<Channel, typeof Mail> = {
@@ -218,17 +218,17 @@ export default function CustomerSupport() {
       {/* KPI bar */}
       <div className="grid grid-cols-4 gap-2">
         {[
-          { label: "Open", value: openCount, icon: AlertTriangle, color: "text-blue-500" },
-          { label: "Resolved", value: resolvedCount, icon: CheckCircle2, color: "text-emerald-500" },
-          { label: "Avg Response", value: `${avgResponseMins}m`, icon: Clock, color: "text-amber-500" },
-          { label: "CSAT", value: `${csat}/5`, icon: BarChart3, color: "text-violet-500" },
+          { label: "Open", value: openCount, icon: AlertTriangle, color: "text-primary" },
+          { label: "Resolved", value: resolvedCount, icon: CheckCircle2, color: "text-muted-foreground" },
+          { label: "Avg Response", value: `${avgResponseMins}m`, icon: Clock, color: "text-muted-foreground" },
+          { label: "CSAT", value: `${csat}/5`, icon: BarChart3, color: "text-muted-foreground" },
         ].map(kpi => (
           <Card key={kpi.label} className="p-2">
             <div className="flex items-center gap-2">
               <kpi.icon className={`h-4 w-4 ${kpi.color}`} />
               <div>
                 <p className="text-xs text-muted-foreground">{kpi.label}</p>
-                <p className="text-base font-semibold">{kpi.value}</p>
+                <p className="text-base font-semibold font-display tabular-nums">{kpi.value}</p>
               </div>
             </div>
           </Card>
@@ -328,8 +328,8 @@ export default function CustomerSupport() {
                       AI Suggest
                     </Button>
                     {ticket.aiSuggestion && (
-                      <div className="flex-1 bg-violet-500/5 border border-violet-500/20 rounded p-2">
-                        <p className="text-xs text-muted-foreground mb-0.5 flex items-center gap-1"><Sparkles className="h-3 w-3 text-violet-500" /> AI Suggested Reply</p>
+                      <div className="flex-1 bg-primary/5 border border-primary/20 rounded p-2">
+                        <p className="text-xs text-muted-foreground mb-0.5 flex items-center gap-1"><Sparkles className="h-3 w-3 text-primary" /> AI Suggested Reply</p>
                         <p className="text-sm">{ticket.aiSuggestion}</p>
                         <Button size="sm" variant="ghost" className="h-5 text-xs mt-1 px-1" onClick={() => setReplyText(prev => ({ ...prev, [ticket.id]: ticket.aiSuggestion || "" }))}>
                           Use this

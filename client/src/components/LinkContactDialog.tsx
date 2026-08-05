@@ -144,7 +144,7 @@ export default function LinkContactDialog({ open, onOpenChange, vendorId, vendor
                         {hasWa ? (
                           <span className="font-mono">{c.whatsappNumber || c.phone}</span>
                         ) : (
-                          <span className="text-amber-600">no WhatsApp number</span>
+                          <span className="text-foreground font-semibold">no WhatsApp number</span>
                         )}
                       </div>
                     </button>

@@ -275,7 +275,7 @@ export default function DataRoomFinancialsPublic() {
                 },
               });
             }}
-            className="w-full py-2 rounded-lg bg-indigo-500 hover:bg-indigo-400 disabled:opacity-50 text-white text-sm font-medium"
+            className="w-full py-2 rounded-lg bg-primary hover:bg-primary/90 disabled:opacity-50 text-primary-foreground text-sm font-medium"
           >
             Continue to NDA
           </button>
@@ -393,7 +393,7 @@ export default function DataRoomFinancialsPublic() {
         )}
 
         {financialsError && (
-          <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-6 text-sm text-red-300">
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-sm text-white font-semibold">
             {financialsError.message}
           </div>
         )}
@@ -487,7 +487,7 @@ function KpiCard({
         <span style={{ color: brandColor || "#818cf8" }}>{icon}</span>
         <span>{label}</span>
       </div>
-      <p className="text-2xl font-semibold text-white tracking-tight">{value}</p>
+      <p className="font-display tabular-nums text-2xl font-semibold text-white tracking-tight">{value}</p>
     </div>
   );
 }

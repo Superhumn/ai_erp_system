@@ -13,11 +13,11 @@ export default function SupplierScoring() {
 
   const gradeColor = (grade: string) => {
     switch (grade) {
-      case "A": return "bg-green-100 text-green-800";
-      case "B": return "bg-blue-100 text-blue-800";
-      case "C": return "bg-yellow-100 text-yellow-800";
-      case "D": return "bg-orange-100 text-orange-800";
-      case "F": return "bg-red-100 text-red-800";
+      case "A": return "bg-primary/10 text-primary";
+      case "B": return "bg-muted text-foreground";
+      case "C": return "bg-muted text-muted-foreground";
+      case "D": return "bg-muted text-foreground font-semibold";
+      case "F": return "bg-[oklch(0.30_0.02_262)] text-white";
       default: return "";
     }
   };
@@ -27,7 +27,7 @@ export default function SupplierScoring() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2">
-            <Brain className="h-8 w-8 text-emerald-600" />
+            <Brain className="h-8 w-8 text-muted-foreground" />
             AI Supplier Scoring
           </h1>
           <p className="text-muted-foreground mt-1">
@@ -50,7 +50,7 @@ export default function SupplierScoring() {
                 <CardHeader className="pb-2"><CardTitle className="text-sm">Top Performers</CardTitle></CardHeader>
                 <CardContent>
                   {scoreMutation.data.topPerformers.map((n, i) => (
-                    <Badge key={i} variant="outline" className="mr-1 mb-1 bg-green-50">{n}</Badge>
+                    <Badge key={i} variant="outline" className="mr-1 mb-1 bg-muted">{n}</Badge>
                   ))}
                 </CardContent>
               </Card>
@@ -60,7 +60,7 @@ export default function SupplierScoring() {
                 <CardHeader className="pb-2"><CardTitle className="text-sm">Needs Improvement</CardTitle></CardHeader>
                 <CardContent>
                   {scoreMutation.data.needsImprovement.map((n, i) => (
-                    <Badge key={i} variant="outline" className="mr-1 mb-1 bg-red-50">{n}</Badge>
+                    <Badge key={i} variant="outline" className="mr-1 mb-1 bg-muted text-foreground font-semibold">{n}</Badge>
                   ))}
                 </CardContent>
               </Card>

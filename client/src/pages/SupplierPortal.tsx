@@ -202,7 +202,7 @@ export default function SupplierPortal() {
   if (sessionLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
   }
@@ -212,7 +212,7 @@ export default function SupplierPortal() {
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <Card className="max-w-md">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-red-600">
+            <CardTitle className="flex items-center gap-2 text-foreground font-semibold">
               <AlertCircle className="h-6 w-6" />
               Invalid or Expired Link
             </CardTitle>
@@ -230,7 +230,7 @@ export default function SupplierPortal() {
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <Card className="max-w-md">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-green-600">
+            <CardTitle className="flex items-center gap-2 text-foreground font-semibold">
               <CheckCircle className="h-6 w-6" />
               Submission Complete
             </CardTitle>
@@ -253,7 +253,7 @@ export default function SupplierPortal() {
         {/* Header */}
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-2">
-            <Building2 className="h-8 w-8 text-blue-600" />
+            <Building2 className="h-8 w-8 text-primary" />
             <h1 className="text-xl font-semibold tracking-[-0.02em]">Supplier Document Portal</h1>
           </div>
           <p className="text-muted-foreground">
@@ -322,24 +322,24 @@ export default function SupplierPortal() {
                     <div 
                       key={docType.value}
                       className={`flex items-center justify-between p-4 rounded-lg border ${
-                        uploaded ? "bg-green-50 border-green-200" : "bg-white"
+                        uploaded ? "bg-primary/5 border-primary/20" : "bg-white"
                       }`}
                     >
                       <div className="flex items-center gap-3">
-                        <Icon className={`h-5 w-5 ${uploaded ? "text-green-600" : "text-gray-400"}`} />
+                        <Icon className={`h-5 w-5 ${uploaded ? "text-primary" : "text-gray-400"}`} />
                         <div>
                           <p className="font-medium">
                             {docType.label}
-                            {docType.required && <span className="text-red-500 ml-1">*</span>}
+                            {docType.required && <span className="text-foreground ml-1">*</span>}
                           </p>
                           {uploaded && (
-                            <p className="text-sm text-green-600">{uploaded.fileName}</p>
+                            <p className="text-sm text-muted-foreground">{uploaded.fileName}</p>
                           )}
                         </div>
                       </div>
                       <div>
                         {uploaded ? (
-                          <Badge variant="outline" className="bg-green-100 text-green-700">
+                          <Badge variant="outline" className="bg-primary/10 text-primary">
                             <CheckCircle className="h-3 w-3 mr-1" />
                             Uploaded
                           </Badge>

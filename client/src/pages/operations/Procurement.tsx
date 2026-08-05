@@ -404,10 +404,10 @@ function VendorsTab({ searchTerm }: { searchTerm: string }) {
 
   const getTypeBadge = (type: string) => {
     const colors: Record<string, string> = {
-      supplier: "bg-blue-500/8 text-blue-600 dark:text-blue-400",
-      manufacturer: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400",
-      distributor: "bg-violet-500/8 text-violet-600 dark:text-violet-400",
-      freight: "bg-orange-500/8 text-orange-600 dark:text-orange-400",
+      supplier: "bg-primary/10 text-primary",
+      manufacturer: "bg-muted text-foreground",
+      distributor: "bg-muted text-muted-foreground",
+      freight: "bg-foreground/10 text-foreground",
     };
     return <Badge className={colors[type] || ""}>{type}</Badge>;
   };
