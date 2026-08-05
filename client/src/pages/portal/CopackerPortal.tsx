@@ -534,7 +534,7 @@ export default function CopackerPortal() {
 
       {/* Biweekly Prompt Banner */}
       {currentPeriod?.isDue && (
-        <Alert variant="destructive" className="border-foreground/25 bg-muted">
+        <Alert variant="default" className="border-foreground/25 bg-muted">
           <AlertTriangle className="h-4 w-4 text-foreground" />
           <AlertTitle className="text-foreground font-semibold">Inventory Update Due</AlertTitle>
           <AlertDescription className="text-muted-foreground">

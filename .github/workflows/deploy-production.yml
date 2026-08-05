@@ -71,7 +71,9 @@ jobs:
             echo "::error title=Railway service id missing::RAILWAY_SERVICE_ID variable is not set, so 'railway up' cannot target a service. Add it in GitHub → Settings → Secrets and variables → Actions → Variables (copy the service ID from the Railway dashboard)."
             exit 1
           fi
-          # Pin the CLI so a surprise upstream release can't change deploy behavior.
+          # Constrain the CLI to the v4 major line so a v5 breaking release
+          # can't change deploy behavior. 4.x minors still float — set an exact
+          # version here if you need fully reproducible installs.
           npm install -g @railway/cli@^4 || {
             echo "::error title=Railway CLI install failed::Could not install @railway/cli."
             exit 1
