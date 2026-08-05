@@ -700,17 +700,27 @@ async function startServer() {
       return res.status(403).json({ error: "Missing Origin header" });
     }
 
-    // In production, validate origin matches our app URL
+    // In production, validate origin matches our app URL (+ optional allowlist)
     if (ENV.isProduction && ENV.publicAppUrl) {
       try {
         const requestHost = new URL(origin as string).host;
-        // Allow both the Railway domain and custom domain
-        const allowedHosts = new Set([
+        const allowedHosts = new Set<string>([
           new URL(ENV.publicAppUrl).host,
           "app.superhumn.co",
           "aierpsystem-production.up.railway.app",
         ]);
+        for (const entry of ENV.allowedOrigins.split(",")) {
+          const trimmed = entry.trim();
+          if (!trimmed) continue;
+          try {
+            // Accept bare host or full URL
+            allowedHosts.add(trimmed.includes("://") ? new URL(trimmed).host : trimmed);
+          } catch {
+            allowedHosts.add(trimmed);
+          }
+        }
         if (!allowedHosts.has(requestHost)) {
+          console.warn("[CSRF] Origin mismatch: %s (allowed: %s)", requestHost, [...allowedHosts].join(", "));
           return res.status(403).json({ error: "Origin mismatch" });
         }
       } catch {
