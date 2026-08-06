@@ -16548,6 +16548,7 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
               totalDriveImportFailureMessage,
             } = await import('./googleDriveSyncService');
 
+            const syncStartMs = Date.now();
             const recon = await reconcileDataRoomFromDrive({
               dataRoomId: input.dataRoomId,
               rootFolderId: config.googleDriveFolderId,
@@ -16558,7 +16559,12 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
               },
               uploadedBy: ctx.user.id,
               allowDelete: true,
+              syncSubfolders: config.syncSubfolders,
+              includeFileTypes: config.includeFileTypes ? JSON.parse(config.includeFileTypes) : undefined,
+              excludeFileTypes: config.excludeFileTypes ? JSON.parse(config.excludeFileTypes) : undefined,
+              maxFileSizeMb: config.maxFileSizeMb ?? undefined,
             });
+            const syncDurationMs = Date.now() - syncStartMs;
 
             if (isTotalDriveImportFailure(recon)) {
               throw new Error(totalDriveImportFailureMessage(recon));
@@ -16577,7 +16583,7 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
               filesUpdated: recon.filesUpdated,
               filesSkipped: 0,
               foldersCreated: recon.foldersCreated,
-              durationMs: 0,
+              durationMs: syncDurationMs,
               warnings: recon.errors,
             };
 
@@ -16591,6 +16597,7 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
               filesRemoved: recon.filesRemoved,
               filesSkipped: 0,
               foldersCreated: recon.foldersCreated,
+              durationMs: syncDurationMs,
               warnings: recon.errors?.length ? JSON.stringify(recon.errors) : null,
             });
 
