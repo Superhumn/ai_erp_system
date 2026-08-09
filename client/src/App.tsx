@@ -119,6 +119,7 @@ const RFQs = lazy(() => import("./pages/freight/RFQs"));
 const RFQDetail = lazy(() => import("./pages/freight/RFQDetail"));
 const CustomsClearance = lazy(() => import("./pages/freight/CustomsClearance"));
 const CustomsDetail = lazy(() => import("./pages/freight/CustomsDetail"));
+const ControlTower = lazy(() => import("./pages/freight/control-tower/ControlTower"));
 
 // HR
 const HRHub = lazy(() => import("./pages/hr/HRHub"));
@@ -384,6 +385,7 @@ function Router() {
           <Route path="/edi/insights" component={EDIInsights} />
 
           {/* Freight */}
+          <Route path="/freight/control-tower" component={ControlTower} />
           <Route path="/freight" component={FreightDashboard} />
           <Route path="/freight/tracking" component={FreightTracking} />
           <Route path="/freight/fda" component={FDAPriorNotice} />
