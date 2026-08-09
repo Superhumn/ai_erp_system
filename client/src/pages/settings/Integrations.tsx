@@ -38,6 +38,33 @@ export default function IntegrationsPage() {
   const [shopifyConnecting, setShopifyConnecting] = useState(false);
   const [activeTab, setActiveTab] = useState("connections");
 
+  // Gmail: compose draft dialog
+  const [showComposeDraft, setShowComposeDraft] = useState(false);
+  const [draftTo, setDraftTo] = useState("");
+  const [draftSubject, setDraftSubject] = useState("");
+  const [draftBody, setDraftBody] = useState("");
+  // Gmail: message viewer + reply
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+  const [replyBody, setReplyBody] = useState("");
+
+  // Workspace: new doc dialog
+  const [showNewDoc, setShowNewDoc] = useState(false);
+  const [docTitle, setDocTitle] = useState("");
+  const [docContent, setDocContent] = useState("");
+  // Workspace: new sheet dialog
+  const [showNewSheet, setShowNewSheet] = useState(false);
+  const [sheetTitle, setSheetTitle] = useState("");
+  // Workspace: share dialog
+  const [showShareFile, setShowShareFile] = useState(false);
+  const [shareFileId, setShareFileId] = useState("");
+  const [shareEmail, setShareEmail] = useState("");
+  const [shareRole, setShareRole] = useState<"reader" | "writer" | "commenter">("reader");
+  // Workspace: sheet values tools
+  const [sheetToolsId, setSheetToolsId] = useState("");
+  const [sheetToolsRange, setSheetToolsRange] = useState("A1");
+  const [sheetToolsValues, setSheetToolsValues] = useState("");
+  const [sheetValuesQuery, setSheetValuesQuery] = useState<{ spreadsheetId: string; range: string } | null>(null);
+
   const { data: status, isLoading, refetch } = trpc.integrations.getStatus.useQuery(undefined, { refetchOnWindowFocus: true, refetchOnMount: "always", staleTime: 0 });
   const { data: syncHistory } = trpc.integrations.getSyncHistory.useQuery({ limit: 20 });
 
@@ -159,6 +186,125 @@ export default function IntegrationsPage() {
       toast.error(error.message);
     },
   });
+
+  // Live connection status straight from the Google token (shared by Gmail + Workspace).
+  const { data: gmailConn } = trpc.gmail.getConnectionStatus.useQuery();
+  const { data: workspaceConn } = trpc.googleWorkspace.getConnectionStatus.useQuery();
+
+  // Gmail: recent messages peek (only when connected)
+  const gmailConnected = !!status?.gmail?.configured || !!(gmailConn as any)?.connected;
+  const {
+    data: gmailMessages,
+    isLoading: gmailMessagesLoading,
+    refetch: refetchGmailMessages,
+  } = trpc.gmail.listMessages.useQuery({ maxResults: 10 }, { enabled: gmailConnected });
+
+  // Gmail: full message for the viewer dialog
+  const { data: gmailMessage, isLoading: gmailMessageLoading } = trpc.gmail.getMessage.useQuery(
+    { messageId: selectedMessageId ?? "" },
+    { enabled: !!selectedMessageId },
+  );
+
+  const createDraftMutation = trpc.gmail.createDraft.useMutation({
+    onSuccess: () => {
+      toast.success("Draft created in Gmail");
+      setShowComposeDraft(false);
+      setDraftTo("");
+      setDraftSubject("");
+      setDraftBody("");
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const replyToMessageMutation = trpc.gmail.replyToMessage.useMutation({
+    onSuccess: () => {
+      toast.success("Reply sent");
+      setReplyBody("");
+      setSelectedMessageId(null);
+      refetchGmailMessages();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const createDocMutation = trpc.googleWorkspace.createDoc.useMutation({
+    onSuccess: (data) => {
+      const link = (data as any)?.webViewLink;
+      toast.success("Google Doc created");
+      if (link) window.open(link, "_blank", "noopener,noreferrer");
+      setShowNewDoc(false);
+      setDocTitle("");
+      setDocContent("");
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const createSheetMutation = trpc.googleWorkspace.createSheet.useMutation({
+    onSuccess: (data) => {
+      const link = (data as any)?.spreadsheetUrl || (data as any)?.webViewLink;
+      toast.success("Google Sheet created");
+      if (link) window.open(link, "_blank", "noopener,noreferrer");
+      setShowNewSheet(false);
+      setSheetTitle("");
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const shareFileMutation = trpc.googleWorkspace.shareFile.useMutation({
+    onSuccess: () => {
+      toast.success("File shared");
+      setShowShareFile(false);
+      setShareFileId("");
+      setShareEmail("");
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const appendToSheetMutation = trpc.googleWorkspace.appendToSheet.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Appended (${(data as any)?.updatedCells ?? 0} cells)`);
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const updateSheetValuesMutation = trpc.googleWorkspace.updateSheetValues.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Updated (${(data as any)?.updatedCells ?? 0} cells)`);
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  // Workspace: read sheet values on demand (enabled once a query target is set)
+  const { data: sheetValues, isFetching: sheetValuesFetching } =
+    trpc.googleWorkspace.getSheetValues.useQuery(
+      sheetValuesQuery ?? { spreadsheetId: "", range: "" },
+      { enabled: !!sheetValuesQuery },
+    );
+
+  // Parse the textarea into a 2D array of cells: newline = rows, comma = columns.
+  const parseSheetValues = (raw: string): string[][] =>
+    raw
+      .split("\n")
+      .filter((line) => line.trim().length > 0)
+      .map((line) => line.split(",").map((cell) => cell.trim()));
+
+  const gmailMsg = gmailMessage as any;
+  const gmailMsgHeaders: any[] = gmailMsg?.payload?.headers ?? [];
+  const getGmailHeader = (name: string): string =>
+    gmailMsgHeaders.find((h: any) => (h?.name ?? "").toLowerCase() === name.toLowerCase())?.value ?? "";
 
   // Check for OAuth callback success/error in URL
   React.useEffect(() => {
@@ -738,6 +884,10 @@ export default function IntegrationsPage() {
                       <div className="p-4 border rounded-lg">
                         <h4 className="font-medium mb-2">Quick Actions</h4>
                         <div className="space-y-2">
+                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => setShowComposeDraft(true)}>
+                            <Plus className="w-4 h-4 mr-2" />
+                            Compose Draft
+                          </Button>
                           <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => window.open("https://mail.google.com/mail/?view=cm&fs=1", "_blank", "noopener,noreferrer")}>
                             <Mail className="w-4 h-4 mr-2" />
                             Compose Email
@@ -748,6 +898,63 @@ export default function IntegrationsPage() {
                           </Button>
                         </div>
                       </div>
+                    </div>
+
+                    {/* Recent messages peek */}
+                    <div className="p-4 border rounded-lg">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-medium">Recent Messages</h4>
+                          {(gmailConn as any)?.connected ? (
+                            <Badge className="bg-green-500/10 text-green-500 border-green-500/20">
+                              <CheckCircle2 className="w-3 h-3 mr-1" /> Connected
+                            </Badge>
+                          ) : (
+                            <Badge variant="secondary">
+                              <AlertCircle className="w-3 h-3 mr-1" /> Offline
+                            </Badge>
+                          )}
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => refetchGmailMessages()}
+                          disabled={gmailMessagesLoading}
+                        >
+                          <RefreshCw className={`w-4 h-4 ${gmailMessagesLoading ? "animate-spin" : ""}`} />
+                        </Button>
+                      </div>
+                      {gmailMessagesLoading ? (
+                        <div className="flex items-center justify-center py-6">
+                          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+                        </div>
+                      ) : ((gmailMessages as any)?.messages?.length ?? 0) > 0 ? (
+                        <div className="divide-y">
+                          {((gmailMessages as any).messages as any[]).map((m: any) => (
+                            <div key={m.id} className="flex items-center justify-between py-2 gap-2">
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm truncate">{m.snippet || m.subject || m.id}</p>
+                                {m.threadId && (
+                                  <p className="text-xs text-muted-foreground truncate">Thread {m.threadId}</p>
+                                )}
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="shrink-0 h-7 px-2 text-xs"
+                                onClick={() => {
+                                  setReplyBody("");
+                                  setSelectedMessageId(m.id);
+                                }}
+                              >
+                                View
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground py-2">No recent messages found</p>
+                      )}
                     </div>
 
                     <div className="p-4 bg-muted/50 rounded-lg">
@@ -772,6 +979,134 @@ export default function IntegrationsPage() {
                 )}
               </CardContent>
             </Card>
+
+            {/* Compose draft dialog */}
+            <Dialog open={showComposeDraft} onOpenChange={setShowComposeDraft}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Compose Draft</DialogTitle>
+                  <DialogDescription>Save a draft email to your Gmail account</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="draftTo">To</Label>
+                    <Input
+                      id="draftTo"
+                      placeholder="recipient@example.com"
+                      value={draftTo}
+                      onChange={(e) => setDraftTo(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="draftSubject">Subject</Label>
+                    <Input
+                      id="draftSubject"
+                      placeholder="Subject"
+                      value={draftSubject}
+                      onChange={(e) => setDraftSubject(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="draftBody">Body</Label>
+                    <textarea
+                      id="draftBody"
+                      className="flex min-h-[120px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      placeholder="Write your message…"
+                      value={draftBody}
+                      onChange={(e) => setDraftBody(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setShowComposeDraft(false)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={() =>
+                      createDraftMutation.mutate({
+                        to: draftTo,
+                        subject: draftSubject,
+                        body: draftBody,
+                      })
+                    }
+                    disabled={createDraftMutation.isPending || !draftTo.trim() || !draftSubject.trim()}
+                  >
+                    {createDraftMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Plus className="w-4 h-4 mr-2" />
+                    )}
+                    Save Draft
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            {/* Message viewer + reply dialog */}
+            <Dialog open={!!selectedMessageId} onOpenChange={(open) => { if (!open) setSelectedMessageId(null); }}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle className="truncate">
+                    {getGmailHeader("Subject") || "Message"}
+                  </DialogTitle>
+                  <DialogDescription className="truncate">
+                    {getGmailHeader("From")}
+                  </DialogDescription>
+                </DialogHeader>
+                {gmailMessageLoading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  <div className="space-y-4 py-2">
+                    <div className="p-3 bg-muted/50 rounded-lg text-sm max-h-48 overflow-y-auto whitespace-pre-wrap">
+                      {gmailMsg?.snippet || "(no preview available)"}
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="replyBody">Reply</Label>
+                      <textarea
+                        id="replyBody"
+                        className="flex min-h-[100px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        placeholder="Write a reply…"
+                        value={replyBody}
+                        onChange={(e) => setReplyBody(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                )}
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setSelectedMessageId(null)}>
+                    Close
+                  </Button>
+                  <Button
+                    onClick={() =>
+                      replyToMessageMutation.mutate({
+                        threadId: gmailMsg?.threadId ?? "",
+                        messageId: gmailMsg?.id ?? selectedMessageId ?? "",
+                        to: getGmailHeader("From"),
+                        subject: getGmailHeader("Subject").startsWith("Re:")
+                          ? getGmailHeader("Subject")
+                          : `Re: ${getGmailHeader("Subject")}`,
+                        body: replyBody,
+                      })
+                    }
+                    disabled={
+                      replyToMessageMutation.isPending ||
+                      !replyBody.trim() ||
+                      !gmailMsg?.threadId ||
+                      !getGmailHeader("From")
+                    }
+                  >
+                    {replyToMessageMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Mail className="w-4 h-4 mr-2" />
+                    )}
+                    Send Reply
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </TabsContent>
 
           {/* Google Workspace Tab */}
@@ -890,16 +1225,142 @@ export default function IntegrationsPage() {
                       <div className="p-4 border rounded-lg">
                         <h4 className="font-medium mb-2">Quick Actions</h4>
                         <div className="space-y-2">
-                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => window.open("https://docs.new", "_blank", "noopener,noreferrer")}>
-                            <FileSpreadsheet className="w-4 h-4 mr-2" />
-                            Create Google Doc
+                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => setShowNewDoc(true)}>
+                            <Plus className="w-4 h-4 mr-2" />
+                            New Doc
                           </Button>
-                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => window.open("https://sheets.new", "_blank", "noopener,noreferrer")}>
-                            <FileSpreadsheet className="w-4 h-4 mr-2" />
-                            Create Google Sheet
+                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => setShowNewSheet(true)}>
+                            <Plus className="w-4 h-4 mr-2" />
+                            New Sheet
+                          </Button>
+                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => setShowShareFile(true)}>
+                            <ExternalLink className="w-4 h-4 mr-2" />
+                            Share a File
                           </Button>
                         </div>
                       </div>
+                    </div>
+
+                    {/* Sheet tools: read / append / update values */}
+                    <div className="p-4 border rounded-lg space-y-4">
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-medium">Sheet Tools</h4>
+                        {(workspaceConn as any)?.connected ? (
+                          <Badge className="bg-green-500/10 text-green-500 border-green-500/20">
+                            <CheckCircle2 className="w-3 h-3 mr-1" /> Connected
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary">
+                            <AlertCircle className="w-3 h-3 mr-1" /> Offline
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Read, append, or overwrite cells in a spreadsheet by ID. Rows are separated by new lines,
+                        columns by commas.
+                      </p>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label htmlFor="sheetToolsId">Spreadsheet ID</Label>
+                          <Input
+                            id="sheetToolsId"
+                            placeholder="1AbC…"
+                            value={sheetToolsId}
+                            onChange={(e) => setSheetToolsId(e.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="sheetToolsRange">Range</Label>
+                          <Input
+                            id="sheetToolsRange"
+                            placeholder="Sheet1!A1"
+                            value={sheetToolsRange}
+                            onChange={(e) => setSheetToolsRange(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="sheetToolsValues">Values (rows = lines, columns = commas)</Label>
+                        <textarea
+                          id="sheetToolsValues"
+                          className="flex min-h-[80px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          placeholder={"Alice,30\nBob,25"}
+                          value={sheetToolsValues}
+                          onChange={(e) => setSheetToolsValues(e.target.value)}
+                        />
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setSheetValuesQuery({ spreadsheetId: sheetToolsId, range: sheetToolsRange })}
+                          disabled={!sheetToolsId.trim() || !sheetToolsRange.trim() || sheetValuesFetching}
+                        >
+                          {sheetValuesFetching ? (
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          ) : (
+                            <RefreshCw className="w-4 h-4 mr-2" />
+                          )}
+                          Read
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            appendToSheetMutation.mutate({
+                              spreadsheetId: sheetToolsId,
+                              range: sheetToolsRange,
+                              values: parseSheetValues(sheetToolsValues),
+                            })
+                          }
+                          disabled={
+                            appendToSheetMutation.isPending ||
+                            !sheetToolsId.trim() ||
+                            !sheetToolsRange.trim() ||
+                            !sheetToolsValues.trim()
+                          }
+                        >
+                          {appendToSheetMutation.isPending ? (
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          ) : (
+                            <Plus className="w-4 h-4 mr-2" />
+                          )}
+                          Append
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            updateSheetValuesMutation.mutate({
+                              spreadsheetId: sheetToolsId,
+                              range: sheetToolsRange,
+                              values: parseSheetValues(sheetToolsValues),
+                            })
+                          }
+                          disabled={
+                            updateSheetValuesMutation.isPending ||
+                            !sheetToolsId.trim() ||
+                            !sheetToolsRange.trim() ||
+                            !sheetToolsValues.trim()
+                          }
+                        >
+                          {updateSheetValuesMutation.isPending ? (
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          ) : (
+                            <FileSpreadsheet className="w-4 h-4 mr-2" />
+                          )}
+                          Update
+                        </Button>
+                      </div>
+                      {sheetValuesQuery && (
+                        <div className="p-3 bg-muted/50 rounded-lg text-xs font-mono max-h-40 overflow-auto whitespace-pre">
+                          {sheetValuesFetching
+                            ? "Loading…"
+                            : ((sheetValues as any[] | undefined)?.length ?? 0) > 0
+                              ? (sheetValues as any[]).map((row: any) => (Array.isArray(row) ? row.join(", ") : String(row))).join("\n")
+                              : "(no values in range)"}
+                        </div>
+                      )}
                     </div>
 
                     <div className="p-4 bg-muted/50 rounded-lg">
@@ -924,6 +1385,163 @@ export default function IntegrationsPage() {
                 )}
               </CardContent>
             </Card>
+
+            {/* New Doc dialog */}
+            <Dialog open={showNewDoc} onOpenChange={setShowNewDoc}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>New Google Doc</DialogTitle>
+                  <DialogDescription>Create a Google Doc in the connected account</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="docTitle">Title</Label>
+                    <Input
+                      id="docTitle"
+                      placeholder="Untitled document"
+                      value={docTitle}
+                      onChange={(e) => setDocTitle(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="docContent">Initial content (optional)</Label>
+                    <textarea
+                      id="docContent"
+                      className="flex min-h-[120px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      placeholder="Document body…"
+                      value={docContent}
+                      onChange={(e) => setDocContent(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setShowNewDoc(false)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={() =>
+                      createDocMutation.mutate({
+                        title: docTitle,
+                        content: docContent || undefined,
+                      })
+                    }
+                    disabled={createDocMutation.isPending || !docTitle.trim()}
+                  >
+                    {createDocMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Plus className="w-4 h-4 mr-2" />
+                    )}
+                    Create Doc
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            {/* New Sheet dialog */}
+            <Dialog open={showNewSheet} onOpenChange={setShowNewSheet}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>New Google Sheet</DialogTitle>
+                  <DialogDescription>Create a Google Sheet in the connected account</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="sheetTitle">Title</Label>
+                    <Input
+                      id="sheetTitle"
+                      placeholder="Untitled spreadsheet"
+                      value={sheetTitle}
+                      onChange={(e) => setSheetTitle(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setShowNewSheet(false)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={() => createSheetMutation.mutate({ title: sheetTitle })}
+                    disabled={createSheetMutation.isPending || !sheetTitle.trim()}
+                  >
+                    {createSheetMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Plus className="w-4 h-4 mr-2" />
+                    )}
+                    Create Sheet
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            {/* Share file dialog */}
+            <Dialog open={showShareFile} onOpenChange={setShowShareFile}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Share a File</DialogTitle>
+                  <DialogDescription>Grant a user access to a Drive file, Doc, or Sheet by ID</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="shareFileId">File ID</Label>
+                    <Input
+                      id="shareFileId"
+                      placeholder="1AbC…"
+                      value={shareFileId}
+                      onChange={(e) => setShareFileId(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="shareEmail">Share with (email)</Label>
+                    <Input
+                      id="shareEmail"
+                      type="email"
+                      placeholder="teammate@example.com"
+                      value={shareEmail}
+                      onChange={(e) => setShareEmail(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="shareRole">Role</Label>
+                    <select
+                      id="shareRole"
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      value={shareRole}
+                      onChange={(e) => setShareRole(e.target.value as "reader" | "writer" | "commenter")}
+                    >
+                      <option value="reader">Reader</option>
+                      <option value="commenter">Commenter</option>
+                      <option value="writer">Writer</option>
+                    </select>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setShowShareFile(false)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={() =>
+                      shareFileMutation.mutate({
+                        fileId: shareFileId,
+                        role: shareRole,
+                        type: "user",
+                        emailAddress: shareEmail,
+                        sendNotificationEmail: true,
+                      })
+                    }
+                    disabled={shareFileMutation.isPending || !shareFileId.trim() || !shareEmail.trim()}
+                  >
+                    {shareFileMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <ExternalLink className="w-4 h-4 mr-2" />
+                    )}
+                    Share
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </TabsContent>
 
           {/* QuickBooks Tab */}
