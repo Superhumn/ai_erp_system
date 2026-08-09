@@ -119,9 +119,9 @@ export default function Products() {
   }), [products, search, statusFilter, classificationFilter]);
 
   const typeColors: Record<string, string> = {
-    physical: "bg-blue-500/10 text-blue-600",
-    digital: "bg-purple-500/10 text-purple-600",
-    service: "bg-amber-500/10 text-amber-600",
+    physical: "bg-primary/10 text-primary",
+    digital: "bg-muted text-foreground",
+    service: "bg-muted text-muted-foreground",
   };
   const manufacturingStageLabels: Record<string, string> = {
     raw_material: "Raw Material",

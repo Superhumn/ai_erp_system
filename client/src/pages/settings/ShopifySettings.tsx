@@ -135,7 +135,7 @@ export default function ShopifySettings() {
                     </CardTitle>
                     <CardDescription>{store.storeDomain}</CardDescription>
                   </div>
-                  <Badge className={store.isEnabled ? "bg-green-500/10 text-green-600" : "bg-gray-500/10 text-gray-600"}>
+                  <Badge className={store.isEnabled ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}>
                     {store.isEnabled ? (
                       <><CheckCircle2 className="w-3 h-3 mr-1" /> Active</>
                     ) : (
@@ -544,7 +544,7 @@ function LocationMappingRow({ mapping, warehouses, warehouseName, updateMapping,
         <TableCell>
           <div className="flex">
             <Button variant="ghost" size="icon" disabled={!warehouseId || updateMapping.isPending} onClick={save} aria-label="Save mapping">
-              <CheckCircle2 className="h-4 w-4 text-green-600" />
+              <CheckCircle2 className="h-4 w-4 text-primary" />
             </Button>
             <Button variant="ghost" size="icon" onClick={() => setEditing(false)} aria-label="Cancel edit">
               <XCircle className="h-4 w-4 text-muted-foreground" />

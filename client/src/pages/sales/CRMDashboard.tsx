@@ -97,7 +97,7 @@ export default function CRMDashboard() {
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{totalInvestors}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{totalInvestors}</div>
             <p className="text-xs text-muted-foreground">
               {activeInvestors} active, {committedInvestors} committed
             </p>
@@ -110,7 +110,7 @@ export default function CRMDashboard() {
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">${totalRaised.toLocaleString()}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">${totalRaised.toLocaleString()}</div>
             <p className="text-xs text-muted-foreground">
               From {investments?.length || 0} investments
             </p>
@@ -123,7 +123,7 @@ export default function CRMDashboard() {
             <Target className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{activeCampaigns}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{activeCampaigns}</div>
             <p className="text-xs text-muted-foreground">
               {campaigns?.length || 0} total campaigns
             </p>
@@ -136,7 +136,7 @@ export default function CRMDashboard() {
             <Calendar className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{upcomingReminders}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{upcomingReminders}</div>
             <p className="text-xs text-muted-foreground">
               In the next 7 days
             </p>
@@ -210,9 +210,9 @@ export default function CRMDashboard() {
                       ${campaign.raised.toLocaleString()} / ${campaign.target.toLocaleString()}
                     </div>
                   </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div className="w-full bg-muted rounded-full h-2">
                     <div
-                      className="bg-green-600 h-2 rounded-full"
+                      className="bg-primary h-2 rounded-full"
                       style={{ width: `${Math.min(campaign.percentage, 100)}%` }}
                     />
                   </div>
@@ -244,9 +244,9 @@ export default function CRMDashboard() {
                     </div>
                   </div>
                   <Badge className={
-                    investor.status === 'invested' ? 'bg-emerald-500/8 text-emerald-600 dark:text-emerald-400' :
-                    investor.status === 'committed' ? 'bg-orange-500/8 text-orange-600 dark:text-orange-400' :
-                    'bg-blue-500/8 text-blue-600 dark:text-blue-400'
+                    investor.status === 'invested' ? 'bg-muted text-foreground' :
+                    investor.status === 'committed' ? 'bg-primary/10 text-primary' :
+                    'bg-muted text-muted-foreground'
                   }>
                     {investor.status}
                   </Badge>
@@ -274,9 +274,9 @@ export default function CRMDashboard() {
                       </div>
                     </div>
                     <Badge variant="outline" className={
-                      reminder.priority === 'critical' ? 'border-red-500 text-red-700' :
-                      reminder.priority === 'high' ? 'border-orange-500 text-orange-700' :
-                      'border-blue-500 text-blue-700'
+                      reminder.priority === 'critical' ? 'border-transparent bg-[oklch(0.30_0.02_262)] text-white' :
+                      reminder.priority === 'high' ? 'border-foreground/30 text-foreground font-semibold' :
+                      'text-muted-foreground'
                     }>
                       {reminder.priority}
                     </Badge>

@@ -162,8 +162,8 @@ export default function POReceiving() {
                       <TableCell>-</TableCell>
                       <TableCell>
                         <Badge className={
-                          po.status === 'partial' ? 'bg-amber-500/8 text-amber-600 dark:text-amber-400' :
-                          'bg-blue-500/8 text-blue-600 dark:text-blue-400'
+                          po.status === 'partial' ? 'bg-muted text-foreground font-semibold' :
+                          'bg-primary/10 text-primary'
                         }>
                           {po.status}
                         </Badge>
@@ -232,13 +232,13 @@ export default function POReceiving() {
                         </TableCell>
                         <TableCell>
                           {remaining === 0 ? (
-                            <Badge className="bg-emerald-500/8 text-emerald-600 dark:text-emerald-400">
+                            <Badge className="bg-muted text-muted-foreground">
                               <CheckCircle className="w-3 h-3 mr-1" /> Complete
                             </Badge>
                           ) : received > 0 ? (
-                            <Badge className="bg-amber-500/8 text-amber-600 dark:text-amber-400">Partial</Badge>
+                            <Badge className="bg-muted text-foreground font-semibold">Partial</Badge>
                           ) : (
-                            <Badge className="bg-gray-500/8 text-gray-600 dark:text-gray-400">Pending</Badge>
+                            <Badge className="bg-muted text-muted-foreground">Pending</Badge>
                           )}
                         </TableCell>
                       </TableRow>

@@ -47,20 +47,20 @@ function isCOGSTransaction(tx: any): boolean {
 }
 
 const accountTypeColors: Record<string, string> = {
-  asset: "bg-blue-500/10 text-blue-600",
-  liability: "bg-red-500/10 text-red-600",
-  equity: "bg-purple-500/10 text-purple-600",
-  revenue: "bg-green-500/10 text-green-600",
-  expense: "bg-amber-500/10 text-amber-600",
+  asset: "bg-primary/10 text-primary",
+  liability: "bg-muted text-muted-foreground",
+  equity: "bg-muted text-muted-foreground",
+  revenue: "bg-muted text-muted-foreground",
+  expense: "bg-muted text-muted-foreground",
 };
 
 const txTypeColors: Record<string, string> = {
-  journal: "bg-blue-500/10 text-blue-600",
-  invoice: "bg-green-500/10 text-green-600",
-  payment: "bg-purple-500/10 text-purple-600",
-  expense: "bg-red-500/10 text-red-600",
-  transfer: "bg-amber-500/10 text-amber-600",
-  adjustment: "bg-gray-500/10 text-gray-600",
+  journal: "bg-muted text-muted-foreground",
+  invoice: "bg-primary/10 text-primary",
+  payment: "bg-muted text-muted-foreground",
+  expense: "bg-muted text-muted-foreground",
+  transfer: "bg-muted text-muted-foreground",
+  adjustment: "bg-muted text-muted-foreground",
 };
 
 export default function AccountsAndTransactions() {

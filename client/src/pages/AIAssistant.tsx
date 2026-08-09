@@ -21,6 +21,7 @@ import {
   Loader2,
   Sparkles,
   MessageSquare,
+  Square,
   Plus,
   History,
   LayoutDashboard,
@@ -31,6 +32,7 @@ import {
 } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { toast } from "sonner";
+import type { AgentStreamEvent } from "@shared/aiChat";
 
 interface Message {
   role: "user" | "assistant";
@@ -115,8 +117,15 @@ export default function AIAssistant() {
   const [selectedConversationId, setSelectedConversationId] = useState<number | null>(null);
   const [analysisType, setAnalysisType] = useState<AnalysisType | "">("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const utils = trpc.useUtils();
 
-  const agentChat = trpc.ai.agentChat.useMutation();
+  // Streamed response state. `isWorking` = waiting/tool-running (no answer text
+  // yet); `isStreaming` = the answer is actively typing out.
+  const [isWorking, setIsWorking] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamStatus, setStreamStatus] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
   const query = trpc.ai.query.useMutation();
 
   // Conversation history
@@ -144,7 +153,20 @@ export default function AIAssistant() {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, streamStatus]);
+
+  // Replace the content of the most recent assistant message (the one we stream into).
+  const updateLastAssistant = (content: string) =>
+    setMessages((prev) => {
+      const next = [...prev];
+      for (let i = next.length - 1; i >= 0; i--) {
+        if (next[i].role === "assistant") {
+          next[i] = { ...next[i], content };
+          break;
+        }
+      }
+      return next;
+    });
 
   // Load messages of the selected past conversation into the view.
   useEffect(() => {
@@ -183,29 +205,69 @@ export default function AIAssistant() {
 
     const userMessage = input.trim();
     setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
+
+    // Build conversation history from previous messages for context (before we
+    // append the new user turn + assistant placeholder).
+    const conversationHistory = messages
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: userMessage },
+      { role: "assistant", content: "" },
+    ]);
+    setIsWorking(true);
+    setIsStreaming(false);
+    setStreamStatus(null);
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    let acc = "";
 
     try {
-      // Build conversation history from previous messages for context
-      const conversationHistory = messages
-        .filter((m) => m.role === "user" || m.role === "assistant")
-        .map((m) => ({
-          role: m.role as "user" | "assistant",
-          content: m.content,
-        }));
-
-      const response = await agentChat.mutateAsync({
-        message: userMessage,
-        conversationHistory,
-      });
-
-      setMessages((prev) => [...prev, { role: "assistant", content: response.message }]);
+      const iterable = (await utils.client.ai.agentChatStream.mutate(
+        { message: userMessage, conversationHistory, mode: "act" },
+        { signal: controller.signal },
+      )) as AsyncIterable<AgentStreamEvent>;
+      for await (const ev of iterable) {
+        if (ev.type === "token") {
+          setIsWorking(false);
+          setIsStreaming(true);
+          setStreamStatus(null);
+          acc += ev.text;
+          updateLastAssistant(acc);
+        } else if (ev.type === "reset") {
+          acc = "";
+          updateLastAssistant("");
+          setIsStreaming(false);
+          setIsWorking(true);
+        } else if (ev.type === "status") {
+          setStreamStatus(ev.label);
+        } else if (ev.type === "done") {
+          setIsWorking(false);
+          setIsStreaming(false);
+          setStreamStatus(null);
+          updateLastAssistant(ev.response.message || acc || "Done.");
+        }
+        // `action` events are not surfaced on this simple chat page.
+      }
     } catch (error) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: "Sorry, I encountered an error. Please try again." },
-      ]);
+      setIsWorking(false);
+      setIsStreaming(false);
+      setStreamStatus(null);
+      if (controller.signal.aborted) {
+        if (!acc) updateLastAssistant("_(stopped)_");
+        return;
+      }
+      updateLastAssistant("Sorry, I encountered an error. Please try again.");
+    } finally {
+      if (abortRef.current === controller) abortRef.current = null;
     }
+  };
+
+  const stopStreaming = () => {
+    abortRef.current?.abort();
   };
 
   const handleQuickQuery = async (question: string) => {
@@ -231,7 +293,7 @@ export default function AIAssistant() {
     "What are our top selling products?",
   ];
 
-  const isLoading = agentChat.isPending || query.isPending;
+  const isBusy = isWorking || isStreaming || query.isPending;
   const conversationList: any[] = Array.isArray(conversations.data) ? conversations.data : [];
 
   return (
@@ -345,7 +407,7 @@ export default function AIAssistant() {
                           <button
                             key={question}
                             onClick={() => handleQuickQuery(question)}
-                            disabled={isLoading}
+                            disabled={isBusy}
                             className="text-left text-sm p-3 rounded-lg border hover:bg-muted transition-colors disabled:opacity-50"
                           >
                             <MessageSquare className="h-3 w-3 inline mr-2 text-muted-foreground" />
@@ -374,7 +436,15 @@ export default function AIAssistant() {
                             }`}
                           >
                             {message.role === "assistant" ? (
-                              <Streamdown>{message.content}</Streamdown>
+                              <>
+                                <Streamdown>{message.content}</Streamdown>
+                                {isStreaming && index === messages.length - 1 && (
+                                  <span
+                                    className="inline-block h-4 w-[2px] ml-0.5 align-middle bg-primary/70 animate-pulse rounded-sm"
+                                    aria-hidden
+                                  />
+                                )}
+                              </>
                             ) : (
                               <p className="text-sm">{message.content}</p>
                             )}
@@ -386,13 +456,16 @@ export default function AIAssistant() {
                           )}
                         </div>
                       ))}
-                      {isLoading && (
+                      {(isWorking || query.isPending) && (
                         <div className="flex gap-3">
                           <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
                             <Bot className="h-4 w-4 text-primary" />
                           </div>
-                          <div className="bg-muted rounded-lg p-3">
+                          <div className="bg-muted rounded-lg p-3 flex items-center gap-2">
                             <Loader2 className="h-4 w-4 animate-spin" />
+                            {streamStatus && (
+                              <span className="text-sm text-muted-foreground">{streamStatus}</span>
+                            )}
                           </div>
                         </div>
                       )}
@@ -413,16 +486,22 @@ export default function AIAssistant() {
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       placeholder="Ask about your business data..."
-                      disabled={isLoading}
+                      disabled={isBusy}
                       className="flex-1"
                     />
-                    <Button type="submit" disabled={isLoading || !input.trim()}>
-                      {isLoading ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Send className="h-4 w-4" />
-                      )}
-                    </Button>
+                    {isWorking || isStreaming ? (
+                      <Button type="button" variant="outline" onClick={stopStreaming}>
+                        <Square className="h-4 w-4 mr-1" /> Stop
+                      </Button>
+                    ) : (
+                      <Button type="submit" disabled={isBusy || !input.trim()}>
+                        {query.isPending ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Send className="h-4 w-4" />
+                        )}
+                      </Button>
+                    )}
                   </form>
                 </div>
               </CardContent>

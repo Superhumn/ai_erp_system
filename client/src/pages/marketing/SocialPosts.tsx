@@ -27,12 +27,12 @@ const PLATFORMS = [
 type PlatformKey = typeof PLATFORMS[number]["value"];
 
 const STATUS_STYLES: Record<string, { icon: any; cls: string }> = {
-  published: { icon: CheckCircle2, cls: "bg-green-500/10 text-green-700" },
-  scheduled: { icon: Clock,        cls: "bg-blue-500/10 text-blue-700" },
-  uploading: { icon: Loader2,      cls: "bg-blue-500/10 text-blue-700" },
-  pending:   { icon: Clock,        cls: "bg-gray-500/10 text-gray-600" },
-  skipped:   { icon: AlertTriangle,cls: "bg-amber-500/10 text-amber-700" },
-  failed:    { icon: XCircle,      cls: "bg-red-500/10 text-red-700" },
+  published: { icon: CheckCircle2, cls: "bg-muted text-foreground" },
+  scheduled: { icon: Clock,        cls: "bg-muted text-muted-foreground" },
+  uploading: { icon: Loader2,      cls: "bg-muted text-muted-foreground" },
+  pending:   { icon: Clock,        cls: "bg-muted text-muted-foreground" },
+  skipped:   { icon: AlertTriangle,cls: "bg-muted text-foreground font-semibold" },
+  failed:    { icon: XCircle,      cls: "bg-[oklch(0.30_0.02_262)] text-white" },
 };
 
 export default function SocialPosts() {
@@ -174,7 +174,7 @@ export default function SocialPosts() {
                 <div className="flex items-center gap-2 text-sm">
                   <span className="font-medium">{label}</span>
                   {connected ? (
-                    <Badge className="bg-green-500/10 text-green-700 text-[10px]">
+                    <Badge className="bg-muted text-foreground text-[10px]">
                       <CheckCircle2 className="h-3 w-3 mr-0.5" /> Connected{cred.accountHandle ? ` · ${cred.accountHandle}` : ""}
                     </Badge>
                   ) : (
@@ -233,12 +233,12 @@ export default function SocialPosts() {
                       <Badge variant="outline" className="text-[10px]">{p.platform}</Badge>
                       <Badge variant="outline" className="text-[10px]">{p.aspectRatio}</Badge>
                       <span className="text-muted-foreground">{new Date(p.createdAt).toLocaleString()}</span>
-                      {p.skipReason && <span className="text-amber-700">{p.skipReason}</span>}
-                      {p.errorMessage && <span className="text-red-700">{p.errorMessage}</span>}
+                      {p.skipReason && <span className="text-foreground font-medium">{p.skipReason}</span>}
+                      {p.errorMessage && <span className="text-foreground font-semibold">{p.errorMessage}</span>}
                     </div>
                     <div className="flex items-center gap-2">
                       {p.externalUrl && (
-                        <a href={p.externalUrl} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline inline-flex items-center gap-0.5">
+                        <a href={p.externalUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline inline-flex items-center gap-0.5">
                           View <ExternalLink className="h-3 w-3" />
                         </a>
                       )}
@@ -371,10 +371,10 @@ function VideoRow({ video, onChanged }: { video: any; onChanged: () => void }) {
                         <div className="font-medium">{p.label}</div>
                         <div className="text-muted-foreground">{p.requires}</div>
                         {fit && fit.pickedRatio && (
-                          <div className="text-green-700">→ will use {fit.pickedRatio} cut</div>
+                          <div className="text-muted-foreground">→ will use {fit.pickedRatio} cut</div>
                         )}
                         {isSkipped && (
-                          <div className="text-amber-700">→ will skip: {fit.skipReason}</div>
+                          <div className="text-foreground font-medium">→ will skip: {fit.skipReason}</div>
                         )}
                       </label>
                     </div>
