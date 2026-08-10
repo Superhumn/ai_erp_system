@@ -39,6 +39,11 @@ export const ENV = {
     // Public app URL for email links
     publicAppUrl: process.env.PUBLIC_APP_URL ?? process.env.APP_URL ?? "http://localhost:3000",
 
+    // Extra hosts allowed for CSRF Origin checks (comma-separated), e.g.
+    // "staging.superhumn.co,preview.example.com". Always includes publicAppUrl
+    // host plus the production Railway/custom domain fallbacks.
+    allowedOrigins: process.env.ALLOWED_ORIGINS ?? "",
+
     // IMAP email inbox configuration
     imapHost: process.env.IMAP_HOST ?? "",
     imapPort: process.env.IMAP_PORT ?? "993",

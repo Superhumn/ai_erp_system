@@ -61,20 +61,20 @@ export default function ProductDetail() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "active": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
-      case "inactive": return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
-      case "discontinued": return "bg-red-500/8 text-red-600 dark:text-red-400";
-      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "active": return "bg-primary/10 text-primary";
+      case "inactive": return "bg-muted text-muted-foreground";
+      case "discontinued": return "bg-[oklch(0.30_0.02_262)] text-white";
+      default: return "bg-muted text-muted-foreground";
     }
   };
 
   const getTypeColor = (type: string) => {
     switch (type) {
-      case "finished_good": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
-      case "raw_material": return "bg-violet-500/8 text-violet-600 dark:text-violet-400";
-      case "component": return "bg-amber-500/8 text-amber-600 dark:text-amber-400";
-      case "service": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
-      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "finished_good": return "bg-primary/10 text-primary";
+      case "raw_material": return "bg-muted text-foreground";
+      case "component": return "bg-muted text-muted-foreground";
+      case "service": return "bg-foreground/10 text-foreground";
+      default: return "bg-muted text-muted-foreground";
     }
   };
 

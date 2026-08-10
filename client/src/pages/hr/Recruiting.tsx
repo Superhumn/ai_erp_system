@@ -21,13 +21,13 @@ import { format } from "date-fns";
 
 const stages = ["applied", "screening", "interview", "assessment", "offer", "hired", "rejected"] as const;
 const stageColors: Record<string, string> = {
-  applied: "bg-blue-500/10 text-blue-600",
-  screening: "bg-purple-500/10 text-purple-600",
-  interview: "bg-amber-500/10 text-amber-600",
-  assessment: "bg-cyan-500/10 text-cyan-600",
-  offer: "bg-green-500/10 text-green-600",
-  hired: "bg-emerald-500/10 text-emerald-600",
-  rejected: "bg-red-500/10 text-red-600",
+  applied: "bg-muted text-muted-foreground",
+  screening: "bg-muted text-muted-foreground",
+  interview: "bg-muted text-foreground",
+  assessment: "bg-muted text-foreground",
+  offer: "bg-primary/10 text-primary",
+  hired: "bg-muted text-foreground font-semibold",
+  rejected: "bg-[oklch(0.30_0.02_262)] text-white",
 };
 
 interface Candidate {
@@ -166,7 +166,7 @@ Provide: 1) Score X/10, 2) Key strengths, 3) Concerns, 4) Recommendation (advanc
           <div className="h-4 w-px bg-border" />
           <div><span className="text-muted-foreground">Interviews</span> <span className="font-bold">{stats.interviews}</span></div>
           <div className="h-4 w-px bg-border" />
-          <div><span className="text-muted-foreground">Offers</span> <span className="font-bold text-green-600">{stats.offers}</span></div>
+          <div><span className="text-muted-foreground">Offers</span> <span className="font-bold text-primary">{stats.offers}</span></div>
           <div className="h-4 w-px bg-border" />
           <div><span className="text-muted-foreground">Total</span> <span className="font-bold">{stats.total}</span></div>
         </div>
@@ -264,7 +264,7 @@ Provide: 1) Score X/10, 2) Key strengths, 3) Concerns, 4) Recommendation (advanc
                             <Badge className={stageColors[c.stage]}>{c.stage}</Badge>
                             {c.score !== null && (
                               <Badge variant="outline" className="flex items-center gap-0.5">
-                                <Star className="h-3 w-3 text-amber-500" />{c.score}/10
+                                <Star className="h-3 w-3 text-muted-foreground" />{c.score}/10
                               </Badge>
                             )}
                           </div>

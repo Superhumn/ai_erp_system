@@ -543,7 +543,7 @@ export default function DocumentImport() {
                   </div>
                 </div>
                 <div className="flex items-start gap-3 p-4 rounded-lg border">
-                  <FileText className="h-8 w-8 text-purple-500" />
+                  <FileText className="h-8 w-8 text-muted-foreground" />
                   <div>
                     <h3 className="font-medium">Vendor Invoices</h3>
                     <p className="text-sm text-muted-foreground">
@@ -556,7 +556,7 @@ export default function DocumentImport() {
                   </div>
                 </div>
                 <div className="flex items-start gap-3 p-4 rounded-lg border">
-                  <Truck className="h-8 w-8 text-green-500" />
+                  <Truck className="h-8 w-8 text-muted-foreground" />
                   <div>
                     <h3 className="font-medium">Freight Invoices</h3>
                     <p className="text-sm text-muted-foreground">
@@ -569,7 +569,7 @@ export default function DocumentImport() {
                   </div>
                 </div>
                 <div className="flex items-start gap-3 p-4 rounded-lg border">
-                  <FileText className="h-8 w-8 text-orange-500" />
+                  <FileText className="h-8 w-8 text-muted-foreground" />
                   <div>
                     <h3 className="font-medium">Customs Documents</h3>
                     <p className="text-sm text-muted-foreground">
@@ -735,7 +735,7 @@ export default function DocumentImport() {
                                 }}
                                 className="flex items-center gap-3 p-3 rounded-lg border hover:bg-accent text-left"
                               >
-                                <FolderOpen className="h-5 w-5 text-yellow-500" />
+                                <FolderOpen className="h-5 w-5 text-muted-foreground" />
                                 <span className="font-medium">{folder.name}</span>
                               </button>
                             ))}
@@ -890,13 +890,13 @@ export default function DocumentImport() {
                         <div 
                           key={index}
                           className={`flex items-center gap-2 p-2 rounded text-sm ${
-                            result.success ? 'bg-green-500/10' : 'bg-red-500/10'
+                            result.success ? 'bg-primary/10' : 'bg-muted'
                           }`}
                         >
                           {result.success ? (
-                            <CheckCircle className="h-4 w-4 text-green-500 flex-shrink-0" />
+                            <CheckCircle className="h-4 w-4 text-primary flex-shrink-0" />
                           ) : (
-                            <AlertCircle className="h-4 w-4 text-red-500 flex-shrink-0" />
+                            <AlertCircle className="h-4 w-4 text-foreground font-semibold flex-shrink-0" />
                           )}
                           <span className="truncate flex-1">{result.fileName}</span>
                           {result.success && result.data && (

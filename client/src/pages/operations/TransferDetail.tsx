@@ -102,12 +102,12 @@ export default function TransferDetail() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "draft": return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
-      case "pending": return "bg-amber-500/8 text-amber-600 dark:text-amber-400";
-      case "in_transit": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
-      case "received": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
-      case "cancelled": return "bg-red-500/8 text-red-600 dark:text-red-400";
-      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "draft": return "bg-muted text-muted-foreground";
+      case "pending": return "bg-muted text-foreground font-semibold";
+      case "in_transit": return "bg-primary/10 text-primary";
+      case "received": return "bg-muted text-muted-foreground";
+      case "cancelled": return "bg-[oklch(0.30_0.02_262)] text-white";
+      default: return "bg-muted text-muted-foreground";
     }
   };
 
@@ -343,7 +343,7 @@ export default function TransferDetail() {
           {canReceive && (
             <Dialog open={isReceiveOpen} onOpenChange={setIsReceiveOpen}>
               <DialogTrigger asChild>
-                <Button className="bg-green-600 hover:bg-green-700">
+                <Button className="bg-primary hover:bg-primary/90">
                   <CheckCircle className="h-4 w-4 mr-2" />
                   Receive Transfer
                 </Button>
@@ -377,7 +377,7 @@ export default function TransferDetail() {
                 </div>
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setIsReceiveOpen(false)}>Cancel</Button>
-                  <Button onClick={handleReceive} disabled={receiveMutation.isPending} className="bg-green-600 hover:bg-green-700">
+                  <Button onClick={handleReceive} disabled={receiveMutation.isPending} className="bg-primary hover:bg-primary/90">
                     <CheckCircle className="h-4 w-4 mr-2" />
                     Confirm Receipt
                   </Button>

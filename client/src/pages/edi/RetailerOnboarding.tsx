@@ -381,11 +381,11 @@ export default function RetailerOnboarding() {
           const isPast = ["select", "credentials", "crosswalks", "test", "done"].indexOf(step) > i;
           return (
             <div key={s} className="flex items-center gap-2">
-              {i > 0 && <div className={`h-px w-8 ${isPast ? "bg-green-500" : "bg-gray-200"}`} />}
+              {i > 0 && <div className={`h-px w-8 ${isPast ? "bg-primary" : "bg-muted"}`} />}
               <div className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1 rounded-full ${
                 isActive ? "bg-primary text-primary-foreground" :
-                isPast ? "bg-green-100 text-green-700" :
-                "bg-gray-100 text-gray-500"
+                isPast ? "bg-primary/10 text-primary" :
+                "bg-muted text-muted-foreground"
               }`}>
                 {isPast && <CheckCircle2 className="h-3.5 w-3.5" />}
                 {labels[i]}
@@ -560,7 +560,7 @@ export default function RetailerOnboarding() {
 
             {/* Notes */}
             {formData.notes && (
-              <div className="p-3 bg-blue-50 border border-blue-200 rounded-md text-sm text-blue-800">
+              <div className="p-3 bg-primary/10 border border-primary/20 rounded-md text-sm text-foreground">
                 {formData.notes}
               </div>
             )}
@@ -674,14 +674,14 @@ export default function RetailerOnboarding() {
             </div>
 
             {testConnection.data && (
-              <div className={`p-4 rounded-md ${testConnection.data.success ? "bg-green-50 border border-green-200" : "bg-red-50 border border-red-200"}`}>
+              <div className={`p-4 rounded-md ${testConnection.data.success ? "bg-primary/10 border border-primary/20" : "bg-muted border border-foreground/40"}`}>
                 <div className="flex items-center gap-2">
                   {testConnection.data.success ? (
-                    <CheckCircle2 className="h-5 w-5 text-green-600" />
+                    <CheckCircle2 className="h-5 w-5 text-primary" />
                   ) : (
-                    <XCircle className="h-5 w-5 text-red-600" />
+                    <XCircle className="h-5 w-5 text-foreground" />
                   )}
-                  <span className={`font-medium ${testConnection.data.success ? "text-green-700" : "text-red-700"}`}>
+                  <span className={`font-medium ${testConnection.data.success ? "text-primary" : "text-foreground"}`}>
                     {testConnection.data.message}
                   </span>
                 </div>
@@ -697,7 +697,7 @@ export default function RetailerOnboarding() {
               }}>
                 Keep in Test Mode
               </Button>
-              <Button onClick={handleActivate} disabled={updatePartner.isPending} className="bg-green-600 hover:bg-green-700">
+              <Button onClick={handleActivate} disabled={updatePartner.isPending} className="bg-primary hover:bg-primary/90">
                 {updatePartner.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
                 Activate & Go Live
               </Button>
@@ -712,7 +712,7 @@ export default function RetailerOnboarding() {
       {step === "done" && (
         <Card>
           <CardContent className="pt-10 pb-10 text-center space-y-4">
-            <CheckCircle2 className="h-16 w-16 mx-auto text-green-500" />
+            <CheckCircle2 className="h-16 w-16 mx-auto text-primary" />
             <h2 className="text-xl font-semibold tracking-[-0.02em]">Retailer Connected!</h2>
             <p className="text-muted-foreground max-w-md mx-auto">
               {formData.name} is set up and ready. Inbound 850 Purchase Orders will be auto-processed and acknowledged with a 997.

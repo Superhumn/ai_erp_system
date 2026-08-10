@@ -163,12 +163,12 @@ function CampaignsSection() {
                   <TableCell><Badge variant="outline" className="capitalize">{c.type || "custom"}</Badge></TableCell>
                   <TableCell>
                     <Badge className={
-                      c.status === "sent" ? "bg-green-100 text-green-700" :
-                      c.status === "sending" ? "bg-blue-100 text-blue-700" :
-                      c.status === "scheduled" ? "bg-indigo-100 text-indigo-700" :
-                      c.status === "paused" ? "bg-yellow-100 text-yellow-700" :
-                      c.status === "cancelled" ? "bg-red-100 text-red-700" :
-                      "bg-gray-100 text-gray-700"
+                      c.status === "sent" ? "bg-muted text-muted-foreground" :
+                      c.status === "sending" ? "bg-primary/10 text-primary" :
+                      c.status === "scheduled" ? "bg-muted text-foreground" :
+                      c.status === "paused" ? "bg-muted text-foreground font-semibold" :
+                      c.status === "cancelled" ? "bg-[oklch(0.30_0.02_262)] text-white" :
+                      "bg-muted text-muted-foreground"
                     }>{c.status || "draft"}</Badge>
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">{c.scheduledAt ? new Date(c.scheduledAt).toLocaleDateString() : "—"}</TableCell>

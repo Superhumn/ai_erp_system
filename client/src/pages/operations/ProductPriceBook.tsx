@@ -629,7 +629,7 @@ function PriceTierQuoteWidget({ productId, tiers }: { productId: number; tiers: 
             <div className="text-right">
               <div className="text-xs text-muted-foreground">
                 {formatMoney(quote.effectivePricePerUnit, quote.currency)} / {(quote.tier as any).unitOfMeasure ?? "unit"}
-                {quote.discountPercent > 0 && <span className="ml-1 text-emerald-600">(-{quote.discountPercent.toFixed(1)}%)</span>}
+                {quote.discountPercent > 0 && <span className="ml-1 text-muted-foreground">(-{quote.discountPercent.toFixed(1)}%)</span>}
               </div>
               <div className="text-lg font-mono font-semibold">{formatMoney(quote.subtotal, quote.currency)}</div>
             </div>

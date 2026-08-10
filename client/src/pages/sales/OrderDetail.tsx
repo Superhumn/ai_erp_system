@@ -94,14 +94,14 @@ export default function OrderDetail() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "draft": return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
-      case "pending": return "bg-amber-500/8 text-amber-600 dark:text-amber-400";
-      case "confirmed": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
-      case "processing": return "bg-violet-500/8 text-violet-600 dark:text-violet-400";
-      case "shipped": return "bg-indigo-500/8 text-indigo-600 dark:text-indigo-400";
-      case "delivered": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
-      case "cancelled": return "bg-red-500/8 text-red-600 dark:text-red-400";
-      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "draft": return "bg-muted text-muted-foreground";
+      case "pending": return "bg-primary/10 text-primary";
+      case "confirmed": return "bg-primary/10 text-primary";
+      case "processing": return "bg-primary/10 text-primary";
+      case "shipped": return "bg-primary/10 text-primary";
+      case "delivered": return "bg-muted text-muted-foreground";
+      case "cancelled": return "bg-[oklch(0.30_0.02_262)] text-white";
+      default: return "bg-muted text-muted-foreground";
     }
   };
 

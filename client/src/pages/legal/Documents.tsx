@@ -101,13 +101,13 @@ export default function Documents() {
   });
 
   const typeColors: Record<string, string> = {
-    contract: "bg-blue-500/10 text-blue-600",
-    invoice: "bg-green-500/10 text-green-600",
-    receipt: "bg-purple-500/10 text-purple-600",
-    report: "bg-amber-500/10 text-amber-600",
-    legal: "bg-indigo-500/10 text-indigo-600",
-    hr: "bg-pink-500/10 text-pink-600",
-    other: "bg-gray-500/10 text-gray-600",
+    contract: "bg-muted text-muted-foreground",
+    invoice: "bg-muted text-muted-foreground",
+    receipt: "bg-muted text-muted-foreground",
+    report: "bg-muted text-muted-foreground",
+    legal: "bg-muted text-muted-foreground",
+    hr: "bg-muted text-muted-foreground",
+    other: "bg-muted text-muted-foreground",
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

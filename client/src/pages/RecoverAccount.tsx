@@ -97,7 +97,7 @@ export default function RecoverAccount() {
 
           {error && <p className="text-sm text-destructive">{error}</p>}
           {successMessage && (
-            <p className="text-sm text-green-600 dark:text-green-400">{successMessage}</p>
+            <p className="text-sm text-primary">{successMessage}</p>
           )}
 
           <Button type="submit" className="w-full" disabled={loading}>

@@ -77,7 +77,7 @@ export default function ResetPassword() {
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="w-full max-w-sm space-y-6 p-8 animate-fade-in text-center">
           <h1 className="text-xl font-semibold tracking-[-0.02em]">Password Reset</h1>
-          <p className="text-sm text-green-600 dark:text-green-400">
+          <p className="text-sm text-primary">
             Your password has been reset successfully.
           </p>
           <Button className="w-full" onClick={() => navigate("/login")}>
