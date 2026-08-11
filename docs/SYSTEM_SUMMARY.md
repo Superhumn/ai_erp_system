@@ -42,16 +42,20 @@ assistant / autonomous-workflow layer into one app.
 ## 3. Feature map
 
 Navigation is a **locked** 6-section sidebar (enforced by `DashboardLayout.test.ts`),
-plus AI Assistant + Approval Queue in the top bar.
+plus AI Assistant + Approval Queue in the top bar. The middle column below lists
+the **exact, enforced sidebar item labels** from `getMenuGroups()`; the right
+column lists the underlying features those items open onto (these are
+capabilities/pages, **not** sidebar entries — several, like Freight and Time
+Tracking, are deliberately absorbed into a parent item and banned as nav labels).
 
-| Section | Features |
-|---|---|
-| **Command Center** | Dashboard/KPIs, Projects & tasks, Email Inbox, Meetings, Messaging |
-| **Sales** | Orders & order detail, Customers, Invoicing, Shopify sync, CRM Hub/Admin, Marketing (content, social posts, brand ambassadors), Fundraising campaigns |
-| **Finance** | Consolidated Finance (accounts + transactions + reports + R&D tax credit), CFO dashboard, Banking, Costing/COGS, Payments, Grants & government tenders, Fundraising, Investors (cap table / equity portal), Data Rooms |
-| **Operations** | Consolidated Operations (inventory + manufacturing + procurement), multi-warehouse inventory, BOM, work orders, production batches, recipes/ingredients, purchase orders & receiving, vendors & supplier scoring, vendor negotiations, forecasting/planning, Logistics & Freight (carriers, RFQs, tracking, customs, FDA prior notice) |
-| **People** | HR Hub, Employees, Departments, Payroll, Time tracking, Offer letters, Recruiting, Employee portal, Legal (contracts, disputes, cases, regulatory licenses, documents) |
-| **Tools** | SOPs, Code editor + Settings (admin), Import, EDI (trading partners, transactions, insights, retailer onboarding) |
+| Section | Sidebar items (canonical) | Underlying features |
+|---|---|---|
+| **Command Center** | Dashboard, Projects, Email Inbox, Meetings, Messaging | KPI dashboard, project/task management, inbound email triage, meeting notes, internal messaging |
+| **Sales** | Orders, CRM, Marketing, CX, Sales AI *(role-gated)* | Orders & order detail, customers, invoicing, Shopify sync; CRM hub/admin; marketing (content, social posts, brand ambassadors); customer support; sales automation |
+| **Finance** | Finance, Grants, Fundraising, Investors, Data Room | Consolidated Finance (accounts + transactions + reports + R&D tax credit), CFO dashboard, banking, costing/COGS, payments; grants & government tenders; fundraising campaigns; investors (cap table / equity); data rooms |
+| **Operations** | Operations, Logistics, Recipes *(admin/ops)*, Vendors | Consolidated Operations (inventory + manufacturing + procurement), multi-warehouse inventory, BOM, work orders, production batches, recipes/ingredients, POs & receiving, forecasting/planning; Logistics = merged logistics + freight (carriers, RFQs, tracking, customs, FDA prior notice); vendors & supplier scoring, vendor negotiations |
+| **People** | HR, Recruiting, Legal *(legal/admin/exec)* | HR hub, employees, departments, payroll, time tracking (absorbed into HR), offer letters, employee portal; recruiting; legal (contracts, disputes, cases, regulatory licenses, documents) |
+| **Tools** | SOPs, Code *(admin)*, Settings *(admin)*, Import *(admin/ops)*, EDI *(ops)* | SOPs; in-app code editor; settings/integrations; data import; EDI (trading partners, transactions, insights, retailer onboarding) |
 
 **AI / automation layer:** natural-language command bar (⌘K) for POs, invoices,
 payments, work orders, inventory transfers; conversational AI assistant with 20+
@@ -109,10 +113,13 @@ check` passes (exit 0, confirmed locally). `check:strict` already passes.
 - **Data Room due-diligence / checklists throw at runtime.** DD templates /
   categories / items / checklist tables in `server/db/dataRoom.ts` are `null`
   stubs; any CRUD on them throws.
-- **Mercury banking has no graceful degradation.** `server/mercuryService.ts`
-  throws immediately if `MERCURY_API_TOKEN` is unset, and the var is missing from
-  `.env.example`, so the Banking UI hard-errors instead of showing "not
-  configured".
+- **Mercury banking is only partially gated.** `MERCURY_API_TOKEN` *is* present
+  in `.env.example` (line 98), and most helpers in `server/mercuryService.ts`
+  (`getMercuryAccounts`, `getMercuryTransactions`) now return `{ configured:
+  false }` when the token is unset, so the Banking UI can degrade cleanly. But
+  `getMercuryTransactionDetail` still **throws** `"MERCURY_API_TOKEN not
+  configured"` — that one path hard-errors. Make the remaining helper(s)
+  consistent with the graceful-degradation pattern.
 
 ### 🟠 P1 — Known type-safety debt
 
