@@ -7,15 +7,17 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
 }
 
+const DISK_FULL_ERROR_CODES = new Set(["ER_DISK_FULL", "ER_DISK_FULL_NOWAIT"]);
+
 export function isDiskFullMigrationError(error: unknown): boolean {
   if (!isRecord(error)) return false;
   const code = error.code;
-  if (typeof code === "string" && code === "ER_DISK_FULL_NOWAIT") return true;
+  if (typeof code === "string" && DISK_FULL_ERROR_CODES.has(code)) return true;
 
   const cause = error.cause;
   if (isRecord(cause)) {
     const causeCode = cause.code;
-    if (typeof causeCode === "string" && causeCode === "ER_DISK_FULL_NOWAIT") {
+    if (typeof causeCode === "string" && DISK_FULL_ERROR_CODES.has(causeCode)) {
       return true;
     }
     const causeMessage = cause.sqlMessage ?? cause.message;

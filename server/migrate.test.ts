@@ -8,12 +8,22 @@ describe("isDiskFullMigrationError", () => {
         code: "ER_DISK_FULL_NOWAIT",
       }),
     ).toBe(true);
+    expect(
+      isDiskFullMigrationError({
+        code: "ER_DISK_FULL",
+      }),
+    ).toBe(true);
   });
 
   it("returns true for mysql disk full code on cause", () => {
     expect(
       isDiskFullMigrationError({
         cause: { code: "ER_DISK_FULL_NOWAIT" },
+      }),
+    ).toBe(true);
+    expect(
+      isDiskFullMigrationError({
+        cause: { code: "ER_DISK_FULL" },
       }),
     ).toBe(true);
   });
