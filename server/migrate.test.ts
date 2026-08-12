@@ -34,6 +34,11 @@ describe("isDiskFullMigrationError", () => {
         cause: { sqlMessage: "Create table/tablespace 'regions' failed, as disk is full" },
       }),
     ).toBe(true);
+    expect(
+      isDiskFullMigrationError({
+        cause: { message: "migration failed because disk is full" },
+      }),
+    ).toBe(true);
   });
 
   it("returns true for top-level disk full message", () => {
