@@ -51,7 +51,7 @@ export async function runMigrations() {
       isDiskFullMigrationError(error)
     ) {
       console.warn(
-        "[migrate] Migration skipped because database storage is full and MIGRATION_ALLOW_DISK_FULL_FAILURE is enabled",
+        "[migrate] WARNING: Migration skipped because database storage is full and MIGRATION_ALLOW_DISK_FULL_FAILURE is enabled. Schema may be out of date until DB storage is restored.",
       );
       process.exit(0);
     }
