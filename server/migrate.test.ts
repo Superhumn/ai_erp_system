@@ -55,5 +55,9 @@ describe("isDiskFullMigrationError", () => {
         message: "Syntax error in SQL statement",
       }),
     ).toBe(false);
+    expect(isDiskFullMigrationError("disk is full")).toBe(false);
+    expect(isDiskFullMigrationError({ cause: { message: "connection reset" } })).toBe(
+      false,
+    );
   });
 });
