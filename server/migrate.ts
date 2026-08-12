@@ -29,7 +29,7 @@ export function isDiskFullMigrationError(error: unknown): boolean {
     }
   }
 
-  const message = error.message;
+  const message = error.sqlMessage ?? error.message;
   return typeof message === "string" && message.toLowerCase().includes("disk is full");
 }
 
@@ -52,6 +52,9 @@ export async function runMigrations() {
       process.env.MIGRATION_ALLOW_DISK_FULL_FAILURE === "true" &&
       isDiskFullMigrationError(error)
     ) {
+      // Intentionally return success in environments that opt in (currently
+      // staging deploys) so app deploys are not blocked by temporary DB storage
+      // exhaustion. The warning below keeps this visible for operators.
       console.warn(
         "[migrate] WARNING: Migration skipped because database storage is full and MIGRATION_ALLOW_DISK_FULL_FAILURE is enabled. Schema may be out of date until DB storage is restored.",
       );

@@ -42,6 +42,11 @@ describe("isDiskFullMigrationError", () => {
         message: "migration failed because disk is full",
       }),
     ).toBe(true);
+    expect(
+      isDiskFullMigrationError({
+        sqlMessage: "Create table failed, as disk is full",
+      }),
+    ).toBe(true);
   });
 
   it("returns false for unrelated errors", () => {
