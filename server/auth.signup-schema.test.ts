@@ -30,7 +30,7 @@ describe("signup schema migration 0056", () => {
     expect(sql).toMatch(/INFORMATION_SCHEMA/);
     // Auth-critical work must run before regions (disk-full on regions
     // previously aborted the procedure before users columns were added).
-    const emailVerifiedAt = sql.indexOf("emailVerified");
+    const emailVerifiedAt = sql.indexOf("ADD COLUMN `emailVerified`");
     const regionsAt = sql.indexOf("CREATE TABLE `regions`");
     expect(emailVerifiedAt).toBeGreaterThan(-1);
     expect(regionsAt).toBeGreaterThan(emailVerifiedAt);

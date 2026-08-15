@@ -324,7 +324,7 @@ function rowsFromExecute(result: unknown): Record<string, unknown>[] {
   return Array.isArray(rows) ? rows : [];
 }
 
-const USER_CORE_SELECT_SQL = `id, openId, name, email, loginMethod, role, departmentId,
+const USER_CORE_SELECT_SQL = `id, openId, name, email, loginMethod, \`role\`, departmentId,
   avatarUrl, phone, linkedVendorId, linkedWarehouseId, isActive,
   invitedBy, invitedAt, createdAt, updatedAt, lastSignedIn`;
 
