@@ -1,9 +1,11 @@
 import { useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Landmark, Loader2, AlertCircle, ExternalLink } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Landmark, Loader2, AlertCircle, ExternalLink, RefreshCw, CheckCircle2, Check } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, TooltipProps } from "recharts";
 import { formatCurrency } from "@/lib/format";
+import { toast } from "sonner";
 
 function fmtAxisK(value: number): string {
   if (Math.abs(value) >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
@@ -28,11 +30,50 @@ function BankTooltip({ active, payload, label }: TooltipProps<number, string>) {
 }
 
 export default function Banking() {
+  const utils = trpc.useUtils();
+
   // Queries
   const { data: balancesData, isLoading: balancesLoading } = trpc.banking.balances.useQuery();
   const { data: txnData } = trpc.banking.transactions.useQuery({});
+  const { data: bankAccountsData } = trpc.banking.accounts.useQuery();
 
   const accounts: any[] = balancesData?.accounts || [];
+  const bankAccounts: any[] = bankAccountsData?.accounts || [];
+
+  // Unconfirmed transactions (anything not yet confirmed)
+  const unconfirmedTxns: any[] = useMemo(
+    () => (txnData || []).filter((t: any) => t.categorizationStatus !== "confirmed"),
+    [txnData]
+  );
+
+  // Mutations
+  const syncMutation = trpc.banking.syncTransactions.useMutation({
+    onSuccess: (res: any) => {
+      toast.success(
+        `Synced ${res.totalImported} new transaction(s), ${res.totalSkipped} skipped across ${res.accounts} account(s)`
+      );
+      utils.banking.transactions.invalidate();
+      utils.banking.balances.invalidate();
+      utils.banking.accounts.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const confirmOneMutation = trpc.banking.confirmOne.useMutation({
+    onSuccess: () => {
+      toast.success("Transaction confirmed");
+      utils.banking.transactions.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const confirmAllMutation = trpc.banking.confirmAll.useMutation({
+    onSuccess: (res: any) => {
+      toast.success(`Confirmed ${res.confirmed} transaction(s)`);
+      utils.banking.transactions.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   // Build running balance chart from transactions
   const balanceChartData = useMemo(() => {
@@ -60,14 +101,24 @@ export default function Banking() {
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
-      <div>
-        <h1 className="text-lg font-semibold flex items-center gap-2">
-          <Landmark className="h-8 w-8" />
-          Banking
-        </h1>
-        <p className="text-muted-foreground mt-1">
-          Mercury account balances.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-lg font-semibold flex items-center gap-2">
+            <Landmark className="h-8 w-8" />
+            Banking
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            Mercury account balances.
+          </p>
+        </div>
+        <Button onClick={() => syncMutation.mutate()} disabled={syncMutation.isPending}>
+          {syncMutation.isPending ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <RefreshCw className="h-4 w-4" />
+          )}
+          Sync transactions
+        </Button>
       </div>
 
       {/* Account Balance Cards */}
@@ -136,6 +187,93 @@ export default function Banking() {
                 />
               </LineChart>
             </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Bank Accounts */}
+      {bankAccounts.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Bank Accounts</CardTitle>
+            <CardDescription className="text-xs">Connected Mercury accounts</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="divide-y">
+              {bankAccounts.map((acct: any) => (
+                <div key={acct.id} className="flex items-center justify-between py-2">
+                  <div>
+                    <p className="text-sm font-medium">{acct.name || acct.nickname || "Account"}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {acct.kind || acct.type || "Checking"}
+                      {acct.accountNumber ? ` · ****${acct.accountNumber.slice(-4)}` : ""}
+                    </p>
+                  </div>
+                  <span className="text-sm font-semibold">
+                    {formatCurrency(acct.currentBalance ?? acct.availableBalance ?? 0)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Unconfirmed Transactions */}
+      {unconfirmedTxns.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
+            <div>
+              <CardTitle className="text-sm font-medium">Unconfirmed Transactions</CardTitle>
+              <CardDescription className="text-xs">
+                {unconfirmedTxns.length} transaction(s) awaiting confirmation
+              </CardDescription>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => confirmAllMutation.mutate()}
+              disabled={confirmAllMutation.isPending}
+            >
+              {confirmAllMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4" />
+              )}
+              Confirm all
+            </Button>
+          </CardHeader>
+          <CardContent>
+            <div className="divide-y">
+              {unconfirmedTxns.map((txn: any) => (
+                <div key={txn.id} className="flex items-center justify-between gap-4 py-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate">
+                      {txn.counterpartyName || txn.description || "Transaction"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {new Date(txn.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                      {txn.category ? ` · ${txn.category}` : ""}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <span className={`text-sm font-semibold ${txn.type === "credit" ? "text-green-600" : ""}`}>
+                      {txn.type === "credit" ? "+" : "-"}
+                      {formatCurrency(parseFloat(txn.amount ?? "0"))}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => confirmOneMutation.mutate({ id: txn.id })}
+                      disabled={confirmOneMutation.isPending}
+                    >
+                      <Check className="h-4 w-4" />
+                      Confirm
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </CardContent>
         </Card>
       )}

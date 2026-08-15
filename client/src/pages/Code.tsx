@@ -112,6 +112,7 @@ export default function CodePage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [editingSnippetId, setEditingSnippetId] = useState<number | null>(null);
+  const [viewSnippetId, setViewSnippetId] = useState<number | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -122,6 +123,11 @@ export default function CodePage() {
     { enabled: searchQuery.length > 0 }
   );
   const executionsQuery = codeApi.executions.useQuery({});
+  const aiSessionsQuery = codeApi.aiSessions.useQuery({});
+  const viewSnippetQuery = codeApi.getSnippet.useQuery(
+    { id: viewSnippetId ?? 0 },
+    { enabled: viewSnippetId !== null }
+  );
 
   // Mutations
   const executeMutation = codeApi.execute.useMutation({
@@ -141,6 +147,7 @@ export default function CodePage() {
     onSuccess: (data) => {
       setAiResult({ outputCode: data.outputCode ?? null, explanation: data.explanation ?? "" });
       setActiveTab("ai-result");
+      aiSessionsQuery.refetch();
       toast.success("AI response received");
     },
     onError: (err) => toast.error(err.message),
@@ -387,6 +394,10 @@ export default function CodePage() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => setViewSnippetId(snippet.id)}>
+                          <Eye className="h-3 w-3 mr-2" />
+                          View
+                        </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => copyToClipboard(snippet.code)}>
                           <Copy className="h-3 w-3 mr-2" />
                           Copy Code
@@ -490,6 +501,10 @@ export default function CodePage() {
                 <TabsTrigger value="history" className="text-xs">
                   <Clock className="h-3 w-3 mr-1" />
                   History
+                </TabsTrigger>
+                <TabsTrigger value="ai-history" className="text-xs">
+                  <Sparkles className="h-3 w-3 mr-1" />
+                  AI History
                 </TabsTrigger>
               </TabsList>
 
@@ -605,6 +620,41 @@ export default function CodePage() {
                           </span>
                           <span className="text-muted-foreground">
                             {exec.executionTimeMs ? `${exec.executionTimeMs}ms` : ""}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </ScrollArea>
+              </TabsContent>
+
+              <TabsContent value="ai-history" className="flex-1 m-0 overflow-hidden">
+                <ScrollArea className="h-full px-3 pb-2">
+                  {(aiSessionsQuery.data ?? []).length === 0 ? (
+                    <p className="text-xs text-muted-foreground py-4 text-center">
+                      No AI sessions yet.
+                    </p>
+                  ) : (
+                    <div className="space-y-1">
+                      {(aiSessionsQuery.data ?? []).slice(0, 20).map((session: any) => (
+                        <div
+                          key={session.id}
+                          className="flex items-center gap-2 text-xs py-1 px-2 rounded hover:bg-accent cursor-pointer"
+                          onClick={() => {
+                            if (session.outputCode) setCode(session.outputCode);
+                            setAiResult({
+                              outputCode: session.outputCode ?? null,
+                              explanation: session.explanation ?? "",
+                            });
+                            setActiveTab("ai-result");
+                          }}
+                        >
+                          <Badge variant="secondary" className="text-[10px] h-4 px-1">
+                            {session.action}
+                          </Badge>
+                          <span className="truncate flex-1">{session.prompt}</span>
+                          <span className="text-muted-foreground">
+                            {session.model ?? ""}
                           </span>
                         </div>
                       ))}
@@ -802,6 +852,60 @@ export default function CodePage() {
                 <Save className="h-4 w-4 mr-1" />
               )}
               Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Snippet Dialog */}
+      <Dialog open={viewSnippetId !== null} onOpenChange={(open) => !open && setViewSnippetId(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {viewSnippetQuery.data?.title ?? "Snippet"}
+            </DialogTitle>
+            <DialogDescription>
+              {viewSnippetQuery.data?.description || "View snippet details"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            {viewSnippetQuery.isLoading ? (
+              <div className="flex items-center justify-center py-6">
+                <Loader2 className="h-5 w-5 animate-spin" />
+              </div>
+            ) : viewSnippetQuery.data ? (
+              <>
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary">{viewSnippetQuery.data.language}</Badge>
+                  {viewSnippetQuery.data.isPublic && (
+                    <Badge variant="outline">Public</Badge>
+                  )}
+                </div>
+                <pre className="font-mono text-xs whitespace-pre-wrap bg-muted/50 rounded p-2 max-h-64 overflow-auto">
+                  {viewSnippetQuery.data.code}
+                </pre>
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground py-4 text-center">
+                Snippet not found.
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewSnippetId(null)}>
+              Close
+            </Button>
+            <Button
+              disabled={!viewSnippetQuery.data}
+              onClick={() => {
+                if (viewSnippetQuery.data) {
+                  loadSnippet(viewSnippetQuery.data);
+                  setViewSnippetId(null);
+                }
+              }}
+            >
+              <Code2 className="h-4 w-4 mr-1" />
+              Open in Editor
             </Button>
           </DialogFooter>
         </DialogContent>

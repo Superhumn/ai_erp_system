@@ -83,19 +83,48 @@ if (routers.size === 0) {
 }
 
 // --- Concatenate client source ---------------------------------------------
+// Normalize the `(trpc.X as any).proc` escape hatch → `trpc.X.proc` so the
+// literal-path scan below sees the procedure. Same for aliases: `(codeApi as
+// any).proc` → `codeApi.proc`. Without this, casted calls read as unreached.
 const clientText = listSource(CLIENT)
   .map((f) => readFileSync(f, "utf8"))
-  .join("\n");
+  .join("\n")
+  .replace(/\(\s*(trpc(?:\.\w+)+|\w+)\s+as\s+\w+\s*\)/g, "$1");
+
+// Router aliases: `const codeApi = trpc.code` then `codeApi.snippets.useQuery()`.
+// Without this the alias hides the router's procedures from the literal-path
+// scan below. Map aliasName -> routerKey for every top-level-router alias.
+const aliasToRouter = new Map();
+for (const m of clientText.matchAll(/(?:const|let|var)\s+(\w+)\s*=\s*trpc\.(\w+)(?![\w.])/g)) {
+  if (routers.has(m[2])) aliasToRouter.set(m[1], m[2]);
+}
+const aliasesByRouter = new Map();
+for (const [alias, router] of aliasToRouter) {
+  if (!aliasesByRouter.has(router)) aliasesByRouter.set(router, []);
+  aliasesByRouter.get(router).push(alias);
+}
 
 // A proc path is "reached" if it appears as an identifier path anywhere in the
 // client. Boundaries: not preceded/followed by a word char (a leading `.` from
-// `trpc.`/`utils.` is allowed since `.` is not a word char).
+// `trpc.`/`utils.` is allowed since `.` is not a word char). Also resolves
+// router aliases so `codeApi.snippets` counts for `code.snippets`.
 const reachCache = new Map();
 function isReached(path) {
   if (reachCache.has(path)) return reachCache.get(path);
   const esc = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(`(?<![\\w])${esc}(?![\\w])`);
-  const hit = re.test(clientText);
+  let hit = new RegExp(`(?<![\\w])${esc}(?![\\w])`).test(clientText);
+  if (!hit) {
+    const dot = path.indexOf(".");
+    const router = path.slice(0, dot);
+    const rest = path.slice(dot + 1);
+    for (const alias of aliasesByRouter.get(router) || []) {
+      const aliasEsc = `${alias}.${rest}`.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (new RegExp(`(?<![\\w])${aliasEsc}(?![\\w])`).test(clientText)) {
+        hit = true;
+        break;
+      }
+    }
+  }
   reachCache.set(path, hit);
   return hit;
 }
