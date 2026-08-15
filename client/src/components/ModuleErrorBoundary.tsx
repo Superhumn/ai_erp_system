@@ -36,7 +36,7 @@ export class ModuleErrorBoundary extends Component<Props, State> {
       return (
         <div className="flex items-center justify-center py-20 px-8">
           <div className="flex flex-col items-center max-w-md text-center">
-            <AlertTriangle className="h-10 w-10 text-amber-500 mb-4" />
+            <AlertTriangle className="h-10 w-10 text-foreground mb-4" />
             <h2 className="text-lg font-semibold mb-2">
               {isNotConfigured
                 ? `${this.props.moduleName || "Module"} needs setup`

@@ -63,25 +63,25 @@ function InventorySummaryCards({ inventory }: { inventory: InventoryItem[] | und
     <div className="grid gap-4 md:grid-cols-4">
       <Card>
         <CardContent className="pt-6">
-          <div className="text-2xl font-bold">{total}</div>
+          <div className="text-2xl font-bold font-display tabular-nums">{total}</div>
           <p className="text-xs text-muted-foreground">Total SKUs</p>
         </CardContent>
       </Card>
       <Card>
         <CardContent className="pt-6">
-          <div className="text-2xl font-bold text-green-600">{inStock}</div>
+          <div className="text-2xl font-bold font-display tabular-nums">{inStock}</div>
           <p className="text-xs text-muted-foreground">In Stock</p>
         </CardContent>
       </Card>
       <Card>
         <CardContent className="pt-6">
-          <div className="text-2xl font-bold text-amber-600">{lowStock}</div>
+          <div className="text-2xl font-bold text-foreground font-display tabular-nums">{lowStock}</div>
           <p className="text-xs text-muted-foreground">Low Stock</p>
         </CardContent>
       </Card>
       <Card>
         <CardContent className="pt-6">
-          <div className="text-2xl font-bold text-red-600">{outOfStock}</div>
+          <div className="text-2xl font-bold text-foreground font-display tabular-nums">{outOfStock}</div>
           <p className="text-xs text-muted-foreground">Out of Stock</p>
         </CardContent>
       </Card>
@@ -193,16 +193,16 @@ export default function Inventory() {
       type: "status",
       sortable: false,
       options: [
-        { value: "in_stock", label: "In Stock", color: "bg-green-500/10 text-green-600" },
-        { value: "low_stock", label: "Low Stock", color: "bg-amber-500/10 text-amber-600" },
-        { value: "out_of_stock", label: "Out of Stock", color: "bg-red-500/10 text-red-600" },
+        { value: "in_stock", label: "In Stock", color: "bg-muted text-muted-foreground" },
+        { value: "low_stock", label: "Low Stock", color: "bg-muted text-foreground font-semibold" },
+        { value: "out_of_stock", label: "Out of Stock", color: "bg-[oklch(0.30_0.02_262)] text-white" },
       ],
       render: (row) => {
         const status = getStockStatus(row.quantity, row.reorderLevel);
         const colors: Record<string, string> = {
-          in_stock: "bg-green-500/10 text-green-600",
-          low_stock: "bg-amber-500/10 text-amber-600",
-          out_of_stock: "bg-red-500/10 text-red-600",
+          in_stock: "bg-muted text-muted-foreground",
+          low_stock: "bg-muted text-foreground font-semibold",
+          out_of_stock: "bg-[oklch(0.30_0.02_262)] text-white",
         };
         return (
           <Badge className={colors[status.value]}>

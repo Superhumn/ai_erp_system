@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseFormulationSheet, parseQuantityToGrams } from "./recipeSheetImport";
+import { parseFormulationSheet, parseQuantityToGrams, suggestColumnMapping } from "./recipeSheetImport";
 
 describe("parseQuantityToGrams", () => {
   it("treats bare numbers as grams", () => {
@@ -90,5 +90,58 @@ describe("parseFormulationSheet", () => {
     const { recipes, warnings } = parseFormulationSheet(rows);
     expect(recipes).toHaveLength(0);
     expect(warnings.some((w) => /no recipe name/.test(w))).toBe(true);
+  });
+
+  it("auto-detects columns from fuzzy / aliased header titles", () => {
+    const rows = [
+      ["Formula", "Ingredients", "Qty (g)", "Steps"],
+      ["Sauce", "Tomato", "500", "Simmer"],
+      ["Sauce", "Basil", "10", "Season"],
+    ];
+    const { recipes, warnings } = parseFormulationSheet(rows);
+    expect(recipes).toHaveLength(1);
+    expect(recipes[0].name).toBe("Sauce");
+    expect(recipes[0].lines.map((l) => l.ingredientName)).toEqual(["Tomato", "Basil"]);
+    expect(recipes[0].lines[0].quantityGrams).toBe(500);
+    expect(recipes[0].procedures.map((p) => p.instruction)).toEqual(["Simmer", "Season"]);
+    expect(warnings).toHaveLength(0);
+  });
+
+  it("honours an explicit column mapping over the header names", () => {
+    // Headers "A"/"B"/"C" match nothing automatically — mapping makes it work.
+    const rows = [
+      ["A", "B", "C"],
+      ["My Recipe", "Cumin", "5"],
+      ["My Recipe", "Paprika", "8"],
+    ];
+    const { recipes, warnings } = parseFormulationSheet(rows, {
+      columnMapping: { recipeName: 0, ingredient: 1, quantity: 2 },
+    });
+    expect(recipes).toHaveLength(1);
+    expect(recipes[0].name).toBe("My Recipe");
+    expect(recipes[0].lines).toHaveLength(2);
+    expect(recipes[0].lines[1]).toMatchObject({ ingredientName: "Paprika", quantityGrams: 8 });
+    expect(warnings).toHaveLength(0);
+  });
+
+  it("gives mapping-specific guidance when the mapping omits ingredient and procedure", () => {
+    const rows = [
+      ["A", "B"],
+      ["R", "x"],
+    ];
+    const { recipes, warnings } = parseFormulationSheet(rows, { columnMapping: { recipeName: 0 } });
+    expect(recipes).toHaveLength(0);
+    expect(warnings[0]).toMatch(/Map at least/i);
+  });
+});
+
+describe("suggestColumnMapping", () => {
+  it("returns column indices for matched fields and -1 for the rest", () => {
+    const m = suggestColumnMapping(["Formula", "Component", "Weight"]);
+    expect(m.recipeName).toBe(0);
+    expect(m.ingredient).toBe(1);
+    expect(m.quantity).toBe(2);
+    expect(m.procedure).toBe(-1);
+    expect(m.recipeId).toBe(-1);
   });
 });

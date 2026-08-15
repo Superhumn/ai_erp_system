@@ -455,7 +455,7 @@ export default function AutonomousSettings() {
                               &lt; ${Number(workflow.autoApproveThreshold).toLocaleString()}
                             </Badge>
                           ) : (
-                            <Badge variant="outline" className="text-green-600">Auto</Badge>
+                            <Badge variant="outline" className="text-muted-foreground">Auto</Badge>
                           )}
                         </TableCell>
                         <TableCell>
@@ -469,7 +469,7 @@ export default function AutonomousSettings() {
                                 } as any)
                               }
                             />
-                            <span className={workflow.isActive ? "text-green-600" : "text-muted-foreground"}>
+                            <span className={workflow.isActive ? "text-primary" : "text-muted-foreground"}>
                               {workflow.isActive ? "Active" : "Inactive"}
                             </span>
                           </div>
@@ -569,7 +569,7 @@ export default function AutonomousSettings() {
                         </TableCell>
                         <TableCell>
                           {threshold.autoApproveMaxAmount ? (
-                            <span className="text-green-600">
+                            <span className="text-foreground">
                               ${Number(threshold.autoApproveMaxAmount).toLocaleString()}
                             </span>
                           ) : "-"}

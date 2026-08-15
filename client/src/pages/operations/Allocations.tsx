@@ -129,11 +129,11 @@ export default function Allocations() {
 
   const getChannelColor = (channel: string) => {
     switch (channel) {
-      case "shopify": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
-      case "amazon": return "bg-orange-500/8 text-orange-600 dark:text-orange-400";
-      case "wholesale": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
-      case "retail": return "bg-violet-500/8 text-violet-600 dark:text-violet-400";
-      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "shopify": return "bg-muted text-muted-foreground";
+      case "amazon": return "bg-muted text-muted-foreground";
+      case "wholesale": return "bg-muted text-muted-foreground";
+      case "retail": return "bg-muted text-muted-foreground";
+      default: return "bg-muted text-muted-foreground";
     }
   };
 

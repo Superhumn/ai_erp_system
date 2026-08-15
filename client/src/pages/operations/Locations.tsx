@@ -121,12 +121,12 @@ export default function Locations() {
 
   const getTypeColor = (type: string) => {
     switch (type) {
-      case "copacker": return "bg-violet-500/8 text-violet-600 dark:text-violet-400";
-      case "warehouse": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
-      case "3pl": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
-      case "distribution": return "bg-orange-500/8 text-orange-600 dark:text-orange-400";
-      case "store": return "bg-pink-500/8 text-pink-600 dark:text-pink-400";
-      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "copacker": return "bg-muted text-muted-foreground";
+      case "warehouse": return "bg-muted text-muted-foreground";
+      case "3pl": return "bg-muted text-muted-foreground";
+      case "distribution": return "bg-muted text-muted-foreground";
+      case "store": return "bg-muted text-muted-foreground";
+      default: return "bg-muted text-muted-foreground";
     }
   };
 
@@ -314,11 +314,11 @@ export default function Locations() {
                 <CardContent>
                   <div className="flex items-center gap-4">
                     <div>
-                      <p className="text-xl font-semibold tracking-[-0.02em]">{loc.totalProducts}</p>
+                      <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{loc.totalProducts}</p>
                       <p className="text-xs text-muted-foreground">Products</p>
                     </div>
                     <div>
-                      <p className="text-xl font-semibold tracking-[-0.02em]">{Math.round(loc.totalQuantity)}</p>
+                      <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{Math.round(loc.totalQuantity)}</p>
                       <p className="text-xs text-muted-foreground">Total Units</p>
                     </div>
                   </div>

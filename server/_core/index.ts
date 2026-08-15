@@ -507,6 +507,24 @@ async function ensureTables() {
         respondedAt TIMESTAMP NULL,
         createdBy INT
       )`,
+      // Auth tokens + regions — mirrored from drizzle/0056_*.sql so signup /
+      // password-reset keep working even if the migration journal has drifted.
+      `CREATE TABLE IF NOT EXISTS authTokens (
+        token VARCHAR(128) PRIMARY KEY,
+        type ENUM('email_verification','password_reset') NOT NULL,
+        email VARCHAR(320) NOT NULL,
+        expiresAt TIMESTAMP NOT NULL,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS regions (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        code VARCHAR(16) NOT NULL UNIQUE,
+        name VARCHAR(128) NOT NULL,
+        baseCurrency VARCHAR(3) NOT NULL DEFAULT 'USD',
+        status ENUM('active','inactive') NOT NULL DEFAULT 'active',
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )`,
     ];
     // Add missing columns to existing tables
     const alterColumns = [
@@ -517,6 +535,15 @@ async function ensureTables() {
       "ALTER TABLE fundraising_campaigns ADD COLUMN dataRoomId INT",
       "ALTER TABLE fundraising_campaigns ADD COLUMN createdBy INT",
       "ALTER TABLE fundraising_campaigns ADD COLUMN companyId INT",
+      // Signup SELECTs every users column — missing any of these 500s registration.
+      "ALTER TABLE users ADD COLUMN emailVerified BOOLEAN NOT NULL DEFAULT false",
+      "ALTER TABLE users ADD COLUMN companyId INT",
+      "ALTER TABLE users ADD COLUMN regionScope ENUM('entity','region','global') NOT NULL DEFAULT 'global'",
+      "ALTER TABLE companies ADD COLUMN regionId INT",
+      "ALTER TABLE companies ADD COLUMN functionalCurrency VARCHAR(3) NOT NULL DEFAULT 'USD'",
+      "ALTER TABLE companies ADD COLUMN locale VARCHAR(10) NOT NULL DEFAULT 'en-US'",
+      "ALTER TABLE companies ADD COLUMN timezone VARCHAR(64) NOT NULL DEFAULT 'America/New_York'",
+      "ALTER TABLE companies ADD COLUMN taxRegime ENUM('vat','gst','sales_tax','none') NOT NULL DEFAULT 'none'",
     ];
     for (const alt of alterColumns) {
       try { await database.execute(require('drizzle-orm/sql').sql.raw(alt)); } catch { /* already exists */ }
@@ -700,17 +727,27 @@ async function startServer() {
       return res.status(403).json({ error: "Missing Origin header" });
     }
 
-    // In production, validate origin matches our app URL
+    // In production, validate origin matches our app URL (+ optional allowlist)
     if (ENV.isProduction && ENV.publicAppUrl) {
       try {
         const requestHost = new URL(origin as string).host;
-        // Allow both the Railway domain and custom domain
-        const allowedHosts = new Set([
+        const allowedHosts = new Set<string>([
           new URL(ENV.publicAppUrl).host,
           "app.superhumn.co",
           "aierpsystem-production.up.railway.app",
         ]);
+        for (const entry of ENV.allowedOrigins.split(",")) {
+          const trimmed = entry.trim();
+          if (!trimmed) continue;
+          try {
+            // Accept bare host or full URL
+            allowedHosts.add(trimmed.includes("://") ? new URL(trimmed).host : trimmed);
+          } catch {
+            allowedHosts.add(trimmed);
+          }
+        }
         if (!allowedHosts.has(requestHost)) {
+          console.warn("[CSRF] Origin mismatch: %s (allowed: %s)", requestHost, [...allowedHosts].join(", "));
           return res.status(403).json({ error: "Origin mismatch" });
         }
       } catch {

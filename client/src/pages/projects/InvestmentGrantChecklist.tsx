@@ -49,22 +49,22 @@ const CATEGORY_LABELS: Record<string, string> = {
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
-  entity_entry_setup: "bg-blue-500/10 text-blue-700 border-blue-200",
-  project_definition: "bg-purple-500/10 text-purple-700 border-purple-200",
-  capex_financials: "bg-green-500/10 text-green-700 border-green-200",
-  land_infrastructure: "bg-amber-500/10 text-amber-700 border-amber-200",
-  jobs_localization: "bg-teal-500/10 text-teal-700 border-teal-200",
-  incentive_application: "bg-indigo-500/10 text-indigo-700 border-indigo-200",
-  construction_equipment: "bg-orange-500/10 text-orange-700 border-orange-200",
-  grant_disbursement: "bg-emerald-500/10 text-emerald-700 border-emerald-200",
+  entity_entry_setup: "bg-muted text-foreground border-transparent",
+  project_definition: "bg-muted text-foreground border-transparent",
+  capex_financials: "bg-muted text-foreground border-transparent",
+  land_infrastructure: "bg-muted text-foreground border-transparent",
+  jobs_localization: "bg-muted text-foreground border-transparent",
+  incentive_application: "bg-muted text-foreground border-transparent",
+  construction_equipment: "bg-muted text-foreground border-transparent",
+  grant_disbursement: "bg-muted text-foreground border-transparent",
 };
 
 const STATUS_CONFIG: Record<string, { icon: typeof CheckCircle2; color: string; label: string }> = {
-  not_started: { icon: Circle, color: "text-gray-400", label: "Not Started" },
-  in_progress: { icon: Clock, color: "text-blue-500", label: "In Progress" },
-  completed: { icon: CheckCircle2, color: "text-green-500", label: "Completed" },
-  blocked: { icon: Ban, color: "text-red-500", label: "Blocked" },
-  on_hold: { icon: Ban, color: "text-amber-500", label: "On Hold" },
+  not_started: { icon: Circle, color: "text-muted-foreground", label: "Not Started" },
+  in_progress: { icon: Clock, color: "text-primary", label: "In Progress" },
+  completed: { icon: CheckCircle2, color: "text-foreground", label: "Completed" },
+  blocked: { icon: Ban, color: "text-foreground", label: "Blocked" },
+  on_hold: { icon: Ban, color: "text-muted-foreground", label: "On Hold" },
 };
 
 function formatCurrency(value: string | null | undefined, currency = "SAR") {
@@ -241,20 +241,20 @@ function ChecklistDetail({ checklistId, onBack }: { checklistId: number; onBack:
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardContent className="pt-6">
-            <div className="text-xl font-semibold tracking-[-0.02em]">{completedCount}/{totalCount}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{completedCount}/{totalCount}</div>
             <p className="text-xs text-muted-foreground">Tasks Completed</p>
             <Progress value={progressPercent} className="mt-2 h-2" />
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-xl font-semibold tracking-[-0.02em]">{progressPercent}%</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{progressPercent}%</div>
             <p className="text-xs text-muted-foreground">Overall Progress</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-xl font-semibold tracking-[-0.02em]">
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">
               {checklist.totalCapex ? formatCurrency(checklist.totalCapex, checklist.currency || "SAR") : "-"}
             </div>
             <p className="text-xs text-muted-foreground">Total Capex</p>
@@ -262,7 +262,7 @@ function ChecklistDetail({ checklistId, onBack }: { checklistId: number; onBack:
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">
               {checklist.estimatedGrant
                 ? formatCurrency(checklist.estimatedGrant, checklist.currency || "SAR")
                 : checklist.totalCapex
@@ -320,7 +320,7 @@ function ChecklistDetail({ checklistId, onBack }: { checklistId: number; onBack:
                         key={item.id}
                         className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
                           item.status === "completed"
-                            ? "bg-green-50/50 border-green-200/50"
+                            ? "bg-muted/50 border-transparent"
                             : "bg-background hover:bg-muted/50"
                         }`}
                       >
@@ -609,13 +609,13 @@ export default function InvestmentGrantChecklist() {
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardContent className="pt-6">
-            <div className="text-xl font-semibold tracking-[-0.02em]">{checklists?.length || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{checklists?.length || 0}</div>
             <p className="text-xs text-muted-foreground">Total Checklists</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-xl font-semibold tracking-[-0.02em] text-blue-600">
+            <div className="text-xl font-semibold tracking-[-0.02em] text-primary font-display tabular-nums">
               {(checklists as unknown as Checklist[])?.filter((c: Checklist) => c.status === "in_progress").length || 0}
             </div>
             <p className="text-xs text-muted-foreground">In Progress</p>
@@ -623,7 +623,7 @@ export default function InvestmentGrantChecklist() {
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">
               {(checklists as unknown as Checklist[])?.filter((c: Checklist) => c.status === "completed").length || 0}
             </div>
             <p className="text-xs text-muted-foreground">Completed</p>
@@ -681,7 +681,7 @@ export default function InvestmentGrantChecklist() {
                         ? formatCurrency(checklist.totalCapex, checklist.currency || "SAR")
                         : "-"}
                     </TableCell>
-                    <TableCell className="text-right font-mono text-green-600">
+                    <TableCell className="text-right font-mono">
                       {checklist.estimatedGrant
                         ? formatCurrency(checklist.estimatedGrant, checklist.currency || "SAR")
                         : checklist.totalCapex
