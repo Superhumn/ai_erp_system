@@ -46,6 +46,12 @@ export default function FreightDashboard() {
           <p className="text-muted-foreground text-sm">Shipments, quotes, carriers, and customs</p>
         </div>
         <div className="flex gap-2">
+          <Link href="/freight/control-tower">
+            <Button variant="outline">
+              <Ship className="h-4 w-4 mr-2" />
+              Control Tower
+            </Button>
+          </Link>
           <Link href="/freight/tracking">
             <Button variant="outline">
               <Package className="h-4 w-4 mr-2" />

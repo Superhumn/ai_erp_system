@@ -7,6 +7,8 @@ import {
 } from "recharts";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
+import { Input } from "../../components/ui/input";
+import { toast } from "sonner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import { Badge } from "../../components/ui/badge";
 import {
@@ -30,6 +32,10 @@ import {
   Upload,
   Plus,
   DollarSign,
+  Layers,
+  Check,
+  X,
+  Pencil,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
 
@@ -1120,6 +1126,229 @@ export function BankingSection() {
 }
 
 // ══════════════════════════════════════════════════════════════
+// Financial Model — sheets, per-metric model vs actual, inline edit
+// ══════════════════════════════════════════════════════════════
+const MONTH_LABELS = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+export function FinancialModelSection() {
+  const [sheetName, setSheetName] = useState<string>("all");
+  const [metricName, setMetricName] = useState<string>("");
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editValue, setEditValue] = useState<string>("");
+
+  const utils = trpc.useUtils();
+
+  const sheetsQuery = trpc.financialModel.sheets.useQuery();
+  const sheets = (sheetsQuery.data ?? []).filter(Boolean) as string[];
+
+  // Metric names available for the picker — scoped to the chosen sheet.
+  const metricsQuery = trpc.financialModel.list.useQuery(
+    sheetName !== "all" ? { sheetName } : {},
+  );
+  const metricNames = useMemo(() => {
+    const seen = new Set<string>();
+    for (const row of (metricsQuery.data ?? []) as any[]) {
+      if (row.metricName) seen.add(row.metricName);
+    }
+    return Array.from(seen).sort();
+  }, [metricsQuery.data]);
+
+  const comparisonQuery = trpc.financialModel.getComparison.useQuery(
+    { metricName, ...(sheetName !== "all" ? { sheetName } : {}) },
+    { enabled: metricName.length > 0 },
+  );
+  const comparison = (comparisonQuery.data ?? []) as any[];
+
+  const updateActual = trpc.financialModel.updateActual.useMutation({
+    onSuccess: () => {
+      toast.success("Actual updated");
+      setEditingId(null);
+      setEditValue("");
+      utils.financialModel.getComparison.invalidate();
+      utils.financialModel.list.invalidate();
+    },
+    onError: (err) => toast.error(err.message || "Failed to update actual"),
+  });
+
+  const startEdit = (row: any) => {
+    setEditingId(row.id);
+    setEditValue(row.actualValue ?? "");
+  };
+
+  const saveEdit = (id: number) => {
+    if (editValue.trim() === "") {
+      toast.error("Enter a value");
+      return;
+    }
+    updateActual.mutate({ id, actualValue: editValue.trim() });
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <Layers className="h-5 w-5 text-muted-foreground" />
+            <div>
+              <CardTitle className="text-base">Financial Model</CardTitle>
+              <CardDescription className="text-sm">
+                Browse model sheets and reconcile projections against actuals, line by line.
+              </CardDescription>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Select value={sheetName} onValueChange={(v) => { setSheetName(v); setMetricName(""); }}>
+              <SelectTrigger className="w-[160px] h-8 text-xs">
+                <SelectValue placeholder="Sheet" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Sheets</SelectItem>
+                {sheets.map((s) => (
+                  <SelectItem key={s} value={s}>{s}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={metricName || undefined} onValueChange={setMetricName}>
+              <SelectTrigger className="w-[200px] h-8 text-xs">
+                <SelectValue placeholder="Select a metric" />
+              </SelectTrigger>
+              <SelectContent>
+                {metricNames.map((m) => (
+                  <SelectItem key={m} value={m}>{m}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {!metricName ? (
+          <div className="text-center py-8 text-sm text-muted-foreground">
+            {sheetsQuery.isLoading || metricsQuery.isLoading ? (
+              <span className="flex items-center justify-center">
+                <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading model…
+              </span>
+            ) : metricNames.length === 0 ? (
+              <>
+                No financial model data yet.
+                <Button variant="outline" size="sm" className="mt-2 ml-2" onClick={() => window.location.href = "/import"}>
+                  <Upload className="h-3 w-3 mr-1" /> Import Financial Model
+                </Button>
+              </>
+            ) : (
+              "Select a metric to compare its model projection against actuals."
+            )}
+          </div>
+        ) : comparisonQuery.isLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            <span className="ml-2 text-sm text-muted-foreground">Loading comparison…</span>
+          </div>
+        ) : comparison.length === 0 ? (
+          <div className="text-center py-8 text-sm text-muted-foreground">
+            No rows for {metricName}.
+          </div>
+        ) : (
+          <div className="border rounded-md overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Period</TableHead>
+                  <TableHead>Sheet</TableHead>
+                  <TableHead className="text-right">Projected</TableHead>
+                  <TableHead className="text-right">Actual</TableHead>
+                  <TableHead className="text-right">Variance</TableHead>
+                  <TableHead className="text-right">Variance %</TableHead>
+                  <TableHead className="w-[90px] text-right">Edit</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {comparison.map((row) => {
+                  const variancePctVal = row.variancePct !== null && row.variancePct !== undefined
+                    ? parseFloat(row.variancePct)
+                    : null;
+                  const isEditing = editingId === row.id;
+                  return (
+                    <TableRow key={row.id}>
+                      <TableCell className="text-sm">
+                        {row.year ?? "-"}{row.month ? ` · ${MONTH_LABELS[row.month] ?? row.month}` : ""}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{row.sheetName ?? "-"}</TableCell>
+                      <TableCell className="text-right text-sm font-medium">
+                        {row.projectedValue ? fmtCompact(row.projectedValue) : "-"}
+                      </TableCell>
+                      <TableCell className="text-right text-sm font-medium">
+                        {isEditing ? (
+                          <Input
+                            autoFocus
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") saveEdit(row.id);
+                              if (e.key === "Escape") { setEditingId(null); setEditValue(""); }
+                            }}
+                            className="h-7 w-28 ml-auto text-right text-sm"
+                          />
+                        ) : (
+                          row.actualValue ? fmtCompact(row.actualValue) : "-"
+                        )}
+                      </TableCell>
+                      <TableCell className={`text-right text-sm font-medium ${varianceColor(variancePctVal)}`}>
+                        {row.variance !== null && row.variance !== undefined ? fmtCompact(row.variance) : "-"}
+                      </TableCell>
+                      <TableCell className={`text-right text-sm font-medium ${varianceColor(variancePctVal)}`}>
+                        {variancePctVal !== null
+                          ? `${variancePctVal >= 0 ? "+" : ""}${variancePctVal.toFixed(1)}%`
+                          : "-"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {isEditing ? (
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 w-7 p-0"
+                              disabled={updateActual.isPending}
+                              onClick={() => saveEdit(row.id)}
+                            >
+                              {updateActual.isPending
+                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                : <Check className="h-3.5 w-3.5" />}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 w-7 p-0"
+                              disabled={updateActual.isPending}
+                              onClick={() => { setEditingId(null); setEditValue(""); }}
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0"
+                            onClick={() => startEdit(row)}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
 // Standalone Financials page (/finance/reports) — composes sections
 // ══════════════════════════════════════════════════════════════
 export default function FinancialReports() {
@@ -1128,6 +1357,7 @@ export default function FinancialReports() {
       <h1 className="text-lg font-semibold">Financials</h1>
       <FinancialsCharts />
       <ModelVsActual />
+      <FinancialModelSection />
       <ReportsSection />
       <KpiGoalsSection />
       <BankingSection />
