@@ -10,11 +10,11 @@ import { Send, RefreshCw, Eye, Bot, CheckCircle, XCircle, Clock, AlertCircle, Ex
 import { useLocation } from "wouter";
 
 const statusConfig: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
-  queued: { label: "Queued", color: "bg-gray-100 text-gray-800", icon: <Clock className="h-3 w-3" /> },
-  sent: { label: "Sent", color: "bg-blue-100 text-blue-800", icon: <Send className="h-3 w-3" /> },
-  delivered: { label: "Delivered", color: "bg-green-100 text-green-800", icon: <CheckCircle className="h-3 w-3" /> },
-  failed: { label: "Failed", color: "bg-red-100 text-red-800", icon: <XCircle className="h-3 w-3" /> },
-  bounced: { label: "Bounced", color: "bg-orange-100 text-orange-800", icon: <AlertCircle className="h-3 w-3" /> },
+  queued: { label: "Queued", color: "bg-muted text-muted-foreground", icon: <Clock className="h-3 w-3" /> },
+  sent: { label: "Sent", color: "bg-muted text-foreground", icon: <Send className="h-3 w-3" /> },
+  delivered: { label: "Delivered", color: "bg-primary/10 text-primary", icon: <CheckCircle className="h-3 w-3" /> },
+  failed: { label: "Failed", color: "bg-[oklch(0.30_0.02_262)] text-white", icon: <XCircle className="h-3 w-3" /> },
+  bounced: { label: "Bounced", color: "bg-muted text-foreground font-semibold", icon: <AlertCircle className="h-3 w-3" /> },
 };
 
 const entityTypeLabels: Record<string, string> = {

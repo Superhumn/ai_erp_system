@@ -119,6 +119,12 @@ export default function CopackerPortal() {
   const [viewInvoiceId, setViewInvoiceId] = useState<number | null>(null);
   const [viewSharedRecipeId, setViewSharedRecipeId] = useState<number | null>(null);
 
+  // --- Customs clearance / documents view ---
+  const [viewClearance, setViewClearance] = useState<any>(null);
+  const [shipmentDocName, setShipmentDocName] = useState("");
+  const [shipmentDocType, setShipmentDocType] = useState<string>("other");
+  const [shipmentDocFile, setShipmentDocFile] = useState<File | null>(null);
+
   // ---- Queries ----
   const { data: warehouse } = trpc.copackerPortal.getWarehouse.useQuery();
   const { data: inventory, isLoading: loadingInventory, refetch: refetchInventory } = trpc.copackerPortal.getInventory.useQuery();
@@ -139,6 +145,11 @@ export default function CopackerPortal() {
   const { data: invoiceDetail } = (trpc.copackerPortal as any).getInvoiceDetail.useQuery(
     { id: viewInvoiceId! },
     { enabled: !!viewInvoiceId }
+  );
+  const { data: customsClearances } = (trpc.copackerPortal as any).getCustomsClearances.useQuery();
+  const { data: customsDocuments, refetch: refetchCustomsDocuments } = (trpc.copackerPortal as any).getCustomsDocuments.useQuery(
+    { clearanceId: viewClearance?.id! },
+    { enabled: !!viewClearance }
   );
 
   // ---- Work Orders query ----
@@ -201,6 +212,15 @@ export default function CopackerPortal() {
       refetchInvoices();
     },
     onError: (error: any) => toast.error("Failed to upload invoice", { description: error.message }),
+  });
+
+  const uploadShipmentDocument = (trpc.copackerPortal as any).uploadShipmentDocument.useMutation({
+    onSuccess: () => {
+      toast.success("Shipment document uploaded");
+      resetShipmentDocForm();
+      refetchCustomsDocuments();
+    },
+    onError: (error: any) => toast.error("Failed to upload shipment document", { description: error.message }),
   });
 
   const completeProduction = trpc.workOrders.completeProduction.useMutation({
@@ -378,6 +398,33 @@ export default function CopackerPortal() {
     });
   };
 
+  // ---- Shipment document upload (customs) ----
+  const resetShipmentDocForm = () => {
+    setShipmentDocName("");
+    setShipmentDocType("other");
+    setShipmentDocFile(null);
+  };
+
+  const handleUploadShipmentDoc = async () => {
+    if (!shipmentDocFile) {
+      toast.error("Please select a file to upload");
+      return;
+    }
+    if (!viewClearance?.shipmentId) {
+      toast.error("This clearance has no linked shipment");
+      return;
+    }
+    const buffer = await shipmentDocFile.arrayBuffer();
+    const fileData = arrayBufferToBase64(buffer);
+    uploadShipmentDocument.mutate({
+      shipmentId: viewClearance.shipmentId,
+      documentType: shipmentDocType as "invoice" | "receipt" | "contract" | "legal" | "report" | "hr" | "other",
+      name: shipmentDocName || shipmentDocFile.name,
+      fileData,
+      mimeType: shipmentDocFile.type,
+    });
+  };
+
   // ---- Stats ----
   const stats = useMemo(() => {
     const totalProducts = inventory?.length || 0;
@@ -534,16 +581,16 @@ export default function CopackerPortal() {
 
       {/* Biweekly Prompt Banner */}
       {currentPeriod?.isDue && (
-        <Alert variant="destructive" className="border-orange-500 bg-orange-50 dark:bg-orange-950/20">
-          <AlertTriangle className="h-4 w-4 text-orange-600" />
-          <AlertTitle className="text-orange-800 dark:text-orange-400">Inventory Update Due</AlertTitle>
-          <AlertDescription className="text-orange-700 dark:text-orange-300">
+        <Alert variant="default" className="border-foreground/25 bg-muted">
+          <AlertTriangle className="h-4 w-4 text-foreground" />
+          <AlertTitle className="text-foreground font-semibold">Inventory Update Due</AlertTitle>
+          <AlertDescription className="text-muted-foreground">
             Your biweekly inventory update for <strong>{currentPeriod.periodLabel}</strong> is due
             in {currentPeriod.daysLeft} day{currentPeriod.daysLeft !== 1 ? "s" : ""}.
             <Button
               variant="outline"
               size="sm"
-              className="ml-3 border-orange-500 text-orange-700 hover:bg-orange-100"
+              className="ml-3 text-foreground hover:bg-muted"
               onClick={initUpdateForm}
             >
               <ClipboardList className="h-3 w-3 mr-1" />
@@ -558,10 +605,10 @@ export default function CopackerPortal() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
-              <Package className="h-8 w-8 text-blue-500" />
+              <Package className="h-8 w-8 text-muted-foreground" />
               <div>
                 <p className="text-sm text-muted-foreground">Products Tracked</p>
-                <p className="text-xl font-semibold tracking-[-0.02em]">{stats.totalProducts}</p>
+                <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{stats.totalProducts}</p>
               </div>
             </div>
           </CardContent>
@@ -569,10 +616,10 @@ export default function CopackerPortal() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
-              <Clock className="h-8 w-8 text-orange-500" />
+              <Clock className="h-8 w-8 text-muted-foreground" />
               <div>
                 <p className="text-sm text-muted-foreground">Draft Updates</p>
-                <p className="text-xl font-semibold tracking-[-0.02em]">{stats.pendingUpdates}</p>
+                <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{stats.pendingUpdates}</p>
               </div>
             </div>
           </CardContent>
@@ -580,10 +627,10 @@ export default function CopackerPortal() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
-              <DollarSign className="h-8 w-8 text-green-500" />
+              <DollarSign className="h-8 w-8 text-muted-foreground" />
               <div>
                 <p className="text-sm text-muted-foreground">Total Invoices</p>
-                <p className="text-xl font-semibold tracking-[-0.02em]">{stats.totalInvoices}</p>
+                <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{stats.totalInvoices}</p>
               </div>
             </div>
           </CardContent>
@@ -591,10 +638,10 @@ export default function CopackerPortal() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
-              <FileText className="h-8 w-8 text-yellow-500" />
+              <FileText className="h-8 w-8 text-muted-foreground" />
               <div>
                 <p className="text-sm text-muted-foreground">Pending Invoices</p>
-                <p className="text-xl font-semibold tracking-[-0.02em]">{stats.pendingInvoices}</p>
+                <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{stats.pendingInvoices}</p>
               </div>
             </div>
           </CardContent>
@@ -602,10 +649,10 @@ export default function CopackerPortal() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
-              <Truck className="h-8 w-8 text-purple-500" />
+              <Truck className="h-8 w-8 text-muted-foreground" />
               <div>
                 <p className="text-sm text-muted-foreground">Shipping Docs</p>
-                <p className="text-xl font-semibold tracking-[-0.02em]">{stats.totalDocs}</p>
+                <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{stats.totalDocs}</p>
               </div>
             </div>
           </CardContent>
@@ -864,6 +911,143 @@ export default function CopackerPortal() {
                 ))}
               </TableBody>
             </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Customs Clearances */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Customs Clearances</CardTitle>
+              <CardDescription>
+                Import/export clearances linked to your shipments
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {!customsClearances?.length ? (
+            <div className="text-center py-6 text-muted-foreground">
+              No customs clearances found for your shipments
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Clearance #</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Country</TableHead>
+                    <TableHead>Port of Entry</TableHead>
+                    <TableHead>Broker Ref</TableHead>
+                    <TableHead className="text-right">Total</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {customsClearances.map((c: any) => (
+                    <TableRow key={c.id}>
+                      <TableCell className="font-mono text-xs">{c.clearanceNumber}</TableCell>
+                      <TableCell className="capitalize">{c.type}</TableCell>
+                      <TableCell>
+                        <Badge variant={statusVariant(c.status)} className="text-xs capitalize">
+                          {c.status?.replace(/_/g, " ")}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-sm">{c.country || "--"}</TableCell>
+                      <TableCell className="text-sm">{c.portOfEntry || "--"}</TableCell>
+                      <TableCell className="text-sm font-mono">{c.brokerReference || "--"}</TableCell>
+                      <TableCell className="text-right font-mono text-sm">
+                        {c.totalAmount != null
+                          ? `${c.currency || "USD"} ${parseFloat(c.totalAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                          : "--"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 text-xs"
+                          onClick={() => { setViewClearance(c); resetShipmentDocForm(); }}
+                        >
+                          <FileText className="h-3 w-3 mr-1" />
+                          Documents
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Shipping Documents */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Shipping Documents</CardTitle>
+              <CardDescription>
+                BOLs, packing lists, and other documents uploaded for your facility
+              </CardDescription>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => setShowShipDocUpload(true)}>
+              <Upload className="h-4 w-4 mr-1" />
+              Upload Doc
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {!shippingDocs?.length ? (
+            <div className="text-center py-6 text-muted-foreground">
+              No shipping documents uploaded yet
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Shipment</TableHead>
+                    <TableHead className="text-right">File</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {shippingDocs.map((d: any) => (
+                    <TableRow key={d.id}>
+                      <TableCell className="font-medium text-sm">{d.name}</TableCell>
+                      <TableCell className="text-sm capitalize">{d.documentType?.replace(/_/g, " ")}</TableCell>
+                      <TableCell>
+                        <Badge variant={statusVariant(d.status)} className="text-xs capitalize">
+                          {d.status?.replace(/_/g, " ")}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-sm font-mono">{d.shipmentId ?? "--"}</TableCell>
+                      <TableCell className="text-right">
+                        {d.fileUrl ? (
+                          <a
+                            href={d.fileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:underline text-sm"
+                          >
+                            View
+                          </a>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">--</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -1500,7 +1684,7 @@ export default function CopackerPortal() {
                       href={invoiceDetail.invoice.fileUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-blue-600 hover:underline"
+                      className="text-primary hover:underline"
                     >
                       {invoiceDetail.invoice.fileName || "View File"}
                     </a>
@@ -1740,6 +1924,133 @@ export default function CopackerPortal() {
               </DialogFooter>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Customs Documents Dialog */}
+      <Dialog open={!!viewClearance} onOpenChange={(open) => { if (!open) { setViewClearance(null); resetShipmentDocForm(); } }}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Customs Documents</DialogTitle>
+            {viewClearance && (
+              <DialogDescription>
+                Clearance {viewClearance.clearanceNumber}
+                <Badge variant={statusVariant(viewClearance.status)} className="ml-2 capitalize">
+                  {viewClearance.status?.replace(/_/g, " ")}
+                </Badge>
+              </DialogDescription>
+            )}
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {customsDocuments?.length ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">File</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {customsDocuments.map((doc: any) => (
+                    <TableRow key={doc.id}>
+                      <TableCell className="font-medium text-sm">{doc.name}</TableCell>
+                      <TableCell className="text-sm capitalize">{doc.documentType?.replace(/_/g, " ")}</TableCell>
+                      <TableCell>
+                        <Badge variant={statusVariant(doc.status)} className="text-xs capitalize">
+                          {doc.status?.replace(/_/g, " ")}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {doc.fileUrl ? (
+                          <a
+                            href={doc.fileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:underline text-sm"
+                          >
+                            View
+                          </a>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">--</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : (
+              <p className="text-muted-foreground text-center py-4">No documents on file for this clearance</p>
+            )}
+
+            <Separator />
+
+            {/* Upload a document against the linked shipment */}
+            <div className="space-y-3">
+              <Label className="text-base font-semibold">Upload Shipment Document</Label>
+              {!viewClearance?.shipmentId && (
+                <Alert>
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertTitle>No linked shipment</AlertTitle>
+                  <AlertDescription>
+                    This clearance is not linked to a shipment, so documents cannot be uploaded here.
+                  </AlertDescription>
+                </Alert>
+              )}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Document Type *</Label>
+                  <Select value={shipmentDocType} onValueChange={setShipmentDocType}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="invoice">Invoice</SelectItem>
+                      <SelectItem value="receipt">Receipt</SelectItem>
+                      <SelectItem value="contract">Contract</SelectItem>
+                      <SelectItem value="legal">Legal</SelectItem>
+                      <SelectItem value="report">Report</SelectItem>
+                      <SelectItem value="hr">HR</SelectItem>
+                      <SelectItem value="other">Other</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Document Name</Label>
+                  <Input
+                    value={shipmentDocName}
+                    onChange={(e) => setShipmentDocName(e.target.value)}
+                    placeholder="e.g., Commercial Invoice"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Select File *</Label>
+                <Input
+                  type="file"
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                  onChange={(e) => setShipmentDocFile(e.target.files?.[0] || null)}
+                />
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  onClick={handleUploadShipmentDoc}
+                  disabled={uploadShipmentDocument.isPending || !shipmentDocFile || !viewClearance?.shipmentId}
+                >
+                  <Upload className="h-4 w-4 mr-2" />
+                  Upload
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setViewClearance(null); resetShipmentDocForm(); }}>
+              Close
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

@@ -69,24 +69,24 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 const TYPE_COLORS: Record<string, string> = {
-  grant: "bg-green-500/10 text-green-700 border-green-200",
-  procurement_bid: "bg-blue-500/10 text-blue-700 border-blue-200",
-  rfp_response: "bg-purple-500/10 text-purple-700 border-purple-200",
-  subsidy: "bg-amber-500/10 text-amber-700 border-amber-200",
-  tax_incentive: "bg-teal-500/10 text-teal-700 border-teal-200",
+  grant: "bg-muted text-muted-foreground border-border",
+  procurement_bid: "bg-muted text-muted-foreground border-border",
+  rfp_response: "bg-muted text-muted-foreground border-border",
+  subsidy: "bg-muted text-muted-foreground border-border",
+  tax_incentive: "bg-muted text-muted-foreground border-border",
 };
 
 const STATUS_CONFIG: Record<string, { icon: typeof CheckCircle2; color: string; label: string }> = {
-  draft: { icon: Circle, color: "text-gray-400", label: "Draft" },
-  data_collection: { icon: Database, color: "text-blue-500", label: "Collecting Data" },
-  ai_generating: { icon: Brain, color: "text-purple-500", label: "AI Generating" },
-  review: { icon: Eye, color: "text-amber-500", label: "Under Review" },
-  approved: { icon: CheckCircle2, color: "text-green-500", label: "Approved" },
-  submitted: { icon: Send, color: "text-indigo-500", label: "Submitted" },
-  under_review: { icon: Clock, color: "text-blue-600", label: "Under Review (External)" },
-  awarded: { icon: CheckCircle2, color: "text-emerald-600", label: "Awarded" },
-  rejected: { icon: Ban, color: "text-red-500", label: "Rejected" },
-  withdrawn: { icon: Ban, color: "text-gray-500", label: "Withdrawn" },
+  draft: { icon: Circle, color: "text-muted-foreground", label: "Draft" },
+  data_collection: { icon: Database, color: "text-muted-foreground", label: "Collecting Data" },
+  ai_generating: { icon: Brain, color: "text-muted-foreground", label: "AI Generating" },
+  review: { icon: Eye, color: "text-muted-foreground", label: "Under Review" },
+  approved: { icon: CheckCircle2, color: "text-foreground", label: "Approved" },
+  submitted: { icon: Send, color: "text-foreground", label: "Submitted" },
+  under_review: { icon: Clock, color: "text-muted-foreground", label: "Under Review (External)" },
+  awarded: { icon: CheckCircle2, color: "text-primary", label: "Awarded" },
+  rejected: { icon: Ban, color: "text-foreground", label: "Rejected" },
+  withdrawn: { icon: Ban, color: "text-muted-foreground", label: "Withdrawn" },
 };
 
 function formatCurrency(value: string | number | null | undefined, currency = "USD") {
@@ -142,13 +142,13 @@ export default function GrantBidSubmitter() {
           <div className="h-4 w-px bg-border" />
           <div><span className="text-muted-foreground">Total</span> <span className="font-bold">{stats?.total || 0}</span></div>
           <div className="h-4 w-px bg-border" />
-          <div><span className="text-muted-foreground">Draft</span> <span className="font-bold text-amber-600">{stats?.draft || 0}</span></div>
+          <div><span className="text-muted-foreground">Draft</span> <span className="font-bold text-foreground">{stats?.draft || 0}</span></div>
           <div className="h-4 w-px bg-border" />
-          <div><span className="text-muted-foreground">Submitted</span> <span className="font-bold text-indigo-600">{stats?.submitted || 0}</span></div>
+          <div><span className="text-muted-foreground">Submitted</span> <span className="font-bold text-foreground">{stats?.submitted || 0}</span></div>
           <div className="h-4 w-px bg-border" />
-          <div><span className="text-muted-foreground">Awarded</span> <span className="font-bold text-green-600">{stats?.awarded || 0}</span></div>
+          <div><span className="text-muted-foreground">Awarded</span> <span className="font-bold text-foreground">{stats?.awarded || 0}</span></div>
           <div className="h-4 w-px bg-border" />
-          <div><span className="text-muted-foreground">Requested</span> <span className="font-bold text-emerald-600">{formatCurrency(stats?.totalRequested)}</span></div>
+          <div><span className="text-muted-foreground">Requested</span> <span className="font-bold text-foreground">{formatCurrency(stats?.totalRequested)}</span></div>
         </div>
         <div className="flex items-center gap-2">
           <Link href="/ops/views">
@@ -267,7 +267,7 @@ export default function GrantBidSubmitter() {
                           <TableCell className="font-medium">{app.requestedAmount ? formatCurrency(app.requestedAmount, app.currency || 'USD') : '-'}</TableCell>
                           <TableCell className="text-sm">
                             {app.submissionDeadline ? (
-                              <span className={new Date(app.submissionDeadline) < new Date() ? "text-red-500" : ""}>
+                              <span className={new Date(app.submissionDeadline) < new Date() ? "text-foreground font-semibold" : ""}>
                                 {format(new Date(app.submissionDeadline), "MMM d, yyyy")}
                               </span>
                             ) : '-'}
@@ -872,7 +872,7 @@ function ApplicationDetail({ id, onBack }: { id: number; onBack: () => void }) {
           disabled={collectDataMutation.isPending}
           onClick={() => collectDataMutation.mutate({ applicationId: id, applicationType: application.type })}
         >
-          {collectDataMutation.isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Database className="h-5 w-5 text-blue-500" />}
+          {collectDataMutation.isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Database className="h-5 w-5 text-muted-foreground" />}
           <span className="text-sm font-medium">1. Collect ERP Data</span>
           <span className="text-xs text-muted-foreground">Auto-pull from system</span>
         </Button>
@@ -881,7 +881,7 @@ function ApplicationDetail({ id, onBack }: { id: number; onBack: () => void }) {
           disabled={generateNarrativeMutation.isPending}
           onClick={() => generateNarrativeMutation.mutate({ applicationId: id })}
         >
-          {generateNarrativeMutation.isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Sparkles className="h-5 w-5 text-purple-500" />}
+          {generateNarrativeMutation.isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Sparkles className="h-5 w-5 text-muted-foreground" />}
           <span className="text-sm font-medium">2. Generate Narrative</span>
           <span className="text-xs text-muted-foreground">AI writes content</span>
         </Button>
@@ -890,7 +890,7 @@ function ApplicationDetail({ id, onBack }: { id: number; onBack: () => void }) {
           disabled={reviewMutation.isPending}
           onClick={() => reviewMutation.mutate({ applicationId: id })}
         >
-          {reviewMutation.isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Eye className="h-5 w-5 text-amber-500" />}
+          {reviewMutation.isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Eye className="h-5 w-5 text-muted-foreground" />}
           <span className="text-sm font-medium">3. AI Review</span>
           <span className="text-xs text-muted-foreground">Score & feedback</span>
         </Button>
@@ -899,7 +899,7 @@ function ApplicationDetail({ id, onBack }: { id: number; onBack: () => void }) {
           disabled={generateDocMutation.isPending}
           onClick={() => generateDocMutation.mutate({ applicationId: id })}
         >
-          {generateDocMutation.isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : <FileSpreadsheet className="h-5 w-5 text-green-500" />}
+          {generateDocMutation.isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : <FileSpreadsheet className="h-5 w-5 text-muted-foreground" />}
           <span className="text-sm font-medium">4. Generate Document</span>
           <span className="text-xs text-muted-foreground">Create submission doc</span>
         </Button>
@@ -907,10 +907,10 @@ function ApplicationDetail({ id, onBack }: { id: number; onBack: () => void }) {
 
       {/* AI Review Result */}
       {reviewResult && (
-        <Card className={reviewResult.score >= 80 ? "border-green-200 bg-green-50/50" : reviewResult.score >= 60 ? "border-amber-200 bg-amber-50/50" : "border-red-200 bg-red-50/50"}>
+        <Card className={reviewResult.score >= 80 ? "border-primary/20 bg-primary/10" : reviewResult.score >= 60 ? "border-border bg-muted/50" : "border-[oklch(0.30_0.02_262)] bg-muted/50"}>
           <CardContent className="p-4">
             <div className="flex items-center gap-3 mb-3">
-              <div className={`text-2xl font-bold ${reviewResult.score >= 80 ? "text-green-700" : reviewResult.score >= 60 ? "text-amber-700" : "text-red-700"}`}>
+              <div className={`text-2xl font-bold font-display tabular-nums ${reviewResult.score >= 80 ? "text-primary" : "text-foreground"}`}>
                 {reviewResult.score}/100
               </div>
               <div className="flex-1">
@@ -925,7 +925,7 @@ function ApplicationDetail({ id, onBack }: { id: number; onBack: () => void }) {
                 <ul className="text-sm space-y-1">
                   {reviewResult.suggestions.map((s, i) => (
                     <li key={i} className="flex items-start gap-2">
-                      <AlertTriangle className="h-3.5 w-3.5 mt-0.5 text-amber-500 shrink-0" />
+                      <AlertTriangle className="h-3.5 w-3.5 mt-0.5 text-muted-foreground shrink-0" />
                       {s}
                     </li>
                   ))}
@@ -978,7 +978,7 @@ function ApplicationDetail({ id, onBack }: { id: number; onBack: () => void }) {
                   {Object.entries(formData).map(([key, value]) => (
                     <div key={key}>
                       <Label className="flex items-center gap-1.5">
-                        <Database className="h-3 w-3 text-blue-400" />
+                        <Database className="h-3 w-3 text-muted-foreground" />
                         {key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
                       </Label>
                       <Input
@@ -1070,7 +1070,7 @@ function ApplicationDetail({ id, onBack }: { id: number; onBack: () => void }) {
                         </TableCell>
                         <TableCell>
                           <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); deleteDocMutation.mutate({ id: doc.id, applicationId: id }); }}>
-                            <Trash2 className="h-4 w-4 text-red-400" />
+                            <Trash2 className="h-4 w-4 text-destructive" />
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -1166,14 +1166,14 @@ function ApplicationDetail({ id, onBack }: { id: number; onBack: () => void }) {
 
 // Opportunity Discovery Component
 const OPP_STATUS_CONFIG: Record<string, { color: string; label: string }> = {
-  discovered: { color: "bg-blue-500/10 text-blue-700 border-blue-200", label: "Discovered" },
-  saved: { color: "bg-amber-500/10 text-amber-700 border-amber-200", label: "Saved" },
-  evaluating: { color: "bg-purple-500/10 text-purple-700 border-purple-200", label: "Evaluating" },
-  applying: { color: "bg-indigo-500/10 text-indigo-700 border-indigo-200", label: "Applying" },
-  applied: { color: "bg-green-500/10 text-green-700 border-green-200", label: "Applied" },
-  not_eligible: { color: "bg-gray-500/10 text-gray-700 border-gray-200", label: "Not Eligible" },
-  expired: { color: "bg-red-500/10 text-red-700 border-red-200", label: "Expired" },
-  dismissed: { color: "bg-gray-500/10 text-gray-500 border-gray-200", label: "Dismissed" },
+  discovered: { color: "bg-muted text-foreground border-border", label: "Discovered" },
+  saved: { color: "bg-muted text-foreground border-border", label: "Saved" },
+  evaluating: { color: "bg-muted text-foreground border-border", label: "Evaluating" },
+  applying: { color: "bg-primary/10 text-primary border-primary/20", label: "Applying" },
+  applied: { color: "bg-muted text-foreground font-semibold border-border", label: "Applied" },
+  not_eligible: { color: "bg-muted text-muted-foreground border-border", label: "Not Eligible" },
+  expired: { color: "bg-[oklch(0.30_0.02_262)] text-white border-transparent", label: "Expired" },
+  dismissed: { color: "bg-muted text-muted-foreground border-border", label: "Dismissed" },
 };
 
 function OpportunityDiscovery({ onStartApplication }: { onStartApplication: (appId: number) => void }) {
@@ -1244,7 +1244,7 @@ function OpportunityDiscovery({ onStartApplication }: { onStartApplication: (app
         <CardContent className="p-6">
           <div className="flex flex-col gap-4">
             <div className="flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-purple-500" />
+              <Sparkles className="h-5 w-5 text-primary" />
               <h3 className="font-semibold">AI-Powered Opportunity Search</h3>
             </div>
             <p className="text-sm text-muted-foreground">
@@ -1325,11 +1325,11 @@ function OpportunityDiscovery({ onStartApplication }: { onStartApplication: (app
 
       {/* Evaluation Result */}
       {evaluationResult && evaluatingId && (
-        <Card className={evaluationResult.fitScore >= 70 ? "border-green-200 bg-green-50/50" : evaluationResult.fitScore >= 40 ? "border-amber-200 bg-amber-50/50" : "border-red-200 bg-red-50/50"}>
+        <Card className={evaluationResult.fitScore >= 70 ? "border-primary/20 bg-primary/10" : evaluationResult.fitScore >= 40 ? "border-border bg-muted/50" : "border-[oklch(0.30_0.02_262)] bg-muted/50"}>
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-3">
-                <div className={`text-2xl font-bold ${evaluationResult.fitScore >= 70 ? "text-green-700" : evaluationResult.fitScore >= 40 ? "text-amber-700" : "text-red-700"}`}>
+                <div className={`text-2xl font-bold font-display tabular-nums ${evaluationResult.fitScore >= 70 ? "text-primary" : "text-foreground"}`}>
                   {evaluationResult.fitScore}/100
                 </div>
                 <div>
@@ -1349,20 +1349,20 @@ function OpportunityDiscovery({ onStartApplication }: { onStartApplication: (app
             <div className="grid grid-cols-2 gap-4">
               {evaluationResult.strengths.length > 0 && (
                 <div>
-                  <p className="text-sm font-medium text-green-700 mb-1">Strengths</p>
+                  <p className="text-sm font-medium text-foreground mb-1">Strengths</p>
                   <ul className="text-sm space-y-1">
                     {evaluationResult.strengths.map((s, i) => (
-                      <li key={i} className="flex items-start gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 mt-0.5 text-green-500 shrink-0" />{s}</li>
+                      <li key={i} className="flex items-start gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 mt-0.5 text-muted-foreground shrink-0" />{s}</li>
                     ))}
                   </ul>
                 </div>
               )}
               {evaluationResult.gaps.length > 0 && (
                 <div>
-                  <p className="text-sm font-medium text-amber-700 mb-1">Gaps</p>
+                  <p className="text-sm font-medium text-foreground mb-1">Gaps</p>
                   <ul className="text-sm space-y-1">
                     {evaluationResult.gaps.map((g, i) => (
-                      <li key={i} className="flex items-start gap-1.5"><AlertTriangle className="h-3.5 w-3.5 mt-0.5 text-amber-500 shrink-0" />{g}</li>
+                      <li key={i} className="flex items-start gap-1.5"><AlertTriangle className="h-3.5 w-3.5 mt-0.5 text-muted-foreground shrink-0" />{g}</li>
                     ))}
                   </ul>
                 </div>
@@ -1400,7 +1400,7 @@ function OpportunityDiscovery({ onStartApplication }: { onStartApplication: (app
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       {opp.matchScore != null && (
-                        <div className={`text-xs font-bold px-2 py-0.5 rounded ${opp.matchScore >= 70 ? "bg-green-100 text-green-700" : opp.matchScore >= 40 ? "bg-amber-100 text-amber-700" : "bg-gray-100 text-gray-600"}`}>
+                        <div className={`text-xs font-bold px-2 py-0.5 rounded ${opp.matchScore >= 70 ? "bg-primary/10 text-primary" : opp.matchScore >= 40 ? "bg-muted text-foreground" : "bg-muted text-muted-foreground"}`}>
                           {opp.matchScore}% match
                         </div>
                       )}
@@ -1421,7 +1421,7 @@ function OpportunityDiscovery({ onStartApplication }: { onStartApplication: (app
                       </Badge>
                     )}
                     {opp.deadline && (
-                      <Badge variant="secondary" className={new Date(opp.deadline) < new Date() ? "bg-red-100 text-red-700" : ""}>
+                      <Badge variant="secondary" className={new Date(opp.deadline) < new Date() ? "bg-muted text-foreground font-semibold" : ""}>
                         <Clock className="h-3 w-3 mr-0.5" />
                         {format(new Date(opp.deadline), "MMM d, yyyy")}
                       </Badge>
@@ -1474,7 +1474,7 @@ function OpportunityDiscovery({ onStartApplication }: { onStartApplication: (app
                       </>
                     )}
                     {opp.status === 'applying' && (
-                      <Badge variant="secondary" className="bg-indigo-100 text-indigo-700">Application in progress</Badge>
+                      <Badge variant="secondary" className="bg-primary/10 text-primary">Application in progress</Badge>
                     )}
                     {(opp.status === 'dismissed' || opp.status === 'expired' || opp.status === 'not_eligible') && (
                       <Button
@@ -1558,7 +1558,7 @@ function WebFormFiller({ applicationId }: { applicationId: number }) {
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="text-lg flex items-center gap-2">
-                <Globe className="h-5 w-5 text-blue-500" />
+                <Globe className="h-5 w-5 text-muted-foreground" />
                 Web Form Auto-Filler
               </CardTitle>
               <CardDescription>Fill out grant portal forms automatically or export data for manual entry</CardDescription>
@@ -1650,21 +1650,21 @@ function WebFormFiller({ applicationId }: { applicationId: number }) {
                     <div className="flex items-center justify-between">
                       <div>
                         <CardTitle className="text-base flex items-center gap-2">
-                          <Globe className="h-4 w-4 text-blue-500" />
+                          <Globe className="h-4 w-4 text-muted-foreground" />
                           {mapping.portalName}
                         </CardTitle>
                         {mapping.portalUrl && <p className="text-xs text-muted-foreground mt-0.5">{mapping.portalUrl}</p>}
                       </div>
                       <div className="flex gap-2">
                         <Badge variant="outline" className={
-                          mapping.status === 'submitted' ? 'bg-green-100 text-green-700' :
-                          mapping.status === 'tested' ? 'bg-blue-100 text-blue-700' :
-                          'bg-gray-100 text-gray-700'
+                          mapping.status === 'submitted' ? 'bg-muted text-foreground font-semibold' :
+                          mapping.status === 'tested' ? 'bg-primary/10 text-primary' :
+                          'bg-muted text-muted-foreground'
                         }>
                           {mapping.status}
                         </Badge>
                         <Button variant="ghost" size="sm" onClick={() => deleteMutation.mutate({ id: mapping.id })}>
-                          <Trash2 className="h-4 w-4 text-red-400" />
+                          <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       </div>
                     </div>
@@ -1690,7 +1690,7 @@ function WebFormFiller({ applicationId }: { applicationId: number }) {
                               <TableCell>
                                 {field.value && (
                                   <Button variant="ghost" size="sm" onClick={() => copyToClipboard(field.value, field.formFieldLabel)}>
-                                    {copiedField === field.formFieldLabel ? <CheckCircle2 className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
+                                    {copiedField === field.formFieldLabel ? <CheckCircle2 className="h-3.5 w-3.5 text-primary" /> : <Copy className="h-3.5 w-3.5" />}
                                   </Button>
                                 )}
                               </TableCell>
@@ -1711,7 +1711,7 @@ function WebFormFiller({ applicationId }: { applicationId: number }) {
                             variant="outline" size="sm"
                             onClick={() => copyToClipboard(mapping.autoFillScript, 'Auto-fill script')}
                           >
-                            {copiedField === 'Auto-fill script' ? <CheckCircle2 className="h-3.5 w-3.5 mr-1 text-green-500" /> : <Copy className="h-3.5 w-3.5 mr-1" />}
+                            {copiedField === 'Auto-fill script' ? <CheckCircle2 className="h-3.5 w-3.5 mr-1 text-primary" /> : <Copy className="h-3.5 w-3.5 mr-1" />}
                             Copy Script
                           </Button>
                         </div>
@@ -1756,7 +1756,7 @@ function WebFormFiller({ applicationId }: { applicationId: number }) {
                   variant="outline" size="sm"
                   onClick={() => copyPasteData?.guide && copyToClipboard(copyPasteData.guide, 'Full guide')}
                 >
-                  {copiedField === 'Full guide' ? <CheckCircle2 className="h-3.5 w-3.5 mr-1 text-green-500" /> : <Copy className="h-3.5 w-3.5 mr-1" />}
+                  {copiedField === 'Full guide' ? <CheckCircle2 className="h-3.5 w-3.5 mr-1 text-primary" /> : <Copy className="h-3.5 w-3.5 mr-1" />}
                   Copy All
                 </Button>
               </div>
@@ -1786,7 +1786,7 @@ function WebFormFiller({ applicationId }: { applicationId: number }) {
                   variant="outline" size="sm"
                   onClick={() => apiPayloadData?.json && copyToClipboard(apiPayloadData.json, 'JSON payload')}
                 >
-                  {copiedField === 'JSON payload' ? <CheckCircle2 className="h-3.5 w-3.5 mr-1 text-green-500" /> : <Copy className="h-3.5 w-3.5 mr-1" />}
+                  {copiedField === 'JSON payload' ? <CheckCircle2 className="h-3.5 w-3.5 mr-1 text-primary" /> : <Copy className="h-3.5 w-3.5 mr-1" />}
                   Copy JSON
                 </Button>
               </div>
@@ -1845,7 +1845,7 @@ function AgentFormFiller({ applicationId }: { applicationId: number }) {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-lg flex items-center gap-2">
-            <Bot className="h-5 w-5 text-purple-500" />
+            <Bot className="h-5 w-5 text-primary" />
             AI Form Filler Agent
           </CardTitle>
           <CardDescription>
@@ -1892,11 +1892,11 @@ function AgentFormFiller({ applicationId }: { applicationId: number }) {
 
       {/* Agent Progress (while running) */}
       {agentMutation.isPending && (
-        <Card className="border-purple-200 bg-purple-50/30">
+        <Card className="border-primary/20 bg-primary/10">
           <CardContent className="p-6">
             <div className="flex items-center gap-3 mb-4">
-              <div className="h-8 w-8 rounded-full bg-purple-100 flex items-center justify-center">
-                <Bot className="h-4 w-4 text-purple-600 animate-pulse" />
+              <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
+                <Bot className="h-4 w-4 text-primary animate-pulse" />
               </div>
               <div>
                 <p className="font-medium">AI Agent is analyzing the portal and planning...</p>
@@ -1912,19 +1912,19 @@ function AgentFormFiller({ applicationId }: { applicationId: number }) {
       {agentPlan && (
         <div className="space-y-4">
           {/* Status Overview */}
-          <Card className={agentPlan.status === 'completed' ? 'border-green-200' : agentPlan.status === 'failed' ? 'border-red-200' : 'border-yellow-200'}>
+          <Card className={agentPlan.status === 'completed' ? 'border-primary/30' : agentPlan.status === 'failed' ? 'border-[oklch(0.30_0.02_262)]/40' : 'border-border'}>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-lg flex items-center gap-2">
-                  {agentPlan.status === 'completed' ? <CheckCircle2 className="h-5 w-5 text-green-500" /> :
-                   agentPlan.status === 'failed' ? <AlertCircle className="h-5 w-5 text-red-500" /> :
-                   <Clock className="h-5 w-5 text-yellow-500" />}
+                  {agentPlan.status === 'completed' ? <CheckCircle2 className="h-5 w-5 text-primary" /> :
+                   agentPlan.status === 'failed' ? <AlertCircle className="h-5 w-5 text-foreground" /> :
+                   <Clock className="h-5 w-5 text-muted-foreground" />}
                   Agent Plan — {agentPlan.portalName}
                 </CardTitle>
                 <Badge variant="outline" className={
-                  agentPlan.status === 'completed' ? 'bg-green-100 text-green-700' :
-                  agentPlan.status === 'failed' ? 'bg-red-100 text-red-700' :
-                  'bg-yellow-100 text-yellow-700'
+                  agentPlan.status === 'completed' ? 'bg-primary/10 text-primary' :
+                  agentPlan.status === 'failed' ? 'bg-[oklch(0.30_0.02_262)] text-white' :
+                  'bg-muted text-foreground'
                 }>
                   {agentPlan.status}
                 </Badge>
@@ -1933,19 +1933,19 @@ function AgentFormFiller({ applicationId }: { applicationId: number }) {
             <CardContent>
               <div className="grid grid-cols-4 gap-4 text-center">
                 <div className="bg-muted rounded-lg p-3">
-                  <p className="text-2xl font-bold">{agentPlan.fieldActions.length}</p>
+                  <p className="text-2xl font-bold font-display tabular-nums">{agentPlan.fieldActions.length}</p>
                   <p className="text-xs text-muted-foreground">Fields Mapped</p>
                 </div>
                 <div className="bg-muted rounded-lg p-3">
-                  <p className="text-2xl font-bold">{agentPlan.steps.length}</p>
+                  <p className="text-2xl font-bold font-display tabular-nums">{agentPlan.steps.length}</p>
                   <p className="text-xs text-muted-foreground">Agent Steps</p>
                 </div>
                 <div className="bg-muted rounded-lg p-3">
-                  <p className="text-2xl font-bold text-orange-600">{agentPlan.humanActions.length}</p>
+                  <p className="text-2xl font-bold font-display tabular-nums text-foreground">{agentPlan.humanActions.length}</p>
                   <p className="text-xs text-muted-foreground">Manual Actions</p>
                 </div>
                 <div className="bg-muted rounded-lg p-3">
-                  <p className="text-2xl font-bold text-yellow-600">{agentPlan.warnings.length}</p>
+                  <p className="text-2xl font-bold font-display tabular-nums text-foreground">{agentPlan.warnings.length}</p>
                   <p className="text-xs text-muted-foreground">Warnings</p>
                 </div>
               </div>
@@ -1967,10 +1967,10 @@ function AgentFormFiller({ applicationId }: { applicationId: number }) {
                   >
                     <div className="flex items-center gap-3">
                       <div className={`h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold ${
-                        step.status === 'completed' ? 'bg-green-100 text-green-700' :
-                        step.status === 'failed' ? 'bg-red-100 text-red-700' :
-                        step.status === 'needs_human' ? 'bg-orange-100 text-orange-700' :
-                        'bg-gray-100 text-gray-600'
+                        step.status === 'completed' ? 'bg-primary/10 text-primary' :
+                        step.status === 'failed' ? 'bg-[oklch(0.30_0.02_262)] text-white' :
+                        step.status === 'needs_human' ? 'bg-muted text-foreground font-semibold' :
+                        'bg-muted text-muted-foreground'
                       }`}>
                         {step.stepNumber}
                       </div>
@@ -2015,7 +2015,7 @@ function AgentFormFiller({ applicationId }: { applicationId: number }) {
                     </TableHeader>
                     <TableBody>
                       {agentPlan.fieldActions.map((action: any, idx: number) => (
-                        <TableRow key={idx} className={action.requiresHuman ? 'bg-orange-50' : ''}>
+                        <TableRow key={idx} className={action.requiresHuman ? 'bg-muted/50' : ''}>
                           <TableCell className="text-xs text-muted-foreground">{action.order}</TableCell>
                           <TableCell className="text-xs">{action.pageOrSection}</TableCell>
                           <TableCell className="font-medium text-sm">{action.fieldLabel}</TableCell>
@@ -2023,9 +2023,9 @@ function AgentFormFiller({ applicationId }: { applicationId: number }) {
                           <TableCell className="text-sm max-w-[200px] truncate">{action.value || '—'}</TableCell>
                           <TableCell>
                             {action.requiresHuman ? (
-                              <Badge variant="outline" className="bg-orange-100 text-orange-700 text-xs">Manual</Badge>
+                              <Badge variant="outline" className="bg-muted text-foreground font-semibold text-xs">Manual</Badge>
                             ) : (
-                              <Badge variant="outline" className="bg-green-100 text-green-700 text-xs">Auto</Badge>
+                              <Badge variant="outline" className="bg-muted text-muted-foreground text-xs">Auto</Badge>
                             )}
                           </TableCell>
                         </TableRow>
@@ -2039,10 +2039,10 @@ function AgentFormFiller({ applicationId }: { applicationId: number }) {
 
           {/* Human Actions Required */}
           {agentPlan.humanActions.length > 0 && (
-            <Card className="border-orange-200">
+            <Card className="border-border">
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center gap-2">
-                  <HandMetal className="h-4 w-4 text-orange-500" />
+                  <HandMetal className="h-4 w-4 text-foreground" />
                   Manual Actions Required ({agentPlan.humanActions.length})
                 </CardTitle>
                 <CardDescription>These steps require human intervention</CardDescription>
@@ -2051,7 +2051,7 @@ function AgentFormFiller({ applicationId }: { applicationId: number }) {
                 <ul className="space-y-2">
                   {agentPlan.humanActions.map((action: string, idx: number) => (
                     <li key={idx} className="flex items-start gap-2 text-sm">
-                      <AlertTriangle className="h-4 w-4 text-orange-500 mt-0.5 shrink-0" />
+                      <AlertTriangle className="h-4 w-4 text-foreground mt-0.5 shrink-0" />
                       {action}
                     </li>
                   ))}
@@ -2062,10 +2062,10 @@ function AgentFormFiller({ applicationId }: { applicationId: number }) {
 
           {/* Warnings */}
           {agentPlan.warnings.length > 0 && (
-            <Card className="border-yellow-200">
+            <Card className="border-border">
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4 text-yellow-500" />
+                  <AlertCircle className="h-4 w-4 text-muted-foreground" />
                   Warnings ({agentPlan.warnings.length})
                 </CardTitle>
               </CardHeader>
@@ -2073,7 +2073,7 @@ function AgentFormFiller({ applicationId }: { applicationId: number }) {
                 <ul className="space-y-2">
                   {agentPlan.warnings.map((warning: string, idx: number) => (
                     <li key={idx} className="flex items-start gap-2 text-sm">
-                      <AlertCircle className="h-4 w-4 text-yellow-500 mt-0.5 shrink-0" />
+                      <AlertCircle className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
                       {warning}
                     </li>
                   ))}
@@ -2108,7 +2108,7 @@ function AgentFormFiller({ applicationId }: { applicationId: number }) {
                     variant="outline" size="sm"
                     onClick={() => copyToClipboard(agentPlan.autoFillScript, 'Agent script')}
                   >
-                    {copiedField === 'Agent script' ? <CheckCircle2 className="h-3.5 w-3.5 mr-1 text-green-500" /> : <Copy className="h-3.5 w-3.5 mr-1" />}
+                    {copiedField === 'Agent script' ? <CheckCircle2 className="h-3.5 w-3.5 mr-1 text-primary" /> : <Copy className="h-3.5 w-3.5 mr-1" />}
                     Copy Script
                   </Button>
                 </div>

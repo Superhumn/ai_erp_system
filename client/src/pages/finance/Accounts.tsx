@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import InlineEdit from "@/components/InlineEdit";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import InlineEdit from "@/components/InlineEdit";
 import {
   Dialog,
   DialogContent,
@@ -30,11 +30,11 @@ import { toast } from "sonner";
 import { formatCurrency } from "@/lib/format";
 
 const typeOptions = [
-  { value: "asset", label: "Asset", color: "bg-blue-500/10 text-blue-600" },
-  { value: "liability", label: "Liability", color: "bg-red-500/10 text-red-600" },
-  { value: "equity", label: "Equity", color: "bg-purple-500/10 text-purple-600" },
-  { value: "revenue", label: "Revenue", color: "bg-green-500/10 text-green-600" },
-  { value: "expense", label: "Expense", color: "bg-amber-500/10 text-amber-600" },
+  { value: "asset", label: "Asset", color: "bg-primary/10 text-primary" },
+  { value: "liability", label: "Liability", color: "bg-muted text-muted-foreground" },
+  { value: "equity", label: "Equity", color: "bg-muted text-muted-foreground" },
+  { value: "revenue", label: "Revenue", color: "bg-muted text-muted-foreground" },
+  { value: "expense", label: "Expense", color: "bg-muted text-muted-foreground" },
 ];
 
 function AccountSummaryBody({ account, onUpdate }: { account: any; onUpdate: (patch: { name?: string; description?: string }) => void }) {

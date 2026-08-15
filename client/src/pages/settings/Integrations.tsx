@@ -38,6 +38,33 @@ export default function IntegrationsPage() {
   const [shopifyConnecting, setShopifyConnecting] = useState(false);
   const [activeTab, setActiveTab] = useState("connections");
 
+  // Gmail: compose draft dialog
+  const [showComposeDraft, setShowComposeDraft] = useState(false);
+  const [draftTo, setDraftTo] = useState("");
+  const [draftSubject, setDraftSubject] = useState("");
+  const [draftBody, setDraftBody] = useState("");
+  // Gmail: message viewer + reply
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+  const [replyBody, setReplyBody] = useState("");
+
+  // Workspace: new doc dialog
+  const [showNewDoc, setShowNewDoc] = useState(false);
+  const [docTitle, setDocTitle] = useState("");
+  const [docContent, setDocContent] = useState("");
+  // Workspace: new sheet dialog
+  const [showNewSheet, setShowNewSheet] = useState(false);
+  const [sheetTitle, setSheetTitle] = useState("");
+  // Workspace: share dialog
+  const [showShareFile, setShowShareFile] = useState(false);
+  const [shareFileId, setShareFileId] = useState("");
+  const [shareEmail, setShareEmail] = useState("");
+  const [shareRole, setShareRole] = useState<"reader" | "writer" | "commenter">("reader");
+  // Workspace: sheet values tools
+  const [sheetToolsId, setSheetToolsId] = useState("");
+  const [sheetToolsRange, setSheetToolsRange] = useState("A1");
+  const [sheetToolsValues, setSheetToolsValues] = useState("");
+  const [sheetValuesQuery, setSheetValuesQuery] = useState<{ spreadsheetId: string; range: string } | null>(null);
+
   const { data: status, isLoading, refetch } = trpc.integrations.getStatus.useQuery(undefined, { refetchOnWindowFocus: true, refetchOnMount: "always", staleTime: 0 });
   const { data: syncHistory } = trpc.integrations.getSyncHistory.useQuery({ limit: 20 });
 
@@ -160,6 +187,125 @@ export default function IntegrationsPage() {
     },
   });
 
+  // Live connection status straight from the Google token (shared by Gmail + Workspace).
+  const { data: gmailConn } = trpc.gmail.getConnectionStatus.useQuery();
+  const { data: workspaceConn } = trpc.googleWorkspace.getConnectionStatus.useQuery();
+
+  // Gmail: recent messages peek (only when connected)
+  const gmailConnected = !!status?.gmail?.configured || !!(gmailConn as any)?.connected;
+  const {
+    data: gmailMessages,
+    isLoading: gmailMessagesLoading,
+    refetch: refetchGmailMessages,
+  } = trpc.gmail.listMessages.useQuery({ maxResults: 10 }, { enabled: gmailConnected });
+
+  // Gmail: full message for the viewer dialog
+  const { data: gmailMessage, isLoading: gmailMessageLoading } = trpc.gmail.getMessage.useQuery(
+    { messageId: selectedMessageId ?? "" },
+    { enabled: !!selectedMessageId },
+  );
+
+  const createDraftMutation = trpc.gmail.createDraft.useMutation({
+    onSuccess: () => {
+      toast.success("Draft created in Gmail");
+      setShowComposeDraft(false);
+      setDraftTo("");
+      setDraftSubject("");
+      setDraftBody("");
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const replyToMessageMutation = trpc.gmail.replyToMessage.useMutation({
+    onSuccess: () => {
+      toast.success("Reply sent");
+      setReplyBody("");
+      setSelectedMessageId(null);
+      refetchGmailMessages();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const createDocMutation = trpc.googleWorkspace.createDoc.useMutation({
+    onSuccess: (data) => {
+      const link = (data as any)?.webViewLink;
+      toast.success("Google Doc created");
+      if (link) window.open(link, "_blank", "noopener,noreferrer");
+      setShowNewDoc(false);
+      setDocTitle("");
+      setDocContent("");
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const createSheetMutation = trpc.googleWorkspace.createSheet.useMutation({
+    onSuccess: (data) => {
+      const link = (data as any)?.spreadsheetUrl || (data as any)?.webViewLink;
+      toast.success("Google Sheet created");
+      if (link) window.open(link, "_blank", "noopener,noreferrer");
+      setShowNewSheet(false);
+      setSheetTitle("");
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const shareFileMutation = trpc.googleWorkspace.shareFile.useMutation({
+    onSuccess: () => {
+      toast.success("File shared");
+      setShowShareFile(false);
+      setShareFileId("");
+      setShareEmail("");
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const appendToSheetMutation = trpc.googleWorkspace.appendToSheet.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Appended (${(data as any)?.updatedCells ?? 0} cells)`);
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const updateSheetValuesMutation = trpc.googleWorkspace.updateSheetValues.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Updated (${(data as any)?.updatedCells ?? 0} cells)`);
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  // Workspace: read sheet values on demand (enabled once a query target is set)
+  const { data: sheetValues, isFetching: sheetValuesFetching } =
+    trpc.googleWorkspace.getSheetValues.useQuery(
+      sheetValuesQuery ?? { spreadsheetId: "", range: "" },
+      { enabled: !!sheetValuesQuery },
+    );
+
+  // Parse the textarea into a 2D array of cells: newline = rows, comma = columns.
+  const parseSheetValues = (raw: string): string[][] =>
+    raw
+      .split("\n")
+      .filter((line) => line.trim().length > 0)
+      .map((line) => line.split(",").map((cell) => cell.trim()));
+
+  const gmailMsg = gmailMessage as any;
+  const gmailMsgHeaders: any[] = gmailMsg?.payload?.headers ?? [];
+  const getGmailHeader = (name: string): string =>
+    gmailMsgHeaders.find((h: any) => (h?.name ?? "").toLowerCase() === name.toLowerCase())?.value ?? "";
+
   // Check for OAuth callback success/error in URL
   React.useEffect(() => {
     if (!searchParams) return;
@@ -231,7 +377,7 @@ export default function IntegrationsPage() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "connected":
-        return <Badge className="bg-green-500/10 text-green-500 border-green-500/20"><CheckCircle2 className="w-3 h-3 mr-1" /> Connected</Badge>;
+        return <Badge className="bg-primary/10 text-primary border-primary/20"><CheckCircle2 className="w-3 h-3 mr-1" /> Connected</Badge>;
       case "error":
         return <Badge variant="destructive"><XCircle className="w-3 h-3 mr-1" /> Error</Badge>;
       case "not_configured":
@@ -244,11 +390,11 @@ export default function IntegrationsPage() {
   const getSyncStatusBadge = (status: string) => {
     switch (status) {
       case "success":
-        return <Badge className="bg-green-500/10 text-green-500 border-green-500/20">Success</Badge>;
+        return <Badge className="bg-primary/10 text-primary border-primary/20">Success</Badge>;
       case "error":
         return <Badge variant="destructive">Error</Badge>;
       case "warning":
-        return <Badge className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20">Warning</Badge>;
+        return <Badge className="bg-muted text-foreground font-semibold">Warning</Badge>;
       case "pending":
         return <Badge variant="secondary">Pending</Badge>;
       default:
@@ -296,8 +442,8 @@ export default function IntegrationsPage() {
               <CardContent className="p-0 divide-y">
                 {[
                   {
-                    icon: <Mail className="w-4 h-4 text-blue-500" />,
-                    bg: "bg-blue-500/10",
+                    icon: <Mail className="w-4 h-4 text-muted-foreground" />,
+                    bg: "bg-muted",
                     name: "SendGrid",
                     desc: status?.sendgrid?.configured ? "Configured and ready" : "Email delivery service",
                     status: status?.sendgrid?.status || "not_configured",
@@ -305,8 +451,8 @@ export default function IntegrationsPage() {
                     actionLabel: "Configure",
                   },
                   {
-                    icon: <ShoppingBag className="w-4 h-4 text-green-500" />,
-                    bg: "bg-green-500/10",
+                    icon: <ShoppingBag className="w-4 h-4 text-muted-foreground" />,
+                    bg: "bg-muted",
                     name: "Shopify",
                     desc: status?.shopify?.configured ? `${status.shopify.storeCount} store(s) connected` : "E-commerce platform",
                     status: status?.shopify?.status || "not_configured",
@@ -314,8 +460,8 @@ export default function IntegrationsPage() {
                     actionLabel: "Configure",
                   },
                   {
-                    icon: <FileSpreadsheet className="w-4 h-4 text-emerald-500" />,
-                    bg: "bg-emerald-500/10",
+                    icon: <FileSpreadsheet className="w-4 h-4 text-muted-foreground" />,
+                    bg: "bg-muted",
                     name: "Google Sheets",
                     desc: status?.google?.configured ? `Connected as ${status.google.email}` : "Data import/export",
                     status: status?.google?.status || "not_configured",
@@ -327,8 +473,8 @@ export default function IntegrationsPage() {
                     actionLabel: status?.google?.configured ? "Import" : "Connect",
                   },
                   {
-                    icon: <Mail className="w-4 h-4 text-red-500" />,
-                    bg: "bg-red-500/10",
+                    icon: <Mail className="w-4 h-4 text-muted-foreground" />,
+                    bg: "bg-muted",
                     name: "Gmail",
                     desc: status?.gmail?.configured ? `Connected as ${status.gmail.email}` : "Email integration",
                     status: status?.gmail?.status || "not_configured",
@@ -340,8 +486,8 @@ export default function IntegrationsPage() {
                     actionLabel: status?.gmail?.configured ? "Configure" : "Connect",
                   },
                   {
-                    icon: <FileSpreadsheet className="w-4 h-4 text-blue-600" />,
-                    bg: "bg-blue-600/10",
+                    icon: <FileSpreadsheet className="w-4 h-4 text-muted-foreground" />,
+                    bg: "bg-muted",
                     name: "Google Workspace",
                     desc: status?.googleWorkspace?.configured ? `Connected as ${status.googleWorkspace.email}` : "Docs & Sheets",
                     status: status?.googleWorkspace?.status || "not_configured",
@@ -353,8 +499,8 @@ export default function IntegrationsPage() {
                     actionLabel: status?.googleWorkspace?.configured ? "Configure" : "Connect",
                   },
                   {
-                    icon: <Calculator className="w-4 h-4 text-purple-500" />,
-                    bg: "bg-purple-500/10",
+                    icon: <Calculator className="w-4 h-4 text-muted-foreground" />,
+                    bg: "bg-muted",
                     name: "QuickBooks",
                     desc: status?.quickbooks?.configured ? `Company ${status.quickbooks.realmId}` : "Accounting software",
                     status: status?.quickbooks?.status || "not_configured",
@@ -362,8 +508,8 @@ export default function IntegrationsPage() {
                     actionLabel: "Configure",
                   },
                   {
-                    icon: <Settings className="w-4 h-4 text-orange-500" />,
-                    bg: "bg-orange-500/10",
+                    icon: <Settings className="w-4 h-4 text-muted-foreground" />,
+                    bg: "bg-muted",
                     name: "Fireflies.ai",
                     desc: "Meeting transcription & actions",
                     status: (status as any)?.fireflies?.status || "not_configured" as string,
@@ -428,9 +574,9 @@ export default function IntegrationsPage() {
                             Enter your store name or full domain (e.g., "mystore" or "mystore.myshopify.com")
                           </p>
                         </div>
-                        <div className="p-4 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-800">
-                          <h4 className="font-medium text-sm mb-2 text-blue-900 dark:text-blue-100">Secure OAuth Connection</h4>
-                          <p className="text-xs text-blue-700 dark:text-blue-300">
+                        <div className="p-4 bg-muted/50 rounded-lg border">
+                          <h4 className="font-medium text-sm mb-2 text-foreground">Secure OAuth Connection</h4>
+                          <p className="text-xs text-muted-foreground">
                             You'll be redirected to Shopify to authorize this connection. No need to manually copy access tokens - the integration will be set up automatically.
                           </p>
                         </div>
@@ -487,7 +633,7 @@ export default function IntegrationsPage() {
                           <TableCell>{store.storeDomain}</TableCell>
                           <TableCell>
                             {store.isEnabled ? (
-                              <Badge className="bg-green-500/10 text-green-500 border-green-500/20">Active</Badge>
+                              <Badge className="bg-primary/10 text-primary border-primary/20">Active</Badge>
                             ) : (
                               <Badge variant="secondary">Disabled</Badge>
                             )}
@@ -580,11 +726,11 @@ export default function IntegrationsPage() {
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
-                  <div className={`p-3 rounded-full ${status?.sendgrid?.configured ? 'bg-green-500/10' : 'bg-yellow-500/10'}`}>
+                  <div className={`p-3 rounded-full ${status?.sendgrid?.configured ? 'bg-primary/10' : 'bg-muted'}`}>
                     {status?.sendgrid?.configured ? (
-                      <CheckCircle2 className="w-6 h-6 text-green-500" />
+                      <CheckCircle2 className="w-6 h-6 text-primary" />
                     ) : (
-                      <AlertCircle className="w-6 h-6 text-yellow-500" />
+                      <AlertCircle className="w-6 h-6 text-muted-foreground" />
                     )}
                   </div>
                   <div>
@@ -667,11 +813,11 @@ export default function IntegrationsPage() {
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
-                  <div className={`p-3 rounded-full ${status?.gmail?.configured ? 'bg-green-500/10' : 'bg-yellow-500/10'}`}>
+                  <div className={`p-3 rounded-full ${status?.gmail?.configured ? 'bg-primary/10' : 'bg-muted'}`}>
                     {status?.gmail?.configured ? (
-                      <CheckCircle2 className="w-6 h-6 text-green-500" />
+                      <CheckCircle2 className="w-6 h-6 text-primary" />
                     ) : (
-                      <AlertCircle className="w-6 h-6 text-yellow-500" />
+                      <AlertCircle className="w-6 h-6 text-muted-foreground" />
                     )}
                   </div>
                   <div>
@@ -705,8 +851,8 @@ export default function IntegrationsPage() {
                       </Button>
                     </div>
 
-                    <div className="p-4 bg-blue-500/5 border border-blue-500/20 rounded-lg">
-                      <h4 className="font-medium text-blue-600 dark:text-blue-400 mb-2">
+                    <div className="p-4 bg-muted/50 border rounded-lg">
+                      <h4 className="font-medium text-foreground mb-2">
                         What you can do with Gmail integration:
                       </h4>
                       <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
@@ -730,7 +876,7 @@ export default function IntegrationsPage() {
                           </div>
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Status:</span>
-                            <Badge className="bg-green-500/10 text-green-500 border-green-500/20">Active</Badge>
+                            <Badge className="bg-primary/10 text-primary border-primary/20">Active</Badge>
                           </div>
                         </div>
                       </div>
@@ -738,6 +884,10 @@ export default function IntegrationsPage() {
                       <div className="p-4 border rounded-lg">
                         <h4 className="font-medium mb-2">Quick Actions</h4>
                         <div className="space-y-2">
+                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => setShowComposeDraft(true)}>
+                            <Plus className="w-4 h-4 mr-2" />
+                            Compose Draft
+                          </Button>
                           <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => window.open("https://mail.google.com/mail/?view=cm&fs=1", "_blank", "noopener,noreferrer")}>
                             <Mail className="w-4 h-4 mr-2" />
                             Compose Email
@@ -748,6 +898,63 @@ export default function IntegrationsPage() {
                           </Button>
                         </div>
                       </div>
+                    </div>
+
+                    {/* Recent messages peek */}
+                    <div className="p-4 border rounded-lg">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-medium">Recent Messages</h4>
+                          {(gmailConn as any)?.connected ? (
+                            <Badge className="bg-green-500/10 text-green-500 border-green-500/20">
+                              <CheckCircle2 className="w-3 h-3 mr-1" /> Connected
+                            </Badge>
+                          ) : (
+                            <Badge variant="secondary">
+                              <AlertCircle className="w-3 h-3 mr-1" /> Offline
+                            </Badge>
+                          )}
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => refetchGmailMessages()}
+                          disabled={gmailMessagesLoading}
+                        >
+                          <RefreshCw className={`w-4 h-4 ${gmailMessagesLoading ? "animate-spin" : ""}`} />
+                        </Button>
+                      </div>
+                      {gmailMessagesLoading ? (
+                        <div className="flex items-center justify-center py-6">
+                          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+                        </div>
+                      ) : ((gmailMessages as any)?.messages?.length ?? 0) > 0 ? (
+                        <div className="divide-y">
+                          {((gmailMessages as any).messages as any[]).map((m: any) => (
+                            <div key={m.id} className="flex items-center justify-between py-2 gap-2">
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm truncate">{m.snippet || m.subject || m.id}</p>
+                                {m.threadId && (
+                                  <p className="text-xs text-muted-foreground truncate">Thread {m.threadId}</p>
+                                )}
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="shrink-0 h-7 px-2 text-xs"
+                                onClick={() => {
+                                  setReplyBody("");
+                                  setSelectedMessageId(m.id);
+                                }}
+                              >
+                                View
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground py-2">No recent messages found</p>
+                      )}
                     </div>
 
                     <div className="p-4 bg-muted/50 rounded-lg">
@@ -772,6 +979,134 @@ export default function IntegrationsPage() {
                 )}
               </CardContent>
             </Card>
+
+            {/* Compose draft dialog */}
+            <Dialog open={showComposeDraft} onOpenChange={setShowComposeDraft}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Compose Draft</DialogTitle>
+                  <DialogDescription>Save a draft email to your Gmail account</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="draftTo">To</Label>
+                    <Input
+                      id="draftTo"
+                      placeholder="recipient@example.com"
+                      value={draftTo}
+                      onChange={(e) => setDraftTo(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="draftSubject">Subject</Label>
+                    <Input
+                      id="draftSubject"
+                      placeholder="Subject"
+                      value={draftSubject}
+                      onChange={(e) => setDraftSubject(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="draftBody">Body</Label>
+                    <textarea
+                      id="draftBody"
+                      className="flex min-h-[120px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      placeholder="Write your message…"
+                      value={draftBody}
+                      onChange={(e) => setDraftBody(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setShowComposeDraft(false)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={() =>
+                      createDraftMutation.mutate({
+                        to: draftTo,
+                        subject: draftSubject,
+                        body: draftBody,
+                      })
+                    }
+                    disabled={createDraftMutation.isPending || !draftTo.trim() || !draftSubject.trim()}
+                  >
+                    {createDraftMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Plus className="w-4 h-4 mr-2" />
+                    )}
+                    Save Draft
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            {/* Message viewer + reply dialog */}
+            <Dialog open={!!selectedMessageId} onOpenChange={(open) => { if (!open) setSelectedMessageId(null); }}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle className="truncate">
+                    {getGmailHeader("Subject") || "Message"}
+                  </DialogTitle>
+                  <DialogDescription className="truncate">
+                    {getGmailHeader("From")}
+                  </DialogDescription>
+                </DialogHeader>
+                {gmailMessageLoading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  <div className="space-y-4 py-2">
+                    <div className="p-3 bg-muted/50 rounded-lg text-sm max-h-48 overflow-y-auto whitespace-pre-wrap">
+                      {gmailMsg?.snippet || "(no preview available)"}
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="replyBody">Reply</Label>
+                      <textarea
+                        id="replyBody"
+                        className="flex min-h-[100px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        placeholder="Write a reply…"
+                        value={replyBody}
+                        onChange={(e) => setReplyBody(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                )}
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setSelectedMessageId(null)}>
+                    Close
+                  </Button>
+                  <Button
+                    onClick={() =>
+                      replyToMessageMutation.mutate({
+                        threadId: gmailMsg?.threadId ?? "",
+                        messageId: gmailMsg?.id ?? selectedMessageId ?? "",
+                        to: getGmailHeader("From"),
+                        subject: getGmailHeader("Subject").startsWith("Re:")
+                          ? getGmailHeader("Subject")
+                          : `Re: ${getGmailHeader("Subject")}`,
+                        body: replyBody,
+                      })
+                    }
+                    disabled={
+                      replyToMessageMutation.isPending ||
+                      !replyBody.trim() ||
+                      !gmailMsg?.threadId ||
+                      !getGmailHeader("From")
+                    }
+                  >
+                    {replyToMessageMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Mail className="w-4 h-4 mr-2" />
+                    )}
+                    Send Reply
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </TabsContent>
 
           {/* Google Workspace Tab */}
@@ -785,11 +1120,11 @@ export default function IntegrationsPage() {
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
-                  <div className={`p-3 rounded-full ${status?.googleWorkspace?.configured ? 'bg-green-500/10' : 'bg-yellow-500/10'}`}>
+                  <div className={`p-3 rounded-full ${status?.googleWorkspace?.configured ? 'bg-primary/10' : 'bg-muted'}`}>
                     {status?.googleWorkspace?.configured ? (
-                      <CheckCircle2 className="w-6 h-6 text-green-500" />
+                      <CheckCircle2 className="w-6 h-6 text-primary" />
                     ) : (
-                      <AlertCircle className="w-6 h-6 text-yellow-500" />
+                      <AlertCircle className="w-6 h-6 text-muted-foreground" />
                     )}
                   </div>
                   <div>
@@ -806,9 +1141,9 @@ export default function IntegrationsPage() {
 
                 <div className="p-4 border rounded-lg">
                   <div className="flex items-start gap-3">
-                    <div className={`mt-0.5 p-2 rounded-full ${status?.googleDriveServiceAccount?.configured ? 'bg-green-500/10' : 'bg-muted'}`}>
+                    <div className={`mt-0.5 p-2 rounded-full ${status?.googleDriveServiceAccount?.configured ? 'bg-primary/10' : 'bg-muted'}`}>
                       {status?.googleDriveServiceAccount?.configured ? (
-                        <CheckCircle2 className="w-4 h-4 text-green-500" />
+                        <CheckCircle2 className="w-4 h-4 text-primary" />
                       ) : (
                         <AlertCircle className="w-4 h-4 text-muted-foreground" />
                       )}
@@ -856,8 +1191,8 @@ export default function IntegrationsPage() {
                       </Button>
                     </div>
 
-                    <div className="p-4 bg-blue-500/5 border border-blue-500/20 rounded-lg">
-                      <h4 className="font-medium text-blue-600 dark:text-blue-400 mb-2">
+                    <div className="p-4 bg-muted/50 border rounded-lg">
+                      <h4 className="font-medium text-foreground mb-2">
                         What you can do with Google Workspace:
                       </h4>
                       <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
@@ -882,7 +1217,7 @@ export default function IntegrationsPage() {
                           </div>
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Status:</span>
-                            <Badge className="bg-green-500/10 text-green-500 border-green-500/20">Active</Badge>
+                            <Badge className="bg-primary/10 text-primary border-primary/20">Active</Badge>
                           </div>
                         </div>
                       </div>
@@ -890,16 +1225,142 @@ export default function IntegrationsPage() {
                       <div className="p-4 border rounded-lg">
                         <h4 className="font-medium mb-2">Quick Actions</h4>
                         <div className="space-y-2">
-                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => window.open("https://docs.new", "_blank", "noopener,noreferrer")}>
-                            <FileSpreadsheet className="w-4 h-4 mr-2" />
-                            Create Google Doc
+                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => setShowNewDoc(true)}>
+                            <Plus className="w-4 h-4 mr-2" />
+                            New Doc
                           </Button>
-                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => window.open("https://sheets.new", "_blank", "noopener,noreferrer")}>
-                            <FileSpreadsheet className="w-4 h-4 mr-2" />
-                            Create Google Sheet
+                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => setShowNewSheet(true)}>
+                            <Plus className="w-4 h-4 mr-2" />
+                            New Sheet
+                          </Button>
+                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => setShowShareFile(true)}>
+                            <ExternalLink className="w-4 h-4 mr-2" />
+                            Share a File
                           </Button>
                         </div>
                       </div>
+                    </div>
+
+                    {/* Sheet tools: read / append / update values */}
+                    <div className="p-4 border rounded-lg space-y-4">
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-medium">Sheet Tools</h4>
+                        {(workspaceConn as any)?.connected ? (
+                          <Badge className="bg-green-500/10 text-green-500 border-green-500/20">
+                            <CheckCircle2 className="w-3 h-3 mr-1" /> Connected
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary">
+                            <AlertCircle className="w-3 h-3 mr-1" /> Offline
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Read, append, or overwrite cells in a spreadsheet by ID. Rows are separated by new lines,
+                        columns by commas.
+                      </p>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label htmlFor="sheetToolsId">Spreadsheet ID</Label>
+                          <Input
+                            id="sheetToolsId"
+                            placeholder="1AbC…"
+                            value={sheetToolsId}
+                            onChange={(e) => setSheetToolsId(e.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="sheetToolsRange">Range</Label>
+                          <Input
+                            id="sheetToolsRange"
+                            placeholder="Sheet1!A1"
+                            value={sheetToolsRange}
+                            onChange={(e) => setSheetToolsRange(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="sheetToolsValues">Values (rows = lines, columns = commas)</Label>
+                        <textarea
+                          id="sheetToolsValues"
+                          className="flex min-h-[80px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          placeholder={"Alice,30\nBob,25"}
+                          value={sheetToolsValues}
+                          onChange={(e) => setSheetToolsValues(e.target.value)}
+                        />
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setSheetValuesQuery({ spreadsheetId: sheetToolsId, range: sheetToolsRange })}
+                          disabled={!sheetToolsId.trim() || !sheetToolsRange.trim() || sheetValuesFetching}
+                        >
+                          {sheetValuesFetching ? (
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          ) : (
+                            <RefreshCw className="w-4 h-4 mr-2" />
+                          )}
+                          Read
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            appendToSheetMutation.mutate({
+                              spreadsheetId: sheetToolsId,
+                              range: sheetToolsRange,
+                              values: parseSheetValues(sheetToolsValues),
+                            })
+                          }
+                          disabled={
+                            appendToSheetMutation.isPending ||
+                            !sheetToolsId.trim() ||
+                            !sheetToolsRange.trim() ||
+                            !sheetToolsValues.trim()
+                          }
+                        >
+                          {appendToSheetMutation.isPending ? (
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          ) : (
+                            <Plus className="w-4 h-4 mr-2" />
+                          )}
+                          Append
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            updateSheetValuesMutation.mutate({
+                              spreadsheetId: sheetToolsId,
+                              range: sheetToolsRange,
+                              values: parseSheetValues(sheetToolsValues),
+                            })
+                          }
+                          disabled={
+                            updateSheetValuesMutation.isPending ||
+                            !sheetToolsId.trim() ||
+                            !sheetToolsRange.trim() ||
+                            !sheetToolsValues.trim()
+                          }
+                        >
+                          {updateSheetValuesMutation.isPending ? (
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          ) : (
+                            <FileSpreadsheet className="w-4 h-4 mr-2" />
+                          )}
+                          Update
+                        </Button>
+                      </div>
+                      {sheetValuesQuery && (
+                        <div className="p-3 bg-muted/50 rounded-lg text-xs font-mono max-h-40 overflow-auto whitespace-pre">
+                          {sheetValuesFetching
+                            ? "Loading…"
+                            : ((sheetValues as any[] | undefined)?.length ?? 0) > 0
+                              ? (sheetValues as any[]).map((row: any) => (Array.isArray(row) ? row.join(", ") : String(row))).join("\n")
+                              : "(no values in range)"}
+                        </div>
+                      )}
                     </div>
 
                     <div className="p-4 bg-muted/50 rounded-lg">
@@ -924,6 +1385,163 @@ export default function IntegrationsPage() {
                 )}
               </CardContent>
             </Card>
+
+            {/* New Doc dialog */}
+            <Dialog open={showNewDoc} onOpenChange={setShowNewDoc}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>New Google Doc</DialogTitle>
+                  <DialogDescription>Create a Google Doc in the connected account</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="docTitle">Title</Label>
+                    <Input
+                      id="docTitle"
+                      placeholder="Untitled document"
+                      value={docTitle}
+                      onChange={(e) => setDocTitle(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="docContent">Initial content (optional)</Label>
+                    <textarea
+                      id="docContent"
+                      className="flex min-h-[120px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      placeholder="Document body…"
+                      value={docContent}
+                      onChange={(e) => setDocContent(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setShowNewDoc(false)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={() =>
+                      createDocMutation.mutate({
+                        title: docTitle,
+                        content: docContent || undefined,
+                      })
+                    }
+                    disabled={createDocMutation.isPending || !docTitle.trim()}
+                  >
+                    {createDocMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Plus className="w-4 h-4 mr-2" />
+                    )}
+                    Create Doc
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            {/* New Sheet dialog */}
+            <Dialog open={showNewSheet} onOpenChange={setShowNewSheet}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>New Google Sheet</DialogTitle>
+                  <DialogDescription>Create a Google Sheet in the connected account</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="sheetTitle">Title</Label>
+                    <Input
+                      id="sheetTitle"
+                      placeholder="Untitled spreadsheet"
+                      value={sheetTitle}
+                      onChange={(e) => setSheetTitle(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setShowNewSheet(false)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={() => createSheetMutation.mutate({ title: sheetTitle })}
+                    disabled={createSheetMutation.isPending || !sheetTitle.trim()}
+                  >
+                    {createSheetMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Plus className="w-4 h-4 mr-2" />
+                    )}
+                    Create Sheet
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            {/* Share file dialog */}
+            <Dialog open={showShareFile} onOpenChange={setShowShareFile}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Share a File</DialogTitle>
+                  <DialogDescription>Grant a user access to a Drive file, Doc, or Sheet by ID</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="shareFileId">File ID</Label>
+                    <Input
+                      id="shareFileId"
+                      placeholder="1AbC…"
+                      value={shareFileId}
+                      onChange={(e) => setShareFileId(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="shareEmail">Share with (email)</Label>
+                    <Input
+                      id="shareEmail"
+                      type="email"
+                      placeholder="teammate@example.com"
+                      value={shareEmail}
+                      onChange={(e) => setShareEmail(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="shareRole">Role</Label>
+                    <select
+                      id="shareRole"
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      value={shareRole}
+                      onChange={(e) => setShareRole(e.target.value as "reader" | "writer" | "commenter")}
+                    >
+                      <option value="reader">Reader</option>
+                      <option value="commenter">Commenter</option>
+                      <option value="writer">Writer</option>
+                    </select>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setShowShareFile(false)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={() =>
+                      shareFileMutation.mutate({
+                        fileId: shareFileId,
+                        role: shareRole,
+                        type: "user",
+                        emailAddress: shareEmail,
+                        sendNotificationEmail: true,
+                      })
+                    }
+                    disabled={shareFileMutation.isPending || !shareFileId.trim() || !shareEmail.trim()}
+                  >
+                    {shareFileMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <ExternalLink className="w-4 h-4 mr-2" />
+                    )}
+                    Share
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </TabsContent>
 
           {/* QuickBooks Tab */}
@@ -937,11 +1555,11 @@ export default function IntegrationsPage() {
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
-                  <div className={`p-3 rounded-full ${status?.quickbooks?.configured ? 'bg-green-500/10' : 'bg-yellow-500/10'}`}>
+                  <div className={`p-3 rounded-full ${status?.quickbooks?.configured ? 'bg-primary/10' : 'bg-muted'}`}>
                     {status?.quickbooks?.configured ? (
-                      <CheckCircle2 className="w-6 h-6 text-green-500" />
+                      <CheckCircle2 className="w-6 h-6 text-primary" />
                     ) : (
-                      <AlertCircle className="w-6 h-6 text-yellow-500" />
+                      <AlertCircle className="w-6 h-6 text-muted-foreground" />
                     )}
                   </div>
                   <div>
@@ -969,8 +1587,8 @@ export default function IntegrationsPage() {
                         <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_REDIRECT_URI</code> - OAuth callback URL (optional)</li>
                         <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_ENVIRONMENT</code> - sandbox or production (optional, defaults to production)</li>
                       </ul>
-                      <div className="mb-4 p-3 bg-yellow-500/5 border border-yellow-500/20 rounded-md text-sm">
-                        <p className="font-medium text-yellow-700 dark:text-yellow-400 mb-1">⚠ Use Production credentials</p>
+                      <div className="mb-4 p-3 bg-muted/50 border rounded-md text-sm">
+                        <p className="font-medium text-foreground mb-1">⚠ Use Production credentials</p>
                         <p className="text-muted-foreground">
                           In the Intuit Developer Portal, make sure your app has been promoted to <strong>Production</strong> and that you are using the <strong>production</strong> Client ID and Secret.
                           Development (sandbox) credentials only work with Intuit sandbox companies — real QuickBooks users will see a "no sandbox companies found" error.
@@ -984,9 +1602,9 @@ export default function IntegrationsPage() {
                           </p>
                           <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 font-mono pt-1">
                             <span className="text-muted-foreground">client_id:</span>
-                            <span>{quickbooksDebug.clientIdMasked ?? <em className="text-red-500">not set</em>} <span className="text-muted-foreground">({quickbooksDebug.clientIdLength} chars)</span></span>
+                            <span>{quickbooksDebug.clientIdMasked ?? <em className="text-foreground font-semibold">not set</em>} <span className="text-muted-foreground">({quickbooksDebug.clientIdLength} chars)</span></span>
                             <span className="text-muted-foreground">client_secret:</span>
-                            <span>{quickbooksDebug.clientSecretSet ? "set" : <em className="text-red-500">not set</em>}</span>
+                            <span>{quickbooksDebug.clientSecretSet ? "set" : <em className="text-foreground font-semibold">not set</em>}</span>
                             <span className="text-muted-foreground">environment:</span>
                             <span>{quickbooksDebug.environment}</span>
                             <span className="text-muted-foreground">redirect_uri:</span>
@@ -995,7 +1613,7 @@ export default function IntegrationsPage() {
                         </div>
                       )}
                       {quickbooksAuthUrl?.redirectUri && (
-                        <div className="mb-4 p-3 bg-amber-500/5 border border-amber-500/20 rounded-md">
+                        <div className="mb-4 p-3 bg-muted/50 border rounded-md">
                           <p className="text-sm font-medium mb-1">Register this Redirect URI in Intuit</p>
                           <p className="text-xs text-muted-foreground mb-2">
                             In the Intuit Developer portal, open your app → <strong>Keys &amp; OAuth</strong> → <strong>Redirect URIs</strong>, and add this exact string. Intuit rejects the connection if it doesn't match character-for-character.
@@ -1040,8 +1658,8 @@ export default function IntegrationsPage() {
                       </Button>
                     </div>
 
-                    <div className="p-4 bg-blue-500/5 border border-blue-500/20 rounded-lg">
-                      <h4 className="font-medium text-blue-600 dark:text-blue-400 mb-2">
+                    <div className="p-4 bg-muted/50 border rounded-lg">
+                      <h4 className="font-medium text-foreground mb-2">
                         What you can do with QuickBooks:
                       </h4>
                       <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
@@ -1066,7 +1684,7 @@ export default function IntegrationsPage() {
                           </div>
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Status:</span>
-                            <Badge className="bg-green-500/10 text-green-500 border-green-500/20">Active</Badge>
+                            <Badge className="bg-primary/10 text-primary border-primary/20">Active</Badge>
                           </div>
                         </div>
                       </div>

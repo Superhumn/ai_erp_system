@@ -393,6 +393,13 @@
 			"when": 1781900000000,
 			"tag": "0055_ensure_investor_investments_schema",
 			"breakpoints": true
+		},
+		{
+			"idx": 56,
+			"version": "5",
+			"when": 1785931200000,
+			"tag": "0056_auth_tokens_email_verified_user_region",
+			"breakpoints": true
 		}
 	]
 }

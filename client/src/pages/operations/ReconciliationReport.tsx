@@ -36,11 +36,11 @@ export default function ReconciliationReport() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "completed":
-        return <Badge className="bg-green-500/10 text-green-600"><CheckCircle2 className="w-3 h-3 mr-1" />Completed</Badge>;
+        return <Badge className="bg-muted text-muted-foreground"><CheckCircle2 className="w-3 h-3 mr-1" />Completed</Badge>;
       case "running":
-        return <Badge className="bg-blue-500/10 text-blue-600"><Loader2 className="w-3 h-3 mr-1 animate-spin" />Running</Badge>;
+        return <Badge className="bg-primary/10 text-primary"><Loader2 className="w-3 h-3 mr-1 animate-spin" />Running</Badge>;
       case "pending":
-        return <Badge className="bg-yellow-500/10 text-yellow-600"><Clock className="w-3 h-3 mr-1" />Pending</Badge>;
+        return <Badge className="bg-muted text-foreground font-semibold"><Clock className="w-3 h-3 mr-1" />Pending</Badge>;
       case "failed":
         return <Badge variant="destructive"><XCircle className="w-3 h-3 mr-1" />Failed</Badge>;
       default:
@@ -168,12 +168,12 @@ function ReconciliationRunRow({ run, getStatusBadge }: { run: any; getStatusBadg
         <TableCell>{getStatusBadge(run.status)}</TableCell>
         <TableCell>
           {run.discrepancyCount > 0 ? (
-            <span className="flex items-center gap-1 text-amber-600 font-medium">
+            <span className="flex items-center gap-1 text-foreground font-semibold">
               <AlertTriangle className="h-4 w-4" />
               {run.discrepancyCount}
             </span>
           ) : run.status === "completed" ? (
-            <span className="flex items-center gap-1 text-green-600">
+            <span className="flex items-center gap-1 text-muted-foreground">
               <CheckCircle2 className="h-4 w-4" />
               None
             </span>
@@ -213,14 +213,14 @@ function ReconciliationRunRow({ run, getStatusBadge }: { run: any; getStatusBadg
                       <TableCell className="font-mono text-xs">{line.sku || "—"}</TableCell>
                       <TableCell>{line.erpQuantity}</TableCell>
                       <TableCell>{line.channelQuantity}</TableCell>
-                      <TableCell className={variance !== 0 ? "text-amber-600 font-medium" : "text-green-600"}>
+                      <TableCell className={variance !== 0 ? "text-foreground font-semibold" : "text-muted-foreground"}>
                         {variance > 0 ? `+${variance}` : variance}
                       </TableCell>
                       <TableCell>
                         {variance === 0 ? (
-                          <Badge className="bg-green-500/10 text-green-600">Match</Badge>
+                          <Badge className="bg-muted text-muted-foreground">Match</Badge>
                         ) : (
-                          <Badge className="bg-amber-500/10 text-amber-600">Mismatch</Badge>
+                          <Badge className="bg-muted text-foreground font-semibold">Mismatch</Badge>
                         )}
                       </TableCell>
                     </TableRow>

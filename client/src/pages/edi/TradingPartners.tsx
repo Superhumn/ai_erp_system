@@ -316,10 +316,10 @@ export default function TradingPartners() {
           </div>
           <Badge
             className={
-              sp.status === "active" ? "bg-green-50 text-green-700 border-green-200" :
-              sp.status === "testing" ? "bg-yellow-50 text-yellow-700 border-yellow-200" :
-              sp.status === "onboarding" ? "bg-blue-50 text-blue-700 border-blue-200" :
-              "bg-gray-50 text-gray-700 border-gray-200"
+              sp.status === "active" ? "bg-primary/10 text-primary border-primary/20" :
+              sp.status === "testing" ? "bg-muted text-muted-foreground border-border" :
+              sp.status === "onboarding" ? "bg-muted text-muted-foreground border-border" :
+              "bg-muted text-muted-foreground border-border"
             }
             variant="outline"
           >
@@ -489,14 +489,14 @@ export default function TradingPartners() {
                     )}
                   </div>
                   {testConnection.data && (
-                    <div className={`mt-3 p-3 rounded-md text-sm ${testConnection.data.success ? "bg-green-50 border border-green-200" : "bg-red-50 border border-red-200"}`}>
+                    <div className={`mt-3 p-3 rounded-md text-sm ${testConnection.data.success ? "bg-primary/10 border border-primary/20" : "bg-muted border border-foreground/40"}`}>
                       <div className="flex items-center gap-2">
                         {testConnection.data.success ? (
-                          <CheckCircle2 className="h-4 w-4 text-green-600" />
+                          <CheckCircle2 className="h-4 w-4 text-primary" />
                         ) : (
-                          <XCircle className="h-4 w-4 text-red-600" />
+                          <XCircle className="h-4 w-4 text-foreground" />
                         )}
-                        <span className={testConnection.data.success ? "text-green-700" : "text-red-700"}>
+                        <span className={testConnection.data.success ? "text-primary" : "text-foreground"}>
                           {testConnection.data.message}
                         </span>
                       </div>
@@ -506,12 +506,12 @@ export default function TradingPartners() {
                     </div>
                   )}
                   {pollPartner.data && (
-                    <div className="mt-3 p-3 rounded-md text-sm bg-blue-50 border border-blue-200">
-                      <p className="text-blue-700">
+                    <div className="mt-3 p-3 rounded-md text-sm bg-primary/10 border border-primary/20">
+                      <p className="text-foreground">
                         Files found: {pollPartner.data.filesFound} | Processed: {pollPartner.data.filesProcessed}
                       </p>
                       {pollPartner.data.errors.length > 0 && (
-                        <ul className="text-red-600 text-xs mt-1 list-disc list-inside">
+                        <ul className="text-foreground text-xs mt-1 list-disc list-inside">
                           {pollPartner.data.errors.map((err: string, i: number) => <li key={i}>{err}</li>)}
                         </ul>
                       )}
@@ -1173,10 +1173,10 @@ export default function TradingPartners() {
                       <Badge
                         variant="outline"
                         className={
-                          partner.status === "active" ? "bg-green-50 text-green-700 border-green-200" :
-                          partner.status === "testing" ? "bg-yellow-50 text-yellow-700 border-yellow-200" :
-                          partner.status === "onboarding" ? "bg-blue-50 text-blue-700 border-blue-200" :
-                          "bg-gray-50 text-gray-700 border-gray-200"
+                          partner.status === "active" ? "bg-primary/10 text-primary border-primary/20" :
+                          partner.status === "testing" ? "bg-muted text-muted-foreground border-border" :
+                          partner.status === "onboarding" ? "bg-muted text-muted-foreground border-border" :
+                          "bg-muted text-muted-foreground border-border"
                         }
                       >
                         {partner.status}

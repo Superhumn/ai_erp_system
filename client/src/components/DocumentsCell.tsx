@@ -44,10 +44,10 @@ type DocType = typeof DOC_TYPES[number];
 
 function getFileIcon(mimeType?: string | null) {
   if (!mimeType) return <File className="h-3.5 w-3.5 text-muted-foreground" />;
-  if (mimeType.includes("image")) return <FileImage className="h-3.5 w-3.5 text-blue-500" />;
+  if (mimeType.includes("image")) return <FileImage className="h-3.5 w-3.5 text-muted-foreground" />;
   if (mimeType.includes("spreadsheet") || mimeType.includes("excel") || mimeType.includes("csv"))
-    return <FileSpreadsheet className="h-3.5 w-3.5 text-green-500" />;
-  if (mimeType.includes("pdf")) return <FileText className="h-3.5 w-3.5 text-red-500" />;
+    return <FileSpreadsheet className="h-3.5 w-3.5 text-muted-foreground" />;
+  if (mimeType.includes("pdf")) return <FileText className="h-3.5 w-3.5 text-muted-foreground" />;
   return <File className="h-3.5 w-3.5 text-muted-foreground" />;
 }
 

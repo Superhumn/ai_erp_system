@@ -119,12 +119,12 @@ export default function Contracts() {
   });
 
   const typeColors: Record<string, string> = {
-    customer: "bg-blue-500/10 text-blue-600",
-    vendor: "bg-purple-500/10 text-purple-600",
-    employment: "bg-green-500/10 text-green-600",
-    nda: "bg-amber-500/10 text-amber-600",
-    partnership: "bg-indigo-500/10 text-indigo-600",
-    other: "bg-gray-500/10 text-gray-600",
+    customer: "bg-muted text-muted-foreground",
+    vendor: "bg-muted text-muted-foreground",
+    employment: "bg-muted text-muted-foreground",
+    nda: "bg-muted text-muted-foreground",
+    partnership: "bg-muted text-muted-foreground",
+    other: "bg-muted text-muted-foreground",
   };
 
   const handleSubmit = (e: React.FormEvent) => {
