@@ -1,0 +1,25 @@
+drizzle/schema.ts
+  s_8abb44e9c81370::t_b44992f20429c9 7793
+ROUTERS_INDEX.md
+  s_8abb44e9c81370::t_c47908cf2e6836 5,13-139,145-201,207-276
+client/src/pages/hr/Employees.tsx
+  s_8abb44e9c81370::t_3945819e5f516e 25-26,1855-1856,2000,2015-2019,2024-2034
+server/routers.ts
+  s_8abb44e9c81370::t_d7681ea75249e5 130-136,1520,3817
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "18af5c92a99619c4dc50f41c20aa8c2be53d027a",
+  "prompts": {},
+  "sessions": {
+    "s_8abb44e9c81370": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c663859-537c-475d-9207-e5c606452f1b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    }
+  }
+}
