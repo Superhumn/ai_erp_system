@@ -124,6 +124,13 @@ export const opsProcedure = protectedProcedure.use(({ ctx, next }) => {
   return next({ ctx });
 });
 
+const execProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (!['admin', 'exec'].includes(ctx.user.role)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Executive access required' });
+  }
+  return next({ ctx });
+});
+
 // Region/entity data-scoping middleware. Resolves the caller's visible entity set from their
 // home company + regionScope and attaches `ctx.scope`, which scoped DB helpers consume. Global
 // users (the backfill default) get { companyIds: "all" }, preserving pre-multi-region behavior.
@@ -1345,7 +1352,7 @@ export const appRouter = router({
         await createAuditLog(ctx.user.id, 'create', 'vendor', result.id, input.name);
         return result;
       }),
-    update: opsProcedure
+    update: adminProcedure
       .input(z.object({
         id: z.number(),
         name: z.string().optional(),
@@ -3642,7 +3649,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         await createAuditLog(ctx.user.id, 'create', 'employee', result.id, `${input.firstName} ${input.lastName}`);
         return result;
       }),
-    update: adminProcedure
+    update: execProcedure
       .input(z.object({
         id: z.number(),
         firstName: z.string().optional(),
