@@ -91,6 +91,9 @@ const MaterialSupply = lazy(() => import("./pages/operations/MaterialSupply"));
 const OpsWorkspace = lazy(() => import("./pages/ops/OpsWorkspace"));
 const FormFill = lazy(() => import("./pages/ops/FormFill"));
 
+// Planner (unified Today view + NL quick-add + auto-scheduling)
+const TodayPlanner = lazy(() => import("./pages/planner/Today"));
+
 // Backend→frontend gap: pages wiring previously-orphaned routers
 const Costing = lazy(() => import("./pages/finance/Costing"));
 const EmailScanning = lazy(() => import("./pages/settings/EmailScanning"));
@@ -119,6 +122,7 @@ const RFQs = lazy(() => import("./pages/freight/RFQs"));
 const RFQDetail = lazy(() => import("./pages/freight/RFQDetail"));
 const CustomsClearance = lazy(() => import("./pages/freight/CustomsClearance"));
 const CustomsDetail = lazy(() => import("./pages/freight/CustomsDetail"));
+const ControlTower = lazy(() => import("./pages/freight/control-tower/ControlTower"));
 
 // HR
 const HRHub = lazy(() => import("./pages/hr/HRHub"));
@@ -384,6 +388,7 @@ function Router() {
           <Route path="/edi/insights" component={EDIInsights} />
 
           {/* Freight */}
+          <Route path="/freight/control-tower" component={ControlTower} />
           <Route path="/freight" component={FreightDashboard} />
           <Route path="/freight/tracking" component={FreightTracking} />
           <Route path="/freight/fda" component={FDAPriorNotice} />
@@ -480,6 +485,9 @@ function Router() {
           {/* Ops Toolkit — views / forms / automations / reports */}
           <Route path="/ops/:tab" component={OpsWorkspace} />
           <Route path="/ops" component={OpsWorkspace} />
+
+          {/* Planner — unified Today view */}
+          <Route path="/today" component={TodayPlanner} />
 
           {/* Component Showcase */}
           <Route path="/showcase" component={ComponentShowcase} />

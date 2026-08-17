@@ -22,6 +22,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useAuth } from "@/_core/hooks/useAuth";
+import InlineEdit from "@/components/InlineEdit";
 import {
   Table,
   TableBody,
@@ -108,23 +110,23 @@ function calcNextVestDate(
 
 // ── type badge colors ────────────────────────────────────────────
 const typeColors: Record<string, string> = {
-  founder: "bg-purple-500/10 text-purple-600",
-  employee: "bg-blue-500/10 text-blue-600",
-  investor: "bg-emerald-500/10 text-emerald-600",
-  advisor: "bg-amber-500/10 text-amber-600",
-  board_member: "bg-indigo-500/10 text-indigo-600",
-  contractor: "bg-cyan-500/10 text-cyan-600",
-  full_time: "bg-blue-500/10 text-blue-600",
-  part_time: "bg-teal-500/10 text-teal-600",
-  intern: "bg-pink-500/10 text-pink-600",
+  founder: "bg-primary/10 text-primary",
+  employee: "bg-muted text-muted-foreground",
+  investor: "bg-muted text-muted-foreground",
+  advisor: "bg-muted text-muted-foreground",
+  board_member: "bg-muted text-foreground",
+  contractor: "bg-muted text-muted-foreground",
+  full_time: "bg-muted text-muted-foreground",
+  part_time: "bg-muted text-muted-foreground",
+  intern: "bg-muted text-muted-foreground",
 };
 
 const statusColors: Record<string, string> = {
-  active: "bg-emerald-500/10 text-emerald-600",
+  active: "bg-primary/10 text-primary",
   inactive: "bg-gray-500/10 text-gray-600",
-  terminated: "bg-red-500/10 text-red-600",
-  departed: "bg-orange-500/10 text-orange-600",
-  on_leave: "bg-yellow-500/10 text-yellow-600",
+  terminated: "bg-[oklch(0.30_0.02_262)] text-white",
+  departed: "bg-muted text-foreground font-semibold",
+  on_leave: "bg-muted text-foreground font-semibold",
 };
 
 // ── unified row type (one row per person) ───────────────────────
@@ -173,11 +175,11 @@ function EmployeeTasksSection({ email, name }: { email: string; name: string }) 
             <div className="text-[10px] text-muted-foreground uppercase">Active</div>
           </div>
           <div className="p-2.5 bg-muted/50 rounded-lg text-center">
-            <div className="text-lg font-semibold text-red-600">{overdueTasks.length}</div>
+            <div className="text-lg font-semibold text-foreground">{overdueTasks.length}</div>
             <div className="text-[10px] text-muted-foreground uppercase">Overdue</div>
           </div>
           <div className="p-2.5 bg-muted/50 rounded-lg text-center">
-            <div className="text-lg font-semibold text-green-600">{completedTasks.length}</div>
+            <div className="text-lg font-semibold text-muted-foreground">{completedTasks.length}</div>
             <div className="text-[10px] text-muted-foreground uppercase">Completed</div>
           </div>
           <div className="p-2.5 bg-muted/50 rounded-lg text-center">
@@ -209,19 +211,19 @@ function EmployeeTasksSection({ email, name }: { email: string; name: string }) 
                       <TableCell className="text-muted-foreground">{t.projectName || "-"}</TableCell>
                       <TableCell>
                         <Badge className={
-                          t.status === "in_progress" ? "bg-blue-500/10 text-blue-600" :
-                          t.status === "review" ? "bg-purple-500/10 text-purple-600" :
+                          t.status === "in_progress" ? "bg-primary/10 text-primary" :
+                          t.status === "review" ? "bg-primary/10 text-primary" :
                           "bg-gray-500/10 text-gray-600"
                         }>{t.status?.replace(/_/g, " ")}</Badge>
                       </TableCell>
                       <TableCell>
                         <Badge className={
-                          t.priority === "urgent" || t.priority === "critical" ? "bg-red-500/10 text-red-600" :
-                          t.priority === "high" ? "bg-orange-500/10 text-orange-600" :
+                          t.priority === "urgent" || t.priority === "critical" ? "bg-[oklch(0.30_0.02_262)] text-white" :
+                          t.priority === "high" ? "bg-muted text-foreground font-semibold" :
                           "bg-gray-500/10 text-gray-600"
                         }>{t.priority}</Badge>
                       </TableCell>
-                      <TableCell className={isOverdue ? "text-red-600 font-medium" : isUrgent ? "text-yellow-600" : ""}>
+                      <TableCell className={isOverdue ? "text-foreground font-semibold" : isUrgent ? "text-foreground" : ""}>
                         {t.dueDate ? fmtDate(t.dueDate) : "-"}
                       </TableCell>
                     </TableRow>
@@ -1098,15 +1100,15 @@ export default function PeopleAndEquity() {
           <div className="grid grid-cols-3 gap-4">
             <Card><CardContent className="pt-4 pb-4">
               <div className="text-sm text-muted-foreground">Active Employees</div>
-              <div className="text-2xl font-semibold">{active.length}</div>
+              <div className="text-2xl font-semibold font-display tabular-nums">{active.length}</div>
             </CardContent></Card>
             <Card><CardContent className="pt-4 pb-4">
               <div className="text-sm text-muted-foreground">Annual Payroll</div>
-              <div className="text-2xl font-semibold">{fmt$(annualPayroll)}</div>
+              <div className="text-2xl font-semibold font-display tabular-nums">{fmt$(annualPayroll)}</div>
             </CardContent></Card>
             <Card><CardContent className="pt-4 pb-4">
               <div className="text-sm text-muted-foreground">Avg Salary</div>
-              <div className="text-2xl font-semibold">{fmt$(avgSalary)}</div>
+              <div className="text-2xl font-semibold font-display tabular-nums">{fmt$(avgSalary)}</div>
             </CardContent></Card>
           </div>
         );
@@ -1850,6 +1852,8 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
   }, [allContracts, person]);
 
   const utils = trpc.useUtils();
+  const { user } = useAuth();
+  const canEditEmployee = !!user && ["admin", "exec"].includes(user.role) && !!person.employeeId;
   const [compOpen, setCompOpen] = useState(false);
   const [compForm, setCompForm] = useState({
     effectiveDate: "",
@@ -1993,7 +1997,7 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <h4 className="text-sm font-semibold text-muted-foreground">Personal Information</h4>
-                      {person.employeeId && (
+                      {canEditEmployee && (
                         <Button size="sm" variant="outline" onClick={openEdit} disabled={!employeeSource}>
                           <Pencil className="h-3.5 w-3.5 mr-1.5" />
                           Edit
@@ -2008,12 +2012,26 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
                           <Badge className={typeColors[person.type] || "bg-gray-500/10 text-gray-600"}>{person.type.replace(/_/g, " ")}</Badge>
                         ) : "-"}
                       </span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Title</span><span>{person.title}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Title</span><span>
+                        {canEditEmployee ? (
+                          <InlineEdit value={person.title === "-" ? "" : person.title} type="text" onSave={(v) => updateEmployee.mutate({ id: person.employeeId!, jobTitle: v })} />
+                        ) : person.title}
+                      </span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Department</span><span>{person.department}</span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Salary</span><span>{person.salary}</span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Hire Date</span><span>{person.hireDate ? fmtDate(person.hireDate) : "-"}</span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Status</span><span>
-                        {person.status && person.status !== "-" ? (
+                        {canEditEmployee ? (
+                          <Select value={person.status} onValueChange={(v) => updateEmployee.mutate({ id: person.employeeId!, status: v as any })}>
+                            <SelectTrigger className="h-7 w-32 text-xs"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="active">Active</SelectItem>
+                              <SelectItem value="inactive">Inactive</SelectItem>
+                              <SelectItem value="on_leave">On leave</SelectItem>
+                              <SelectItem value="terminated">Terminated</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        ) : person.status && person.status !== "-" ? (
                           <Badge className={statusColors[person.status] || "bg-gray-500/10 text-gray-600"}>{person.status.replace(/_/g, " ")}</Badge>
                         ) : "-"}
                       </span></div>

@@ -189,6 +189,8 @@ import {
   pmTasks, InsertPmTask,
   pmDependencies, InsertPmDependency,
   pmMilestones, InsertPmMilestone,
+  // Recruiting
+  recruitingCandidates, InsertRecruitingCandidate,
   // Ops Toolkit
   savedViews, InsertSavedView,
   intakeForms, InsertIntakeForm,
@@ -353,15 +355,14 @@ export async function changeUserPassword(userId: number, currentPassword: string
   // Find local auth record
   const [localAuth] = await db.select().from(localAuthCredentials).where(eq(localAuthCredentials.openId, user.openId));
   if (!localAuth) throw new Error("No password set for this account. Use your SSO provider to change your password.");
-  // Verify current password
-  const crypto = await import("crypto");
-  const currentHash = crypto.pbkdf2Sync(currentPassword, localAuth.salt, 100000, 64, "sha512").toString("hex");
-  const hashesMatch = currentHash.length === localAuth.passwordHash.length &&
-    crypto.timingSafeEqual(Buffer.from(currentHash, 'hex'), Buffer.from(localAuth.passwordHash, 'hex'));
-  if (!hashesMatch) throw new Error("Current password is incorrect");
-  // Set new password
-  const newSalt = crypto.randomBytes(32).toString("hex");
-  const newHash = crypto.pbkdf2Sync(newPassword, newSalt, 100000, 64, "sha512").toString("hex");
+
+  // Verify with current (600k) + legacy (100k) iteration counts, then write at 600k
+  const { verifyPassword, hashPassword, generateSalt } = await import("./_core/passwordHash");
+  const { valid } = await verifyPassword(currentPassword, localAuth.salt, localAuth.passwordHash);
+  if (!valid) throw new Error("Current password is incorrect");
+
+  const newSalt = generateSalt();
+  const newHash = await hashPassword(newPassword, newSalt);
   await db.update(localAuthCredentials).set({ passwordHash: newHash, salt: newSalt }).where(eq(localAuthCredentials.openId, user.openId));
 }
 
@@ -491,6 +492,39 @@ export async function getCompanyIdsInRegion(regionId: number): Promise<number[]>
   if (!db) return [];
   const rows = await db.select({ id: companies.id }).from(companies).where(eq(companies.regionId, regionId));
   return rows.map((r) => r.id);
+}
+
+// Entity tree (multi-entity STEP 1): a company PLUS all of its descendants (the input entity is
+// INCLUDED — entity_tree carries a depth=0 self-row), via the `entity_tree` view
+// (drizzle/manual/step1_entity_tree.sql). Lets a query scope to "this entity and everything under
+// it" — e.g. GLOBAL resolves to every operating company including GLOBAL itself. This
+// include-self behavior is intentional for scoping; the name says so explicitly.
+export async function getEntityAndDescendantCompanyIds(companyId: number): Promise<number[]> {
+  const db = await getDb();
+  if (!db) return [];
+  let result: any;
+  try {
+    result = await db.execute(
+      sql`SELECT DISTINCT entity_id FROM entity_tree WHERE ancestor_id = ${companyId}`,
+    );
+  } catch (err) {
+    // The entity_tree view is applied out-of-band (drizzle-kit can't manage views). Surface an
+    // actionable message instead of a raw "table 'entity_tree' doesn't exist" SQL error.
+    throw new Error(
+      `getEntityAndDescendantCompanyIds: querying the 'entity_tree' view failed — has it been ` +
+        `applied? Run drizzle/manual/step1_entity_tree.sql in this environment. ` +
+        `Underlying error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  // db.execute may return `[rows, fields]` (mysql2) or a plain `rows[]` depending on driver/version.
+  // Disambiguate: if result[0] is itself an array it's the [rows, fields] tuple; otherwise `result`
+  // already IS the rows array (result[0] would be a row object).
+  const rows: any[] = Array.isArray(result)
+    ? (Array.isArray(result[0]) ? result[0] : result)
+    : (result?.rows ?? []);
+  return rows
+    .map((r: any) => Number(r.entity_id))
+    .filter((n: number) => Number.isFinite(n));
 }
 
 export async function createCompany(data: InsertCompany) {
@@ -15428,4 +15462,32 @@ export async function deleteSavedReport(id: number) {
   const db = await getDb();
   if (!db) return;
   await db.delete(savedReports).where(eq(savedReports.id, id));
+}
+
+// ============================================
+// RECRUITING CANDIDATES
+// ============================================
+export async function listRecruitingCandidates() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(recruitingCandidates).orderBy(desc(recruitingCandidates.appliedAt));
+}
+
+export async function createRecruitingCandidate(data: InsertRecruitingCandidate) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(recruitingCandidates).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateRecruitingCandidate(id: number, data: Partial<InsertRecruitingCandidate>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(recruitingCandidates).set({ ...data, updatedAt: new Date() } as any).where(eq(recruitingCandidates.id, id));
+}
+
+export async function deleteRecruitingCandidate(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(recruitingCandidates).where(eq(recruitingCandidates.id, id));
 }

@@ -64,9 +64,9 @@ function QuickAction({ icon, label, onClick }: QuickActionProps) {
 
 function ActionStatusBadge({ action }: { action: AIAction }) {
   const statusConfig = {
-    pending: { icon: Clock, color: 'text-yellow-500', bg: 'bg-yellow-500/10' },
-    completed: { icon: CheckCircle2, color: 'text-green-500', bg: 'bg-green-500/10' },
-    failed: { icon: XCircle, color: 'text-red-500', bg: 'bg-red-500/10' },
+    pending: { icon: Clock, color: 'text-muted-foreground', bg: 'bg-muted' },
+    completed: { icon: CheckCircle2, color: 'text-muted-foreground', bg: 'bg-muted' },
+    failed: { icon: XCircle, color: 'text-white', bg: 'bg-[oklch(0.30_0.02_262)]' },
   };
 
   const config = statusConfig[action.status ?? "pending"];
@@ -136,8 +136,8 @@ function ErrandApprovalCard({ errand }: { errand: any }) {
   };
 
   return (
-    <div className="rounded-lg border border-amber-300/60 bg-amber-50/60 dark:bg-amber-500/5 p-3 space-y-2">
-      <div className="flex items-center gap-2 text-xs font-medium text-amber-700 dark:text-amber-400">
+    <div className="rounded-lg border border-primary/20 bg-primary/10 p-3 space-y-2">
+      <div className="flex items-center gap-2 text-xs font-medium text-primary">
         <ClipboardList className="h-4 w-4" />
         Approval needed{errand?.riskLevel ? ` · ${errand.riskLevel} risk` : ''}
       </div>
@@ -166,7 +166,7 @@ function ErrandApprovalCard({ errand }: { errand: any }) {
         </div>
       )}
       {phase === 'done' && (
-        <div className="flex items-start gap-2 text-sm text-green-700 dark:text-green-400 pt-1">
+        <div className="flex items-start gap-2 text-sm text-muted-foreground pt-1">
           <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
           <span>{summary}</span>
         </div>
@@ -177,7 +177,7 @@ function ErrandApprovalCard({ errand }: { errand: any }) {
         </div>
       )}
       {phase === 'error' && (
-        <div className="flex items-start gap-2 text-sm text-red-600 dark:text-red-400 pt-1">
+        <div className="flex items-start gap-2 text-sm text-foreground font-semibold pt-1">
           <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
           <span>{errorMsg}</span>
         </div>

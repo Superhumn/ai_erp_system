@@ -67,17 +67,17 @@ function scoreTier(score: number): Tier {
 }
 
 const tierColors: Record<Tier, string> = {
-  hot: "bg-red-500/10 text-red-600 dark:text-red-400",
-  warm: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  cool: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
-  cold: "bg-gray-500/10 text-gray-600 dark:text-gray-400",
+  hot: "bg-primary/10 text-primary",
+  warm: "bg-muted text-foreground",
+  cool: "bg-muted text-muted-foreground",
+  cold: "bg-muted text-muted-foreground",
 };
 
 const statusColors: Record<SequenceStatus, string> = {
-  draft: "bg-gray-500/10 text-gray-600 dark:text-gray-400",
-  active: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  paused: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  completed: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+  draft: "bg-muted text-muted-foreground",
+  active: "bg-primary/10 text-primary",
+  paused: "bg-muted text-foreground font-semibold",
+  completed: "bg-muted text-muted-foreground",
 };
 
 const channelIcons: Record<StepChannel, typeof Mail> = { email: Mail, linkedin: Linkedin, call: Phone };
@@ -197,17 +197,17 @@ function LeadScoring() {
       {/* KPI bar */}
       <div className="grid grid-cols-4 gap-2">
         {([
-          { tier: "hot" as Tier, label: "Hot (80+)", count: tierCounts.hot, color: "text-red-500" },
-          { tier: "warm" as Tier, label: "Warm (60-79)", count: tierCounts.warm, color: "text-amber-500" },
-          { tier: "cool" as Tier, label: "Cool (40-59)", count: tierCounts.cool, color: "text-blue-500" },
-          { tier: "cold" as Tier, label: "Cold (<40)", count: tierCounts.cold, color: "text-gray-500" },
+          { tier: "hot" as Tier, label: "Hot (80+)", count: tierCounts.hot, color: "text-primary" },
+          { tier: "warm" as Tier, label: "Warm (60-79)", count: tierCounts.warm, color: "text-muted-foreground" },
+          { tier: "cool" as Tier, label: "Cool (40-59)", count: tierCounts.cool, color: "text-muted-foreground" },
+          { tier: "cold" as Tier, label: "Cold (<40)", count: tierCounts.cold, color: "text-muted-foreground" },
         ]).map(k => (
           <Card key={k.tier} className="p-2 cursor-pointer hover:bg-muted/50" onClick={() => setTierFilter(tierFilter === k.tier ? "all" : k.tier)}>
             <div className="flex items-center gap-2">
               <TrendingUp className={`h-4 w-4 ${k.color}`} />
               <div>
                 <p className="text-xs text-muted-foreground">{k.label}</p>
-                <p className="text-base font-semibold">{k.count}</p>
+                <p className="text-base font-semibold font-display tabular-nums">{k.count}</p>
               </div>
             </div>
           </Card>
@@ -351,7 +351,7 @@ function OutreachSequences() {
       {/* Generator */}
       <Card className="p-3">
         <div className="flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-violet-500" />
+          <Sparkles className="h-4 w-4 text-muted-foreground" />
           <span className="text-sm font-medium">AI Sequence Generator</span>
           <ArrowRight className="h-3 w-3 text-muted-foreground" />
           <Select value={genTier} onValueChange={v => setGenTier(v as Tier)}>

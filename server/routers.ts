@@ -15,12 +15,16 @@ import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, impor
 import { detectMaterialShortages, detectAnomalies, runShortageCheckAndNotify, runAnomalyCheckAndNotify } from "./materialShortageService";
 import { linkParsedEmailToEntities } from "./emailDocumentLinker";
 import { trackShipment, getFreightRates, getShippingLines, getVesselSchedules } from "./searatesService";
+import { freightControlTowerRouter } from "./freightControlTowerRouter";
 import { generateVendorEmail, sendVendorEmail, sendBulkEmail, checkAndSendPoFollowups } from "./vendorEmailAutomation";
-import { processAIAgentRequest, planAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
+import { processAIAgentRequest, processAIAgentRequestStream, planAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import { fireAutomationEvent, testRunRule } from "./opsAutomationEngine";
+import { parseQuickAdd } from "./nlQuickAddService";
+import { suggestSlots, zonedWallTimeToUtcMs } from "./autoScheduleService";
+import { DEFAULT_PLANNER_TIMEZONE, type QuickAddIntent, type QuickAddResult } from "@shared/planner";
 import { agentRouter } from "./agent";
 import { parseNoteWithLLM } from "./notesParser";
 import type { NoteAppliedItem, NoteParseResult, NoteParsedItem } from "@shared/notes";
@@ -46,7 +50,7 @@ import { storagePut, storageDelete } from "./storage";
 import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile, type GmailSendOptions, type GmailDraftOptions } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
-import { parseFormulationSheet } from "./recipeSheetImport";
+import { parseFormulationSheet, suggestColumnMapping, type ColumnKey } from "./recipeSheetImport";
 import { getGoogleFullAccessAuthUrl, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
 import { getServiceAccountEmail, isServiceAccountConfigured } from "./_core/googleServiceAccount";
 import { getQuickBooksAuthUrl, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems, getProfitAndLoss, parseProfitAndLossReport } from "./_core/quickbooks";
@@ -119,6 +123,13 @@ export const financeProcedure = protectedProcedure.use(({ ctx, next }) => {
 export const opsProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (!['admin', 'ops', 'exec'].includes(ctx.user.role)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Operations access required' });
+  }
+  return next({ ctx });
+});
+
+const execProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (!['admin', 'exec'].includes(ctx.user.role)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Executive access required' });
   }
   return next({ ctx });
 });
@@ -214,6 +225,61 @@ export async function createAuditLog(userId: number, action: 'create' | 'update'
     oldValues,
     newValues,
   });
+}
+
+// ---- Planner / quick-add helpers ----
+// Convert a wall-clock ISO (no offset) in `tz` to an absolute Date.
+function wallIsoToDate(wallIso: string | null | undefined, tz: string): Date | null {
+  if (!wallIso) return null;
+  const m = wallIso.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!m) { const d = new Date(wallIso); return isNaN(d.getTime()) ? null : d; }
+  const ms = zonedWallTimeToUtcMs(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], tz);
+  return new Date(ms);
+}
+// Add minutes to a wall-clock ISO, returning a wall-clock ISO (no offset).
+function addMinutesWall(wallIso: string, minutes: number): string {
+  const base = wallIso.endsWith("Z") ? wallIso : wallIso + "Z";
+  const d = new Date(base);
+  return new Date(d.getTime() + minutes * 60000).toISOString().replace(/\.\d{3}Z$/, "");
+}
+// Create the right record for a parsed quick-add intent.
+async function commitQuickAdd(userId: number, intent: QuickAddIntent, tz: string): Promise<QuickAddResult> {
+  if (intent.kind === "note") {
+    await db.createNote({ userId, title: intent.title.slice(0, 255), content: intent.description || intent.title, status: "draft" });
+    return { kind: "note", title: intent.title, detail: "Saved to Notes" };
+  }
+  if (intent.kind === "event") {
+    const token = await getValidGoogleToken(userId);
+    if (!token.error && intent.datetime) {
+      const startWall = intent.datetime;
+      const endWall = intent.endDatetime || addMinutesWall(startWall, intent.durationMinutes || 30);
+      const { createCalendarEvent } = await import("./calendarService");
+      await createCalendarEvent(token.accessToken, {
+        summary: intent.title,
+        description: intent.description || undefined,
+        start: { dateTime: startWall, timeZone: tz },
+        end: { dateTime: endWall, timeZone: tz },
+        attendees: intent.attendees?.map((email) => ({ email })),
+        location: intent.location || undefined,
+      });
+      return { kind: "event", title: intent.title, detail: "Added to Google Calendar" };
+    }
+    const projectId = await db.getOrCreateNotesInboxProject(userId);
+    await db.createProjectTask({
+      projectId, name: intent.title, description: intent.description || null,
+      dueDate: wallIsoToDate(intent.datetime, tz), status: "todo",
+      priority: intent.priority || "medium", sourceType: "manual", createdBy: userId,
+    });
+    return { kind: "event", title: intent.title, detail: "Google Calendar not connected — saved as a task", fellBackToTask: true };
+  }
+  // task or reminder → a project task (optionally with a due date)
+  const projectId = await db.getOrCreateNotesInboxProject(userId);
+  await db.createProjectTask({
+    projectId, name: intent.title, description: intent.description || null,
+    dueDate: wallIsoToDate(intent.datetime, tz), status: "todo",
+    priority: intent.priority || "medium", sourceType: "manual", createdBy: userId,
+  });
+  return { kind: intent.kind, title: intent.title, detail: intent.datetime ? "Added to Tasks with a due date" : "Added to Tasks" };
 }
 
 // Helper to refresh Google OAuth token
@@ -636,10 +702,11 @@ async function requireRecipeAccess(
 async function importFormulationRows(
   values: unknown[][],
   userId: number,
-  opts?: { defaultRecipeName?: string },
+  opts?: { defaultRecipeName?: string; columnMapping?: Partial<Record<ColumnKey, number>> },
 ) {
   const { recipes: parsed, warnings } = parseFormulationSheet(values || [], {
     defaultRecipeName: opts?.defaultRecipeName,
+    columnMapping: opts?.columnMapping,
   });
   if (parsed.length === 0) {
     throw new TRPCError({
@@ -797,6 +864,9 @@ const investorCompanyIdInput = z.object({ companyId: z.number().optional() }).op
 
 export const appRouter = router({
   system: systemRouter,
+
+  // Freight Control Tower — Meridian shipment & inventory control tower
+  freightControlTower: freightControlTowerRouter,
 
   // Autonomous Supply Chain Workflows
   autonomousWorkflows: autonomousWorkflowRouter,
@@ -1044,6 +1114,113 @@ export const appRouter = router({
       .input(z.object({ id: z.number(), name: z.string().optional(), pivotConfig: z.any().optional() }))
       .mutation(async ({ input }) => { const { id, ...rest } = input; await db.updateSavedReport(id, rest as any); return { success: true }; }),
     delete: internalProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => { await db.deleteSavedReport(input.id); return { success: true }; }),
+  }),
+
+  // ============================================
+  // PLANNER — universal NL quick-add, auto-scheduling, unified Today agenda
+  // ============================================
+  quickAdd: router({
+    // Parse a free-text line into a structured intent (no side effects).
+    parse: protectedProcedure
+      .input(z.object({ text: z.string().min(1), timezone: z.string().optional() }))
+      .mutation(({ input }) => parseQuickAdd(input.text, new Date().toISOString(), input.timezone || DEFAULT_PLANNER_TIMEZONE)),
+    // Create the record for a (possibly user-edited) intent.
+    commit: protectedProcedure
+      .input(z.object({
+        intent: z.object({
+          kind: z.enum(["task", "event", "reminder", "note"]),
+          title: z.string().min(1),
+          description: z.string().nullish(),
+          datetime: z.string().nullish(),
+          endDatetime: z.string().nullish(),
+          durationMinutes: z.number().nullish(),
+          allDay: z.boolean().optional(),
+          priority: z.enum(["low", "medium", "high", "critical"]).nullish(),
+          location: z.string().nullish(),
+          attendees: z.array(z.string()).optional(),
+          recurrence: z.string().nullish(),
+        }),
+        timezone: z.string().optional(),
+      }))
+      .mutation(({ ctx, input }) => commitQuickAdd(ctx.user.id, input.intent as QuickAddIntent, input.timezone || DEFAULT_PLANNER_TIMEZONE)),
+  }),
+
+  scheduling: router({
+    // Suggest open time-blocks of a given length within a window.
+    suggest: protectedProcedure
+      .input(z.object({
+        durationMinutes: z.number().min(5).max(1440),
+        windowStartIso: z.string().optional(),
+        windowEndIso: z.string().optional(),
+        timezone: z.string().optional(),
+        maxResults: z.number().min(1).max(12).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const tz = input.timezone || DEFAULT_PLANNER_TIMEZONE;
+        const nowMs = Date.now();
+        const windowStartMs = input.windowStartIso ? Date.parse(input.windowStartIso) : nowMs;
+        const windowEndMs = input.windowEndIso ? Date.parse(input.windowEndIso) : nowMs + 7 * 24 * 3600 * 1000;
+        const token = await getValidGoogleToken(ctx.user.id);
+        const slots = await suggestSlots({
+          accessToken: token.error ? null : token.accessToken,
+          windowStartMs, windowEndMs, durationMin: input.durationMinutes,
+          tz, maxResults: input.maxResults ?? 6, nowMs,
+        });
+        return { googleConnected: !token.error, slots };
+      }),
+    // Book a chosen slot as a calendar time-block (falls back to a task).
+    book: protectedProcedure
+      .input(z.object({
+        title: z.string().min(1),
+        startIso: z.string(),
+        endIso: z.string(),
+        description: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const token = await getValidGoogleToken(ctx.user.id);
+        if (!token.error) {
+          const { createCalendarEvent } = await import("./calendarService");
+          await createCalendarEvent(token.accessToken, {
+            summary: input.title,
+            description: input.description,
+            start: { dateTime: input.startIso },
+            end: { dateTime: input.endIso },
+          });
+          return { booked: "calendar" as const, detail: "Time blocked on Google Calendar" };
+        }
+        const projectId = await db.getOrCreateNotesInboxProject(ctx.user.id);
+        await db.createProjectTask({
+          projectId, name: input.title, dueDate: new Date(input.startIso),
+          status: "todo", priority: "medium", sourceType: "manual", createdBy: ctx.user.id,
+        });
+        return { booked: "task" as const, detail: "Google Calendar not connected — saved as a task" };
+      }),
+  }),
+
+  planner: router({
+    // Calendar events for a date range (empty + googleConnected:false when not connected).
+    agenda: protectedProcedure
+      .input(z.object({ startIso: z.string(), endIso: z.string() }))
+      .query(async ({ ctx, input }) => {
+        const token = await getValidGoogleToken(ctx.user.id);
+        const empty = { googleConnected: false, events: [] as Array<{ id: string; title: string; startIso: string | null; endIso: string | null; allDay: boolean; location: string | null }> };
+        if (token.error) return empty;
+        try {
+          const { getCalendarEvents } = await import("./calendarService");
+          const json: any = await getCalendarEvents(token.accessToken, input.startIso, input.endIso, 100);
+          const events = (json?.items ?? []).map((ev: any, i: number) => ({
+            id: String(ev?.id ?? i),
+            title: ev?.summary || "(no title)",
+            startIso: ev?.start?.dateTime ?? ev?.start?.date ?? null,
+            endIso: ev?.end?.dateTime ?? ev?.end?.date ?? null,
+            allDay: !ev?.start?.dateTime,
+            location: ev?.location ?? null,
+          }));
+          return { googleConnected: true, events };
+        } catch {
+          return { googleConnected: true, events: [] };
+        }
+      }),
   }),
 
   auth: router({
@@ -1340,7 +1517,7 @@ export const appRouter = router({
         await createAuditLog(ctx.user.id, 'create', 'vendor', result.id, input.name);
         return result;
       }),
-    update: opsProcedure
+    update: adminProcedure
       .input(z.object({
         id: z.number(),
         name: z.string().optional(),
@@ -3637,7 +3814,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         await createAuditLog(ctx.user.id, 'create', 'employee', result.id, `${input.firstName} ${input.lastName}`);
         return result;
       }),
-    update: adminProcedure
+    update: execProcedure
       .input(z.object({
         id: z.number(),
         firstName: z.string().optional(),
@@ -5450,7 +5627,12 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         return { url: null, error: 'Google OAuth not configured' };
       }
       
-      const redirectUri = `${process.env.VITE_APP_URL || 'http://localhost:3000'}/api/google/callback`;
+      // Use the same canonical redirect URI as every other Google OAuth flow
+      // (Drive full-access, Gmail, Workspace, Chat) so a single URI needs to be
+      // registered in the Google Cloud Console. The matching callback handler
+      // lives at /api/oauth/google/callback in server/_core/index.ts. Honors the
+      // GOOGLE_REDIRECT_URI override just like that handler does.
+      const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${process.env.VITE_APP_URL || process.env.APP_URL || 'http://localhost:3000'}/api/oauth/google/callback`;
       const scope = encodeURIComponent('https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets.readonly');
       const { createSignedOAuthState } = await import('./_core/crypto');
       const state = createSignedOAuthState({ userId: ctx.user.id, provider: 'google' });
@@ -6938,6 +7120,49 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           });
         }
       }),
+
+    // Server-backed candidate pipeline (persisted so the Ops Toolkit
+    // views/reports can operate over recruiting like any other module).
+    candidates: router({
+      list: protectedProcedure.query(() => db.listRecruitingCandidates()),
+      create: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          email: z.string().optional(),
+          phone: z.string().optional(),
+          position: z.string().optional(),
+          stage: z.enum(["applied", "screening", "interview", "assessment", "offer", "hired", "rejected"]).optional(),
+          score: z.number().optional(),
+          resume: z.string().optional(),
+          notes: z.string().optional(),
+          source: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createRecruitingCandidate({ ...input, createdBy: ctx.user.id });
+          return { id: result.id };
+        }),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          email: z.string().optional(),
+          phone: z.string().optional(),
+          position: z.string().optional(),
+          stage: z.enum(["applied", "screening", "interview", "assessment", "offer", "hired", "rejected"]).optional(),
+          score: z.number().nullable().optional(),
+          resume: z.string().optional(),
+          notes: z.string().optional(),
+          source: z.string().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { id, ...rest } = input;
+          await db.updateRecruitingCandidate(id, rest as any);
+          return { success: true };
+        }),
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => { await db.deleteRecruitingCandidate(input.id); return { success: true }; }),
+    }),
   }),
 
   // ============================================
@@ -7133,6 +7358,52 @@ Be concise and helpful. Always give actionable guidance.`;
         const result = await processAIAgentRequest(message, history, agentContext);
 
         return result;
+      }),
+
+    // Streaming version of agentChat — same inputs and semantics, but the answer
+    // is delivered token-by-token (async generator) so the UI can type it out
+    // live. Consumed via the vanilla client's `.mutate()` (react-query's
+    // useMutation cannot iterate an async iterable). Plan mode returns a single
+    // terminal `done` event carrying the plan, matching agentChat's shape.
+    agentChatStream: protectedProcedure
+      .input(z.object({
+        message: z.string().min(1).max(10000),
+        conversationHistory: z.array(z.object({
+          role: z.enum(['user', 'assistant']),
+          content: z.string().max(10000),
+        })).max(50).optional(),
+        mode: z.enum(['act', 'plan']).optional(),
+        approvedPlan: z.string().max(20000).optional(),
+      }))
+      .mutation(async function* ({ input, ctx, signal }) {
+        const agentContext: AIAgentContext = {
+          userId: ctx.user.id,
+          userName: ctx.user.name || 'User',
+          userRole: ctx.user.role,
+          companyId: (ctx.user as any).companyId,
+        };
+
+        const history = input.conversationHistory || [];
+
+        // Plan-first mode: build the plan (non-streamed) and emit it as the single
+        // terminal event. The client handles isPlan exactly as with agentChat.
+        if (input.mode === 'plan') {
+          const plan = await planAIAgentRequest(input.message, history, agentContext);
+          yield { type: 'done' as const, response: plan };
+          return;
+        }
+
+        const MAX_PLAN_CHARS = 8000;
+        const planText = input.approvedPlan
+          ? (input.approvedPlan.length > MAX_PLAN_CHARS
+              ? `${input.approvedPlan.slice(0, MAX_PLAN_CHARS)}…`
+              : input.approvedPlan)
+          : undefined;
+        const message = planText
+          ? `${input.message}\n\nThe user reviewed and approved the following plan. Follow it as closely as possible, adjusting only where necessary:\n${planText}`
+          : input.message;
+
+        yield* processAIAgentRequestStream(message, history, agentContext, { signal });
       }),
 
     // Quick analysis endpoint for data insights
@@ -10980,6 +11251,9 @@ Provide a brief status summary, any missing documents, and next steps.`;
         spreadsheetId: z.string().min(1),
         range: z.string().optional(),
         defaultRecipeName: z.string().optional(),
+        // Optional explicit column mapping (field → column index) that
+        // overrides automatic header detection.
+        columnMapping: z.record(z.string(), z.number()).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
@@ -11000,9 +11274,50 @@ Provide a brief status summary, any missing documents, and next steps.`;
         return importFormulationRows(
           (sheet.values as unknown[][]) || [],
           ctx.user.id,
-          { defaultRecipeName: input.defaultRecipeName },
+          {
+            defaultRecipeName: input.defaultRecipeName,
+            columnMapping: input.columnMapping as Partial<Record<ColumnKey, number>> | undefined,
+          },
         );
       }),
+    // Read a sheet's header row (plus a few sample rows) and suggest a column
+    // mapping, so the import UI can let the user review/adjust which column maps
+    // to which recipe field before importing. Read-only — nothing is persisted.
+    previewGoogleSheet: protectedProcedure
+      .input(z.object({
+        spreadsheetId: z.string().min(1),
+        range: z.string().optional(),
+      }))
+      .query(async ({ input, ctx }) => {
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: error });
+        }
+        const sheet = await getGoogleSheetValues(
+          accessToken,
+          input.spreadsheetId,
+          input.range || "A1:Z1000",
+        );
+        if (!sheet.success) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: sheet.error || "Failed to read the spreadsheet.",
+          });
+        }
+        const values = (sheet.values as unknown[][]) || [];
+        const header = (values[0] as unknown[]) || [];
+        return {
+          headers: header.map((h) => String(h ?? "")),
+          sampleRows: values.slice(1, 6).map((r) => (r as unknown[]).map((c) => String(c ?? ""))),
+          suggestedMapping: suggestColumnMapping(header),
+        };
+      }),
+    // Suggest a column mapping for a header row parsed on the client (file
+    // upload path), keeping the auto-detection logic on the server as the single
+    // source of truth.
+    suggestImportMapping: protectedProcedure
+      .input(z.object({ headers: z.array(z.string()).max(200) }))
+      .query(({ input }) => suggestColumnMapping(input.headers)),
     // Import recipe formulations from an uploaded CSV/XLSX file. The client
     // parses the file into a 2D array of rows (header row first) and sends it
     // here, so no Google account or hosted sheet is required. Same parsing and
@@ -11011,10 +11326,12 @@ Provide a brief status summary, any missing documents, and next steps.`;
       .input(z.object({
         rows: z.array(z.array(z.any())).max(10000),
         defaultRecipeName: z.string().optional(),
+        columnMapping: z.record(z.string(), z.number()).optional(),
       }))
       .mutation(({ input, ctx }) =>
         importFormulationRows(input.rows as unknown[][], ctx.user.id, {
           defaultRecipeName: input.defaultRecipeName,
+          columnMapping: input.columnMapping as Partial<Record<ColumnKey, number>> | undefined,
         })),
     // List copackers a recipe is shared with (owner only)
     listShares: opsProcedure

@@ -57,9 +57,10 @@ import {
   StickyNote,
   Headphones,
   Zap,
+  CalendarClock,
 } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { AICommandBar } from './AICommandBar';
 import { QuickNoteDialog } from './QuickNoteDialog';
@@ -198,12 +199,12 @@ const MIN_WIDTH = 160;
 const MAX_WIDTH = 400;
 
 const roleColors: Record<string, string> = {
-  admin: "bg-red-500/10 text-red-500 border-red-500/20",
-  finance: "bg-green-500/10 text-green-500 border-green-500/20",
-  ops: "bg-blue-500/10 text-blue-500 border-blue-500/20",
-  legal: "bg-purple-500/10 text-purple-500 border-purple-500/20",
-  exec: "bg-amber-500/10 text-amber-500 border-amber-500/20",
-  user: "bg-gray-500/10 text-gray-500 border-gray-500/20",
+  admin: "bg-primary/10 text-primary border-primary/20",
+  finance: "bg-muted text-muted-foreground border-border",
+  ops: "bg-muted text-muted-foreground border-border",
+  legal: "bg-muted text-muted-foreground border-border",
+  exec: "bg-muted text-muted-foreground border-border",
+  user: "bg-muted text-muted-foreground border-border",
 };
 
 export default function DashboardLayout({
@@ -510,6 +511,18 @@ function DashboardLayoutContent({
           </div>
           {!isExternalRole && <AICommandBar />}
           <div className="flex items-center gap-2 shrink-0">
+            {!isExternalRole && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Link href="/today">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Today planner">
+                      <CalendarClock className="h-4 w-4" />
+                    </Button>
+                  </Link>
+                </TooltipTrigger>
+                <TooltipContent>Today planner</TooltipContent>
+              </Tooltip>
+            )}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button

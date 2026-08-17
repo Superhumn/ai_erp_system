@@ -1,4 +1,4 @@
--- Migration 0054: autonomous supply-chain workflow tables.
+-- Migration 0057: autonomous supply-chain workflow tables.
 --
 -- These 12 tables back the Autonomous Agent / supply-chain orchestrator
 -- (server/supplyChainOrchestrator.ts, server/autonomousWorkflowRouter.ts).

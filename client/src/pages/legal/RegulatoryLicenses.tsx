@@ -53,17 +53,17 @@ const STATUSES = [
 type StatusValue = typeof STATUSES[number];
 
 const STATUS_COLORS: Record<string, string> = {
-  planned: "bg-gray-500/10 text-gray-700 border-gray-200",
-  applied: "bg-blue-500/10 text-blue-700 border-blue-200",
-  in_review: "bg-purple-500/10 text-purple-700 border-purple-200",
-  issued: "bg-emerald-500/10 text-emerald-700 border-emerald-200",
-  active: "bg-emerald-500/10 text-emerald-700 border-emerald-200",
-  expiring_soon: "bg-amber-500/10 text-amber-700 border-amber-200",
-  expired: "bg-red-500/10 text-red-700 border-red-200",
-  revoked: "bg-red-500/10 text-red-700 border-red-200",
-  renewed: "bg-emerald-500/10 text-emerald-700 border-emerald-200",
-  rejected: "bg-red-500/10 text-red-700 border-red-200",
-  withdrawn: "bg-gray-500/10 text-gray-600 border-gray-200",
+  planned: "bg-muted text-muted-foreground border-transparent",
+  applied: "bg-muted text-muted-foreground border-transparent",
+  in_review: "bg-primary/10 text-primary border-primary/20",
+  issued: "bg-muted text-muted-foreground border-transparent",
+  active: "bg-muted text-muted-foreground border-transparent",
+  expiring_soon: "bg-muted text-foreground font-semibold border-transparent",
+  expired: "bg-[oklch(0.30_0.02_262)] text-white border-transparent",
+  revoked: "bg-[oklch(0.30_0.02_262)] text-white border-transparent",
+  renewed: "bg-muted text-muted-foreground border-transparent",
+  rejected: "bg-[oklch(0.30_0.02_262)] text-white border-transparent",
+  withdrawn: "bg-muted text-muted-foreground border-transparent",
 };
 
 function daysUntil(date: string | Date | null | undefined): number | null {
@@ -154,20 +154,20 @@ export default function RegulatoryLicenses() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center gap-3 text-xs">
-            <div><span className="text-muted-foreground">Active</span> <span className="font-bold text-emerald-600">{stats.active}</span></div>
+            <div><span className="text-muted-foreground">Active</span> <span className="font-bold text-foreground">{stats.active}</span></div>
             <div className="h-4 w-px bg-border" />
-            <div><span className="text-muted-foreground">Pending</span> <span className="font-bold text-amber-600">{stats.pending}</span></div>
+            <div><span className="text-muted-foreground">Pending</span> <span className="font-bold text-foreground">{stats.pending}</span></div>
             <div className="h-4 w-px bg-border" />
             <div className="flex items-center gap-1">
               <span className="text-muted-foreground">Expiring</span>
-              <span className={`font-bold ${stats.expiringSoon > 0 ? "text-amber-600" : ""}`}>{stats.expiringSoon}</span>
-              {stats.expiringSoon > 0 && <AlertTriangle className="h-3 w-3 text-amber-600" />}
+              <span className={`font-bold ${stats.expiringSoon > 0 ? "text-foreground" : ""}`}>{stats.expiringSoon}</span>
+              {stats.expiringSoon > 0 && <AlertTriangle className="h-3 w-3 text-foreground" />}
             </div>
             <div className="h-4 w-px bg-border" />
             <div className="flex items-center gap-1">
               <span className="text-muted-foreground">Expired</span>
-              <span className={`font-bold ${stats.expired > 0 ? "text-red-600" : ""}`}>{stats.expired}</span>
-              {stats.expired > 0 && <AlertTriangle className="h-3 w-3 text-red-600" />}
+              <span className={`font-bold ${stats.expired > 0 ? "text-foreground" : ""}`}>{stats.expired}</span>
+              {stats.expired > 0 && <AlertTriangle className="h-3 w-3 text-foreground" />}
             </div>
           </div>
           <Select value={filter} onValueChange={setFilter}>
@@ -369,7 +369,7 @@ export default function RegulatoryLicenses() {
                       <TableCell className="font-mono text-xs">{l.licenseNumber ?? "-"}</TableCell>
                       <TableCell className="text-xs">
                         {l.expirationDate ? (
-                          <span className={expired ? "text-red-600 font-medium" : expiringSoon ? "text-amber-600 font-medium" : ""}>
+                          <span className={expired ? "text-foreground font-semibold" : expiringSoon ? "text-foreground font-medium" : ""}>
                             {new Date(l.expirationDate).toLocaleDateString()}
                             {l.daysToExpiry !== null && l.daysToExpiry >= 0 && (
                               <span className="ml-1 text-muted-foreground">({l.daysToExpiry}d)</span>
@@ -447,8 +447,8 @@ function LicenseDetailDialog({ id, onClose, onChanged }: { id: number; onClose: 
           {license.notes && <p className="text-sm whitespace-pre-wrap text-muted-foreground">{license.notes}</p>}
           {(license.portalUrl || license.documentUrl) && (
             <div className="space-y-1 text-sm">
-              {license.portalUrl && <a href={license.portalUrl} target="_blank" rel="noreferrer" className="block text-blue-600 underline">Portal</a>}
-              {license.documentUrl && <a href={license.documentUrl} target="_blank" rel="noreferrer" className="block text-blue-600 underline">Issued license document</a>}
+              {license.portalUrl && <a href={license.portalUrl} target="_blank" rel="noreferrer" className="block text-primary underline">Portal</a>}
+              {license.documentUrl && <a href={license.documentUrl} target="_blank" rel="noreferrer" className="block text-primary underline">Issued license document</a>}
             </div>
           )}
 

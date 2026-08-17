@@ -397,8 +397,15 @@
 		{
 			"idx": 56,
 			"version": "5",
+			"when": 1785931200000,
+			"tag": "0056_auth_tokens_email_verified_user_region",
+			"breakpoints": true
+		},
+		{
+			"idx": 57,
+			"version": "5",
 			"when": 1784823841000,
-			"tag": "0056_supply_chain_workflow_tables",
+			"tag": "0057_supply_chain_workflow_tables",
 			"breakpoints": true
 		}
 	]

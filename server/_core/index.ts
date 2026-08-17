@@ -507,6 +507,24 @@ async function ensureTables() {
         respondedAt TIMESTAMP NULL,
         createdBy INT
       )`,
+      // Auth tokens + regions — mirrored from drizzle/0056_*.sql so signup /
+      // password-reset keep working even if the migration journal has drifted.
+      `CREATE TABLE IF NOT EXISTS authTokens (
+        token VARCHAR(128) PRIMARY KEY,
+        type ENUM('email_verification','password_reset') NOT NULL,
+        email VARCHAR(320) NOT NULL,
+        expiresAt TIMESTAMP NOT NULL,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS regions (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        code VARCHAR(16) NOT NULL UNIQUE,
+        name VARCHAR(128) NOT NULL,
+        baseCurrency VARCHAR(3) NOT NULL DEFAULT 'USD',
+        status ENUM('active','inactive') NOT NULL DEFAULT 'active',
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )`,
     ];
     // Add missing columns to existing tables
     const alterColumns = [
@@ -517,6 +535,15 @@ async function ensureTables() {
       "ALTER TABLE fundraising_campaigns ADD COLUMN dataRoomId INT",
       "ALTER TABLE fundraising_campaigns ADD COLUMN createdBy INT",
       "ALTER TABLE fundraising_campaigns ADD COLUMN companyId INT",
+      // Signup SELECTs every users column — missing any of these 500s registration.
+      "ALTER TABLE users ADD COLUMN emailVerified BOOLEAN NOT NULL DEFAULT false",
+      "ALTER TABLE users ADD COLUMN companyId INT",
+      "ALTER TABLE users ADD COLUMN regionScope ENUM('entity','region','global') NOT NULL DEFAULT 'global'",
+      "ALTER TABLE companies ADD COLUMN regionId INT",
+      "ALTER TABLE companies ADD COLUMN functionalCurrency VARCHAR(3) NOT NULL DEFAULT 'USD'",
+      "ALTER TABLE companies ADD COLUMN locale VARCHAR(10) NOT NULL DEFAULT 'en-US'",
+      "ALTER TABLE companies ADD COLUMN timezone VARCHAR(64) NOT NULL DEFAULT 'America/New_York'",
+      "ALTER TABLE companies ADD COLUMN taxRegime ENUM('vat','gst','sales_tax','none') NOT NULL DEFAULT 'none'",
     ];
     for (const alt of alterColumns) {
       try { await database.execute(require('drizzle-orm/sql').sql.raw(alt)); } catch { /* already exists */ }
@@ -700,17 +727,27 @@ async function startServer() {
       return res.status(403).json({ error: "Missing Origin header" });
     }
 
-    // In production, validate origin matches our app URL
+    // In production, validate origin matches our app URL (+ optional allowlist)
     if (ENV.isProduction && ENV.publicAppUrl) {
       try {
         const requestHost = new URL(origin as string).host;
-        // Allow both the Railway domain and custom domain
-        const allowedHosts = new Set([
+        const allowedHosts = new Set<string>([
           new URL(ENV.publicAppUrl).host,
           "app.superhumn.co",
           "aierpsystem-production.up.railway.app",
         ]);
+        for (const entry of ENV.allowedOrigins.split(",")) {
+          const trimmed = entry.trim();
+          if (!trimmed) continue;
+          try {
+            // Accept bare host or full URL
+            allowedHosts.add(trimmed.includes("://") ? new URL(trimmed).host : trimmed);
+          } catch {
+            allowedHosts.add(trimmed);
+          }
+        }
         if (!allowedHosts.has(requestHost)) {
+          console.warn("[CSRF] Origin mismatch: %s (allowed: %s)", requestHost, [...allowedHosts].join(", "));
           return res.status(403).json({ error: "Origin mismatch" });
         }
       } catch {
@@ -1151,17 +1188,21 @@ async function startServer() {
         return res.status(driveResponse.status || 502).send(`Drive fetch failed: ${driveResponse.status}. ${body}`);
       }
 
-      res.setHeader('Content-Type', driveResponse.headers.get('content-type') || outMime || 'application/octet-stream');
+      const effectiveType = (driveResponse.headers.get('content-type') || outMime || 'application/octet-stream').toLowerCase();
+      res.setHeader('Content-Type', effectiveType);
       const len = driveResponse.headers.get('content-length');
       if (len) res.setHeader('Content-Length', len);
       res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(doc.name || 'file')}"`);
-      // Sandbox the proxied document. The Content-Type comes from the uploaded
-      // file, so an HTML/SVG document would otherwise execute JavaScript in our
-      // origin when framed inline (X-Frame-Options: SAMEORIGIN above). A bare
-      // `sandbox` directive gives the response a unique opaque origin — scripts,
-      // forms, and same-origin access are all disabled — while browser-native
-      // rendering of PDFs/images is unaffected.
-      res.setHeader('Content-Security-Policy', 'sandbox');
+      // Sandbox the proxied document so an HTML/SVG file can't execute JavaScript
+      // in our origin when framed inline (X-Frame-Options: SAMEORIGIN above).
+      // Chrome's built-in PDF viewer, however, needs scripts + same-origin to
+      // render, so relax the sandbox ONLY for genuine PDFs (a PDF can't script
+      // our page). Everything else keeps the strict opaque-origin sandbox.
+      const isPdf = effectiveType.includes('application/pdf');
+      res.setHeader(
+        'Content-Security-Policy',
+        isPdf ? 'sandbox allow-scripts allow-same-origin allow-popups allow-downloads' : 'sandbox',
+      );
       res.setHeader('Cache-Control', 'private, max-age=60');
 
       // Pipe Drive's response body to the client. Node's fetch returns a web
