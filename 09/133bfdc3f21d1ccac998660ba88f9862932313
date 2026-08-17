@@ -1,0 +1,20 @@
+server/db.ts
+  s_fe54356c3ec465::t_c1411f90a6ba11 3
+  s_fe54356c3ec465::t_284475d19a6242 211,217-233,237
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "09133bfdc3f21d1ccac998660ba88f9862932313",
+  "prompts": {},
+  "sessions": {
+    "s_fe54356c3ec465": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "435d6f0a-6897-4c32-88f5-5f18edb81e8a",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    }
+  }
+}
