@@ -7790,6 +7790,7 @@ export type InsertSavedReport = typeof savedReports.$inferInsert;
 // ============================================
 export const recruitingCandidates = mysqlTable("recruiting_candidates", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
   name: varchar("name", { length: 200 }).notNull(),
   email: varchar("email", { length: 320 }),
   phone: varchar("phone", { length: 64 }),
