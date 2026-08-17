@@ -59,16 +59,16 @@ function formatBytes(bytes?: number | null): string {
 }
 
 const statusOptions = [
-  { value: "pending", label: "Pending", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
-  { value: "in_transit", label: "In Transit", color: "bg-amber-500/8 text-amber-600 dark:text-amber-400" },
-  { value: "delivered", label: "Delivered", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
-  { value: "returned", label: "Returned", color: "bg-violet-500/8 text-violet-600 dark:text-violet-400" },
-  { value: "cancelled", label: "Cancelled", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
+  { value: "pending", label: "Pending", color: "bg-muted text-muted-foreground" },
+  { value: "in_transit", label: "In Transit", color: "bg-primary/10 text-primary" },
+  { value: "delivered", label: "Delivered", color: "bg-muted text-muted-foreground" },
+  { value: "returned", label: "Returned", color: "bg-muted text-foreground font-semibold" },
+  { value: "cancelled", label: "Cancelled", color: "bg-[oklch(0.30_0.02_262)] text-white" },
 ];
 
 const typeOptions = [
-  { value: "inbound", label: "Inbound", color: "bg-blue-500/10 text-blue-600" },
-  { value: "outbound", label: "Outbound", color: "bg-green-500/10 text-green-600" },
+  { value: "inbound", label: "Inbound", color: "bg-primary/10 text-primary" },
+  { value: "outbound", label: "Outbound", color: "bg-muted text-muted-foreground" },
 ];
 
 function ShipmentSummaryBody({ s, materialLabel }: { s: any; materialLabel?: string | null }) {
@@ -642,25 +642,25 @@ export default function Shipments() {
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardContent className="pt-6">
-            <div className="text-xl font-semibold tracking-[-0.02em]">{counts.total}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{counts.total}</div>
             <p className="text-xs text-muted-foreground">Total Shipments</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-xl font-semibold tracking-[-0.02em] text-gray-600">{counts.pending}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{counts.pending}</div>
             <p className="text-xs text-muted-foreground">Pending</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-xl font-semibold tracking-[-0.02em] text-amber-600">{counts.inTransit}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-primary font-display tabular-nums">{counts.inTransit}</div>
             <p className="text-xs text-muted-foreground">In Transit</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{counts.delivered}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{counts.delivered}</div>
             <p className="text-xs text-muted-foreground">Delivered</p>
           </CardContent>
         </Card>

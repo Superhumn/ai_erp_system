@@ -291,10 +291,10 @@ export default function RawMaterials() {
                         <Badge
                           className={
                             mat.status === "active"
-                              ? "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400"
+                              ? "bg-primary/10 text-primary"
                               : mat.status === "inactive"
-                              ? "bg-amber-500/8 text-amber-600 dark:text-amber-400"
-                              : "bg-red-500/8 text-red-600 dark:text-red-400"
+                              ? "bg-muted text-muted-foreground"
+                              : "bg-[oklch(0.30_0.02_262)] text-white"
                           }
                         >
                           {mat.status}
@@ -318,7 +318,7 @@ export default function RawMaterials() {
                               }
                             }}
                           >
-                            <Trash2 className="h-4 w-4 text-red-500" />
+                            <Trash2 className="h-4 w-4 text-muted-foreground" />
                           </Button>
                         </div>
                       </TableCell>

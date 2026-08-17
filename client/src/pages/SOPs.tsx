@@ -775,19 +775,19 @@ const sops: SOPSection[] = [
 ];
 
 const audienceColors: Record<string, string> = {
-  "All Users": "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
-  "Admin": "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
-  "Finance": "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
-  "Ops": "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
-  "Sales": "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
-  "Procurement": "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400",
-  "Logistics": "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400",
-  "Warehouse": "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
-  "Production": "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
-  "Exec": "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
-  "Copacker": "bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400",
-  "Vendor": "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400",
-  "Supplier": "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400",
+  "All Users": "bg-muted text-muted-foreground",
+  "Admin": "bg-primary/10 text-primary",
+  "Finance": "bg-muted text-foreground",
+  "Ops": "bg-muted text-muted-foreground",
+  "Sales": "bg-muted text-foreground",
+  "Procurement": "bg-muted text-muted-foreground",
+  "Logistics": "bg-muted text-foreground",
+  "Warehouse": "bg-muted text-muted-foreground",
+  "Production": "bg-muted text-foreground",
+  "Exec": "bg-primary/10 text-primary",
+  "Copacker": "bg-muted text-muted-foreground",
+  "Vendor": "bg-muted text-foreground",
+  "Supplier": "bg-muted text-foreground",
 };
 
 function SOPCard({

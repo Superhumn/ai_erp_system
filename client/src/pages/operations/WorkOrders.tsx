@@ -59,22 +59,22 @@ export default function WorkOrders() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "draft": return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
-      case "scheduled": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
-      case "in_progress": return "bg-amber-500/8 text-amber-600 dark:text-amber-400";
-      case "completed": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
-      case "cancelled": return "bg-red-500/8 text-red-600 dark:text-red-400";
-      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "draft": return "bg-muted text-muted-foreground";
+      case "scheduled": return "bg-muted text-foreground";
+      case "in_progress": return "bg-primary/10 text-primary";
+      case "completed": return "bg-muted text-muted-foreground";
+      case "cancelled": return "bg-[oklch(0.30_0.02_262)] text-white";
+      default: return "bg-muted text-muted-foreground";
     }
   };
 
   const getPriorityColor = (priority: string) => {
     switch (priority) {
-      case "urgent": return "bg-red-500/8 text-red-600 dark:text-red-400";
-      case "high": return "bg-orange-500/8 text-orange-600 dark:text-orange-400";
-      case "normal": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
-      case "low": return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
-      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "urgent": return "bg-[oklch(0.30_0.02_262)] text-white";
+      case "high": return "bg-muted text-foreground font-semibold";
+      case "normal": return "bg-muted text-muted-foreground";
+      case "low": return "bg-muted text-muted-foreground";
+      default: return "bg-muted text-muted-foreground";
     }
   };
 
@@ -187,7 +187,7 @@ export default function WorkOrders() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Draft</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-xl font-semibold tracking-[-0.02em]">{workOrders?.filter(w => w.status === 'draft').length || 0}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{workOrders?.filter(w => w.status === 'draft').length || 0}</div>
             </CardContent>
           </Card>
           <Card>
@@ -195,7 +195,7 @@ export default function WorkOrders() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Scheduled</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-xl font-semibold tracking-[-0.02em]">{workOrders?.filter(w => w.status === 'scheduled').length || 0}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{workOrders?.filter(w => w.status === 'scheduled').length || 0}</div>
             </CardContent>
           </Card>
           <Card>
@@ -203,7 +203,7 @@ export default function WorkOrders() {
               <CardTitle className="text-sm font-medium text-muted-foreground">In Progress</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-xl font-semibold tracking-[-0.02em] text-yellow-600">{workOrders?.filter(w => w.status === 'in_progress').length || 0}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em] text-primary font-display tabular-nums">{workOrders?.filter(w => w.status === 'in_progress').length || 0}</div>
             </CardContent>
           </Card>
           <Card>
@@ -211,7 +211,7 @@ export default function WorkOrders() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Completed</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{workOrders?.filter(w => w.status === 'completed').length || 0}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{workOrders?.filter(w => w.status === 'completed').length || 0}</div>
             </CardContent>
           </Card>
         </div>
@@ -281,13 +281,13 @@ export default function WorkOrders() {
                                 size="sm"
                                 onClick={() => startMutation.mutate({ id: wo.id })}
                               >
-                                <Play className="w-4 h-4 text-green-600" />
+                                <Play className="w-4 h-4 text-primary" />
                               </Button>
                             )}
                             {wo.status === 'in_progress' && (
                               <Link href={`/operations/work-orders/${wo.id}`}>
                                 <Button variant="ghost" size="sm">
-                                  <CheckCircle className="w-4 h-4 text-blue-600" />
+                                  <CheckCircle className="w-4 h-4 text-primary" />
                                 </Button>
                               </Link>
                             )}

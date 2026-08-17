@@ -40,14 +40,14 @@ import { Link } from "wouter";
 import { format } from "date-fns";
 
 const customerStatusOptions = [
-  { value: "active", label: "Active", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
-  { value: "inactive", label: "Inactive", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
-  { value: "prospect", label: "Prospect", color: "bg-amber-500/8 text-amber-600 dark:text-amber-400" },
+  { value: "active", label: "Active", color: "bg-muted text-foreground" },
+  { value: "inactive", label: "Inactive", color: "bg-muted text-muted-foreground" },
+  { value: "prospect", label: "Prospect", color: "bg-muted text-muted-foreground" },
 ];
 
 const sourceOptions = [
-  { value: "shopify", label: "Shopify", color: "bg-green-500/10 text-green-600" },
-  { value: "manual", label: "Manual", color: "bg-gray-500/10 text-gray-600" },
+  { value: "shopify", label: "Shopify", color: "bg-muted text-foreground" },
+  { value: "manual", label: "Manual", color: "bg-muted text-muted-foreground" },
 ];
 
 function CustomerSummaryBody({ customer }: { customer: any }) {
@@ -456,18 +456,18 @@ export default function Customers() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Total Customers</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-xl font-semibold tracking-[-0.02em]">{syncStatus.total}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{syncStatus.total}</div>
             </CardContent>
           </Card>
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                <ShoppingBag className="h-4 w-4 text-green-600" />
+                <ShoppingBag className="h-4 w-4 text-muted-foreground" />
                 From Shopify
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{syncStatus.shopify}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{syncStatus.shopify}</div>
             </CardContent>
           </Card>
           <Card>
@@ -475,7 +475,7 @@ export default function Customers() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Manual Entry</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-xl font-semibold tracking-[-0.02em]">{syncStatus.manual}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{syncStatus.manual}</div>
             </CardContent>
           </Card>
         </div>
