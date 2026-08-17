@@ -91,6 +91,9 @@ const MaterialSupply = lazy(() => import("./pages/operations/MaterialSupply"));
 const OpsWorkspace = lazy(() => import("./pages/ops/OpsWorkspace"));
 const FormFill = lazy(() => import("./pages/ops/FormFill"));
 
+// Planner (unified Today view + NL quick-add + auto-scheduling)
+const TodayPlanner = lazy(() => import("./pages/planner/Today"));
+
 // Backend→frontend gap: pages wiring previously-orphaned routers
 const Costing = lazy(() => import("./pages/finance/Costing"));
 const EmailScanning = lazy(() => import("./pages/settings/EmailScanning"));
@@ -482,6 +485,9 @@ function Router() {
           {/* Ops Toolkit — views / forms / automations / reports */}
           <Route path="/ops/:tab" component={OpsWorkspace} />
           <Route path="/ops" component={OpsWorkspace} />
+
+          {/* Planner — unified Today view */}
+          <Route path="/today" component={TodayPlanner} />
 
           {/* Component Showcase */}
           <Route path="/showcase" component={ComponentShowcase} />
