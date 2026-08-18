@@ -28,6 +28,7 @@ import {
   Package,
   Ship,
   Plane,
+  Calculator,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "wouter";
@@ -372,6 +373,14 @@ export default function LogisticsHub() {
         >
           <Ship className="h-3.5 w-3.5" />
           Material Supply &amp; Reorder
+        </Link>
+        <div className="h-4 w-px bg-border" />
+        <Link
+          href="/freight/rate-estimator"
+          className="flex items-center gap-1.5 font-semibold text-primary hover:underline"
+        >
+          <Calculator className="h-3.5 w-3.5" />
+          Ocean Rate Estimator
         </Link>
       </div>
 
