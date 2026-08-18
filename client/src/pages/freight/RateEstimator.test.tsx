@@ -80,4 +80,23 @@ describe("RateEstimator", () => {
     expect(shows("$2,120")).toBe(true);
   });
 
+  it("exposes each comparison destination as a keyboard-reachable button", () => {
+    renderAt();
+
+    const buttons = within(comparisonTable()).getAllByRole("button");
+    expect(buttons.map((b) => b.textContent)).toEqual([
+      "US West Coast", "US East Coast", "Japan", "North Europe", "GCC", "Australia", "South Africa",
+    ]);
+
+    const japan = within(comparisonTable()).getByRole("button", { name: "Japan" });
+    japan.focus();
+    expect(japan).toHaveFocus();
+    fireEvent.click(japan);
+
+    expect(screen.getByText("Chennai → Tokyo")).toBeInTheDocument();
+    expect(
+      within(comparisonTable()).getByRole("button", { name: "Japan" }),
+    ).toHaveAttribute("aria-current", "true");
+  });
+
 });

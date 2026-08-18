@@ -36,7 +36,12 @@ function num(value: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+/** Local calendar date as YYYY-MM-DD. toISOString() would give the UTC day. */
+function today(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
 
 export default function RateEstimator() {
   const [originCountry, setOriginCountry] = useState("India");
@@ -417,7 +422,16 @@ export default function RateEstimator() {
                             className={isActive ? "bg-muted/50" : "cursor-pointer"}
                             onClick={() => setDestination(lane.destination)}
                           >
-                            <TableCell className="font-medium">{lane.destination}</TableCell>
+                            <TableCell className="font-medium">
+                              <button
+                                type="button"
+                                className="hover:underline focus-visible:ring-ring/50 rounded-sm outline-none focus-visible:ring-[3px]"
+                                aria-current={isActive ? "true" : undefined}
+                                onClick={() => setDestination(lane.destination)}
+                              >
+                                {lane.destination}
+                              </button>
+                            </TableCell>
                             <TableCell className="text-muted-foreground">{lane.dischargePort}</TableCell>
                             <TableCell className="text-right tabular-nums">{lane.transitDays}d</TableCell>
                             <TableCell className="text-right tabular-nums">

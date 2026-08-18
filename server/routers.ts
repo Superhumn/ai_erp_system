@@ -8628,9 +8628,9 @@ Be concise and helpful. Always give actionable guidance.`;
     rateEstimate: router({
       estimate: protectedProcedure
         .input(z.object({
-          originCountry: z.string().min(1),
-          destination: z.string().min(1),
-          loadPort: z.string().optional(),
+          originCountry: z.string().trim().min(1),
+          destination: z.string().trim().min(1),
+          loadPort: z.string().trim().min(1).optional(),
           mode: z.enum(["fcl20", "fcl40", "lcl"]),
           containers: z.number().int().min(1).max(100).optional(),
           volumeCbm: z.number().min(0).optional(),
