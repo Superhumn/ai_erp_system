@@ -44,7 +44,7 @@ import { estimateEffort, optimizeResourceAllocation, predictProjectRisks, optimi
 import { detectEdiAnomalies, predictEdiErrors } from "./ediAiService";
 import { scoreSuppliers } from "./supplierScoringService";
 import * as db from "./db";
-import { resolveScope } from "./_core/scope";
+import { resolveScopeFromAccess } from "./_core/scope";
 import * as manufacturingDb from "./db/manufacturing";
 import { storagePut, storageDelete } from "./storage";
 import { nanoid } from "nanoid";
@@ -134,16 +134,20 @@ const execProcedure = protectedProcedure.use(({ ctx, next }) => {
   return next({ ctx });
 });
 
-// Region/entity data-scoping middleware. Resolves the caller's visible entity set from their
-// home company + regionScope and attaches `ctx.scope`, which scoped DB helpers consume. Global
-// users (the backfill default) get { companyIds: "all" }, preserving pre-multi-region behavior.
+// Region/entity data-scoping middleware. Resolves the caller's visible entity set and attaches
+// `ctx.scope`, which scoped DB helpers consume. Multi-entity (STEP 3): the set is the union of the
+// user's user_entity_access memberships expanded to descendants; a user with no memberships falls
+// back to their single home company + regionScope; exec (regionScope 'global') sees everything.
 // See docs/MULTI_REGION_PHASE_1_2_SPEC.md.
 export const scopedProcedure = protectedProcedure.use(async ({ ctx, next }) => {
-  const scope = await resolveScope(
+  const accessEntityIds = await db.getUserEntityAccessCompanyIds(ctx.user.id);
+  const scope = await resolveScopeFromAccess(
     { companyId: ctx.user.companyId, regionScope: ctx.user.regionScope },
+    accessEntityIds,
     {
       getCompanyRegionId: async (id) => (await db.getCompanyById(id))?.regionId ?? null,
       getCompanyIdsInRegion: (regionId) => db.getCompanyIdsInRegion(regionId),
+      getEntityAndDescendants: (id) => db.getEntityAndDescendantCompanyIds(id),
     },
   );
   if (scope.companyIds !== 'all' && scope.companyIds.length === 0) {
@@ -1488,12 +1492,12 @@ export const appRouter = router({
   // VENDOR MANAGEMENT
   // ============================================
   vendors: router({
-    list: protectedProcedure
-      .input(z.object({ companyId: z.number().optional() }).optional())
-      .query(({ input }) => db.getVendors(input?.companyId)),
-    get: protectedProcedure
+    // Scope derived server-side from the caller's entity access (ctx.scope), never from client input.
+    list: scopedProcedure
+      .query(({ ctx }) => db.getVendors(ctx.scope)),
+    get: scopedProcedure
       .input(z.object({ id: z.number() }))
-      .query(({ input }) => db.getVendorById(input.id)),
+      .query(({ input, ctx }) => db.getVendorById(input.id, ctx.scope)),
     create: opsProcedure
       .input(z.object({
         name: z.string().min(1),

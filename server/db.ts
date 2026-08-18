@@ -20,7 +20,7 @@ import {
   freightCarriers, freightRfqs, freightQuotes, freightEmails,
   customsClearances, customsDocuments, freightBookings, freightQuotesStandalone,
   inventoryTransfers, inventoryTransferItems,
-  teamInvitations, userPermissions,
+  teamInvitations, userPermissions, userEntityAccess,
   billOfMaterials, bomComponents, rawMaterials, bomVersionHistory,
   recipes, recipeLines, recipeIngredients,
   workOrders, workOrderMaterials, rawMaterialInventory, rawMaterialTransactions,
@@ -527,6 +527,19 @@ export async function getEntityAndDescendantCompanyIds(companyId: number): Promi
     .filter((n: number) => Number.isFinite(n));
 }
 
+// Multi-entity access (STEP 3): the entity ids a user is a member of (active rows only).
+// Empty result means "no explicit membership" — the scope resolver then falls back to the user's
+// single home entity + regionScope.
+export async function getUserEntityAccessCompanyIds(userId: number): Promise<number[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select({ companyId: userEntityAccess.companyId })
+    .from(userEntityAccess)
+    .where(and(eq(userEntityAccess.userId, userId), eq(userEntityAccess.isActive, true)));
+  return rows.map((r) => r.companyId);
+}
+
 export async function createCompany(data: InsertCompany) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -691,20 +704,34 @@ export async function deleteCustomer(id: number) {
 // VENDOR MANAGEMENT
 // ============================================
 
-export async function getVendors(companyId?: number) {
+// Pass a request's `ctx.scope` to restrict to the caller's visible entities. `filters.companyId`
+// is an explicit filter for trusted internal callers (not a security boundary). Omit both for full
+// access. Scope and filter compose (AND) when both are given.
+export async function getVendors(scope?: Scope, filters?: { companyId?: number }) {
   const db = await getDb();
   if (!db) return [];
-  if (companyId) {
-    return db.select().from(vendors).where(eq(vendors.companyId, companyId)).orderBy(desc(vendors.createdAt));
+  const conds: any[] = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return []; // scoped user with no visible entities
+    conds.push(inArray(vendors.companyId, ids));
   }
-  return db.select().from(vendors).orderBy(desc(vendors.createdAt));
+  if (filters?.companyId != null) conds.push(eq(vendors.companyId, filters.companyId));
+  return conds.length
+    ? db.select().from(vendors).where(and(...conds)).orderBy(desc(vendors.createdAt))
+    : db.select().from(vendors).orderBy(desc(vendors.createdAt));
 }
 
-export async function getVendorById(id: number) {
+// Pass `ctx.scope` to enforce entity visibility: a vendor outside the caller's scope is reported
+// as not found (undefined) so cross-entity existence isn't leaked. Omit for internal callers.
+export async function getVendorById(id: number, scope?: Scope) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(vendors).where(eq(vendors.id, id)).limit(1);
-  return result[0];
+  const vendor = result[0];
+  if (!vendor) return undefined;
+  if (scope && !scopeAllows(scope, vendor.companyId)) return undefined;
+  return vendor;
 }
 
 export async function getVendorsByIds(ids: number[]) {

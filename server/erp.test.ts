@@ -9,6 +9,11 @@ vi.mock("./db", () => ({
   getDb: vi.fn().mockResolvedValue({}),
   upsertUser: vi.fn(),
   getUserByOpenId: vi.fn(),
+  // Multi-entity scoping (STEP 3): scopedProcedure resolves the caller's entity set from these.
+  getUserEntityAccessCompanyIds: vi.fn().mockResolvedValue([]),
+  getEntityAndDescendantCompanyIds: vi.fn().mockResolvedValue([]),
+  getCompanyById: vi.fn().mockResolvedValue(undefined),
+  getCompanyIdsInRegion: vi.fn().mockResolvedValue([]),
   // Dashboard
   getDashboardMetrics: vi.fn().mockResolvedValue({
     revenueThisMonth: "50000",

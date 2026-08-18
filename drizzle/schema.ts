@@ -97,6 +97,24 @@ export const userPermissions = mysqlTable("userPermissions", {
 export type UserPermission = typeof userPermissions.$inferSelect;
 export type InsertUserPermission = typeof userPermissions.$inferInsert;
 
+// Multi-entity access (STEP 3): a user may belong to several entities, each with a per-entity role.
+// The permitted-entity set for scoping is the union of these rows' companies (expanded to
+// descendants via entity_tree). Access to a parent (e.g. GLOBAL) reaches its children.
+export const userEntityAccess = mysqlTable("user_entity_access", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().references(() => users.id),
+  companyId: int("companyId").notNull().references((): AnyMySqlColumn => companies.id),
+  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "sales", "copacker", "vendor", "contractor", "investor"]).default("user").notNull(),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  userCompanyUnique: uniqueIndex("uq_user_entity_access_user_company").on(t.userId, t.companyId),
+}));
+
+export type UserEntityAccess = typeof userEntityAccess.$inferSelect;
+export type InsertUserEntityAccess = typeof userEntityAccess.$inferInsert;
+
 // Google OAuth tokens for Drive/Sheets access
 export const googleOAuthTokens = mysqlTable("googleOAuthTokens", {
   id: int("id").autoincrement().primaryKey(),
