@@ -44,7 +44,7 @@ import { estimateEffort, optimizeResourceAllocation, predictProjectRisks, optimi
 import { detectEdiAnomalies, predictEdiErrors } from "./ediAiService";
 import { scoreSuppliers } from "./supplierScoringService";
 import * as db from "./db";
-import { resolveScopeFromAccess } from "./_core/scope";
+import { resolveScopeFromAccess, scopeAllows } from "./_core/scope";
 import * as manufacturingDb from "./db/manufacturing";
 import { storagePut, storageDelete } from "./storage";
 import { nanoid } from "nanoid";
@@ -139,10 +139,12 @@ const execProcedure = protectedProcedure.use(({ ctx, next }) => {
 // user's user_entity_access memberships expanded to descendants; a user with no memberships falls
 // back to their single home company + regionScope; exec (regionScope 'global') sees everything.
 // See docs/MULTI_REGION_PHASE_1_2_SPEC.md.
-export const scopedProcedure = protectedProcedure.use(async ({ ctx, next }) => {
-  const accessEntityIds = await db.getUserEntityAccessCompanyIds(ctx.user.id);
-  const scope = await resolveScopeFromAccess(
-    { companyId: ctx.user.companyId, regionScope: ctx.user.regionScope },
+// Resolve a request's entity scope. Reusable so role-gated handlers (opsProcedure etc.) can also
+// enforce scope on by-id reads/writes without losing their role gate.
+export async function resolveRequestScope(user: { id: number; companyId: number | null; regionScope: 'entity' | 'region' | 'global' }) {
+  const accessEntityIds = await db.getUserEntityAccessCompanyIds(user.id);
+  return resolveScopeFromAccess(
+    { companyId: user.companyId, regionScope: user.regionScope },
     accessEntityIds,
     {
       getCompanyRegionId: async (id) => (await db.getCompanyById(id))?.regionId ?? null,
@@ -150,6 +152,10 @@ export const scopedProcedure = protectedProcedure.use(async ({ ctx, next }) => {
       getEntityAndDescendants: (id) => db.getEntityAndDescendantCompanyIds(id),
     },
   );
+}
+
+export const scopedProcedure = protectedProcedure.use(async ({ ctx, next }) => {
+  const scope = await resolveRequestScope(ctx.user);
   if (scope.companyIds !== 'all' && scope.companyIds.length === 0) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'No entity scope assigned' });
   }
@@ -1517,6 +1523,13 @@ export const appRouter = router({
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        // Can't create a vendor under an entity the caller doesn't have access to.
+        if (input.companyId != null) {
+          const scope = await resolveRequestScope(ctx.user);
+          if (!scopeAllows(scope, input.companyId)) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Cannot create a vendor under an entity outside your access.' });
+          }
+        }
         const result = await db.createVendor(input);
         await createAuditLog(ctx.user.id, 'create', 'vendor', result.id, input.name);
         return result;
@@ -1555,7 +1568,7 @@ export const appRouter = router({
     autoLinkContact: opsProcedure
       .input(z.object({ vendorId: z.number() }))
       .mutation(async ({ input, ctx }) => {
-        const vendor = await db.getVendorById(input.vendorId);
+        const vendor = await db.getVendorById(input.vendorId, await resolveRequestScope(ctx.user));
         if (!vendor) throw new TRPCError({ code: "NOT_FOUND", message: "Vendor not found" });
         if (vendor.contactId) {
           const contact = await db.getCrmContactById(vendor.contactId);
@@ -1579,7 +1592,7 @@ export const appRouter = router({
         whatsappNumber: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const vendor = await db.getVendorById(input.vendorId);
+        const vendor = await db.getVendorById(input.vendorId, await resolveRequestScope(ctx.user));
         if (!vendor) throw new TRPCError({ code: "NOT_FOUND", message: "Vendor not found" });
         await db.linkVendorContact(input.vendorId, input.contactId, input.whatsappNumber);
         await createAuditLog(ctx.user.id, "update", "vendor", input.vendorId, vendor.name, null, { contactId: input.contactId });
@@ -1589,7 +1602,7 @@ export const appRouter = router({
     unlinkContact: opsProcedure
       .input(z.object({ vendorId: z.number() }))
       .mutation(async ({ input, ctx }) => {
-        const vendor = await db.getVendorById(input.vendorId);
+        const vendor = await db.getVendorById(input.vendorId, await resolveRequestScope(ctx.user));
         if (!vendor) throw new TRPCError({ code: "NOT_FOUND", message: "Vendor not found" });
         await db.unlinkVendorContact(input.vendorId);
         await createAuditLog(ctx.user.id, "update", "vendor", input.vendorId, vendor.name, null, { contactId: null });

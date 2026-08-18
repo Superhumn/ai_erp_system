@@ -533,11 +533,22 @@ export async function getEntityAndDescendantCompanyIds(companyId: number): Promi
 export async function getUserEntityAccessCompanyIds(userId: number): Promise<number[]> {
   const db = await getDb();
   if (!db) return [];
-  const rows = await db
-    .select({ companyId: userEntityAccess.companyId })
-    .from(userEntityAccess)
-    .where(and(eq(userEntityAccess.userId, userId), eq(userEntityAccess.isActive, true)));
-  return rows.map((r) => r.companyId);
+  try {
+    const rows = await db
+      .select({ companyId: userEntityAccess.companyId })
+      .from(userEntityAccess)
+      .where(and(eq(userEntityAccess.userId, userId), eq(userEntityAccess.isActive, true)));
+    return rows.map((r) => r.companyId);
+  } catch (err) {
+    // scopedProcedure calls this on every request. If the table isn't migrated yet, degrade
+    // gracefully to "no explicit membership" (→ legacy single-home/global resolution) rather than
+    // hard-failing every scoped endpoint. This preserves pre-STEP-3 behavior until db:push runs.
+    console.warn(
+      `[scope] getUserEntityAccessCompanyIds fell back to no-membership — is the user_entity_access ` +
+        `table migrated? Run pnpm db:push. Error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return [];
+  }
 }
 
 export async function createCompany(data: InsertCompany) {
