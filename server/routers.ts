@@ -43,7 +43,7 @@ import { analyzeContract, extractClauses, predictDisputes, checkCompliance } fro
 import { estimateEffort, optimizeResourceAllocation, predictProjectRisks, optimizeSchedule } from "./projectsAiService";
 import { detectEdiAnomalies, predictEdiErrors } from "./ediAiService";
 import { scoreSuppliers } from "./supplierScoringService";
-import { normalizeQuotesForRfq, basisFromRfq, INCOTERM_CODES, DEFAULT_TARGET_INCOTERM } from "./quoteNormalization";
+import { normalizeQuotesForRfq, basisFromRfq, INCOTERM_CODES } from "./quoteNormalization";
 import { ingestVendorQuoteEmail, parseVendorQuoteAttachment, parseVendorQuoteEmail } from "./vendorQuoteParser";
 import { computeResponsivenessForVendors, computeVendorResponsiveness, markStaleInvitationsNoResponse, responsivenessScoreFromMetrics } from "./vendorResponsiveness";
 import { deleteCurrencyRate, getFxRate, listCurrencyRates, upsertCurrencyRate } from "./currencyService";
