@@ -256,6 +256,45 @@ export const fxRates = mysqlTable("fx_rates", {
 export type FxRate = typeof fxRates.$inferSelect;
 export type InsertFxRate = typeof fxRates.$inferInsert;
 
+// Intercompany links (STEP 5): match a transaction in one entity with its counterpart in another
+// (e.g. a SA→US internal sale ↔ the US purchase) so both sides are eliminated at group level.
+// Inherently cross-entity — no single companyId.
+export const intercompanyLinks = mysqlTable("intercompany_links", {
+  id: int("id").autoincrement().primaryKey(),
+  transactionAId: int("transaction_a_id").notNull().references((): AnyMySqlColumn => transactions.id),
+  transactionBId: int("transaction_b_id").notNull().references((): AnyMySqlColumn => transactions.id),
+  linkType: mysqlEnum("linkType", ["sale_purchase", "loan", "transfer", "allocation", "other"]).default("sale_purchase").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (t) => ({
+  pairUnique: uniqueIndex("uq_intercompany_links_pair").on(t.transactionAId, t.transactionBId),
+}));
+
+export type IntercompanyLink = typeof intercompanyLinks.$inferSelect;
+export type InsertIntercompanyLink = typeof intercompanyLinks.$inferInsert;
+
+// Product sourcing (STEP 5): the explicit "entity X manufactures product P for entity Y" relationship
+// (e.g. SA makes jerky for US), carrying the intercompany transfer price. Drives supply planning and
+// freezes the transfer price for STEP 4 money. Group-level config — not owned by a single entity.
+export const productSourcing = mysqlTable("product_sourcing", {
+  id: int("id").autoincrement().primaryKey(),
+  productId: int("productId").notNull().references((): AnyMySqlColumn => products.id),
+  makerEntityId: int("makerEntityId").notNull().references((): AnyMySqlColumn => companies.id),
+  forEntityId: int("forEntityId").notNull().references((): AnyMySqlColumn => companies.id),
+  transferPriceMethod: mysqlEnum("transferPriceMethod", ["cost_plus", "fixed", "market"]).default("cost_plus").notNull(),
+  markupPct: decimal("markupPct", { precision: 7, scale: 4 }),
+  transferCurrency: varchar("transferCurrency", { length: 3 }).default("USD"),
+  isActive: boolean("isActive").default(true).notNull(),
+  effectiveFrom: timestamp("effectiveFrom"),
+  effectiveTo: timestamp("effectiveTo"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  productMakerForUnique: uniqueIndex("uq_product_sourcing_product_maker_for").on(t.productId, t.makerEntityId, t.forEntityId),
+}));
+
+export type ProductSourcing = typeof productSourcing.$inferSelect;
+export type InsertProductSourcing = typeof productSourcing.$inferInsert;
+
 export const companies = mysqlTable("companies", {
   id: int("id").autoincrement().primaryKey(),
   name: varchar("name", { length: 255 }).notNull(),

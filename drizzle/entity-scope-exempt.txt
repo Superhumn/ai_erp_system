@@ -96,6 +96,7 @@ ingredientQuoteRequests
 ingredientVendors
 intakeFormSubmissions
 intakeForms
+intercompanyLinks
 inventoryReservations
 inventoryTransactions
 inventoryTransferItems
@@ -129,6 +130,7 @@ poReceivingRecords
 proRataIndications
 productPriceTiers
 productRegionalSkus
+productSourcing
 productVolumeDiscounts
 projectMilestones
 projectTasks
