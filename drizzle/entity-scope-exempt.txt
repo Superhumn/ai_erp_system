@@ -35,6 +35,7 @@ crmContactTags
 crmInteractions
 crmPipelines
 crmTags
+currencyRates
 customsDocuments
 dataRoomChecklistItems
 dataRoomChecklists

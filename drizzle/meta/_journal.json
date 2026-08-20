@@ -400,6 +400,13 @@
 			"when": 1785931200000,
 			"tag": "0056_auth_tokens_email_verified_user_region",
 			"breakpoints": true
+		},
+		{
+			"idx": 57,
+			"version": "5",
+			"when": 1787000000000,
+			"tag": "0057_quote_normalization_and_responsiveness",
+			"breakpoints": true
 		}
 	]
 }

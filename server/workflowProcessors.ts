@@ -37,6 +37,31 @@ import {
 import { eq, and, lt, lte, gte, gt, desc, asc, sql, isNull, or, inArray, between } from "drizzle-orm";
 import type { WorkflowEngine, WorkflowContext, WorkflowResult, StepResult } from "./autonomousWorkflowEngine";
 import { supplierPerformance, exceptionLog } from "../drizzle/schema";
+import {
+  computeResponsivenessForVendors,
+  markStaleInvitationsNoResponse,
+  responsivenessScoreFromMetrics,
+  type ResponsivenessMetrics,
+} from "./vendorResponsiveness";
+
+/** Map measured RFQ responsiveness onto the supplierPerformance columns. */
+function responsivenessColumns(
+  metrics: ResponsivenessMetrics | null,
+  score: number | null,
+) {
+  if (!metrics) return {};
+  return {
+    averageResponseTimeHours:
+      metrics.averageResponseHours !== null ? metrics.averageResponseHours.toFixed(2) : null,
+    responsiveScore: score !== null ? score.toString() : null,
+    rfqsInvited: metrics.invited,
+    rfqsResponded: metrics.responded,
+    rfqsDeclined: metrics.declined,
+    rfqsNoResponse: metrics.noResponse,
+    rfqResponseRatePct: metrics.responseRatePct !== null ? metrics.responseRatePct.toFixed(2) : null,
+    onTimeQuoteRatePct: metrics.onTimeRatePct !== null ? metrics.onTimeRatePct.toFixed(2) : null,
+  };
+}
 
 // ============================================
 // WORKFLOW PROCESSOR INTERFACE
@@ -1962,6 +1987,17 @@ const supplierManagementProcessor: WorkflowProcessor = {
     const step2 = await engine.recordStep(context, 2, "Calculate Performance Metrics", "calculation", async () => {
       const metrics: any[] = [];
 
+      // Close out invitations that went past their due date unanswered, then
+      // measure responsiveness for the whole vendor set in one query. Without
+      // the close-out step, silent vendors would never count as unresponsive.
+      const { closed } = await markStaleInvitationsNoResponse();
+      if (closed > 0) {
+        console.log(`[SupplierPerformance] Closed ${closed} stale RFQ invitation(s) as no_response`);
+      }
+      const responsivenessByVendor = await computeResponsivenessForVendors(
+        step1.data.vendors.map((v: any) => v.id),
+      );
+
       for (const vendor of step1.data.vendors) {
         // Get POs for this vendor in the last 3 months
         const threeMonthsAgo = new Date();
@@ -1985,7 +2021,19 @@ const supplierManagementProcessor: WorkflowProcessor = {
         const deliveryScore = onTimeRate;
         const qualityScore = 85; // Would calculate from quality inspections
         const priceScore = 80; // Would compare to market rates
-        const overallScore = (deliveryScore * 0.4 + qualityScore * 0.35 + priceScore * 0.25);
+
+        // Responsiveness is measured off RFQ invitations rather than assumed.
+        const responsiveness = responsivenessByVendor.get(vendor.id) ?? null;
+        const responsivenessScoring = responsiveness
+          ? responsivenessScoreFromMetrics(responsiveness)
+          : null;
+        const responsiveScore = responsivenessScoring?.score ?? null;
+
+        // Vendors with no RFQ history keep the original three-factor weighting
+        // instead of being penalised for data we never collected.
+        const overallScore = responsiveScore !== null
+          ? deliveryScore * 0.35 + qualityScore * 0.30 + priceScore * 0.20 + responsiveScore * 0.15
+          : deliveryScore * 0.4 + qualityScore * 0.35 + priceScore * 0.25;
 
         // Upsert performance record
         const [existing] = await db
@@ -2010,6 +2058,7 @@ const supplierManagementProcessor: WorkflowProcessor = {
               qualityScore: qualityScore.toString(),
               priceScore: priceScore.toString(),
               overallScore: overallScore.toString(),
+              ...responsivenessColumns(responsiveness, responsiveScore),
             })
             .where(eq(supplierPerformance.id, existing.id));
         } else {
@@ -2025,6 +2074,7 @@ const supplierManagementProcessor: WorkflowProcessor = {
             priceScore: priceScore.toString(),
             overallScore: overallScore.toString(),
             riskLevel: overallScore < 60 ? "high" : overallScore < 80 ? "medium" : "low",
+            ...responsivenessColumns(responsiveness, responsiveScore),
           });
         }
 
@@ -2034,6 +2084,8 @@ const supplierManagementProcessor: WorkflowProcessor = {
           deliveryScore,
           qualityScore,
           priceScore,
+          responsiveScore,
+          responsivenessDetails: responsivenessScoring?.details ?? "No RFQ invitations on record.",
           overallScore,
           riskLevel: overallScore < 60 ? "high" : overallScore < 80 ? "medium" : "low",
         });
