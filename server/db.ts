@@ -1141,26 +1141,38 @@ export async function getAccountByName(name: string, companyId?: number) {
 // SALES - ORDERS
 // ============================================
 
-export async function getOrders(filters?: { companyId?: number; status?: string; customerId?: number }) {
+// Pass a request's `ctx.scope` to restrict to the caller's visible entities. `filters` are
+// non-security refinements (status/customerId, and companyId for trusted internal callers).
+export async function getOrders(scope?: Scope, filters?: { companyId?: number; status?: string; customerId?: number }) {
   const db = await getDb();
   if (!db) return [];
-  
+
   const conditions = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return []; // scoped user with no visible entities
+    conditions.push(inArray(orders.companyId, ids));
+  }
   if (filters?.companyId) conditions.push(eq(orders.companyId, filters.companyId));
   if (filters?.status) conditions.push(eq(orders.status, filters.status as any));
   if (filters?.customerId) conditions.push(eq(orders.customerId, filters.customerId));
-  
+
   if (conditions.length > 0) {
     return db.select().from(orders).where(and(...conditions)).orderBy(desc(orders.createdAt));
   }
   return db.select().from(orders).orderBy(desc(orders.createdAt));
 }
 
-export async function getOrderById(id: number) {
+// Pass `ctx.scope` to enforce entity visibility: an order outside the caller's scope is reported
+// as not found (undefined). Omit for internal callers.
+export async function getOrderById(id: number, scope?: Scope) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
-  return result[0];
+  const order = result[0];
+  if (!order) return undefined;
+  if (scope && !scopeAllows(scope, order.companyId)) return undefined;
+  return order;
 }
 
 export async function getOrderByShopifyId(shopifyOrderId: string) {
@@ -1177,11 +1189,11 @@ export async function getProductByShopifyId(shopifyProductId: string) {
   return result[0];
 }
 
-export async function getOrderWithItems(id: number) {
+export async function getOrderWithItems(id: number, scope?: Scope) {
   const db = await getDb();
   if (!db) return undefined;
-  
-  const order = await getOrderById(id);
+
+  const order = await getOrderById(id, scope);
   if (!order) return undefined;
   
   const items = await db.select().from(orderItems).where(eq(orderItems.orderId, id));

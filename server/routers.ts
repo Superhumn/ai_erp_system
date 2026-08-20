@@ -2518,16 +2518,17 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
   // SALES - ORDERS
   // ============================================
   orders: router({
-    list: protectedProcedure
+    // Scope derived server-side from the caller's entity access (ctx.scope); status/customerId
+    // remain client-side non-security filters. companyId is no longer a client input.
+    list: scopedProcedure
       .input(z.object({
-        companyId: z.number().optional(),
         status: z.string().optional(),
         customerId: z.number().optional(),
       }).optional())
-      .query(({ input }) => db.getOrders(input)),
-    get: protectedProcedure
+      .query(({ input, ctx }) => db.getOrders(ctx.scope, { status: input?.status, customerId: input?.customerId })),
+    get: scopedProcedure
       .input(z.object({ id: z.number() }))
-      .query(({ input }) => db.getOrderWithItems(input.id)),
+      .query(({ input, ctx }) => db.getOrderWithItems(input.id, ctx.scope)),
     create: protectedProcedure
       .input(z.object({
         companyId: z.number().optional(),
@@ -2556,6 +2557,13 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
       }))
       .mutation(async ({ input, ctx }) => {
         const { items, ...orderData } = input;
+        // Can't create an order under an entity the caller doesn't have access to.
+        if (orderData.companyId != null) {
+          const scope = await resolveRequestScope(ctx.user);
+          if (!scopeAllows(scope, orderData.companyId)) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Cannot create an order under an entity outside your access.' });
+          }
+        }
         const orderNumber = generateNumber('ORD');
         const result = await db.createOrder({ ...orderData, orderNumber, createdBy: ctx.user.id });
         
