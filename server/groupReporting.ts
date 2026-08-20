@@ -61,6 +61,39 @@ export function eliminateIntercompany(transactions: GroupTxn[], links: Link[]) {
   return { revenueGroup, expenseGroup, netGroup: revenueGroup - expenseGroup };
 }
 
+export type EquityGrant = { stakeholderId: number; companyId: number | null; shares: number };
+
+/**
+ * Cap tables (STEP 6). An investor's effective GLOBAL ownership = their share of an entity ×
+ * the ultimate parent's effective % of that entity. Recursive because the entity's effective %
+ * already compounds every hop up the tree (from computeEffectiveOwnership / v_group_ownership).
+ * Example: 40% of a JV that the group effectively owns 24.99% of ⇒ 40% × 24.99% = 9.996% global.
+ * Mirrors the v_investor_global_ownership view.
+ */
+export function computeInvestorGlobalOwnership(
+  grants: EquityGrant[],
+  effectivePctByEntity: Map<number, number>,
+): Array<{ stakeholderId: number; companyId: number; localPct: number; globalPct: number }> {
+  const totalByEntity = new Map<number, number>();
+  const sharesByPair = new Map<string, { stakeholderId: number; companyId: number; shares: number }>();
+  for (const g of grants) {
+    if (g.companyId == null) continue;
+    totalByEntity.set(g.companyId, (totalByEntity.get(g.companyId) ?? 0) + g.shares);
+    const key = `${g.stakeholderId}:${g.companyId}`;
+    const acc = sharesByPair.get(key) ?? { stakeholderId: g.stakeholderId, companyId: g.companyId, shares: 0 };
+    acc.shares += g.shares;
+    sharesByPair.set(key, acc);
+  }
+  const out: Array<{ stakeholderId: number; companyId: number; localPct: number; globalPct: number }> = [];
+  for (const { stakeholderId, companyId, shares } of sharesByPair.values()) {
+    const total = totalByEntity.get(companyId) ?? 0;
+    const localPct = total > 0 ? (shares / total) * 100 : 0;
+    const effectivePct = effectivePctByEntity.get(companyId) ?? 0;
+    out.push({ stakeholderId, companyId, localPct, globalPct: (localPct * effectivePct) / 100 });
+  }
+  return out;
+}
+
 /** Per-entity net P&L (mirrors v_entity_pnl), summing an amount field grouped by companyId. */
 export function rollupByEntity(
   transactions: Array<{ companyId: number | null; type: string; amount: number }>,

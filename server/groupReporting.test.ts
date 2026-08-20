@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   computeEffectiveOwnership,
+  computeInvestorGlobalOwnership,
   eliminateIntercompany,
   rollupByEntity,
   type EntityNode,
@@ -55,6 +56,41 @@ describe("eliminateIntercompany (group P&L)", () => {
       { id: 2, type: "expense", amountGroup: 200 },
     ];
     expect(eliminateIntercompany(txns, []).netGroup).toBe(300);
+  });
+});
+
+describe("computeInvestorGlobalOwnership (cap tables, STEP 6)", () => {
+  it("an investor's global ownership compounds their entity stake with the group's effective %", () => {
+    // GLOBAL → US(100%) → JV(51%) → subJV(49%); group effectively owns 24.99% of subJV(4).
+    const tree: EntityNode[] = [
+      { id: 1, parentCompanyId: null, ownershipPctOfParent: null },
+      { id: 2, parentCompanyId: 1, ownershipPctOfParent: 100 },
+      { id: 3, parentCompanyId: 2, ownershipPctOfParent: 51 },
+      { id: 4, parentCompanyId: 3, ownershipPctOfParent: 49 },
+    ];
+    const effective = computeEffectiveOwnership(tree);
+    // Investor 100 holds 40 of 100 shares of subJV(4) → 40% local.
+    const grants = [
+      { stakeholderId: 100, companyId: 4, shares: 40 },
+      { stakeholderId: 200, companyId: 4, shares: 60 },
+    ];
+    const own = computeInvestorGlobalOwnership(grants, effective);
+    const inv100 = own.find((o) => o.stakeholderId === 100)!;
+    expect(inv100.localPct).toBeCloseTo(40, 6);
+    // 40% of an entity the group effectively owns 24.99% of → 40% × 24.99% = 9.996% global.
+    expect(inv100.globalPct).toBeCloseTo(9.996, 6);
+  });
+
+  it("a direct investor in a wholly-owned entity keeps their full local percentage globally", () => {
+    const tree: EntityNode[] = [
+      { id: 1, parentCompanyId: null, ownershipPctOfParent: null },
+      { id: 2, parentCompanyId: 1, ownershipPctOfParent: 100 },
+    ];
+    const effective = computeEffectiveOwnership(tree);
+    const own = computeInvestorGlobalOwnership([{ stakeholderId: 1, companyId: 2, shares: 25 }, { stakeholderId: 2, companyId: 2, shares: 75 }], effective);
+    const inv1 = own.find((o) => o.stakeholderId === 1)!;
+    expect(inv1.localPct).toBeCloseTo(25, 6);
+    expect(inv1.globalPct).toBeCloseTo(25, 6); // wholly-owned ⇒ global == local
   });
 });
 
