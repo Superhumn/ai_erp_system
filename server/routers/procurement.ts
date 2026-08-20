@@ -804,17 +804,25 @@ export const procurementRouter = router({
       sendToVendors: opsProcedure
         .input(z.object({
           rfqId: z.number(),
-          vendorIds: z.array(z.number()).min(1).max(MAX_RFQ_VENDORS_PER_SEND),
+          // Payload guard only; the real cap is on the DISTINCT count below.
+          vendorIds: z.array(z.number()).min(1).max(MAX_RFQ_VENDORS_PER_SEND * 4),
         }))
         .mutation(async ({ input, ctx }) => {
           const rfq = await db.getVendorRfqById(input.rfqId);
           if (!rfq) throw new TRPCError({ code: 'NOT_FOUND', message: 'RFQ not found' });
 
+          const targetVendorIds = Array.from(new Set(input.vendorIds));
+          if (targetVendorIds.length > MAX_RFQ_VENDORS_PER_SEND) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: `An RFQ can go to at most ${MAX_RFQ_VENDORS_PER_SEND} vendors at a time (received ${targetVendorIds.length}).`,
+            });
+          }
+
           const results = { sent: 0, failed: 0, skipped: 0, emails: [] as any[] };
 
           const existingInvitations = await db.getVendorRfqInvitations(input.rfqId);
           const alreadyInvited = new Set(existingInvitations.map(i => i.vendorId));
-          const targetVendorIds = Array.from(new Set(input.vendorIds));
 
           for (const vendorId of targetVendorIds) {
             if (alreadyInvited.has(vendorId)) {

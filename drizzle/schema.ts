@@ -4300,8 +4300,12 @@ export const vendorQuotes = mysqlTable("vendorQuotes", {
   billableQuantity: decimal("billableQuantity", { precision: 15, scale: 4 }), // qty actually paid for after MOQ
   moqShortfallUnits: decimal("moqShortfallUnits", { precision: 15, scale: 4 }), // units bought above requirement to clear MOQ
   toolingPerUnit: decimal("toolingPerUnit", { precision: 18, scale: 6 }),
-  normalizationBreakdown: text("normalizationBreakdown"), // JSON array of { key, label, amount, currency, source }
-  normalizationWarnings: text("normalizationWarnings"), // JSON array of { code, message }
+  // JSON array of { key, label, amount, source } — amounts are in the quote's
+  // own currency; `fxRate` converts the total into `normalizedCurrency`.
+  normalizationBreakdown: text("normalizationBreakdown"),
+  // JSON array of { code, message, understatesCost? } — `understatesCost` marks
+  // a warning whose cause makes the landed cost a floor rather than an estimate.
+  normalizationWarnings: text("normalizationWarnings"),
   normalizedRank: int("normalizedRank"), // 1 = lowest landed total cost
   normalizedAt: timestamp("normalizedAt"),
 

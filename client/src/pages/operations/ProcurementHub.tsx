@@ -650,8 +650,10 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                                 </td>
                                 <td className="px-1.5 py-0.5 text-right font-mono font-semibold">
                                   {n?.landedTotalCost != null ? (
-                                    <span title={n.breakdown.map((b: any) => `${b.label}: ${b.amount}`).join('\n')}>
-                                      {formatCurrency(n.landedTotalCost)}
+                                    // Landed cost is in the RFQ's base currency, which is
+                                    // not necessarily USD.
+                                    <span title={n.breakdown.map((b: any) => `${b.label}: ${b.amount} ${n.quoteCurrency}`).join('\n')}>
+                                      {formatCurrency(n.landedTotalCost, { currency: n.baseCurrency })}
                                     </span>
                                   ) : (
                                     <span className="text-muted-foreground">-</span>
