@@ -37,6 +37,7 @@ const DATA_MODULES = [
   { key: "orders", label: "Orders", title: "orderNumber", group: "status", date: "orderDate" },
   { key: "procurement", label: "Procurement (POs)", title: "poNumber", group: "status", date: "expectedDate" },
   { key: "grants", label: "Grants", title: "title", group: "status", date: "submissionDeadline" },
+  { key: "recruiting", label: "Recruiting", title: "name", group: "stage", date: "appliedAt" },
 ] as const;
 
 type DataModuleKey = (typeof DATA_MODULES)[number]["key"];
@@ -46,7 +47,12 @@ function useModuleRows(module: DataModuleKey) {
   const ordersQ = trpc.orders.list.useQuery(undefined, { enabled: module === "orders" });
   const poQ = trpc.purchaseOrders.list.useQuery(undefined, { enabled: module === "procurement" });
   const grantsQ = trpc.grantBid.applications.list.useQuery({}, { enabled: module === "grants" });
-  const active = module === "orders" ? ordersQ : module === "procurement" ? poQ : grantsQ;
+  const recruitingQ = trpc.recruiting.candidates.list.useQuery(undefined, { enabled: module === "recruiting" });
+  const active =
+    module === "orders" ? ordersQ :
+    module === "procurement" ? poQ :
+    module === "recruiting" ? recruitingQ :
+    grantsQ;
   return {
     rows: ((active.data as unknown as Row[]) || []),
     isLoading: active.isLoading,
