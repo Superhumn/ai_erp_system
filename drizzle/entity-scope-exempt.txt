@@ -80,6 +80,7 @@ freightCostAllocations
 freightEmails
 freightQuotes
 fundraisingReminders
+fxRates
 googleOAuthTokens
 grantBidDocuments
 grantBidFieldMappings

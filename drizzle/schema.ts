@@ -238,6 +238,24 @@ export const regions = mysqlTable("regions", {
 export type Region = typeof regions.$inferSelect;
 export type InsertRegion = typeof regions.$inferInsert;
 
+// FX rates (multi-entity STEP 4). Global reference data (no entity). A money row freezes the rate
+// used at its transaction date; historical rows are never recomputed. Look up the latest rate on
+// or before a given date. Unique per (from, to, as-of date).
+export const fxRates = mysqlTable("fx_rates", {
+  id: int("id").autoincrement().primaryKey(),
+  fromCcy: varchar("fromCcy", { length: 3 }).notNull(),
+  toCcy: varchar("toCcy", { length: 3 }).notNull(),
+  rate: decimal("rate", { precision: 18, scale: 8 }).notNull(),
+  asOfDate: timestamp("asOfDate").notNull(),
+  source: varchar("source", { length: 64 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (t) => ({
+  fromToDateUnique: uniqueIndex("uq_fx_rates_from_to_date").on(t.fromCcy, t.toCcy, t.asOfDate),
+}));
+
+export type FxRate = typeof fxRates.$inferSelect;
+export type InsertFxRate = typeof fxRates.$inferInsert;
+
 export const companies = mysqlTable("companies", {
   id: int("id").autoincrement().primaryKey(),
   name: varchar("name", { length: 255 }).notNull(),
@@ -385,6 +403,10 @@ export const invoices = mysqlTable("invoices", {
   totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).notNull(),
   paidAmount: decimal("paidAmount", { precision: 15, scale: 2 }).default("0"),
   currency: varchar("currency", { length: 3 }).default("USD"),
+  amountFunc: decimal("amountFunc", { precision: 15, scale: 2 }),      // entity functional currency
+  amountGroup: decimal("amountGroup", { precision: 15, scale: 2 }),    // group reporting (USD)
+  fxRateUsed: decimal("fxRateUsed", { precision: 18, scale: 8 }),      // rate frozen at txn date
+  fxRateDate: timestamp("fxRateDate"),                                 // date the rate was taken
   notes: text("notes"),
   terms: text("terms"),
   quickbooksInvoiceId: varchar("quickbooksInvoiceId", { length: 64 }),
@@ -420,6 +442,10 @@ export const payments = mysqlTable("payments", {
   accountId: int("accountId").references(() => accounts.id),
   amount: decimal("amount", { precision: 15, scale: 2 }).notNull(),
   currency: varchar("currency", { length: 3 }).default("USD"),
+  amountFunc: decimal("amountFunc", { precision: 15, scale: 2 }),      // entity functional currency
+  amountGroup: decimal("amountGroup", { precision: 15, scale: 2 }),    // group reporting (USD)
+  fxRateUsed: decimal("fxRateUsed", { precision: 18, scale: 8 }),      // rate frozen at txn date
+  fxRateDate: timestamp("fxRateDate"),                                 // date the rate was taken
   paymentMethod: mysqlEnum("paymentMethod", ["cash", "check", "bank_transfer", "credit_card", "ach", "wire", "other"]).default("bank_transfer"),
   paymentDate: timestamp("paymentDate").notNull(),
   referenceNumber: varchar("referenceNumber", { length: 128 }),
@@ -443,6 +469,10 @@ export const transactions = mysqlTable("transactions", {
   description: text("description"),
   totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).notNull(),
   currency: varchar("currency", { length: 3 }).default("USD"),
+  amountFunc: decimal("amountFunc", { precision: 15, scale: 2 }),      // entity functional currency
+  amountGroup: decimal("amountGroup", { precision: 15, scale: 2 }),    // group reporting (USD)
+  fxRateUsed: decimal("fxRateUsed", { precision: 18, scale: 8 }),      // rate frozen at txn date
+  fxRateDate: timestamp("fxRateDate"),                                 // date the rate was taken
   status: mysqlEnum("status", ["draft", "posted", "void"]).default("draft").notNull(),
   createdBy: int("createdBy").references(() => users.id),
   postedBy: int("postedBy").references(() => users.id),
@@ -481,6 +511,10 @@ export const orders = mysqlTable("orders", {
   discountAmount: decimal("discountAmount", { precision: 15, scale: 2 }).default("0"),
   totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).notNull(),
   currency: varchar("currency", { length: 3 }).default("USD"),
+  amountFunc: decimal("amountFunc", { precision: 15, scale: 2 }),      // entity functional currency
+  amountGroup: decimal("amountGroup", { precision: 15, scale: 2 }),    // group reporting (USD)
+  fxRateUsed: decimal("fxRateUsed", { precision: 18, scale: 8 }),      // rate frozen at txn date
+  fxRateDate: timestamp("fxRateDate"),                                 // date the rate was taken
   notes: text("notes"),
   shopifyOrderId: varchar("shopifyOrderId", { length: 64 }),
   invoiceId: int("invoiceId").references(() => invoices.id),
