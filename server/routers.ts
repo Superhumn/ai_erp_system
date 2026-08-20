@@ -43,6 +43,10 @@ import { analyzeContract, extractClauses, predictDisputes, checkCompliance } fro
 import { estimateEffort, optimizeResourceAllocation, predictProjectRisks, optimizeSchedule } from "./projectsAiService";
 import { detectEdiAnomalies, predictEdiErrors } from "./ediAiService";
 import { scoreSuppliers } from "./supplierScoringService";
+import { normalizeQuotesForRfq, basisFromRfq, INCOTERM_CODES, DEFAULT_TARGET_INCOTERM } from "./quoteNormalization";
+import { ingestVendorQuoteEmail, parseVendorQuoteAttachment, parseVendorQuoteEmail } from "./vendorQuoteParser";
+import { computeResponsivenessForVendors, computeVendorResponsiveness, markStaleInvitationsNoResponse, responsivenessScoreFromMetrics } from "./vendorResponsiveness";
+import { deleteCurrencyRate, getFxRate, listCurrencyRates, upsertCurrencyRate } from "./currencyService";
 import * as db from "./db";
 import { resolveScope } from "./_core/scope";
 import * as manufacturingDb from "./db/manufacturing";
@@ -179,6 +183,10 @@ const vendorProcedure = protectedProcedure.use(({ ctx, next }) => {
 // and must never reach internal-only features (AI assistant, global search,
 // cross-module agent tasks) that read company-wide data.
 const EXTERNAL_ROLES = ['copacker', 'vendor', 'investor', 'contractor'];
+
+// Upper bound on a single RFQ blast. Each vendor costs an LLM draft plus an
+// email send, so an unbounded list would hold the request open for minutes.
+const MAX_RFQ_VENDORS_PER_SEND = 50;
 
 // Internal-staff-only. Allows every internal role (including the basic "user"
 // role, which has AI-query access) but blocks the external/portal roles.
@@ -12404,6 +12412,15 @@ Provide your forecast in JSON format with the following structure:
           validityPeriod: z.number().optional(),
           priority: z.enum(['low', 'normal', 'high', 'urgent']).optional(),
           notes: z.string().optional(),
+          // Comparison basis every quote on this RFQ is normalized to.
+          baseCurrency: z.string().length(3).optional(),
+          targetIncoterms: z.string().optional(),
+          destinationCountry: z.string().optional(),
+          freightAllowancePerUnit: z.string().optional(),
+          freightAllowancePct: z.string().optional(),
+          dutyRatePct: z.string().optional(),
+          insuranceRatePct: z.string().optional(),
+          amortizeToolingOverUnits: z.string().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
           const rfqNumber = await db.generateVendorRfqNumber();
@@ -12423,6 +12440,14 @@ Provide your forecast in JSON format with the following structure:
           quoteDueDate: z.date().optional(),
           notes: z.string().optional(),
           internalNotes: z.string().optional(),
+          baseCurrency: z.string().length(3).optional(),
+          targetIncoterms: z.string().optional(),
+          destinationCountry: z.string().optional(),
+          freightAllowancePerUnit: z.string().optional(),
+          freightAllowancePct: z.string().optional(),
+          dutyRatePct: z.string().optional(),
+          insuranceRatePct: z.string().optional(),
+          amortizeToolingOverUnits: z.string().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
           const { id, ...data } = input;
@@ -12435,23 +12460,36 @@ Provide your forecast in JSON format with the following structure:
       sendToVendors: opsProcedure
         .input(z.object({
           rfqId: z.number(),
-          vendorIds: z.array(z.number()),
+          // Bounded: each vendor costs an LLM call plus an email send, and a
+          // runaway list would hold the request open for minutes.
+          vendorIds: z.array(z.number()).min(1).max(MAX_RFQ_VENDORS_PER_SEND),
         }))
         .mutation(async ({ input, ctx }) => {
           const rfq = await db.getVendorRfqById(input.rfqId);
           if (!rfq) throw new TRPCError({ code: 'NOT_FOUND', message: 'RFQ not found' });
-          
-          const results = { sent: 0, failed: 0, emails: [] as any[] };
-          
-          for (const vendorId of input.vendorIds) {
+
+          const results = { sent: 0, failed: 0, skipped: 0, emails: [] as any[] };
+
+          // Vendors already invited on this RFQ are skipped rather than sent a
+          // duplicate RFQ, which would also reset their response clock.
+          const existingInvitations = await db.getVendorRfqInvitations(input.rfqId);
+          const alreadyInvited = new Set(existingInvitations.map(i => i.vendorId));
+          const targetVendorIds = Array.from(new Set(input.vendorIds));
+
+          for (const vendorId of targetVendorIds) {
+            if (alreadyInvited.has(vendorId)) {
+              results.skipped++;
+              results.emails.push({ vendorId, status: 'skipped', error: 'Already invited on this RFQ' });
+              continue;
+            }
             const vendor = await db.getVendorById(vendorId);
             if (!vendor || !vendor.email) {
               results.failed++;
               continue;
             }
-            
+
             // Create invitation record
-            await db.createVendorRfqInvitation({
+            const invitation = await db.createVendorRfqInvitation({
               rfqId: input.rfqId,
               vendorId,
               status: 'pending',
@@ -12507,10 +12545,7 @@ Format the email professionally.`;
               
               if (sendResult.success) {
                 emailStatus = 'sent';
-                await db.updateVendorRfqInvitation(
-                  (await db.getVendorRfqInvitations(input.rfqId)).find(i => i.vendorId === vendorId)?.id || 0,
-                  { status: 'sent' }
-                );
+                await db.updateVendorRfqInvitation(invitation.id, { status: 'sent' });
               } else {
                 emailStatus = 'failed';
                 deliveryError = sendResult.error;
@@ -12665,6 +12700,14 @@ Ask if they received the original request and if they can provide a quote.`;
           paymentTerms: z.string().optional(),
           receivedVia: z.enum(['email', 'portal', 'phone', 'manual']).optional(),
           notes: z.string().optional(),
+          // Terms the vendor quoted on, needed to level bids onto one basis.
+          incoterms: z.enum(INCOTERM_CODES).optional(),
+          namedPlace: z.string().optional(),
+          insuranceCost: z.string().optional(),
+          customsDutyAmount: z.string().optional(),
+          toolingCost: z.string().optional(),
+          toolingAmortizationUnits: z.string().optional(),
+          toolingIsRefundable: z.boolean().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
           const result = await db.createVendorQuote({ ...input, status: 'received' });
@@ -12685,7 +12728,10 @@ Ask if they received the original request and if they can provide a quote.`;
             await db.updateVendorRfq(input.rfqId, { status: 'partially_received' });
           }
           
-          // Rank quotes (simple ranking by price)
+          // Re-level the RFQ on the common basis (FX, Incoterm gaps, MOQ,
+          // tooling amortization) so the new bid is immediately comparable.
+          // `overallRank` keeps its legacy price-only meaning for callers that
+          // still read it; `normalizedRank` is the landed-cost ranking.
           const allQuotes = await db.getVendorQuotes({ rfqId: input.rfqId });
           const sortedQuotes = allQuotes
             .filter(q => q.status === 'received')
@@ -12693,9 +12739,19 @@ Ask if they received the original request and if they can provide a quote.`;
           for (let i = 0; i < sortedQuotes.length; i++) {
             await db.updateVendorQuote(sortedQuotes[i].id, { overallRank: i + 1 });
           }
-          
+
+          let normalization: Awaited<ReturnType<typeof normalizeQuotesForRfq>> | null = null;
+          try {
+            normalization = await normalizeQuotesForRfq(input.rfqId);
+          } catch (e) {
+            console.warn('[VendorQuotes] Normalization after quote entry failed:', e);
+          }
+
           await createAuditLog(ctx.user.id, 'create', 'vendor_quote', result.id, `Quote from vendor ${input.vendorId}`);
-          return result;
+          return {
+            ...result,
+            normalized: normalization?.results.find(r => r.quoteId === result.id) ?? null,
+          };
         }),
       update: opsProcedure
         .input(z.object({
@@ -12704,6 +12760,19 @@ Ask if they received the original request and if they can provide a quote.`;
           unitPrice: z.string().optional(),
           quantity: z.string().optional(),
           totalPrice: z.string().optional(),
+          currency: z.string().length(3).optional(),
+          shippingCost: z.string().optional(),
+          handlingFee: z.string().optional(),
+          taxAmount: z.string().optional(),
+          otherCharges: z.string().optional(),
+          insuranceCost: z.string().optional(),
+          customsDutyAmount: z.string().optional(),
+          incoterms: z.enum(INCOTERM_CODES).optional(),
+          namedPlace: z.string().optional(),
+          minimumOrderQty: z.string().optional(),
+          toolingCost: z.string().optional(),
+          toolingAmortizationUnits: z.string().optional(),
+          toolingIsRefundable: z.boolean().optional(),
           leadTimeDays: z.number().optional(),
           validUntil: z.date().optional(),
           paymentTerms: z.string().optional(),
@@ -12712,6 +12781,16 @@ Ask if they received the original request and if they can provide a quote.`;
         .mutation(async ({ input, ctx }) => {
           const { id, ...data } = input;
           await db.updateVendorQuote(id, data);
+          // Any change to price, currency, Incoterm, MOQ or tooling moves the
+          // landed cost, so the whole RFQ is re-leveled rather than left stale.
+          const quote = await db.getVendorQuoteById(id);
+          if (quote?.rfqId) {
+            try {
+              await normalizeQuotesForRfq(quote.rfqId);
+            } catch (e) {
+              console.warn('[VendorQuotes] Normalization after quote update failed:', e);
+            }
+          }
           await createAuditLog(ctx.user.id, 'update', 'vendor_quote', id);
           return { success: true };
         }),
@@ -12889,13 +12968,28 @@ Ask if they received the original request and if they can provide a quote.`;
           const vendorNames = new Map<number, string>(uniqueVendorIds.map(id => [id, `Vendor ${id}`]));
           for (const v of vendorList) vendorNames.set(v.id, v.name || `Vendor ${v.id}`);
 
+          // Level the money deterministically FIRST. The model narrates scope
+          // deviations on top of these numbers; it does not compute them, so an
+          // award recommendation always traces back to arithmetic we can show.
+          const normalization = await normalizeQuotesForRfq(input.rfqId);
+          const normalizedById = new Map(normalization.results.map(r => [r.quoteId, r]));
+          const basis = normalization.basis;
+
           const requirementBlock = `RFQ ${rfq.rfqNumber}
 Material: ${rfq.materialName}${rfq.materialDescription ? ` — ${rfq.materialDescription}` : ''}
 Required quantity: ${rfq.quantity} ${rfq.unit}
 Specifications: ${rfq.specifications || 'Standard'}
 Required delivery date: ${rfq.requiredDeliveryDate ? new Date(rfq.requiredDeliveryDate).toLocaleDateString() : 'Flexible'}
 Delivery location: ${rfq.deliveryLocation || 'TBD'}
-Incoterms requested: ${rfq.incoterms || 'Not specified'}`;
+Incoterms requested: ${rfq.incoterms || 'Not specified'}
+
+COMPARISON BASIS (already applied to the landed costs below):
+Base currency: ${basis.baseCurrency}
+Leveled to Incoterm: ${basis.targetIncoterm}
+Freight allowance: ${basis.freightAllowancePerUnit != null ? `${basis.freightAllowancePerUnit}/unit` : basis.freightAllowancePct != null ? `${basis.freightAllowancePct}% of goods` : 'not configured'}
+Duty rate: ${basis.dutyRatePct != null ? `${basis.dutyRatePct}%` : 'not configured'}
+Insurance rate: ${basis.insuranceRatePct != null ? `${basis.insuranceRatePct}%` : 'not configured'}
+Tooling amortized over: ${basis.amortizeToolingOverUnits != null ? `${basis.amortizeToolingOverUnits} units` : 'this order only'}`;
 
           const quoteBlocks = quotes.map(q => `Quote id ${q.id} — ${vendorNames.get(q.vendorId)}
   Unit price: ${q.unitPrice ?? 'n/a'} ${q.currency || 'USD'}
@@ -12907,7 +13001,26 @@ Incoterms requested: ${rfq.incoterms || 'Not specified'}`;
   Minimum order qty: ${q.minimumOrderQty ?? 'n/a'}
   Payment terms: ${q.paymentTerms || 'n/a'}
   Valid until: ${q.validUntil ? new Date(q.validUntil).toLocaleDateString() : 'n/a'}
-  Vendor notes: ${q.notes || 'none'}`).join('\n\n');
+  Vendor notes: ${q.notes || 'none'}
+  --- computed landed cost (authoritative, do not recompute) ---
+${(() => {
+    const n = normalizedById.get(q.id);
+    if (!n) return '  Not normalized.';
+    const lines = [
+      `  Incoterm quoted: ${n.incoterms.quoted ?? 'not stated'}${n.incoterms.namedPlace ? ` ${n.incoterms.namedPlace}` : ''} (leveled to ${n.incoterms.target})`,
+      `  Billable quantity: ${n.billableQuantity}${n.moqShortfallUnits > 0 ? ` (includes ${n.moqShortfallUnits} MOQ surplus units)` : ''}`,
+      `  Tooling per unit: ${n.toolingPerUnit}`,
+      n.fx ? `  FX: 1 ${n.quoteCurrency} = ${n.fx.rate} ${n.baseCurrency} (${n.fx.source}, as of ${n.fx.asOf.toISOString().slice(0, 10)})` : `  FX: none needed or unavailable`,
+      n.comparable
+        ? `  LANDED TOTAL: ${n.landedTotalCost} ${n.baseCurrency} | LANDED UNIT: ${n.landedUnitCost} ${n.baseCurrency}`
+        : `  NOT COMPARABLE — excluded from the cost ranking`,
+      `  Cost breakdown: ${n.breakdown.map(b => `${b.label}=${b.amount}`).join('; ')}`,
+    ];
+    if (n.warnings.length) {
+      lines.push(`  Computation warnings: ${n.warnings.map(w => `[${w.code}] ${w.message}`).join(' ')}`);
+    }
+    return lines.join('\n');
+  })()}`).join('\n\n');
 
           const prompt = `You are a procurement analyst performing BID LEVELING for a single-material RFQ.
 Bid leveling means adjusting each vendor's quote to a common scope baseline so prices are compared on equal terms, surfacing hidden assumptions and scope gaps.
@@ -12918,13 +13031,15 @@ ${requirementBlock}
 VENDOR QUOTES:
 ${quoteBlocks}
 
-For EACH quote:
-1. Compute a "leveledTotalCost": the total all-in cost normalized to the RFQ's requested quantity and scope. Include shipping/handling/tax/other charges. If the vendor quoted a different quantity than requested, pro-rate to the requested quantity (${rfq.quantity}). If freight/incoterms differ from what was requested and the vendor's price excludes delivery, add a reasonable allowance and note it as a deviation.
-2. Identify scopeDeviations: each is { requirement, finding, severity } where requirement is the specific RFQ requirement (e.g. "delivery date", "incoterms", "quantity", "specifications", "payment terms"), finding describes how this quote diverges, and severity is "low" | "medium" | "high". Return an empty array if fully compliant.
-3. Write a one-to-two sentence rationale explaining the leveling adjustments.
-4. Give a score 0-100 (higher = better leveled value, balancing cost, lead time, compliance).
+The landed costs above are already computed deterministically (FX conversion at a dated rate, Incoterm gap allowances, MOQ reconciliation, tooling amortization). Do NOT recompute or second-guess them.
 
-Then rank all quotes by best leveled value (1 = best), recommend one quoteId to award, and write a short award-recommendation summary a procurement manager could defend to an auditor.`;
+For EACH quote:
+1. Set "leveledTotalCost" to exactly the LANDED TOTAL shown for that quote. If a quote is marked NOT COMPARABLE, set it to null.
+2. Identify scopeDeviations: each is { requirement, finding, severity } where requirement is the specific RFQ requirement (e.g. "delivery date", "incoterms", "quantity", "specifications", "payment terms"), finding describes how this quote diverges, and severity is "low" | "medium" | "high". Return an empty array if fully compliant.
+3. Write a one-to-two sentence rationale that explains what drove this quote's landed cost away from its headline price (Incoterm gaps, MOQ surplus, tooling, FX) and flags any computation warning a buyer must act on.
+4. Give a score 0-100 (higher = better leveled value, balancing landed cost, lead time, compliance and the risk implied by the warnings).
+
+Then rank all quotes by best leveled value (1 = best; quotes marked NOT COMPARABLE rank last), recommend one quoteId to award, and write a short award-recommendation summary a procurement manager could defend to an auditor. Never recommend a NOT COMPARABLE quote — say what is missing instead.`;
 
           const response = await invokeLLM({
             messages: [
@@ -13024,9 +13139,15 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
           const validIds = new Set(quotes.map(q => q.id));
           for (const item of leveled.quotes) {
             if (!validIds.has(item.quoteId)) continue;
+            // The computed landed cost wins over whatever the model echoed back;
+            // only the narrative fields come from the LLM.
+            const computed = normalizedById.get(item.quoteId);
+            const leveledTotalCost = computed?.comparable && computed.landedTotalCost != null
+              ? computed.landedTotalCost.toFixed(2)
+              : item.leveledTotalCost != null ? item.leveledTotalCost.toFixed(2) : null;
             await db.updateVendorQuote(item.quoteId, {
-              leveledTotalCost: item.leveledTotalCost != null ? item.leveledTotalCost.toFixed(2) : null,
-              leveledRank: item.leveledRank,
+              leveledTotalCost,
+              leveledRank: computed?.rank ?? item.leveledRank,
               scopeDeviations: JSON.stringify(item.scopeDeviations),
               leveledNotes: item.rationale,
               leveledAt: now,
@@ -13041,12 +13162,15 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
             leveledAt: now,
           });
 
-          // Only surface a recommendation that maps to a real quote on this RFQ;
-          // ignore a hallucinated id.
+          // Only surface a recommendation that maps to a real quote on this RFQ
+          // AND to one that survived normalization; ignore a hallucinated id or
+          // a recommendation for a quote we could not put on the common basis.
           const recommendedQuoteId =
-            leveled.recommendedQuoteId != null && validIds.has(leveled.recommendedQuoteId)
+            leveled.recommendedQuoteId != null &&
+            validIds.has(leveled.recommendedQuoteId) &&
+            normalizedById.get(leveled.recommendedQuoteId)?.comparable !== false
               ? leveled.recommendedQuoteId
-              : null;
+              : normalization.bestQuoteId;
 
           await createAuditLog(ctx.user.id, 'update', 'vendor_rfq', input.rfqId, `AI bid leveling across ${quotes.length} quotes`);
           return {
@@ -13054,6 +13178,66 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
             leveledCount: quotes.length,
             recommendedQuoteId,
             summary: leveled.summary,
+            basis: normalization.basis,
+            comparableCount: normalization.comparableCount,
+            excludedCount: normalization.excludedCount,
+          };
+        }),
+
+      // Deterministic normalization only — no LLM. Puts every received quote on
+      // the RFQ's comparison basis and ranks by landed cost.
+      normalize: opsProcedure
+        .input(z.object({ rfqId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await normalizeQuotesForRfq(input.rfqId);
+          await createAuditLog(
+            ctx.user.id,
+            'update',
+            'vendor_rfq',
+            input.rfqId,
+            `Normalized ${result.results.length} quotes to ${result.basis.baseCurrency} / ${result.basis.targetIncoterm}`,
+          );
+          return result;
+        }),
+
+      // Side-by-side comparison payload for the UI: stored quote rows joined to
+      // freshly computed landed costs, so the table never shows a stale rank.
+      comparison: protectedProcedure
+        .input(z.object({ rfqId: z.number() }))
+        .query(async ({ input }) => {
+          const rfq = await db.getVendorRfqById(input.rfqId);
+          if (!rfq) throw new TRPCError({ code: 'NOT_FOUND', message: 'RFQ not found' });
+
+          const quotes = await db.getVendorQuotes({ rfqId: input.rfqId });
+          if (quotes.length === 0) {
+            return { rfq, basis: basisFromRfq(rfq as any), rows: [], comparableCount: 0, excludedCount: 0 };
+          }
+
+          // Persist:false keeps a read-only query from writing.
+          const normalization = await normalizeQuotesForRfq(input.rfqId, { persist: false });
+          const normalizedById = new Map(normalization.results.map(r => [r.quoteId, r]));
+
+          const vendorIds = Array.from(new Set(quotes.map(q => q.vendorId)));
+          const vendorList = await db.getVendorsByIds(vendorIds);
+          const vendorById = new Map(vendorList.map(v => [v.id, v]));
+
+          const rows = quotes.map(q => ({
+            quote: q,
+            vendor: vendorById.get(q.vendorId) ?? null,
+            normalized: normalizedById.get(q.id) ?? null,
+          }));
+          rows.sort((a, b) => {
+            const ra = a.normalized?.rank ?? Number.MAX_SAFE_INTEGER;
+            const rb = b.normalized?.rank ?? Number.MAX_SAFE_INTEGER;
+            return ra - rb;
+          });
+
+          return {
+            rfq,
+            basis: normalization.basis,
+            rows,
+            comparableCount: normalization.comparableCount,
+            excludedCount: normalization.excludedCount,
           };
         }),
     }),
@@ -13063,7 +13247,149 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
       list: protectedProcedure
         .input(z.object({ rfqId: z.number().optional(), vendorId: z.number().optional() }).optional())
         .query(({ input }) => db.getVendorRfqEmails(input)),
+
+      // Parse an inbound vendor reply (body and/or an attached quote sheet) into
+      // a structured quote, match it to the vendor and the open RFQ, and level it.
+      parseIncoming: opsProcedure
+        .input(z.object({
+          fromEmail: z.string().email(),
+          fromName: z.string().optional(),
+          subject: z.string(),
+          body: z.string(),
+          htmlBody: z.string().optional(),
+          receivedAt: z.date().optional(),
+          attachment: z.object({ fileUrl: z.string().url(), fileName: z.string() }).optional(),
+          // Supply these to override matching when the buyer already knows them.
+          vendorId: z.number().optional(),
+          rfqId: z.number().optional(),
+          externalMessageId: z.string().optional(),
+          threadId: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await ingestVendorQuoteEmail(input);
+          if (result.quoteId) {
+            await createAuditLog(
+              ctx.user.id,
+              'create',
+              'vendor_quote',
+              result.quoteId,
+              `Parsed from vendor email: ${input.subject}`,
+            );
+          }
+          return result;
+        }),
+
+      // Extract a quote from a document without writing anything — lets a buyer
+      // review the extraction before it lands on the RFQ.
+      previewAttachment: opsProcedure
+        .input(z.object({
+          fileUrl: z.string().url(),
+          fileName: z.string(),
+          context: z.string().optional(),
+        }))
+        .mutation(({ input }) => parseVendorQuoteAttachment(input)),
+
+      previewEmail: opsProcedure
+        .input(z.object({
+          subject: z.string(),
+          body: z.string(),
+          fromEmail: z.string().email().optional(),
+          fromName: z.string().optional(),
+        }))
+        .mutation(({ input }) => parseVendorQuoteEmail(input)),
     }),
+
+    // Measured vendor responsiveness on RFQs (no LLM, no defaults).
+    responsiveness: router({
+      byVendor: protectedProcedure
+        .input(z.object({
+          vendorId: z.number(),
+          sinceDays: z.number().min(1).max(1095).optional(),
+        }))
+        .query(({ input }) =>
+          computeVendorResponsiveness(input.vendorId, {
+            since: input.sinceDays
+              ? new Date(Date.now() - input.sinceDays * 24 * 60 * 60 * 1000)
+              : undefined,
+          }),
+        ),
+
+      leaderboard: protectedProcedure
+        .input(z.object({ sinceDays: z.number().min(1).max(1095).optional() }).optional())
+        .query(async ({ input }) => {
+          const vendorList = await db.getVendors();
+          const since = input?.sinceDays
+            ? new Date(Date.now() - input.sinceDays * 24 * 60 * 60 * 1000)
+            : undefined;
+          const metrics = await computeResponsivenessForVendors(vendorList.map(v => v.id), { since });
+          return vendorList
+            .map(v => {
+              const m = metrics.get(v.id);
+              // `m` already carries vendorId.
+              return m ? { vendorName: v.name, ...m, scoring: responsivenessScoreFromMetrics(m) } : null;
+            })
+            .filter((r): r is NonNullable<typeof r> => r !== null && r.invited > 0)
+            .sort((a, b) => (b.scoring.score ?? -1) - (a.scoring.score ?? -1));
+        }),
+
+      // Close out invitations that went past their due date with no reply, so
+      // silent vendors register as unresponsive instead of sitting as "sent".
+      closeStaleInvitations: opsProcedure
+        .input(z.object({ graceDays: z.number().min(0).max(90).optional() }).optional())
+        .mutation(({ input }) => markStaleInvitationsNoResponse({ graceDays: input?.graceDays })),
+    }),
+  }),
+
+  // ============================================
+  // CURRENCY RATES (FX basis for quote comparison)
+  // ============================================
+  currency: router({
+    list: protectedProcedure
+      .input(z.object({
+        fromCurrency: z.string().length(3).optional(),
+        toCurrency: z.string().length(3).optional(),
+        limit: z.number().min(1).max(500).optional(),
+      }).optional())
+      .query(({ input }) => listCurrencyRates(input ?? undefined)),
+
+    // Resolve the rate that would actually be applied, including the inverse and
+    // USD-triangulated paths, so a buyer can check a pair before leveling bids.
+    resolve: protectedProcedure
+      .input(z.object({
+        fromCurrency: z.string().length(3),
+        toCurrency: z.string().length(3),
+        asOf: z.date().optional(),
+      }))
+      .query(({ input }) => getFxRate(input.fromCurrency, input.toCurrency, input.asOf)),
+
+    upsert: opsProcedure
+      .input(z.object({
+        fromCurrency: z.string().length(3),
+        toCurrency: z.string().length(3),
+        rate: z.number().positive(),
+        asOf: z.date().optional(),
+        source: z.string().max(64).optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await upsertCurrencyRate({ ...input, createdBy: ctx.user.id });
+        await createAuditLog(
+          ctx.user.id,
+          'create',
+          'currency_rate',
+          result.id,
+          `1 ${input.fromCurrency} = ${input.rate} ${input.toCurrency}`,
+        );
+        return result;
+      }),
+
+    remove: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await deleteCurrencyRate(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'currency_rate', input.id);
+        return { success: true };
+      }),
   }),
 
   // ============================================
@@ -13896,6 +14222,7 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
 
         let totalProcessed = 0;
         let totalAttachmentsParsed = 0;
+        let totalQuotesIngested = 0;
         const errors: string[] = [];
 
         for (const folder of folders) {
@@ -13922,6 +14249,11 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
                   status: "parsed",
                   category: email.categorization?.category || "other",
                 } as any);
+
+                // A quote often arrives as an attached sheet rather than in the
+                // body, so keep the first document-shaped attachment to hand it
+                // to the vendor-quote parser below.
+                let quoteAttachment: { fileUrl: string; fileName: string } | null = null;
 
                 // Persist attachment records (so they show in the inbox) and
                 // AUTO-IMPORT each into the correct ERP location.
@@ -13954,12 +14286,17 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
                       continue; // no stored bytes — skip parsing this attachment
                     }
 
+                    // Parse from the in-memory bytes we just uploaded (no R2 round-trip).
+                    const dataUrl = `data:${att.contentType};base64,${att.data.toString("base64")}`;
+                    if (!quoteAttachment && /\.(pdf|xlsx?|csv|png|jpe?g)$/i.test(att.filename)) {
+                      quoteAttachment = { fileUrl: dataUrl, fileName: att.filename };
+                    }
+
                     try {
                       const r = await importEmailAttachmentToErp({
                         emailId,
                         attachmentId,
-                        // Parse from the in-memory bytes we just uploaded (no R2 round-trip).
-                        content: `data:${att.contentType};base64,${att.data.toString("base64")}`,
+                        content: dataUrl,
                         filename: att.filename,
                         mimeType: att.contentType,
                         userId: 1,
@@ -13968,6 +14305,31 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
                     } catch { /* skip individual attachment failures */ }
                   }
                 }
+
+                // Supplier quotations land as real quotes on the matching RFQ,
+                // parsed from the body and the attached quote sheet together.
+                if (email.categorization?.category === "vendor_quote") {
+                  try {
+                    const ingest = await ingestVendorQuoteEmail({
+                      subject: email.subject,
+                      body: email.bodyText || "",
+                      fromEmail: email.from.address,
+                      fromName: email.from.name || undefined,
+                      receivedAt: email.date,
+                      attachment: quoteAttachment ?? undefined,
+                      externalMessageId: email.messageId,
+                    });
+                    if (ingest.quoteId) {
+                      totalQuotesIngested++;
+                      console.log(`[scanNow→VendorQuote] Created quote ${ingest.quoteId} on RFQ ${ingest.rfqId} from email ${emailId}`);
+                    } else {
+                      console.log(`[scanNow→VendorQuote] Email ${emailId} not converted: ${ingest.reason}`);
+                    }
+                  } catch (e: any) {
+                    console.error("[scanNow→VendorQuote] Ingest failed:", e?.message);
+                  }
+                }
+
                 totalProcessed++;
               } catch { /* skip */ }
             }
@@ -13981,6 +14343,7 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
           foldersScanned: folders,
           emailsProcessed: totalProcessed,
           attachmentsParsed: totalAttachmentsParsed,
+          vendorQuotesIngested: totalQuotesIngested,
           errors,
         };
       }),
@@ -14338,6 +14701,29 @@ Then rank all quotes by best leveled value (1 = best), recommend one quoteId to 
               }
             } catch (e) {
               console.warn("[Email→Quote] Auto-creation failed:", e);
+            }
+          }
+
+          // ── Automation #6: Vendor quote email → parse, match RFQ, level bids ──
+          if (result.categorization?.category === "vendor_quote") {
+            try {
+              const ingest = await ingestVendorQuoteEmail({
+                subject: input.subject,
+                body: input.bodyText,
+                htmlBody: input.bodyHtml,
+                fromEmail: input.fromEmail,
+                fromName: input.fromName,
+              });
+              if (ingest.quoteId) {
+                console.log(
+                  `[Email→VendorQuote] Created quote ${ingest.quoteId} on RFQ ${ingest.rfqId} from email ${emailId}` +
+                  (ingest.normalized?.rank ? ` (landed rank #${ingest.normalized.rank})` : ''),
+                );
+              } else {
+                console.log(`[Email→VendorQuote] Email ${emailId} not converted: ${ingest.reason}`);
+              }
+            } catch (e) {
+              console.warn("[Email→VendorQuote] Auto-ingest failed:", e);
             }
           }
 

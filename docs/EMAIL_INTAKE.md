@@ -17,6 +17,10 @@ A background scanner polls the configured mailbox(es) every 5 minutes
    - **Tracking number** → shipment
    - **Sender email / vendor name** → vendor (and their open POs)
 4. Creates an in-app notification summarizing what was imported.
+5. Runs category-specific automations. A message classified `vendor_quote` — a
+   supplier quoting materials against one of our RFQs — is parsed into a
+   structured quote, matched to the vendor and the open RFQ, and leveled against
+   the other bids. See [`QUOTE_NORMALIZATION.md`](./QUOTE_NORMALIZATION.md).
 
 So a supplier emailing an invoice to `ops@superhumn.co` results in a filed document linked
 to the matching PO / shipment / vendor — no manual upload.

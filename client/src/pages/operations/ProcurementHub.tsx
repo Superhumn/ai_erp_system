@@ -43,6 +43,7 @@ import {
   XCircle,
   Bot,
   Sparkles,
+  Scale,
   Plug,
   CloudUpload,
   FileSpreadsheet,
@@ -77,6 +78,36 @@ const poStatusOptions = [
 ];
 
 // Vendor Quotes Tab Component
+// Incoterms 2020, in increasing order of seller obligation. Mirrors
+// INCOTERM_CODES in server/quoteNormalization.ts.
+const INCOTERM_OPTIONS = ['EXW', 'FCA', 'FAS', 'FOB', 'CFR', 'CIF', 'CPT', 'CIP', 'DAP', 'DPU', 'DDP'] as const;
+
+const COMMON_CURRENCIES = ['USD', 'EUR', 'GBP', 'CNY', 'JPY', 'INR', 'CAD', 'AUD', 'MXN', 'CHF'] as const;
+
+const EMPTY_QUOTE_FORM = {
+  vendorId: '',
+  unitPrice: '',
+  quantity: '',
+  totalPrice: '',
+  currency: 'USD',
+  incoterms: '',
+  namedPlace: '',
+  minimumOrderQty: '',
+  shippingCost: '',
+  handlingFee: '',
+  insuranceCost: '',
+  customsDutyAmount: '',
+  taxAmount: '',
+  otherCharges: '',
+  toolingCost: '',
+  toolingAmortizationUnits: '',
+  toolingIsRefundable: false,
+  leadTimeDays: '',
+  validUntil: '',
+  paymentTerms: '',
+  notes: '',
+};
+
 function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMaterials: any[] }) {
   const utils = trpc.useUtils();
   const [activeSubTab, setActiveSubTab] = useState<'rfqs' | 'quotes'>('rfqs');
@@ -84,16 +115,9 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
   const [selectedRfqId, setSelectedRfqId] = useState<number | null>(null);
   const [selectedVendorIds, setSelectedVendorIds] = useState<number[]>([]);
   const [isEnterQuoteOpen, setIsEnterQuoteOpen] = useState(false);
-  const [quoteForm, setQuoteForm] = useState({
-    vendorId: '',
-    unitPrice: '',
-    quantity: '',
-    totalPrice: '',
-    leadTimeDays: '',
-    validUntil: '',
-    paymentTerms: '',
-    notes: '',
-  });
+  const [isFxRatesOpen, setIsFxRatesOpen] = useState(false);
+  const [fxForm, setFxForm] = useState({ fromCurrency: 'EUR', toCurrency: 'USD', rate: '', asOf: '' });
+  const [quoteForm, setQuoteForm] = useState(EMPTY_QUOTE_FORM);
   const [rfqForm, setRfqForm] = useState({
     materialName: '',
     rawMaterialId: '',
@@ -106,6 +130,14 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
     quoteDueDate: '',
     priority: 'normal',
     notes: '',
+    // Comparison basis — how quotes on this RFQ get leveled against each other.
+    baseCurrency: 'USD',
+    targetIncoterms: 'DDP',
+    freightAllowancePerUnit: '',
+    freightAllowancePct: '',
+    dutyRatePct: '',
+    insuranceRatePct: '',
+    amortizeToolingOverUnits: '',
   });
 
   // Queries
@@ -119,6 +151,12 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
     { rfqId: selectedRfqId! },
     { enabled: !!selectedRfqId }
   );
+  // Quotes joined to freshly computed landed costs, so the table never shows a
+  // stale rank after an FX rate or an allowance rate changes.
+  const { data: comparison } = trpc.vendorQuotes.quotes.comparison.useQuery(
+    { rfqId: selectedRfqId! },
+    { enabled: !!selectedRfqId }
+  );
 
   // Mutations
   const createRfq = trpc.vendorQuotes.rfqs.create.useMutation({
@@ -126,7 +164,7 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
       toast.success('RFQ created successfully');
       utils.vendorQuotes.rfqs.list.invalidate();
       setIsCreateRfqOpen(false);
-      setRfqForm({ materialName: '', rawMaterialId: '', materialDescription: '', quantity: '', unit: 'kg', specifications: '', requiredDeliveryDate: '', deliveryLocation: '', quoteDueDate: '', priority: 'normal', notes: '' });
+      setRfqForm({ materialName: '', rawMaterialId: '', materialDescription: '', quantity: '', unit: 'kg', specifications: '', requiredDeliveryDate: '', deliveryLocation: '', quoteDueDate: '', priority: 'normal', notes: '', baseCurrency: 'USD', targetIncoterms: 'DDP', freightAllowancePerUnit: '', freightAllowancePct: '', dutyRatePct: '', insuranceRatePct: '', amortizeToolingOverUnits: '' });
     },
     onError: (err) => toast.error(err.message),
   });
@@ -158,9 +196,10 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
       toast.success('Quote recorded successfully');
       utils.vendorQuotes.quotes.list.invalidate();
       utils.vendorQuotes.quotes.getWithVendorInfo.invalidate();
+      utils.vendorQuotes.quotes.comparison.invalidate();
       utils.vendorQuotes.rfqs.list.invalidate();
       setIsEnterQuoteOpen(false);
-      setQuoteForm({ vendorId: '', unitPrice: '', quantity: '', totalPrice: '', leadTimeDays: '', validUntil: '', paymentTerms: '', notes: '' });
+      setQuoteForm(EMPTY_QUOTE_FORM);
     },
     onError: (err) => toast.error(err.message),
   });
@@ -170,6 +209,7 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
       toast.success(result.poId ? `Quote accepted and PO #${result.poId} created` : 'Quote accepted');
       utils.vendorQuotes.quotes.list.invalidate();
       utils.vendorQuotes.quotes.getWithVendorInfo.invalidate();
+      utils.vendorQuotes.quotes.comparison.invalidate();
       utils.vendorQuotes.rfqs.list.invalidate();
     },
     onError: (err) => toast.error(err.message),
@@ -180,15 +220,53 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
       toast.success('Quote rejected');
       utils.vendorQuotes.quotes.list.invalidate();
       utils.vendorQuotes.quotes.getWithVendorInfo.invalidate();
+      utils.vendorQuotes.quotes.comparison.invalidate();
     },
     onError: (err) => toast.error(err.message),
   });
 
   const levelBids = trpc.vendorQuotes.quotes.levelBids.useMutation({
     onSuccess: (res) => {
-      toast.success(`Leveled ${res.leveledCount} quote${res.leveledCount === 1 ? '' : 's'} to a common scope baseline`);
+      toast.success(
+        `Leveled ${res.leveledCount} quote${res.leveledCount === 1 ? '' : 's'} to ${res.basis.baseCurrency} / ${res.basis.targetIncoterm}` +
+        (res.excludedCount > 0 ? ` (${res.excludedCount} excluded from ranking)` : ''),
+      );
       utils.vendorQuotes.quotes.getWithVendorInfo.invalidate();
+      utils.vendorQuotes.quotes.comparison.invalidate();
       utils.vendorQuotes.rfqs.list.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const { data: fxRates } = trpc.currency.list.useQuery(undefined, { enabled: isFxRatesOpen });
+
+  const upsertFxRate = trpc.currency.upsert.useMutation({
+    onSuccess: () => {
+      toast.success('Rate saved');
+      utils.currency.list.invalidate();
+      utils.vendorQuotes.quotes.comparison.invalidate();
+      setFxForm({ fromCurrency: 'EUR', toCurrency: 'USD', rate: '', asOf: '' });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const removeFxRate = trpc.currency.remove.useMutation({
+    onSuccess: () => {
+      toast.success('Rate removed');
+      utils.currency.list.invalidate();
+      utils.vendorQuotes.quotes.comparison.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const normalizeQuotes = trpc.vendorQuotes.quotes.normalize.useMutation({
+    onSuccess: (res) => {
+      toast.success(
+        `Recomputed landed cost for ${res.comparableCount} quote${res.comparableCount === 1 ? '' : 's'}` +
+        (res.excludedCount > 0 ? ` — ${res.excludedCount} could not be put on the common basis` : ''),
+      );
+      utils.vendorQuotes.quotes.comparison.invalidate();
+      utils.vendorQuotes.quotes.getWithVendorInfo.invalidate();
     },
     onError: (err) => toast.error(err.message),
   });
@@ -406,26 +484,72 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                     </div>
                   )}
 
-                  {/* Received Quotes Comparison */}
-                  {selectedRfqQuotes && selectedRfqQuotes.length > 0 && (
+                  {/* Received Quotes — side by side on one leveled basis */}
+                  {comparison && comparison.rows.length > 0 && (
                     <div>
                       <div className="flex items-center justify-between mb-2">
-                        <h4 className="text-sm font-medium">Received Quotes ({selectedRfqQuotes.length})</h4>
+                        <h4 className="text-sm font-medium">Received Quotes ({comparison.rows.length})</h4>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7"
+                            onClick={() => normalizeQuotes.mutate({ rfqId: selectedRfq.id })}
+                            disabled={normalizeQuotes.isPending}
+                          >
+                            {normalizeQuotes.isPending ? (
+                              <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                            ) : (
+                              <Scale className="h-3.5 w-3.5 mr-1" />
+                            )}
+                            Recompute Landed Cost
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7"
+                            onClick={() => levelBids.mutate({ rfqId: selectedRfq.id })}
+                            disabled={levelBids.isPending}
+                          >
+                            {levelBids.isPending ? (
+                              <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                            ) : (
+                              <Sparkles className="h-3.5 w-3.5 mr-1" />
+                            )}
+                            Level Bids (AI)
+                          </Button>
+                        </div>
+                      </div>
+
+                      {/* The basis every landed cost below was computed against. */}
+                      <div className="mb-2 rounded border bg-muted/50 px-2 py-1.5 text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground">Comparison basis:</span>{' '}
+                        {comparison.basis.baseCurrency} · leveled to {comparison.basis.targetIncoterm} ·{' '}
+                        freight {comparison.basis.freightAllowancePerUnit != null
+                          ? `${comparison.basis.freightAllowancePerUnit}/unit`
+                          : comparison.basis.freightAllowancePct != null
+                            ? `${comparison.basis.freightAllowancePct}% of goods`
+                            : 'not set'} ·{' '}
+                        duty {comparison.basis.dutyRatePct != null ? `${comparison.basis.dutyRatePct}%` : 'not set'} ·{' '}
+                        insurance {comparison.basis.insuranceRatePct != null ? `${comparison.basis.insuranceRatePct}%` : 'not set'} ·{' '}
+                        tooling over {comparison.basis.amortizeToolingOverUnits != null
+                          ? `${comparison.basis.amortizeToolingOverUnits} units`
+                          : 'this order only'}
+                        {comparison.excludedCount > 0 && (
+                          <span className="ml-1 text-foreground">
+                            · {comparison.excludedCount} quote{comparison.excludedCount === 1 ? '' : 's'} excluded from ranking
+                          </span>
+                        )}
                         <Button
                           size="sm"
-                          variant="outline"
-                          className="h-7"
-                          onClick={() => levelBids.mutate({ rfqId: selectedRfq.id })}
-                          disabled={levelBids.isPending}
+                          variant="link"
+                          className="h-auto p-0 ml-2 text-xs"
+                          onClick={() => setIsFxRatesOpen(true)}
                         >
-                          {levelBids.isPending ? (
-                            <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
-                          ) : (
-                            <Sparkles className="h-3.5 w-3.5 mr-1" />
-                          )}
-                          Level Bids (AI)
+                          FX rates
                         </Button>
                       </div>
+
                       {selectedRfq.levelingSummary && (
                         <div className="mb-2 rounded border border-primary/20 bg-primary/10 p-2 text-xs text-foreground">
                           <div className="flex items-center gap-1 font-medium mb-0.5">
@@ -434,65 +558,137 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                           <p className="whitespace-pre-wrap">{selectedRfq.levelingSummary}</p>
                         </div>
                       )}
-                      <div className="border rounded overflow-hidden">
+
+                      <div className="border rounded overflow-x-auto">
                         <table className="w-full text-sm">
                           <thead className="bg-muted">
                             <tr>
                               <th className="text-left px-1.5 py-1">Rank</th>
                               <th className="text-left px-1.5 py-1">Vendor</th>
                               <th className="text-right px-1.5 py-1">Unit Price</th>
-                              <th className="text-right px-1.5 py-1">Total</th>
-                              <th className="text-right px-1.5 py-1">Leveled Cost</th>
-                              <th className="text-center px-1.5 py-1">Scope</th>
+                              <th className="text-center px-1.5 py-1">Ccy</th>
+                              <th className="text-center px-1.5 py-1">Incoterm</th>
+                              <th className="text-right px-1.5 py-1">MOQ</th>
+                              <th className="text-right px-1.5 py-1">Tooling/unit</th>
+                              <th className="text-right px-1.5 py-1">Landed Total</th>
+                              <th className="text-right px-1.5 py-1">Landed/unit</th>
+                              <th className="text-center px-1.5 py-1">Flags</th>
                               <th className="text-center px-1.5 py-1">Lead Time</th>
                               <th className="text-center px-1.5 py-1">Valid Until</th>
                               <th className="text-center px-1.5 py-1">Actions</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {[...selectedRfqQuotes]
-                              .sort((a: any, b: any) => (a.leveledRank ?? a.overallRank ?? 999) - (b.leveledRank ?? b.overallRank ?? 999))
-                              .map((quote: any, idx: number) => {
+                            {comparison.rows.map((row: any) => {
+                              const quote = row.quote;
+                              const n = row.normalized;
                               const deviations: any[] = (() => {
                                 try { return quote.scopeDeviations ? JSON.parse(quote.scopeDeviations) : []; }
                                 catch { return []; }
                               })();
-                              const highSeverity = deviations.some(d => d.severity === 'high');
+                              const highSeverity = deviations.some((d: any) => d.severity === 'high');
+                              const understated = (n?.warnings ?? []).filter((w: any) => w.understatesCost);
+                              const isBest = n?.rank === 1;
                               return (
-                              <tr key={quote.id} className={`border-t ${idx === 0 ? 'bg-primary/10' : ''}`}>
+                              <tr key={quote.id} className={`border-t ${isBest ? 'bg-primary/10' : ''}`}>
                                 <td className="px-1.5 py-0.5">
-                                  {idx === 0 ? (
+                                  {isBest ? (
                                     <Badge className="bg-primary text-primary-foreground">Best</Badge>
+                                  ) : n?.rank ? (
+                                    <span className="text-muted-foreground">#{n.rank}</span>
                                   ) : (
-                                    <span className="text-muted-foreground">#{quote.leveledRank || quote.overallRank || idx + 1}</span>
+                                    <Badge
+                                      variant="outline"
+                                      className="text-foreground font-semibold"
+                                      title={(n?.warnings ?? []).map((w: any) => w.message).join('\n') || 'Not comparable'}
+                                    >
+                                      n/c
+                                    </Badge>
                                   )}
                                 </td>
-                                <td className="px-1.5 py-0.5 font-medium">{quote.vendor?.name}</td>
-                                <td className="px-1.5 py-0.5 text-right font-mono">{formatCurrency(quote.unitPrice)}</td>
-                                <td className="px-1.5 py-0.5 text-right font-mono font-semibold">{formatCurrency(quote.totalPrice)}</td>
+                                <td className="px-1.5 py-0.5 font-medium">{row.vendor?.name ?? `Vendor ${quote.vendorId}`}</td>
                                 <td className="px-1.5 py-0.5 text-right font-mono">
-                                  {quote.leveledTotalCost != null ? (
-                                    <span title={quote.leveledNotes || ''}>{formatCurrency(quote.leveledTotalCost)}</span>
+                                  {quote.unitPrice != null ? Number(quote.unitPrice).toLocaleString(undefined, { maximumFractionDigits: 4 }) : '-'}
+                                </td>
+                                <td className="px-1.5 py-0.5 text-center">
+                                  {/* FX provenance matters as much as the converted number. */}
+                                  <span
+                                    className={n?.fx && n.fx.rate !== 1 ? 'underline decoration-dotted' : ''}
+                                    title={n?.fx && n.fx.rate !== 1
+                                      ? `1 ${n.quoteCurrency} = ${n.fx.rate} ${n.baseCurrency} (${n.fx.source}, ${n.fx.provider}, as of ${formatDate(n.fx.asOf)})`
+                                      : undefined}
+                                  >
+                                    {n?.quoteCurrency ?? quote.currency ?? '-'}
+                                  </span>
+                                </td>
+                                <td className="px-1.5 py-0.5 text-center">
+                                  {n?.incoterms?.quoted ? (
+                                    <span title={n.incoterms.gaps.length > 0
+                                      ? `Buyer covers: ${n.incoterms.gaps.join(', ')}`
+                                      : `Meets the ${n.incoterms.target} basis`}>
+                                      {n.incoterms.quoted}
+                                      {n.incoterms.namedPlace ? ` ${n.incoterms.namedPlace}` : ''}
+                                    </span>
                                   ) : (
                                     <span className="text-muted-foreground">-</span>
                                   )}
                                 </td>
+                                <td className="px-1.5 py-0.5 text-right font-mono">
+                                  {quote.minimumOrderQty != null ? (
+                                    <span
+                                      className={n?.moqShortfallUnits > 0 ? 'text-foreground font-semibold' : ''}
+                                      title={n?.moqShortfallUnits > 0
+                                        ? `${n.moqShortfallUnits} surplus units above the ${n.requiredQuantity} required`
+                                        : undefined}
+                                    >
+                                      {Number(quote.minimumOrderQty).toLocaleString()}
+                                    </span>
+                                  ) : '-'}
+                                </td>
+                                <td className="px-1.5 py-0.5 text-right font-mono">
+                                  {n?.toolingPerUnit ? n.toolingPerUnit.toLocaleString(undefined, { maximumFractionDigits: 4 }) : '-'}
+                                </td>
+                                <td className="px-1.5 py-0.5 text-right font-mono font-semibold">
+                                  {n?.landedTotalCost != null ? (
+                                    <span title={n.breakdown.map((b: any) => `${b.label}: ${b.amount}`).join('\n')}>
+                                      {formatCurrency(n.landedTotalCost)}
+                                    </span>
+                                  ) : (
+                                    <span className="text-muted-foreground">-</span>
+                                  )}
+                                </td>
+                                <td className="px-1.5 py-0.5 text-right font-mono">
+                                  {n?.landedUnitCost != null
+                                    ? n.landedUnitCost.toLocaleString(undefined, { maximumFractionDigits: 4 })
+                                    : <span className="text-muted-foreground">-</span>}
+                                </td>
                                 <td className="px-1.5 py-0.5 text-center">
-                                  {quote.leveledAt ? (
-                                    deviations.length === 0 ? (
-                                      <Badge variant="outline" className="text-muted-foreground">OK</Badge>
-                                    ) : (
+                                  <div className="flex items-center justify-center gap-1">
+                                    {understated.length > 0 && (
+                                      <Badge
+                                        variant="outline"
+                                        className="text-foreground font-semibold"
+                                        title={understated.map((w: any) => w.message).join('\n')}
+                                      >
+                                        under
+                                      </Badge>
+                                    )}
+                                    {quote.leveledAt && deviations.length > 0 && (
                                       <Badge
                                         variant={highSeverity ? 'destructive' : 'outline'}
                                         className={highSeverity ? '!bg-[oklch(0.30_0.02_262)] !text-white !border-transparent font-semibold' : 'text-foreground font-semibold'}
-                                        title={deviations.map(d => `${d.requirement}: ${d.finding} (${d.severity})`).join('\n')}
+                                        title={deviations.map((d: any) => `${d.requirement}: ${d.finding} (${d.severity})`).join('\n')}
                                       >
-                                        {deviations.length} flag{deviations.length === 1 ? '' : 's'}
+                                        {deviations.length}
                                       </Badge>
-                                    )
-                                  ) : (
-                                    <span className="text-muted-foreground">-</span>
-                                  )}
+                                    )}
+                                    {quote.leveledAt && deviations.length === 0 && understated.length === 0 && (
+                                      <Badge variant="outline" className="text-muted-foreground">OK</Badge>
+                                    )}
+                                    {!quote.leveledAt && understated.length === 0 && (
+                                      <span className="text-muted-foreground">-</span>
+                                    )}
+                                  </div>
                                 </td>
                                 <td className="px-1.5 py-0.5 text-center">{quote.leadTimeDays ? `${quote.leadTimeDays} days` : '-'}</td>
                                 <td className="px-1.5 py-0.5 text-center">{formatDate(quote.validUntil)}</td>
@@ -594,7 +790,7 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
 
       {/* Create RFQ Dialog */}
       <Dialog open={isCreateRfqOpen} onOpenChange={setIsCreateRfqOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Create Request for Quote</DialogTitle>
             <DialogDescription>Send an RFQ to vendors for material pricing</DialogDescription>
@@ -698,6 +894,73 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                 </SelectContent>
               </Select>
             </div>
+
+            {/* How quotes on this RFQ will be leveled against each other. */}
+            <div className="rounded border p-3 space-y-3">
+              <div>
+                <Label className="text-sm font-medium">Comparison basis</Label>
+                <p className="text-xs text-muted-foreground">
+                  Quotes are converted to this currency and topped up to this Incoterm before ranking.
+                  Leave an allowance blank and any gap it would cover is reported as unpriced rather than guessed.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Base currency</Label>
+                  <Select value={rfqForm.baseCurrency} onValueChange={(v) => setRfqForm({ ...rfqForm, baseCurrency: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {COMMON_CURRENCIES.map((c) => (
+                        <SelectItem key={c} value={c}>{c}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>Level to Incoterm</Label>
+                  <Select value={rfqForm.targetIncoterms} onValueChange={(v) => setRfqForm({ ...rfqForm, targetIncoterms: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {INCOTERM_OPTIONS.map((c) => (
+                        <SelectItem key={c} value={c}>{c}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Freight allowance / unit</Label>
+                  <Input type="number" step="0.0001" placeholder="e.g., 0.15"
+                    value={rfqForm.freightAllowancePerUnit}
+                    onChange={(e) => setRfqForm({ ...rfqForm, freightAllowancePerUnit: e.target.value })} />
+                </div>
+                <div>
+                  <Label>…or freight as % of goods</Label>
+                  <Input type="number" step="0.001" placeholder="e.g., 8"
+                    value={rfqForm.freightAllowancePct}
+                    onChange={(e) => setRfqForm({ ...rfqForm, freightAllowancePct: e.target.value })} />
+                </div>
+                <div>
+                  <Label>Duty rate %</Label>
+                  <Input type="number" step="0.001" placeholder="e.g., 6"
+                    value={rfqForm.dutyRatePct}
+                    onChange={(e) => setRfqForm({ ...rfqForm, dutyRatePct: e.target.value })} />
+                </div>
+                <div>
+                  <Label>Insurance rate %</Label>
+                  <Input type="number" step="0.001" placeholder="e.g., 0.5"
+                    value={rfqForm.insuranceRatePct}
+                    onChange={(e) => setRfqForm({ ...rfqForm, insuranceRatePct: e.target.value })} />
+                </div>
+              </div>
+              <div>
+                <Label>Amortize tooling over (units)</Label>
+                <Input type="number" step="0.0001" placeholder="Program volume — blank charges tooling to this order alone"
+                  value={rfqForm.amortizeToolingOverUnits}
+                  onChange={(e) => setRfqForm({ ...rfqForm, amortizeToolingOverUnits: e.target.value })} />
+              </div>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsCreateRfqOpen(false)}>Cancel</Button>
@@ -719,6 +982,13 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                   quoteDueDate: rfqForm.quoteDueDate ? new Date(rfqForm.quoteDueDate) : undefined,
                   priority: rfqForm.priority as any,
                   notes: rfqForm.notes || undefined,
+                  baseCurrency: rfqForm.baseCurrency || undefined,
+                  targetIncoterms: rfqForm.targetIncoterms || undefined,
+                  freightAllowancePerUnit: rfqForm.freightAllowancePerUnit || undefined,
+                  freightAllowancePct: rfqForm.freightAllowancePct || undefined,
+                  dutyRatePct: rfqForm.dutyRatePct || undefined,
+                  insuranceRatePct: rfqForm.insuranceRatePct || undefined,
+                  amortizeToolingOverUnits: rfqForm.amortizeToolingOverUnits || undefined,
                 });
               }}
               disabled={createRfq.isPending}
@@ -732,7 +1002,7 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
 
       {/* Enter Quote Dialog */}
       <Dialog open={isEnterQuoteOpen} onOpenChange={setIsEnterQuoteOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Enter Vendor Quote</DialogTitle>
             <DialogDescription>Record a quote received from a vendor</DialogDescription>
@@ -778,7 +1048,48 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                 />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <Label>Currency</Label>
+                <Select value={quoteForm.currency} onValueChange={(v) => setQuoteForm({ ...quoteForm, currency: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {COMMON_CURRENCIES.map((c) => (
+                      <SelectItem key={c} value={c}>{c}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Incoterm</Label>
+                <Select value={quoteForm.incoterms} onValueChange={(v) => setQuoteForm({ ...quoteForm, incoterms: v })}>
+                  <SelectTrigger><SelectValue placeholder="As quoted" /></SelectTrigger>
+                  <SelectContent>
+                    {INCOTERM_OPTIONS.map((c) => (
+                      <SelectItem key={c} value={c}>{c}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Named Place</Label>
+                <Input
+                  value={quoteForm.namedPlace}
+                  onChange={(e) => setQuoteForm({ ...quoteForm, namedPlace: e.target.value })}
+                  placeholder="e.g., Ningbo"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <Label>Minimum Order Qty</Label>
+                <Input
+                  type="number"
+                  step="0.0001"
+                  value={quoteForm.minimumOrderQty}
+                  onChange={(e) => setQuoteForm({ ...quoteForm, minimumOrderQty: e.target.value })}
+                />
+              </div>
               <div>
                 <Label>Lead Time (days)</Label>
                 <Input
@@ -794,6 +1105,52 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                   value={quoteForm.validUntil}
                   onChange={(e) => setQuoteForm({ ...quoteForm, validUntil: e.target.value })}
                 />
+              </div>
+            </div>
+
+            {/* Charges the vendor quoted. Anything left blank is filled from the
+                RFQ's allowance rates when the Incoterm leaves it with us. */}
+            <div>
+              <Label className="text-xs text-muted-foreground">Quoted charges ({quoteForm.currency})</Label>
+              <div className="grid grid-cols-3 gap-2 mt-1">
+                <Input type="number" step="0.01" placeholder="Shipping"
+                  value={quoteForm.shippingCost}
+                  onChange={(e) => setQuoteForm({ ...quoteForm, shippingCost: e.target.value })} />
+                <Input type="number" step="0.01" placeholder="Handling"
+                  value={quoteForm.handlingFee}
+                  onChange={(e) => setQuoteForm({ ...quoteForm, handlingFee: e.target.value })} />
+                <Input type="number" step="0.01" placeholder="Insurance"
+                  value={quoteForm.insuranceCost}
+                  onChange={(e) => setQuoteForm({ ...quoteForm, insuranceCost: e.target.value })} />
+                <Input type="number" step="0.01" placeholder="Customs duty"
+                  value={quoteForm.customsDutyAmount}
+                  onChange={(e) => setQuoteForm({ ...quoteForm, customsDutyAmount: e.target.value })} />
+                <Input type="number" step="0.01" placeholder="Tax"
+                  value={quoteForm.taxAmount}
+                  onChange={(e) => setQuoteForm({ ...quoteForm, taxAmount: e.target.value })} />
+                <Input type="number" step="0.01" placeholder="Other"
+                  value={quoteForm.otherCharges}
+                  onChange={(e) => setQuoteForm({ ...quoteForm, otherCharges: e.target.value })} />
+              </div>
+            </div>
+
+            <div>
+              <Label className="text-xs text-muted-foreground">Tooling / NRE</Label>
+              <div className="grid grid-cols-3 gap-2 mt-1 items-center">
+                <Input type="number" step="0.01" placeholder="Tooling cost"
+                  value={quoteForm.toolingCost}
+                  onChange={(e) => setQuoteForm({ ...quoteForm, toolingCost: e.target.value })} />
+                <Input type="number" step="0.0001" placeholder="Amortize over units"
+                  value={quoteForm.toolingAmortizationUnits}
+                  onChange={(e) => setQuoteForm({ ...quoteForm, toolingAmortizationUnits: e.target.value })} />
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={quoteForm.toolingIsRefundable}
+                    onChange={(e) => setQuoteForm({ ...quoteForm, toolingIsRefundable: e.target.checked })}
+                  />
+                  Refundable
+                </label>
               </div>
             </div>
             <div>
@@ -826,6 +1183,19 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                   unitPrice: quoteForm.unitPrice,
                   quantity: quoteForm.quantity || selectedRfq?.quantity,
                   totalPrice: quoteForm.totalPrice || undefined,
+                  currency: quoteForm.currency || undefined,
+                  incoterms: (quoteForm.incoterms || undefined) as any,
+                  namedPlace: quoteForm.namedPlace || undefined,
+                  minimumOrderQty: quoteForm.minimumOrderQty || undefined,
+                  shippingCost: quoteForm.shippingCost || undefined,
+                  handlingFee: quoteForm.handlingFee || undefined,
+                  insuranceCost: quoteForm.insuranceCost || undefined,
+                  customsDutyAmount: quoteForm.customsDutyAmount || undefined,
+                  taxAmount: quoteForm.taxAmount || undefined,
+                  otherCharges: quoteForm.otherCharges || undefined,
+                  toolingCost: quoteForm.toolingCost || undefined,
+                  toolingAmortizationUnits: quoteForm.toolingAmortizationUnits || undefined,
+                  toolingIsRefundable: quoteForm.toolingIsRefundable || undefined,
                   leadTimeDays: quoteForm.leadTimeDays ? parseInt(quoteForm.leadTimeDays) : undefined,
                   validUntil: quoteForm.validUntil ? new Date(quoteForm.validUntil) : undefined,
                   paymentTerms: quoteForm.paymentTerms || undefined,
@@ -839,6 +1209,130 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
               Save Quote
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* FX Rates — the basis for converting foreign-currency quotes. A quote in
+          a currency with no rate on file is excluded from ranking, not guessed. */}
+      <Dialog open={isFxRatesOpen} onOpenChange={setIsFxRatesOpen}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Currency Rates</DialogTitle>
+            <DialogDescription>
+              Rates used to convert vendor quotes into an RFQ's base currency. Each quote is
+              converted at the newest rate dated on or before it, and the rate and date are
+              recorded alongside the converted number.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid grid-cols-4 gap-2 items-end">
+            <div>
+              <Label>From</Label>
+              <Select value={fxForm.fromCurrency} onValueChange={(v) => setFxForm({ ...fxForm, fromCurrency: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {COMMON_CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>To</Label>
+              <Select value={fxForm.toCurrency} onValueChange={(v) => setFxForm({ ...fxForm, toCurrency: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {COMMON_CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Rate</Label>
+              <Input
+                type="number"
+                step="0.00000001"
+                placeholder="1.0850"
+                value={fxForm.rate}
+                onChange={(e) => setFxForm({ ...fxForm, rate: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label>As of</Label>
+              <Input
+                type="date"
+                value={fxForm.asOf}
+                onChange={(e) => setFxForm({ ...fxForm, asOf: e.target.value })}
+              />
+            </div>
+          </div>
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-muted-foreground">
+              1 {fxForm.fromCurrency} = {fxForm.rate || '?'} {fxForm.toCurrency}. The inverse pair and
+              USD-triangulated pairs are derived automatically.
+            </p>
+            <Button
+              size="sm"
+              onClick={() => {
+                const rate = parseFloat(fxForm.rate);
+                if (!Number.isFinite(rate) || rate <= 0) {
+                  toast.error('Enter a positive rate');
+                  return;
+                }
+                if (fxForm.fromCurrency === fxForm.toCurrency) {
+                  toast.error('Pick two different currencies');
+                  return;
+                }
+                upsertFxRate.mutate({
+                  fromCurrency: fxForm.fromCurrency,
+                  toCurrency: fxForm.toCurrency,
+                  rate,
+                  asOf: fxForm.asOf ? new Date(fxForm.asOf) : undefined,
+                });
+              }}
+              disabled={upsertFxRate.isPending}
+            >
+              {upsertFxRate.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Save Rate
+            </Button>
+          </div>
+
+          <div className="border rounded overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-muted">
+                <tr>
+                  <th className="text-left px-1.5 py-1">Pair</th>
+                  <th className="text-right px-1.5 py-1">Rate</th>
+                  <th className="text-center px-1.5 py-1">As of</th>
+                  <th className="text-left px-1.5 py-1">Source</th>
+                  <th className="text-center px-1.5 py-1"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {(fxRates ?? []).length === 0 && (
+                  <tr><td colSpan={5} className="text-center text-muted-foreground py-4">
+                    No rates yet. Quotes in a foreign currency stay out of the ranking until one is added.
+                  </td></tr>
+                )}
+                {(fxRates ?? []).map((r: any) => (
+                  <tr key={r.id} className="border-t">
+                    <td className="px-1.5 py-0.5 font-mono">{r.fromCurrency} → {r.toCurrency}</td>
+                    <td className="px-1.5 py-0.5 text-right font-mono">{Number(r.rate).toLocaleString(undefined, { maximumFractionDigits: 8 })}</td>
+                    <td className="px-1.5 py-0.5 text-center">{formatDate(r.asOf)}</td>
+                    <td className="px-1.5 py-0.5 text-muted-foreground">{r.source}</td>
+                    <td className="px-1.5 py-0.5 text-center">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7"
+                        onClick={() => removeFxRate.mutate({ id: r.id })}
+                        disabled={removeFxRate.isPending}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

@@ -10,7 +10,14 @@ import * as db from "../db";
 import { storagePut } from "../storage";
 import { nanoid } from "nanoid";
 import { listDriveFolders } from "../_core/googleDrive";
+import { normalizeQuotesForRfq, basisFromRfq, INCOTERM_CODES } from "../quoteNormalization";
+import { ingestVendorQuoteEmail, parseVendorQuoteAttachment, parseVendorQuoteEmail } from "../vendorQuoteParser";
+import { computeResponsivenessForVendors, computeVendorResponsiveness, markStaleInvitationsNoResponse, responsivenessScoreFromMetrics } from "../vendorResponsiveness";
 import { router, publicProcedure, protectedProcedure, opsProcedure, copackerProcedure, vendorProcedure, createAuditLog, generateNumber } from "./middleware";
+
+// Upper bound on a single RFQ blast — mirrors MAX_RFQ_VENDORS_PER_SEND in
+// server/routers.ts. Each vendor costs an LLM draft plus an email send.
+const MAX_RFQ_VENDORS_PER_SEND = 50;
 
 export const procurementRouter = router({
   // ============================================
@@ -797,23 +804,32 @@ export const procurementRouter = router({
       sendToVendors: opsProcedure
         .input(z.object({
           rfqId: z.number(),
-          vendorIds: z.array(z.number()),
+          vendorIds: z.array(z.number()).min(1).max(MAX_RFQ_VENDORS_PER_SEND),
         }))
         .mutation(async ({ input, ctx }) => {
           const rfq = await db.getVendorRfqById(input.rfqId);
           if (!rfq) throw new TRPCError({ code: 'NOT_FOUND', message: 'RFQ not found' });
-          
-          const results = { sent: 0, failed: 0, emails: [] as any[] };
-          
-          for (const vendorId of input.vendorIds) {
+
+          const results = { sent: 0, failed: 0, skipped: 0, emails: [] as any[] };
+
+          const existingInvitations = await db.getVendorRfqInvitations(input.rfqId);
+          const alreadyInvited = new Set(existingInvitations.map(i => i.vendorId));
+          const targetVendorIds = Array.from(new Set(input.vendorIds));
+
+          for (const vendorId of targetVendorIds) {
+            if (alreadyInvited.has(vendorId)) {
+              results.skipped++;
+              results.emails.push({ vendorId, status: 'skipped', error: 'Already invited on this RFQ' });
+              continue;
+            }
             const vendor = await db.getVendorById(vendorId);
             if (!vendor || !vendor.email) {
               results.failed++;
               continue;
             }
-            
+
             // Create invitation record
-            await db.createVendorRfqInvitation({
+            const invitation = await db.createVendorRfqInvitation({
               rfqId: input.rfqId,
               vendorId,
               status: 'pending',
@@ -869,10 +885,7 @@ Format the email professionally.`;
               
               if (sendResult.success) {
                 emailStatus = 'sent';
-                await db.updateVendorRfqInvitation(
-                  (await db.getVendorRfqInvitations(input.rfqId)).find(i => i.vendorId === vendorId)?.id || 0,
-                  { status: 'sent' }
-                );
+                await db.updateVendorRfqInvitation(invitation.id, { status: 'sent' });
               } else {
                 emailStatus = 'failed';
                 deliveryError = sendResult.error;
@@ -1027,6 +1040,13 @@ Ask if they received the original request and if they can provide a quote.`;
           paymentTerms: z.string().optional(),
           receivedVia: z.enum(['email', 'portal', 'phone', 'manual']).optional(),
           notes: z.string().optional(),
+          incoterms: z.enum(INCOTERM_CODES).optional(),
+          namedPlace: z.string().optional(),
+          insuranceCost: z.string().optional(),
+          customsDutyAmount: z.string().optional(),
+          toolingCost: z.string().optional(),
+          toolingAmortizationUnits: z.string().optional(),
+          toolingIsRefundable: z.boolean().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
           const result = await db.createVendorQuote({ ...input, status: 'received' });
@@ -1047,7 +1067,7 @@ Ask if they received the original request and if they can provide a quote.`;
             await db.updateVendorRfq(input.rfqId, { status: 'partially_received' });
           }
           
-          // Rank quotes (simple ranking by price)
+          // Legacy price-only rank, kept for callers that still read overallRank.
           const allQuotes = await db.getVendorQuotes({ rfqId: input.rfqId });
           const sortedQuotes = allQuotes
             .filter(q => q.status === 'received')
@@ -1055,9 +1075,20 @@ Ask if they received the original request and if they can provide a quote.`;
           for (let i = 0; i < sortedQuotes.length; i++) {
             await db.updateVendorQuote(sortedQuotes[i].id, { overallRank: i + 1 });
           }
-          
+
+          // Landed-cost ranking on the RFQ's comparison basis.
+          let normalization: Awaited<ReturnType<typeof normalizeQuotesForRfq>> | null = null;
+          try {
+            normalization = await normalizeQuotesForRfq(input.rfqId);
+          } catch (e) {
+            console.warn('[VendorQuotes] Normalization after quote entry failed:', e);
+          }
+
           await createAuditLog(ctx.user.id, 'create', 'vendor_quote', result.id, `Quote from vendor ${input.vendorId}`);
-          return result;
+          return {
+            ...result,
+            normalized: normalization?.results.find(r => r.quoteId === result.id) ?? null,
+          };
         }),
       update: opsProcedure
         .input(z.object({
@@ -1230,13 +1261,152 @@ Ask if they received the original request and if they can provide a quote.`;
           await createAuditLog(ctx.user.id, 'update', 'vendor_rfq', input.rfqId, 'AI analyzed and ranked quotes');
           return { success: true };
         }),
+
+      // Deterministic normalization only — no LLM.
+      normalize: opsProcedure
+        .input(z.object({ rfqId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await normalizeQuotesForRfq(input.rfqId);
+          await createAuditLog(
+            ctx.user.id,
+            'update',
+            'vendor_rfq',
+            input.rfqId,
+            `Normalized ${result.results.length} quotes to ${result.basis.baseCurrency} / ${result.basis.targetIncoterm}`,
+          );
+          return result;
+        }),
+
+      // Side-by-side comparison payload for the UI.
+      comparison: protectedProcedure
+        .input(z.object({ rfqId: z.number() }))
+        .query(async ({ input }) => {
+          const rfq = await db.getVendorRfqById(input.rfqId);
+          if (!rfq) throw new TRPCError({ code: 'NOT_FOUND', message: 'RFQ not found' });
+
+          const quotes = await db.getVendorQuotes({ rfqId: input.rfqId });
+          if (quotes.length === 0) {
+            return { rfq, basis: basisFromRfq(rfq as any), rows: [], comparableCount: 0, excludedCount: 0 };
+          }
+
+          const normalization = await normalizeQuotesForRfq(input.rfqId, { persist: false });
+          const normalizedById = new Map(normalization.results.map(r => [r.quoteId, r]));
+
+          const vendorIds = Array.from(new Set(quotes.map(q => q.vendorId)));
+          const vendorList = await db.getVendorsByIds(vendorIds);
+          const vendorById = new Map(vendorList.map(v => [v.id, v]));
+
+          const rows = quotes.map(q => ({
+            quote: q,
+            vendor: vendorById.get(q.vendorId) ?? null,
+            normalized: normalizedById.get(q.id) ?? null,
+          }));
+          rows.sort((a, b) => {
+            const ra = a.normalized?.rank ?? Number.MAX_SAFE_INTEGER;
+            const rb = b.normalized?.rank ?? Number.MAX_SAFE_INTEGER;
+            return ra - rb;
+          });
+
+          return {
+            rfq,
+            basis: normalization.basis,
+            rows,
+            comparableCount: normalization.comparableCount,
+            excludedCount: normalization.excludedCount,
+          };
+        }),
     }),
-    
+
     // Emails
     emails: router({
       list: protectedProcedure
         .input(z.object({ rfqId: z.number().optional(), vendorId: z.number().optional() }).optional())
         .query(({ input }) => db.getVendorRfqEmails(input)),
+
+      // Parse an inbound vendor reply (body and/or attached quote sheet) into a
+      // structured quote, match it to the RFQ, and level it.
+      parseIncoming: opsProcedure
+        .input(z.object({
+          fromEmail: z.string().email(),
+          fromName: z.string().optional(),
+          subject: z.string(),
+          body: z.string(),
+          htmlBody: z.string().optional(),
+          receivedAt: z.date().optional(),
+          attachment: z.object({ fileUrl: z.string().url(), fileName: z.string() }).optional(),
+          vendorId: z.number().optional(),
+          rfqId: z.number().optional(),
+          externalMessageId: z.string().optional(),
+          threadId: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await ingestVendorQuoteEmail(input);
+          if (result.quoteId) {
+            await createAuditLog(
+              ctx.user.id,
+              'create',
+              'vendor_quote',
+              result.quoteId,
+              `Parsed from vendor email: ${input.subject}`,
+            );
+          }
+          return result;
+        }),
+
+      previewAttachment: opsProcedure
+        .input(z.object({
+          fileUrl: z.string().url(),
+          fileName: z.string(),
+          context: z.string().optional(),
+        }))
+        .mutation(({ input }) => parseVendorQuoteAttachment(input)),
+
+      previewEmail: opsProcedure
+        .input(z.object({
+          subject: z.string(),
+          body: z.string(),
+          fromEmail: z.string().email().optional(),
+          fromName: z.string().optional(),
+        }))
+        .mutation(({ input }) => parseVendorQuoteEmail(input)),
+    }),
+
+    // Measured vendor responsiveness on RFQs.
+    responsiveness: router({
+      byVendor: protectedProcedure
+        .input(z.object({
+          vendorId: z.number(),
+          sinceDays: z.number().min(1).max(1095).optional(),
+        }))
+        .query(({ input }) =>
+          computeVendorResponsiveness(input.vendorId, {
+            since: input.sinceDays
+              ? new Date(Date.now() - input.sinceDays * 24 * 60 * 60 * 1000)
+              : undefined,
+          }),
+        ),
+
+      leaderboard: protectedProcedure
+        .input(z.object({ sinceDays: z.number().min(1).max(1095).optional() }).optional())
+        .query(async ({ input }) => {
+          const vendorList = await db.getVendors();
+          const since = input?.sinceDays
+            ? new Date(Date.now() - input.sinceDays * 24 * 60 * 60 * 1000)
+            : undefined;
+          const metrics = await computeResponsivenessForVendors(vendorList.map(v => v.id), { since });
+          return vendorList
+            .map(v => {
+              const m = metrics.get(v.id);
+              // `m` already carries vendorId.
+              return m ? { vendorName: v.name, ...m, scoring: responsivenessScoreFromMetrics(m) } : null;
+            })
+            .filter((r): r is NonNullable<typeof r> => r !== null && r.invited > 0)
+            .sort((a, b) => (b.scoring.score ?? -1) - (a.scoring.score ?? -1));
+        }),
+
+      closeStaleInvitations: opsProcedure
+        .input(z.object({ graceDays: z.number().min(0).max(90).optional() }).optional())
+        .mutation(({ input }) => markStaleInvitationsNoResponse({ graceDays: input?.graceDays })),
     }),
   }),
   // ============================================
