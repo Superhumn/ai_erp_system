@@ -221,7 +221,9 @@ export function coerceExtraction(parsed: any): VendorQuoteExtraction {
 export function findRfqNumber(...texts: (string | null | undefined)[]): string | null {
   for (const text of texts) {
     if (!text) continue;
-    const match = text.match(/\bRFQ[-\s]?(?:ING[-\s]?)?[A-Z0-9]{2,}(?:[-\s]?[A-Z0-9]{2,})*/i);
+    // Segments after the first must be hyphen-joined: allowing whitespace here
+    // lets the match run on into the next word ("RFQ-1-AB rates" -> "...-RATES").
+    const match = text.match(/\bRFQ[-\s]?(?:ING[-\s]?)?[A-Z0-9]{2,}(?:-[A-Z0-9]{2,})*/i);
     if (match) return match[0].replace(/\s+/g, "-").toUpperCase();
   }
   return null;

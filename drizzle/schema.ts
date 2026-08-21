@@ -1494,7 +1494,21 @@ export const freightRfqs = mysqlTable("freightRfqs", {
   // Related records
   purchaseOrderId: int("purchaseOrderId"),
   vendorId: int("vendorId"),
-  
+
+  // Comparison basis: every quote on this RFQ is normalized to these terms before
+  // ranking, so carriers quoting different scopes/currencies compare fairly.
+  // See server/freightQuoteNormalization.ts.
+  baseCurrency: varchar("baseCurrency", { length: 3 }).default("USD"),
+  targetServiceScope: varchar("targetServiceScope", { length: 20 }), // Scope to level to (default door_to_door)
+  // Volumetric divisor: kg billed per CBM. Defaults by mode when unset
+  // (air 167, LCL sea 1000, road 333) — see MODE_DIM_FACTORS.
+  dimFactorKgPerCbm: decimal("dimFactorKgPerCbm", { precision: 10, scale: 3 }),
+  // Allowances used to fill legs a carrier's quoted scope excludes.
+  originHaulageAllowance: decimal("originHaulageAllowance", { precision: 15, scale: 2 }),
+  destinationHaulageAllowance: decimal("destinationHaulageAllowance", { precision: 15, scale: 2 }),
+  customsClearanceAllowance: decimal("customsClearanceAllowance", { precision: 15, scale: 2 }),
+  insuranceRatePct: decimal("insuranceRatePct", { precision: 6, scale: 3 }), // % of declaredValue
+
   // Metadata
   notes: text("notes"),
   createdById: int("createdById"),
@@ -1527,7 +1541,31 @@ export const freightQuotes = mysqlTable("freightQuotes", {
   shippingMode: varchar("shippingMode", { length: 50 }),
   routeDescription: text("routeDescription"),
   validUntil: timestamp("validUntil"),
-  
+
+  // Commercial terms the carrier actually quoted (may differ from the RFQ ask)
+  serviceScope: varchar("serviceScope", { length: 20 }), // port_to_port, door_to_port, port_to_door, door_to_door
+  rateBasis: varchar("rateBasis", { length: 20 }), // per_kg, per_cbm, per_revenue_ton, per_container, flat
+  chargeableWeightKg: decimal("chargeableWeightKg", { precision: 15, scale: 3 }), // As stated by the carrier, if given
+
+  // Deterministic normalization to the RFQ's comparison basis
+  // (server/freightQuoteNormalization.ts). Computed in code, not by an LLM:
+  // chargeable-weight reconciled, scope-gap filled, FX-converted landed cost.
+  // `ai*` below stays the narrative layer.
+  normalizedCurrency: varchar("normalizedCurrency", { length: 3 }),
+  fxRate: decimal("fxRate", { precision: 18, scale: 8 }), // quote currency -> normalizedCurrency
+  fxRateAsOf: timestamp("fxRateAsOf"),
+  fxRateSource: varchar("fxRateSource", { length: 64 }),
+  landedTotalCost: decimal("landedTotalCost", { precision: 18, scale: 2 }), // All-in for the shipment, base currency
+  costPerChargeableKg: decimal("costPerChargeableKg", { precision: 18, scale: 6 }),
+  computedChargeableWeightKg: decimal("computedChargeableWeightKg", { precision: 15, scale: 3 }),
+  // JSON: breakdown is [{ key, label, amount, source }] with amounts in the
+  // quote's own currency (pre-conversion); warnings are
+  // [{ code, message, understatesCost? }].
+  normalizationBreakdown: text("normalizationBreakdown"),
+  normalizationWarnings: text("normalizationWarnings"),
+  normalizedRank: int("normalizedRank"), // 1 = lowest landed total cost
+  normalizedAt: timestamp("normalizedAt"),
+
   // AI analysis
   aiScore: int("aiScore"), // AI-generated score 1-100
   aiAnalysis: text("aiAnalysis"), // AI-generated analysis
