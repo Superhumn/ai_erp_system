@@ -376,6 +376,8 @@ export const vendors = mysqlTable("vendors", {
   notes: text("notes"),
   quickbooksVendorId: varchar("quickbooksVendorId", { length: 64 }),
   defaultLeadTimeDays: int("defaultLeadTimeDays").default(14), // Default lead time for this vendor
+  defaultCurrency: varchar("defaultCurrency", { length: 3 }), // Currency this vendor normally quotes in
+  defaultIncoterms: varchar("defaultIncoterms", { length: 10 }), // Incoterm this vendor normally quotes on
   minOrderAmount: decimal("minOrderAmount", { precision: 12, scale: 2 }), // Minimum order amount
   shippingMethod: varchar("shippingMethod", { length: 64 }), // Preferred shipping method
   contactId: int("contactId").references(() => crmContacts.id, { onDelete: "set null" }), // FK to crm_contacts.id (set on auto-link by phone or manual picker)
@@ -1203,9 +1205,16 @@ export const emailCategoryEnum = mysqlEnum("email_category", [
   "invoice",
   "shipping_confirmation",
   "freight_quote",
+  // Supplier quotations against our RFQs (material pricing, not carrier rates).
+  "vendor_quote",
   "delivery_notification",
   "order_confirmation",
   "payment_confirmation",
+  // These three were already produced by the classifier but were missing from
+  // the enum, so they were silently rejected on write.
+  "inventory_report",
+  "hr_recruiting",
+  "legal",
   "general",
 ]);
 
@@ -4291,7 +4300,19 @@ export const vendorRfqs = mysqlTable("vendorRfqs", {
   // Timeline
   quoteDueDate: timestamp("quoteDueDate"),
   validityPeriod: int("validityPeriod"), // Days the quote should be valid
-  
+
+  // Comparison basis: every quote on this RFQ is normalized to these terms
+  // before ranking, so vendors quoting different Incoterms/currencies compare fairly.
+  baseCurrency: varchar("baseCurrency", { length: 3 }).default("USD"),
+  targetIncoterms: varchar("targetIncoterms", { length: 10 }), // Delivered basis to level to (default DDP)
+  destinationCountry: varchar("destinationCountry", { length: 64 }),
+  // Allowance rates used to fill cost buckets a vendor's Incoterm excludes.
+  freightAllowancePerUnit: decimal("freightAllowancePerUnit", { precision: 15, scale: 4 }),
+  freightAllowancePct: decimal("freightAllowancePct", { precision: 6, scale: 3 }), // % of goods value
+  dutyRatePct: decimal("dutyRatePct", { precision: 6, scale: 3 }),
+  insuranceRatePct: decimal("insuranceRatePct", { precision: 6, scale: 3 }),
+  amortizeToolingOverUnits: decimal("amortizeToolingOverUnits", { precision: 15, scale: 4 }), // Program volume for NRE amortization
+
   // Related records
   purchaseRequestId: int("purchaseRequestId"),
   projectId: int("projectId"),
@@ -4330,6 +4351,16 @@ export const vendorQuotes = mysqlTable("vendorQuotes", {
   taxAmount: decimal("taxAmount", { precision: 15, scale: 2 }),
   otherCharges: decimal("otherCharges", { precision: 15, scale: 2 }),
   totalWithCharges: decimal("totalWithCharges", { precision: 15, scale: 2 }),
+
+  // Commercial terms the vendor actually quoted (may differ from the RFQ ask)
+  incoterms: varchar("incoterms", { length: 10 }), // EXW, FCA, FOB, CFR, CIF, DAP, DDP, ...
+  namedPlace: varchar("namedPlace", { length: 255 }), // "FOB Ningbo" -> namedPlace = "Ningbo"
+  customsDutyAmount: decimal("customsDutyAmount", { precision: 15, scale: 2 }),
+  insuranceCost: decimal("insuranceCost", { precision: 15, scale: 2 }),
+  // One-time tooling / NRE and the volume it is amortized across
+  toolingCost: decimal("toolingCost", { precision: 15, scale: 2 }),
+  toolingAmortizationUnits: decimal("toolingAmortizationUnits", { precision: 15, scale: 4 }),
+  toolingIsRefundable: boolean("toolingIsRefundable").default(false),
   
   // Delivery details
   leadTimeDays: int("leadTimeDays"),
@@ -4347,6 +4378,27 @@ export const vendorQuotes = mysqlTable("vendorQuotes", {
   priceComparisonRank: int("priceComparisonRank"), // 1 = best price
   leadTimeComparisonRank: int("leadTimeComparisonRank"), // 1 = fastest
   overallRank: int("overallRank"), // Combined ranking
+
+  // Deterministic normalization to the RFQ's comparison basis (see server/quoteNormalization.ts).
+  // Computed in code, not by an LLM: FX-converted, Incoterm-gap-filled, MOQ-reconciled,
+  // tooling-amortized landed cost. `leveled*` below stays the AI narrative layer.
+  normalizedCurrency: varchar("normalizedCurrency", { length: 3 }),
+  fxRate: decimal("fxRate", { precision: 18, scale: 8 }), // quote currency -> normalizedCurrency
+  fxRateAsOf: timestamp("fxRateAsOf"),
+  fxRateSource: varchar("fxRateSource", { length: 64 }),
+  landedUnitCost: decimal("landedUnitCost", { precision: 18, scale: 6 }), // per RFQ unit, base currency
+  landedTotalCost: decimal("landedTotalCost", { precision: 18, scale: 2 }), // for the RFQ quantity, base currency
+  billableQuantity: decimal("billableQuantity", { precision: 15, scale: 4 }), // qty actually paid for after MOQ
+  moqShortfallUnits: decimal("moqShortfallUnits", { precision: 15, scale: 4 }), // units bought above requirement to clear MOQ
+  toolingPerUnit: decimal("toolingPerUnit", { precision: 18, scale: 6 }),
+  // JSON array of { key, label, amount, source } — amounts are in the quote's
+  // own currency; `fxRate` converts the total into `normalizedCurrency`.
+  normalizationBreakdown: text("normalizationBreakdown"),
+  // JSON array of { code, message, understatesCost? } — `understatesCost` marks
+  // a warning whose cause makes the landed cost a floor rather than an estimate.
+  normalizationWarnings: text("normalizationWarnings"),
+  normalizedRank: int("normalizedRank"), // 1 = lowest landed total cost
+  normalizedAt: timestamp("normalizedAt"),
 
   // Bid leveling (scope-normalized comparison)
   leveledTotalCost: decimal("leveledTotalCost", { precision: 15, scale: 2 }), // Normalized total cost adjusted to a common scope baseline
@@ -4419,6 +4471,10 @@ export const vendorRfqInvitations = mysqlTable("vendorRfqInvitations", {
   respondedAt: timestamp("respondedAt"),
   reminderSentAt: timestamp("reminderSentAt"),
   reminderCount: int("reminderCount").default(0),
+  // Measured responsiveness (written when a quote lands, see server/vendorResponsiveness.ts)
+  firstResponseHours: decimal("firstResponseHours", { precision: 10, scale: 2 }),
+  respondedBeforeDueDate: boolean("respondedBeforeDueDate"),
+  closedAt: timestamp("closedAt"), // set when the invitation is resolved as no_response
   
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -4436,6 +4492,31 @@ export type InsertVendorRfqEmail = typeof vendorRfqEmails.$inferInsert;
 
 export type VendorRfqInvitation = typeof vendorRfqInvitations.$inferSelect;
 export type InsertVendorRfqInvitation = typeof vendorRfqInvitations.$inferInsert;
+
+// ==========================================
+// CURRENCY RATES (FX normalization)
+// ==========================================
+
+// Stored FX rates. `rate` converts 1 unit of `fromCurrency` into `toCurrency`.
+// Lookups pick the newest row with asOf <= the requested date; inverse and
+// USD-triangulated pairs are derived in code (server/currencyService.ts).
+export const currencyRates = mysqlTable("currencyRates", {
+  id: int("id").autoincrement().primaryKey(),
+  fromCurrency: varchar("fromCurrency", { length: 3 }).notNull(),
+  toCurrency: varchar("toCurrency", { length: 3 }).notNull(),
+  rate: decimal("rate", { precision: 18, scale: 8 }).notNull(),
+  asOf: timestamp("asOf").notNull(),
+  source: varchar("source", { length: 64 }).default("manual").notNull(),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  currencyRatePairAsOfIdx: uniqueIndex("currencyRates_pair_asof_idx").on(table.fromCurrency, table.toCurrency, table.asOf),
+}));
+
+export type CurrencyRate = typeof currencyRates.$inferSelect;
+export type InsertCurrencyRate = typeof currencyRates.$inferInsert;
 
 // ============================================
 // CRM MODULE - Contacts, Messaging & Tracking
@@ -6955,6 +7036,12 @@ export const supplierPerformance = mysqlTable("supplierPerformance", {
   totalSpend: decimal("totalSpend", { precision: 18, scale: 2 }),
   averagePriceVariancePercent: decimal("averagePriceVariancePercent", { precision: 6, scale: 2 }),
   averageResponseTimeHours: decimal("averageResponseTimeHours", { precision: 8, scale: 2 }),
+  rfqsInvited: int("rfqsInvited").default(0),
+  rfqsResponded: int("rfqsResponded").default(0),
+  rfqsDeclined: int("rfqsDeclined").default(0),
+  rfqsNoResponse: int("rfqsNoResponse").default(0),
+  rfqResponseRatePct: decimal("rfqResponseRatePct", { precision: 5, scale: 2 }),
+  onTimeQuoteRatePct: decimal("onTimeQuoteRatePct", { precision: 5, scale: 2 }),
   issuesReported: int("issuesReported").default(0),
   issuesResolved: int("issuesResolved").default(0),
   deliveryScore: decimal("deliveryScore", { precision: 5, scale: 2 }),

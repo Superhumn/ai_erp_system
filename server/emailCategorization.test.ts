@@ -85,6 +85,58 @@ describe("Email Categorization", () => {
     });
   });
 
+  describe("vendor_quote vs freight_quote", () => {
+    it("categorizes a supplier's reply to our RFQ as a vendor quote", () => {
+      const result = quickCategorize(
+        "Re: RFQ-20260112-AB12 - our quotation",
+        "sales@shandongfoods.cn",
+      );
+      expect(result.category).toBe("vendor_quote");
+      expect(result.priority).toBe("high");
+    });
+
+    it("categorizes a body with supplier pricing signals as a vendor quote", () => {
+      const result = quickCategorize(
+        "Pricing for dried shiitake",
+        "sales@supplier.com",
+        "Unit price USD 4.20/kg. MOQ 5000 kg. Tooling charge USD 800 one-time.",
+      );
+      expect(result.category).toBe("vendor_quote");
+    });
+
+    it("still routes a carrier rate sheet to freight_quote", () => {
+      const result = quickCategorize(
+        "Freight quotation Ningbo - Long Beach",
+        "rates@flexport.com",
+        "FCL 40HQ rate, transit 22 days, includes drayage.",
+      );
+      expect(result.category).toBe("freight_quote");
+    });
+
+    it("keeps a carrier's message away from the vendor-quote parser", () => {
+      // Lands on shipping_confirmation via the maersk.com sender pattern, which
+      // is pre-existing behaviour; what matters here is that it is not claimed
+      // as a supplier quotation.
+      const result = quickCategorize("Ocean freight quote for Q3", "quotes@maersk.com");
+      expect(result.category).not.toBe("vendor_quote");
+    });
+
+    it("does not let transport language in the body turn a carrier note into a vendor quote", () => {
+      const result = quickCategorize(
+        "Quotation for your shipment",
+        "ops@somebroker.com",
+        "Transit time 22 days, demurrage free for 7 days.",
+      );
+      expect(result.category).not.toBe("vendor_quote");
+    });
+
+    it("has display info for the vendor_quote category", () => {
+      const info = getCategoryDisplayInfo("vendor_quote");
+      expect(info.label).toBe("Vendor Quote");
+      expect(info.color).toBeTruthy();
+    });
+  });
+
   describe("getCategoryDisplayInfo", () => {
     it("should return correct info for receipt category", () => {
       const info = getCategoryDisplayInfo("receipt");

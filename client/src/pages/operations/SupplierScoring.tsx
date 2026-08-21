@@ -76,7 +76,7 @@ export default function SupplierScoring() {
                 <TableHead>Delivery</TableHead>
                 <TableHead>Quality</TableHead>
                 <TableHead>Pricing</TableHead>
-                <TableHead>Responsiveness</TableHead>
+                <TableHead title="Measured from RFQ invitations: response rate, first-reply speed, and replies before the quote due date">Responsiveness</TableHead>
                 <TableHead>Compliance</TableHead>
                 <TableHead>Trend</TableHead>
                 <TableHead>Risk</TableHead>
@@ -98,7 +98,13 @@ export default function SupplierScoring() {
                   <TableCell className="text-sm">{s.dimensions.delivery.score}</TableCell>
                   <TableCell className="text-sm">{s.dimensions.quality.score}</TableCell>
                   <TableCell className="text-sm">{s.dimensions.pricing.score}</TableCell>
-                  <TableCell className="text-sm">{s.dimensions.responsiveness.score}</TableCell>
+                  {/* Responsiveness is measured from RFQ invitations, so the
+                      figures behind the number are worth surfacing. */}
+                  <TableCell className="text-sm">
+                    <span className="underline decoration-dotted" title={s.dimensions.responsiveness.details}>
+                      {s.dimensions.responsiveness.score}
+                    </span>
+                  </TableCell>
                   <TableCell className="text-sm">{s.dimensions.compliance.score}</TableCell>
                   <TableCell>
                     <Badge variant={s.trend === "improving" ? "default" : s.trend === "declining" ? "destructive" : "outline"}>

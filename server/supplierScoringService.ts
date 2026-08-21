@@ -6,6 +6,11 @@
 import { invokeLLM } from "./_core/llm";
 import * as db from "./db";
 import { z } from "zod";
+import {
+  computeResponsivenessForVendors,
+  responsivenessScoreFromMetrics,
+  type ResponsivenessMetrics,
+} from "./vendorResponsiveness";
 
 // ============================================
 // SCHEMAS
@@ -39,6 +44,25 @@ const SupplierScoreSchema = z.object({
 
 export type SupplierScoreResult = z.infer<typeof SupplierScoreSchema>;
 
+/** Scoring fans out per vendor, so a single run is bounded. */
+const MAX_VENDORS_PER_SCORING_RUN = 30;
+/** Weight of the responsiveness dimension in the overall score. */
+const RESPONSIVENESS_WEIGHT = 0.15;
+/** Neutral placeholder used only when a dimension genuinely has no data behind it. */
+const NO_DATA_DIMENSION_SCORE = 50;
+
+function clampScore(value: number): number {
+  return Math.round(Math.max(0, Math.min(100, value)));
+}
+
+function gradeFor(overall: number): "A" | "B" | "C" | "D" | "F" {
+  if (overall >= 90) return "A";
+  if (overall >= 80) return "B";
+  if (overall >= 70) return "C";
+  if (overall >= 60) return "D";
+  return "F";
+}
+
 // ============================================
 // ML-BASED SUPPLIER SCORING
 // ============================================
@@ -63,10 +87,20 @@ export async function scoreSuppliers(params?: {
     totalSpend: number;
     avgOrderValue: number;
     onTimeRate: number;
+    responsiveness: ResponsivenessMetrics | null;
   }> = [];
 
+  // Scoring is capped at 30 vendors per run; see the note on the returned summary.
+  const scoredVendors = targetVendors.slice(0, MAX_VENDORS_PER_SCORING_RUN);
+
+  // Real RFQ responsiveness for the whole batch in one query, so the
+  // responsiveness dimension is measured rather than assumed.
+  const responsivenessByVendor = await computeResponsivenessForVendors(
+    scoredVendors.map(v => v.id),
+  );
+
   const metricsResults = await Promise.all(
-    targetVendors.slice(0, 30).map(async (vendor) => {
+    scoredVendors.map(async (vendor) => {
       const [spendingRecords, pos] = await Promise.all([
         db.getVendorSpendingHistory(vendor.id),
         db.getPurchaseOrders({ vendorId: vendor.id }),
@@ -83,6 +117,7 @@ export async function scoreSuppliers(params?: {
         totalSpend,
         avgOrderValue: spendingRecords.length > 0 ? totalSpend / spendingRecords.length : 0,
         onTimeRate,
+        responsiveness: responsivenessByVendor.get(vendor.id) ?? null,
       };
     })
   );
@@ -91,13 +126,22 @@ export async function scoreSuppliers(params?: {
   const prompt = `Score these suppliers/vendors on a comprehensive performance framework.
 
 VENDORS (${vendorMetrics.length}):
-${vendorMetrics.map(vm => `- ID:${vm.vendor.id} Name:"${vm.vendor.name}" Contact:"${vm.vendor.contactName || 'N/A'}" POs:${vm.poCount} TotalSpend:$${vm.totalSpend.toFixed(2)} AvgOrder:$${vm.avgOrderValue.toFixed(2)} OnTimeRate:${(vm.onTimeRate * 100).toFixed(0)}%`).join("\n")}
+${vendorMetrics.map(vm => {
+    const r = vm.responsiveness;
+    const responsiveness = r && r.closed > 0
+      ? `RFQsInvited:${r.invited} Answered:${r.responded} Declined:${r.declined} NoReply:${r.noResponse}` +
+        ` ResponseRate:${r.responseRatePct?.toFixed(0) ?? 'n/a'}%` +
+        ` AvgFirstReply:${r.averageResponseHours !== null ? `${r.averageResponseHours.toFixed(1)}h` : 'n/a'}` +
+        ` OnTimeVsDueDate:${r.onTimeRatePct !== null ? `${r.onTimeRatePct.toFixed(0)}%` : 'n/a'}`
+      : 'RFQ responsiveness: NO DATA';
+    return `- ID:${vm.vendor.id} Name:"${vm.vendor.name}" Contact:"${vm.vendor.contactName || 'N/A'}" POs:${vm.poCount} TotalSpend:$${vm.totalSpend.toFixed(2)} AvgOrder:$${vm.avgOrderValue.toFixed(2)} OnTimeRate:${(vm.onTimeRate * 100).toFixed(0)}% ${responsiveness}`;
+  }).join("\n")}
 
 Score each vendor on these dimensions (0-100):
 1. DELIVERY: On-time delivery performance, lead time consistency
 2. QUALITY: Product quality, defect rates, consistency
 3. PRICING: Competitiveness, value for money, price stability
-4. RESPONSIVENESS: Communication speed, issue resolution, flexibility
+4. RESPONSIVENESS: Use the RFQ response figures given for each vendor. Where they read NO DATA, score 50 and say so in the details rather than inventing a number.
 5. COMPLIANCE: Documentation, regulatory compliance, terms adherence
 
 Overall score should be weighted: Delivery 25%, Quality 25%, Pricing 20%, Responsiveness 15%, Compliance 15%
@@ -124,7 +168,29 @@ Respond ONLY with valid JSON:
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
       const validated = SupplierScoreSchema.safeParse(parsed);
-      if (validated.success) return validated.data;
+      if (validated.success) {
+        // Responsiveness is measured, not judged: overwrite whatever the model
+        // returned for that dimension with the computed value, and re-weight
+        // the overall score so the two stay consistent.
+        for (const score of validated.data.scores) {
+          const metrics = responsivenessByVendor.get(score.vendorId);
+          if (!metrics) continue;
+          const measured = responsivenessScoreFromMetrics(metrics);
+          const previous = score.dimensions.responsiveness.score;
+          score.dimensions.responsiveness = {
+            score: measured.score ?? NO_DATA_DIMENSION_SCORE,
+            details: measured.score === null
+              ? `No RFQ response data. ${measured.details}`
+              : `${measured.details}${measured.lowConfidence ? " (low confidence: small sample)" : ""}`,
+          };
+          score.overallScore = clampScore(
+            score.overallScore +
+              (score.dimensions.responsiveness.score - previous) * RESPONSIVENESS_WEIGHT,
+          );
+          score.grade = gradeFor(score.overallScore);
+        }
+        return validated.data;
+      }
     }
   } catch (e) {
     console.warn("Supplier scoring LLM failed:", e);
@@ -135,18 +201,21 @@ Respond ONLY with valid JSON:
     const deliveryScore = vm.onTimeRate * 100;
     const pricingScore = vm.poCount > 10 ? 75 : vm.poCount > 3 ? 65 : 50;
     const qualityScore = vm.poCount > 5 ? 70 : 55;
-    const responsivenessScore = 60;
+    const measuredResponsiveness = vm.responsiveness
+      ? responsivenessScoreFromMetrics(vm.responsiveness)
+      : { score: null, lowConfidence: true, details: "No RFQ invitations on record." };
+    const responsivenessScore = measuredResponsiveness.score ?? NO_DATA_DIMENSION_SCORE;
     const complianceScore = 65;
 
     const overall = Math.round(
       deliveryScore * 0.25 +
       qualityScore * 0.25 +
       pricingScore * 0.20 +
-      responsivenessScore * 0.15 +
+      responsivenessScore * RESPONSIVENESS_WEIGHT +
       complianceScore * 0.15
     );
 
-    const grade = overall >= 90 ? "A" as const : overall >= 80 ? "B" as const : overall >= 70 ? "C" as const : overall >= 60 ? "D" as const : "F" as const;
+    const grade = gradeFor(overall);
 
     return {
       vendorId: vm.vendor.id,
@@ -157,7 +226,12 @@ Respond ONLY with valid JSON:
         delivery: { score: Math.round(deliveryScore), details: `${vm.poCount} orders tracked` },
         quality: { score: qualityScore, details: "Estimated from order history" },
         pricing: { score: pricingScore, details: `Avg order: $${vm.avgOrderValue.toFixed(2)}` },
-        responsiveness: { score: responsivenessScore, details: "Default - requires more data" },
+        responsiveness: {
+          score: responsivenessScore,
+          details: measuredResponsiveness.score === null
+            ? `No RFQ response data. ${measuredResponsiveness.details}`
+            : `${measuredResponsiveness.details}${measuredResponsiveness.lowConfidence ? " (low confidence: small sample)" : ""}`,
+        },
         compliance: { score: complianceScore, details: "Default - requires audit data" },
       },
       trend: "stable" as const,
@@ -172,6 +246,11 @@ Respond ONLY with valid JSON:
     scores,
     topPerformers: sorted.slice(0, 3).map(s => s.vendorName),
     needsImprovement: sorted.filter(s => s.overallScore < 70).map(s => s.vendorName),
-    summary: `Scored ${scores.length} suppliers. Average score: ${scores.length > 0 ? Math.round(scores.reduce((s, sc) => s + sc.overallScore, 0) / scores.length) : 0}/100.`,
+    summary:
+      `Scored ${scores.length} suppliers. Average score: ${scores.length > 0 ? Math.round(scores.reduce((s, sc) => s + sc.overallScore, 0) / scores.length) : 0}/100.` +
+      // Never let a capped run read as full coverage.
+      (targetVendors.length > scores.length
+        ? ` ${targetVendors.length - scores.length} further vendor(s) were not scored in this run (cap: ${MAX_VENDORS_PER_SCORING_RUN}).`
+        : ""),
   };
 }

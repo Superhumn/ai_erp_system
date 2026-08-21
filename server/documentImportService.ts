@@ -148,6 +148,221 @@ export interface ImportResult {
 }
 
 /**
+ * Turn a file URL into LLM message content, transparently handling images
+ * (base64 data URL), text PDFs (pdfjs text extraction) and scanned PDFs
+ * (pdf2pic + vision OCR), and plain text/CSV/Excel exports.
+ *
+ * Shared by every document-parsing entry point — `parseUploadedDocument` and
+ * the vendor-quote attachment parser — so all of them get the same OCR
+ * fallback and the same size caps.
+ */
+// A flat shape rather than a discriminated union: this project compiles with
+// `strictNullChecks: false`, under which TypeScript will not narrow a union on a
+// boolean literal discriminant.
+export interface DocumentMessageContent {
+  ok: boolean;
+  content: any[];
+  hasImageContent: boolean;
+  isPdf: boolean;
+  error?: string;
+}
+
+const EMPTY_MESSAGE_CONTENT = { content: [] as any[], hasImageContent: false, isPdf: false };
+
+export async function buildDocumentMessageContent(
+  fileUrl: string,
+  filename: string,
+  prompt: string,
+): Promise<DocumentMessageContent> {
+  try {
+    // Determine file type
+    const isImage = filename.toLowerCase().match(/\.(png|jpg|jpeg|gif|webp)$/i);
+    const isPdf = filename.toLowerCase().endsWith('.pdf');
+    const isCsv = filename.toLowerCase().endsWith('.csv');
+    
+    // Build the message content
+    let messageContent: any[];
+    
+    if (isImage) {
+      // For images, download and convert to base64 data URL
+      try {
+        console.log("[DocumentImport] Downloading image from:", fileUrl);
+        const response = await fetch(fileUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch image: ${response.status}`);
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        const base64 = buffer.toString('base64');
+        const ext = filename.toLowerCase().match(/\.(png|jpg|jpeg|gif|webp)$/i)?.[1] || 'png';
+        const mimeTypeMap: Record<string, string> = {
+          'png': 'image/png',
+          'jpg': 'image/jpeg',
+          'jpeg': 'image/jpeg',
+          'gif': 'image/gif',
+          'webp': 'image/webp'
+        };
+        const imageMimeType = mimeTypeMap[ext] || 'image/png';
+        const dataUrl = `data:${imageMimeType};base64,${base64}`;
+        console.log("[DocumentImport] Converted image to base64 data URL, length:", dataUrl.length);
+        messageContent = [
+          { type: "text", text: prompt },
+          { type: "image_url", image_url: { url: dataUrl, detail: "high" } }
+        ];
+      } catch (fetchError) {
+        console.error("[DocumentImport] Failed to fetch/convert image:", fetchError);
+        return { ok: false, ...EMPTY_MESSAGE_CONTENT, error: "Failed to process image file" };
+      }
+    } else if (isPdf) {
+      // For PDFs, first try text extraction, then fall back to OCR for scanned PDFs
+      console.log("[DocumentImport] Extracting text from PDF using pdfjs-dist");
+      try {
+        // Download the PDF
+        const response = await fetch(fileUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch PDF: ${response.status}`);
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        const uint8Array = new Uint8Array(arrayBuffer);
+        console.log("[DocumentImport] Downloaded PDF, size:", uint8Array.byteLength);
+        
+        // Use pdfjs-dist to extract text (pure JavaScript, no native dependencies)
+        const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+        const loadingTask = pdfjsLib.getDocument({ data: uint8Array });
+        const pdf = await loadingTask.promise;
+        console.log("[DocumentImport] PDF loaded, pages:", pdf.numPages);
+        
+        // Extract text from all pages
+        let fullText = '';
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          const pageText = textContent.items.map((item: any) => item.str).join(' ');
+          fullText += pageText + '\n';
+        }
+        console.log("[DocumentImport] PDF text extracted, length:", fullText.length);
+        
+        // Check if we got sufficient text (less than threshold suggests scanned/image PDF)
+        if (fullText.trim().length < MIN_TEXT_LENGTH_FOR_SCANNED_DETECTION) {
+          console.log("[DocumentImport] Insufficient text extracted, PDF appears to be scanned. Falling back to OCR...");
+
+          const pagesToProcess = Math.min(pdf.numPages, MAX_SCANNED_PDF_PAGES);
+          if (pdf.numPages > MAX_SCANNED_PDF_PAGES) {
+            console.warn(`[DocumentImport] PDF has ${pdf.numPages} pages, capping OCR at first ${MAX_SCANNED_PDF_PAGES} pages.`);
+          }
+          console.log(`[DocumentImport] Processing ${pagesToProcess} page(s) for OCR`);
+
+          // Create buffer for pdf2pic (only needed for scanned PDFs)
+          const buffer = Buffer.from(arrayBuffer);
+
+          // Convert PDF to images using pdf2pic for OCR
+          // Use crypto.randomBytes for unique directory name to avoid collisions
+          const uniqueId = randomBytes(8).toString('hex');
+          const tempDir = join(tmpdir(), `pdf_ocr_${uniqueId}`);
+          if (!existsSync(tempDir)) {
+            mkdirSync(tempDir, { recursive: true });
+          }
+
+          try {
+            const options = {
+              density: 200, // DPI for image conversion
+              saveFilename: `pdf_page_${uniqueId}`, // Unique filename to avoid collisions
+              savePath: tempDir,
+              format: "png" as const,
+              width: 2000,
+              height: 2800
+            };
+
+            console.log("[DocumentImport] Converting PDF to images for OCR...");
+            const convert = fromBuffer(buffer, options);
+
+            // Configure to use ImageMagick (not GraphicsMagick)
+            convert.setGMClass(true); // true = use ImageMagick
+
+            // Convert all pages to base64 for vision OCR
+            const imageContents: any[] = [];
+            for (let pageNum = 1; pageNum <= pagesToProcess; pageNum++) {
+              const pageResult = await convert(pageNum, { responseType: "base64" });
+              if (!pageResult || !pageResult.base64) {
+                console.warn(`[DocumentImport] Failed to convert page ${pageNum}, skipping`);
+                continue;
+              }
+              const dataUrl = `data:image/png;base64,${pageResult.base64}`;
+              imageContents.push({ type: "image_url", image_url: { url: dataUrl, detail: "high" } });
+            }
+
+            if (imageContents.length === 0) {
+              throw new Error("PDF to image conversion failed for all pages");
+            }
+
+            console.log(`[DocumentImport] Converted ${imageContents.length} page(s) to images, using vision OCR`);
+
+            // Use vision-based OCR with all pages
+            messageContent = [
+              { type: "text", text: prompt },
+              ...imageContents
+            ];
+
+            // Clean up temp directory using safe fs.rmSync
+            try {
+              rmSync(tempDir, { recursive: true, force: true });
+            } catch (cleanupError) {
+              console.warn("[DocumentImport] Failed to cleanup temp directory:", cleanupError);
+            }
+          } catch (ocrError) {
+            console.error("[DocumentImport] OCR conversion failed:", ocrError);
+            // Clean up temp directory on error using safe fs.rmSync
+            try {
+              rmSync(tempDir, { recursive: true, force: true });
+            } catch (cleanupError) {
+              // Ignore cleanup errors
+            }
+            throw new Error(`Failed to process scanned PDF: ${ocrError instanceof Error ? ocrError.message : 'Unknown error'}`);
+          }
+        } else {
+          // Use the extracted text for LLM analysis
+          const pdfText = fullText.substring(0, 50000); // Limit to 50k chars
+          messageContent = [
+            { type: "text", text: `${prompt}\n\nEXTRACTED PDF TEXT:\n${pdfText}` }
+          ];
+          console.log("[DocumentImport] PDF text extracted successfully");
+        }
+      } catch (pdfError) {
+        console.error("[DocumentImport] Failed to extract PDF text:", pdfError);
+        return { ok: false, ...EMPTY_MESSAGE_CONTENT, error: `Failed to process PDF: ${pdfError instanceof Error ? pdfError.message : 'Unknown error'}` };
+      }
+    } else {
+      // For CSV/Excel/text files, download and extract text content
+      try {
+        console.log("[DocumentImport] Fetching document content from URL:", fileUrl);
+        const response = await fetch(fileUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch document: ${response.status}`);
+        }
+        const textContent = await response.text();
+        console.log("[DocumentImport] Extracted text content length:", textContent.length);
+        messageContent = [
+          { type: "text", text: `${prompt}\n\nDOCUMENT CONTENT:\n${textContent.substring(0, 50000)}` }
+        ];
+      } catch (fetchError) {
+        console.error("[DocumentImport] Failed to fetch document:", fetchError);
+        return { ok: false, ...EMPTY_MESSAGE_CONTENT, error: "Failed to read document content" };
+      }
+    }
+    
+    return {
+      ok: true,
+      content: messageContent,
+      hasImageContent: messageContent.some((m: any) => m.type === "image_url"),
+      isPdf: !!isPdf,
+    };
+  } catch (error) {
+    console.error("[DocumentImport] Failed to build message content:", error);
+    return { ok: false, ...EMPTY_MESSAGE_CONTENT, error: error instanceof Error ? error.message : "Failed to read document" };
+  }
+}
+
+/**
  * Parse uploaded document content (text extracted from PDF/Excel/CSV)
  */
 export async function parseUploadedDocument(
@@ -292,181 +507,14 @@ Return a JSON object with this structure:
 Only include the relevant object based on document type.
 If document type is unknown, return all as null.`;
 
-    // Determine file type
-    const isImage = filename.toLowerCase().match(/\.(png|jpg|jpeg|gif|webp)$/i);
-    const isPdf = filename.toLowerCase().endsWith('.pdf');
-    const isCsv = filename.toLowerCase().endsWith('.csv');
-    
-    // Build the message content
-    let messageContent: any[];
-    
-    if (isImage) {
-      // For images, download and convert to base64 data URL
-      try {
-        console.log("[DocumentImport] Downloading image from:", fileUrl);
-        const response = await fetch(fileUrl);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch image: ${response.status}`);
-        }
-        const arrayBuffer = await response.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
-        const base64 = buffer.toString('base64');
-        const ext = filename.toLowerCase().match(/\.(png|jpg|jpeg|gif|webp)$/i)?.[1] || 'png';
-        const mimeTypeMap: Record<string, string> = {
-          'png': 'image/png',
-          'jpg': 'image/jpeg',
-          'jpeg': 'image/jpeg',
-          'gif': 'image/gif',
-          'webp': 'image/webp'
-        };
-        const imageMimeType = mimeTypeMap[ext] || 'image/png';
-        const dataUrl = `data:${imageMimeType};base64,${base64}`;
-        console.log("[DocumentImport] Converted image to base64 data URL, length:", dataUrl.length);
-        messageContent = [
-          { type: "text", text: prompt },
-          { type: "image_url", image_url: { url: dataUrl, detail: "high" } }
-        ];
-      } catch (fetchError) {
-        console.error("[DocumentImport] Failed to fetch/convert image:", fetchError);
-        return { success: false, documentType: "unknown", error: "Failed to process image file" };
-      }
-    } else if (isPdf) {
-      // For PDFs, first try text extraction, then fall back to OCR for scanned PDFs
-      console.log("[DocumentImport] Extracting text from PDF using pdfjs-dist");
-      try {
-        // Download the PDF
-        const response = await fetch(fileUrl);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch PDF: ${response.status}`);
-        }
-        const arrayBuffer = await response.arrayBuffer();
-        const uint8Array = new Uint8Array(arrayBuffer);
-        console.log("[DocumentImport] Downloaded PDF, size:", uint8Array.byteLength);
-        
-        // Use pdfjs-dist to extract text (pure JavaScript, no native dependencies)
-        const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
-        const loadingTask = pdfjsLib.getDocument({ data: uint8Array });
-        const pdf = await loadingTask.promise;
-        console.log("[DocumentImport] PDF loaded, pages:", pdf.numPages);
-        
-        // Extract text from all pages
-        let fullText = '';
-        for (let i = 1; i <= pdf.numPages; i++) {
-          const page = await pdf.getPage(i);
-          const textContent = await page.getTextContent();
-          const pageText = textContent.items.map((item: any) => item.str).join(' ');
-          fullText += pageText + '\n';
-        }
-        console.log("[DocumentImport] PDF text extracted, length:", fullText.length);
-        
-        // Check if we got sufficient text (less than threshold suggests scanned/image PDF)
-        if (fullText.trim().length < MIN_TEXT_LENGTH_FOR_SCANNED_DETECTION) {
-          console.log("[DocumentImport] Insufficient text extracted, PDF appears to be scanned. Falling back to OCR...");
-
-          const pagesToProcess = Math.min(pdf.numPages, MAX_SCANNED_PDF_PAGES);
-          if (pdf.numPages > MAX_SCANNED_PDF_PAGES) {
-            console.warn(`[DocumentImport] PDF has ${pdf.numPages} pages, capping OCR at first ${MAX_SCANNED_PDF_PAGES} pages.`);
-          }
-          console.log(`[DocumentImport] Processing ${pagesToProcess} page(s) for OCR`);
-
-          // Create buffer for pdf2pic (only needed for scanned PDFs)
-          const buffer = Buffer.from(arrayBuffer);
-
-          // Convert PDF to images using pdf2pic for OCR
-          // Use crypto.randomBytes for unique directory name to avoid collisions
-          const uniqueId = randomBytes(8).toString('hex');
-          const tempDir = join(tmpdir(), `pdf_ocr_${uniqueId}`);
-          if (!existsSync(tempDir)) {
-            mkdirSync(tempDir, { recursive: true });
-          }
-
-          try {
-            const options = {
-              density: 200, // DPI for image conversion
-              saveFilename: `pdf_page_${uniqueId}`, // Unique filename to avoid collisions
-              savePath: tempDir,
-              format: "png" as const,
-              width: 2000,
-              height: 2800
-            };
-
-            console.log("[DocumentImport] Converting PDF to images for OCR...");
-            const convert = fromBuffer(buffer, options);
-
-            // Configure to use ImageMagick (not GraphicsMagick)
-            convert.setGMClass(true); // true = use ImageMagick
-
-            // Convert all pages to base64 for vision OCR
-            const imageContents: any[] = [];
-            for (let pageNum = 1; pageNum <= pagesToProcess; pageNum++) {
-              const pageResult = await convert(pageNum, { responseType: "base64" });
-              if (!pageResult || !pageResult.base64) {
-                console.warn(`[DocumentImport] Failed to convert page ${pageNum}, skipping`);
-                continue;
-              }
-              const dataUrl = `data:image/png;base64,${pageResult.base64}`;
-              imageContents.push({ type: "image_url", image_url: { url: dataUrl, detail: "high" } });
-            }
-
-            if (imageContents.length === 0) {
-              throw new Error("PDF to image conversion failed for all pages");
-            }
-
-            console.log(`[DocumentImport] Converted ${imageContents.length} page(s) to images, using vision OCR`);
-
-            // Use vision-based OCR with all pages
-            messageContent = [
-              { type: "text", text: prompt },
-              ...imageContents
-            ];
-
-            // Clean up temp directory using safe fs.rmSync
-            try {
-              rmSync(tempDir, { recursive: true, force: true });
-            } catch (cleanupError) {
-              console.warn("[DocumentImport] Failed to cleanup temp directory:", cleanupError);
-            }
-          } catch (ocrError) {
-            console.error("[DocumentImport] OCR conversion failed:", ocrError);
-            // Clean up temp directory on error using safe fs.rmSync
-            try {
-              rmSync(tempDir, { recursive: true, force: true });
-            } catch (cleanupError) {
-              // Ignore cleanup errors
-            }
-            throw new Error(`Failed to process scanned PDF: ${ocrError instanceof Error ? ocrError.message : 'Unknown error'}`);
-          }
-        } else {
-          // Use the extracted text for LLM analysis
-          const pdfText = fullText.substring(0, 50000); // Limit to 50k chars
-          messageContent = [
-            { type: "text", text: `${prompt}\n\nEXTRACTED PDF TEXT:\n${pdfText}` }
-          ];
-          console.log("[DocumentImport] PDF text extracted successfully");
-        }
-      } catch (pdfError) {
-        console.error("[DocumentImport] Failed to extract PDF text:", pdfError);
-        return { success: false, documentType: "unknown", error: `Failed to process PDF: ${pdfError instanceof Error ? pdfError.message : 'Unknown error'}` };
-      }
-    } else {
-      // For CSV/Excel/text files, download and extract text content
-      try {
-        console.log("[DocumentImport] Fetching document content from URL:", fileUrl);
-        const response = await fetch(fileUrl);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch document: ${response.status}`);
-        }
-        const textContent = await response.text();
-        console.log("[DocumentImport] Extracted text content length:", textContent.length);
-        messageContent = [
-          { type: "text", text: `${prompt}\n\nDOCUMENT CONTENT:\n${textContent.substring(0, 50000)}` }
-        ];
-      } catch (fetchError) {
-        console.error("[DocumentImport] Failed to fetch document:", fetchError);
-        return { success: false, documentType: "unknown", error: "Failed to read document content" };
-      }
+    const built = await buildDocumentMessageContent(fileUrl, filename, prompt);
+    if (!built.ok) {
+      return { success: false, documentType: "unknown", error: built.error };
     }
-    
+    const messageContent = built.content;
+    const isImage = !built.isPdf && built.hasImageContent;
+    const isPdf = built.isPdf;
+
     console.log("[DocumentImport] Sending to LLM with content type:", isImage ? "image_url (base64)" : isPdf ? "text or image_url (OCR if needed)" : "text");
     console.log("[DocumentImport] Message content structure:", JSON.stringify(messageContent.map((m: any) => ({ type: m.type, hasUrl: !!m.image_url?.url || !!m.file_url?.url }))));
     
