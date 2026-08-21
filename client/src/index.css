@@ -306,9 +306,12 @@
 @layer components {
   /* Route/page entrance: content rises 6px and fades in. Applied by the
      dashboard shell, keyed by route, so every navigation feels placed
-     rather than swapped. */
+     rather than swapped. No fill-mode: once the animation ends the transform
+     reverts to `none`, so this wrapper stops being a containing block and
+     position:fixed descendants (e.g. bulk-action bars) anchor to the
+     viewport again. */
   .page-enter {
-    animation: page-enter var(--motion-slow) var(--ease-enter) both;
+    animation: page-enter var(--motion-slow) var(--ease-enter);
   }
 
   /* Tab panels cross-fade instead of hard-cutting. */
@@ -331,7 +334,9 @@
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    /* End at the base value so there is no visual jump when the animation
+       finishes and the element's own (transform-free) style takes over. */
+    transform: none;
   }
 }
 
@@ -345,8 +350,10 @@
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
     scroll-behavior: auto !important;
   }
 }
