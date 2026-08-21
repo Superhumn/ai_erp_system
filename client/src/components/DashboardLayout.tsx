@@ -542,7 +542,12 @@ function DashboardLayoutContent({
             <NotificationCenter />
           </div>
         </header>
-        <main className="density-compact flex-1 overflow-auto p-3 pb-3 md:p-4 md:pb-4 lg:p-5 lg:pb-5">{children}</main>
+        <main className="density-compact flex-1 overflow-auto p-3 pb-3 md:p-4 md:pb-4 lg:p-5 lg:pb-5">
+          {/* Keyed by route so each navigation replays the page-enter rise. */}
+          <div key={location} className="page-enter">
+            {children}
+          </div>
+        </main>
       </SidebarInset>
 
       {/* Floating AI removed - using toolbar only */}
