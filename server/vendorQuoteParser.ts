@@ -27,6 +27,7 @@ import { buildDocumentMessageContent } from "./documentImportService";
 import { normalizeQuotesForRfq } from "./quoteNormalization";
 import { currencyOr, normalizeCurrencyCode } from "./currencyService";
 import { recordInvitationResponse } from "./vendorResponsiveness";
+import { parseLlmJson } from "./llmJson";
 
 // ─── Extraction shape ──────────────────────────────────────────────────
 
@@ -151,20 +152,9 @@ const EXTRACTION_SCHEMA = {
 
 /** Tolerant JSON extraction — `response_format` is a prompt hint here, not a guarantee. */
 export function parseExtractionJson(raw: unknown): VendorQuoteExtraction {
-  const text = typeof raw === "string" ? raw : JSON.stringify(raw ?? "");
-  const stripped = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "");
-  let parsed: any;
-  try {
-    parsed = JSON.parse(stripped);
-  } catch {
-    const match = stripped.match(/\{[\s\S]*\}/);
-    if (!match) return { ...EMPTY_EXTRACTION };
-    try {
-      parsed = JSON.parse(match[0]);
-    } catch {
-      return { ...EMPTY_EXTRACTION };
-    }
-  }
+  // Shared tolerant recovery, so a fenced block behind a sentence still parses.
+  const parsed = parseLlmJson(raw);
+  if (parsed === null || typeof parsed !== "object") return { ...EMPTY_EXTRACTION };
   return coerceExtraction(parsed);
 }
 

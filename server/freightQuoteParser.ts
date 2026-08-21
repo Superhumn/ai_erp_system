@@ -21,6 +21,7 @@ import { invokeLLM } from "./_core/llm";
 import { buildDocumentMessageContent } from "./documentImportService";
 import { normalizeCurrencyCode } from "./currencyService";
 import { parseServiceScope, type ServiceScope } from "./freightQuoteNormalization";
+import { parseLlmJson } from "./llmJson";
 
 // ─── Extraction shape ──────────────────────────────────────────────────
 
@@ -175,20 +176,9 @@ export function coerceFreightExtraction(parsed: any): FreightQuoteExtraction {
 }
 
 export function parseFreightExtractionJson(raw: unknown): FreightQuoteExtraction {
-  const text = typeof raw === "string" ? raw : JSON.stringify(raw ?? "");
-  const stripped = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "");
-  let parsed: any;
-  try {
-    parsed = JSON.parse(stripped);
-  } catch {
-    const match = stripped.match(/\{[\s\S]*\}/);
-    if (!match) return { ...EMPTY_EXTRACTION };
-    try {
-      parsed = JSON.parse(match[0]);
-    } catch {
-      return { ...EMPTY_EXTRACTION };
-    }
-  }
+  // Shared tolerant recovery, so a fenced block behind a sentence still parses.
+  const parsed = parseLlmJson(raw);
+  if (parsed === null || typeof parsed !== "object") return { ...EMPTY_EXTRACTION };
   return coerceFreightExtraction(parsed);
 }
 

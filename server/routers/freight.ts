@@ -8,6 +8,8 @@ import { nanoid } from "nanoid";
 import { router, protectedProcedure, opsProcedure, createAuditLog } from "./middleware";
 import { normalizeFreightQuotesForRfq, SERVICE_SCOPES } from "../freightQuoteNormalization";
 import { parseFreightQuoteEmail, parseFreightQuoteAttachment, mergeFreightExtractions, quoteValuesFromExtraction } from "../freightQuoteParser";
+import { parseLlmJson } from "../llmJson";
+import { isFetchableAttachmentUrl } from "../attachmentUrl";
 
 export const freightRouter = router({
   // ============================================
@@ -471,12 +473,10 @@ Then recommend one quoteId and write a summary an operations manager could defen
             ],
           });
 
-          const raw = response.choices[0]?.message?.content;
-          const content = typeof raw === 'string' ? raw : JSON.stringify(raw);
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, ''));
-          } catch {
+          // Tolerant recovery: the model sometimes prefixes the fenced block with a
+          // sentence, which a single fence-strip would turn into a failed mutation.
+          const parsed = parseLlmJson(response.choices[0]?.message?.content);
+          if (parsed === null) {
             throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to parse freight quote analysis response' });
           }
 
@@ -601,7 +601,12 @@ Then recommend one quoteId and write a summary an operations manager could defen
           // Carriers quote lanes on rate sheets far more often than in the body,
           // so the attachment is the binding document when both are present.
           attachments: z.array(z.object({
-            fileUrl: z.string(),
+            // Fetched server-side, so it must be a data: URL or our own storage —
+            // never an arbitrary host. Defence in depth: buildDocumentMessageContent
+            // re-checks before fetching. See server/attachmentUrl.ts.
+            fileUrl: z.string().refine(isFetchableAttachmentUrl, {
+              message: 'Attachment URL must be an uploaded storage URL.',
+            }),
             fileName: z.string(),
           })).max(5).optional(),
         }))
