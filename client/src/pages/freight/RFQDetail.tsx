@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -31,10 +31,13 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import { formatCurrency } from "@/lib/format";
 import {
+  AlertTriangle,
   ArrowLeft,
   Send,
   Loader2,
+  Scale,
   MapPin,
   Package,
   Calendar,
@@ -51,6 +54,25 @@ import {
 } from "lucide-react";
 import { Link, useParams, useLocation } from "wouter";
 import { Streamdown } from "streamdown";
+
+/** Carrier-facing labels for the canonical service scopes. */
+const SCOPE_LABELS: Record<string, string> = {
+  port_to_port: "Port → Port",
+  door_to_port: "Door → Port",
+  port_to_door: "Port → Door",
+  door_to_door: "Door → Door",
+};
+
+/** Parse a persisted JSON array column, tolerating null and malformed values. */
+function parseJsonArray(raw: unknown): any[] {
+  if (!raw || typeof raw !== "string") return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 export default function RFQDetail() {
   const { id } = useParams<{ id: string }>();
@@ -90,6 +112,20 @@ export default function RFQDetail() {
   const { data: carriers } = trpc.freight.carriers.list.useQuery({ isActive: true });
   const { data: emails } = trpc.freight.emails.list.useQuery({ rfqId });
 
+  // Order by computed rank where normalization has run; un-leveled quotes keep
+  // their original order behind the ranked ones rather than sorting as "best".
+  const sortedQuotes = useMemo(
+    () =>
+      [...(quotes ?? [])].sort(
+        (a: any, b: any) => (a.normalizedRank ?? 9999) - (b.normalizedRank ?? 9999),
+      ),
+    [quotes],
+  );
+  const bestLeveled = useMemo(
+    () => (quotes ?? []).find((q: any) => q.normalizedRank === 1) as any,
+    [quotes],
+  );
+
   const sendToCarriersMutation = trpc.freight.rfqs.sendToCarriers.useMutation({
     onSuccess: (result) => {
       if (result.emailConfigured) {
@@ -120,10 +156,25 @@ export default function RFQDetail() {
     },
   });
 
+  const normalizeQuotesMutation = trpc.freight.quotes.normalizeQuotes.useMutation({
+    onSuccess: (result) => {
+      toast.success(
+        result.excludedCount > 0
+          ? `Leveled ${result.comparableCount} quote${result.comparableCount === 1 ? "" : "s"} — ${result.excludedCount} could not be compared`
+          : `Leveled ${result.comparableCount} quote${result.comparableCount === 1 ? "" : "s"} to a common basis`,
+      );
+      utils.freight.quotes.list.invalidate({ rfqId });
+    },
+    onError: (error) => {
+      toast.error(error.message || "Failed to level quotes");
+    },
+  });
+
   const analyzeQuotesMutation = trpc.freight.quotes.analyzeQuotes.useMutation({
     onSuccess: () => {
-      toast.success("AI analysis complete - scores updated");
+      toast.success("AI analysis complete - quotes leveled and scored");
       utils.freight.quotes.list.invalidate({ rfqId });
+      utils.freight.rfqs.get.invalidate({ id: rfqId });
     },
     onError: (error) => {
       toast.error(error.message || "Failed to analyze quotes");
@@ -325,6 +376,20 @@ export default function RFQDetail() {
           {quotes && quotes.length > 1 && rfq.status !== 'awarded' && (
             <Button
               variant="outline"
+              onClick={() => normalizeQuotesMutation.mutate({ rfqId })}
+              disabled={normalizeQuotesMutation.isPending}
+            >
+              {normalizeQuotesMutation.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Scale className="h-4 w-4 mr-2" />
+              )}
+              Level Quotes
+            </Button>
+          )}
+          {quotes && quotes.length > 1 && rfq.status !== 'awarded' && (
+            <Button
+              variant="outline"
               onClick={() => analyzeQuotesMutation.mutate({ rfqId })}
               disabled={analyzeQuotesMutation.isPending}
             >
@@ -467,13 +532,11 @@ export default function RFQDetail() {
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
             <span>Quotes Received ({quotes?.length || 0})</span>
-            {quotes && quotes.length > 0 && (
+            {bestLeveled && (
               <Badge variant="outline">
-                Best: {quotes.reduce((min, q) => 
-                  parseFloat(q.totalCost || '999999') < parseFloat(min.totalCost || '999999') ? q : min
-                ).totalCost ? `$${quotes.reduce((min, q) => 
-                  parseFloat(q.totalCost || '999999') < parseFloat(min.totalCost || '999999') ? q : min
-                ).totalCost}` : 'N/A'}
+                Best landed: {formatCurrency(bestLeveled.landedTotalCost, {
+                  currency: bestLeveled.normalizedCurrency || undefined,
+                })}
               </Badge>
             )}
           </CardTitle>
@@ -488,8 +551,12 @@ export default function RFQDetail() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead>Rank</TableHead>
                   <TableHead>Carrier</TableHead>
-                  <TableHead>Total Cost</TableHead>
+                  <TableHead>Quoted Total</TableHead>
+                  <TableHead>Scope</TableHead>
+                  <TableHead>Landed Cost</TableHead>
+                  <TableHead>Per kg</TableHead>
                   <TableHead>Transit Time</TableHead>
                   <TableHead>Mode</TableHead>
                   <TableHead>AI Score</TableHead>
@@ -499,11 +566,26 @@ export default function RFQDetail() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {quotes.map((quote) => {
+                {sortedQuotes.map((quote, idx) => {
                   const carrier = carriers?.find(c => c.id === quote.carrierId);
-                  
+                  const warnings = parseJsonArray(quote.normalizationWarnings);
+                  const breakdown = parseJsonArray(quote.normalizationBreakdown);
+                  const understates = warnings.some((w: any) => w.understatesCost);
+                  const notComparable = !!quote.normalizedAt && quote.landedTotalCost == null;
+
                   return (
                     <TableRow key={quote.id} className={quote.aiRecommendation === 'Recommended' ? 'bg-primary/10' : ''}>
+                      <TableCell>
+                        {notComparable ? (
+                          <Badge variant="outline" className="text-muted-foreground">n/a</Badge>
+                        ) : quote.normalizedRank === 1 ? (
+                          <Badge className="bg-primary text-primary-foreground">Best</Badge>
+                        ) : (
+                          <span className="text-muted-foreground">
+                            #{quote.normalizedRank ?? idx + 1}
+                          </span>
+                        )}
+                      </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           {quote.aiRecommendation === 'Recommended' && (
@@ -520,10 +602,72 @@ export default function RFQDetail() {
                       <TableCell>
                         <div className="flex items-center gap-1">
                           <DollarSign className="h-4 w-4 text-muted-foreground" />
-                          <span className="font-medium">
-                            {quote.totalCost ? `${quote.currency || 'USD'} ${quote.totalCost}` : 'TBD'}
+                          <span className="font-medium" title={`Quoted in ${quote.currency || 'USD'}`}>
+                            {quote.totalCost
+                              ? formatCurrency(quote.totalCost, { currency: quote.currency || undefined })
+                              : 'TBD'}
                           </span>
                         </div>
+                      </TableCell>
+                      <TableCell>
+                        {quote.serviceScope ? (
+                          <span className="text-sm">{SCOPE_LABELS[quote.serviceScope] ?? quote.serviceScope}</span>
+                        ) : (
+                          <span className="text-muted-foreground text-sm">not stated</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {notComparable ? (
+                          <span
+                            className="text-muted-foreground text-sm"
+                            title={warnings.map((w: any) => w.message).join('\n')}
+                          >
+                            not comparable
+                          </span>
+                        ) : quote.landedTotalCost != null ? (
+                          <div className="flex items-center gap-1">
+                            <span
+                              className="font-semibold"
+                              title={breakdown
+                                .map((b: any) => `${b.label}: ${b.amount} ${quote.currency || 'USD'}`)
+                                .join('\n')}
+                            >
+                              {formatCurrency(quote.landedTotalCost, {
+                                currency: quote.normalizedCurrency || undefined,
+                              })}
+                            </span>
+                            {understates && (
+                              <span
+                                title={warnings
+                                  .filter((w: any) => w.understatesCost)
+                                  .map((w: any) => w.message)
+                                  .join('\n')}
+                              >
+                                <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground text-sm">not leveled</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {quote.costPerChargeableKg != null ? (
+                          <span
+                            className="text-sm font-mono"
+                            title={
+                              quote.computedChargeableWeightKg
+                                ? `Chargeable weight ${quote.computedChargeableWeightKg} kg`
+                                : undefined
+                            }
+                          >
+                            {formatCurrency(quote.costPerChargeableKg, {
+                              currency: quote.normalizedCurrency || undefined,
+                            })}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground text-sm">-</span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">

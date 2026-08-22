@@ -6,6 +6,7 @@ import { tmpdir } from "os";
 import { execSync } from "child_process";
 import { fromBuffer } from "pdf2pic";
 import { randomBytes } from "crypto";
+import { assertFetchableAttachmentUrl, MAX_ATTACHMENT_BYTES } from "./attachmentUrl";
 
 // PDF.js will be imported dynamically in the function to avoid worker issues
 
@@ -169,12 +170,44 @@ export interface DocumentMessageContent {
 
 const EMPTY_MESSAGE_CONTENT = { content: [] as any[], hasImageContent: false, isPdf: false };
 
+/** Reject an oversized download from its Content-Length, before reading the body. */
+function assertWithinAttachmentLimit(response: Response, kind: string): void {
+  // Content-Length is advisory and the header bag is absent on some fetch
+  // implementations, so a missing value simply defers to the post-read check.
+  const declared = Number(response?.headers?.get?.("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > MAX_ATTACHMENT_BYTES) {
+    throw new Error(
+      `Refusing to fetch ${kind}: ${declared} bytes exceeds the ${MAX_ATTACHMENT_BYTES}-byte attachment limit.`,
+    );
+  }
+}
+
+/** Content-Length is advisory, so re-check once the body is in hand. */
+function assertBufferWithinLimit(byteLength: number, kind: string): void {
+  if (byteLength > MAX_ATTACHMENT_BYTES) {
+    throw new Error(
+      `Refusing to process ${kind}: ${byteLength} bytes exceeds the ${MAX_ATTACHMENT_BYTES}-byte attachment limit.`,
+    );
+  }
+}
+
 export async function buildDocumentMessageContent(
   fileUrl: string,
   filename: string,
   prompt: string,
 ): Promise<DocumentMessageContent> {
   try {
+    // Every branch below fetches this URL server-side, so it is validated once
+    // here rather than in each caller: a client-supplied URL must be a data:
+    // URL or point at our own object storage. See server/attachmentUrl.ts.
+    try {
+      assertFetchableAttachmentUrl(fileUrl);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Attachment URL rejected.";
+      console.warn("[DocumentImport] Rejected attachment URL:", message);
+      return { ok: false, ...EMPTY_MESSAGE_CONTENT, error: message };
+    }
+
     // Determine file type
     const isImage = filename.toLowerCase().match(/\.(png|jpg|jpeg|gif|webp)$/i);
     const isPdf = filename.toLowerCase().endsWith('.pdf');
@@ -191,7 +224,9 @@ export async function buildDocumentMessageContent(
         if (!response.ok) {
           throw new Error(`Failed to fetch image: ${response.status}`);
         }
+        assertWithinAttachmentLimit(response, 'image');
         const arrayBuffer = await response.arrayBuffer();
+        assertBufferWithinLimit(arrayBuffer.byteLength, 'image');
         const buffer = Buffer.from(arrayBuffer);
         const base64 = buffer.toString('base64');
         const ext = filename.toLowerCase().match(/\.(png|jpg|jpeg|gif|webp)$/i)?.[1] || 'png';
@@ -222,7 +257,9 @@ export async function buildDocumentMessageContent(
         if (!response.ok) {
           throw new Error(`Failed to fetch PDF: ${response.status}`);
         }
+        assertWithinAttachmentLimit(response, 'PDF');
         const arrayBuffer = await response.arrayBuffer();
+        assertBufferWithinLimit(arrayBuffer.byteLength, 'PDF');
         const uint8Array = new Uint8Array(arrayBuffer);
         console.log("[DocumentImport] Downloaded PDF, size:", uint8Array.byteLength);
         
@@ -339,6 +376,7 @@ export async function buildDocumentMessageContent(
         if (!response.ok) {
           throw new Error(`Failed to fetch document: ${response.status}`);
         }
+        assertWithinAttachmentLimit(response, 'document');
         const textContent = await response.text();
         console.log("[DocumentImport] Extracted text content length:", textContent.length);
         messageContent = [
