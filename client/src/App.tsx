@@ -123,6 +123,7 @@ const RFQDetail = lazy(() => import("./pages/freight/RFQDetail"));
 const CustomsClearance = lazy(() => import("./pages/freight/CustomsClearance"));
 const CustomsDetail = lazy(() => import("./pages/freight/CustomsDetail"));
 const ControlTower = lazy(() => import("./pages/freight/control-tower/ControlTower"));
+const RateEstimator = lazy(() => import("./pages/freight/RateEstimator"));
 
 // HR
 const HRHub = lazy(() => import("./pages/hr/HRHub"));
@@ -398,6 +399,7 @@ function Router() {
           <Route path="/freight/customs" component={CustomsClearance} />
           <Route path="/freight/customs/:id" component={CustomsDetail} />
           <Route path="/freight/carrier-quotes" component={CarrierQuotes} />
+          <Route path="/freight/rate-estimator" component={RateEstimator} />
 
           {/* Marketing */}
           <Route path="/marketing" component={MarketingHub} />

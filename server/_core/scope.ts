@@ -26,6 +26,11 @@ export interface ScopeLookup {
   getCompanyIdsInRegion: (regionId: number) => Promise<number[]>;
 }
 
+export interface AccessScopeLookup extends ScopeLookup {
+  /** A company plus all of its descendants (via the entity_tree view). */
+  getEntityAndDescendants: (companyId: number) => Promise<number[]>;
+}
+
 /**
  * Resolve a user's visible entity set. Fails closed: a non-global user without a home entity
  * sees nothing rather than everything.
@@ -58,6 +63,34 @@ export async function resolveScope(
   }
   const ids = await lookup.getCompanyIdsInRegion(regionId);
   return { mode: "region", companyIds: ids.length ? ids : [user.companyId] };
+}
+
+/**
+ * Multi-entity resolution (STEP 3). A user may belong to several entities via `user_entity_access`.
+ * The permitted set is the union of each access entity expanded to its descendants — so access to
+ * GLOBAL (the holdco) reaches every operating company, and access to a region parent reaches its
+ * children. Precedence:
+ *   1. regionScope "global" (or unset) → exec/consolidation, sees everything.
+ *   2. explicit access rows → union of their entity subtrees.
+ *   3. no access rows → fall back to the legacy single-home `resolveScope` (backward compatible).
+ * Fails closed: a non-global user with neither access rows nor a home entity sees nothing.
+ */
+export async function resolveScopeFromAccess(
+  user: { companyId: number | null | undefined; regionScope: ScopeMode | null | undefined },
+  accessEntityIds: number[],
+  lookup: AccessScopeLookup,
+): Promise<Scope> {
+  if (user.regionScope == null || user.regionScope === "global") {
+    return { mode: "global", companyIds: "all" };
+  }
+  if (accessEntityIds.length > 0) {
+    const set = new Set<number>();
+    for (const id of accessEntityIds) {
+      for (const descendant of await lookup.getEntityAndDescendants(id)) set.add(descendant);
+    }
+    return { mode: "entity", companyIds: [...set].sort((a, b) => a - b) };
+  }
+  return resolveScope(user, lookup);
 }
 
 /**
