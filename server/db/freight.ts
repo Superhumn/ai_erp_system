@@ -49,6 +49,19 @@ export async function updateFreightCarrier(id: number, data: Partial<InsertFreig
   return { success: true };
 }
 
+/** Link a CRM contact to a freight carrier. */
+export async function linkFreightCarrierContact(carrierId: number, contactId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(freightCarriers).set({ contactId }).where(eq(freightCarriers.id, carrierId));
+}
+
+export async function unlinkFreightCarrierContact(carrierId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(freightCarriers).set({ contactId: null }).where(eq(freightCarriers.id, carrierId));
+}
+
 // ============================================
 // FREIGHT RFQs
 // ============================================

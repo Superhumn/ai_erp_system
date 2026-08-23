@@ -13,7 +13,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Plus, Loader2, Target, Edit, Building2, Users, Trash2 } from "lucide-react";
+import { Plus, Loader2, Target, Edit, Building2, Users, Trash2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 
 const NONE = "none";
@@ -264,24 +264,101 @@ export default function FundraisingCampaigns() {
   );
 }
 
+
+const blankInvestor = {
+  name: "", email: "", company: "", title: "",
+  type: "angel" as string, status: "lead" as string,
+};
+
+// Mirrors the server-side constraint on `crm.addCampaignInvestment.amount`.
+// Checked before the investor is created so a malformed amount can't leave a
+// CRM row behind with no link to the round.
+const AMOUNT_RE = /^\d+(\.\d{1,2})?$/;
+const AMOUNT_ERROR = "Amount must be a positive number with up to 2 decimals";
+
 // Investors linked to a single round, pulled from and added to the investor CRM.
+// New investors can be created inline here — they land in the CRM and, when an
+// amount is given, are linked to this round in the same step.
 function RoundInvestorsDialog({ round, onClose }: { round: any; onClose: () => void }) {
   const { data: links, refetch } = (trpc.crm as any).listCampaignInvestors.useQuery({ campaignId: round.id });
-  const { data: investors } = (trpc.crm as any).listInvestors.useQuery();
+  const { data: investors, refetch: refetchInvestors } = (trpc.crm as any).listInvestors.useQuery();
+  const [mode, setMode] = useState<"existing" | "new">("existing");
   const [investorId, setInvestorId] = useState("");
   const [amount, setAmount] = useState("");
+  const [newInvestor, setNewInvestor] = useState({ ...blankInvestor });
+  const [newAmount, setNewAmount] = useState("");
+  // Set once the CRM row exists but linking it to the round hasn't succeeded
+  // yet, so retrying links that investor instead of creating a duplicate.
+  const [createdId, setCreatedId] = useState<number | null>(null);
 
-  const add = (trpc.crm as any).addCampaignInvestment.useMutation({
-    onSuccess: () => { toast.success("Investor added to round"); setInvestorId(""); setAmount(""); refetch(); },
-    onError: (e: any) => toast.error(e.message),
-  });
+  // These run as chained awaits below, so success/error is reported by the
+  // caller rather than in per-mutation callbacks (avoids double toasts).
+  const add = (trpc.crm as any).addCampaignInvestment.useMutation();
+  const createInvestor = (trpc.crm as any).createInvestor.useMutation();
   const remove = (trpc.crm as any).removeCampaignInvestment.useMutation({
     onSuccess: () => refetch(),
     onError: (e: any) => toast.error(e.message),
   });
 
+  const addExisting = async () => {
+    if (!AMOUNT_RE.test(amount.trim())) {
+      toast.error(AMOUNT_ERROR);
+      return;
+    }
+    try {
+      await add.mutateAsync({ campaignId: round.id, investorId: parseInt(investorId), amount });
+      toast.success("Investor added to round");
+      setInvestorId("");
+      setAmount("");
+      refetch();
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  };
+
+  const createAndAdd = async () => {
+    const name = newInvestor.name.trim();
+    if (!name) return;
+    const committed = newAmount.trim();
+    if (committed && !AMOUNT_RE.test(committed)) {
+      toast.error(AMOUNT_ERROR);
+      return;
+    }
+    try {
+      let linkId = createdId;
+      if (linkId == null) {
+        const created = await createInvestor.mutateAsync({
+          name,
+          email: newInvestor.email.trim() || undefined,
+          company: newInvestor.company.trim() || undefined,
+          title: newInvestor.title.trim() || undefined,
+          type: newInvestor.type,
+          status: newInvestor.status,
+        });
+        linkId = created.id;
+        setCreatedId(linkId);
+        // Surface the new record in the picker right away, so it stays
+        // reachable even if the link below fails.
+        refetchInvestors();
+      }
+      if (committed) {
+        await add.mutateAsync({ campaignId: round.id, investorId: linkId, amount: committed });
+      }
+      toast.success(committed ? `${name} added to your CRM and this round` : `${name} added to your CRM`);
+      setNewInvestor({ ...blankInvestor });
+      setNewAmount("");
+      setCreatedId(null);
+      setMode("existing");
+      refetchInvestors();
+      refetch();
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  };
+
   const rows: any[] = links || [];
   const total = rows.reduce((s, r) => s + (parseFloat(r.amount || "0") || 0), 0);
+  const busy = add.isPending || createInvestor.isPending;
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -296,7 +373,7 @@ function RoundInvestorsDialog({ round, onClose }: { round: any; onClose: () => v
         <div className="space-y-3">
           {rows.length === 0 ? (
             <p className="text-sm text-muted-foreground py-4 text-center">
-              No investors linked yet — add one from your CRM below.
+              No investors linked yet — pick one from your CRM below, or add a new one.
             </p>
           ) : (
             <div className="divide-y rounded-lg border">
@@ -318,31 +395,114 @@ function RoundInvestorsDialog({ round, onClose }: { round: any; onClose: () => v
           )}
 
           <div className="rounded-lg border p-3 space-y-2">
-            <Label className="text-xs">Add investor from CRM</Label>
-            <div className="flex gap-2">
-              <Select value={investorId} onValueChange={setInvestorId}>
-                <SelectTrigger className="flex-1"><SelectValue placeholder="Select investor" /></SelectTrigger>
-                <SelectContent>
-                  {(investors || []).map((inv: any) => (
-                    <SelectItem key={inv.id} value={String(inv.id)}>
-                      {inv.name}{inv.status ? ` · ${inv.status}` : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Input
-                type="number" step="0.01" placeholder="Amount" className="w-32"
-                value={amount} onChange={(e) => setAmount(e.target.value)}
-              />
+            <div className="flex items-center justify-between gap-2">
+              <Label className="text-xs">
+                {mode === "existing" ? "Add investor from CRM" : "New investor"}
+              </Label>
               <Button
-                disabled={!investorId || !amount || add.isPending}
-                onClick={() => add.mutate({ campaignId: round.id, investorId: parseInt(investorId), amount })}
+                size="sm"
+                variant="ghost"
+                className="h-7 text-xs"
+                onClick={() => setMode(mode === "existing" ? "new" : "existing")}
               >
-                {add.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add"}
+                {mode === "existing" ? (
+                  <><UserPlus className="h-3.5 w-3.5 mr-1.5" />New investor</>
+                ) : (
+                  "Pick from CRM"
+                )}
               </Button>
             </div>
-            {(!investors || investors.length === 0) && (
-              <p className="text-xs text-muted-foreground">No investors in your CRM yet — add them in the Investors area first.</p>
+
+            {mode === "existing" ? (
+              <>
+                <div className="flex gap-2">
+                  <Select value={investorId} onValueChange={setInvestorId}>
+                    <SelectTrigger className="flex-1"><SelectValue placeholder="Select investor" /></SelectTrigger>
+                    <SelectContent>
+                      {(investors || []).map((inv: any) => (
+                        <SelectItem key={inv.id} value={String(inv.id)}>
+                          {inv.name}{inv.status ? ` · ${inv.status}` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    type="number" step="0.01" placeholder="Amount" className="w-32"
+                    value={amount} onChange={(e) => setAmount(e.target.value)}
+                  />
+                  <Button disabled={!investorId || !amount || busy} onClick={addExisting}>
+                    {add.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add"}
+                  </Button>
+                </div>
+                {(!investors || investors.length === 0) && (
+                  <p className="text-xs text-muted-foreground">
+                    No investors in your CRM yet — use “New investor” to add your first one.
+                  </p>
+                )}
+              </>
+            ) : (
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <Input
+                    placeholder="Name *" aria-label="Investor name"
+                    value={newInvestor.name}
+                    onChange={(e) => {
+                      setCreatedId(null);
+                      setNewInvestor({ ...newInvestor, name: e.target.value });
+                    }}
+                  />
+                  <Input
+                    type="email" placeholder="Email" aria-label="Investor email"
+                    value={newInvestor.email}
+                    onChange={(e) => setNewInvestor({ ...newInvestor, email: e.target.value })}
+                  />
+                  <Input
+                    placeholder="Firm" aria-label="Investor firm"
+                    value={newInvestor.company}
+                    onChange={(e) => setNewInvestor({ ...newInvestor, company: e.target.value })}
+                  />
+                  <Input
+                    placeholder="Title" aria-label="Investor title"
+                    value={newInvestor.title}
+                    onChange={(e) => setNewInvestor({ ...newInvestor, title: e.target.value })}
+                  />
+                  <Select value={newInvestor.type} onValueChange={(v) => setNewInvestor({ ...newInvestor, type: v })}>
+                    <SelectTrigger aria-label="Investor type"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="angel">Angel</SelectItem>
+                      <SelectItem value="vc">VC</SelectItem>
+                      <SelectItem value="family_office">Family Office</SelectItem>
+                      <SelectItem value="strategic">Strategic</SelectItem>
+                      <SelectItem value="accelerator">Accelerator</SelectItem>
+                      <SelectItem value="other">Other</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select value={newInvestor.status} onValueChange={(v) => setNewInvestor({ ...newInvestor, status: v })}>
+                    <SelectTrigger aria-label="Investor status"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="lead">Lead</SelectItem>
+                      <SelectItem value="contacted">Contacted</SelectItem>
+                      <SelectItem value="interested">Interested</SelectItem>
+                      <SelectItem value="committed">Committed</SelectItem>
+                      <SelectItem value="invested">Invested</SelectItem>
+                      <SelectItem value="passed">Passed</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex gap-2">
+                  <Input
+                    type="number" step="0.01" placeholder="Amount (optional)" className="flex-1"
+                    aria-label="Committed amount"
+                    value={newAmount} onChange={(e) => setNewAmount(e.target.value)}
+                  />
+                  <Button disabled={!newInvestor.name.trim() || busy} onClick={createAndAdd}>
+                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add to CRM"}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Saved to your investor CRM. Add an amount to commit them to this round now.
+                </p>
+              </div>
             )}
           </div>
         </div>
