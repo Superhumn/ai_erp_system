@@ -1224,11 +1224,18 @@ export async function createOrderItem(data: typeof orderItems.$inferInsert) {
 // OPERATIONS - INVENTORY
 // ============================================
 
-export async function getInventory(filters?: { companyId?: number; warehouseId?: number; productId?: number; limit?: number }) {
+// Pass a request's `ctx.scope` to restrict to the caller's visible entities. `filters` are
+// non-security refinements (warehouse/product/limit, and companyId for trusted internal callers).
+export async function getInventory(scope?: Scope, filters?: { companyId?: number; warehouseId?: number; productId?: number; limit?: number }) {
   const db = await getDb();
   if (!db) return [];
 
   const conditions = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return []; // scoped user with no visible entities
+    conditions.push(inArray(inventory.companyId, ids));
+  }
   if (filters?.companyId) conditions.push(eq(inventory.companyId, filters.companyId));
   if (filters?.warehouseId) conditions.push(eq(inventory.warehouseId, filters.warehouseId));
   if (filters?.productId) conditions.push(eq(inventory.productId, filters.productId));

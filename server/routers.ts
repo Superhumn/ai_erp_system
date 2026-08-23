@@ -2719,14 +2719,21 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
   // OPERATIONS - INVENTORY
   // ============================================
   inventory: router({
+    // opsProcedure keeps the role gate; scope is resolved server-side and applied on top so a
+    // user only sees their entities' inventory. companyId is no longer a client input.
     list: opsProcedure
       .input(z.object({
-        companyId: z.number().optional(),
         warehouseId: z.number().optional(),
         productId: z.number().optional(),
         limit: z.number().min(1).max(1000).optional(),
       }).optional())
-      .query(({ input }) => db.getInventory(input)),
+      .query(async ({ input, ctx }) =>
+        db.getInventory(await resolveRequestScope(ctx.user), {
+          warehouseId: input?.warehouseId,
+          productId: input?.productId,
+          limit: input?.limit,
+        }),
+      ),
     create: opsProcedure
       .input(z.object({
         companyId: z.number().optional(),
@@ -2751,7 +2758,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
-        const [oldInventory] = await db.getInventory({ id } as any) || [];
+        const [oldInventory] = await db.getInventory(undefined, { id } as any) || [];
         await db.updateInventory(id, data);
         await createAuditLog(ctx.user.id, 'update', 'inventory', id);
 
@@ -9917,7 +9924,7 @@ Then recommend one quoteId and write a summary an operations manager could defen
                 const poItems = await db.getPurchaseOrderItems(shipment.purchaseOrderId);
                 for (const item of poItems) {
                   const quantity = item.quantity || '0';
-                  const existingInventory = await db.getInventory({ productId: item.productId, warehouseId });
+                  const existingInventory = await db.getInventory(undefined, { productId: item.productId, warehouseId });
                   if (existingInventory.length > 0) {
                     const existing = existingInventory[0];
                     const newQty = (parseFloat(existing.quantity) + parseFloat(quantity)).toString();
@@ -12432,7 +12439,7 @@ Provide your forecast in JSON format with the following structure:
         if (!product) throw new Error('Product not found');
         
         // Get current inventory
-        const inventoryRecords = await db.getInventory({ productId: product.id });
+        const inventoryRecords = await db.getInventory(undefined, { productId: product.id });
         const currentInventory = inventoryRecords.reduce((sum, inv) => sum + parseFloat(inv.quantity?.toString() || '0'), 0);
         
         // Calculate production needed
