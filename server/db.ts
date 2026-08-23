@@ -1452,6 +1452,9 @@ export async function getPurchaseOrders(filters?: { companyId?: number; status?:
   return rows.map((r) => ({ ...r.po, vendor: r.vendor }));
 }
 
+/** Backstop when a caller omits `limit`, so the list can never read unbounded. */
+const DEFAULT_PO_PAGE_LIMIT = 1000;
+
 export type PurchaseOrderListFilters = {
   companyId?: number;
   status?: string;
@@ -1541,21 +1544,24 @@ export async function getPurchaseOrdersPaged(filters: PurchaseOrderListFilters =
   const sortCol = purchaseOrderSortColumn(filters.sortBy);
   const direction = filters.sortDir === "asc" ? asc : desc;
 
-  let query = db
+  // limit/offset are applied unconditionally rather than built up behind a
+  // cast: conditionally chaining them needs the builder typed as `any`, which
+  // erased the row type all the way out to the page component. Every caller
+  // passes a limit; DEFAULT_PO_PAGE_LIMIT is just a backstop against an
+  // unbounded read.
+  const rows = await db
     .select({ po: purchaseOrders, vendor: vendors })
     .from(purchaseOrders)
     .leftJoin(vendors, eq(purchaseOrders.vendorId, vendors.id))
     .where(where)
     // id is the tiebreak so rows can't shuffle between pages when the sort
     // column ties — which it constantly does on these bulk-imported POs.
-    .orderBy(direction(sortCol), desc(purchaseOrders.id)) as any;
+    .orderBy(direction(sortCol), desc(purchaseOrders.id))
+    .limit(filters.limit ?? DEFAULT_PO_PAGE_LIMIT)
+    .offset(filters.offset ?? 0);
 
-  if (filters.limit != null) query = query.limit(filters.limit);
-  if (filters.offset != null) query = query.offset(filters.offset);
-
-  const rows = await query;
   return {
-    rows: rows.map((r: any) => ({ ...r.po, vendor: r.vendor })),
+    rows: rows.map((r) => ({ ...r.po, vendor: r.vendor })),
     total,
   };
 }
