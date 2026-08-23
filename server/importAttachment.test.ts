@@ -18,6 +18,7 @@ vi.mock("./db", () => ({
   createPurchaseOrderItem: vi.fn(async () => ({ id: 21 })),
   updatePurchaseOrder: vi.fn(async () => {}),
   findPurchaseOrderByNumber: vi.fn(async () => null),
+  findPurchaseOrderByNumberExact: vi.fn(async () => null),
   getRawMaterials: vi.fn(async () => []),
   getRawMaterialById: vi.fn(async () => null),
   createRawMaterial: vi.fn(async () => ({ id: 30 })),
@@ -106,6 +107,40 @@ describe("importEmailAttachmentToErp — document-type routing", () => {
     );
     // Line items are persisted.
     expect(db.createParsedDocumentLineItem).toHaveBeenCalledTimes(VENDOR_INVOICE.lineItems.length);
+  });
+
+  // Re-importing a document used to mint a second identical PO every run
+  // (poNumber has no unique constraint), which is how the list filled up with
+  // duplicate rows. Both importers now refuse to re-create an existing PO.
+  it("does not create a second PO when the vendor invoice was already imported", async () => {
+    (db.findPurchaseOrderByNumberExact as any).mockResolvedValueOnce({ id: 20, poNumber: "INV-INV-2002" });
+    mockParse("vendor_invoice", { vendorInvoice: VENDOR_INVOICE });
+    const result = await importEmailAttachmentToErp(baseOpts);
+
+    expect(result.documentType).toBe("vendor_invoice");
+    expect(db.createPurchaseOrder).not.toHaveBeenCalled();
+    // The document itself is still filed — only the duplicate PO is skipped.
+    expect(db.createParsedDocument).toHaveBeenCalled();
+  });
+
+  it("does not create a second PO when the purchase order was already imported", async () => {
+    (db.findPurchaseOrderByNumberExact as any).mockResolvedValueOnce({ id: 20, poNumber: "PO-1001" });
+    mockParse("purchase_order", { purchaseOrder: PO });
+    const result = await importEmailAttachmentToErp(baseOpts);
+
+    expect(result.documentType).toBe("purchase_order");
+    expect(db.createPurchaseOrder).not.toHaveBeenCalled();
+  });
+
+  // A duplicate must not re-run the receiving side either: that double-counted
+  // inventory on every re-import.
+  it("does not re-apply inventory when a duplicate invoice import is skipped", async () => {
+    (db.findPurchaseOrderByNumberExact as any).mockResolvedValueOnce({ id: 20, poNumber: "INV-INV-2002" });
+    mockParse("vendor_invoice", { vendorInvoice: VENDOR_INVOICE });
+    await importEmailAttachmentToErp(baseOpts);
+
+    expect(db.updateRawMaterial).not.toHaveBeenCalled();
+    expect(db.createPurchaseOrderItem).not.toHaveBeenCalled();
   });
 
   it("routes a freight invoice to an invoice parsed document", async () => {

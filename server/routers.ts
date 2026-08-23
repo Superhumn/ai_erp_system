@@ -3655,6 +3655,32 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         await createAuditLog(ctx.user.id, 'delete', 'purchaseOrder', input.id);
         return { success: true };
       }),
+    // POs that duplicate another PO on (poNumber, vendor, total). Lets the list
+    // filter down to the copies left behind by repeated document imports.
+    duplicates: opsProcedure.query(() => db.getDuplicatePurchaseOrderGroups()),
+    bulkDelete: opsProcedure
+      .input(z.object({ ids: z.array(z.number()).min(1).max(500) }))
+      .mutation(async ({ input, ctx }) => {
+        // Resolve po numbers up front so the audit log still names what was
+        // deleted after the rows are gone.
+        const poNumbers = new Map<number, string>();
+        for (const id of input.ids) {
+          const po = await db.getPurchaseOrderById(id);
+          if (po) poNumbers.set(id, po.poNumber);
+        }
+
+        const { deleted, failed } = await db.bulkDeletePurchaseOrders(input.ids);
+
+        for (const id of deleted) {
+          await createAuditLog(ctx.user.id, 'delete', 'purchaseOrder', id, poNumbers.get(id));
+        }
+
+        return {
+          success: failed.length === 0,
+          deleted: deleted.length,
+          failed: failed.map((f) => ({ ...f, poNumber: poNumbers.get(f.id) ?? `#${f.id}` })),
+        };
+      }),
   }),
 
   // ============================================

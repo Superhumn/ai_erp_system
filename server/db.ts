@@ -1832,9 +1832,131 @@ export async function deletePurchaseOrder(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.transaction(async (tx) => {
+    // Records that outlive the PO (money, physical goods, source documents) are
+    // detached rather than deleted, so the history stays queryable instead of
+    // pointing at a dangling id. shipments carries a real FK to purchase_orders,
+    // so without this the DELETE below fails outright on any received PO.
+    await tx.update(shipments).set({ purchaseOrderId: null }).where(eq(shipments.purchaseOrderId, id));
+    await tx.update(payments).set({ purchaseOrderId: null }).where(eq(payments.purchaseOrderId, id));
+    await tx.update(parsedDocuments).set({ purchaseOrderId: null }).where(eq(parsedDocuments.purchaseOrderId, id));
+    await tx.update(freightRfqs).set({ purchaseOrderId: null }).where(eq(freightRfqs.purchaseOrderId, id));
+    await tx.update(freightQuotesStandalone).set({ purchaseOrderId: null }).where(eq(freightQuotesStandalone.purchaseOrderId, id));
+    await tx.update(freightCostAllocations).set({ purchaseOrderId: null }).where(eq(freightCostAllocations.purchaseOrderId, id));
+    await tx.update(inventoryCostLayers).set({ purchaseOrderId: null }).where(eq(inventoryCostLayers.purchaseOrderId, id));
+
+    // Rows below only exist as part of this PO — they have no meaning once it is
+    // gone, and their purchaseOrderId is NOT NULL so they can't be detached.
+    const itemRows = await tx
+      .select({ id: purchaseOrderItems.id })
+      .from(purchaseOrderItems)
+      .where(eq(purchaseOrderItems.purchaseOrderId, id));
+    const itemIds = itemRows.map((r) => r.id);
+
+    const receivingRows = await tx
+      .select({ id: poReceivingRecords.id })
+      .from(poReceivingRecords)
+      .where(eq(poReceivingRecords.purchaseOrderId, id));
+    const receivingIds = receivingRows.map((r) => r.id);
+    if (receivingIds.length > 0) {
+      await tx.delete(poReceivingItems).where(inArray(poReceivingItems.receivingRecordId, receivingIds));
+      await tx.delete(poReceivingRecords).where(eq(poReceivingRecords.purchaseOrderId, id));
+    }
+    if (itemIds.length > 0) {
+      await tx.delete(purchaseOrderRawMaterials).where(inArray(purchaseOrderRawMaterials.purchaseOrderItemId, itemIds));
+    }
+    await tx.delete(supplierDocuments).where(eq(supplierDocuments.purchaseOrderId, id));
+    await tx.delete(supplierFreightInfo).where(eq(supplierFreightInfo.purchaseOrderId, id));
+    await tx.delete(supplierPortalSessions).where(eq(supplierPortalSessions.purchaseOrderId, id));
     await tx.delete(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, id));
     await tx.delete(purchaseOrders).where(eq(purchaseOrders.id, id));
   });
+}
+
+/**
+ * Delete many POs, one transaction each, so a single undeletable PO doesn't
+ * abort the whole batch. Callers get the per-id outcome and surface the
+ * failures rather than reporting a partial run as a clean success.
+ */
+export async function bulkDeletePurchaseOrders(ids: number[]) {
+  const deleted: number[] = [];
+  const failed: { id: number; reason: string }[] = [];
+  for (const id of ids) {
+    try {
+      await deletePurchaseOrder(id);
+      deleted.push(id);
+    } catch (e: any) {
+      failed.push({ id, reason: e?.message || "Delete failed" });
+    }
+  }
+  return { deleted, failed };
+}
+
+/**
+ * POs that duplicate another PO on (poNumber, vendorId, totalAmount).
+ *
+ * Re-importing the same vendor document used to mint a fresh PO every run
+ * (poNumber has no unique constraint), so an invoice imported three times
+ * shows up as three identical rows. The importers now refuse to re-create an
+ * existing PO; this finds the copies that predate that fix.
+ *
+ * Within a group the lowest id — the original import — is the keeper, and the
+ * later copies are the ones offered for deletion. Grouping happens in JS
+ * rather than GROUP_CONCAT, whose 1024-byte default would silently truncate
+ * large groups.
+ */
+export async function getDuplicatePurchaseOrderGroups() {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select({
+      id: purchaseOrders.id,
+      poNumber: purchaseOrders.poNumber,
+      vendorId: purchaseOrders.vendorId,
+      totalAmount: purchaseOrders.totalAmount,
+    })
+    .from(purchaseOrders)
+    .orderBy(asc(purchaseOrders.id));
+
+  const groups = new Map<string, { poNumber: string; vendorId: number; totalAmount: string; ids: number[] }>();
+  for (const r of rows) {
+    // \u0000 can't appear in any of the parts, so the key is unambiguous.
+    const key = [r.poNumber, r.vendorId, r.totalAmount].join("\u0000");
+    const existing = groups.get(key);
+    if (existing) {
+      existing.ids.push(r.id);
+    } else {
+      groups.set(key, { poNumber: r.poNumber, vendorId: r.vendorId, totalAmount: r.totalAmount ?? "0", ids: [r.id] });
+    }
+  }
+
+  return Array.from(groups.values())
+    .filter((g) => g.ids.length > 1)
+    .map((g) => ({
+      poNumber: g.poNumber,
+      vendorId: g.vendorId,
+      totalAmount: g.totalAmount,
+      keepId: g.ids[0],
+      duplicateIds: g.ids.slice(1),
+    }));
+}
+
+/**
+ * Exact poNumber lookup, for the importers' "have I already imported this?"
+ * guard. Distinct from findPurchaseOrderByNumber, whose LIKE %...% match is
+ * deliberately fuzzy and would treat PO-1 as an existing PO-100.
+ */
+export async function findPurchaseOrderByNumberExact(poNumber: string, vendorId?: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const conditions = [eq(purchaseOrders.poNumber, poNumber)];
+  if (vendorId != null) conditions.push(eq(purchaseOrders.vendorId, vendorId));
+  const result = await db
+    .select()
+    .from(purchaseOrders)
+    .where(and(...conditions))
+    .orderBy(asc(purchaseOrders.id))
+    .limit(1);
+  return result[0] || null;
 }
 
 export async function getAllPurchaseOrderItems() {

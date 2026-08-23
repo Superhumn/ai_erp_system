@@ -1005,7 +1005,22 @@ export async function importPurchaseOrder(
       }
     }
 
-    // 4. Create the purchase order
+    // 4. Create the purchase order. Same idempotency guard as the vendor-invoice
+    // path: a document imported twice should resolve to one PO, not two.
+    const existingPo = await db.findPurchaseOrderByNumberExact(po.poNumber, vendor!.id);
+    if (existingPo) {
+      warnings.push(
+        `PO ${po.poNumber} was already imported (#${existingPo.id}) — skipped to avoid a duplicate.`
+      );
+      return {
+        success: true,
+        documentType: "purchase_order",
+        createdRecords,
+        updatedRecords,
+        warnings,
+      };
+    }
+
     const poResult = await db.createPurchaseOrder({
       poNumber: po.poNumber,
       vendorId: vendor!.id,
@@ -1271,9 +1286,28 @@ export async function importVendorInvoice(
       }
     }
 
-    // 5. Create a purchase order from the invoice (as a received order)
+    // 5. Create a purchase order from the invoice (as a received order).
+    // Re-importing the same invoice must not mint a second PO: poNumber has no
+    // unique constraint, so before this guard every re-run of a document (or a
+    // re-processed mailbox) added another identical row, and — worse — ran the
+    // step-7 inventory update again on top of it.
+    const poNumberForInvoice = invoice.relatedPoNumber || `INV-${invoice.invoiceNumber}`;
+    const existingPo = await db.findPurchaseOrderByNumberExact(poNumberForInvoice, vendor!.id);
+    if (existingPo) {
+      warnings.push(
+        `Invoice ${invoice.invoiceNumber} was already imported as PO ${existingPo.poNumber} (#${existingPo.id}) — skipped to avoid a duplicate.`
+      );
+      return {
+        success: true,
+        documentType: "vendor_invoice",
+        createdRecords,
+        updatedRecords,
+        warnings,
+      };
+    }
+
     const poResult = await db.createPurchaseOrder({
-      poNumber: invoice.relatedPoNumber || `INV-${invoice.invoiceNumber}`,
+      poNumber: poNumberForInvoice,
       vendorId: vendor!.id,
       status: markAsReceived ? "received" : "confirmed",
       orderDate: new Date(invoice.invoiceDate),

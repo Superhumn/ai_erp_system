@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -38,7 +38,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ClipboardList, Plus, Search, Loader2, Sparkles, Send, Trash2, MoreHorizontal, CheckCircle, MessageCircle } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ClipboardList, Plus, Search, Loader2, Sparkles, Send, Trash2, MoreHorizontal, CheckCircle, MessageCircle, Copy, X } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
@@ -65,6 +66,9 @@ export default function PurchaseOrders() {
   const [activeAction, setActiveAction] = useState<'draft' | 'email' | null>(null);
   const [deletePOId, setDeletePOId] = useState<number | null>(null);
   const [detailPoId, setDetailPoId] = useState<number | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [duplicatesOnly, setDuplicatesOnly] = useState(false);
 
   // Deep-link support: /operations/purchase-orders?po=<id> opens that PO's
   // detail drawer (used by status-change notifications). Depends on the search
@@ -120,6 +124,31 @@ export default function PurchaseOrders() {
   const documentCountMap = new Map<number, number>(
     (documentCounts || []).map((c) => [c.purchaseOrderId, c.count])
   );
+
+  // Duplicate groups: POs sharing (poNumber, vendor, total). `keepId` is the
+  // original import; everything in `duplicateIds` is a later copy.
+  const { data: duplicateGroups } = trpc.purchaseOrders.duplicates.useQuery();
+
+  // Every PO that belongs to a duplicate group, original included — the filter
+  // shows whole groups so the original is visible next to its copies.
+  const duplicateIdSet = useMemo(() => {
+    const set = new Set<number>();
+    for (const g of duplicateGroups || []) {
+      set.add(g.keepId);
+      for (const id of g.duplicateIds) set.add(id);
+    }
+    return set;
+  }, [duplicateGroups]);
+
+  // The copies only — what "Select duplicates" ticks, so the oldest of each
+  // group survives the cleanup.
+  const redundantIds = useMemo(() => {
+    const set = new Set<number>();
+    for (const g of duplicateGroups || []) {
+      for (const id of g.duplicateIds) set.add(id);
+    }
+    return set;
+  }, [duplicateGroups]);
 
   const resetForm = () => {
     setFormData({ vendorId: 0, expectedDeliveryDate: "", notes: "" });
@@ -251,7 +280,36 @@ export default function PurchaseOrders() {
     onSuccess: () => {
       toast.success("Purchase order deleted");
       setDeletePOId(null);
+      setSelectedIds((prev) => {
+        if (deletePOId === null || !prev.has(deletePOId)) return prev;
+        const next = new Set(prev);
+        next.delete(deletePOId);
+        return next;
+      });
       utils.purchaseOrders.list.invalidate();
+      utils.purchaseOrders.duplicates.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const bulkDeletePOs = trpc.purchaseOrders.bulkDelete.useMutation({
+    onSuccess: (data) => {
+      // A partial run is reported as a partial run: the POs that couldn't be
+      // deleted stay selected so they can be retried or inspected.
+      if (data.failed.length > 0) {
+        toast.warning(
+          `Deleted ${data.deleted} PO(s). ${data.failed.length} could not be deleted: ${data.failed
+            .map((f) => f.poNumber)
+            .join(", ")}`
+        );
+        setSelectedIds(new Set(data.failed.map((f) => f.id)));
+      } else {
+        toast.success(`Deleted ${data.deleted} purchase order(s)`);
+        setSelectedIds(new Set());
+      }
+      setBulkDeleteOpen(false);
+      utils.purchaseOrders.list.invalidate();
+      utils.purchaseOrders.duplicates.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -281,10 +339,58 @@ export default function PurchaseOrders() {
   });
 
   const filteredPOs = purchaseOrders?.filter((po) => {
-    const matchesSearch = po.poNumber.toLowerCase().includes(search.toLowerCase());
+    // Search covers the vendor name too — with a screen full of near-identical
+    // imported rows, PO number alone is rarely what you have to hand.
+    const term = search.trim().toLowerCase();
+    const vendorName = (po.vendor?.name ?? "").toLowerCase();
+    const matchesSearch = !term || po.poNumber.toLowerCase().includes(term) || vendorName.includes(term);
     const matchesStatus = statusFilter === "all" || po.status === statusFilter;
-    return matchesSearch && matchesStatus;
+    const matchesDuplicates = !duplicatesOnly || duplicateIdSet.has(po.id);
+    return matchesSearch && matchesStatus && matchesDuplicates;
   });
+
+  // Selection is scoped to what's on screen: "select all" ticks the current
+  // filter, and hidden rows are never silently swept into a delete.
+  const visibleIds = (filteredPOs || []).map((po) => po.id);
+  const selectedVisibleIds = visibleIds.filter((id) => selectedIds.has(id));
+  const allVisibleSelected = visibleIds.length > 0 && selectedVisibleIds.length === visibleIds.length;
+  const someVisibleSelected = selectedVisibleIds.length > 0 && !allVisibleSelected;
+
+  const toggleRow = (id: number, checked: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const toggleAllVisible = (checked: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const id of visibleIds) {
+        if (checked) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  };
+
+  // Tick the redundant copies only (the oldest PO in each group is left alone),
+  // limited to rows the current filter actually shows.
+  const selectDuplicates = () => {
+    const target = visibleIds.filter((id) => redundantIds.has(id));
+    if (target.length === 0) {
+      toast.info("No duplicate copies in the current view");
+      return;
+    }
+    setSelectedIds(new Set(target));
+    toast.success(`Selected ${target.length} duplicate copy(ies) — originals kept`);
+  };
+
+  // Selecting rows then filtering them away would otherwise leave an invisible
+  // selection armed behind the delete button.
+  const selectedCount = selectedVisibleIds.length;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -707,7 +813,67 @@ export default function PurchaseOrders() {
                 <SelectItem value="cancelled">Cancelled</SelectItem>
               </SelectContent>
             </Select>
+            <Button
+              variant={duplicatesOnly ? "default" : "outline"}
+              onClick={() => setDuplicatesOnly((v) => !v)}
+              aria-pressed={duplicatesOnly}
+            >
+              <Copy className="h-4 w-4 mr-2" />
+              Duplicates
+              {redundantIds.size > 0 && (
+                <Badge variant="secondary" className="ml-2 font-mono">
+                  {redundantIds.size}
+                </Badge>
+              )}
+            </Button>
           </div>
+
+          {selectedCount > 0 && (
+            <div className="mt-3 flex items-center gap-3 flex-wrap rounded-md border bg-muted/50 px-3 py-2">
+              <span className="text-sm font-medium">{selectedCount} selected</span>
+              {redundantIds.size > 0 && (
+                <Button variant="outline" size="sm" onClick={selectDuplicates}>
+                  <Copy className="h-4 w-4 mr-2" />
+                  Select duplicates only
+                </Button>
+              )}
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => setBulkDeleteOpen(true)}
+                disabled={bulkDeletePOs.isPending}
+              >
+                {bulkDeletePOs.isPending ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4 mr-2" />
+                )}
+                Delete {selectedCount}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())}>
+                <X className="h-4 w-4 mr-2" />
+                Clear
+              </Button>
+            </div>
+          )}
+
+          {selectedCount === 0 && redundantIds.size > 0 && (
+            <p className="mt-3 text-sm text-muted-foreground">
+              {redundantIds.size} duplicate {redundantIds.size === 1 ? "copy" : "copies"} found from repeated
+              document imports.{" "}
+              <button
+                type="button"
+                className="text-primary underline underline-offset-2"
+                onClick={() => {
+                  setDuplicatesOnly(true);
+                  setStatusFilter("all");
+                  setSearch("");
+                }}
+              >
+                Review them
+              </button>
+            </p>
+          )}
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -717,12 +883,19 @@ export default function PurchaseOrders() {
           ) : !filteredPOs || filteredPOs.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
               <ClipboardList className="h-12 w-12 mx-auto mb-4 opacity-20" />
-              <p>No purchase orders found</p>
+              <p>{duplicatesOnly ? "No duplicate purchase orders found" : "No purchase orders found"}</p>
             </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-[40px]">
+                    <Checkbox
+                      checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false}
+                      onCheckedChange={(checked) => toggleAllVisible(checked === true)}
+                      aria-label="Select all purchase orders in view"
+                    />
+                  </TableHead>
                   <TableHead>PO #</TableHead>
                   <TableHead>Vendor Name</TableHead>
                   <TableHead className="text-right">Total Amount</TableHead>
@@ -747,9 +920,17 @@ export default function PurchaseOrders() {
                   return (
                     <TableRow
                       key={po.id}
-                      className="cursor-pointer"
+                      className={`cursor-pointer ${selectedIds.has(po.id) ? "bg-muted/50" : ""}`}
+                      data-state={selectedIds.has(po.id) ? "selected" : undefined}
                       onClick={() => setDetailPoId(po.id)}
                     >
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <Checkbox
+                          checked={selectedIds.has(po.id)}
+                          onCheckedChange={(checked) => toggleRow(po.id, checked === true)}
+                          aria-label={`Select purchase order ${po.poNumber}`}
+                        />
+                      </TableCell>
                       {/* The PO number is a real <button> so keyboard / screen-reader
                           users get a proper control; the row onClick is just a
                           mouse convenience. role/tabIndex on the <tr> itself would
@@ -908,6 +1089,31 @@ export default function PurchaseOrders() {
             >
               {deletePO.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk delete confirmation */}
+      <Dialog open={bulkDeleteOpen} onOpenChange={(open) => { if (!open) setBulkDeleteOpen(false); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete {selectedCount} purchase order{selectedCount === 1 ? "" : "s"}?</DialogTitle>
+            <DialogDescription>
+              This permanently deletes the selected purchase orders, their line items, and any
+              receiving records and supplier-portal uploads attached to them. Linked shipments,
+              payments and source documents are kept and unlinked. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setBulkDeleteOpen(false)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={bulkDeletePOs.isPending || selectedCount === 0}
+              onClick={() => bulkDeletePOs.mutate({ ids: selectedVisibleIds })}
+            >
+              {bulkDeletePOs.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Delete {selectedCount}
             </Button>
           </DialogFooter>
         </DialogContent>
