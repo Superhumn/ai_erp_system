@@ -92,7 +92,7 @@ export default function VendorNegotiations() {
   // Queries
   const { data: negotiations, isLoading } = trpc.vendorNegotiations.list.useQuery({});
   const { data: stats } = trpc.vendorNegotiations.stats.useQuery({});
-  const { data: vendors } = trpc.vendors.list.useQuery({});
+  const { data: vendors } = trpc.vendors.list.useQuery();
 
   const { data: selectedDetail } = trpc.vendorNegotiations.get.useQuery(
     { id: selectedNegotiationId! },

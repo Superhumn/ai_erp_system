@@ -29,6 +29,7 @@ import { agentRouter } from "./agent";
 import { parseNoteWithLLM } from "./notesParser";
 import type { NoteAppliedItem, NoteParseResult, NoteParsedItem } from "@shared/notes";
 import { buildImportRecord } from "@shared/importFields";
+import { estimateOceanFreight } from "@shared/oceanFreightRates";
 import { employeePortalRouter } from "./routers/employeePortal";
 import { codeRouter } from "./routers/code";
 import { parseCopackerInventoryEmail, applyCopackerInventoryUpdate } from "./copackerEmailExtractor";
@@ -51,7 +52,7 @@ import { computeResponsivenessForVendors, computeVendorResponsiveness, markStale
 import { deleteCurrencyRate, getFxRate, listCurrencyRates, upsertCurrencyRate } from "./currencyService";
 import { getCompanyWebSources, sourceCompanyContacts, sourceCompanyContactsBatch } from "./companyContactSourcing";
 import * as db from "./db";
-import { resolveScope } from "./_core/scope";
+import { resolveScopeFromAccess, scopeAllows } from "./_core/scope";
 import * as manufacturingDb from "./db/manufacturing";
 import { storagePut, storageDelete } from "./storage";
 import { nanoid } from "nanoid";
@@ -143,18 +144,28 @@ const execProcedure = protectedProcedure.use(({ ctx, next }) => {
   return next({ ctx });
 });
 
-// Region/entity data-scoping middleware. Resolves the caller's visible entity set from their
-// home company + regionScope and attaches `ctx.scope`, which scoped DB helpers consume. Global
-// users (the backfill default) get { companyIds: "all" }, preserving pre-multi-region behavior.
+// Region/entity data-scoping middleware. Resolves the caller's visible entity set and attaches
+// `ctx.scope`, which scoped DB helpers consume. Multi-entity (STEP 3): the set is the union of the
+// user's user_entity_access memberships expanded to descendants; a user with no memberships falls
+// back to their single home company + regionScope; exec (regionScope 'global') sees everything.
 // See docs/MULTI_REGION_PHASE_1_2_SPEC.md.
-export const scopedProcedure = protectedProcedure.use(async ({ ctx, next }) => {
-  const scope = await resolveScope(
-    { companyId: ctx.user.companyId, regionScope: ctx.user.regionScope },
+// Resolve a request's entity scope. Reusable so role-gated handlers (opsProcedure etc.) can also
+// enforce scope on by-id reads/writes without losing their role gate.
+export async function resolveRequestScope(user: { id: number; companyId: number | null; regionScope: 'entity' | 'region' | 'global' }) {
+  const accessEntityIds = await db.getUserEntityAccessCompanyIds(user.id);
+  return resolveScopeFromAccess(
+    { companyId: user.companyId, regionScope: user.regionScope },
+    accessEntityIds,
     {
       getCompanyRegionId: async (id) => (await db.getCompanyById(id))?.regionId ?? null,
       getCompanyIdsInRegion: (regionId) => db.getCompanyIdsInRegion(regionId),
+      getEntityAndDescendants: (id) => db.getEntityAndDescendantCompanyIds(id),
     },
   );
+}
+
+export const scopedProcedure = protectedProcedure.use(async ({ ctx, next }) => {
+  const scope = await resolveRequestScope(ctx.user);
   if (scope.companyIds !== 'all' && scope.companyIds.length === 0) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'No entity scope assigned' });
   }
@@ -1501,12 +1512,12 @@ export const appRouter = router({
   // VENDOR MANAGEMENT
   // ============================================
   vendors: router({
-    list: protectedProcedure
-      .input(z.object({ companyId: z.number().optional() }).optional())
-      .query(({ input }) => db.getVendors(input?.companyId)),
-    get: protectedProcedure
+    // Scope derived server-side from the caller's entity access (ctx.scope), never from client input.
+    list: scopedProcedure
+      .query(({ ctx }) => db.getVendors(ctx.scope)),
+    get: scopedProcedure
       .input(z.object({ id: z.number() }))
-      .query(({ input }) => db.getVendorById(input.id)),
+      .query(({ input, ctx }) => db.getVendorById(input.id, ctx.scope)),
     create: opsProcedure
       .input(z.object({
         name: z.string().min(1),
@@ -1527,6 +1538,13 @@ export const appRouter = router({
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        // Can't create a vendor under an entity the caller doesn't have access to.
+        if (input.companyId != null) {
+          const scope = await resolveRequestScope(ctx.user);
+          if (!scopeAllows(scope, input.companyId)) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Cannot create a vendor under an entity outside your access.' });
+          }
+        }
         const result = await db.createVendor(input);
         await createAuditLog(ctx.user.id, 'create', 'vendor', result.id, input.name);
         return result;
@@ -1566,7 +1584,7 @@ export const appRouter = router({
     autoLinkContact: opsProcedure
       .input(z.object({ vendorId: z.number() }))
       .mutation(async ({ input, ctx }) => {
-        const vendor = await db.getVendorById(input.vendorId);
+        const vendor = await db.getVendorById(input.vendorId, await resolveRequestScope(ctx.user));
         if (!vendor) throw new TRPCError({ code: "NOT_FOUND", message: "Vendor not found" });
         if (vendor.contactId) {
           const contact = await db.getCrmContactById(vendor.contactId);
@@ -1590,7 +1608,7 @@ export const appRouter = router({
         whatsappNumber: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const vendor = await db.getVendorById(input.vendorId);
+        const vendor = await db.getVendorById(input.vendorId, await resolveRequestScope(ctx.user));
         if (!vendor) throw new TRPCError({ code: "NOT_FOUND", message: "Vendor not found" });
         await db.linkVendorContact(input.vendorId, input.contactId, input.whatsappNumber);
         await createAuditLog(ctx.user.id, "update", "vendor", input.vendorId, vendor.name, null, { contactId: input.contactId });
@@ -1600,7 +1618,7 @@ export const appRouter = router({
     unlinkContact: opsProcedure
       .input(z.object({ vendorId: z.number() }))
       .mutation(async ({ input, ctx }) => {
-        const vendor = await db.getVendorById(input.vendorId);
+        const vendor = await db.getVendorById(input.vendorId, await resolveRequestScope(ctx.user));
         if (!vendor) throw new TRPCError({ code: "NOT_FOUND", message: "Vendor not found" });
         await db.unlinkVendorContact(input.vendorId);
         await createAuditLog(ctx.user.id, "update", "vendor", input.vendorId, vendor.name, null, { contactId: null });
@@ -2573,16 +2591,17 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
   // SALES - ORDERS
   // ============================================
   orders: router({
-    list: protectedProcedure
+    // Scope derived server-side from the caller's entity access (ctx.scope); status/customerId
+    // remain client-side non-security filters. companyId is no longer a client input.
+    list: scopedProcedure
       .input(z.object({
-        companyId: z.number().optional(),
         status: z.string().optional(),
         customerId: z.number().optional(),
       }).optional())
-      .query(({ input }) => db.getOrders(input)),
-    get: protectedProcedure
+      .query(({ input, ctx }) => db.getOrders(ctx.scope, { status: input?.status, customerId: input?.customerId })),
+    get: scopedProcedure
       .input(z.object({ id: z.number() }))
-      .query(({ input }) => db.getOrderWithItems(input.id)),
+      .query(({ input, ctx }) => db.getOrderWithItems(input.id, ctx.scope)),
     create: protectedProcedure
       .input(z.object({
         companyId: z.number().optional(),
@@ -2611,6 +2630,13 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
       }))
       .mutation(async ({ input, ctx }) => {
         const { items, ...orderData } = input;
+        // Can't create an order under an entity the caller doesn't have access to.
+        if (orderData.companyId != null) {
+          const scope = await resolveRequestScope(ctx.user);
+          if (!scopeAllows(scope, orderData.companyId)) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Cannot create an order under an entity outside your access.' });
+          }
+        }
         const orderNumber = generateNumber('ORD');
         const result = await db.createOrder({ ...orderData, orderNumber, createdBy: ctx.user.id });
         
@@ -8692,6 +8718,29 @@ Be concise and helpful. Always give actionable guidance.`;
       .mutation(async ({ input }) => {
         return getFreightRates(input);
       }),
+
+    // Ocean freight matrix: indicative pricing off the Superhumn rate matrix,
+    // no carrier API call. The matrix itself lives in @shared/oceanFreightRates
+    // so the client can render the same numbers without a round trip.
+    rateEstimate: router({
+      estimate: protectedProcedure
+        .input(z.object({
+          originCountry: z.string().trim().min(1),
+          destination: z.string().trim().min(1),
+          loadPort: z.string().trim().min(1).optional(),
+          mode: z.enum(["fcl20", "fcl40", "lcl"]),
+          containers: z.number().int().min(1).max(100).optional(),
+          volumeCbm: z.number().min(0).optional(),
+          weightKg: z.number().min(0).optional(),
+          cargoValueUsd: z.number().min(0).optional(),
+          rateScenario: z.number().min(0.1).max(5).optional(),
+          shipDate: z.string().optional(),
+          includeDrayage: z.boolean().optional(),
+          includeInsurance: z.boolean().optional(),
+          applyPeakSeason: z.boolean().optional(),
+        }))
+        .query(({ input }) => estimateOceanFreight(input)),
+    }),
 
     // SeaRates: List supported shipping lines
     shippingLines: protectedProcedure.query(async () => {

@@ -1062,7 +1062,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
 
   // Query all vendors for manual selection
   const vendorsQuery = trpc.vendors.list.useQuery(
-    {},
+    undefined,
     { enabled: showVendorDropdown || showDraftPreview }
   );
 

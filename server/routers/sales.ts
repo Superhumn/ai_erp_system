@@ -145,13 +145,16 @@ export const salesRouter = router({
   // SALES - ORDERS
   // ============================================
   orders: router({
+    // ⚠️ SECURITY: orphaned extracted router (not wired into the live app — see CLAUDE.md).
+    // Before wiring up, adopt server-derived scoping (scopedProcedure + ctx.scope) like the live
+    // server/routers.ts orders router, or this reintroduces cross-entity reads.
     list: protectedProcedure
       .input(z.object({
         companyId: z.number().optional(),
         status: z.string().optional(),
         customerId: z.number().optional(),
       }).optional())
-      .query(({ input }) => db.getOrders(input)),
+      .query(({ input }) => db.getOrders(undefined, input)),
     get: protectedProcedure
       .input(z.object({ id: z.number() }))
       .query(({ input }) => db.getOrderWithItems(input.id)),
