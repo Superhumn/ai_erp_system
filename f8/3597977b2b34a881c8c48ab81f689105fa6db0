@@ -1,0 +1,171 @@
+.github/workflows/deploy.yml
+  s_c2bc34cc15eb7f::t_1a52070bb70046 49-50,59
+.strict-baseline.json
+  s_c2bc34cc15eb7f::t_7f3928f94a6e6c 3-4,7
+DB_INDEX.md
+  s_c2bc34cc15eb7f::t_11de4bebf262ab 5,13-127,131-385,387-395,397,399-400,402-406,408,410-1569
+ROUTERS_INDEX.md
+  s_c2bc34cc15eb7f::t_df3f7095f48dcd 5,13-140,142,146-204,206,210-278
+client/src/App.tsx
+  s_c2bc34cc15eb7f::t_892b891cea87a4 94-96,489-491
+client/src/components/DashboardLayout.tsx
+  s_c2bc34cc15eb7f::t_c6f2ce671c88bc 60,63,400-404,406,518-529,549-556
+client/src/components/planner/QuickAddBar.tsx
+  s_c2bc34cc15eb7f::t_0f4101a647f9c3 1-162
+client/src/components/ui/button.tsx
+  s_c2bc34cc15eb7f::t_40382b203f18a8 8,13,15,17
+client/src/components/ui/card.tsx
+  s_c2bc34cc15eb7f::t_31978ca58dbc1f 10
+client/src/components/ui/progress.tsx
+  s_c2bc34cc15eb7f::t_daf76fec179ad5 22
+client/src/index.css
+  s_c2bc34cc15eb7f::t_ed1343d1f3e4f6 246-360
+client/src/lib/format.test.ts
+  s_c2bc34cc15eb7f::t_34c5605bb4e765 1-53
+client/src/lib/format.ts
+  s_c2bc34cc15eb7f::t_361963d6697e3b 17-41,43,45-48,52,56-59
+client/src/lib/utils.test.ts
+  s_c2bc34cc15eb7f::t_290352dd1563e2 2,30-60
+client/src/lib/utils.ts
+  s_c2bc34cc15eb7f::t_2c5c214f0c5815 7-32
+client/src/pages/freight/Carriers.tsx
+  s_c2bc34cc15eb7f::t_d22c0db40f0e16 3,49-51,62-101,109,162-192,194,196-199,428-434,451-453,457-463,567-570,599-632
+client/src/pages/freight/RFQDetail.tsx
+  s_c2bc34cc15eb7f::t_7313c56281bbd1 1,34,36,40,58-76,115-128,159-172,175,177,376-389,535,537-539,554,556-559,569,571-575,578-588,605-608,612-671
+client/src/pages/hr/Employees.tsx
+  s_c2bc34cc15eb7f::t_c3fa9f54a1fb3e 25-26,1855-1856,2000,2015-2019,2024-2034
+client/src/pages/hr/Recruiting.tsx
+  s_c2bc34cc15eb7f::t_072ed9090a0f0d 2,37-39,42-46,50-66,110-115,125-132,151-153,157-162,169,194-197,332
+client/src/pages/operations/ProcurementHub.tsx
+  s_c2bc34cc15eb7f::t_221faa2e15faef 46,81-110,118-120,133-140,154-159,167,199,202,212,223,230-233,235,241-273,487-488,491-542,545-547,549,552,561-562,569-575,582-584,589-591,593,595,597-598,600-606,609,611-631,636-666,668-678,682,684,686-693,795,899-965,987-993,1007,1053-1094,1112-1157,1188-1200,1216-1339
+client/src/pages/operations/SupplierScoring.tsx
+  s_c2bc34cc15eb7f::t_6204e60960d3ab 79,101-107
+client/src/pages/operations/Vendors.tsx
+  s_c2bc34cc15eb7f::t_94c08877e53acf 3,34,102,177-195,270,288,539-551,907-962
+client/src/pages/ops/OpsWorkspace.tsx
+  s_c2bc34cc15eb7f::t_84635878b7fbdf 40,50-55
+client/src/pages/planner/Today.tsx
+  s_c2bc34cc15eb7f::t_73639cbef5f416 1-198
+client/src/pages/sales/FundraisingCampaigns.test.tsx
+  s_c2bc34cc15eb7f::t_c8003d5581d30a 1-151
+client/src/pages/sales/FundraisingCampaigns.tsx
+  s_c2bc34cc15eb7f::t_e379625edc3650 16,267-278,280-281,284-285,288-292,294-297,303-358,361,376,398-401,403-406,408-412,415-505
+client/src/pages/superhumn/theme.css
+  s_c2bc34cc15eb7f::t_d24ec1d113e0b2 23-34
+docs/COMPANY_WEBSITE_SOURCING.md
+  s_c2bc34cc15eb7f::t_555d2046df7191 1-189
+docs/EMAIL_INTAKE.md
+  s_c2bc34cc15eb7f::t_b73d4750deb1ba 20-23
+docs/FREIGHT_QUOTE_NORMALIZATION.md
+  s_c2bc34cc15eb7f::t_9ca7f8858cf0ac 1-158
+docs/QUOTE_NORMALIZATION.md
+  s_c2bc34cc15eb7f::t_80cfccae133e0f 1-206
+docs/VENDOR_QUOTE_WORKFLOW.md
+  s_c2bc34cc15eb7f::t_df1bde977084c7 3-8
+drizzle/0057_quote_normalization_and_responsiveness.sql
+  s_c2bc34cc15eb7f::t_5040c36860fdf1 1-197
+drizzle/0058_freight_quote_normalization.sql
+  s_c2bc34cc15eb7f::t_05b9e0c2afe7f4 1-90
+drizzle/0059_company_website_sourcing.sql
+  s_c2bc34cc15eb7f::t_8a55d6ab9332a7 1-79
+drizzle/entity-scope-exempt.txt
+  s_c2bc34cc15eb7f::t_18b9b1c06efcbe 26,39
+drizzle/meta/_journal.json
+  s_c2bc34cc15eb7f::t_fe50c9d9781925 403-423
+drizzle/schema.ts
+  s_c2bc34cc15eb7f::t_f892917dc67e1f 303-309,311-312,1124-1125,1129-1133,1459-1466,1512-1526,1559-1583,4265-4277,4316-4325,4344-4364,4436-4439,4458-4512,7031-7036,7955-7983
+server/_core/emailParser.ts
+  s_c2bc34cc15eb7f::t_32a3931d9e006a 10,111,129,194,266-276,339-372,441-450,452,808
+server/attachmentUrl.test.ts
+  s_c2bc34cc15eb7f::t_782d304f1ba6b6 1-136
+server/attachmentUrl.ts
+  s_c2bc34cc15eb7f::t_bc95e782f0b159 1-108
+server/autoSchedule.test.ts
+  s_c2bc34cc15eb7f::t_c94b1ac4778b61 1-80
+server/autoScheduleService.ts
+  s_c2bc34cc15eb7f::t_30d9d3b20676e9 1-188
+server/companyContactSourcing.test.ts
+  s_c2bc34cc15eb7f::t_dda3e0724890d2 1-133
+server/companyContactSourcing.ts
+  s_c2bc34cc15eb7f::t_07859ca48bd161 1-310
+server/companyWebsiteSource.test.ts
+  s_c2bc34cc15eb7f::t_92b7e56951c060 1-355
+server/companyWebsiteSource.ts
+  s_c2bc34cc15eb7f::t_585443395e8da2 1-593
+server/currencyService.test.ts
+  s_c2bc34cc15eb7f::t_114b1008d93968 1-42
+server/currencyService.ts
+  s_c2bc34cc15eb7f::t_e9b01cc2154ebc 1-286
+server/db.ts
+  s_c2bc34cc15eb7f::t_5d95f95e1b1e2f 192-193,2974-3002,15568-15595
+server/db/freight.ts
+  s_c2bc34cc15eb7f::t_7e924d7dfdefbd 52-64
+server/documentImportService.ts
+  s_c2bc34cc15eb7f::t_319b05443146a4 9,152-158,160-169,171,173-183,185-190,194-209,227,229,249,260,262,369,379,387,391-555
+server/emailCategorization.test.ts
+  s_c2bc34cc15eb7f::t_447f31ac2b458c 88-139
+server/freightQuoteNormalization.test.ts
+  s_c2bc34cc15eb7f::t_9090ebc15f8866 1-464
+server/freightQuoteNormalization.ts
+  s_c2bc34cc15eb7f::t_ba6a9f509d54b2 1-796
+server/freightQuoteParser.test.ts
+  s_c2bc34cc15eb7f::t_aa98da048ef50c 1-195
+server/freightQuoteParser.ts
+  s_c2bc34cc15eb7f::t_2873b868f55ce8 1-330
+server/jsdom.d.ts
+  s_c2bc34cc15eb7f::t_2cbc66982e23df 1-34
+server/llmJson.test.ts
+  s_c2bc34cc15eb7f::t_4086ef46ffe3a3 1-61
+server/llmJson.ts
+  s_c2bc34cc15eb7f::t_c58bd58fab2774 1-63
+server/migrate.test.ts
+  s_c2bc34cc15eb7f::t_a049c60265b670 1-68
+server/migrate.ts
+  s_c2bc34cc15eb7f::t_55c6b0f0adbcda 4,6-36,51-62,68-71
+server/nlQuickAddService.ts
+  s_c2bc34cc15eb7f::t_2cbaed1707ad9b 1-97
+server/quoteNormalization.test.ts
+  s_c2bc34cc15eb7f::t_f9c8cfb47d3173 1-423
+server/quoteNormalization.ts
+  s_c2bc34cc15eb7f::t_0f6060536117d0 1-704
+server/routers.ts
+  s_c2bc34cc15eb7f::t_4111164f0126bf 25-27,46-52,79-80,139-145,192-195,243-297,1132-1238,1526,1534,1547,1610-1666,3889,7195-7237,8716-8726,8736,8743-8744,8747-8751,8766-8776,8825-8835,8839-8990,9028-9035,9057-9064,9092,9098-9119,9244-9248,9250-9251,9253,9286-9289,9307-9309,9323-9342,9347-9349,9353-9358,9361-9372,9374-9416,9420,9424-9429,9431-9452,9454-9479,9481-9493,9495,9551-9561,9564-9570,9572-9579,9581,9587,9593,9596-9614,9618-9629,9631-9646,12799-12807,12827-12834,12847-12850,12855-12878,12882-12887,12890-12904,12906,12962,13117-13124,13145-13148,13156-13163,13165-13168,13177-13189,13198-13207,13385-13391,13398-13406,13418-13437,13448-13449,13451,13453-13454,13456,13509-13512,13554-13563,13565-13566,13581-13583,13585-13587,13589,13597-13656,13666-13760,13764-13815,14646,14674-14678,14710-14715,14720,14729-14753,14767,15128-15150
+server/routers/freight.ts
+  s_c2bc34cc15eb7f::t_b2c9f528c46f94 9-13,67-77,81-232,270-277,299-306,334,340-361,365,487-491,493-494,496,529-531,549-551,564-583,588-590,594-657,661,665-670,672-693,695-720,722-734,736,791-801,804-810,812-818,820-822,827,833,836-854,858-869,871-886
+server/routers/procurement.ts
+  s_c2bc34cc15eb7f::t_36446b15404934 13-16,19-22,50,70,85-132,858-859,864-883,887-892,895-909,911,967,1122-1128,1149,1157-1165,1167-1170,1343-1396,1398,1404-1488
+server/supplierScoringService.ts
+  s_c2bc34cc15eb7f::t_1dc7e3caa159ef 9-13,47-65,90,93-101,103,120,129-138,144,171-193,204-207,214,218,229-234,249-254
+server/vendorQuoteParser.test.ts
+  s_c2bc34cc15eb7f::t_97667e0073c752 1-137
+server/vendorQuoteParser.ts
+  s_c2bc34cc15eb7f::t_efbbd32d801f63 1-618
+server/vendorResponsiveness.test.ts
+  s_c2bc34cc15eb7f::t_f9db414bb994b6 1-187
+server/vendorResponsiveness.ts
+  s_c2bc34cc15eb7f::t_c8cb8d7c7913d0 1-321
+server/webFetchGuard.test.ts
+  s_c2bc34cc15eb7f::t_405076d47f8760 1-343
+server/webFetchGuard.ts
+  s_c2bc34cc15eb7f::t_89cc5b9c0546a5 1-419
+server/workflowProcessors.ts
+  s_c2bc34cc15eb7f::t_4aba20ce19c2d8 40-64,1990-2000,2024-2036,2061,2077,2087-2088
+shared/planner.ts
+  s_c2bc34cc15eb7f::t_c6c9e6b2215cdd 1-110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "f83597977b2b34a881c8c48ab81f689105fa6db0",
+  "prompts": {},
+  "sessions": {
+    "s_c2bc34cc15eb7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9928e53-5247-4262-810c-098bf219ad0b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    }
+  }
+}
