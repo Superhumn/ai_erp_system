@@ -284,3 +284,105 @@ export async function deleteCurrencyRate(id: number): Promise<void> {
   if (!db) throw new Error("Database not available");
   await db.delete(currencyRates).where(eq(currencyRates.id, id));
 }
+
+// ─── Bulk entry ────────────────────────────────────────────────────────
+//
+// The feed covers the ECB's ~30 currencies. Procurement buys in CNY, INR, VND,
+// THB and plenty of others it does not publish, so those rates arrive as a list
+// someone pastes out of a bank statement or a broker's email. This parses that
+// list rather than making them fill in one form per currency.
+
+export interface ParsedRateLine {
+  line: number;
+  raw: string;
+  fromCurrency?: string;
+  toCurrency?: string;
+  rate?: number;
+  error?: string;
+}
+
+/**
+ * Read pasted rate lines. Accepts the shapes people actually paste:
+ *
+ *   CNY 7.24            (base -> CNY, base supplied by the caller)
+ *   CNY, 7.24
+ *   USD/CNY 7.24
+ *   USD -> CNY 7.24
+ *   1 USD = 7.24 CNY
+ *
+ * Blank lines and `#` comments are ignored. A line that cannot be read is
+ * returned with an `error` rather than dropped, so the caller can show which
+ * line was wrong instead of silently importing fewer rates than were pasted.
+ */
+export function parseRatePaste(
+  text: string,
+  options: { base?: string } = {},
+): ParsedRateLine[] {
+  const base = normalizeCurrencyCode(options.base) ?? DEFAULT_BASE_CURRENCY;
+  const out: ParsedRateLine[] = [];
+
+  const lines = String(text ?? "").split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i].trim();
+    if (!raw || raw.startsWith("#")) continue;
+
+    const entry: ParsedRateLine = { line: i + 1, raw };
+    // Commas and tabs are separators here, never decimal marks — a pasted
+    // "1,234.5" would be ambiguous, so it is rejected below rather than guessed.
+    const cleaned = raw.replace(/[,\t]+/g, " ").replace(/\s+/g, " ").trim();
+
+    let from: string | null = null;
+    let to: string | null = null;
+    let rateText: string | null = null;
+
+    // 1 USD = 7.24 CNY
+    const equation = cleaned.match(/^1\s+([A-Za-z]{3})\s*=\s*([-+]?[\d.]+)\s+([A-Za-z]{3})$/);
+    // USD/CNY 7.24  |  USD->CNY 7.24  |  USD CNY 7.24
+    const pair = cleaned.match(/^([A-Za-z]{3})\s*(?:\/|->|→|\s)\s*([A-Za-z]{3})\s+([-+]?[\d.]+)$/);
+    // CNY 7.24
+    const single = cleaned.match(/^([A-Za-z]{3})\s+([-+]?[\d.]+)$/);
+
+    if (equation) {
+      from = normalizeCurrencyCode(equation[1]);
+      rateText = equation[2];
+      to = normalizeCurrencyCode(equation[3]);
+    } else if (pair) {
+      from = normalizeCurrencyCode(pair[1]);
+      to = normalizeCurrencyCode(pair[2]);
+      rateText = pair[3];
+    } else if (single) {
+      from = base;
+      to = normalizeCurrencyCode(single[1]);
+      rateText = single[2];
+    } else {
+      entry.error = "Could not read a currency and a rate from this line.";
+      out.push(entry);
+      continue;
+    }
+
+    if (!from || !to) {
+      entry.error = "Not a valid three-letter currency code.";
+      out.push(entry);
+      continue;
+    }
+    if (from === to) {
+      entry.error = `A rate from ${from} to itself is always 1.`;
+      out.push(entry);
+      continue;
+    }
+
+    const rate = Number(rateText);
+    if (!Number.isFinite(rate) || rate <= 0) {
+      entry.error = `"${rateText}" is not a positive number.`;
+      out.push(entry);
+      continue;
+    }
+
+    entry.fromCurrency = from;
+    entry.toCurrency = to;
+    entry.rate = rate;
+    out.push(entry);
+  }
+
+  return out;
+}
