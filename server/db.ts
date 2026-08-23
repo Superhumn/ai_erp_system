@@ -2021,13 +2021,15 @@ export async function deletePurchaseOrder(id: number): Promise<boolean> {
     await tx.update(freightQuotesStandalone).set({ purchaseOrderId: null }).where(eq(freightQuotesStandalone.purchaseOrderId, id));
     await tx.update(freightCostAllocations).set({ purchaseOrderId: null }).where(eq(freightCostAllocations.purchaseOrderId, id));
     await tx.update(inventoryCostLayers).set({ purchaseOrderId: null }).where(eq(inventoryCostLayers.purchaseOrderId, id));
-    // Operator uploads point at the PO through the polymorphic
-    // referenceType/referenceId pair rather than a FK column, so they need
-    // clearing explicitly — the file is kept, only the dead pointer goes.
-    await tx
-      .update(documents)
-      .set({ referenceType: null, referenceId: null })
-      .where(and(inArray(documents.referenceType, ["purchase_order", "po"]), eq(documents.referenceId, id)));
+    // Deliberately NOT touched: the polymorphic referenceType/referenceId pairs
+    // on documents, rawMaterialTransactions, inventoryTransactions,
+    // inventoryCostLayers and transactions. Those record where a file or a stock
+    // movement came from, and "received against PO 4711" stays true after the PO
+    // row is gone — erasing it would destroy the provenance that makes keeping
+    // these records worthwhile. They are plain nullable ints with no FK, and PO
+    // ids are never reused, so nothing dangles into a live row. Queries filtered
+    // by the pair simply return nothing, which is the correct answer for a
+    // deleted PO.
 
     // Rows below only exist as part of this PO — they have no meaning once it is
     // gone, and their purchaseOrderId is NOT NULL so they can't be detached.

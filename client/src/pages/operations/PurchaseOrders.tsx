@@ -1470,9 +1470,10 @@ export default function PurchaseOrders() {
             <DialogDescription>
               This permanently deletes the selected purchase orders, their line items, and any
               receiving records, material links, approvals and supplier-portal uploads attached
-              to them. Linked shipments, payments, parsed and uploaded documents, freight RFQs,
-              quotes and cost allocations, and inventory cost layers are kept — their link to the
-              PO is cleared. This cannot be undone.
+              to them. Linked shipments, payments, parsed documents, freight RFQs, quotes and
+              cost allocations, and inventory cost layers are kept, with their direct link to the
+              PO cleared. Stock-movement and document history keeps recording which PO it came
+              from. This cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2">
