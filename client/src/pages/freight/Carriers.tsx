@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { safeExternalUrl } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +46,9 @@ import {
   Mail,
   Phone,
   Globe,
+  ShieldCheck,
+  ShieldAlert,
+  Download,
 } from "lucide-react";
 
 const carrierTypeIcons: Record<string, React.ReactNode> = {
@@ -55,6 +59,46 @@ const carrierTypeIcons: Record<string, React.ReactNode> = {
   multimodal: <Layers className="h-4 w-4" />,
 };
 
+/**
+ * How a carrier's contact details got there, and whether they can be mailed.
+ *
+ * `discovered` means a model proposed the company and nothing has confirmed how
+ * to reach it — the server refuses to send an RFQ to one of these, so the row
+ * says so rather than letting the send fail silently later.
+ */
+function ContactProvenance({ carrier }: { carrier: any }) {
+  const source = carrier.contactSource ?? "manual";
+  if (source === "discovered") {
+    return (
+      <Badge variant="outline" className="w-fit gap-1 border-amber-500/50 text-amber-600">
+        <ShieldAlert className="h-3 w-3" />
+        Unverified — cannot send RFQ
+      </Badge>
+    );
+  }
+  if (source === "website") {
+    // Server-extracted, but still untrusted data from the DB at render time.
+    const href = safeExternalUrl(carrier.contactSourceUrl);
+    return (
+      <Badge variant="outline" className="w-fit gap-1 border-emerald-500/50 text-emerald-600">
+        <ShieldCheck className="h-3 w-3" />
+        {href ? (
+          <a href={href} target="_blank" rel="noreferrer noopener" className="hover:underline">
+            From their website
+          </a>
+        ) : (
+          "From their website"
+        )}
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="outline" className="w-fit text-muted-foreground">
+      {source === "inbound_email" ? "From their email" : source === "import" ? "Imported" : "Entered by hand"}
+    </Badge>
+  );
+}
+
 export default function Carriers() {
   const [isOpen, setIsOpen] = useState(false);
   const [isDiscoverOpen, setIsDiscoverOpen] = useState(false);
@@ -62,6 +106,7 @@ export default function Carriers() {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [discoverForm, setDiscoverForm] = useState({ origin: "", destination: "", cargoType: "", shippingMode: "" as string, specialRequirements: "" });
   const [discoveredCarriers, setDiscoveredCarriers] = useState<any[]>([]);
+  const [sourcingCarrierId, setSourcingCarrierId] = useState<number | null>(null);
   const [formData, setFormData] = useState({
     name: "",
     type: "ocean" as "ocean" | "air" | "ground" | "rail" | "multimodal",
@@ -114,17 +159,44 @@ export default function Carriers() {
     onError: (error: any) => toast.error(error.message),
   });
 
+  // Saving a suggested carrier stores only what the model can actually know —
+  // name, type, country, website — and then reads the contact details off the
+  // carrier's own site. Nothing here writes an address the model made up.
+  const addDiscoveredMutation = trpc.freight.carriers.addDiscovered.useMutation({
+    onSuccess: (result: any) => {
+      utils.freight.carriers.list.invalidate();
+      if (result.verified) {
+        toast.success(result.message);
+      } else {
+        toast.warning(result.message);
+      }
+    },
+    onError: (error: any) => toast.error(error.message || "Failed to add carrier"),
+  });
+
+  const sourceMutation = trpc.freight.carriers.sourceFromWebsite.useMutation({
+    onSuccess: (result: any) => {
+      utils.freight.carriers.list.invalidate();
+      if (result.verified) {
+        toast.success(`Verified from ${result.source?.fetchedUrl ?? "the carrier's website"}`);
+      } else if (result.status === "no_website") {
+        toast.warning("No website on this carrier — add one first.");
+      } else {
+        const reason = result.skipped?.[0]?.reason;
+        toast.warning(reason || "Nothing usable found on the carrier's own site.");
+      }
+    },
+    onError: (error: any) => toast.error(error.message || "Could not read that website"),
+    onSettled: () => setSourcingCarrierId(null),
+  });
+
   const handleAddDiscovered = (carrier: any) => {
-    createMutation.mutate({
+    addDiscoveredMutation.mutate({
       name: carrier.name,
-      type: carrier.type || "ocean",
-      contactName: carrier.contactName || "",
-      email: carrier.email || "",
-      phone: carrier.phone || "",
-      country: carrier.country || "",
-      website: carrier.website || "",
-      notes: carrier.notes || "",
-      isPreferred: false,
+      type: carrier.type || "multimodal",
+      country: carrier.country || undefined,
+      website: carrier.website || undefined,
+      notes: carrier.notes || undefined,
     });
     setDiscoveredCarriers(prev => prev.filter(c => c.name !== carrier.name));
   };
@@ -353,7 +425,13 @@ export default function Carriers() {
             {discoveredCarriers.length > 0 && (
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label className="text-xs text-muted-foreground uppercase tracking-wider">Found {discoveredCarriers.length} Carriers</Label>
+                  <div>
+                    <Label className="text-xs text-muted-foreground uppercase tracking-wider">Found {discoveredCarriers.length} Carriers</Label>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      These are suggestions. Adding one saves the company and reads its contact
+                      details from its own website — no email address is taken from the suggestion itself.
+                    </p>
+                  </div>
                   <Button variant="outline" size="sm" onClick={() => {
                     discoveredCarriers.forEach(c => handleAddDiscovered(c));
                   }}>
@@ -370,17 +448,19 @@ export default function Carriers() {
                           {carrier.country && `${carrier.country} · `}{carrier.notes}
                         </div>
                         <div className="flex gap-2 mt-0.5 text-xs text-muted-foreground">
-                          {carrier.email && <span className="flex items-center gap-0.5"><Mail className="h-2.5 w-2.5" />{carrier.email}</span>}
-                          {carrier.website && <span className="flex items-center gap-0.5"><Globe className="h-2.5 w-2.5" />{carrier.website}</span>}
+                          {carrier.website
+                            ? <span className="flex items-center gap-0.5"><Globe className="h-2.5 w-2.5" />{carrier.website}</span>
+                            : <span className="flex items-center gap-0.5 text-amber-600"><ShieldAlert className="h-2.5 w-2.5" />No website — contacts must be entered by hand</span>}
                         </div>
                       </div>
                       <div className="shrink-0 flex items-center gap-1">
-                        {carrier.rating && (
-                          <div className="flex items-center gap-0.5 text-xs text-muted-foreground">
-                            <Star className="h-3 w-3 fill-current" />{carrier.rating}
-                          </div>
-                        )}
-                        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleAddDiscovered(carrier)}>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs"
+                          disabled={addDiscoveredMutation.isPending}
+                          onClick={() => handleAddDiscovered(carrier)}
+                        >
                           <Plus className="h-3 w-3 mr-1" /> Add
                         </Button>
                       </div>
@@ -484,6 +564,10 @@ export default function Carriers() {
                             {carrier.phone}
                           </p>
                         )}
+                        {!carrier.email && !carrier.phone && (
+                          <p className="text-sm text-muted-foreground">No contact details</p>
+                        )}
+                        <ContactProvenance carrier={carrier} />
                       </div>
                     </TableCell>
                     <TableCell>
@@ -512,13 +596,40 @@ export default function Carriers() {
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
                         {carrier.website && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => window.open(carrier.website!, "_blank")}
-                          >
-                            <Globe className="h-4 w-4" />
-                          </Button>
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title={safeExternalUrl(carrier.website) ? "Open website" : "Website is not a usable http(s) URL"}
+                              disabled={!safeExternalUrl(carrier.website)}
+                              onClick={() => {
+                                const href = safeExternalUrl(carrier.website);
+                                if (href) window.open(href, "_blank", "noopener,noreferrer");
+                              }}
+                            >
+                              <Globe className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="Read contact details from their website"
+                              disabled={
+                                sourceMutation.isPending &&
+                                sourcingCarrierId === carrier.id
+                              }
+                              onClick={() => {
+                                setSourcingCarrierId(carrier.id);
+                                sourceMutation.mutate({ carrierId: carrier.id });
+                              }}
+                            >
+                              {sourceMutation.isPending &&
+                              sourcingCarrierId === carrier.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Download className="h-4 w-4" />
+                              )}
+                            </Button>
+                          </>
                         )}
                         <Button
                           variant="ghost"

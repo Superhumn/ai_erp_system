@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { cn } from "./utils";
+import { cn, safeExternalUrl } from "./utils";
 
 describe("cn utility", () => {
   it("merges class names", () => {
@@ -25,5 +25,36 @@ describe("cn utility", () => {
 
   it("handles array inputs", () => {
     expect(cn(["foo", "bar"])).toBe("foo bar");
+  });
+});
+
+describe("safeExternalUrl", () => {
+  it("adds https to a bare host", () => {
+    expect(safeExternalUrl("acme-freight.com")).toBe("https://acme-freight.com/");
+  });
+
+  it("keeps an explicit http(s) URL", () => {
+    expect(safeExternalUrl("http://acme.com/contact")).toBe("http://acme.com/contact");
+  });
+
+  it("refuses a javascript: URL", () => {
+    // A vendor website field is typed by a person and rendered as a link.
+    expect(safeExternalUrl("javascript:alert(1)")).toBeNull();
+    expect(safeExternalUrl("  JavaScript:alert(1)")).toBeNull();
+  });
+
+  it("refuses other non-http schemes", () => {
+    expect(safeExternalUrl("data:text/html,<script>1</script>")).toBeNull();
+    expect(safeExternalUrl("file:///etc/passwd")).toBeNull();
+  });
+
+  it("refuses a host with no dot, which would navigate within our own origin", () => {
+    expect(safeExternalUrl("/operations/vendors")).toBeNull();
+    expect(safeExternalUrl("localhost")).toBeNull();
+  });
+
+  it("returns null for empty input", () => {
+    expect(safeExternalUrl(null)).toBeNull();
+    expect(safeExternalUrl("   ")).toBeNull();
   });
 });
