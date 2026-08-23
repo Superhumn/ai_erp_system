@@ -300,6 +300,13 @@ export const vendors = mysqlTable("vendors", {
   bankRouting: varchar("bankRouting", { length: 64 }),
   notes: text("notes"),
   quickbooksVendorId: varchar("quickbooksVendorId", { length: 64 }),
+  website: varchar("website", { length: 512 }), // Company site — the source of record for contact info
+  // Provenance. `contactSource` says where name/email/phone came from; "discovered"
+  // means a model proposed them and nothing has confirmed them yet.
+  // See server/companyWebsiteSource.ts.
+  contactSource: mysqlEnum("contactSource", ["manual", "discovered", "website", "inbound_email", "import"]).default("manual"),
+  contactVerifiedAt: timestamp("contactVerifiedAt"), // Set only when found on the company's own domain
+  contactSourceUrl: varchar("contactSourceUrl", { length: 1024 }), // The exact page the contact was read from
   defaultLeadTimeDays: int("defaultLeadTimeDays").default(14), // Default lead time for this vendor
   defaultCurrency: varchar("defaultCurrency", { length: 3 }), // Currency this vendor normally quotes in
   defaultIncoterms: varchar("defaultIncoterms", { length: 10 }), // Incoterm this vendor normally quotes on
@@ -1449,6 +1456,14 @@ export const freightCarriers = mysqlTable("freightCarriers", {
   country: varchar("country", { length: 100 }),
   website: varchar("website", { length: 500 }),
   notes: text("notes"),
+  // Carrier contacts join the CRM the same way vendor contacts do.
+  contactId: int("contactId").references((): AnyMySqlColumn => crmContacts.id, { onDelete: "set null" }),
+  // Provenance. A carrier proposed by `discoverCarriers` lands as "discovered";
+  // it becomes "website" (and gains contactVerifiedAt) only once its contact
+  // details are read off a page served by its own domain.
+  contactSource: mysqlEnum("contactSource", ["manual", "discovered", "website", "inbound_email", "import"]).default("manual"),
+  contactVerifiedAt: timestamp("contactVerifiedAt"),
+  contactSourceUrl: varchar("contactSourceUrl", { length: 1024 }),
   rating: int("rating"), // 1-5 star rating
   isPreferred: boolean("isPreferred").default(false),
   isActive: boolean("isActive").default(true),
@@ -4464,6 +4479,36 @@ export const currencyRates = mysqlTable("currencyRates", {
 
 export type CurrencyRate = typeof currencyRates.$inferSelect;
 export type InsertCurrencyRate = typeof currencyRates.$inferInsert;
+
+// ==========================================
+// COMPANY WEBSITE SOURCING
+// ==========================================
+
+// One row per attempt to read a company's contact details off its own website.
+// An append-only log rather than a cache: when someone asks "where did this
+// email come from", the answer is a URL, an HTTP status and a timestamp.
+export const companyWebSources = mysqlTable("companyWebSources", {
+  id: int("id").autoincrement().primaryKey(),
+  entityType: mysqlEnum("entityType", ["vendor", "freight_carrier"]).notNull(),
+  entityId: int("entityId").notNull(),
+  websiteUrl: varchar("websiteUrl", { length: 1024 }).notNull(),
+  fetchedUrl: varchar("fetchedUrl", { length: 1024 }), // after redirects
+  httpStatus: int("httpStatus"),
+  status: mysqlEnum("status", ["ok", "no_contact_found", "fetch_failed", "blocked", "skipped"]).notNull(),
+  // Contact details read verbatim off the page — never generated.
+  // JSON: { emails: [{ value, sourceUrl, onOwnDomain }], phones: [...], addresses: [...] }
+  extracted: text("extracted"),
+  // Why a candidate was or was not accepted, e.g. an off-domain email rejected.
+  warnings: text("warnings"),
+  pagesFetched: int("pagesFetched").default(0),
+  durationMs: int("durationMs"),
+  error: text("error"),
+  requestedBy: int("requestedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CompanyWebSource = typeof companyWebSources.$inferSelect;
+export type InsertCompanyWebSource = typeof companyWebSources.$inferInsert;
 
 // ============================================
 // CRM MODULE - Contacts, Messaging & Tracking
