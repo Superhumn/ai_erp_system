@@ -8,6 +8,12 @@ on:
         required: true
         default: ''
 
+# Same reasoning as deploy-staging.yml: Railway serves one container per
+# service, so never let two production deploys overlap.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 jobs:
   deploy-production:
     name: Deploy to Railway Production
