@@ -74,17 +74,17 @@ type LeaveType = (typeof LEAVE_TYPES)[number];
 type BenefitType = (typeof BENEFIT_TYPES)[number];
 
 const STATUS_COLORS: Record<string, string> = {
-  pending: "bg-yellow-100 text-yellow-800",
-  approved: "bg-green-100 text-green-800",
-  rejected: "bg-red-100 text-red-800",
+  pending: "bg-muted text-foreground font-semibold",
+  approved: "bg-muted text-muted-foreground",
+  rejected: "bg-[oklch(0.30_0.02_262)] text-white",
   cancelled: "bg-gray-100 text-gray-700",
-  completed: "bg-green-100 text-green-800",
-  in_progress: "bg-blue-100 text-blue-800",
+  completed: "bg-muted text-muted-foreground",
+  in_progress: "bg-primary/10 text-primary",
   skipped: "bg-gray-100 text-gray-700",
-  enrolled: "bg-green-100 text-green-800",
+  enrolled: "bg-muted text-muted-foreground",
   waived: "bg-gray-100 text-gray-700",
-  terminated: "bg-red-100 text-red-800",
-  processed: "bg-green-100 text-green-800",
+  terminated: "bg-[oklch(0.30_0.02_262)] text-white",
+  processed: "bg-muted text-muted-foreground",
 };
 
 function formatCurrency(value: string | number | null | undefined) {
@@ -183,7 +183,7 @@ export default function EmployeePortal() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{availableHours.toFixed(1)}h</div>
+            <div className="text-2xl font-bold font-display tabular-nums">{availableHours.toFixed(1)}h</div>
             <p className="text-xs text-muted-foreground">
               {totalPending.toFixed(1)}h pending · {totalUsed.toFixed(1)}h used
             </p>
@@ -197,7 +197,7 @@ export default function EmployeePortal() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
+            <div className="text-2xl font-bold font-display tabular-nums">
               {payslips && payslips[0]
                 ? formatCurrency(payslips[0].amount)
                 : "—"}
@@ -215,7 +215,7 @@ export default function EmployeePortal() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
+            <div className="text-2xl font-bold font-display tabular-nums">
               {completedTasks}/{(onboardingTasks || []).length}
             </div>
             <p className="text-xs text-muted-foreground">{openTasks} open task(s)</p>
@@ -229,7 +229,7 @@ export default function EmployeePortal() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
+            <div className="text-2xl font-bold font-display tabular-nums">
               {(benefits || []).filter((b) => b.enrollmentStatus === "enrolled").length}
             </div>
             <p className="text-xs text-muted-foreground">
@@ -432,7 +432,7 @@ function PayTab({ payslips, compensation }: { payslips: any[]; compensation: any
             <CardTitle className="text-sm">YTD Earnings</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(ytd)}</div>
+            <div className="text-2xl font-bold font-display tabular-nums">{formatCurrency(ytd)}</div>
           </CardContent>
         </Card>
         <Card>
@@ -440,7 +440,7 @@ function PayTab({ payslips, compensation }: { payslips: any[]; compensation: any
             <CardTitle className="text-sm">Current Compensation</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
+            <div className="text-2xl font-bold font-display tabular-nums">
               {currentComp ? formatCurrency(currentComp.salary) : "—"}
             </div>
             <p className="text-xs text-muted-foreground">
@@ -455,7 +455,7 @@ function PayTab({ payslips, compensation }: { payslips: any[]; compensation: any
             <CardTitle className="text-sm">Payslips</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{payslips.length}</div>
+            <div className="text-2xl font-bold font-display tabular-nums">{payslips.length}</div>
           </CardContent>
         </Card>
       </div>
@@ -606,7 +606,7 @@ function TimeOffTab({
                   <CardTitle className="text-sm">{titleCase(b.leaveType)}</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">{available.toFixed(1)}h</div>
+                  <div className="text-2xl font-bold font-display tabular-nums">{available.toFixed(1)}h</div>
                   <p className="text-xs text-muted-foreground">
                     {accrued.toFixed(1)}h accrued · {used.toFixed(1)}h used · {pending.toFixed(1)}h pending
                   </p>
@@ -790,7 +790,7 @@ function OnboardingTab({ tasks, onChange }: { tasks: any[]; onChange: () => void
                     className="mt-0.5"
                   >
                     {done ? (
-                      <CheckCircle2 className="h-5 w-5 text-green-600" />
+                      <CheckCircle2 className="h-5 w-5 text-primary" />
                     ) : (
                       <Circle className="h-5 w-5 text-muted-foreground" />
                     )}

@@ -102,9 +102,9 @@ function formatFMV(value: string | number | null | undefined): string {
 
 function statusColor(status: string | null | undefined): string {
   switch (status) {
-    case "approved": return "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300";
-    case "pending": return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300";
-    case "expired": return "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300";
+    case "approved": return "bg-muted text-muted-foreground";
+    case "pending": return "bg-muted text-foreground font-semibold";
+    case "expired": return "bg-[oklch(0.30_0.02_262)] text-white";
     case "draft": return "bg-gray-100 text-gray-800 dark:bg-gray-800/30 dark:text-gray-300";
     default: return "bg-gray-100 text-gray-700";
   }
@@ -447,7 +447,7 @@ export default function EquityReports() {
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
-            <Shield className="h-5 w-5 text-blue-600" />
+            <Shield className="h-5 w-5 text-muted-foreground" />
             <CardTitle className="text-base">409A Valuation</CardTitle>
           </div>
           <CardDescription className="text-sm">
@@ -580,7 +580,7 @@ export default function EquityReports() {
                       className="flex items-center justify-between p-2 border rounded-md text-sm hover:bg-muted/50"
                     >
                       <div className="flex items-center gap-2 min-w-0">
-                        <FileText className="h-4 w-4 text-red-500 shrink-0" />
+                        <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
                         <span className="truncate">{doc.name}</span>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
@@ -607,7 +607,7 @@ export default function EquityReports() {
                             }}
                             className="hover:text-primary"
                           >
-                            <ExternalLink className="h-3 w-3 text-blue-600" />
+                            <ExternalLink className="h-3 w-3 text-primary" />
                           </button>
                         )}
                       </div>
@@ -628,7 +628,7 @@ export default function EquityReports() {
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
-            <FileBarChart className="h-5 w-5 text-purple-600" />
+            <FileBarChart className="h-5 w-5 text-muted-foreground" />
             <CardTitle className="text-base">SAFE &amp; Convertible Conversion Model</CardTitle>
           </div>
           <CardDescription className="text-sm">
@@ -776,19 +776,19 @@ export default function EquityReports() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="border rounded-lg p-3 space-y-1">
                   <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">New Shares Issued</p>
-                  <p className="text-lg font-bold">{conversionModel.totalNewShares.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+                  <p className="text-lg font-bold font-display tabular-nums">{conversionModel.totalNewShares.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
                 </div>
                 <div className="border rounded-lg p-3 space-y-1">
                   <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Total Dilution</p>
-                  <p className="text-lg font-bold text-red-600">{conversionModel.totalDilutionPct.toFixed(2)}%</p>
+                  <p className="text-lg font-bold font-display tabular-nums text-foreground">{conversionModel.totalDilutionPct.toFixed(2)}%</p>
                 </div>
                 <div className="border rounded-lg p-3 space-y-1">
                   <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Post-Money Valuation</p>
-                  <p className="text-lg font-bold">${(conversionModel.postMoneyVal / 1_000_000).toFixed(1)}M</p>
+                  <p className="text-lg font-bold font-display tabular-nums">${(conversionModel.postMoneyVal / 1_000_000).toFixed(1)}M</p>
                 </div>
                 <div className="border rounded-lg p-3 space-y-1">
                   <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Fully Diluted Shares</p>
-                  <p className="text-lg font-bold">{conversionModel.fullyDiluted.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+                  <p className="text-lg font-bold font-display tabular-nums">{conversionModel.fullyDiluted.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
                 </div>
               </div>
 
@@ -820,7 +820,7 @@ export default function EquityReports() {
                             <TableCell className="py-1.5 text-xs text-right font-mono">
                               {row.postOwnershipPct.toFixed(2)}%
                             </TableCell>
-                            <TableCell className="py-1.5 text-xs text-right font-mono text-red-600">
+                            <TableCell className="py-1.5 text-xs text-right font-mono text-foreground font-medium">
                               -{row.dilutionPct.toFixed(2)}%
                             </TableCell>
                           </TableRow>

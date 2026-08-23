@@ -242,6 +242,12 @@ export const companies = mysqlTable("companies", {
   locale: varchar("locale", { length: 10 }).notNull().default("en-US"),
   timezone: varchar("timezone", { length: 64 }).notNull().default("America/New_York"),
   taxRegime: mysqlEnum("taxRegime", ["vat", "gst", "sales_tax", "none"]).default("none").notNull(),
+  // Entity-tree attributes (multi-entity rollout STEP 1). `companies` IS the entity table:
+  // the holding company + regional operating companies live here, linked by parentCompanyId.
+  code: varchar("code", { length: 32 }).unique(),                    // stable key: 'GLOBAL','SA','US','ASIA','CO','IN'
+  entityType: mysqlEnum("entityType", ["holdco", "opco", "jv"]).default("opco").notNull(),
+  countryCode: varchar("countryCode", { length: 2 }),               // ISO 3166-1 alpha-2 (distinct from free-text `country`)
+  ownershipPctOfParent: decimal("ownershipPctOfParent", { precision: 7, scale: 4 }), // parent's % of this entity
   status: mysqlEnum("status", ["active", "inactive", "pending"]).default("active").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -527,6 +533,7 @@ export type InsertWarehouse = typeof warehouses.$inferInsert;
 // Inventory transfers between locations
 export const inventoryTransfers = mysqlTable("inventory_transfers", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   transferNumber: varchar("transferNumber", { length: 64 }).notNull(),
   fromWarehouseId: int("fromWarehouseId").notNull().references(() => warehouses.id),
   toWarehouseId: int("toWarehouseId").notNull().references(() => warehouses.id),
@@ -1119,6 +1126,7 @@ export const emailPriorityEnum = mysqlEnum("email_priority", [
 
 export const inboundEmails = mysqlTable("inbound_emails", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   messageId: varchar("messageId", { length: 255 }).unique(),
   fromEmail: varchar("fromEmail", { length: 255 }).notNull(),
   fromName: varchar("fromName", { length: 255 }),
@@ -1442,6 +1450,7 @@ export const freightCarriers = mysqlTable("freightCarriers", {
 // Freight Request for Quotes (RFQ)
 export const freightRfqs = mysqlTable("freightRfqs", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   rfqNumber: varchar("rfqNumber", { length: 50 }).notNull().unique(),
   title: varchar("title", { length: 255 }).notNull(),
   status: mysqlEnum("status", ["draft", "sent", "awaiting_quotes", "quotes_received", "awarded", "cancelled"]).default("draft").notNull(),
@@ -1561,6 +1570,7 @@ export const freightEmails = mysqlTable("freightEmails", {
 // Customs clearance tracking
 export const customsClearances = mysqlTable("customsClearances", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   clearanceNumber: varchar("clearanceNumber", { length: 50 }).notNull().unique(),
   shipmentId: int("shipmentId"),
   rfqId: int("rfqId"),
@@ -1641,6 +1651,7 @@ export const customsDocuments = mysqlTable("customsDocuments", {
 // Freight bookings (when a quote is accepted)
 export const freightBookings = mysqlTable("freightBookings", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   bookingNumber: varchar("bookingNumber", { length: 50 }).notNull().unique(),
   quoteId: int("quoteId").notNull(),
   rfqId: int("rfqId").notNull(),
@@ -1696,6 +1707,7 @@ export type InsertFreightBooking = typeof freightBookings.$inferInsert;
 // Standalone freight quotes (simplified, denormalized for quick quoting)
 export const freightQuotesStandalone = mysqlTable("freight_quotes", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   shipmentId: int("shipmentId"),
   purchaseOrderId: int("purchaseOrderId"),
   carrierName: varchar("carrierName", { length: 255 }).notNull(),
@@ -1801,6 +1813,7 @@ export const rawMaterials = mysqlTable("rawMaterials", {
 // Recipe costing ingredients
 export const recipeIngredients = mysqlTable("recipeIngredients", {
   id: int("id").autoincrement().primaryKey(),
+  ownerCompanyId: int("ownerCompanyId").references(() => companies.id),
   name: varchar("name", { length: 255 }).notNull(),
   sku: varchar("sku", { length: 64 }).notNull().unique(),
   category: mysqlEnum("category", ["protein", "spice", "liquid", "produce", "packaging", "other"]).default("other").notNull(),
@@ -1832,6 +1845,7 @@ export const ingredientCostHistory = mysqlTable("ingredientCostHistory", {
 
 export const recipes = mysqlTable("recipes", {
   id: int("id").autoincrement().primaryKey(),
+  ownerCompanyId: int("ownerCompanyId").references(() => companies.id),
   recipeId: varchar("recipeId", { length: 32 }).notNull(),
   name: varchar("name", { length: 255 }).notNull(),
   category: mysqlEnum("category", ["beef", "pork", "chicken", "seafood", "dairy", "blend", "other"]).default("other").notNull(),
@@ -2055,6 +2069,7 @@ export type InsertRecipeAccessGrant = typeof recipeAccessGrants.$inferInsert;
 // Biweekly inventory update submissions from copackers
 export const copackerInventoryUpdates = mysqlTable("copacker_inventory_updates", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   warehouseId: int("warehouseId").notNull(),
   submittedBy: int("submittedBy").notNull(),
   periodStart: timestamp("periodStart").notNull(),
@@ -2090,6 +2105,7 @@ export type InsertCopackerInventoryUpdateItem = typeof copackerInventoryUpdateIt
 // Invoices submitted by copackers for their services
 export const copackerInvoices = mysqlTable("copacker_invoices", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   warehouseId: int("warehouseId").notNull(),
   submittedBy: int("submittedBy").notNull(),
   invoiceNumber: varchar("invoiceNumber", { length: 64 }).notNull(),
@@ -2227,6 +2243,7 @@ export const workOrderMaterials = mysqlTable("workOrderMaterials", {
 // Raw material inventory (separate from finished goods inventory)
 export const rawMaterialInventory = mysqlTable("rawMaterialInventory", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   rawMaterialId: int("rawMaterialId").notNull().references(() => rawMaterials.id),
   warehouseId: int("warehouseId").notNull().references(() => warehouses.id),
   quantity: decimal("quantity", { precision: 15, scale: 4 }).default("0").notNull(),
@@ -2327,6 +2344,7 @@ export type InsertPoReceivingItem = typeof poReceivingItems.$inferInsert;
 // Demand forecasts generated by AI
 export const demandForecasts = mysqlTable("demandForecasts", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   forecastNumber: varchar("forecastNumber", { length: 32 }).notNull(),
   productId: int("productId"),
   forecastDate: timestamp("forecastDate").notNull(), // Date this forecast was generated
@@ -2354,6 +2372,7 @@ export type InsertDemandForecast = typeof demandForecasts.$inferInsert;
 // Production plans derived from demand forecasts
 export const productionPlans = mysqlTable("productionPlans", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   planNumber: varchar("planNumber", { length: 32 }).notNull(),
   demandForecastId: int("demandForecastId"),
   productId: int("productId").notNull(),
@@ -2408,6 +2427,7 @@ export type InsertMaterialRequirement = typeof materialRequirements.$inferInsert
 // Suggested purchase orders (auto-generated, pending approval)
 export const suggestedPurchaseOrders = mysqlTable("suggestedPurchaseOrders", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   suggestedPoNumber: varchar("suggestedPoNumber", { length: 32 }).notNull(),
   vendorId: int("vendorId").notNull(),
   productionPlanId: int("productionPlanId"),
@@ -2479,6 +2499,7 @@ export type InsertForecastAccuracy = typeof forecastAccuracy.$inferInsert;
 // Inventory lots for batch/lot tracking
 export const inventoryLots = mysqlTable("inventoryLots", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   lotCode: varchar("lotCode", { length: 64 }).notNull(),
   productId: int("productId").notNull(),
   productType: mysqlEnum("productType", ["finished", "wip", "material", "packaging", "subassembly"]).default("finished").notNull(),
@@ -2500,6 +2521,7 @@ export type InsertInventoryLot = typeof inventoryLots.$inferInsert;
 // Inventory balance by lot and location with status
 export const inventoryBalances = mysqlTable("inventoryBalances", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   lotId: int("lotId").notNull(),
   productId: int("productId").notNull(),
   warehouseId: int("warehouseId").notNull(),
@@ -2682,6 +2704,7 @@ export type InsertRecommendation = typeof recommendations.$inferInsert;
 // Shopify store configuration
 export const shopifyStores = mysqlTable("shopifyStores", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   storeDomain: varchar("storeDomain", { length: 255 }).notNull().unique(), // mystore.myshopify.com
   storeName: varchar("storeName", { length: 255 }),
   accessToken: text("accessToken"), // Encrypted in production
@@ -2761,6 +2784,7 @@ export type InsertShopifyLocationMapping = typeof shopifyLocationMappings.$infer
 // Sales orders (from Shopify or manual)
 export const salesOrders = mysqlTable("salesOrders", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   orderNumber: varchar("orderNumber", { length: 64 }).notNull(),
   source: mysqlEnum("source", ["shopify", "manual", "api", "other"]).default("manual").notNull(),
   shopifyOrderId: varchar("shopifyOrderId", { length: 64 }),
@@ -2843,6 +2867,7 @@ export type InsertInventoryReservation = typeof inventoryReservations.$inferInse
 // Inventory allocation pools by channel
 export const inventoryAllocations = mysqlTable("inventoryAllocations", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   channel: mysqlEnum("channel", ["shopify", "amazon", "wholesale", "retail", "other"]).default("shopify").notNull(),
   storeId: int("storeId"), // For Shopify, link to shopifyStores
   productId: int("productId").notNull(),
@@ -3002,6 +3027,7 @@ export type InsertParsedDocumentLineItem = typeof parsedDocumentLineItems.$infer
 // Data Rooms - top level container
 export const dataRooms = mysqlTable("data_rooms", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   name: varchar("name", { length: 255 }).notNull(),
   description: text("description"),
   slug: varchar("slug", { length: 128 }).notNull().unique(), // URL-friendly identifier
@@ -4152,6 +4178,7 @@ export type InsertEmailTemplate = typeof emailTemplates.$inferInsert;
 // Vendor RFQ (Request for Quote) - sent to vendors for material pricing
 export const vendorRfqs = mysqlTable("vendorRfqs", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   rfqNumber: varchar("rfqNumber", { length: 50 }).notNull(),
   status: mysqlEnum("status", ["draft", "sent", "partially_received", "all_received", "awarded", "cancelled", "expired"]).default("draft").notNull(),
   
@@ -4542,6 +4569,7 @@ export type InsertCrmPipeline = typeof crmPipelines.$inferInsert;
 // CRM Deals - Track opportunities/deals
 export const crmDeals = mysqlTable("crm_deals", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   pipelineId: int("pipelineId").notNull().references(() => crmPipelines.id),
   contactId: int("contactId").notNull().references(() => crmContacts.id),
 
@@ -4626,6 +4654,7 @@ export type InsertContactCapture = typeof contactCaptures.$inferInsert;
 // Email Campaigns for CRM
 export const crmEmailCampaigns = mysqlTable("crm_email_campaigns", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   name: varchar("name", { length: 255 }).notNull(),
   subject: varchar("subject", { length: 500 }).notNull(),
   bodyHtml: text("bodyHtml").notNull(),
@@ -4689,6 +4718,7 @@ export type InsertCrmCampaignRecipient = typeof crmCampaignRecipients.$inferInse
 // provider aggregator (Ayrshare profile) — we only store a reference.
 export const socialAccounts = mysqlTable("social_accounts", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   platform: mysqlEnum("platform", ["linkedin", "twitter", "facebook", "instagram", "tiktok", "youtube", "threads"]).notNull(),
   handle: varchar("handle", { length: 255 }).notNull(),
   displayName: varchar("displayName", { length: 255 }),
@@ -4708,6 +4738,7 @@ export type InsertSocialAccount = typeof socialAccounts.$inferInsert;
 // A marketing campaign groups posts and (optionally) paid spend for ROI.
 export const marketingCampaigns = mysqlTable("marketing_campaigns", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   name: varchar("name", { length: 255 }).notNull(),
   goal: mysqlEnum("goal", ["awareness", "engagement", "leads", "conversions", "retention"]).default("engagement").notNull(),
   status: mysqlEnum("status", ["draft", "active", "paused", "completed", "archived"]).default("draft").notNull(),
@@ -4734,6 +4765,7 @@ export type InsertMarketingCampaign = typeof marketingCampaigns.$inferInsert;
 // IDs on the post so engagement/metrics can be keyed back correctly).
 export const marketingPosts = mysqlTable("marketing_posts", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   campaignId: int("campaignId").references(() => marketingCampaigns.id),
   title: varchar("title", { length: 255 }),
   body: text("body").notNull(),
@@ -4806,6 +4838,7 @@ export type InsertMarketingMetric = typeof marketingMetrics.$inferInsert;
 // the same person already exists in the contact graph.
 export const influencers = mysqlTable("influencers", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   fullName: varchar("fullName", { length: 255 }).notNull(),
   primaryHandle: varchar("primaryHandle", { length: 255 }),
   primaryPlatform: mysqlEnum("primaryPlatform", ["linkedin", "twitter", "facebook", "instagram", "tiktok", "youtube", "threads"]),
@@ -6420,6 +6453,7 @@ export type InsertBankTransaction = typeof bankTransactions.$inferInsert;
 
 export const investmentCommitments = mysqlTable("investment_commitments", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   dataRoomId: int("dataRoomId"),
   investorName: varchar("investorName", { length: 256 }).notNull(),
   investorEmail: varchar("investorEmail", { length: 320 }).notNull(),
@@ -6451,6 +6485,7 @@ export type InsertInvestmentCommitment = typeof investmentCommitments.$inferInse
 
 export const financialModel = mysqlTable("financial_model", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   sheetName: varchar("sheetName", { length: 128 }).notNull(),
   category: varchar("category", { length: 128 }),
   metricName: varchar("metricName", { length: 255 }).notNull(),
@@ -7203,6 +7238,7 @@ export type InsertPmFunction = typeof pmFunctions.$inferInsert;
 
 export const pmPrograms = mysqlTable("pm_programs", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   name: varchar("name", { length: 255 }).notNull(),
   marketId: int("marketId").notNull().references(() => pmMarkets.id),
   description: text("description"),
@@ -7220,6 +7256,7 @@ export type InsertPmProgram = typeof pmPrograms.$inferInsert;
 
 export const pmProjects = mysqlTable("pm_projects", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
   programId: int("programId").references(() => pmPrograms.id),
   // Denormalized market_id + function_id so matrix view can filter without joins.
   marketId: int("marketId").notNull().references(() => pmMarkets.id),

@@ -143,9 +143,9 @@ export default function Forecasting() {
 
   const getTrendIcon = (trend?: string | null) => {
     switch (trend) {
-      case 'up': return <TrendingUp className="h-4 w-4 text-green-500" />;
-      case 'down': return <TrendingDown className="h-4 w-4 text-red-500" />;
-      default: return <Minus className="h-4 w-4 text-gray-500" />;
+      case 'up': return <TrendingUp className="h-4 w-4 text-muted-foreground" />;
+      case 'down': return <TrendingDown className="h-4 w-4 text-foreground" />;
+      default: return <Minus className="h-4 w-4 text-muted-foreground" />;
     }
   };
 
@@ -234,7 +234,7 @@ export default function Forecasting() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Active Forecasts</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{dashboardData?.activeForecasts || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{dashboardData?.activeForecasts || 0}</div>
           </CardContent>
         </Card>
         <Card>
@@ -242,7 +242,7 @@ export default function Forecasting() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Pending Plans</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{dashboardData?.pendingPlans || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{dashboardData?.pendingPlans || 0}</div>
           </CardContent>
         </Card>
         <Card>
@@ -250,7 +250,7 @@ export default function Forecasting() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Suggested POs</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em] text-orange-600">{dashboardData?.pendingSuggestedPOs || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-primary font-display tabular-nums">{dashboardData?.pendingSuggestedPOs || 0}</div>
           </CardContent>
         </Card>
         <Card>
@@ -258,7 +258,7 @@ export default function Forecasting() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Forecasted Demand</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{dashboardData?.totalForecastedDemand?.toLocaleString() || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{dashboardData?.totalForecastedDemand?.toLocaleString() || 0}</div>
             <p className="text-xs text-muted-foreground">units</p>
           </CardContent>
         </Card>
@@ -267,7 +267,7 @@ export default function Forecasting() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Pending PO Value</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">${dashboardData?.totalPendingPOValue?.toLocaleString() || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">${dashboardData?.totalPendingPOValue?.toLocaleString() || 0}</div>
           </CardContent>
         </Card>
       </div>
@@ -324,7 +324,7 @@ export default function Forecasting() {
                       const daysUntilRequired = po.daysUntilRequired || 0;
                       
                       return (
-                        <TableRow key={po.id} className={isUrgent ? 'bg-red-50 dark:bg-red-950/20' : ''}>
+                        <TableRow key={po.id} className={isUrgent ? 'bg-muted/50' : ''}>
                           <TableCell className="font-medium">
                             <div className="flex items-center gap-2">
                               {po.suggestedPoNumber}
@@ -355,7 +355,7 @@ export default function Forecasting() {
                                 </span>
                               </div>
                               {isUrgent && (
-                                <span className="text-xs text-red-600 dark:text-red-400">
+                                <span className="text-xs text-foreground font-semibold">
                                   {Math.abs(leadTimeDays - daysUntilRequired)} days late
                                 </span>
                               )}
@@ -593,7 +593,7 @@ export default function Forecasting() {
       <Card className="bg-muted/50">
         <CardHeader>
           <CardTitle className="text-lg flex items-center gap-2">
-            <Sparkles className="h-5 w-5 text-yellow-500" />
+            <Sparkles className="h-5 w-5 text-primary" />
             AI Forecasting Workflow
           </CardTitle>
         </CardHeader>
@@ -615,7 +615,7 @@ export default function Forecasting() {
             </div>
             <span className="text-muted-foreground">→</span>
             <div className="flex items-center gap-2 bg-background rounded-lg px-4 py-2">
-              <div className="w-8 h-8 rounded-full bg-green-600 text-white flex items-center justify-center font-bold">4</div>
+              <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-bold">4</div>
               <span>One-Click Approve</span>
             </div>
           </div>

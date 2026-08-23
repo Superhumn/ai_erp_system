@@ -33,7 +33,7 @@ export default function HRAIInsights() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold flex items-center gap-2">
-          <Brain className="h-8 w-8 text-purple-600" />
+          <Brain className="h-8 w-8 text-primary" />
           HR AI Insights
         </h1>
         <p className="text-muted-foreground mt-1">
@@ -161,7 +161,7 @@ export default function HRAIInsights() {
                               {b.positionInMarket.replace("_", " ")}
                             </Badge>
                           </TableCell>
-                          <TableCell className={b.adjustmentRecommendation > 0 ? "text-green-600 font-medium" : ""}>
+                          <TableCell className={b.adjustmentRecommendation > 0 ? "text-primary font-medium" : ""}>
                             {b.adjustmentRecommendation > 0 ? `+$${b.adjustmentRecommendation.toLocaleString()}` : "-"}
                           </TableCell>
                         </TableRow>
@@ -250,15 +250,15 @@ export default function HRAIInsights() {
                     <Card>
                       <CardContent className="pt-4">
                         <div className="text-sm text-muted-foreground">Monthly Cost</div>
-                        <div className="text-2xl font-bold">${workforceMutation.data.costProjection.currentMonthlyCost.toLocaleString()}</div>
+                        <div className="text-2xl font-bold font-display tabular-nums">${workforceMutation.data.costProjection.currentMonthlyCost.toLocaleString()}</div>
                       </CardContent>
                     </Card>
                     <Card>
                       <CardContent className="pt-4">
                         <div className="text-sm text-muted-foreground">Projected Cost</div>
-                        <div className="text-2xl font-bold">${workforceMutation.data.costProjection.projectedMonthlyCost.toLocaleString()}</div>
+                        <div className="text-2xl font-bold font-display tabular-nums">${workforceMutation.data.costProjection.projectedMonthlyCost.toLocaleString()}</div>
                         {workforceMutation.data.costProjection.increasePercent > 0 && (
-                          <span className="text-sm text-orange-600">+{workforceMutation.data.costProjection.increasePercent}%</span>
+                          <span className="text-sm text-foreground font-medium">+{workforceMutation.data.costProjection.increasePercent}%</span>
                         )}
                       </CardContent>
                     </Card>
@@ -281,7 +281,7 @@ export default function HRAIInsights() {
                           <TableCell className="font-medium">{n.department}</TableCell>
                           <TableCell>{n.currentCount}</TableCell>
                           <TableCell>{n.projectedNeed}</TableCell>
-                          <TableCell className={n.gap > 0 ? "text-red-600 font-medium" : ""}>{n.gap > 0 ? `+${n.gap}` : n.gap}</TableCell>
+                          <TableCell className={n.gap > 0 ? "text-foreground font-semibold" : ""}>{n.gap > 0 ? `+${n.gap}` : n.gap}</TableCell>
                           <TableCell><Badge variant={n.priority === "critical" || n.priority === "high" ? "destructive" : "outline"}>{n.priority}</Badge></TableCell>
                           <TableCell className="text-sm">{n.timeline}</TableCell>
                         </TableRow>

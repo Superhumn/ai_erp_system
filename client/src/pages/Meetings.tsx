@@ -294,15 +294,15 @@ export default function Meetings() {
     const base = "text-[10px] px-1.5 py-0";
     switch (status) {
       case "pending":
-        return <Badge variant="outline" className={`${base} text-yellow-600 border-yellow-300`}>Pending</Badge>;
+        return <Badge variant="outline" className={`${base} text-primary border-primary/30`}>Pending</Badge>;
       case "fully_processed":
-        return <Badge className={`${base} bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400`}>Processed</Badge>;
+        return <Badge className={`${base} bg-muted text-foreground`}>Processed</Badge>;
       case "contacts_created":
-        return <Badge className={`${base} bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400`}>Contacts</Badge>;
+        return <Badge className={`${base} bg-muted text-muted-foreground`}>Contacts</Badge>;
       case "tasks_created":
-        return <Badge className={`${base} bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400`}>Tasks</Badge>;
+        return <Badge className={`${base} bg-muted text-muted-foreground`}>Tasks</Badge>;
       case "project_created":
-        return <Badge className={`${base} bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400`}>Project</Badge>;
+        return <Badge className={`${base} bg-muted text-muted-foreground`}>Project</Badge>;
       case "skipped":
         return <Badge variant="outline" className={`${base} text-muted-foreground`}>Skipped</Badge>;
       case "error":
@@ -469,8 +469,8 @@ export default function Meetings() {
         <h1 className="text-sm font-bold tracking-[-0.02em] mr-1">Meetings</h1>
         <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
           <span className="rounded bg-muted px-1.5 py-0.5 font-medium tabular-nums">{stats?.total ?? meetings.length}</span>
-          <span className="rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400 px-1.5 py-0.5 font-medium tabular-nums">{stats?.pending ?? 0} pending</span>
-          <span className="rounded bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 px-1.5 py-0.5 font-medium tabular-nums">{stats?.processed ?? 0} done</span>
+          <span className="rounded bg-primary/10 text-primary px-1.5 py-0.5 font-medium tabular-nums">{stats?.pending ?? 0} pending</span>
+          <span className="rounded bg-muted text-foreground px-1.5 py-0.5 font-medium tabular-nums">{stats?.processed ?? 0} done</span>
         </div>
         <div className="ml-auto flex items-center gap-1.5">
           <a href="/calendar" className="rounded border px-2 py-1 text-[11px] font-medium hover:border-primary/40 hover:text-primary transition-colors">Calendar</a>
@@ -556,9 +556,9 @@ export default function Meetings() {
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
         </div>
       ) : meetingsError ? (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-center text-sm dark:border-red-900/30 dark:bg-red-950/20">
-          <p className="font-medium text-red-700 dark:text-red-300">Error loading meetings</p>
-          <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">{meetingsError.message}</p>
+        <div className="rounded-lg border bg-muted p-4 text-center text-sm">
+          <p className="font-semibold text-foreground">Error loading meetings</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{meetingsError.message}</p>
         </div>
       ) : filtered.length === 0 ? (
         <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">
@@ -627,10 +627,10 @@ export default function Meetings() {
                       <ul className="mt-1 space-y-0">
                         {previewTasks.map((task, i) => (
                           <li key={i} className="flex items-start gap-1.5 text-[12px] leading-[1.4]">
-                            <CheckCircle2 className="mt-[2px] h-3 w-3 shrink-0 text-emerald-500" />
+                            <CheckCircle2 className="mt-[2px] h-3 w-3 shrink-0 text-muted-foreground" />
                             <span className="line-clamp-1">
                               {task.assignee && (
-                                <span className="font-medium text-blue-600 dark:text-blue-400 mr-1">@{task.assignee}</span>
+                                <span className="font-medium text-primary mr-1">@{task.assignee}</span>
                               )}
                               <span className="text-foreground/80">{task.text}</span>
                             </span>
@@ -710,16 +710,16 @@ export default function Meetings() {
                         <CheckCircle2 className="h-3.5 w-3.5" />
                         Tasks ({actionItems.length})
                       </h3>
-                      <ul className="space-y-2 rounded-lg border bg-emerald-50/40 dark:bg-emerald-950/10 p-3">
+                      <ul className="space-y-2 rounded-lg border bg-muted/40 p-3">
                         {actionItems.map((item: any, i: number) => {
                           const rawText = typeof item === "string" ? item : item.text || item.description || "";
                           const text = cleanActionText(rawText);
                           return (
                             <li key={i} className="flex items-start gap-2.5 text-[13px] leading-relaxed">
-                              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                               <span className="flex-1">{renderInlineMd(text)}</span>
                               {item.assignee && (
-                                <span className="shrink-0 text-[11px] font-medium text-blue-600 dark:text-blue-400">@{item.assignee}</span>
+                                <span className="shrink-0 text-[11px] font-medium text-primary">@{item.assignee}</span>
                               )}
                             </li>
                           );
@@ -849,7 +849,7 @@ export default function Meetings() {
                           <div className="mt-3 space-y-3">
                             {blocks.map((b, i) => (
                               <div key={i}>
-                                <div className="text-[11px] font-medium text-blue-600 dark:text-blue-400">{b.speaker}</div>
+                                <div className="text-[11px] font-medium text-muted-foreground">{b.speaker}</div>
                                 <p className="text-[13px] leading-relaxed whitespace-pre-wrap">{b.text}</p>
                               </div>
                             ))}
@@ -898,7 +898,7 @@ export default function Meetings() {
           <div className="space-y-4">
             <div className="space-y-3 rounded-lg border p-3">
               <div className="flex items-center gap-3">
-                <Users className="h-5 w-5 text-blue-600 shrink-0" />
+                <Users className="h-5 w-5 text-muted-foreground shrink-0" />
                 <div className="flex-1">
                   <div className="text-sm font-medium">Create CRM Contacts</div>
                   <div className="text-xs text-muted-foreground">From meeting participants</div>
@@ -970,7 +970,7 @@ export default function Meetings() {
               return (
                 <div className="space-y-3 rounded-lg border p-3">
                   <div className="flex items-center gap-3">
-                    <ListTodo className="h-5 w-5 text-purple-600 shrink-0" />
+                    <ListTodo className="h-5 w-5 text-muted-foreground shrink-0" />
                     <div className="flex-1">
                       <div className="text-sm font-medium">Create Tasks</div>
                       <div className="text-xs text-muted-foreground">
@@ -987,7 +987,7 @@ export default function Meetings() {
                         <button
                           type="button"
                           onClick={() => setSelectedTaskIndices(new Set(dialogTasks.map((_, i) => i)))}
-                          className="text-purple-600 hover:underline"
+                          className="text-primary hover:underline"
                         >
                           Select all
                         </button>
@@ -1021,7 +1021,7 @@ export default function Meetings() {
                                 />
                                 <span className="flex-1">
                                   {task.assignee && (
-                                    <span className="font-medium text-blue-600 dark:text-blue-400 mr-1">@{task.assignee}</span>
+                                    <span className="font-medium text-primary mr-1">@{task.assignee}</span>
                                   )}
                                   <span className={checked ? "" : "text-muted-foreground line-through"}>{task.text}</span>
                                 </span>
@@ -1058,7 +1058,7 @@ export default function Meetings() {
             })()}
             <div className="space-y-3 rounded-lg border p-3">
               <div className="flex items-center gap-2">
-                <FolderPlus className="h-5 w-5 text-indigo-600 shrink-0" />
+                <FolderPlus className="h-5 w-5 text-muted-foreground shrink-0" />
                 <div className="flex-1">
                   <div className="text-sm font-medium">Project</div>
                   <div className="text-xs text-muted-foreground">Group tasks under a project</div>
@@ -1072,8 +1072,8 @@ export default function Meetings() {
                     onClick={() => setProjectMode(mode)}
                     className={`rounded-full px-3 py-1 text-xs font-medium border transition-colors ${
                       projectMode === mode
-                        ? "bg-indigo-600 text-white border-indigo-600"
-                        : "bg-background text-muted-foreground border-border hover:border-indigo-400"
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-background text-muted-foreground border-border hover:border-primary/40"
                     }`}
                   >
                     {mode === "none" ? "None" : mode === "existing" ? "Existing" : "New"}
@@ -1099,7 +1099,7 @@ export default function Meetings() {
                     </SelectContent>
                   </Select>
                   {predictedProjectId !== undefined && processExistingProjectId === predictedProjectId && (
-                    <p className="text-[11px] text-indigo-600">✦ Auto-predicted from meeting title</p>
+                    <p className="text-[11px] text-primary">✦ Auto-predicted from meeting title</p>
                   )}
                 </div>
               )}

@@ -66,11 +66,11 @@ export default function BOM() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "active":
-        return <Badge className="bg-emerald-500/8 text-emerald-600 dark:text-emerald-400">Active</Badge>;
+        return <Badge className="bg-primary/10 text-primary">Active</Badge>;
       case "draft":
-        return <Badge className="bg-amber-500/8 text-amber-600 dark:text-amber-400">Draft</Badge>;
+        return <Badge className="bg-muted text-muted-foreground">Draft</Badge>;
       case "obsolete":
-        return <Badge className="bg-gray-500/8 text-gray-600 dark:text-gray-400">Obsolete</Badge>;
+        return <Badge className="bg-muted text-muted-foreground">Obsolete</Badge>;
       default:
         return <Badge>{status}</Badge>;
     }
@@ -188,8 +188,8 @@ export default function BOM() {
             </CardHeader>
             <CardContent>
               <div className="flex items-center gap-2">
-                <FileText className="h-5 w-5 text-blue-500" />
-                <span className="text-xl font-semibold tracking-[-0.02em]">{totalBoms}</span>
+                <FileText className="h-5 w-5 text-muted-foreground" />
+                <span className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{totalBoms}</span>
               </div>
             </CardContent>
           </Card>
@@ -199,8 +199,8 @@ export default function BOM() {
             </CardHeader>
             <CardContent>
               <div className="flex items-center gap-2">
-                <Package className="h-5 w-5 text-green-500" />
-                <span className="text-xl font-semibold tracking-[-0.02em]">{activeBoms}</span>
+                <Package className="h-5 w-5 text-muted-foreground" />
+                <span className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{activeBoms}</span>
               </div>
             </CardContent>
           </Card>
@@ -210,8 +210,8 @@ export default function BOM() {
             </CardHeader>
             <CardContent>
               <div className="flex items-center gap-2">
-                <Calculator className="h-5 w-5 text-yellow-500" />
-                <span className="text-xl font-semibold tracking-[-0.02em]">{draftBoms}</span>
+                <Calculator className="h-5 w-5 text-muted-foreground" />
+                <span className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{draftBoms}</span>
               </div>
             </CardContent>
           </Card>
@@ -302,7 +302,7 @@ export default function BOM() {
                                 }
                               }}
                             >
-                              <Trash2 className="h-4 w-4 text-red-500" />
+                              <Trash2 className="h-4 w-4 text-muted-foreground" />
                             </Button>
                           </div>
                         </TableCell>

@@ -49,10 +49,10 @@ export default function Settings() {
   };
 
   const roleColors: Record<string, string> = {
-    admin: "bg-red-500/10 text-red-500", finance: "bg-green-500/10 text-green-500",
-    ops: "bg-blue-500/10 text-blue-500", legal: "bg-purple-500/10 text-purple-500",
-    sales: "bg-orange-500/10 text-orange-500", exec: "bg-amber-500/10 text-amber-500",
-    user: "bg-gray-500/10 text-gray-500",
+    admin: "bg-primary/10 text-primary", finance: "bg-muted text-foreground",
+    ops: "bg-muted text-muted-foreground", legal: "bg-muted text-foreground",
+    sales: "bg-muted text-muted-foreground", exec: "bg-primary/10 text-primary",
+    user: "bg-muted text-muted-foreground",
   };
 
   const isAdmin = ["admin", "exec"].includes(user?.role || "");
@@ -185,8 +185,8 @@ export default function Settings() {
             </CardHeader>
             <CardContent className="space-y-2">
               {[
-                { label: "Copacker Portal", path: "/portal/copacker", color: "text-blue-600" },
-                { label: "Vendor Portal", path: "/portal/vendor", color: "text-green-600" },
+                { label: "Copacker Portal", path: "/portal/copacker", color: "text-primary" },
+                { label: "Vendor Portal", path: "/portal/vendor", color: "text-muted-foreground" },
               ].map((p) => (
                 <button key={p.path} className="w-full flex items-center justify-between py-1.5 text-sm hover:text-primary transition-colors text-left" onClick={() => navigate(p.path)}>
                   <span>{p.label}</span>

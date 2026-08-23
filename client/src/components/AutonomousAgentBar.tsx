@@ -99,12 +99,12 @@ export function AutonomousAgentBar() {
           <PopoverTrigger asChild>
             <button className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
               isRunning
-                ? "bg-green-500/10 text-green-600 hover:bg-green-500/20"
+                ? "bg-primary/10 text-primary hover:bg-primary/20"
                 : "bg-muted text-muted-foreground hover:bg-accent"
             }`}>
               <Bot className="h-3.5 w-3.5" />
-              <span className={`h-1.5 w-1.5 rounded-full ${isRunning ? "bg-green-500 animate-pulse" : "bg-red-400"}`} />
-              {pendingApprovals > 0 && <span className="bg-amber-500 text-white rounded-full px-1 text-[10px]">{pendingApprovals}</span>}
+              <span className={`h-1.5 w-1.5 rounded-full ${isRunning ? "bg-primary animate-pulse" : "bg-[oklch(0.30_0.03_262)]"}`} />
+              {pendingApprovals > 0 && <span className="bg-primary text-primary-foreground rounded-full px-1 text-[10px]">{pendingApprovals}</span>}
               <ChevronDown className={`h-3 w-3 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
             </button>
           </PopoverTrigger>
@@ -124,15 +124,15 @@ export function AutonomousAgentBar() {
               {todayStats && (
                 <div className="grid grid-cols-3 gap-2 text-center">
                   <div className="p-2 rounded bg-slate-800">
-                    <div className="text-lg font-bold text-green-400">{todayStats.completed || 0}</div>
+                    <div className="text-lg font-bold text-white font-display tabular-nums">{todayStats.completed || 0}</div>
                     <div className="text-[10px] text-slate-400">Completed</div>
                   </div>
                   <div className="p-2 rounded bg-slate-800">
-                    <div className="text-lg font-bold text-red-400">{todayStats.failed || 0}</div>
+                    <div className="text-lg font-bold text-white font-display tabular-nums">{todayStats.failed || 0}</div>
                     <div className="text-[10px] text-slate-400">Failed</div>
                   </div>
                   <div className="p-2 rounded bg-slate-800">
-                    <div className="text-lg font-bold text-amber-400">{pendingApprovals}</div>
+                    <div className="text-lg font-bold text-white font-display tabular-nums">{pendingApprovals}</div>
                     <div className="text-[10px] text-slate-400">Approvals</div>
                   </div>
                 </div>
@@ -147,7 +147,7 @@ export function AutonomousAgentBar() {
                   }}
                   className="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-800 text-sm text-left"
                 >
-                  <Package className="h-4 w-4 text-blue-400" />
+                  <Package className="h-4 w-4 text-muted-foreground" />
                   <span>Workflow Dashboard</span>
                   <ExternalLink className="h-3 w-3 ml-auto text-slate-500" />
                 </button>
@@ -158,10 +158,10 @@ export function AutonomousAgentBar() {
                   }}
                   className="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-800 text-sm text-left"
                 >
-                  <CheckCircle2 className="h-4 w-4 text-green-400" />
+                  <CheckCircle2 className="h-4 w-4 text-muted-foreground" />
                   <span>Approval Queue</span>
                   {pendingApprovals > 0 && (
-                    <Badge variant="secondary" className="ml-auto text-xs bg-amber-500/20 text-amber-300">
+                    <Badge variant="secondary" className="ml-auto text-xs bg-primary/10 text-primary">
                       {pendingApprovals}
                     </Badge>
                   )}
@@ -173,10 +173,10 @@ export function AutonomousAgentBar() {
                   }}
                   className="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-800 text-sm text-left"
                 >
-                  <AlertCircle className="h-4 w-4 text-red-400" />
+                  <AlertCircle className="h-4 w-4 text-muted-foreground" />
                   <span>Exceptions</span>
                   {openExceptions > 0 && (
-                    <Badge variant="secondary" className="ml-auto text-xs bg-red-500/20 text-red-300">
+                    <Badge variant="secondary" className="ml-auto text-xs bg-[oklch(0.30_0.02_262)] text-white">
                       {openExceptions}
                     </Badge>
                   )}
@@ -199,8 +199,8 @@ export function AutonomousAgentBar() {
                 disabled={startMutation.isPending || stopMutation.isPending}
                 className={`w-full ${
                   isRunning
-                    ? "bg-red-600 hover:bg-red-700"
-                    : "bg-green-600 hover:bg-green-700"
+                    ? "bg-[oklch(0.30_0.02_262)] text-white hover:opacity-90"
+                    : "bg-primary text-primary-foreground hover:opacity-90"
                 }`}
               >
                 {isRunning ? (

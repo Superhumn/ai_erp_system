@@ -40,13 +40,13 @@ import { Link } from "wouter";
 import { formatCurrency } from "@/lib/format";
 
 const orderStatusOptions = [
-  { value: "draft", label: "Draft", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
-  { value: "pending", label: "Pending", color: "bg-amber-500/8 text-amber-600 dark:text-amber-400" },
-  { value: "confirmed", label: "Confirmed", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
-  { value: "processing", label: "Processing", color: "bg-violet-500/8 text-violet-600 dark:text-violet-400" },
-  { value: "shipped", label: "Shipped", color: "bg-indigo-500/8 text-indigo-600 dark:text-indigo-400" },
-  { value: "delivered", label: "Delivered", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
-  { value: "cancelled", label: "Cancelled", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
+  { value: "draft", label: "Draft", color: "bg-muted text-muted-foreground" },
+  { value: "pending", label: "Pending", color: "bg-primary/10 text-primary" },
+  { value: "confirmed", label: "Confirmed", color: "bg-primary/10 text-primary" },
+  { value: "processing", label: "Processing", color: "bg-primary/10 text-primary" },
+  { value: "shipped", label: "Shipped", color: "bg-primary/10 text-primary" },
+  { value: "delivered", label: "Delivered", color: "bg-muted text-muted-foreground" },
+  { value: "cancelled", label: "Cancelled", color: "bg-[oklch(0.30_0.02_262)] text-white" },
 ];
 
 function OrderSummaryBody({ order }: { order: any }) {

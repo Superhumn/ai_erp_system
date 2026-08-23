@@ -174,12 +174,12 @@ export default function CarrierQuotes() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "selected": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
-      case "received": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
-      case "requested": return "bg-violet-500/8 text-violet-600 dark:text-violet-400";
-      case "expired": return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
-      case "declined": return "bg-red-500/8 text-red-600 dark:text-red-400";
-      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "selected": return "bg-primary/10 text-primary";
+      case "received": return "bg-muted text-muted-foreground";
+      case "requested": return "bg-muted text-muted-foreground";
+      case "expired": return "bg-muted text-muted-foreground";
+      case "declined": return "bg-[oklch(0.30_0.02_262)] text-white";
+      default: return "bg-muted text-muted-foreground";
     }
   };
 

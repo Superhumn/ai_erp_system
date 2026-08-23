@@ -36,9 +36,9 @@ const isIndeterminate = (t: BackgroundTask) =>
 function StatusIcon({ task, className }: { task: BackgroundTask; className?: string }) {
   switch (task.status) {
     case "success":
-      return <CheckCircle2 className={cn("h-4 w-4 text-emerald-500", className)} />;
+      return <CheckCircle2 className={cn("h-4 w-4 text-muted-foreground", className)} />;
     case "error":
-      return <AlertCircle className={cn("h-4 w-4 text-red-500", className)} />;
+      return <AlertCircle className={cn("h-4 w-4 text-foreground", className)} />;
     case "cancelled":
       return <Ban className={cn("h-4 w-4 text-muted-foreground", className)} />;
     default:
@@ -98,7 +98,7 @@ function TaskRow({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-6 w-6 text-muted-foreground hover:text-red-500"
+                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
                   onClick={() => onCancel(task.id)}
                   aria-label="Cancel task"
                 >

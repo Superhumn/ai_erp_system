@@ -59,12 +59,12 @@ function getCityCoords(city: string | null | undefined): [number, number] | null
 }
 
 const statusColors: Record<string, string> = {
-  pending: "bg-gray-500/10 text-gray-600",
-  confirmed: "bg-blue-500/10 text-blue-600",
-  in_transit: "bg-amber-500/10 text-amber-600",
-  arrived: "bg-green-500/10 text-green-600",
-  delivered: "bg-emerald-500/10 text-emerald-600",
-  cancelled: "bg-red-500/10 text-red-600",
+  pending: "bg-muted text-muted-foreground",
+  confirmed: "bg-muted text-foreground",
+  in_transit: "bg-primary/10 text-primary",
+  arrived: "bg-muted text-foreground",
+  delivered: "bg-muted text-foreground font-semibold",
+  cancelled: "bg-[oklch(0.30_0.02_262)] text-white",
 };
 
 const statusStep: Record<string, number> = {
@@ -407,7 +407,7 @@ export default function FreightTracking() {
                 const active = i <= current;
                 return (
                   <div key={step} className="flex-1 flex flex-col items-center">
-                    <div className={`h-1.5 w-full rounded-full ${active ? "bg-primary" : "bg-gray-200 dark:bg-gray-700"}`} />
+                    <div className={`h-1.5 w-full rounded-full ${active ? "bg-primary" : "bg-muted"}`} />
                     <span className={`text-[10px] mt-1 ${active ? "text-primary font-medium" : "text-muted-foreground"}`}>{step}</span>
                   </div>
                 );

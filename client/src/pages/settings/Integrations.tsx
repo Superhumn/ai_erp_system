@@ -231,7 +231,7 @@ export default function IntegrationsPage() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "connected":
-        return <Badge className="bg-green-500/10 text-green-500 border-green-500/20"><CheckCircle2 className="w-3 h-3 mr-1" /> Connected</Badge>;
+        return <Badge className="bg-primary/10 text-primary border-primary/20"><CheckCircle2 className="w-3 h-3 mr-1" /> Connected</Badge>;
       case "error":
         return <Badge variant="destructive"><XCircle className="w-3 h-3 mr-1" /> Error</Badge>;
       case "not_configured":
@@ -244,11 +244,11 @@ export default function IntegrationsPage() {
   const getSyncStatusBadge = (status: string) => {
     switch (status) {
       case "success":
-        return <Badge className="bg-green-500/10 text-green-500 border-green-500/20">Success</Badge>;
+        return <Badge className="bg-primary/10 text-primary border-primary/20">Success</Badge>;
       case "error":
         return <Badge variant="destructive">Error</Badge>;
       case "warning":
-        return <Badge className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20">Warning</Badge>;
+        return <Badge className="bg-muted text-foreground font-semibold">Warning</Badge>;
       case "pending":
         return <Badge variant="secondary">Pending</Badge>;
       default:
@@ -296,8 +296,8 @@ export default function IntegrationsPage() {
               <CardContent className="p-0 divide-y">
                 {[
                   {
-                    icon: <Mail className="w-4 h-4 text-blue-500" />,
-                    bg: "bg-blue-500/10",
+                    icon: <Mail className="w-4 h-4 text-muted-foreground" />,
+                    bg: "bg-muted",
                     name: "SendGrid",
                     desc: status?.sendgrid?.configured ? "Configured and ready" : "Email delivery service",
                     status: status?.sendgrid?.status || "not_configured",
@@ -305,8 +305,8 @@ export default function IntegrationsPage() {
                     actionLabel: "Configure",
                   },
                   {
-                    icon: <ShoppingBag className="w-4 h-4 text-green-500" />,
-                    bg: "bg-green-500/10",
+                    icon: <ShoppingBag className="w-4 h-4 text-muted-foreground" />,
+                    bg: "bg-muted",
                     name: "Shopify",
                     desc: status?.shopify?.configured ? `${status.shopify.storeCount} store(s) connected` : "E-commerce platform",
                     status: status?.shopify?.status || "not_configured",
@@ -314,8 +314,8 @@ export default function IntegrationsPage() {
                     actionLabel: "Configure",
                   },
                   {
-                    icon: <FileSpreadsheet className="w-4 h-4 text-emerald-500" />,
-                    bg: "bg-emerald-500/10",
+                    icon: <FileSpreadsheet className="w-4 h-4 text-muted-foreground" />,
+                    bg: "bg-muted",
                     name: "Google Sheets",
                     desc: status?.google?.configured ? `Connected as ${status.google.email}` : "Data import/export",
                     status: status?.google?.status || "not_configured",
@@ -327,8 +327,8 @@ export default function IntegrationsPage() {
                     actionLabel: status?.google?.configured ? "Import" : "Connect",
                   },
                   {
-                    icon: <Mail className="w-4 h-4 text-red-500" />,
-                    bg: "bg-red-500/10",
+                    icon: <Mail className="w-4 h-4 text-muted-foreground" />,
+                    bg: "bg-muted",
                     name: "Gmail",
                     desc: status?.gmail?.configured ? `Connected as ${status.gmail.email}` : "Email integration",
                     status: status?.gmail?.status || "not_configured",
@@ -340,8 +340,8 @@ export default function IntegrationsPage() {
                     actionLabel: status?.gmail?.configured ? "Configure" : "Connect",
                   },
                   {
-                    icon: <FileSpreadsheet className="w-4 h-4 text-blue-600" />,
-                    bg: "bg-blue-600/10",
+                    icon: <FileSpreadsheet className="w-4 h-4 text-muted-foreground" />,
+                    bg: "bg-muted",
                     name: "Google Workspace",
                     desc: status?.googleWorkspace?.configured ? `Connected as ${status.googleWorkspace.email}` : "Docs & Sheets",
                     status: status?.googleWorkspace?.status || "not_configured",
@@ -353,8 +353,8 @@ export default function IntegrationsPage() {
                     actionLabel: status?.googleWorkspace?.configured ? "Configure" : "Connect",
                   },
                   {
-                    icon: <Calculator className="w-4 h-4 text-purple-500" />,
-                    bg: "bg-purple-500/10",
+                    icon: <Calculator className="w-4 h-4 text-muted-foreground" />,
+                    bg: "bg-muted",
                     name: "QuickBooks",
                     desc: status?.quickbooks?.configured ? `Company ${status.quickbooks.realmId}` : "Accounting software",
                     status: status?.quickbooks?.status || "not_configured",
@@ -362,8 +362,8 @@ export default function IntegrationsPage() {
                     actionLabel: "Configure",
                   },
                   {
-                    icon: <Settings className="w-4 h-4 text-orange-500" />,
-                    bg: "bg-orange-500/10",
+                    icon: <Settings className="w-4 h-4 text-muted-foreground" />,
+                    bg: "bg-muted",
                     name: "Fireflies.ai",
                     desc: "Meeting transcription & actions",
                     status: (status as any)?.fireflies?.status || "not_configured" as string,
@@ -428,9 +428,9 @@ export default function IntegrationsPage() {
                             Enter your store name or full domain (e.g., "mystore" or "mystore.myshopify.com")
                           </p>
                         </div>
-                        <div className="p-4 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-800">
-                          <h4 className="font-medium text-sm mb-2 text-blue-900 dark:text-blue-100">Secure OAuth Connection</h4>
-                          <p className="text-xs text-blue-700 dark:text-blue-300">
+                        <div className="p-4 bg-muted/50 rounded-lg border">
+                          <h4 className="font-medium text-sm mb-2 text-foreground">Secure OAuth Connection</h4>
+                          <p className="text-xs text-muted-foreground">
                             You'll be redirected to Shopify to authorize this connection. No need to manually copy access tokens - the integration will be set up automatically.
                           </p>
                         </div>
@@ -487,7 +487,7 @@ export default function IntegrationsPage() {
                           <TableCell>{store.storeDomain}</TableCell>
                           <TableCell>
                             {store.isEnabled ? (
-                              <Badge className="bg-green-500/10 text-green-500 border-green-500/20">Active</Badge>
+                              <Badge className="bg-primary/10 text-primary border-primary/20">Active</Badge>
                             ) : (
                               <Badge variant="secondary">Disabled</Badge>
                             )}
@@ -580,11 +580,11 @@ export default function IntegrationsPage() {
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
-                  <div className={`p-3 rounded-full ${status?.sendgrid?.configured ? 'bg-green-500/10' : 'bg-yellow-500/10'}`}>
+                  <div className={`p-3 rounded-full ${status?.sendgrid?.configured ? 'bg-primary/10' : 'bg-muted'}`}>
                     {status?.sendgrid?.configured ? (
-                      <CheckCircle2 className="w-6 h-6 text-green-500" />
+                      <CheckCircle2 className="w-6 h-6 text-primary" />
                     ) : (
-                      <AlertCircle className="w-6 h-6 text-yellow-500" />
+                      <AlertCircle className="w-6 h-6 text-muted-foreground" />
                     )}
                   </div>
                   <div>
@@ -667,11 +667,11 @@ export default function IntegrationsPage() {
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
-                  <div className={`p-3 rounded-full ${status?.gmail?.configured ? 'bg-green-500/10' : 'bg-yellow-500/10'}`}>
+                  <div className={`p-3 rounded-full ${status?.gmail?.configured ? 'bg-primary/10' : 'bg-muted'}`}>
                     {status?.gmail?.configured ? (
-                      <CheckCircle2 className="w-6 h-6 text-green-500" />
+                      <CheckCircle2 className="w-6 h-6 text-primary" />
                     ) : (
-                      <AlertCircle className="w-6 h-6 text-yellow-500" />
+                      <AlertCircle className="w-6 h-6 text-muted-foreground" />
                     )}
                   </div>
                   <div>
@@ -705,8 +705,8 @@ export default function IntegrationsPage() {
                       </Button>
                     </div>
 
-                    <div className="p-4 bg-blue-500/5 border border-blue-500/20 rounded-lg">
-                      <h4 className="font-medium text-blue-600 dark:text-blue-400 mb-2">
+                    <div className="p-4 bg-muted/50 border rounded-lg">
+                      <h4 className="font-medium text-foreground mb-2">
                         What you can do with Gmail integration:
                       </h4>
                       <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
@@ -730,7 +730,7 @@ export default function IntegrationsPage() {
                           </div>
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Status:</span>
-                            <Badge className="bg-green-500/10 text-green-500 border-green-500/20">Active</Badge>
+                            <Badge className="bg-primary/10 text-primary border-primary/20">Active</Badge>
                           </div>
                         </div>
                       </div>
@@ -785,11 +785,11 @@ export default function IntegrationsPage() {
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
-                  <div className={`p-3 rounded-full ${status?.googleWorkspace?.configured ? 'bg-green-500/10' : 'bg-yellow-500/10'}`}>
+                  <div className={`p-3 rounded-full ${status?.googleWorkspace?.configured ? 'bg-primary/10' : 'bg-muted'}`}>
                     {status?.googleWorkspace?.configured ? (
-                      <CheckCircle2 className="w-6 h-6 text-green-500" />
+                      <CheckCircle2 className="w-6 h-6 text-primary" />
                     ) : (
-                      <AlertCircle className="w-6 h-6 text-yellow-500" />
+                      <AlertCircle className="w-6 h-6 text-muted-foreground" />
                     )}
                   </div>
                   <div>
@@ -806,9 +806,9 @@ export default function IntegrationsPage() {
 
                 <div className="p-4 border rounded-lg">
                   <div className="flex items-start gap-3">
-                    <div className={`mt-0.5 p-2 rounded-full ${status?.googleDriveServiceAccount?.configured ? 'bg-green-500/10' : 'bg-muted'}`}>
+                    <div className={`mt-0.5 p-2 rounded-full ${status?.googleDriveServiceAccount?.configured ? 'bg-primary/10' : 'bg-muted'}`}>
                       {status?.googleDriveServiceAccount?.configured ? (
-                        <CheckCircle2 className="w-4 h-4 text-green-500" />
+                        <CheckCircle2 className="w-4 h-4 text-primary" />
                       ) : (
                         <AlertCircle className="w-4 h-4 text-muted-foreground" />
                       )}
@@ -856,8 +856,8 @@ export default function IntegrationsPage() {
                       </Button>
                     </div>
 
-                    <div className="p-4 bg-blue-500/5 border border-blue-500/20 rounded-lg">
-                      <h4 className="font-medium text-blue-600 dark:text-blue-400 mb-2">
+                    <div className="p-4 bg-muted/50 border rounded-lg">
+                      <h4 className="font-medium text-foreground mb-2">
                         What you can do with Google Workspace:
                       </h4>
                       <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
@@ -882,7 +882,7 @@ export default function IntegrationsPage() {
                           </div>
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Status:</span>
-                            <Badge className="bg-green-500/10 text-green-500 border-green-500/20">Active</Badge>
+                            <Badge className="bg-primary/10 text-primary border-primary/20">Active</Badge>
                           </div>
                         </div>
                       </div>
@@ -937,11 +937,11 @@ export default function IntegrationsPage() {
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
-                  <div className={`p-3 rounded-full ${status?.quickbooks?.configured ? 'bg-green-500/10' : 'bg-yellow-500/10'}`}>
+                  <div className={`p-3 rounded-full ${status?.quickbooks?.configured ? 'bg-primary/10' : 'bg-muted'}`}>
                     {status?.quickbooks?.configured ? (
-                      <CheckCircle2 className="w-6 h-6 text-green-500" />
+                      <CheckCircle2 className="w-6 h-6 text-primary" />
                     ) : (
-                      <AlertCircle className="w-6 h-6 text-yellow-500" />
+                      <AlertCircle className="w-6 h-6 text-muted-foreground" />
                     )}
                   </div>
                   <div>
@@ -969,8 +969,8 @@ export default function IntegrationsPage() {
                         <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_REDIRECT_URI</code> - OAuth callback URL (optional)</li>
                         <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_ENVIRONMENT</code> - sandbox or production (optional, defaults to production)</li>
                       </ul>
-                      <div className="mb-4 p-3 bg-yellow-500/5 border border-yellow-500/20 rounded-md text-sm">
-                        <p className="font-medium text-yellow-700 dark:text-yellow-400 mb-1">⚠ Use Production credentials</p>
+                      <div className="mb-4 p-3 bg-muted/50 border rounded-md text-sm">
+                        <p className="font-medium text-foreground mb-1">⚠ Use Production credentials</p>
                         <p className="text-muted-foreground">
                           In the Intuit Developer Portal, make sure your app has been promoted to <strong>Production</strong> and that you are using the <strong>production</strong> Client ID and Secret.
                           Development (sandbox) credentials only work with Intuit sandbox companies — real QuickBooks users will see a "no sandbox companies found" error.
@@ -984,9 +984,9 @@ export default function IntegrationsPage() {
                           </p>
                           <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 font-mono pt-1">
                             <span className="text-muted-foreground">client_id:</span>
-                            <span>{quickbooksDebug.clientIdMasked ?? <em className="text-red-500">not set</em>} <span className="text-muted-foreground">({quickbooksDebug.clientIdLength} chars)</span></span>
+                            <span>{quickbooksDebug.clientIdMasked ?? <em className="text-foreground font-semibold">not set</em>} <span className="text-muted-foreground">({quickbooksDebug.clientIdLength} chars)</span></span>
                             <span className="text-muted-foreground">client_secret:</span>
-                            <span>{quickbooksDebug.clientSecretSet ? "set" : <em className="text-red-500">not set</em>}</span>
+                            <span>{quickbooksDebug.clientSecretSet ? "set" : <em className="text-foreground font-semibold">not set</em>}</span>
                             <span className="text-muted-foreground">environment:</span>
                             <span>{quickbooksDebug.environment}</span>
                             <span className="text-muted-foreground">redirect_uri:</span>
@@ -995,7 +995,7 @@ export default function IntegrationsPage() {
                         </div>
                       )}
                       {quickbooksAuthUrl?.redirectUri && (
-                        <div className="mb-4 p-3 bg-amber-500/5 border border-amber-500/20 rounded-md">
+                        <div className="mb-4 p-3 bg-muted/50 border rounded-md">
                           <p className="text-sm font-medium mb-1">Register this Redirect URI in Intuit</p>
                           <p className="text-xs text-muted-foreground mb-2">
                             In the Intuit Developer portal, open your app → <strong>Keys &amp; OAuth</strong> → <strong>Redirect URIs</strong>, and add this exact string. Intuit rejects the connection if it doesn't match character-for-character.
@@ -1040,8 +1040,8 @@ export default function IntegrationsPage() {
                       </Button>
                     </div>
 
-                    <div className="p-4 bg-blue-500/5 border border-blue-500/20 rounded-lg">
-                      <h4 className="font-medium text-blue-600 dark:text-blue-400 mb-2">
+                    <div className="p-4 bg-muted/50 border rounded-lg">
+                      <h4 className="font-medium text-foreground mb-2">
                         What you can do with QuickBooks:
                       </h4>
                       <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
@@ -1066,7 +1066,7 @@ export default function IntegrationsPage() {
                           </div>
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Status:</span>
-                            <Badge className="bg-green-500/10 text-green-500 border-green-500/20">Active</Badge>
+                            <Badge className="bg-primary/10 text-primary border-primary/20">Active</Badge>
                           </div>
                         </div>
                       </div>

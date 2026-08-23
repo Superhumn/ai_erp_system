@@ -38,17 +38,17 @@ const STAGES = [
 type StageValue = typeof STAGES[number];
 
 const STAGE_COLORS: Record<string, string> = {
-  shortlist: "bg-gray-500/10 text-gray-700 border-gray-200",
-  prospect: "bg-blue-500/10 text-blue-700 border-blue-200",
-  contacted: "bg-indigo-500/10 text-indigo-700 border-indigo-200",
-  in_negotiation: "bg-amber-500/10 text-amber-700 border-amber-200",
-  term_sheet: "bg-purple-500/10 text-purple-700 border-purple-200",
-  signed: "bg-emerald-500/10 text-emerald-700 border-emerald-200",
-  active: "bg-emerald-500/10 text-emerald-700 border-emerald-200",
-  paused: "bg-gray-500/10 text-gray-600 border-gray-200",
-  ended: "bg-gray-500/10 text-gray-600 border-gray-200",
-  declined: "bg-red-500/10 text-red-700 border-red-200",
-  blacklisted: "bg-red-500/10 text-red-700 border-red-200",
+  shortlist: "bg-muted text-muted-foreground border-transparent",
+  prospect: "bg-muted text-muted-foreground border-transparent",
+  contacted: "bg-muted text-muted-foreground border-transparent",
+  in_negotiation: "bg-muted text-muted-foreground border-transparent",
+  term_sheet: "bg-muted text-muted-foreground border-transparent",
+  signed: "bg-muted text-muted-foreground border-transparent",
+  active: "bg-primary/10 text-primary border-primary/20",
+  paused: "bg-muted text-muted-foreground border-transparent",
+  ended: "bg-muted text-muted-foreground border-transparent",
+  declined: "bg-[oklch(0.30_0.02_262)] text-white border-transparent",
+  blacklisted: "bg-[oklch(0.30_0.02_262)] text-white border-transparent",
 };
 
 const ACTIVITY_TYPES = [
@@ -154,9 +154,9 @@ export default function BrandAmbassadors() {
           <div className="h-4 w-px bg-border" />
           <div><span className="text-muted-foreground">Total</span> <span className="font-bold">{stats.total}</span></div>
           <div className="h-4 w-px bg-border" />
-          <div><span className="text-muted-foreground">Active</span> <span className="font-bold text-emerald-600">{stats.active}</span></div>
+          <div><span className="text-muted-foreground">Active</span> <span className="font-bold text-foreground">{stats.active}</span></div>
           <div className="h-4 w-px bg-border" />
-          <div><span className="text-muted-foreground">Pipeline</span> <span className="font-bold text-amber-600">{stats.pipeline}</span></div>
+          <div><span className="text-muted-foreground">Pipeline</span> <span className="font-bold text-foreground">{stats.pipeline}</span></div>
         </div>
         <div className="flex items-center gap-2">
           <Select value={filter} onValueChange={setFilter}>
@@ -568,7 +568,7 @@ function AmbassadorDetailDialog({ id, onClose }: { id: number; onClose: () => vo
                       <TableCell className="text-xs">{(act.activityType as string).replace(/_/g, " ")}</TableCell>
                       <TableCell className="text-sm">{act.summary ?? "-"}</TableCell>
                       <TableCell>
-                        {act.postUrl ? <a href={act.postUrl} target="_blank" rel="noreferrer" className="text-xs text-blue-600 underline">open</a> : "-"}
+                        {act.postUrl ? <a href={act.postUrl} target="_blank" rel="noreferrer" className="text-xs text-primary underline">open</a> : "-"}
                       </TableCell>
                       <TableCell className="text-right font-mono">{formatFollowers(act.impressions)}</TableCell>
                       <TableCell className="text-right font-mono">{formatFollowers(act.engagements)}</TableCell>

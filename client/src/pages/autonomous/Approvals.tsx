@@ -76,13 +76,13 @@ export default function ApprovalsPage() {
   const getRiskBadge = (risk: string) => {
     switch (risk) {
       case "low":
-        return <Badge className="bg-green-500/20 text-green-600">Low Risk</Badge>;
+        return <Badge className="bg-muted text-muted-foreground">Low Risk</Badge>;
       case "medium":
-        return <Badge className="bg-amber-500/20 text-amber-600">Medium Risk</Badge>;
+        return <Badge className="bg-muted text-foreground font-semibold">Medium Risk</Badge>;
       case "high":
-        return <Badge className="bg-red-500/20 text-red-600">High Risk</Badge>;
+        return <Badge className="bg-[oklch(0.30_0.02_262)] text-white">High Risk</Badge>;
       case "critical":
-        return <Badge className="bg-red-600 text-white">Critical</Badge>;
+        return <Badge className="bg-[oklch(0.30_0.02_262)] text-white font-semibold">Critical</Badge>;
       default:
         return <Badge variant="secondary">{risk}</Badge>;
     }
@@ -90,13 +90,13 @@ export default function ApprovalsPage() {
 
   const getTypeBadge = (type: string) => {
     const colors: Record<string, string> = {
-      purchase_order: "bg-blue-500/20 text-blue-600",
-      payment: "bg-green-500/20 text-green-600",
-      inventory_transfer: "bg-purple-500/20 text-purple-600",
-      vendor_selection: "bg-amber-500/20 text-amber-600",
+      purchase_order: "bg-primary/10 text-primary",
+      payment: "bg-muted text-foreground",
+      inventory_transfer: "bg-muted text-muted-foreground",
+      vendor_selection: "bg-muted text-foreground",
     };
     return (
-      <Badge className={colors[type] || "bg-gray-500/20 text-gray-600"}>
+      <Badge className={colors[type] || "bg-muted text-muted-foreground"}>
         {type.replace(/_/g, " ")}
       </Badge>
     );
@@ -141,11 +141,11 @@ export default function ApprovalsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Pending</p>
-                <p className="text-xl font-semibold tracking-[-0.02em]">
+                <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">
                   {approvalsQuery.data?.filter((a) => a.status === "pending").length || 0}
                 </p>
               </div>
-              <Clock className="h-8 w-8 text-amber-500" />
+              <Clock className="h-8 w-8 text-muted-foreground" />
             </div>
           </CardContent>
         </Card>
@@ -154,11 +154,11 @@ export default function ApprovalsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Escalated</p>
-                <p className="text-xl font-semibold tracking-[-0.02em]">
+                <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">
                   {approvalsQuery.data?.filter((a) => a.status === "escalated").length || 0}
                 </p>
               </div>
-              <AlertTriangle className="h-8 w-8 text-red-500" />
+              <AlertTriangle className="h-8 w-8 text-muted-foreground" />
             </div>
           </CardContent>
         </Card>
@@ -167,11 +167,11 @@ export default function ApprovalsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Auto-Approved</p>
-                <p className="text-xl font-semibold tracking-[-0.02em]">
+                <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">
                   {approvalsQuery.data?.filter((a) => a.status === "auto_approved").length || 0}
                 </p>
               </div>
-              <Bot className="h-8 w-8 text-blue-500" />
+              <Bot className="h-8 w-8 text-primary" />
             </div>
           </CardContent>
         </Card>
@@ -180,13 +180,13 @@ export default function ApprovalsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Total Value</p>
-                <p className="text-xl font-semibold tracking-[-0.02em]">
+                <p className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">
                   ${(
                     pendingApprovals.reduce((sum, a) => sum + parseFloat(a.monetaryValue || "0"), 0) / 1000
                   ).toFixed(1)}k
                 </p>
               </div>
-              <DollarSign className="h-8 w-8 text-green-500" />
+              <DollarSign className="h-8 w-8 text-muted-foreground" />
             </div>
           </CardContent>
         </Card>
@@ -201,7 +201,7 @@ export default function ApprovalsPage() {
         <CardContent>
           {pendingApprovals.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
-              <CheckCircle2 className="h-12 w-12 mx-auto mb-4 text-green-500" />
+              <CheckCircle2 className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
               <p>All caught up! No pending approvals.</p>
             </div>
           ) : (
@@ -219,7 +219,7 @@ export default function ApprovalsPage() {
               </TableHeader>
               <TableBody>
                 {pendingApprovals.map((approval) => (
-                  <TableRow key={approval.id} className={approval.status === "escalated" ? "bg-red-50 dark:bg-red-950/20" : ""}>
+                  <TableRow key={approval.id} className={approval.status === "escalated" ? "bg-primary/5" : ""}>
                     <TableCell>{getTypeBadge(approval.approvalType)}</TableCell>
                     <TableCell>
                       <div>
@@ -241,7 +241,7 @@ export default function ApprovalsPage() {
                           className="h-2 w-16 rounded-full bg-muted overflow-hidden"
                         >
                           <div
-                            className="h-full bg-blue-500"
+                            className="h-full bg-primary"
                             style={{ width: `${approval.aiConfidence || 0}%` }}
                           />
                         </div>
@@ -251,7 +251,7 @@ export default function ApprovalsPage() {
                     <TableCell>
                       <div className="flex items-center gap-1">
                         {approval.status === "escalated" && (
-                          <AlertTriangle className="h-3 w-3 text-red-500" />
+                          <AlertTriangle className="h-3 w-3 text-foreground" />
                         )}
                         {formatDistanceToNow(new Date(approval.requestedAt), { addSuffix: true })}
                       </div>

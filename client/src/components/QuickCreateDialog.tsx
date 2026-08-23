@@ -663,7 +663,7 @@ export function QuickCreateDialog({
             <div key={field.name} className="grid gap-2">
               <Label htmlFor={field.name} className="flex items-center gap-1">
                 {field.label}
-                {field.required && <span className="text-red-500">*</span>}
+                {field.required && <span className="text-destructive">*</span>}
               </Label>
               {field.type === "textarea" ? (
                 <Textarea

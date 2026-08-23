@@ -99,7 +99,7 @@ export default function WhatsAppDrawer({ open, onOpenChange, contactId, whatsapp
       <SheetContent side="right" className="w-full sm:max-w-md flex flex-col p-0">
         <SheetHeader className="px-4 py-3 border-b">
           <SheetTitle className="flex items-center gap-2 text-sm">
-            <MessageCircle className="h-4 w-4 text-green-600" />
+            <MessageCircle className="h-4 w-4 text-muted-foreground" />
             {contactName || "WhatsApp"}
           </SheetTitle>
           <div className="flex items-center justify-between gap-2 mt-1">
@@ -125,7 +125,7 @@ export default function WhatsAppDrawer({ open, onOpenChange, contactId, whatsapp
                 <div key={`${msg.type}-${msg.id}`} className={`flex ${isOutbound ? "justify-end" : "justify-start"}`}>
                   <div
                     className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
-                      isOutbound ? "bg-green-600 text-white" : "bg-background border"
+                      isOutbound ? "bg-primary text-primary-foreground" : "bg-background border"
                     }`}
                   >
                     {channelLabel && channelLabel !== "whatsapp" && (
@@ -134,7 +134,7 @@ export default function WhatsAppDrawer({ open, onOpenChange, contactId, whatsapp
                       </Badge>
                     )}
                     <div className="whitespace-pre-wrap break-words">{msg.content}</div>
-                    <div className={`text-[10px] mt-1 ${isOutbound ? "text-green-100" : "text-muted-foreground"}`}>
+                    <div className={`text-[10px] mt-1 ${isOutbound ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
                       {formatMessageTime(msg.timestamp)}
                     </div>
                   </div>
@@ -147,7 +147,7 @@ export default function WhatsAppDrawer({ open, onOpenChange, contactId, whatsapp
 
         <div className="border-t px-3 py-2 bg-background">
           {!online && (
-            <div className="text-[11px] text-amber-600 mb-1">Offline — messages will queue and send when you reconnect.</div>
+            <div className="text-[11px] text-foreground font-semibold mb-1">Offline — messages will queue and send when you reconnect.</div>
           )}
           <div className="flex items-end gap-2">
             <Textarea

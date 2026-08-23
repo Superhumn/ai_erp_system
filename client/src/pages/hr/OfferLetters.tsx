@@ -200,11 +200,11 @@ export default function OfferLetters() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "accepted": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
-      case "sent": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
-      case "viewed": return "bg-violet-500/8 text-violet-600 dark:text-violet-400";
-      case "declined": return "bg-red-500/8 text-red-600 dark:text-red-400";
-      case "expired": return "bg-orange-500/8 text-orange-600 dark:text-orange-400";
+      case "accepted": return "bg-muted text-muted-foreground";
+      case "sent": return "bg-primary/10 text-primary";
+      case "viewed": return "bg-muted text-foreground";
+      case "declined": return "bg-[oklch(0.30_0.02_262)] text-white";
+      case "expired": return "bg-muted text-foreground font-semibold";
       default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
     }
   };

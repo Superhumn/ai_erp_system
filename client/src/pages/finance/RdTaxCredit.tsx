@@ -41,11 +41,11 @@ function pct(value: string | number | null | undefined) {
 }
 
 const statusColors: Record<string, string> = {
-  draft: "bg-gray-100 text-gray-700",
-  in_progress: "bg-blue-100 text-blue-700",
-  under_review: "bg-yellow-100 text-yellow-700",
-  filed: "bg-green-100 text-green-700",
-  amended: "bg-purple-100 text-purple-700",
+  draft: "bg-muted text-muted-foreground",
+  in_progress: "bg-muted text-muted-foreground",
+  under_review: "bg-muted text-muted-foreground",
+  filed: "bg-primary/10 text-primary",
+  amended: "bg-muted text-muted-foreground",
 };
 
 const categoryLabels: Record<string, string> = {
@@ -122,7 +122,7 @@ function StudyList({ onSelect }: { onSelect: (id: number) => void }) {
                 <p className="text-sm text-muted-foreground">Tax Year {study.taxYear} — Form {study.formNumber || "6765"}</p>
               </div>
               <div className="text-right space-y-1">
-                <p className="text-2xl font-bold text-green-600">{fmt(study.netCredit)}</p>
+                <p className="text-2xl font-bold font-display tabular-nums text-primary">{fmt(study.netCredit)}</p>
                 <p className="text-xs text-muted-foreground">Net Credit</p>
               </div>
             </div>
@@ -304,15 +304,15 @@ function StudyDetail({ studyId, onBack }: { studyId: number; onBack: () => void 
         </CardContent></Card>
         <Card><CardContent className="pt-4 text-center">
           <p className="text-xs text-muted-foreground">Gross Credit</p>
-          <p className="text-xl font-bold">{fmt(study.grossCredit)}</p>
+          <p className="text-xl font-bold font-display tabular-nums">{fmt(study.grossCredit)}</p>
         </CardContent></Card>
         <Card><CardContent className="pt-4 text-center">
           <p className="text-xs text-muted-foreground">§280C Reduction</p>
-          <p className="text-xl font-bold text-red-500">{fmt(study.section280CReduction)}</p>
+          <p className="text-xl font-bold font-display tabular-nums text-foreground">{fmt(study.section280CReduction)}</p>
         </CardContent></Card>
-        <Card className="border-green-200 bg-green-50"><CardContent className="pt-4 text-center">
-          <p className="text-xs text-green-700">Net Credit</p>
-          <p className="text-2xl font-bold text-green-700">{fmt(study.netCredit)}</p>
+        <Card className="border-primary/20 bg-primary/10"><CardContent className="pt-4 text-center">
+          <p className="text-xs text-primary">Net Credit</p>
+          <p className="text-2xl font-bold font-display tabular-nums text-primary">{fmt(study.netCredit)}</p>
         </CardContent></Card>
       </div>
 
@@ -397,9 +397,9 @@ function ProjectsTab({ studyId, projects, onRefresh }: { studyId: number; projec
                     <div className="flex items-center gap-2">
                       <h4 className="font-semibold">{project.projectName}</h4>
                       {project.qualifies ? (
-                        <Badge className="bg-green-100 text-green-700"><CheckCircle2 className="h-3 w-3 mr-1" /> Qualifies</Badge>
+                        <Badge className="bg-primary/10 text-primary"><CheckCircle2 className="h-3 w-3 mr-1" /> Qualifies</Badge>
                       ) : (
-                        <Badge className="bg-red-100 text-red-700"><XCircle className="h-3 w-3 mr-1" /> Does not qualify</Badge>
+                        <Badge className="bg-[oklch(0.30_0.02_262)] text-white"><XCircle className="h-3 w-3 mr-1" /> Does not qualify</Badge>
                       )}
                       <Badge variant="outline">{project.status}</Badge>
                     </div>
@@ -408,19 +408,19 @@ function ProjectsTab({ studyId, projects, onRefresh }: { studyId: number; projec
 
                     {/* Four-Part Test Summary */}
                     <div className="flex gap-4 text-xs mt-2">
-                      <span className={project.technologicalInNature ? "text-green-600" : "text-red-500"}>
+                      <span className={project.technologicalInNature ? "text-muted-foreground" : "text-foreground font-semibold"}>
                         {project.technologicalInNature ? <CheckCircle2 className="h-3 w-3 inline mr-1" /> : <XCircle className="h-3 w-3 inline mr-1" />}
                         Technological
                       </span>
-                      <span className={project.eliminationOfUncertainty ? "text-green-600" : "text-red-500"}>
+                      <span className={project.eliminationOfUncertainty ? "text-muted-foreground" : "text-foreground font-semibold"}>
                         {project.eliminationOfUncertainty ? <CheckCircle2 className="h-3 w-3 inline mr-1" /> : <XCircle className="h-3 w-3 inline mr-1" />}
                         Uncertainty
                       </span>
-                      <span className={project.processOfExperimentation ? "text-green-600" : "text-red-500"}>
+                      <span className={project.processOfExperimentation ? "text-muted-foreground" : "text-foreground font-semibold"}>
                         {project.processOfExperimentation ? <CheckCircle2 className="h-3 w-3 inline mr-1" /> : <XCircle className="h-3 w-3 inline mr-1" />}
                         Experimentation
                       </span>
-                      <span className={project.permittedPurpose ? "text-green-600" : "text-red-500"}>
+                      <span className={project.permittedPurpose ? "text-muted-foreground" : "text-foreground font-semibold"}>
                         {project.permittedPurpose ? <CheckCircle2 className="h-3 w-3 inline mr-1" /> : <XCircle className="h-3 w-3 inline mr-1" />}
                         Permitted Purpose
                       </span>
@@ -501,9 +501,9 @@ function ProjectsTab({ studyId, projects, onRefresh }: { studyId: number; projec
 
               <div className="border-t pt-3">
                 {fourPartTestPasses(form) ? (
-                  <Badge className="bg-green-100 text-green-700"><CheckCircle2 className="h-3 w-3 mr-1" /> All four parts satisfied — project qualifies</Badge>
+                  <Badge className="bg-primary/10 text-primary"><CheckCircle2 className="h-3 w-3 mr-1" /> All four parts satisfied — project qualifies</Badge>
                 ) : (
-                  <Badge className="bg-yellow-100 text-yellow-700">Complete all four parts for the project to qualify</Badge>
+                  <Badge className="bg-muted text-muted-foreground">Complete all four parts for the project to qualify</Badge>
                 )}
               </div>
             </div>
@@ -746,8 +746,8 @@ function Form6765Tab({ studyId }: { studyId: number }) {
               <span className="text-muted-foreground">Line 7 — QREs over base</span><span className="text-right font-mono">{fmt(form.line7_excessQre)}</span>
               <span className="text-muted-foreground">Line 8 — Credit rate</span><span className="text-right font-mono">{((parseFloat(String(form.line8_creditRate ?? 0))) * 100).toFixed(0)}%</span>
               <span className="text-muted-foreground font-semibold">Line 9 — Gross credit</span><span className="text-right font-mono font-semibold">{fmt(form.line9_grossCredit)}</span>
-              <span className="text-muted-foreground">Line 10 — §280C reduction</span><span className="text-right font-mono text-red-500">{fmt(form.line10_section280C)}</span>
-              <span className="text-muted-foreground font-bold">Line 11 — Net credit</span><span className="text-right font-mono font-bold text-green-600 text-lg">{fmt(form.line11_netCredit)}</span>
+              <span className="text-muted-foreground">Line 10 — §280C reduction</span><span className="text-right font-mono text-foreground">{fmt(form.line10_section280C)}</span>
+              <span className="text-muted-foreground font-bold">Line 11 — Net credit</span><span className="text-right font-mono font-bold font-display tabular-nums text-primary text-lg">{fmt(form.line11_netCredit)}</span>
             </div>
           </div>
 

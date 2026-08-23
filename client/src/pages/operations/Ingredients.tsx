@@ -137,12 +137,12 @@ export default function Ingredients() {
 
   const getCategoryColor = (category: string) => {
     switch (category) {
-      case "protein": return "bg-red-500/8 text-red-600 dark:text-red-400";
-      case "spice": return "bg-orange-500/8 text-orange-600 dark:text-orange-400";
-      case "liquid": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
-      case "produce": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
-      case "packaging": return "bg-violet-500/8 text-violet-600 dark:text-violet-400";
-      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "protein": return "bg-muted text-muted-foreground";
+      case "spice": return "bg-muted text-muted-foreground";
+      case "liquid": return "bg-muted text-muted-foreground";
+      case "produce": return "bg-muted text-muted-foreground";
+      case "packaging": return "bg-muted text-muted-foreground";
+      default: return "bg-muted text-muted-foreground";
     }
   };
 
@@ -386,7 +386,7 @@ export default function Ingredients() {
                     </TableCell>
                     <TableCell>
                       {ing.isAllergen ? (
-                        <Badge className="bg-amber-500/8 text-amber-600 dark:text-amber-400">
+                        <Badge className="bg-muted text-foreground font-semibold">
                           <AlertTriangle className="h-3 w-3 mr-1" />
                           Allergen
                         </Badge>

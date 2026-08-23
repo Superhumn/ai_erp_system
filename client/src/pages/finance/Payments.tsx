@@ -30,15 +30,15 @@ import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
 
 const typeOptions = [
-  { value: "received", label: "Received", color: "bg-green-500/10 text-green-600" },
-  { value: "made", label: "Made", color: "bg-blue-500/10 text-blue-600" },
+  { value: "received", label: "Received", color: "bg-primary/10 text-primary" },
+  { value: "made", label: "Made", color: "bg-muted text-muted-foreground" },
 ];
 
 const statusOptions = [
-  { value: "pending", label: "Pending", color: "bg-amber-500/8 text-amber-600" },
-  { value: "completed", label: "Completed", color: "bg-emerald-500/8 text-emerald-600" },
-  { value: "failed", label: "Failed", color: "bg-red-500/8 text-red-600" },
-  { value: "cancelled", label: "Cancelled", color: "bg-gray-500/8 text-gray-600" },
+  { value: "pending", label: "Pending", color: "bg-muted text-muted-foreground" },
+  { value: "completed", label: "Completed", color: "bg-muted text-muted-foreground" },
+  { value: "failed", label: "Failed", color: "bg-[oklch(0.30_0.02_262)] text-white" },
+  { value: "cancelled", label: "Cancelled", color: "bg-[oklch(0.30_0.02_262)] text-white" },
 ];
 
 function PaymentSummaryBody({ p }: { p: any }) {

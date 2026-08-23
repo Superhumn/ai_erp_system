@@ -89,24 +89,24 @@ export default function CRMInvestors() {
 
   const getStatusColor = (status: string) => {
     const colors: Record<string, string> = {
-      lead: "bg-gray-500/8 text-gray-600 dark:text-gray-400",
-      contacted: "bg-blue-500/8 text-blue-600 dark:text-blue-400",
-      interested: "bg-violet-500/8 text-violet-600 dark:text-violet-400",
-      committed: "bg-orange-500/8 text-orange-600 dark:text-orange-400",
-      invested: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400",
-      passed: "bg-red-500/8 text-red-600 dark:text-red-400",
+      lead: "bg-muted text-muted-foreground",
+      contacted: "bg-muted text-muted-foreground",
+      interested: "bg-muted text-foreground",
+      committed: "bg-primary/10 text-primary",
+      invested: "bg-muted text-foreground",
+      passed: "bg-[oklch(0.30_0.02_262)] text-white",
     };
-    return colors[status] || "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+    return colors[status] || "bg-muted text-muted-foreground";
   };
 
   const getPriorityColor = (priority: string) => {
     const colors: Record<string, string> = {
-      low: "bg-gray-100 text-gray-600",
-      medium: "bg-blue-100 text-blue-600",
-      high: "bg-orange-100 text-orange-600",
-      critical: "bg-red-100 text-red-600",
+      low: "bg-muted text-muted-foreground",
+      medium: "bg-muted text-foreground",
+      high: "bg-muted text-foreground font-semibold",
+      critical: "bg-[oklch(0.30_0.02_262)] text-white",
     };
-    return colors[priority] || "bg-gray-100 text-gray-600";
+    return colors[priority] || "bg-muted text-muted-foreground";
   };
 
   return (
@@ -409,7 +409,7 @@ export default function CRMInvestors() {
                         </TableCell>
                         <TableCell>
                           {investor.totalInvested && parseFloat(investor.totalInvested) > 0 ? (
-                            <div className="flex items-center gap-1 text-green-600">
+                            <div className="flex items-center gap-1 text-foreground">
                               <TrendingUp className="h-4 w-4" />
                               ${parseFloat(investor.totalInvested).toLocaleString()}
                             </div>

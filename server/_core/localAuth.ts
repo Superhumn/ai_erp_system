@@ -3,38 +3,40 @@
  * Provides email/password authentication as a replacement for manus.ai OAuth
  */
 
-import { pbkdf2, randomBytes, timingSafeEqual } from "crypto";
-import { promisify } from "util";
+import { randomBytes } from "crypto";
 import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import type { Express, Request, Response } from "express";
-import rateLimit from "express-rate-limit";
 import * as db from "../db";
 import { getSessionCookieOptions } from "./cookies";
 import { sdk } from "./sdk";
 import { ENV } from "./env";
 import { isEmailConfigured, sendEmail } from "./email";
+import {
+  SALT_LENGTH,
+  generateSalt,
+  hashPassword,
+  verifyPassword,
+} from "./passwordHash";
 
-// Async PBKDF2 so the 600k-iteration hash runs on libuv's threadpool instead of
-// blocking the event loop (and all concurrent requests) on every auth call.
-const pbkdf2Async = promisify(pbkdf2);
-
-const SALT_LENGTH = 32;
-const HASH_ITERATIONS = 600000;
-const HASH_ITERATIONS_LEGACY = 100000; // iteration count used before April 2026
-const KEY_LENGTH = 64;
-const DIGEST = "sha512";
-
-// Rate limiting
-const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+// Rate limiting — separate buckets so forgot-password clicks don't lock out login
+type RateBucket = { count: number; resetAt: number };
+const loginAttempts = new Map<string, RateBucket>();
+const resetAttempts = new Map<string, RateBucket>();
 const MAX_LOGIN_ATTEMPTS = 5;
+const MAX_RESET_ATTEMPTS = 10;
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+
+function pruneRateMap(map: Map<string, RateBucket>, now: number) {
+  for (const [ip, entry] of map) {
+    if (now > entry.resetAt) map.delete(ip);
+  }
+}
 
 // Periodically clean up stale rate limit entries to prevent memory leaks
 setInterval(() => {
   const now = Date.now();
-  for (const [ip, entry] of loginAttempts) {
-    if (now > entry.resetAt) loginAttempts.delete(ip);
-  }
+  pruneRateMap(loginAttempts, now);
+  pruneRateMap(resetAttempts, now);
 }, RATE_LIMIT_WINDOW_MS);
 
 // ============================================
@@ -55,25 +57,28 @@ setInterval(() => {
 }, 30 * 60 * 1000);
 
 /**
- * Check and update rate limit for an IP address
- * Returns true if request should be allowed, false if rate limited
+ * Check and update rate limit for an IP address against a specific bucket.
+ * Returns true if request should be allowed, false if rate limited.
  */
-function checkRateLimit(ip: string): boolean {
+function checkRateLimit(
+  ip: string,
+  map: Map<string, RateBucket> = loginAttempts,
+  maxAttempts: number = MAX_LOGIN_ATTEMPTS
+): boolean {
   const now = Date.now();
-  const attempt = loginAttempts.get(ip);
+  const attempt = map.get(ip);
 
-  // Clean up expired entries
   if (attempt && now > attempt.resetAt) {
-    loginAttempts.delete(ip);
+    map.delete(ip);
   }
 
-  const current = loginAttempts.get(ip);
+  const current = map.get(ip);
   if (!current) {
-    loginAttempts.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    map.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
     return true;
   }
 
-  if (current.count >= MAX_LOGIN_ATTEMPTS) {
+  if (current.count >= maxAttempts) {
     return false;
   }
 
@@ -82,10 +87,10 @@ function checkRateLimit(ip: string): boolean {
 }
 
 /**
- * Reset rate limit for an IP address (called on successful login)
+ * Clear rate limit for an IP address (called on successful auth)
  */
-function resetRateLimit(ip: string): void {
-  loginAttempts.delete(ip);
+function resetRateLimit(ip: string, map: Map<string, RateBucket> = loginAttempts): void {
+  map.delete(ip);
 }
 
 /**
@@ -98,58 +103,6 @@ function getClientIp(req: Request): string {
     req.socket.remoteAddress ||
     'unknown'
   );
-}
-
-/**
- * Hash a password using PBKDF2 with a given iteration count.
- */
-/** Derive the raw PBKDF2 key bytes. */
-function deriveKey(password: string, salt: string, iterations: number): Promise<Buffer> {
-  return pbkdf2Async(password, salt, iterations, KEY_LENGTH, DIGEST);
-}
-
-async function hashPasswordWithIterations(password: string, salt: string, iterations: number): Promise<string> {
-  return (await deriveKey(password, salt, iterations)).toString("hex");
-}
-
-/**
- * Hash a password using PBKDF2 (current iteration count)
- */
-function hashPassword(password: string, salt: string): Promise<string> {
-  return hashPasswordWithIterations(password, salt, HASH_ITERATIONS);
-}
-
-function generateSalt(): string {
-  return randomBytes(SALT_LENGTH).toString("hex");
-}
-
-/**
- * Verify a password against a hash.
- * Returns { valid, needsUpgrade } where needsUpgrade is true when the stored
- * hash was produced with the legacy iteration count and should be re-hashed.
- */
-async function verifyPassword(password: string, salt: string, hash: string): Promise<{ valid: boolean; needsUpgrade: boolean }> {
-  // Compare the derived key bytes directly against the decoded stored hash. A
-  // malformed stored hash (non-hex / odd length) decodes to a different byte
-  // length and fails the length guard below — returning "invalid" without
-  // throwing — so no try/catch is needed for that case. Genuine hashing failures
-  // (e.g. a PBKDF2/openssl error) are intentionally left to propagate so the
-  // caller surfaces them as a 500 rather than masking them as a 401.
-  const stored = Buffer.from(hash, "hex");
-
-  const candidate = await deriveKey(password, salt, HASH_ITERATIONS);
-  if (candidate.length === stored.length && timingSafeEqual(candidate, stored)) {
-    return { valid: true, needsUpgrade: false };
-  }
-
-  // Fallback: try the legacy iteration count for accounts created before the
-  // HASH_ITERATIONS increase (100k → 600k, April 2026).
-  const legacy = await deriveKey(password, salt, HASH_ITERATIONS_LEGACY);
-  if (legacy.length === stored.length && timingSafeEqual(legacy, stored)) {
-    return { valid: true, needsUpgrade: true };
-  }
-
-  return { valid: false, needsUpgrade: false };
 }
 
 /**
@@ -194,7 +147,7 @@ async function logAuthEvent(action: "create" | "update" | "view", entityType: st
 
 export function registerLocalAuthRoutes(app: Express) {
   /**
-   * POST /api/auth/signup
+   * POST /api/auth/register
    * Register a new user with email/password
    */
   app.post("/api/auth/register", async (req: Request, res: Response) => {
@@ -215,6 +168,8 @@ export function registerLocalAuthRoutes(app: Express) {
         return res.status(400).json({ error: "Email and password are required" });
       }
 
+      const normalizedEmail = email.toLowerCase();
+
       if (!isValidEmail(email)) {
         return res.status(400).json({ error: "Invalid email format" });
       }
@@ -223,10 +178,19 @@ export function registerLocalAuthRoutes(app: Express) {
         return res.status(400).json({ error: "Password must be at least 8 characters" });
       }
 
-      // Check if user already exists
-      const existingUser = await db.getUserByEmail(email.toLowerCase());
-      if (existingUser) {
+      // Distinguish credential-exists (true duplicate) from user-without-password
+      // (OAuth-only / orphaned account — recoverable via forgot-password).
+      const existingUser = await db.getUserByEmail(normalizedEmail);
+      const existingCredential = await db.getLocalAuthCredentialByEmail(normalizedEmail);
+      if (existingCredential) {
         return res.status(409).json({ error: "User with this email already exists" });
+      }
+
+      if (existingUser) {
+        return res.status(409).json({
+          error: "An account with this email already exists. Use Forgot password to set your password.",
+          recovery: "reset_password",
+        });
       }
 
       // Generate salt and hash password
@@ -237,7 +201,7 @@ export function registerLocalAuthRoutes(app: Express) {
       // Store credentials
       await db.createLocalAuthCredential({
         openId,
-        email: email.toLowerCase(),
+        email: normalizedEmail,
         passwordHash,
         salt,
       });
@@ -246,7 +210,7 @@ export function registerLocalAuthRoutes(app: Express) {
       await db.upsertUser({
         openId,
         name: name || email.split("@")[0],
-        email: email.toLowerCase(),
+        email: normalizedEmail,
         loginMethod: "email",
         lastSignedIn: new Date(),
       });
@@ -270,7 +234,7 @@ export function registerLocalAuthRoutes(app: Express) {
         await db.updateUserRole(newUser.id, 'admin');
       }
 
-      await logAuthEvent("create", "auth_signup", newUser?.id, clientIp, email.toLowerCase());
+      await logAuthEvent("create", "auth_signup", newUser?.id, clientIp, normalizedEmail);
 
       // Check for invite token — if present, assign the invited role and mark accepted
       let inviteAccepted = false;
@@ -297,10 +261,15 @@ export function registerLocalAuthRoutes(app: Express) {
         }
       }
 
-      // Skip email verification for invited users — they were invited via email
+      // Skip email verification for invited users — they were invited via email.
+      // Account + session already exist at this point; verification bookkeeping
+      // must not turn a successful signup into a 500.
       if (inviteAccepted) {
-        const normalizedEmail = email.toLowerCase();
-        await db.setUserEmailVerified(normalizedEmail, true);
+        try {
+          await db.setUserEmailVerified(normalizedEmail, true);
+        } catch (verifyErr) {
+          console.warn("[Local Auth] Failed to mark invited email verified:", verifyErr);
+        }
 
         return res.status(201).json({
           success: true,
@@ -309,30 +278,34 @@ export function registerLocalAuthRoutes(app: Express) {
         });
       }
 
-      // Generate email verification token (24-hour expiry)
-      const verificationToken = randomBytes(32).toString("hex");
-      const normalizedEmail = email.toLowerCase();
-      await db.createAuthToken({
-        token: verificationToken,
-        type: "email_verification",
-        email: normalizedEmail,
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-      });
-
-      // Send verification email if SendGrid is configured, otherwise log to console
-      const verifyUrl = `${ENV.publicAppUrl}/api/auth/verify-email?token=${verificationToken}`;
-      if (isEmailConfigured()) {
-        sendEmail({
-          to: normalizedEmail,
-          subject: "Verify your email address",
-          text: `Please verify your email by visiting: ${verifyUrl}`,
-          html: `<p>Please verify your email address by clicking the link below:</p><p><a href="${verifyUrl}">Verify Email</a></p><p>This link expires in 24 hours.</p>`,
-        }).catch((err) => {
-          console.error("[Local Auth] Failed to send verification email:", err);
+      // Generate email verification token (24-hour expiry). Soft-fail: the
+      // account is already usable via the session cookie we just set.
+      try {
+        const verificationToken = randomBytes(32).toString("hex");
+        await db.createAuthToken({
+          token: verificationToken,
+          type: "email_verification",
+          email: normalizedEmail,
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         });
-      } else {
-        console.log(`[Local Auth] Email verification token for ${normalizedEmail}: ${verificationToken}`);
-        console.log(`[Local Auth] Verify URL: ${verifyUrl}`);
+
+        // Send verification email if SendGrid is configured, otherwise log to console
+        const verifyUrl = `${ENV.publicAppUrl}/api/auth/verify-email?token=${verificationToken}`;
+        if (isEmailConfigured()) {
+          sendEmail({
+            to: normalizedEmail,
+            subject: "Verify your email address",
+            text: `Please verify your email by visiting: ${verifyUrl}`,
+            html: `<p>Please verify your email address by clicking the link below:</p><p><a href="${verifyUrl}">Verify Email</a></p><p>This link expires in 24 hours.</p>`,
+          }).catch((err) => {
+            console.error("[Local Auth] Failed to send verification email:", err);
+          });
+        } else {
+          console.log(`[Local Auth] Email verification token for ${normalizedEmail}: ${verificationToken}`);
+          console.log(`[Local Auth] Verify URL: ${verifyUrl}`);
+        }
+      } catch (tokenErr) {
+        console.error("[Local Auth] Failed to create/send verification token after signup:", tokenErr);
       }
 
       return res.status(201).json({
@@ -443,10 +416,22 @@ export function registerLocalAuthRoutes(app: Express) {
         lastSignedIn: new Date(),
       });
 
-      // Create session
+      // Create session — require a user row so we don't mint a cookie that auth.me
+      // will immediately reject (login "succeeds" then DashboardLayout bounces back).
       const user = await db.getUserByOpenId(credentials.openId);
+      if (!user) {
+        console.error(
+          "[Local Auth] Credential openId=%s has no users row — refusing login",
+          credentials.openId
+        );
+        return res.status(401).json({
+          error: "Account is incomplete. Use Forgot password to restore access.",
+          recovery: "reset_password",
+        });
+      }
+
       const sessionToken = await sdk.createSessionToken(credentials.openId, {
-        name: user?.name || email.split("@")[0],
+        name: user.name || email.split("@")[0],
         expiresInMs: ONE_YEAR_MS,
       });
 
@@ -456,7 +441,7 @@ export function registerLocalAuthRoutes(app: Express) {
       // Reset rate limit on successful login
       resetRateLimit(clientIp);
 
-      await logAuthEvent("view", "auth_login_success", user?.id, clientIp, email.toLowerCase());
+      await logAuthEvent("view", "auth_login_success", user.id, clientIp, email.toLowerCase());
 
       return res.status(200).json({
         success: true,
@@ -547,8 +532,8 @@ export function registerLocalAuthRoutes(app: Express) {
   app.post("/api/auth/forgot-password", async (req: Request, res: Response) => {
     const clientIp = getClientIp(req);
 
-    // Check rate limit
-    if (!checkRateLimit(clientIp)) {
+    // Separate bucket from login so reset attempts don't lock out sign-in
+    if (!checkRateLimit(clientIp, resetAttempts, MAX_RESET_ATTEMPTS)) {
       return res.status(429).json({
         error: "Too many requests. Please try again in 15 minutes.",
       });
@@ -565,11 +550,22 @@ export function registerLocalAuthRoutes(app: Express) {
       }
 
       const normalizedEmail = email.toLowerCase();
-
-      // Look up credentials for this email
-      const credentials = await db.getLocalAuthCredentialByEmail(normalizedEmail);
-
-      if (credentials) {
+      // Key off the users row so OAuth-only / orphaned accounts can recover
+      // by creating localAuthCredentials on reset.
+      let user = await db.getUserByEmail(normalizedEmail);
+      if (!user) {
+        // Also handle credential-only orphans (credentials row exists, users row missing)
+        const credential = await db.getLocalAuthCredentialByEmail(normalizedEmail);
+        if (credential) {
+          await db.upsertUser({
+            openId: credential.openId,
+            email: normalizedEmail,
+            loginMethod: "email",
+          });
+          user = await db.getUserByOpenId(credential.openId);
+        }
+      }
+      if (user) {
         // Generate a secure reset token (32 bytes hex)
         const token = randomBytes(32).toString("hex");
         await db.createAuthToken({
@@ -595,7 +591,7 @@ export function registerLocalAuthRoutes(app: Express) {
           console.log(`[Local Auth] Reset URL: ${resetUrl}`);
         }
 
-        await logAuthEvent("update", "auth_password_reset_requested", undefined, clientIp, normalizedEmail);
+        await logAuthEvent("update", "auth_password_reset_requested", user.id, clientIp, normalizedEmail);
       }
 
       // Always return the same response regardless of whether the email exists
@@ -615,8 +611,7 @@ export function registerLocalAuthRoutes(app: Express) {
   app.post("/api/auth/reset-password", async (req: Request, res: Response) => {
     const clientIp = getClientIp(req);
 
-    // Check rate limit
-    if (!checkRateLimit(clientIp)) {
+    if (!checkRateLimit(clientIp, resetAttempts, MAX_RESET_ATTEMPTS)) {
       return res.status(429).json({
         error: "Too many requests. Please try again in 15 minutes.",
       });
@@ -648,31 +643,39 @@ export function registerLocalAuthRoutes(app: Express) {
         return res.status(400).json({ error: "Reset token has expired" });
       }
 
-      // Look up the credential record for this email
-      const credentials = await db.getLocalAuthCredentialByEmail(tokenData.email);
-      if (!credentials) {
-        // Token was valid but credential no longer exists — invalidate and return error
+      const user = await db.getUserByEmail(tokenData.email);
+      if (!user) {
         await db.deleteAuthToken(token);
         return res.status(400).json({ error: "Account not found" });
       }
+
+      const credentials = await db.getLocalAuthCredentialByOpenId(user.openId);
 
       // Hash the new password with a new salt
       const newSalt = generateSalt();
       const newPasswordHash = await hashPassword(newPassword, newSalt);
 
-      // Update the credential record
-      await db.updateLocalAuthCredential(credentials.openId, {
-        passwordHash: newPasswordHash,
-        salt: newSalt,
-      });
+      if (credentials) {
+        await db.updateLocalAuthCredential(credentials.openId, {
+          passwordHash: newPasswordHash,
+          salt: newSalt,
+        });
+      } else {
+        // Create credentials for OAuth-only / orphaned users recovering access
+        await db.createLocalAuthCredential({
+          openId: user.openId,
+          email: tokenData.email,
+          passwordHash: newPasswordHash,
+          salt: newSalt,
+        });
+      }
 
       // Invalidate every reset token for this email (used + any others)
       await db.deleteAuthTokensByEmail(tokenData.email, "password_reset");
 
-      const user = await db.getUserByOpenId(credentials.openId);
-      await logAuthEvent("update", "auth_password_reset_completed", user?.id, clientIp, tokenData.email);
+      await logAuthEvent("update", "auth_password_reset_completed", user.id, clientIp, tokenData.email);
 
-      resetRateLimit(clientIp);
+      resetRateLimit(clientIp, resetAttempts);
 
       return res.status(200).json({
         success: true,

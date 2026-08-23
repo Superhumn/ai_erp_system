@@ -45,20 +45,20 @@ type InvestorStatus = typeof INVESTOR_STATUSES[number];
 
 const STATUS_COLORS: Record<string, string> = {
   planning: "bg-gray-500/10 text-gray-700 border-gray-200",
-  open: "bg-emerald-500/10 text-emerald-700 border-emerald-200",
-  closing: "bg-amber-500/10 text-amber-700 border-amber-200",
-  closed: "bg-blue-500/10 text-blue-700 border-blue-200",
-  cancelled: "bg-red-500/10 text-red-700 border-red-200",
+  open: "bg-primary/10 text-primary border-primary/20",
+  closing: "bg-muted text-foreground font-semibold border-transparent",
+  closed: "bg-muted text-muted-foreground border-transparent",
+  cancelled: "bg-[oklch(0.30_0.02_262)] text-white border-transparent",
 };
 
 const INVESTOR_STATUS_COLORS: Record<string, string> = {
   introduced: "bg-gray-500/10 text-gray-700 border-gray-200",
-  in_diligence: "bg-blue-500/10 text-blue-700 border-blue-200",
-  term_sheet: "bg-purple-500/10 text-purple-700 border-purple-200",
-  committed: "bg-amber-500/10 text-amber-700 border-amber-200",
-  wired: "bg-emerald-500/10 text-emerald-700 border-emerald-200",
-  closed: "bg-emerald-500/10 text-emerald-700 border-emerald-200",
-  declined: "bg-red-500/10 text-red-700 border-red-200",
+  in_diligence: "bg-primary/10 text-primary border-primary/20",
+  term_sheet: "bg-muted text-foreground border-transparent",
+  committed: "bg-muted text-foreground font-semibold border-transparent",
+  wired: "bg-primary/10 text-primary border-primary/20",
+  closed: "bg-muted text-muted-foreground border-transparent",
+  declined: "bg-[oklch(0.30_0.02_262)] text-white border-transparent",
   lapsed: "bg-gray-500/10 text-gray-600 border-gray-200",
 };
 
@@ -355,7 +355,7 @@ function RoundDetailDialog({ id, onClose, onChanged }: { id: number; onClose: ()
                 <span>{((totalCommitted / target) * 100).toFixed(0)}% committed · {((totalWired / target) * 100).toFixed(0)}% wired</span>
               </div>
               <div className="h-2 bg-muted rounded overflow-hidden">
-                <div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, (totalWired / target) * 100)}%` }} />
+                <div className="h-full bg-primary" style={{ width: `${Math.min(100, (totalWired / target) * 100)}%` }} />
               </div>
             </div>
           )}

@@ -43,11 +43,11 @@ type ChannelTab = "all" | "whatsapp" | "gchat";
 function channelIcon(channel?: string) {
   switch (channel) {
     case "whatsapp":
-      return <MessageCircle className="h-3.5 w-3.5 text-green-600" />;
+      return <MessageCircle className="h-3.5 w-3.5 text-muted-foreground" />;
     case "email":
-      return <Mail className="h-3.5 w-3.5 text-blue-500" />;
+      return <Mail className="h-3.5 w-3.5 text-muted-foreground" />;
     case "phone":
-      return <Phone className="h-3.5 w-3.5 text-orange-500" />;
+      return <Phone className="h-3.5 w-3.5 text-muted-foreground" />;
     default:
       return <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />;
   }
@@ -55,10 +55,10 @@ function channelIcon(channel?: string) {
 
 function channelBadge(channel?: string) {
   const variants: Record<string, { label: string; className: string }> = {
-    whatsapp: { label: "WhatsApp", className: "bg-green-100 text-green-700 border-green-200" },
-    email: { label: "Email", className: "bg-blue-100 text-blue-700 border-blue-200" },
-    phone: { label: "Phone", className: "bg-orange-100 text-orange-700 border-orange-200" },
-    sms: { label: "SMS", className: "bg-purple-100 text-purple-700 border-purple-200" },
+    whatsapp: { label: "WhatsApp", className: "bg-muted text-muted-foreground" },
+    email: { label: "Email", className: "bg-muted text-muted-foreground" },
+    phone: { label: "Phone", className: "bg-muted text-muted-foreground" },
+    sms: { label: "SMS", className: "bg-muted text-muted-foreground" },
   };
   const v = variants[channel || ""] || { label: channel || "Unknown", className: "" };
   return (
@@ -71,7 +71,7 @@ function channelBadge(channel?: string) {
 function messageStatusIcon(status?: string) {
   switch (status) {
     case "read":
-      return <CheckCheck className="h-3 w-3 text-blue-500" />;
+      return <CheckCheck className="h-3 w-3 text-primary" />;
     case "delivered":
       return <CheckCheck className="h-3 w-3 text-muted-foreground" />;
     case "sent":
@@ -262,12 +262,12 @@ export default function Messaging() {
           <Badge variant="outline" className="gap-1.5">
             {online ? (
               <>
-                <Wifi className="h-3 w-3 text-green-500" />
+                <Wifi className="h-3 w-3 text-primary" />
                 WhatsApp Connected
               </>
             ) : (
               <>
-                <WifiOff className="h-3 w-3 text-amber-500" />
+                <WifiOff className="h-3 w-3 text-foreground" />
                 Offline — drafts queue locally
               </>
             )}
@@ -593,8 +593,8 @@ export default function Messaging() {
       <div className="py-6 px-2">
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center py-6 text-center">
-            <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center mb-3">
-              <Hash className="h-5 w-5 text-blue-600" />
+            <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-3">
+              <Hash className="h-5 w-5 text-muted-foreground" />
             </div>
             <p className="text-sm font-medium">Google Chat</p>
             <p className="text-xs text-muted-foreground mt-1">
@@ -622,9 +622,9 @@ export default function Messaging() {
           <>
             <div className="px-4 py-3 border-b flex items-center justify-between bg-muted/30">
               <div className="flex items-center gap-2">
-                <Hash className="h-4 w-4 text-blue-600" />
+                <Hash className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm font-medium">Google Chat</span>
-                <Badge variant="outline" className="text-[10px] bg-yellow-50 text-yellow-700 border-yellow-200">
+                <Badge variant="outline" className="text-[10px] bg-muted text-muted-foreground">
                   Embedded Preview
                 </Badge>
               </div>
@@ -659,8 +659,8 @@ export default function Messaging() {
           </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground px-6">
-            <div className="h-16 w-16 rounded-full bg-blue-50 flex items-center justify-center mb-4">
-              <Hash className="h-8 w-8 text-blue-400" />
+            <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center mb-4">
+              <Hash className="h-8 w-8 text-muted-foreground" />
             </div>
             <h3 className="text-base font-medium text-foreground mb-1">Connect Google Chat</h3>
             <p className="text-sm text-center max-w-sm mb-4">

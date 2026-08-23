@@ -111,24 +111,24 @@ function getViewerSrc(doc: DocumentItem, linkCode?: string): { src: string | nul
 function getFileIcon(fileType: string) {
   switch (fileType) {
     case "pdf":
-      return <FileText className="h-5 w-5 text-red-400" />;
+      return <FileText className="h-5 w-5 text-muted-foreground" />;
     case "doc":
     case "docx":
-      return <FileText className="h-5 w-5 text-blue-400" />;
+      return <FileText className="h-5 w-5 text-muted-foreground" />;
     case "xls":
     case "xlsx":
     case "csv":
-      return <FileSpreadsheet className="h-5 w-5 text-emerald-400" />;
+      return <FileSpreadsheet className="h-5 w-5 text-muted-foreground" />;
     case "ppt":
     case "pptx":
-      return <Presentation className="h-5 w-5 text-orange-400" />;
+      return <Presentation className="h-5 w-5 text-muted-foreground" />;
     case "png":
     case "jpg":
     case "jpeg":
     case "gif":
     case "svg":
     case "webp":
-      return <Image className="h-5 w-5 text-purple-400" />;
+      return <Image className="h-5 w-5 text-muted-foreground" />;
     default:
       return <File className="h-5 w-5 text-muted-foreground" />;
   }
@@ -136,12 +136,12 @@ function getFileIcon(fileType: string) {
 
 function getFileColorClass(fileType: string): string {
   switch (fileType) {
-    case "pdf": return "bg-red-500/10 border-red-500/20";
-    case "doc": case "docx": return "bg-blue-500/10 border-blue-500/20";
-    case "xls": case "xlsx": case "csv": return "bg-emerald-500/10 border-emerald-500/20";
-    case "ppt": case "pptx": return "bg-orange-500/10 border-orange-500/20";
+    case "pdf": return "bg-muted border-border";
+    case "doc": case "docx": return "bg-muted border-border";
+    case "xls": case "xlsx": case "csv": return "bg-muted border-border";
+    case "ppt": case "pptx": return "bg-muted border-border";
     case "png": case "jpg": case "jpeg": case "gif": case "svg": case "webp":
-      return "bg-purple-500/10 border-purple-500/20";
+      return "bg-muted border-border";
     default: return "bg-muted border-border";
   }
 }
@@ -1032,7 +1032,7 @@ export default function DataRoomPublic() {
       <div className="fixed bottom-6 right-6 z-40">
         <button
           onClick={() => setInvestFormOpen(true)}
-          className="group flex items-center gap-2.5 rounded-full px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-500/25 transition-all hover:scale-105 hover:shadow-indigo-500/40 active:scale-95"
+          className="group flex items-center gap-2.5 rounded-full px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-primary/25 transition-all hover:scale-105 hover:shadow-primary/40 active:scale-95"
           style={{
             background: `linear-gradient(135deg, ${brandColor || "#6366f1"}, ${brandColor ? brandColor + "cc" : "#818cf8"})`,
           }}
@@ -1068,8 +1068,8 @@ export default function DataRoomPublic() {
             {investSubmitted ? (
               /* Success state */
               <div className="p-8 text-center">
-                <div className="w-16 h-16 rounded-full bg-emerald-500/10 flex items-center justify-center mx-auto mb-4">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
@@ -1182,7 +1182,7 @@ export default function DataRoomPublic() {
                   <div>
                     <Label className="text-xs text-gray-400 mb-1.5 block">Message (optional)</Label>
                     <textarea
-                      className="w-full rounded-xl bg-white/[0.04] border border-white/[0.08] text-white placeholder:text-gray-600 text-sm p-3 min-h-[80px] resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/30"
+                      className="w-full rounded-xl bg-white/[0.04] border border-white/[0.08] text-white placeholder:text-gray-600 text-sm p-3 min-h-[80px] resize-none focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/30"
                       placeholder="Any questions or context about your interest..."
                       value={investForm.notes}
                       onChange={(e) => setInvestForm(f => ({ ...f, notes: e.target.value }))}
@@ -1397,7 +1397,7 @@ export function NdaSigningGate({
                 <div className="border border-white/[0.06] rounded-xl overflow-hidden">
                   <div className="bg-white/[0.03] p-3 flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <FileText className="h-5 w-5 text-red-400" />
+                      <FileText className="h-5 w-5 text-muted-foreground" />
                       <span className="font-medium text-white text-sm">{activeNda.name}</span>
                       <span className="text-xs text-gray-500">v{activeNda.version}</span>
                     </div>

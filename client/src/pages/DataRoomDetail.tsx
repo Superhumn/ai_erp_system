@@ -467,16 +467,16 @@ export default function DataRoomDetail() {
   const getFileIcon = (fileType: string) => {
     switch (fileType) {
       case "pdf":
-        return <FileText className="h-5 w-5 text-red-500" />;
+        return <FileText className="h-5 w-5 text-muted-foreground" />;
       case "doc":
       case "docx":
-        return <FileText className="h-5 w-5 text-blue-500" />;
+        return <FileText className="h-5 w-5 text-muted-foreground" />;
       case "xls":
       case "xlsx":
-        return <FileText className="h-5 w-5 text-green-500" />;
+        return <FileText className="h-5 w-5 text-muted-foreground" />;
       case "ppt":
       case "pptx":
-        return <FileText className="h-5 w-5 text-orange-500" />;
+        return <FileText className="h-5 w-5 text-muted-foreground" />;
       default:
         return <File className="h-5 w-5 text-gray-500" />;
     }
@@ -763,7 +763,7 @@ export default function DataRoomDetail() {
                             setSelectedDoc(null);
                           }}
                         >
-                          <Folder className="h-4 w-4 text-blue-500 shrink-0" />
+                          <Folder className="h-4 w-4 text-muted-foreground shrink-0" />
                           <span className="flex-1 truncate">{folder.name}</span>
                           {folder.googleDriveFolderId && (
                             <Cloud className="h-3 w-3 text-muted-foreground/50 shrink-0" />
@@ -1568,13 +1568,13 @@ export default function DataRoomDetail() {
                     <TableBody>
                       {commitments.map((c: any) => {
                         const statusColors: Record<string, string> = {
-                          interested: "bg-blue-500/10 text-blue-500 border-blue-500/20",
-                          committed: "bg-indigo-500/10 text-indigo-500 border-indigo-500/20",
-                          docs_sent: "bg-amber-500/10 text-amber-500 border-amber-500/20",
-                          signed: "bg-purple-500/10 text-purple-500 border-purple-500/20",
-                          funded: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
-                          completed: "bg-green-500/10 text-green-500 border-green-500/20",
-                          declined: "bg-red-500/10 text-red-500 border-red-500/20",
+                          interested: "bg-muted text-muted-foreground border-border",
+                          committed: "bg-muted text-foreground border-border",
+                          docs_sent: "bg-primary/10 text-primary border-primary/20",
+                          signed: "bg-primary/10 text-primary border-primary/20",
+                          funded: "bg-primary/10 text-primary border-primary/20",
+                          completed: "bg-muted text-foreground border-border",
+                          declined: "bg-[oklch(0.30_0.02_262)] text-white border-transparent",
                         };
                         const typeLabels: Record<string, string> = {
                           safe: "SAFE",
@@ -1638,7 +1638,7 @@ export default function DataRoomDetail() {
                                         </DropdownMenuItem>
                                       ))}
                                       <DropdownMenuItem
-                                        className="text-red-500"
+                                        className="text-destructive"
                                         onClick={() => updateStatusMutation.mutate({ id: c.id, status: "declined" })}
                                       >
                                         Decline
@@ -1661,7 +1661,7 @@ export default function DataRoomDetail() {
                                   </Button>
                                 )}
                                 {c.addedToCapTable && (
-                                  <Badge variant="outline" className="text-xs text-green-600 border-green-600/30">
+                                  <Badge variant="outline" className="text-xs text-foreground border-border">
                                     <CheckCircle2 className="h-3 w-3 mr-1" />
                                     On Cap Table
                                   </Badge>
@@ -2421,8 +2421,8 @@ function NdaManagement({ dataRoomId, requiresNda }: { dataRoomId: number; requir
             <div className="space-y-4">
               <div className="flex items-center justify-between p-4 border rounded-lg">
                 <div className="flex items-center gap-4">
-                  <div className="h-12 w-12 bg-red-100 rounded-lg flex items-center justify-center">
-                    <FileText className="h-6 w-6 text-red-600" />
+                  <div className="h-12 w-12 bg-muted rounded-lg flex items-center justify-center">
+                    <FileText className="h-6 w-6 text-muted-foreground" />
                   </div>
                   <div>
                     <div className="font-medium">{activeNda.name}</div>
@@ -2585,7 +2585,7 @@ function NdaManagement({ dataRoomId, requiresNda }: { dataRoomId: number; requir
               />
               {selectedFile ? (
                 <div className="flex items-center justify-center gap-2">
-                  <FileText className="h-8 w-8 text-red-600" />
+                  <FileText className="h-8 w-8 text-muted-foreground" />
                   <span className="font-medium">{selectedFile.name}</span>
                 </div>
               ) : (
@@ -2920,7 +2920,7 @@ function EmailAccessRulesManager({ dataRoomId }: { dataRoomId: number }) {
   };
 
   const getRuleTypeColor = (type: string) => {
-    return type.startsWith('allow') ? 'bg-emerald-500/8 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/8 text-red-600 dark:text-red-400';
+    return type.startsWith('allow') ? 'bg-muted text-foreground' : 'bg-[oklch(0.30_0.02_262)] text-white';
   };
 
   return (
@@ -3384,7 +3384,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
           {/* Progress bar */}
           <div className="mb-4">
             <div className="h-2.5 bg-muted rounded-full overflow-hidden">
-              <div className="h-full bg-green-500 transition-all duration-500" style={{ width: `${summary.completionPercent}%` }} />
+              <div className="h-full bg-primary transition-all duration-500" style={{ width: `${summary.completionPercent}%` }} />
             </div>
             <div className="flex justify-between mt-1.5 text-xs text-muted-foreground">
               <span>{summary.completedItems} of {summary.totalItems} items</span>
@@ -3400,7 +3400,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
                 <Badge
                   key={name}
                   variant={pct === 100 ? 'default' : 'outline'}
-                  className={`cursor-pointer ${pct === 100 ? 'bg-green-600' : pct > 0 ? 'border-yellow-400 text-yellow-700' : 'border-red-300 text-red-600'}`}
+                  className={`cursor-pointer ${pct === 100 ? 'bg-primary' : pct > 0 ? 'border-border text-foreground font-semibold' : 'border-border text-muted-foreground'}`}
                   onClick={() => {
                     const newSet = new Set(expandedCategories);
                     // Collapse all, expand just this one
@@ -3419,9 +3419,9 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
 
       {/* Missing Items Panel */}
       {showMissingOnly && missingItems.length > 0 && (
-        <Card className="border-red-200">
+        <Card className="border-border">
           <CardHeader className="pb-2">
-            <CardTitle className="text-red-700 flex items-center gap-2 text-base">
+            <CardTitle className="text-foreground font-semibold flex items-center gap-2 text-base">
               <AlertCircle className="h-5 w-5" />
               {missingItems.length} Documents Still Needed
             </CardTitle>
@@ -3429,9 +3429,9 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
           <CardContent>
             <div className="space-y-1">
               {missingItems.map((item: any) => (
-                <div key={item.id} className="flex items-center gap-3 py-2 px-3 rounded hover:bg-red-50 group">
+                <div key={item.id} className="flex items-center gap-3 py-2 px-3 rounded hover:bg-muted group">
                   <button
-                    className="flex-shrink-0 h-5 w-5 border-2 border-red-300 rounded hover:border-red-500 transition-colors"
+                    className="flex-shrink-0 h-5 w-5 border-2 border-border rounded hover:border-foreground transition-colors"
                     onClick={() => handleCheckboxToggle(item)}
                     title="Mark as complete"
                   />
@@ -3483,7 +3483,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
                   <span className="text-sm text-muted-foreground">{catComplete}/{catTotal}</span>
                   <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden">
                     <div
-                      className={`h-full rounded-full ${catPct === 100 ? 'bg-green-500' : catPct > 0 ? 'bg-yellow-500' : 'bg-red-400'}`}
+                      className="h-full rounded-full bg-primary"
                       style={{ width: `${catPct}%` }}
                     />
                   </div>
@@ -3504,17 +3504,17 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
                       <div
                         key={item.id}
                         className={`flex items-start gap-3 py-2.5 px-1 group ${
-                          isMissing && item.requirement === 'required' ? 'bg-red-50/40' : ''
+                          isMissing && item.requirement === 'required' ? 'bg-muted/50' : ''
                         }`}
                       >
                         {/* Checkbox */}
                         <button
                           className={`flex-shrink-0 mt-0.5 h-5 w-5 rounded border-2 transition-all ${
                             isComplete
-                              ? 'bg-green-500 border-green-500 text-white'
+                              ? 'bg-primary border-primary text-primary-foreground'
                               : isWaived || isNA
                               ? 'bg-gray-200 border-gray-300'
-                              : 'border-gray-300 hover:border-green-500'
+                              : 'border-gray-300 hover:border-primary'
                           }`}
                           onClick={() => handleCheckboxToggle(item)}
                           title={isComplete ? 'Mark as missing' : 'Mark as complete'}
@@ -3526,7 +3526,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
                         {/* Item name + linked doc link */}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className={`text-sm font-medium ${isComplete ? 'text-green-700 line-through decoration-green-300' : isWaived || isNA ? 'text-gray-400 line-through' : ''}`}>
+                            <span className={`text-sm font-medium ${isComplete ? 'text-muted-foreground line-through decoration-muted-foreground/40' : isWaived || isNA ? 'text-gray-400 line-through' : ''}`}>
                               {item.itemName}
                             </span>
                             {item.requirement === 'required' && isMissing && (
@@ -3543,7 +3543,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
                                   href={doc.fileUrl || doc.storageKey ? `/api/data-room/documents/${doc.id}/view` : '#'}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                                  className="inline-flex items-center gap-1 text-xs text-primary hover:text-primary/80 hover:underline"
                                 >
                                   <FileText className="h-3 w-3" />
                                   {doc.name}
@@ -3554,7 +3554,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
 
                           {/* Missing indicator */}
                           {isMissing && linkedDocs.length === 0 && (
-                            <span className="text-xs text-red-500 mt-0.5 block">Not found in data room</span>
+                            <span className="text-xs text-foreground font-semibold mt-0.5 block">Not found in data room</span>
                           )}
                         </div>
 
@@ -3589,7 +3589,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem onClick={() => updateItemMutation.mutate({ id: item.id, status: 'complete' })}>
-                                <CheckCircle2 className="h-4 w-4 mr-2 text-green-600" />
+                                <CheckCircle2 className="h-4 w-4 mr-2 text-muted-foreground" />
                                 Mark Complete
                               </DropdownMenuItem>
                               <DropdownMenuItem onClick={() => updateItemMutation.mutate({ id: item.id, status: 'not_applicable' })}>
@@ -3608,7 +3608,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
                                 Waive Requirement
                               </DropdownMenuItem>
                               <DropdownMenuItem onClick={() => updateItemMutation.mutate({ id: item.id, status: 'missing' })}>
-                                <AlertCircle className="h-4 w-4 mr-2 text-red-500" />
+                                <AlertCircle className="h-4 w-4 mr-2 text-foreground" />
                                 Reset to Missing
                               </DropdownMenuItem>
                               <DropdownMenuItem

@@ -27,28 +27,28 @@ import { formatCurrency } from "@/lib/format";
 import { DetailSheet } from "@/components/DetailSheet";
 
 const priorityColors: Record<string, string> = {
-  critical: "bg-red-600 text-white",
-  high: "bg-orange-500/10 text-orange-600",
-  medium: "bg-yellow-500/10 text-yellow-600",
-  low: "bg-gray-500/10 text-gray-600",
+  critical: "bg-[oklch(0.30_0.02_262)] text-white",
+  high: "bg-muted text-foreground font-semibold",
+  medium: "bg-muted text-muted-foreground",
+  low: "bg-muted text-muted-foreground",
 };
 
 const statusColors: Record<string, string> = {
-  open: "bg-blue-500/10 text-blue-600",
-  investigating: "bg-purple-500/10 text-purple-600",
-  negotiating: "bg-amber-500/10 text-amber-600",
-  resolved: "bg-green-500/10 text-green-600",
-  escalated: "bg-red-500/10 text-red-600",
-  closed: "bg-gray-500/10 text-gray-600",
+  open: "bg-primary/10 text-primary",
+  investigating: "bg-muted text-muted-foreground",
+  negotiating: "bg-muted text-muted-foreground",
+  resolved: "bg-muted text-muted-foreground",
+  escalated: "bg-[oklch(0.30_0.02_262)] text-white",
+  closed: "bg-muted text-muted-foreground",
 };
 
 const typeColors: Record<string, string> = {
-  customer: "bg-blue-500/10 text-blue-600",
-  vendor: "bg-green-500/10 text-green-600",
-  employee: "bg-purple-500/10 text-purple-600",
-  legal: "bg-amber-500/10 text-amber-600",
-  regulatory: "bg-red-500/10 text-red-600",
-  other: "bg-gray-500/10 text-gray-600",
+  customer: "bg-muted text-muted-foreground",
+  vendor: "bg-muted text-muted-foreground",
+  employee: "bg-muted text-muted-foreground",
+  legal: "bg-muted text-muted-foreground",
+  regulatory: "bg-muted text-muted-foreground",
+  other: "bg-muted text-muted-foreground",
 };
 
 export default function Disputes() {
@@ -298,13 +298,13 @@ export default function Disputes() {
         <Card>
           <CardContent className="pt-4 pb-4">
             <div className="text-sm text-muted-foreground">Total Cases</div>
-            <div className="text-2xl font-semibold">{stats.total}</div>
+            <div className="text-2xl font-semibold font-display tabular-nums">{stats.total}</div>
           </CardContent>
         </Card>
         {([
-          { key: "active", label: "Active", value: stats.open, color: "text-blue-600" },
-          { key: "resolved", label: "Resolved", value: stats.resolved, color: "text-green-600" },
-          { key: "critical", label: "High Priority", value: stats.critical, color: "text-red-600" },
+          { key: "active", label: "Active", value: stats.open, color: "text-primary" },
+          { key: "resolved", label: "Resolved", value: stats.resolved, color: "text-muted-foreground" },
+          { key: "critical", label: "High Priority", value: stats.critical, color: "text-foreground" },
         ] as const).map((c) => (
           <Card
             key={c.key}
@@ -317,14 +317,14 @@ export default function Disputes() {
           >
             <CardContent className="pt-4 pb-4">
               <div className="text-sm text-muted-foreground">{c.label}</div>
-              <div className={`text-2xl font-semibold ${c.color}`}>{c.value}</div>
+              <div className={`text-2xl font-semibold font-display tabular-nums ${c.color}`}>{c.value}</div>
             </CardContent>
           </Card>
         ))}
         <Card>
           <CardContent className="pt-4 pb-4">
             <div className="text-sm text-muted-foreground">Total Exposure</div>
-            <div className="text-2xl font-semibold">{formatCurrency(stats.totalValue)}</div>
+            <div className="text-2xl font-semibold font-display tabular-nums">{formatCurrency(stats.totalValue)}</div>
           </CardContent>
         </Card>
       </div>
@@ -489,7 +489,7 @@ export default function Disputes() {
                 {nextHearing && (
                   <div>
                     <p className="text-xs text-muted-foreground mb-0.5">Next Hearing</p>
-                    <p className="font-medium text-amber-600">{nextHearing}</p>
+                    <p className="font-semibold text-foreground">{nextHearing}</p>
                   </div>
                 )}
               </div>
@@ -502,7 +502,7 @@ export default function Disputes() {
               {selectedDispute.resolution && (
                 <div>
                   <p className="text-xs text-muted-foreground mb-1">Resolution</p>
-                  <p className="text-sm whitespace-pre-wrap bg-green-50 dark:bg-green-950/20 p-3 rounded border border-green-200">{selectedDispute.resolution}</p>
+                  <p className="text-sm whitespace-pre-wrap bg-muted/40 p-3 rounded border">{selectedDispute.resolution}</p>
                 </div>
               )}
             </div>

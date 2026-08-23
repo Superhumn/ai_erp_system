@@ -40,23 +40,23 @@ function formatDate(value: string | Date | null | undefined) {
 }
 
 const shipmentStatusOptions = [
-  { value: "pending", label: "Pending", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
-  { value: "picked_up", label: "Picked Up", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
-  { value: "in_transit", label: "In Transit", color: "bg-violet-500/8 text-violet-600 dark:text-violet-400" },
-  { value: "customs", label: "In Customs", color: "bg-orange-500/8 text-orange-600 dark:text-orange-400" },
-  { value: "delivered", label: "Delivered", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
-  { value: "cancelled", label: "Cancelled", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
+  { value: "pending", label: "Pending", color: "bg-muted text-muted-foreground" },
+  { value: "picked_up", label: "Picked Up", color: "bg-primary/10 text-primary" },
+  { value: "in_transit", label: "In Transit", color: "bg-primary/10 text-primary" },
+  { value: "customs", label: "In Customs", color: "bg-primary/10 text-primary" },
+  { value: "delivered", label: "Delivered", color: "bg-muted text-muted-foreground" },
+  { value: "cancelled", label: "Cancelled", color: "bg-[oklch(0.30_0.02_262)] text-white" },
 ];
 
 const customsStatusOptions = [
-  { value: "pending_documents", label: "Pending Docs", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
-  { value: "documents_submitted", label: "Submitted", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
-  { value: "under_review", label: "In Review", color: "bg-amber-500/8 text-amber-600 dark:text-amber-400" },
-  { value: "additional_info_required", label: "Info Required", color: "bg-orange-500/8 text-orange-600 dark:text-orange-400" },
-  { value: "cleared", label: "Cleared", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
-  { value: "held", label: "Held", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
-  { value: "rejected", label: "Rejected", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
-  { value: "n/a", label: "N/A", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
+  { value: "pending_documents", label: "Pending Docs", color: "bg-muted text-muted-foreground" },
+  { value: "documents_submitted", label: "Submitted", color: "bg-primary/10 text-primary" },
+  { value: "under_review", label: "In Review", color: "bg-primary/10 text-primary" },
+  { value: "additional_info_required", label: "Info Required", color: "bg-muted text-foreground font-semibold" },
+  { value: "cleared", label: "Cleared", color: "bg-muted text-muted-foreground" },
+  { value: "held", label: "Held", color: "bg-[oklch(0.30_0.02_262)] text-white" },
+  { value: "rejected", label: "Rejected", color: "bg-[oklch(0.30_0.02_262)] text-white" },
+  { value: "n/a", label: "N/A", color: "bg-muted text-muted-foreground" },
 ];
 
 // Detail body for the side-sheet panel. Pure presentation — the sheet
@@ -310,10 +310,10 @@ export default function LogisticsHub() {
   const shipmentColumns: Column<any>[] = [
     { key: "trackingNumber", header: "Tracking #", type: "text", sortable: true },
     { key: "_type", header: "Type", type: "badge", options: [
-      { value: "Inbound", label: "Inbound", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
-      { value: "Outbound", label: "Outbound", color: "bg-violet-500/8 text-violet-600 dark:text-violet-400" },
-      { value: "inbound", label: "Inbound", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
-      { value: "outbound", label: "Outbound", color: "bg-violet-500/8 text-violet-600 dark:text-violet-400" },
+      { value: "Inbound", label: "Inbound", color: "bg-primary/10 text-primary" },
+      { value: "Outbound", label: "Outbound", color: "bg-muted text-muted-foreground" },
+      { value: "inbound", label: "Inbound", color: "bg-primary/10 text-primary" },
+      { value: "outbound", label: "Outbound", color: "bg-muted text-muted-foreground" },
     ]},
     { key: "carrier", header: "Carrier", type: "text" },
     { key: "origin", header: "Origin", type: "text", sortable: true },
@@ -358,17 +358,17 @@ export default function LogisticsHub() {
         <div className="h-4 w-px bg-border" />
         <div><span className="text-muted-foreground">Total</span> <span className="font-bold">{stats.totalShipments}</span></div>
         <div className="h-4 w-px bg-border" />
-        <div><span className="text-muted-foreground">Pending</span> <span className="font-bold text-amber-600">{stats.pending}</span></div>
+        <div><span className="text-muted-foreground">Pending</span> <span className="font-bold text-foreground">{stats.pending}</span></div>
         <div className="h-4 w-px bg-border" />
-        <div><span className="text-muted-foreground">In Transit</span> <span className="font-bold text-blue-600">{stats.inTransit}</span></div>
+        <div><span className="text-muted-foreground">In Transit</span> <span className="font-bold text-foreground">{stats.inTransit}</span></div>
         <div className="h-4 w-px bg-border" />
-        <div><span className="text-muted-foreground">Customs</span> <span className="font-bold text-orange-600">{stats.inCustoms}</span></div>
+        <div><span className="text-muted-foreground">Customs</span> <span className="font-bold text-foreground">{stats.inCustoms}</span></div>
         <div className="h-4 w-px bg-border" />
-        <div><span className="text-muted-foreground">Delivered</span> <span className="font-bold text-green-600">{stats.delivered}</span></div>
+        <div><span className="text-muted-foreground">Delivered</span> <span className="font-bold text-foreground">{stats.delivered}</span></div>
         <div className="h-4 w-px bg-border" />
         <Link
           href="/operations/material-supply"
-          className="flex items-center gap-1.5 font-semibold text-blue-600 hover:underline"
+          className="flex items-center gap-1.5 font-semibold text-primary hover:underline"
         >
           <Ship className="h-3.5 w-3.5" />
           Material Supply &amp; Reorder

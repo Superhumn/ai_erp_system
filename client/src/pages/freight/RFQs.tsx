@@ -515,12 +515,12 @@ export default function RFQs() {
                     <div className="space-y-2">
                       <Label>Commercial Invoice</Label>
                       <Input type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xlsx" onChange={(e) => setPendingFiles({ ...pendingFiles, invoice: e.target.files?.[0] || null })} />
-                      {pendingFiles.invoice && <p className="text-xs text-green-600">✓ {pendingFiles.invoice.name}</p>}
+                      {pendingFiles.invoice && <p className="text-xs text-muted-foreground">✓ {pendingFiles.invoice.name}</p>}
                     </div>
                     <div className="space-y-2">
                       <Label>Packing List</Label>
                       <Input type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xlsx" onChange={(e) => setPendingFiles({ ...pendingFiles, packing: e.target.files?.[0] || null })} />
-                      {pendingFiles.packing && <p className="text-xs text-green-600">✓ {pendingFiles.packing.name}</p>}
+                      {pendingFiles.packing && <p className="text-xs text-muted-foreground">✓ {pendingFiles.packing.name}</p>}
                     </div>
                   </div>
                   <p className="text-xs text-muted-foreground">Carriers require a commercial invoice and packing list with every quote request</p>

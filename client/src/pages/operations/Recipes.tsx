@@ -22,6 +22,38 @@ function extractSpreadsheetId(input: string): string {
   return match ? match[1] : trimmed;
 }
 
+// Recipe import fields the user maps their sheet columns onto. Keys must match
+// the server's ColumnKey values (see server/recipeSheetImport.ts).
+const RECIPE_IMPORT_FIELDS: { key: string; label: string; hint?: string }[] = [
+  { key: "recipeName", label: "Recipe name", hint: "groups rows into recipes" },
+  { key: "recipeId", label: "Recipe ID", hint: "optional" },
+  { key: "category", label: "Category", hint: "beef, pork, chicken…" },
+  { key: "ingredient", label: "Ingredient", hint: "ingredient name" },
+  { key: "ingredientSku", label: "Ingredient SKU", hint: "optional" },
+  { key: "quantity", label: "Quantity (g)", hint: "g / kg / lb / oz" },
+  { key: "quantityDry", label: "Dry quantity (g)", hint: "optional" },
+  { key: "procedure", label: "Procedure / step", hint: "instruction text" },
+];
+
+type ImportColumnMap = Record<string, number>;
+
+/** Parse a CSV/TSV/XLSX file into a 2D array of rows (header row first). */
+async function parseFileToRows(file: File): Promise<unknown[][]> {
+  const name = file.name.toLowerCase();
+  const workbook =
+    name.endsWith(".xlsx") || name.endsWith(".xls")
+      ? XLSX.read(await file.arrayBuffer(), { type: "array", raw: false })
+      : XLSX.read(await file.text(), { type: "string", raw: false });
+  const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+  if (!firstSheet) throw new Error("No sheets found in the file.");
+  return XLSX.utils.sheet_to_json<unknown[]>(firstSheet, {
+    header: 1,
+    defval: "",
+    raw: false,
+    blankrows: false,
+  });
+}
+
 export default function Recipes() {
   const { user } = useAuth();
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -128,74 +160,125 @@ export default function Recipes() {
     return m;
   }, [shares]);
 
-  // --- Import from Google Sheet ---
+  // --- Import recipes (Google Sheet or uploaded file), with column mapping ---
+  const utils = trpc.useUtils();
   const [importOpen, setImportOpen] = useState(false);
   const [importSheet, setImportSheet] = useState("");
   const [importRange, setImportRange] = useState("");
   const [importDefaultName, setImportDefaultName] = useState("");
-  const importFromSheet = trpc.recipes.importFromGoogleSheet.useMutation({
-    onSuccess: (res) => {
-      toast.success(
-        `Imported ${res.recipesCreated} recipe(s), ${res.linesCreated} line(s), ${res.ingredientsCreated} new ingredient(s).`,
-      );
-      res.warnings?.slice(0, 4).forEach((w) => toast.warning(w));
-      setImportOpen(false);
-      setImportSheet("");
-      setImportRange("");
-      setImportDefaultName("");
-      refetch();
-    },
-    onError: (err) => toast.error(err.message),
-  });
-
-  // --- Import from an uploaded CSV/XLSX file (no Google account needed) ---
   const [importFile, setImportFile] = useState<File | null>(null);
-  const importFromRows = trpc.recipes.importFromRows.useMutation({
-    onSuccess: (res) => {
-      toast.success(
-        `Imported ${res.recipesCreated} recipe(s), ${res.linesCreated} line(s), ${res.ingredientsCreated} new ingredient(s).`,
-      );
-      res.warnings?.slice(0, 4).forEach((w) => toast.warning(w));
-      setImportOpen(false);
-      setImportFile(null);
-      setImportDefaultName("");
-      refetch();
-    },
+  const [loadingColumns, setLoadingColumns] = useState(false);
+  // Set once columns are loaded → drives the mapping step of the dialog.
+  const [mapping, setMapping] = useState<{
+    source: "file" | "sheet";
+    headers: string[];
+    sampleRows: string[][];
+    columnMap: ImportColumnMap;
+    rows?: unknown[][]; // file source only (full rows incl. header)
+    spreadsheetId?: string; // sheet source only
+    range?: string;
+  } | null>(null);
+
+  const resetImport = () => {
+    setImportOpen(false);
+    setMapping(null);
+    setImportFile(null);
+    setImportSheet("");
+    setImportRange("");
+    setImportDefaultName("");
+  };
+
+  const onImportSuccess = (res: {
+    recipesCreated: number;
+    linesCreated: number;
+    ingredientsCreated: number;
+    warnings?: string[];
+  }) => {
+    toast.success(
+      `Imported ${res.recipesCreated} recipe(s), ${res.linesCreated} line(s), ${res.ingredientsCreated} new ingredient(s).`,
+    );
+    res.warnings?.slice(0, 4).forEach((w) => toast.warning(w));
+    resetImport();
+    refetch();
+  };
+
+  const importFromSheet = trpc.recipes.importFromGoogleSheet.useMutation({
+    onSuccess: onImportSuccess,
     onError: (err) => toast.error(err.message),
   });
+  const importFromRows = trpc.recipes.importFromRows.useMutation({
+    onSuccess: onImportSuccess,
+    onError: (err) => toast.error(err.message),
+  });
+  const importing = importFromSheet.isPending || importFromRows.isPending;
 
-  // Parse the selected file into a 2D array (header row first) in the browser,
-  // then hand the rows to the server importer — same format as the Sheet import.
-  const handleFileImport = async () => {
+  // Load a file's columns in the browser, then ask the server to suggest a
+  // mapping so the user can review/adjust it before importing.
+  const loadFileColumns = async () => {
     if (!importFile) return;
+    setLoadingColumns(true);
     try {
-      const name = importFile.name.toLowerCase();
-      const workbook =
-        name.endsWith(".xlsx") || name.endsWith(".xls")
-          ? XLSX.read(await importFile.arrayBuffer(), { type: "array", raw: false })
-          : XLSX.read(await importFile.text(), { type: "string", raw: false });
-      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-      if (!firstSheet) {
-        toast.error("No sheets found in the file.");
-        return;
-      }
-      const rows = XLSX.utils.sheet_to_json<unknown[]>(firstSheet, {
-        header: 1,
-        defval: "",
-        raw: false,
-        blankrows: false,
-      });
+      const rows = await parseFileToRows(importFile);
       if (rows.length < 2) {
         toast.error("The file needs a header row plus at least one data row.");
         return;
       }
-      importFromRows.mutate({
-        rows: rows as any[][],
-        defaultRecipeName: importDefaultName.trim() || undefined,
-      });
-    } catch (err) {
+      const headers = (rows[0] as unknown[]).map((h) => String(h ?? ""));
+      const sampleRows = rows.slice(1, 6).map((r) => (r as unknown[]).map((c) => String(c ?? "")));
+      const columnMap = await utils.recipes.suggestImportMapping.fetch({ headers });
+      setMapping({ source: "file", headers, sampleRows, columnMap, rows });
+    } catch (err: any) {
       console.error("Recipe file parse error:", err);
-      toast.error("Could not read the file. Export it as CSV or XLSX and try again.");
+      toast.error(err?.message || "Could not read the file. Export it as CSV or XLSX and try again.");
+    } finally {
+      setLoadingColumns(false);
+    }
+  };
+
+  // Read a Google Sheet's columns (+ suggested mapping) for the mapping step.
+  const loadSheetColumns = async () => {
+    const spreadsheetId = extractSpreadsheetId(importSheet);
+    if (!spreadsheetId) return;
+    const range = importRange.trim() || undefined;
+    setLoadingColumns(true);
+    try {
+      const res = await utils.recipes.previewGoogleSheet.fetch({ spreadsheetId, range });
+      if (!res.headers.length) {
+        toast.error("No header row found in that sheet/range.");
+        return;
+      }
+      setMapping({
+        source: "sheet",
+        headers: res.headers,
+        sampleRows: res.sampleRows,
+        columnMap: res.suggestedMapping,
+        spreadsheetId,
+        range,
+      });
+    } catch (err: any) {
+      toast.error(err?.message || "Could not read the spreadsheet.");
+    } finally {
+      setLoadingColumns(false);
+    }
+  };
+
+  const mappedIngredientOrProcedure =
+    !!mapping && ((mapping.columnMap.ingredient ?? -1) >= 0 || (mapping.columnMap.procedure ?? -1) >= 0);
+  const hasRecipeNameColumn = !!mapping && (mapping.columnMap.recipeName ?? -1) >= 0;
+
+  const runImport = () => {
+    if (!mapping || !mappedIngredientOrProcedure) return;
+    const columnMapping = mapping.columnMap;
+    const defaultRecipeName = importDefaultName.trim() || undefined;
+    if (mapping.source === "file") {
+      importFromRows.mutate({ rows: mapping.rows as any[][], columnMapping, defaultRecipeName });
+    } else {
+      importFromSheet.mutate({
+        spreadsheetId: mapping.spreadsheetId!,
+        range: mapping.range,
+        columnMapping,
+        defaultRecipeName,
+      });
     }
   };
 
@@ -521,83 +604,70 @@ export default function Recipes() {
       <Dialog
         open={importOpen}
         onOpenChange={(open) => {
-          setImportOpen(open);
-          if (!open) setImportFile(null);
+          if (!open) resetImport();
+          else setImportOpen(open);
         }}
       >
-        <DialogContent>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Import recipe formulations</DialogTitle>
             <DialogDescription>
-              Use a header row with columns like{" "}
-              <span className="font-mono text-xs">Recipe</span>,{" "}
-              <span className="font-mono text-xs">Ingredient</span>,{" "}
-              <span className="font-mono text-xs">Quantity (g)</span>, and optionally{" "}
-              <span className="font-mono text-xs">SKU</span>,{" "}
-              <span className="font-mono text-xs">Category</span>,{" "}
-              <span className="font-mono text-xs">Procedure</span>. Imported recipes are
-              private to you until you grant access.
+              {mapping
+                ? "Match each recipe field to a column from your sheet. We've guessed the mapping — adjust anything that's off. You need at least an Ingredient or a Procedure column."
+                : "Load your columns from a file or Google Sheet, then map them to recipe fields. Column titles don't need to match exactly. Imported recipes are private to you until you grant access."}
             </DialogDescription>
           </DialogHeader>
 
-          <Tabs defaultValue="file" className="pt-2">
-            <TabsList className="w-full">
-              <TabsTrigger value="file" className="flex-1">
-                <FileUp className="h-4 w-4" /> Upload file
-              </TabsTrigger>
-              <TabsTrigger value="sheet" className="flex-1">
-                <Upload className="h-4 w-4" /> Google Sheet
-              </TabsTrigger>
-            </TabsList>
+          {!mapping ? (
+            <Tabs defaultValue="file" className="pt-2">
+              <TabsList className="w-full">
+                <TabsTrigger value="file" className="flex-1">
+                  <FileUp className="h-4 w-4" /> Upload file
+                </TabsTrigger>
+                <TabsTrigger value="sheet" className="flex-1">
+                  <Upload className="h-4 w-4" /> Google Sheet
+                </TabsTrigger>
+              </TabsList>
 
-            {/* Upload a CSV/XLSX file — parsed in the browser, no Google needed. */}
-            <TabsContent value="file" className="space-y-3">
-              <div className="space-y-1">
-                <Label>CSV or XLSX file</Label>
-                <Input
-                  type="file"
-                  accept=".csv,.tsv,.xlsx,.xls"
-                  onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
-                />
-                {importFile && (
-                  <p className="text-xs text-muted-foreground">
-                    Selected: <span className="font-medium">{importFile.name}</span>{" "}
-                    ({(importFile.size / 1024).toFixed(1)} KB)
-                  </p>
-                )}
-              </div>
-              <div className="space-y-1">
-                <Label>Default recipe name (optional)</Label>
-                <Input
-                  placeholder="Used when there's no Recipe column"
-                  value={importDefaultName}
-                  onChange={(e) => setImportDefaultName(e.target.value)}
-                />
-              </div>
-              <p className="text-xs text-muted-foreground">
-                The file is read in your browser — no Google account required. Only the
-                first sheet is imported.
-              </p>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setImportOpen(false)}>Cancel</Button>
-                <Button disabled={!importFile || importFromRows.isPending} onClick={handleFileImport}>
-                  {importFromRows.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Import
-                </Button>
-              </DialogFooter>
-            </TabsContent>
+              {/* Upload a CSV/XLSX file — parsed in the browser, no Google needed. */}
+              <TabsContent value="file" className="space-y-3">
+                <div className="space-y-1">
+                  <Label>CSV or XLSX file</Label>
+                  <Input
+                    type="file"
+                    accept=".csv,.tsv,.xlsx,.xls"
+                    onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
+                  />
+                  {importFile && (
+                    <p className="text-xs text-muted-foreground">
+                      Selected: <span className="font-medium">{importFile.name}</span>{" "}
+                      ({(importFile.size / 1024).toFixed(1)} KB)
+                    </p>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  The file is read in your browser — no Google account required. Only the
+                  first sheet is used.
+                </p>
+                <DialogFooter>
+                  <Button variant="outline" onClick={resetImport}>Cancel</Button>
+                  <Button disabled={!importFile || loadingColumns} onClick={loadFileColumns}>
+                    {loadingColumns && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Load columns
+                  </Button>
+                </DialogFooter>
+              </TabsContent>
 
-            {/* Import from a Google Sheet by URL/ID (requires connected Google account). */}
-            <TabsContent value="sheet" className="space-y-3">
-              <div className="space-y-1">
-                <Label>Google Sheet URL or ID</Label>
-                <Input
-                  placeholder="https://docs.google.com/spreadsheets/d/…"
-                  value={importSheet}
-                  onChange={(e) => setImportSheet(e.target.value)}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
+              {/* Import from a Google Sheet by URL/ID (requires connected Google account). */}
+              <TabsContent value="sheet" className="space-y-3">
+                <div className="space-y-1">
+                  <Label>Google Sheet URL or ID</Label>
+                  <Input
+                    placeholder="https://docs.google.com/spreadsheets/d/…"
+                    value={importSheet}
+                    onChange={(e) => setImportSheet(e.target.value)}
+                  />
+                </div>
                 <div className="space-y-1">
                   <Label>Range (optional)</Label>
                   <Input
@@ -606,36 +676,104 @@ export default function Recipes() {
                     onChange={(e) => setImportRange(e.target.value)}
                   />
                 </div>
+                <p className="text-xs text-muted-foreground">
+                  The sheet must be accessible by your connected Google account.
+                </p>
+                <DialogFooter>
+                  <Button variant="outline" onClick={resetImport}>Cancel</Button>
+                  <Button disabled={!importSheet.trim() || loadingColumns} onClick={loadSheetColumns}>
+                    {loadingColumns && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Load columns
+                  </Button>
+                </DialogFooter>
+              </TabsContent>
+            </Tabs>
+          ) : (
+            <div className="space-y-3 pt-1">
+              <div className="rounded-md border bg-muted/40 p-2 text-xs text-muted-foreground">
+                Found <strong>{mapping.headers.length}</strong> column
+                {mapping.headers.length === 1 ? "" : "s"} in{" "}
+                {mapping.source === "file" ? "your file" : "the sheet"}. Pick which column feeds
+                each field (<span className="text-muted-foreground">— None —</span> to skip).
+              </div>
+
+              <div className="border rounded-lg divide-y max-h-72 overflow-y-auto">
+                {RECIPE_IMPORT_FIELDS.map((field) => {
+                  const selected = mapping.columnMap[field.key] ?? -1;
+                  const sample =
+                    selected >= 0
+                      ? mapping.sampleRows.map((r) => r[selected]).find((v) => v && v.trim() !== "")
+                      : undefined;
+                  const required = field.key === "ingredient" || field.key === "procedure";
+                  return (
+                    <div key={field.key} className="flex items-center gap-3 p-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium truncate">
+                          {field.label}
+                          {required && <span className="text-amber-600"> *</span>}
+                        </div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          {sample != null && sample !== ""
+                            ? `e.g. ${sample}`
+                            : field.hint ?? ""}
+                        </div>
+                      </div>
+                      <span className="text-muted-foreground text-xs shrink-0">→</span>
+                      <select
+                        value={selected}
+                        onChange={(e) =>
+                          setMapping((m) =>
+                            m
+                              ? { ...m, columnMap: { ...m.columnMap, [field.key]: Number(e.target.value) } }
+                              : m,
+                          )
+                        }
+                        className="text-sm border rounded-md px-2 py-1 bg-background w-48 shrink-0"
+                      >
+                        <option value={-1}>— None —</option>
+                        {mapping.headers.map((h, i) => (
+                          <option key={i} value={i}>
+                            {h || `Column ${i + 1}`}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {!mappedIngredientOrProcedure && (
+                <p className="text-xs text-amber-600">
+                  Map at least an <strong>Ingredient</strong> or a <strong>Procedure</strong> column
+                  to continue.
+                </p>
+              )}
+
+              {!hasRecipeNameColumn && (
                 <div className="space-y-1">
-                  <Label>Default recipe name (optional)</Label>
+                  <Label>Default recipe name</Label>
                   <Input
-                    placeholder="Used when no Recipe column"
+                    placeholder="Used because no Recipe column is mapped"
                     value={importDefaultName}
                     onChange={(e) => setImportDefaultName(e.target.value)}
                   />
+                  <p className="text-xs text-muted-foreground">
+                    Without a Recipe column, all rows are grouped into one recipe with this name.
+                  </p>
                 </div>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                The sheet must be accessible by your connected Google account.
-              </p>
+              )}
+
               <DialogFooter>
-                <Button variant="outline" onClick={() => setImportOpen(false)}>Cancel</Button>
-                <Button
-                  disabled={!importSheet.trim() || importFromSheet.isPending}
-                  onClick={() =>
-                    importFromSheet.mutate({
-                      spreadsheetId: extractSpreadsheetId(importSheet),
-                      range: importRange.trim() || undefined,
-                      defaultRecipeName: importDefaultName.trim() || undefined,
-                    })
-                  }
-                >
-                  {importFromSheet.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                <Button variant="outline" onClick={() => setMapping(null)} disabled={importing}>
+                  Back
+                </Button>
+                <Button disabled={!mappedIngredientOrProcedure || importing} onClick={runImport}>
+                  {importing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   Import
                 </Button>
               </DialogFooter>
-            </TabsContent>
-          </Tabs>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

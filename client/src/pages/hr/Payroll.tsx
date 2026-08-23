@@ -56,10 +56,10 @@ export default function Payroll() {
   });
 
   const typeColors: Record<string, string> = {
-    full_time: "bg-blue-500/10 text-blue-600",
-    part_time: "bg-green-500/10 text-green-600",
-    contractor: "bg-purple-500/10 text-purple-600",
-    intern: "bg-amber-500/10 text-amber-600",
+    full_time: "bg-primary/10 text-primary",
+    part_time: "bg-muted text-foreground",
+    contractor: "bg-muted text-muted-foreground",
+    intern: "bg-muted text-muted-foreground",
   };
 
   // Calculate summary stats
@@ -94,7 +94,7 @@ export default function Payroll() {
               <Users className="h-4 w-4 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Active Employees</span>
             </div>
-            <div className="text-xl font-semibold tracking-[-0.02em] mt-2">{activeEmployees.length}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] mt-2 font-display tabular-nums">{activeEmployees.length}</div>
           </CardContent>
         </Card>
         <Card>
@@ -103,7 +103,7 @@ export default function Payroll() {
               <DollarSign className="h-4 w-4 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Annual Payroll</span>
             </div>
-            <div className="text-xl font-semibold tracking-[-0.02em] mt-2">{formatCurrency(totalSalary.toString())}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] mt-2 font-display tabular-nums">{formatCurrency(totalSalary.toString())}</div>
           </CardContent>
         </Card>
         <Card>
@@ -112,7 +112,7 @@ export default function Payroll() {
               <TrendingUp className="h-4 w-4 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Avg. Salary</span>
             </div>
-            <div className="text-xl font-semibold tracking-[-0.02em] mt-2">{formatCurrency(avgSalary.toString())}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] mt-2 font-display tabular-nums">{formatCurrency(avgSalary.toString())}</div>
           </CardContent>
         </Card>
         <Card>
@@ -121,7 +121,7 @@ export default function Payroll() {
               <Wallet className="h-4 w-4 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Monthly Payroll</span>
             </div>
-            <div className="text-xl font-semibold tracking-[-0.02em] mt-2">{formatCurrency((Number(totalSalary) / 12).toString())}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] mt-2 font-display tabular-nums">{formatCurrency((Number(totalSalary) / 12).toString())}</div>
           </CardContent>
         </Card>
       </div>

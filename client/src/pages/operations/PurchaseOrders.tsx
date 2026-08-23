@@ -430,12 +430,12 @@ export default function PurchaseOrders() {
                         <span className="font-medium">{poPreview.vendorName}</span>
                       </div>
                       {poPreview.suggested && (
-                        <p className="text-xs text-amber-600">
+                        <p className="text-xs text-foreground font-semibold">
                           ⚠️ Default vendor suggested. Material not found in inventory.
                         </p>
                       )}
                       {poPreview.isPriceEstimated && (
-                        <p className="text-xs text-amber-600">
+                        <p className="text-xs text-foreground font-semibold">
                           ⚠️ Price not available. Please update manually after creation.
                         </p>
                       )}
@@ -490,7 +490,7 @@ export default function PurchaseOrders() {
                 <Button
                   onClick={() => handleCreateFromText(true)}
                   disabled={!poPreview || createFromText.isPending}
-                  className="bg-green-600 hover:bg-green-700"
+                  className="bg-primary hover:bg-primary/90"
                 >
                   {createFromText.isPending && activeAction === 'email' && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                   <Send className="h-4 w-4 mr-2" />
@@ -628,7 +628,7 @@ export default function PurchaseOrders() {
                                   size="sm"
                                   onClick={() => removeLineItem(index)}
                                 >
-                                  <Trash2 className="h-4 w-4 text-red-500" />
+                                  <Trash2 className="h-4 w-4 text-muted-foreground" />
                                 </Button>
                               </TableCell>
                             </TableRow>
@@ -824,7 +824,7 @@ export default function PurchaseOrders() {
                             {autoLinkMutation.isPending && (autoLinkMutation.variables as { vendorId: number } | undefined)?.vendorId === vendor?.id ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
                             ) : (
-                              <MessageCircle className="h-4 w-4 text-muted-foreground hover:text-green-600" />
+                              <MessageCircle className="h-4 w-4 text-muted-foreground hover:text-primary" />
                             )}
                           </Button>
                           <DropdownMenu>

@@ -1,4 +1,9 @@
-import { invokeLLM, Tool, Message } from "./_core/llm";
+import { invokeLLM, invokeLLMStream, Tool, Message, InvokeResult } from "./_core/llm";
+import type { AIAgentResponse, AIAgentAction, AgentStreamEvent } from "@shared/aiChat";
+
+// Re-exported for existing server importers; the canonical definitions live in
+// shared/ so the client can type streamed responses without importing this module.
+export type { AIAgentResponse, AIAgentAction, AgentStreamEvent } from "@shared/aiChat";
 import { getDb, createWorkOrder, createFreightRfq } from "./db";
 import { sendEmail, formatEmailHtml } from "./_core/email";
 import { getValidGoogleToken } from "./routers/middleware";
@@ -53,22 +58,8 @@ export interface AIAgentContext {
   executingErrand?: boolean;
 }
 
-export interface AIAgentResponse {
-  message: string;
-  actions?: AIAgentAction[];
-  data?: Record<string, any>;
-  suggestions?: string[];
-  /** True when `message` is a proposed plan awaiting user approval (plan-first mode). */
-  isPlan?: boolean;
-}
-
-export interface AIAgentAction {
-  type: string;
-  description: string;
-  status: "pending" | "completed" | "failed";
-  result?: any;
-  error?: string;
-}
+// AIAgentResponse and AIAgentAction are defined in shared/aiChat.ts (imported +
+// re-exported above) so the client chat surfaces can share them.
 
 // ============================================
 // TOOL DEFINITIONS FOR AI AGENT
@@ -2157,11 +2148,11 @@ User's role: ${ctx.userRole}. User: ${ctx.userName}.`;
   };
 }
 
-export async function processAIAgentRequest(
+async function buildAgentMessages(
   message: string,
   conversationHistory: Message[],
-  ctx: AIAgentContext
-): Promise<AIAgentResponse> {
+  ctx: AIAgentContext,
+): Promise<Message[]> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
@@ -2239,11 +2230,19 @@ Examples:
 - "What's our banking activity?" → query_system(question, module="banking")
 - "Give me an overview of the business" → query_system(question, module="general")`;
 
-  const messages: Message[] = [
+  return [
     { role: "system", content: systemPrompt },
     ...conversationHistory,
     { role: "user", content: message },
   ];
+}
+
+export async function processAIAgentRequest(
+  message: string,
+  conversationHistory: Message[],
+  ctx: AIAgentContext
+): Promise<AIAgentResponse> {
+  const messages = await buildAgentMessages(message, conversationHistory, ctx);
 
   const actions: AIAgentAction[] = [];
   let finalResponse = "";
@@ -2380,6 +2379,217 @@ Examples:
     actions: actions.length > 0 ? actions : undefined,
     data: Object.keys(data).length > 0 ? data : undefined,
     suggestions,
+  };
+}
+
+// ============================================
+// STREAMING VARIANT
+// ============================================
+
+// AgentStreamEvent is defined in shared/aiChat.ts (imported + re-exported above).
+
+// Friendly, present-tense labels for the status chip shown while a tool runs.
+const TOOL_STATUS_LABELS: Record<string, string> = {
+  create_purchase_order: "Creating purchase order…",
+  manage_order: "Updating order…",
+  manage_freight: "Arranging freight…",
+  track_items: "Updating shipment…",
+  update_inventory: "Updating inventory…",
+  manage_vendor: "Updating vendor…",
+  manage_customer: "Updating customer…",
+  manage_copacker: "Updating co-packer…",
+  send_email: "Sending email…",
+  draft_email: "Drafting email…",
+  search_inbox: "Searching the inbox…",
+  read_email: "Reading email…",
+  search_google_drive: "Searching Google Drive…",
+  generate_report: "Generating report…",
+  create_task: "Creating task…",
+  plan_errand: "Preparing a plan…",
+  manage_calendar: "Updating the calendar…",
+  run_ai_analytics: "Running analytics…",
+  query_crm: "Checking the CRM…",
+  query_system: "Looking that up…",
+  analyze_data: "Analyzing data…",
+};
+function statusLabelForTool(toolName: string): string {
+  return TOOL_STATUS_LABELS[toolName] ?? `Running ${toolName.replace(/_/g, " ")}…`;
+}
+
+/**
+ * Streaming counterpart to `processAIAgentRequest`. Runs the same iterative
+ * tool-calling loop, but drives each turn with `invokeLLMStream` so the answer
+ * types out token-by-token, and yields status/action events as tools run. The
+ * final `done` event carries the exact same payload as the non-streaming version
+ * so callers can finalize identically.
+ *
+ * Pass `opts.signal` (from a Stop button) to abort generation mid-stream.
+ */
+export async function* processAIAgentRequestStream(
+  message: string,
+  conversationHistory: Message[],
+  ctx: AIAgentContext,
+  opts: { signal?: AbortSignal } = {},
+): AsyncGenerator<AgentStreamEvent, void, void> {
+  const messages = await buildAgentMessages(message, conversationHistory, ctx);
+
+  const actions: AIAgentAction[] = [];
+  let finalResponse = "";
+  const data: Record<string, any> = {};
+  let iterations = 0;
+  const maxIterations = 8;
+  // Web search is enabled unless the endpoint rejects it (then disabled + retried),
+  // matching the non-streaming path so the agent keeps its live-lookup ability.
+  let webSearchEnabled = true;
+
+  while (iterations < maxIterations) {
+    iterations++;
+    // Honor a mid-flight Stop: don't start another LLM turn once aborted.
+    if (opts.signal?.aborted) return;
+
+    // Stream this turn. Text tokens are forwarded live; the generator's return
+    // value is the aggregated result (identical shape to invokeLLM) so the
+    // tool-call handling below is unchanged from the non-streaming path.
+    let turnText = "";
+    let result: InvokeResult | undefined;
+    let streamedAny = false;
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        for await (const chunk of invokeLLMStream({
+          messages,
+          tools: AI_TOOLS,
+          toolChoice: "auto",
+          signal: opts.signal,
+          ...(webSearchEnabled ? { webSearch: true } : {}),
+        })) {
+          if (chunk.type === "text") {
+            streamedAny = true;
+            turnText += chunk.delta;
+            yield { type: "token", text: chunk.delta };
+          } else {
+            result = chunk.result;
+          }
+        }
+        break; // turn streamed successfully
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // Retry once without web search only if the endpoint specifically rejected
+        // it AND nothing has streamed yet this turn (so tokens can't double up).
+        if (attempt === 0 && webSearchEnabled && !streamedAny && /web[_ ]?search/i.test(msg)) {
+          webSearchEnabled = false;
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    if (!result) break; // defensive: stream produced no result
+
+    const responseMessage = result.choices[0].message;
+
+    if (responseMessage.tool_calls && responseMessage.tool_calls.length > 0) {
+      // This turn was a tool-calling step, not the answer. Drop any preamble text
+      // it streamed so the user doesn't keep "let me check…" as the result.
+      if (streamedAny) yield { type: "reset" };
+
+      messages.push({
+        role: "assistant",
+        content: typeof responseMessage.content === "string" ? responseMessage.content : "",
+        tool_calls: responseMessage.tool_calls,
+      });
+
+      for (const toolCall of responseMessage.tool_calls) {
+        // If the user pressed Stop, halt before starting any further tool call.
+        // A tool already in flight will finish (individual tools don't take an
+        // abort signal), but no additional side effects (creating POs, sending
+        // email, etc.) are started after Stop.
+        if (opts.signal?.aborted) return;
+        const toolName = toolCall.function.name;
+        yield { type: "status", label: statusLabelForTool(toolName) };
+
+        let toolArgs: any;
+        try {
+          toolArgs = JSON.parse(toolCall.function.arguments);
+        } catch (parseError: any) {
+          const action: AIAgentAction = {
+            type: toolName,
+            description: `Executing ${toolName}`,
+            status: "failed",
+            error: `Invalid arguments: ${parseError.message}`,
+          };
+          actions.push(action);
+          yield { type: "action", action };
+          messages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: JSON.stringify({ error: `Invalid tool arguments: ${parseError.message}` }),
+          });
+          continue;
+        }
+
+        const action: AIAgentAction = {
+          type: toolName,
+          description: `Executing ${toolName}`,
+          status: "pending",
+        };
+        try {
+          const toolResult = await executeTool(toolName, toolArgs, ctx);
+          action.status = "completed";
+          action.result = toolResult;
+          data[toolName] = toolResult;
+          messages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: JSON.stringify(toolResult),
+          });
+        } catch (error: any) {
+          action.status = "failed";
+          action.error = error.message;
+          messages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: JSON.stringify({ error: error.message }),
+          });
+        }
+        actions.push(action);
+        yield { type: "action", action };
+      }
+    } else {
+      // No more tool calls — the text already streamed IS the final answer.
+      finalResponse =
+        turnText || (typeof responseMessage.content === "string" ? responseMessage.content : "");
+      // If the model returned text without streaming deltas (shouldn't normally
+      // happen), emit it once so the client still shows an answer.
+      if (!turnText && finalResponse) yield { type: "token", text: finalResponse };
+      break;
+    }
+  }
+
+  // If we hit max iterations without a written answer, summarize (non-streamed).
+  if (iterations >= maxIterations && !finalResponse) {
+    const summaryResponse = await invokeLLM({
+      messages: [
+        ...messages,
+        { role: "user", content: "Please provide a summary of what you've done so far." },
+      ],
+    });
+    const summaryContent = summaryResponse.choices[0]?.message?.content;
+    finalResponse =
+      typeof summaryContent === "string" ? summaryContent : "I've completed the requested operations.";
+    yield { type: "token", text: finalResponse };
+  }
+
+  const suggestions = generateSuggestions(message, actions, data);
+
+  yield {
+    type: "done",
+    response: {
+      message: finalResponse,
+      actions: actions.length > 0 ? actions : undefined,
+      data: Object.keys(data).length > 0 ? data : undefined,
+      suggestions,
+    },
   };
 }
 

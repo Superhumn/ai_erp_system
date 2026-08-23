@@ -30,7 +30,7 @@ export default function LegalAI() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold flex items-center gap-2">
-          <Brain className="h-8 w-8 text-indigo-600" />
+          <Brain className="h-8 w-8 text-primary" />
           Legal AI Analytics
         </h1>
         <p className="text-muted-foreground mt-1">
@@ -132,7 +132,7 @@ export default function LegalAI() {
 
                   {contractMutation.data.missingClauses.length > 0 && (
                     <div>
-                      <h4 className="font-medium mb-2 flex items-center gap-1"><AlertTriangle className="h-4 w-4 text-orange-500" /> Missing Clauses</h4>
+                      <h4 className="font-medium mb-2 flex items-center gap-1"><AlertTriangle className="h-4 w-4 text-foreground" /> Missing Clauses</h4>
                       <ul className="list-disc pl-5 text-sm space-y-1">
                         {contractMutation.data.missingClauses.map((c, i) => <li key={i}>{c}</li>)}
                       </ul>

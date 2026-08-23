@@ -712,7 +712,7 @@ export function SpreadsheetTable<T extends { id: number | string }>({
                             variant="ghost"
                             size="icon-sm"
                             onClick={commitNewRow}
-                            className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                            className="text-primary hover:text-primary/80 hover:bg-primary/10"
                           >
                             <CheckCircle className="h-4 w-4" />
                           </Button>

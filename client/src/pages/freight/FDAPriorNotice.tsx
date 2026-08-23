@@ -74,10 +74,10 @@ const emptyEntry: PriorNoticeEntry = {
 };
 
 const statusColors: Record<string, string> = {
-  draft: "bg-gray-500/10 text-gray-600",
-  ready: "bg-blue-500/10 text-blue-600",
-  submitted: "bg-amber-500/10 text-amber-600",
-  confirmed: "bg-green-500/10 text-green-600",
+  draft: "bg-muted text-muted-foreground",
+  ready: "bg-primary/10 text-primary",
+  submitted: "bg-muted text-foreground",
+  confirmed: "bg-muted text-foreground font-semibold",
 };
 
 export default function FDAPriorNotice() {

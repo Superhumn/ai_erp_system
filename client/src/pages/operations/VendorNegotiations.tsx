@@ -201,43 +201,43 @@ export default function VendorNegotiations() {
             <Handshake className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.total || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{stats?.total || 0}</div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Active</CardTitle>
-            <MessageSquare className="h-4 w-4 text-blue-600" />
+            <MessageSquare className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.active || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{stats?.active || 0}</div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Completed</CardTitle>
-            <Target className="h-4 w-4 text-green-600" />
+            <Target className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.completed || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{stats?.completed || 0}</div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Rejected</CardTitle>
-            <Clock className="h-4 w-4 text-red-600" />
+            <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.rejected || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">{stats?.rejected || 0}</div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Est. Savings</CardTitle>
-            <DollarSign className="h-4 w-4 text-green-600" />
+            <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">
+            <div className="text-xl font-semibold tracking-[-0.02em] font-display tabular-nums">
               ${(stats?.totalEstimatedSavings || 0).toFixed(0)}
             </div>
           </CardContent>
@@ -322,14 +322,14 @@ export default function VendorNegotiations() {
                           </td>
                           <td className="px-1.5 py-0.5 text-right">
                             {neg.targetUnitPrice ? (
-                              <span className="text-green-600">
+                              <span className="text-foreground">
                                 ${parseFloat(neg.targetUnitPrice).toFixed(2)}
                               </span>
                             ) : "-"}
                           </td>
                           <td className="px-1.5 py-0.5 text-right">
                             {neg.estimatedSavings ? (
-                              <span className="text-green-600 font-medium">
+                              <span className="text-foreground font-medium">
                                 ${parseFloat(neg.estimatedSavings).toFixed(0)}
                               </span>
                             ) : "-"}
@@ -419,13 +419,13 @@ export default function VendorNegotiations() {
                           </div>
                           <div>
                             <p className="text-muted-foreground">Target Price</p>
-                            <p className="font-medium text-green-600">
+                            <p className="font-medium text-foreground">
                               {neg.targetUnitPrice ? `$${parseFloat(neg.targetUnitPrice).toFixed(2)}` : "N/A"}
                             </p>
                           </div>
                           <div>
                             <p className="text-muted-foreground">Est. Savings</p>
-                            <p className="font-medium text-green-600">
+                            <p className="font-medium text-foreground">
                               {neg.estimatedSavings ? `$${parseFloat(neg.estimatedSavings).toFixed(0)}` : "N/A"}
                             </p>
                           </div>
@@ -670,7 +670,7 @@ export default function VendorNegotiations() {
                     </div>
                     <div>
                       <p className="text-muted-foreground mb-1">Target</p>
-                      <p className="text-green-600">Price: {selectedDetail.negotiation.targetUnitPrice ? `$${parseFloat(selectedDetail.negotiation.targetUnitPrice).toFixed(2)}` : "N/A"}</p>
+                      <p className="text-foreground">Price: {selectedDetail.negotiation.targetUnitPrice ? `$${parseFloat(selectedDetail.negotiation.targetUnitPrice).toFixed(2)}` : "N/A"}</p>
                       <p>
                         Terms:{" "}
                         {selectedDetail.negotiation.targetPaymentTerms
@@ -784,7 +784,7 @@ export default function VendorNegotiations() {
                       {selectedDetail.rounds.map((round: any) => (
                         <div
                           key={round.id}
-                          className={`p-3 rounded border ${round.direction === "outbound" ? "border-blue-200 bg-blue-50/50" : "border-gray-200 bg-gray-50/50"}`}
+                          className={`p-3 rounded border ${round.direction === "outbound" ? "border-primary/20 bg-primary/5" : "border-border bg-muted/30"}`}
                         >
                           <div className="flex items-center justify-between mb-1">
                             <div className="flex items-center gap-2">

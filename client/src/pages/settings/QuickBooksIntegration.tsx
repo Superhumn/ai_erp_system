@@ -195,7 +195,7 @@ export default function QuickBooksIntegration() {
                           </TableCell>
                           <TableCell>
                             {account ? (
-                              <Badge variant="default" className="gap-1 bg-green-600 text-white">
+                              <Badge variant="default" className="gap-1 bg-primary/10 text-primary">
                                 <Check className="h-3 w-3" />
                                 Configured
                               </Badge>
@@ -275,7 +275,7 @@ export default function QuickBooksIntegration() {
               <div className="space-y-4">
                 <div className="flex items-center justify-between p-4 border rounded-lg">
                   <div className="flex items-center gap-3">
-                    <DollarSign className="h-5 w-5 text-green-600" />
+                    <DollarSign className="h-5 w-5 text-muted-foreground" />
                     <div>
                       <p className="font-medium">Chart of Accounts</p>
                       <p className="text-sm text-muted-foreground">
@@ -283,12 +283,12 @@ export default function QuickBooksIntegration() {
                       </p>
                     </div>
                   </div>
-                  <Badge variant="default" className="bg-green-600 text-white">Active</Badge>
+                  <Badge variant="default" className="bg-primary/10 text-primary">Active</Badge>
                 </div>
 
                 <div className="flex items-center justify-between p-4 border rounded-lg">
                   <div className="flex items-center gap-3">
-                    <DollarSign className="h-5 w-5 text-blue-600" />
+                    <DollarSign className="h-5 w-5 text-muted-foreground" />
                     <div>
                       <p className="font-medium">Account Mappings</p>
                       <p className="text-sm text-muted-foreground">
@@ -296,7 +296,7 @@ export default function QuickBooksIntegration() {
                       </p>
                     </div>
                   </div>
-                  <Badge variant={accountMappings?.length ? "default" : "secondary"} className={accountMappings?.length ? "bg-green-600 text-white" : ""}>
+                  <Badge variant={accountMappings?.length ? "default" : "secondary"} className={accountMappings?.length ? "bg-primary/10 text-primary" : ""}>
                     {accountMappings?.length ? "Configured" : "Pending"}
                   </Badge>
                 </div>

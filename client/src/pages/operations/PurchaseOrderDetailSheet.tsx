@@ -754,7 +754,7 @@ function EditView({
                     <TableCell className="font-medium text-sm">{formatCurrency(it.totalAmount)}</TableCell>
                     <TableCell>
                       <Button type="button" variant="ghost" size="icon" onClick={() => removeItem(i)}>
-                        <Trash2 className="h-4 w-4 text-red-500" />
+                        <Trash2 className="h-4 w-4 text-destructive" />
                       </Button>
                     </TableCell>
                   </TableRow>

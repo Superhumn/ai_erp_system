@@ -59,22 +59,22 @@ const nodeIcons: Record<TreeNodeType, React.ComponentType<{ className?: string }
 
 // Status badge colors
 const statusColors: Record<string, string> = {
-  pending: "bg-yellow-500/20 text-yellow-500",
-  confirmed: "bg-blue-500/20 text-blue-500",
-  processing: "bg-purple-500/20 text-purple-500",
-  shipped: "bg-cyan-500/20 text-cyan-500",
-  delivered: "bg-green-500/20 text-green-500",
-  cancelled: "bg-red-500/20 text-red-500",
-  draft: "bg-gray-500/20 text-gray-400",
-  approved: "bg-green-500/20 text-green-500",
-  in_progress: "bg-blue-500/20 text-blue-500",
-  completed: "bg-green-500/20 text-green-500",
-  active: "bg-green-500/20 text-green-500",
-  hold: "bg-orange-500/20 text-orange-500",
-  expired: "bg-red-500/20 text-red-500",
-  open: "bg-yellow-500/20 text-yellow-500",
-  acknowledged: "bg-blue-500/20 text-blue-500",
-  resolved: "bg-green-500/20 text-green-500",
+  pending: "bg-muted text-muted-foreground",
+  confirmed: "bg-primary/10 text-primary",
+  processing: "bg-primary/10 text-primary",
+  shipped: "bg-primary/10 text-primary",
+  delivered: "bg-muted text-muted-foreground",
+  cancelled: "bg-[oklch(0.30_0.02_262)] text-white",
+  draft: "bg-muted text-muted-foreground",
+  approved: "bg-muted text-muted-foreground",
+  in_progress: "bg-primary/10 text-primary",
+  completed: "bg-muted text-muted-foreground",
+  active: "bg-primary/10 text-primary",
+  hold: "bg-muted text-foreground font-semibold",
+  expired: "bg-[oklch(0.30_0.02_262)] text-white",
+  open: "bg-muted text-muted-foreground",
+  acknowledged: "bg-primary/10 text-primary",
+  resolved: "bg-muted text-muted-foreground",
 };
 
 export default function CoreOperations() {
@@ -346,17 +346,17 @@ export default function CoreOperations() {
                   {alerts.map((alert) => (
                     <Card key={alert.id} className={cn(
                       "border-l-4",
-                      alert.severity === "critical" && "border-l-red-500",
-                      alert.severity === "warning" && "border-l-yellow-500",
-                      alert.severity === "info" && "border-l-blue-500"
+                      alert.severity === "critical" && "border-l-[oklch(0.30_0.02_262)]",
+                      alert.severity === "warning" && "border-l-foreground",
+                      alert.severity === "info" && "border-l-border"
                     )}>
                       <CardContent className="p-3">
                         <div className="flex items-start gap-2">
                           <AlertTriangle className={cn(
                             "h-4 w-4 mt-0.5",
-                            alert.severity === "critical" && "text-red-500",
-                            alert.severity === "warning" && "text-yellow-500",
-                            alert.severity === "info" && "text-blue-500"
+                            alert.severity === "critical" && "text-foreground",
+                            alert.severity === "warning" && "text-foreground",
+                            alert.severity === "info" && "text-muted-foreground"
                           )} />
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium truncate">{alert.title}</p>
@@ -400,7 +400,7 @@ export default function CoreOperations() {
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-                  <CheckCircle className="h-8 w-8 mb-2 text-green-500" />
+                  <CheckCircle className="h-8 w-8 mb-2 text-muted-foreground" />
                   <p className="text-sm">No open alerts</p>
                 </div>
               )}

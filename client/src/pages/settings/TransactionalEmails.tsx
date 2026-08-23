@@ -131,13 +131,13 @@ export default function TransactionalEmailsPage() {
   const getStatusBadge = (messageStatus: string) => {
     switch (messageStatus) {
       case "delivered":
-        return <Badge className="bg-green-500/10 text-green-500 border-green-500/20"><CheckCircle2 className="w-3 h-3 mr-1" /> Delivered</Badge>;
+        return <Badge className="bg-primary/10 text-primary border-primary/20"><CheckCircle2 className="w-3 h-3 mr-1" /> Delivered</Badge>;
       case "sent":
-        return <Badge className="bg-blue-500/10 text-blue-500 border-blue-500/20"><Send className="w-3 h-3 mr-1" /> Sent</Badge>;
+        return <Badge className="bg-muted text-foreground"><Send className="w-3 h-3 mr-1" /> Sent</Badge>;
       case "queued":
         return <Badge variant="secondary"><Clock className="w-3 h-3 mr-1" /> Queued</Badge>;
       case "sending":
-        return <Badge className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20"><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Sending</Badge>;
+        return <Badge className="bg-muted text-foreground font-semibold"><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Sending</Badge>;
       case "failed":
         return <Badge variant="destructive"><XCircle className="w-3 h-3 mr-1" /> Failed</Badge>;
       case "bounced":
@@ -145,7 +145,7 @@ export default function TransactionalEmailsPage() {
       case "dropped":
         return <Badge variant="destructive"><AlertCircle className="w-3 h-3 mr-1" /> Dropped</Badge>;
       case "deferred":
-        return <Badge className="bg-orange-500/10 text-orange-500 border-orange-500/20"><Clock className="w-3 h-3 mr-1" /> Deferred</Badge>;
+        return <Badge className="bg-muted text-foreground font-semibold"><Clock className="w-3 h-3 mr-1" /> Deferred</Badge>;
       default:
         return <Badge variant="outline">{messageStatus}</Badge>;
     }
@@ -177,37 +177,37 @@ export default function TransactionalEmailsPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Total</CardDescription>
-            <CardTitle className="text-2xl">{stats?.total || 0}</CardTitle>
+            <CardTitle className="text-2xl font-display tabular-nums">{stats?.total || 0}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Queued</CardDescription>
-            <CardTitle className="text-2xl text-yellow-500">{stats?.queued || 0}</CardTitle>
+            <CardTitle className="text-2xl font-display tabular-nums">{stats?.queued || 0}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Sent</CardDescription>
-            <CardTitle className="text-2xl text-blue-500">{stats?.sent || 0}</CardTitle>
+            <CardTitle className="text-2xl font-display tabular-nums">{stats?.sent || 0}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Delivered</CardDescription>
-            <CardTitle className="text-2xl text-green-500">{((stats as any)?.delivered) || 0}</CardTitle>
+            <CardTitle className="text-2xl font-display tabular-nums">{((stats as any)?.delivered) || 0}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Failed</CardDescription>
-            <CardTitle className="text-2xl text-red-500">{stats?.failed || 0}</CardTitle>
+            <CardTitle className="text-2xl font-display tabular-nums">{stats?.failed || 0}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Bounced</CardDescription>
-            <CardTitle className="text-2xl text-orange-500">{((stats as any)?.bounced) || 0}</CardTitle>
+            <CardTitle className="text-2xl font-display tabular-nums">{((stats as any)?.bounced) || 0}</CardTitle>
           </CardHeader>
         </Card>
       </div>
@@ -217,8 +217,8 @@ export default function TransactionalEmailsPage() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className={`p-2 rounded-lg ${status?.configured ? 'bg-green-500/10' : 'bg-yellow-500/10'}`}>
-                <Mail className={`w-5 h-5 ${status?.configured ? 'text-green-500' : 'text-yellow-500'}`} />
+              <div className={`p-2 rounded-lg ${status?.configured ? 'bg-primary/10' : 'bg-muted'}`}>
+                <Mail className={`w-5 h-5 ${status?.configured ? 'text-primary' : 'text-muted-foreground'}`} />
               </div>
               <div>
                 <CardTitle className="text-lg">Email Service Status</CardTitle>
@@ -226,7 +226,7 @@ export default function TransactionalEmailsPage() {
               </div>
             </div>
             {status?.configured ? (
-              <Badge className="bg-green-500/10 text-green-500 border-green-500/20">
+              <Badge className="bg-primary/10 text-primary border-primary/20">
                 <CheckCircle2 className="w-3 h-3 mr-1" /> Configured
               </Badge>
             ) : (
@@ -239,19 +239,19 @@ export default function TransactionalEmailsPage() {
         <CardContent>
           <div className="grid grid-cols-4 gap-4 text-sm">
             <div className="flex items-center gap-2">
-              {status?.configDetails?.hasApiKey ? <CheckCircle2 className="w-4 h-4 text-green-500" /> : <XCircle className="w-4 h-4 text-red-500" />}
+              {status?.configDetails?.hasApiKey ? <CheckCircle2 className="w-4 h-4 text-primary" /> : <XCircle className="w-4 h-4 text-foreground" />}
               <span>API Key</span>
             </div>
             <div className="flex items-center gap-2">
-              {status?.configDetails?.hasFromEmail ? <CheckCircle2 className="w-4 h-4 text-green-500" /> : <XCircle className="w-4 h-4 text-red-500" />}
+              {status?.configDetails?.hasFromEmail ? <CheckCircle2 className="w-4 h-4 text-primary" /> : <XCircle className="w-4 h-4 text-foreground" />}
               <span>From Email</span>
             </div>
             <div className="flex items-center gap-2">
-              {status?.configDetails?.hasReplyTo ? <CheckCircle2 className="w-4 h-4 text-green-500" /> : <AlertCircle className="w-4 h-4 text-yellow-500" />}
+              {status?.configDetails?.hasReplyTo ? <CheckCircle2 className="w-4 h-4 text-primary" /> : <AlertCircle className="w-4 h-4 text-muted-foreground" />}
               <span>Reply-To (optional)</span>
             </div>
             <div className="flex items-center gap-2">
-              {status?.configDetails?.hasWebhookSecret ? <CheckCircle2 className="w-4 h-4 text-green-500" /> : <AlertCircle className="w-4 h-4 text-yellow-500" />}
+              {status?.configDetails?.hasWebhookSecret ? <CheckCircle2 className="w-4 h-4 text-primary" /> : <AlertCircle className="w-4 h-4 text-muted-foreground" />}
               <span>Webhook Secret (optional)</span>
             </div>
           </div>
@@ -384,7 +384,7 @@ export default function TransactionalEmailsPage() {
                       <TableCell className="max-w-xs truncate">{template.description}</TableCell>
                       <TableCell>
                         {template.isActive ? (
-                          <Badge className="bg-green-500/10 text-green-500 border-green-500/20">Active</Badge>
+                          <Badge className="bg-primary/10 text-primary border-primary/20">Active</Badge>
                         ) : (
                           <Badge variant="secondary">Inactive</Badge>
                         )}
@@ -407,7 +407,7 @@ export default function TransactionalEmailsPage() {
                               }
                             }}
                           >
-                            <Trash2 className="w-4 h-4 text-red-500" />
+                            <Trash2 className="w-4 h-4 text-destructive" />
                           </Button>
                         </div>
                       </TableCell>
@@ -695,8 +695,8 @@ export default function TransactionalEmailsPage() {
 
               {viewingMessage.errorJson && (
                 <div>
-                  <Label className="text-muted-foreground text-red-500">Error Details</Label>
-                  <pre className="mt-2 p-4 bg-red-50 rounded-lg text-sm overflow-auto max-h-48 text-red-600">
+                  <Label className="text-foreground font-semibold">Error Details</Label>
+                  <pre className="mt-2 p-4 bg-muted rounded-lg text-sm overflow-auto max-h-48 text-foreground">
                     {JSON.stringify(viewingMessage.errorJson, null, 2)}
                   </pre>
                 </div>

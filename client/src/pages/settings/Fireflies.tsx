@@ -99,15 +99,15 @@ export default function FirefliesPage() {
   const statusBadge = (status: string) => {
     switch (status) {
       case "pending":
-        return <Badge variant="outline" className="text-yellow-600 border-yellow-300">Pending</Badge>;
+        return <Badge variant="outline" className="text-muted-foreground">Pending</Badge>;
       case "fully_processed":
-        return <Badge className="bg-green-100 text-green-700">Processed</Badge>;
+        return <Badge className="bg-primary/10 text-primary">Processed</Badge>;
       case "contacts_created":
-        return <Badge className="bg-blue-100 text-blue-700">Contacts Created</Badge>;
+        return <Badge className="bg-muted text-foreground">Contacts Created</Badge>;
       case "tasks_created":
-        return <Badge className="bg-purple-100 text-purple-700">Tasks Created</Badge>;
+        return <Badge className="bg-muted text-foreground">Tasks Created</Badge>;
       case "project_created":
-        return <Badge className="bg-indigo-100 text-indigo-700">Project Created</Badge>;
+        return <Badge className="bg-muted text-foreground">Project Created</Badge>;
       case "error":
         return <Badge variant="destructive">Error</Badge>;
       default:
@@ -211,36 +211,36 @@ export default function FirefliesPage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 {config?.configured ? (
-                  <CheckCircle2 className="h-5 w-5 text-green-500" />
+                  <CheckCircle2 className="h-5 w-5 text-primary" />
                 ) : (
-                  <XCircle className="h-5 w-5 text-gray-400" />
+                  <XCircle className="h-5 w-5 text-muted-foreground" />
                 )}
                 Connection Settings
               </CardTitle>
               <CardDescription>
                 Connect your Fireflies.ai account to automatically sync meeting transcripts.
                 Get your API key from{" "}
-                <a href="https://app.fireflies.ai/integrations/custom/fireflies" target="_blank" rel="noopener noreferrer" className="text-blue-500 underline">
+                <a href="https://app.fireflies.ai/integrations/custom/fireflies" target="_blank" rel="noopener noreferrer" className="text-primary underline">
                   Fireflies Integrations
                 </a>.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               {config?.configured && (
-                <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-                  <div className="flex items-center gap-2 text-green-700 font-medium">
+                <div className="p-4 bg-primary/10 border border-primary/20 rounded-lg">
+                  <div className="flex items-center gap-2 text-primary font-medium">
                     <CheckCircle2 className="h-4 w-4" />
                     Connected to Fireflies.ai
                   </div>
                   {(config as any).config && (
-                    <div className="mt-2 text-sm text-green-600">
+                    <div className="mt-2 text-sm text-muted-foreground">
                       {((config as any).config as any).firefliesUserName && (
                         <span>Account: {((config as any).config as any).firefliesUserName} ({((config as any).config as any).firefliesEmail})</span>
                       )}
                     </div>
                   )}
                   {(config as any).lastSyncAt && (
-                    <div className="mt-1 text-sm text-green-600">
+                    <div className="mt-1 text-sm text-muted-foreground">
                       Last synced: {formatDate((config as any).lastSyncAt)}
                     </div>
                   )}
@@ -388,13 +388,13 @@ export default function FirefliesPage() {
                               {(meeting as any).processingStatus !== 'pending' && (
                                 <div className="text-xs space-y-0.5">
                                   {((meeting as any).autoCreatedContactCount ?? 0) > 0 && (
-                                    <div className="text-blue-600">{(meeting as any).autoCreatedContactCount} contacts</div>
+                                    <div className="text-muted-foreground">{(meeting as any).autoCreatedContactCount} contacts</div>
                                   )}
                                   {((meeting as any).autoCreatedTaskCount ?? 0) > 0 && (
-                                    <div className="text-purple-600">{(meeting as any).autoCreatedTaskCount} tasks</div>
+                                    <div className="text-muted-foreground">{(meeting as any).autoCreatedTaskCount} tasks</div>
                                   )}
                                   {(meeting as any).autoCreatedProjectId && (
-                                    <div className="text-indigo-600">1 project</div>
+                                    <div className="text-muted-foreground">1 project</div>
                                   )}
                                 </div>
                               )}

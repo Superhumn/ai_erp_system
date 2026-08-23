@@ -25,11 +25,11 @@ const blankForm = {
 };
 
 const statusColors: Record<string, string> = {
-  planning: "bg-gray-500/10 text-gray-600",
-  active: "bg-emerald-500/10 text-emerald-600",
-  paused: "bg-amber-500/10 text-amber-600",
-  closed: "bg-blue-500/10 text-blue-600",
-  cancelled: "bg-red-500/10 text-red-600",
+  planning: "bg-muted text-muted-foreground",
+  active: "bg-primary/10 text-primary",
+  paused: "bg-muted text-foreground",
+  closed: "bg-muted text-muted-foreground",
+  cancelled: "bg-[oklch(0.30_0.02_262)] text-white",
 };
 
 export default function FundraisingCampaigns() {
@@ -240,8 +240,8 @@ export default function FundraisingCampaigns() {
                     <span className="text-muted-foreground">${raised.toLocaleString()} / ${target.toLocaleString()}</span>
                     <span className="font-medium">{progress.toFixed(1)}%</span>
                   </div>
-                  <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                    <div className="bg-green-600 h-2 rounded-full transition-all" style={{ width: `${progress}%` }} />
+                  <div className="w-full bg-muted rounded-full h-2">
+                    <div className="bg-primary h-2 rounded-full transition-all" style={{ width: `${progress}%` }} />
                   </div>
 
                   <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
