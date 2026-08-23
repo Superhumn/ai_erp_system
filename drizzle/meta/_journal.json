@@ -257,42 +257,42 @@
 		{
 			"idx": 36,
 			"version": "5",
-			"when": 1777039200000,
+			"when": 1777651300000,
 			"tag": "0036_crm_contact_dedup_indexes",
 			"breakpoints": true
 		},
 		{
 			"idx": 37,
 			"version": "5",
-			"when": 1777651300000,
+			"when": 1777651400000,
 			"tag": "0036_data_room_live_financials",
 			"breakpoints": true
 		},
 		{
 			"idx": 38,
 			"version": "5",
-			"when": 1777651400000,
+			"when": 1777651500000,
 			"tag": "0037_investor_portal",
 			"breakpoints": true
 		},
 		{
 			"idx": 39,
 			"version": "5",
-			"when": 1777651500000,
+			"when": 1777651600000,
 			"tag": "0038_investor_portal_phase2",
 			"breakpoints": true
 		},
 		{
 			"idx": 40,
 			"version": "5",
-			"when": 1777651600000,
+			"when": 1777651700000,
 			"tag": "0039_pro_rata_indications",
 			"breakpoints": true
 		},
 		{
 			"idx": 41,
 			"version": "5",
-			"when": 1777651700000,
+			"when": 1777651800000,
 			"tag": "0041_fix_fundraising_campaigns_schema",
 			"breakpoints": true
 		},
@@ -423,9 +423,16 @@
 			"breakpoints": true
 		},
 		{
+			"idx": 60,
+			"version": "5",
+			"when": 1787300000000,
+			"tag": "0060_supply_chain_workflow_tables",
+			"breakpoints": true
+		},
+		{
 			"idx": 61,
 			"version": "5",
-			"when": 1787200100000,
+			"when": 1787300100000,
 			"tag": "0061_data_room_drive_sync_tables",
 			"breakpoints": true
 		}
