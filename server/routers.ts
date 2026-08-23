@@ -49,6 +49,7 @@ import { parseFreightQuoteEmail, parseFreightQuoteAttachment, mergeFreightExtrac
 import { ingestVendorQuoteEmail, parseVendorQuoteAttachment, parseVendorQuoteEmail } from "./vendorQuoteParser";
 import { computeResponsivenessForVendors, computeVendorResponsiveness, markStaleInvitationsNoResponse, responsivenessScoreFromMetrics } from "./vendorResponsiveness";
 import { deleteCurrencyRate, getFxRate, listCurrencyRates, upsertCurrencyRate } from "./currencyService";
+import { getCompanyWebSources, sourceCompanyContacts, sourceCompanyContactsBatch } from "./companyContactSourcing";
 import * as db from "./db";
 import { resolveScope } from "./_core/scope";
 import * as manufacturingDb from "./db/manufacturing";
@@ -1522,6 +1523,7 @@ export const appRouter = router({
         paymentTerms: z.number().optional(),
         defaultLeadTimeDays: z.number().optional(),
         taxId: z.string().optional(),
+        website: z.string().optional(),
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
@@ -1542,6 +1544,7 @@ export const appRouter = router({
         defaultLeadTimeDays: z.number().optional(),
         notes: z.string().optional(),
         whatsappNumber: z.string().optional(),
+        website: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
@@ -1602,6 +1605,63 @@ export const appRouter = router({
         await db.unlinkVendorContact(input.vendorId);
         await createAuditLog(ctx.user.id, "update", "vendor", input.vendorId, vendor.name, null, { contactId: null });
         return { success: true };
+      }),
+
+    /**
+     * Read this vendor's own website and fill in contact details from it.
+     *
+     * Only values found on a page served by the vendor's own domain are written,
+     * and only an own-domain email marks the record verified — see
+     * `server/companyWebsiteSource.ts`. Existing details are kept unless the
+     * caller explicitly asks to overwrite them.
+     */
+    sourceFromWebsite: opsProcedure
+      .input(z.object({
+        vendorId: z.number(),
+        website: z.string().optional(),
+        overwriteExisting: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const vendor = await db.getVendorById(input.vendorId);
+        if (!vendor) throw new TRPCError({ code: "NOT_FOUND", message: "Vendor not found" });
+        const result = await sourceCompanyContacts({
+          entityType: "vendor",
+          entityId: input.vendorId,
+          website: input.website,
+          overwriteExisting: input.overwriteExisting,
+          requestedBy: ctx.user.id,
+        });
+        await createAuditLog(
+          ctx.user.id, "update", "vendor", input.vendorId, vendor.name, null,
+          { contactSourcing: result.status, verified: result.verified, applied: result.applied },
+        );
+        return result;
+      }),
+
+    /** Every attempt to read this vendor's website, newest first. */
+    webSources: protectedProcedure
+      .input(z.object({ vendorId: z.number(), limit: z.number().min(1).max(100).optional() }))
+      .query(({ input }) => getCompanyWebSources("vendor", input.vendorId, input.limit)),
+
+    /**
+     * Re-source a batch of vendors. Serial by design — see
+     * `sourceCompanyContactsBatch`.
+     */
+    sourceFromWebsiteBatch: opsProcedure
+      .input(z.object({
+        vendorIds: z.array(z.number()).min(1).max(25),
+        overwriteExisting: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const summary = await sourceCompanyContactsBatch(
+          Array.from(new Set(input.vendorIds)).map(entityId => ({ entityType: "vendor" as const, entityId })),
+          { overwriteExisting: input.overwriteExisting, requestedBy: ctx.user.id },
+        );
+        await createAuditLog(
+          ctx.user.id, "update", "vendor", 0,
+          `Sourced contacts from ${input.vendorIds.length} vendor websites (${summary.verifiedCount} verified)`,
+        );
+        return summary;
       }),
 
     searchAlibaba: protectedProcedure
@@ -8653,6 +8713,17 @@ Be concise and helpful. Always give actionable guidance.`;
       }),
     
     // Carriers
+    /**
+     * Suggest carriers to consider for a shipment.
+     *
+     * The model names companies and their websites — that is a recall task it is
+     * good at. It is deliberately NOT asked for an email address, a phone number
+     * or a rating: those would be invented, and an invented address is one that
+     * gets an RFQ sent to a stranger. Contact details come from the carrier's own
+     * website afterwards (`carriers.addDiscovered`), and until they do the record
+     * stays `contactSource: 'discovered'`, which `rfqs.sendToCarriers` refuses to
+     * mail.
+     */
     discoverCarriers: protectedProcedure
       .input(z.object({
         origin: z.string().optional(),
@@ -8662,23 +8733,22 @@ Be concise and helpful. Always give actionable guidance.`;
         specialRequirements: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
-        const prompt = `You are a freight logistics expert. Find and suggest 8 real freight carriers/forwarders for this shipment:
+        const prompt = `You are a freight logistics expert. Suggest 8 real freight carriers/forwarders for this shipment:
 ${input.origin ? `Origin: ${input.origin}` : ''}
 ${input.destination ? `Destination: ${input.destination}` : ''}
 ${input.cargoType ? `Cargo: ${input.cargoType}` : ''}
 ${input.shippingMode ? `Mode: ${input.shippingMode}` : 'Any mode'}
 ${input.specialRequirements ? `Requirements: ${input.specialRequirements}` : ''}
 
-Return a JSON array of carrier objects with these fields:
-- name: company name (use real companies)
+Return a JSON array of carrier objects with these fields ONLY:
+- name: company name (real companies only)
 - type: "ocean"|"air"|"ground"|"rail"|"multimodal"
-- contactName: typical contact department
-- email: general inquiry email (use real public emails if known, otherwise format as info@domain.com)
-- phone: main phone number if known
 - country: HQ country
-- website: real website URL
-- notes: brief description of their specialty, fleet size, and why they're a good fit
-- rating: suggested rating 1-5 based on industry reputation
+- website: the company's real primary website domain (e.g. "maersk.com"). Omit this field entirely if you are not confident of the real domain.
+- notes: brief description of their specialty and why they're a good fit
+
+Do NOT return an email address, phone number or rating. If you do not know a
+company's real website, omit the website field rather than guessing one.
 
 ONLY return the JSON array, no other text.`;
 
@@ -8693,8 +8763,17 @@ ONLY return the JSON array, no other text.`;
         try {
           const text = typeof content === 'string' ? content : String(content);
           const jsonMatch = text.match(/\[[\s\S]*\]/);
-          const carriers = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
-          return { carriers: carriers.slice(0, 10) };
+          const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+          // Strip anything the model volunteered beyond the fields we asked for,
+          // so a stray "email" can never reach the client and be saved.
+          const carriers = (Array.isArray(parsed) ? parsed : []).slice(0, 10).map((c: any) => ({
+            name: typeof c?.name === 'string' ? c.name.trim() : '',
+            type: ['ocean', 'air', 'ground', 'rail', 'multimodal'].includes(c?.type) ? c.type : 'multimodal',
+            country: typeof c?.country === 'string' ? c.country.trim() : undefined,
+            website: typeof c?.website === 'string' ? c.website.trim() : undefined,
+            notes: typeof c?.notes === 'string' ? c.notes.trim() : undefined,
+          })).filter((c: any) => c.name);
+          return { carriers };
         } catch {
           return { carriers: [] };
         }
@@ -8743,8 +8822,170 @@ ONLY return the JSON array, no other text.`;
         }))
         .mutation(async ({ input, ctx }) => {
           const { id, ...data } = input;
-          await db.updateFreightCarrier(id, data);
+          // A person typing a contact detail is a real source, so an edit that
+          // supplies one lifts the record out of `discovered`. It does not claim
+          // website verification — that is only set by an own-domain page read.
+          const patch: Record<string, any> = { ...data };
+          if (data.email || data.phone) {
+            const existing = await db.getFreightCarrierById(id);
+            if (existing && existing.contactSource === 'discovered') {
+              patch.contactSource = 'manual';
+            }
+          }
+          await db.updateFreightCarrier(id, patch);
           await createAuditLog(ctx.user.id, 'update', 'freight_carrier', id);
+          return { success: true };
+        }),
+
+      /**
+       * Save a carrier the model suggested.
+       *
+       * Stored as `contactSource: 'discovered'` — a name and a website, nothing
+       * more — and then its own website is read for contact details. If that read
+       * turns up an email on the carrier's own domain the record is promoted to
+       * `website` and can be sent RFQs; otherwise it stays unverified and
+       * `rfqs.sendToCarriers` will refuse it until a person fills the details in.
+       */
+      addDiscovered: opsProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          type: z.enum(['ocean', 'air', 'ground', 'rail', 'multimodal']),
+          country: z.string().optional(),
+          website: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const created = await db.createFreightCarrier({
+            name: input.name,
+            type: input.type,
+            country: input.country,
+            website: input.website,
+            notes: input.notes,
+            contactSource: 'discovered',
+          });
+          await createAuditLog(ctx.user.id, 'create', 'freight_carrier', created.id, input.name);
+
+          if (!input.website) {
+            return {
+              id: created.id,
+              sourcing: null,
+              verified: false,
+              message: 'Saved without contact details. Add a website to source them, or enter them by hand.',
+            };
+          }
+
+          const sourcing = await sourceCompanyContacts({
+            entityType: 'freight_carrier',
+            entityId: created.id,
+            requestedBy: ctx.user.id,
+          });
+          return {
+            id: created.id,
+            sourcing,
+            verified: sourcing.verified,
+            message: sourcing.verified
+              ? `Contact details read from ${sourcing.source?.fetchedUrl ?? input.website}.`
+              : 'No contact address found on the carrier\'s own site — enter one by hand before sending an RFQ.',
+          };
+        }),
+
+      /**
+       * Read this carrier's own website and fill in contact details from it.
+       * Same rule as vendors: own-domain pages only, own-domain email verifies.
+       */
+      sourceFromWebsite: opsProcedure
+        .input(z.object({
+          carrierId: z.number(),
+          website: z.string().optional(),
+          overwriteExisting: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const carrier = await db.getFreightCarrierById(input.carrierId);
+          if (!carrier) throw new TRPCError({ code: 'NOT_FOUND', message: 'Carrier not found' });
+          const result = await sourceCompanyContacts({
+            entityType: 'freight_carrier',
+            entityId: input.carrierId,
+            website: input.website,
+            overwriteExisting: input.overwriteExisting,
+            requestedBy: ctx.user.id,
+          });
+          await createAuditLog(
+            ctx.user.id, 'update', 'freight_carrier', input.carrierId, carrier.name, null,
+            { contactSourcing: result.status, verified: result.verified, applied: result.applied },
+          );
+          return result;
+        }),
+
+      /** Every attempt to read this carrier's website, newest first. */
+      webSources: protectedProcedure
+        .input(z.object({ carrierId: z.number(), limit: z.number().min(1).max(100).optional() }))
+        .query(({ input }) => getCompanyWebSources('freight_carrier', input.carrierId, input.limit)),
+
+      sourceFromWebsiteBatch: opsProcedure
+        .input(z.object({
+          carrierIds: z.array(z.number()).min(1).max(25),
+          overwriteExisting: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const summary = await sourceCompanyContactsBatch(
+            Array.from(new Set(input.carrierIds)).map(entityId => ({
+              entityType: 'freight_carrier' as const, entityId,
+            })),
+            { overwriteExisting: input.overwriteExisting, requestedBy: ctx.user.id },
+          );
+          await createAuditLog(
+            ctx.user.id, 'update', 'freight_carrier', 0,
+            `Sourced contacts from ${input.carrierIds.length} carrier websites (${summary.verifiedCount} verified)`,
+          );
+          return summary;
+        }),
+
+      // ── CRM link, mirroring vendors.autoLinkContact / linkContact ──
+      autoLinkContact: opsProcedure
+        .input(z.object({ carrierId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const carrier = await db.getFreightCarrierById(input.carrierId);
+          if (!carrier) throw new TRPCError({ code: 'NOT_FOUND', message: 'Carrier not found' });
+          if (carrier.contactId) {
+            const contact = await db.getCrmContactById(carrier.contactId);
+            if (contact) return { contact, autoLinked: false };
+          }
+          const match = await db.findCrmContactForCarrier({
+            email: carrier.email,
+            phone: carrier.phone,
+          });
+          if (!match) return { contact: null, autoLinked: false };
+          await db.linkFreightCarrierContact(input.carrierId, match.id);
+          await createAuditLog(
+            ctx.user.id, 'update', 'freight_carrier', input.carrierId, carrier.name, null,
+            { contactId: match.id, autoLinked: true },
+          );
+          return { contact: match, autoLinked: true };
+        }),
+
+      linkContact: opsProcedure
+        .input(z.object({ carrierId: z.number(), contactId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const carrier = await db.getFreightCarrierById(input.carrierId);
+          if (!carrier) throw new TRPCError({ code: 'NOT_FOUND', message: 'Carrier not found' });
+          await db.linkFreightCarrierContact(input.carrierId, input.contactId);
+          await createAuditLog(
+            ctx.user.id, 'update', 'freight_carrier', input.carrierId, carrier.name, null,
+            { contactId: input.contactId },
+          );
+          return { success: true };
+        }),
+
+      unlinkContact: opsProcedure
+        .input(z.object({ carrierId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const carrier = await db.getFreightCarrierById(input.carrierId);
+          if (!carrier) throw new TRPCError({ code: 'NOT_FOUND', message: 'Carrier not found' });
+          await db.unlinkFreightCarrierContact(input.carrierId);
+          await createAuditLog(
+            ctx.user.id, 'update', 'freight_carrier', input.carrierId, carrier.name, null,
+            { contactId: null },
+          );
           return { success: true };
         }),
     }),
@@ -8848,12 +9089,34 @@ ONLY return the JSON array, no other text.`;
             freightInfo = await db.getSupplierFreightInfo(rfq.purchaseOrderId);
           }
           
-          const results = { sent: 0, failed: 0, emails: [] as any[] };
+          const results = { sent: 0, failed: 0, blocked: 0, emails: [] as any[] };
           
           for (const carrierId of input.carrierIds) {
             const carrier = await db.getFreightCarrierById(carrierId);
             if (!carrier || !carrier.email) {
               results.failed++;
+              results.emails.push({
+                carrierId,
+                carrierName: carrier?.name,
+                status: 'failed',
+                error: carrier ? 'No email address on this carrier' : 'Carrier not found',
+              });
+              continue;
+            }
+
+            // An address a model proposed is not an address. Until the carrier's
+            // own website (or a person) confirms it, sending an RFQ here means
+            // mailing our shipment details to whoever happens to own that
+            // mailbox. Refuse, and say what unblocks it.
+            if (carrier.contactSource === 'discovered') {
+              results.blocked++;
+              results.emails.push({
+                carrierId,
+                carrierName: carrier.name,
+                status: 'blocked',
+                error: 'Contact details are unverified — they came from a suggestion, not from the carrier. '
+                  + 'Source them from the carrier\'s website or enter them by hand before sending.',
+              });
               continue;
             }
             
@@ -8978,12 +9241,16 @@ Format the email professionally and request a response by ${rfq.quoteDueDate ? n
             });
           }
           
-          // Update RFQ status
-          await db.updateFreightRfq(input.rfqId, { status: 'sent' });
+          // Update RFQ status — but not if every carrier was refused, in which
+          // case nothing was sent and the RFQ is still waiting to go out.
+          if (results.sent > 0 || results.failed > 0) {
+            await db.updateFreightRfq(input.rfqId, { status: 'sent' });
+          }
           const emailConfigured = isEmailConfigured();
-          const auditMessage = emailConfigured 
+          const blockedNote = results.blocked > 0 ? `; ${results.blocked} blocked as unverified` : '';
+          const auditMessage = (emailConfigured 
             ? `Emails sent to ${results.sent} carriers` 
-            : `Email drafts created for ${results.sent + results.failed} carriers (SendGrid not configured)`;
+            : `Email drafts created for ${results.sent + results.failed} carriers (SendGrid not configured)`) + blockedNote;
           await createAuditLog(ctx.user.id, 'update', 'freight_rfq', input.rfqId, auditMessage);
           
           return { ...results, emailConfigured };
@@ -12612,6 +12879,26 @@ Provide your forecast in JSON format with the following structure:
             const vendor = await db.getVendorById(vendorId);
             if (!vendor || !vendor.email) {
               results.failed++;
+              results.emails.push({
+                vendorId,
+                vendorName: vendor?.name,
+                status: 'failed',
+                error: vendor ? 'No email address on this vendor' : 'Vendor not found',
+              });
+              continue;
+            }
+
+            // Same rule as carriers: an address nothing has confirmed is not an
+            // address to send an RFQ to.
+            if (vendor.contactSource === 'discovered') {
+              results.skipped++;
+              results.emails.push({
+                vendorId,
+                vendorName: vendor.name,
+                status: 'blocked',
+                error: 'Contact details are unverified — source them from the vendor\'s website '
+                  + 'or enter them by hand before sending.',
+              });
               continue;
             }
 
