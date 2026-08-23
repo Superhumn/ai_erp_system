@@ -53,6 +53,17 @@ describe("emailOnOwnDomain", () => {
   });
 });
 
+describe("isRoleAddress", () => {
+  it("recognises shared mailboxes, which rank below a named person", () => {
+    expect(isRoleAddress("info@acme-freight.com")).toBe(true);
+    expect(isRoleAddress("BOOKINGS@acme-freight.com")).toBe(true);
+  });
+
+  it("treats a named mailbox as a person", () => {
+    expect(isRoleAddress("j.smith@acme-freight.com")).toBe(false);
+  });
+});
+
 describe("isPlausibleEmail", () => {
   it("rejects image filenames that look like addresses", () => {
     expect(isPlausibleEmail("logo@2x.png")).toBe(false);
