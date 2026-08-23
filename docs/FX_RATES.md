@@ -26,8 +26,10 @@ is a claim an auditor can check against a public record. A mid-market snapshot
 from a trading API at an unrecorded moment is not. The once-a-day granularity is
 the feature.
 
-Set `FX_FEED_URL` to point at a mirror or self-hosted instance. It is fetched
-through `server/webFetchGuard.ts` either way — an env var is configuration, not
+Set `FX_FEED_URL` (typed on `ENV` in `server/_core/env.ts`) to point at a mirror
+or self-hosted instance; empty means the built-in default, which lives next to
+`parseFeedResponse` because the two are coupled. It is fetched through
+`server/webFetchGuard.ts` either way — an env var is configuration, not
 a trusted input, so it gets the same SSRF check, size cap and timeout as any
 other third-party URL.
 
@@ -63,8 +65,10 @@ USD -> CNY 7.24
 1 EUR = 1.1667 USD
 ```
 
-Blank lines and `#` comments are skipped. Commas and tabs are separators, never
-decimal marks — `25,400` is rejected rather than guessed at.
+Blank lines are skipped, and anything from a `#` to the end of a line is a
+comment — whole-line or trailing, since annotating a pasted list is the normal
+case. Commas and tabs are separators, never decimal marks: `25,400` is rejected
+rather than guessed at, because reading it as `25` would be silent and wrong.
 
 `currency.importPaste` is all-or-nothing: if any line cannot be read, nothing is
 imported and the error names the line. Importing 8 of 10 rates and mentioning it
@@ -95,7 +99,7 @@ or an external scheduler calls the route.
 | File | Covers |
 |---|---|
 | `server/fxFeed.test.ts` | 19 — response parsing and every refusal path |
-| `server/currencyService.test.ts` | 18 — code normalization, day bucketing, paste parsing |
+| `server/currencyService.test.ts` | 21 — code normalization, day bucketing, paste parsing |
 
 The fetch itself is not covered end to end: this sandbox blocks outbound HTTPS,
 so the feed has never been called against a real response from here. `testFeed`

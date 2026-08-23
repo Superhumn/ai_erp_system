@@ -50,7 +50,7 @@ import { parseFreightQuoteEmail, parseFreightQuoteAttachment, mergeFreightExtrac
 import { ingestVendorQuoteEmail, parseVendorQuoteAttachment, parseVendorQuoteEmail } from "./vendorQuoteParser";
 import { computeResponsivenessForVendors, computeVendorResponsiveness, markStaleInvitationsNoResponse, responsivenessScoreFromMetrics } from "./vendorResponsiveness";
 import { deleteCurrencyRate, getFxRate, listCurrencyRates, parseRatePaste, upsertCurrencyRate } from "./currencyService";
-import { fetchFeedRates, feedBaseUrl, refreshFxRatesFromFeed, FX_FEED_SOURCE } from "./fxFeed";
+import { fetchFeedRates, feedBaseUrl, feedUrlIsOverridden, refreshFxRatesFromFeed, FX_FEED_SOURCE } from "./fxFeed";
 import { getCompanyWebSources, sourceCompanyContacts, sourceCompanyContactsBatch } from "./companyContactSourcing";
 import * as db from "./db";
 import { resolveScopeFromAccess, scopeAllows } from "./_core/scope";
@@ -13872,7 +13872,7 @@ Then rank all quotes by best leveled value (1 = best; quotes marked NOT COMPARAB
     feedConfig: protectedProcedure.query(() => ({
       url: feedBaseUrl(),
       source: FX_FEED_SOURCE,
-      configuredVia: process.env.FX_FEED_URL ? 'FX_FEED_URL' : 'default',
+      configuredVia: feedUrlIsOverridden() ? 'FX_FEED_URL' : 'default',
     })),
 
     /**
@@ -13956,13 +13956,18 @@ Then rank all quotes by best leveled value (1 = best; quotes marked NOT COMPARAB
           });
         }
 
+        // One timestamp for the whole paste. Letting each row default to "now"
+        // independently would split a paste that straddles UTC midnight across
+        // two different as-of days.
+        const asOf = input.asOf ?? new Date();
+
         const stored: Array<{ pair: string; rate: number }> = [];
         for (const row of parsed) {
           await upsertCurrencyRate({
             fromCurrency: row.fromCurrency!,
             toCurrency: row.toCurrency!,
             rate: row.rate!,
-            asOf: input.asOf,
+            asOf,
             source: 'manual',
             notes: input.notes,
             createdBy: ctx.user.id,

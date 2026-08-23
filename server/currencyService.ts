@@ -310,7 +310,8 @@ export interface ParsedRateLine {
  *   USD -> CNY 7.24
  *   1 USD = 7.24 CNY
  *
- * Blank lines and `#` comments are ignored. A line that cannot be read is
+ * Blank lines are skipped, and anything from a `#` to the end of a line is
+ * treated as a comment — whole-line or trailing. A line that cannot be read is
  * returned with an `error` rather than dropped, so the caller can show which
  * line was wrong instead of silently importing fewer rates than were pasted.
  */
@@ -324,12 +325,16 @@ export function parseRatePaste(
   const lines = String(text ?? "").split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i].trim();
-    if (!raw || raw.startsWith("#")) continue;
+    // A trailing note is common when someone annotates a pasted list
+    // ("CNY 7.24  # from the bank"), so strip from the first # rather than only
+    // skipping whole comment lines. No currency code or rate contains one.
+    const withoutComment = raw.split("#")[0].trim();
+    if (!withoutComment) continue;
 
     const entry: ParsedRateLine = { line: i + 1, raw };
     // Commas and tabs are separators here, never decimal marks — a pasted
     // "1,234.5" would be ambiguous, so it is rejected below rather than guessed.
-    const cleaned = raw.replace(/[,\t]+/g, " ").replace(/\s+/g, " ").trim();
+    const cleaned = withoutComment.replace(/[,\t]+/g, " ").replace(/\s+/g, " ").trim();
 
     let from: string | null = null;
     let to: string | null = null;

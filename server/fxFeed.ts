@@ -32,19 +32,30 @@ import { getDb } from "./db/connection";
 import { currencyRates } from "../drizzle/schema";
 import { normalizeCurrencyCode, startOfUtcDay, upsertCurrencyRate } from "./currencyService";
 import { safeFetchHtml, BlockedUrlError } from "./webFetchGuard";
+import { ENV } from "./_core/env";
 
 /** Provenance written to `currencyRates.source` for anything this module stores. */
 export const FX_FEED_SOURCE = "ecb_frankfurter";
 
 /**
- * Overridable so a deployment can point at a mirror or a self-hosted instance
- * without a code change. The URL is fetched through the SSRF guard either way —
- * an env var is still a configuration input, not a trusted one.
+ * The public Frankfurter host. Kept here rather than in env.ts because it is
+ * coupled to the response shape `parseFeedResponse` expects — changing one
+ * without the other is the bug this proximity is meant to prevent.
  */
-const DEFAULT_FEED_BASE = "https://api.frankfurter.dev/v1";
+export const DEFAULT_FEED_BASE = "https://api.frankfurter.dev/v1";
 
+/**
+ * Where the feed lives. `FX_FEED_URL` points a deployment at a mirror or
+ * self-hosted instance without a code change; the URL is fetched through the
+ * SSRF guard either way — an env var is configuration, not a trusted input.
+ */
 export function feedBaseUrl(): string {
-  return (process.env.FX_FEED_URL || DEFAULT_FEED_BASE).replace(/\/+$/, "");
+  return (ENV.fxFeedUrl || DEFAULT_FEED_BASE).replace(/\/+$/, "");
+}
+
+/** True when a deployment has overridden the feed URL. */
+export function feedUrlIsOverridden(): boolean {
+  return Boolean(ENV.fxFeedUrl);
 }
 
 /**

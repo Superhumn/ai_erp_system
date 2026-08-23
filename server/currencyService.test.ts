@@ -74,6 +74,25 @@ describe("parseRatePaste", () => {
     expect(rows.map(r => r.toCurrency)).toEqual(["CNY", "INR"]);
   });
 
+  it("strips a trailing comment from an otherwise valid line", () => {
+    // Annotating a pasted list is the normal case, not an edge case.
+    expect(ok("CNY 7.24  # rate the bank gave us", "USD")[0]).toMatchObject({
+      toCurrency: "CNY", rate: 7.24,
+    });
+    expect(ok("1 EUR = 1.1667 USD # ECB 2026-08-21")[0]).toMatchObject({
+      fromCurrency: "EUR", toCurrency: "USD", rate: 1.1667,
+    });
+  });
+
+  it("keeps the original line in `raw` so the user sees what they pasted", () => {
+    const rows = parseRatePaste("CNY 7.24  # from the bank", { base: "USD" });
+    expect(rows[0].raw).toBe("CNY 7.24  # from the bank");
+  });
+
+  it("skips a line that is only a comment after stripping", () => {
+    expect(parseRatePaste("   #  just a note", {})).toEqual([]);
+  });
+
   it("uppercases lowercase codes", () => {
     expect(ok("cny 7.24", "usd")[0]).toMatchObject({ fromCurrency: "USD", toCurrency: "CNY" });
   });
