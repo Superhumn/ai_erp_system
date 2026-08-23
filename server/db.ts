@@ -21,7 +21,7 @@ import {
   freightCarriers, freightRfqs, freightQuotes, freightEmails,
   customsClearances, customsDocuments, freightBookings, freightQuotesStandalone,
   inventoryTransfers, inventoryTransferItems,
-  teamInvitations, userPermissions,
+  teamInvitations, userPermissions, userEntityAccess,
   billOfMaterials, bomComponents, rawMaterials, bomVersionHistory,
   recipes, recipeLines, recipeIngredients,
   workOrders, workOrderMaterials, rawMaterialInventory, rawMaterialTransactions,
@@ -546,6 +546,30 @@ export async function getEntityAndDescendantCompanyIds(companyId: number): Promi
     .filter((n: number) => Number.isFinite(n));
 }
 
+// Multi-entity access (STEP 3): the entity ids a user is a member of (active rows only).
+// Empty result means "no explicit membership" — the scope resolver then falls back to the user's
+// single home entity + regionScope.
+export async function getUserEntityAccessCompanyIds(userId: number): Promise<number[]> {
+  const db = await getDb();
+  if (!db) return [];
+  try {
+    const rows = await db
+      .select({ companyId: userEntityAccess.companyId })
+      .from(userEntityAccess)
+      .where(and(eq(userEntityAccess.userId, userId), eq(userEntityAccess.isActive, true)));
+    return rows.map((r) => r.companyId);
+  } catch (err) {
+    // scopedProcedure calls this on every request. If the table isn't migrated yet, degrade
+    // gracefully to "no explicit membership" (→ legacy single-home/global resolution) rather than
+    // hard-failing every scoped endpoint. This preserves pre-STEP-3 behavior until db:push runs.
+    console.warn(
+      `[scope] getUserEntityAccessCompanyIds fell back to no-membership — is the user_entity_access ` +
+        `table migrated? Run pnpm db:push. Error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return [];
+  }
+}
+
 export async function createCompany(data: InsertCompany) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -710,20 +734,34 @@ export async function deleteCustomer(id: number) {
 // VENDOR MANAGEMENT
 // ============================================
 
-export async function getVendors(companyId?: number) {
+// Pass a request's `ctx.scope` to restrict to the caller's visible entities. `filters.companyId`
+// is an explicit filter for trusted internal callers (not a security boundary). Omit both for full
+// access. Scope and filter compose (AND) when both are given.
+export async function getVendors(scope?: Scope, filters?: { companyId?: number }) {
   const db = await getDb();
   if (!db) return [];
-  if (companyId) {
-    return db.select().from(vendors).where(eq(vendors.companyId, companyId)).orderBy(desc(vendors.createdAt));
+  const conds: any[] = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return []; // scoped user with no visible entities
+    conds.push(inArray(vendors.companyId, ids));
   }
-  return db.select().from(vendors).orderBy(desc(vendors.createdAt));
+  if (filters?.companyId != null) conds.push(eq(vendors.companyId, filters.companyId));
+  return conds.length
+    ? db.select().from(vendors).where(and(...conds)).orderBy(desc(vendors.createdAt))
+    : db.select().from(vendors).orderBy(desc(vendors.createdAt));
 }
 
-export async function getVendorById(id: number) {
+// Pass `ctx.scope` to enforce entity visibility: a vendor outside the caller's scope is reported
+// as not found (undefined) so cross-entity existence isn't leaked. Omit for internal callers.
+export async function getVendorById(id: number, scope?: Scope) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(vendors).where(eq(vendors.id, id)).limit(1);
-  return result[0];
+  const vendor = result[0];
+  if (!vendor) return undefined;
+  if (scope && !scopeAllows(scope, vendor.companyId)) return undefined;
+  return vendor;
 }
 
 export async function getVendorsByIds(ids: number[]) {
@@ -1122,26 +1160,38 @@ export async function getAccountByName(name: string, companyId?: number) {
 // SALES - ORDERS
 // ============================================
 
-export async function getOrders(filters?: { companyId?: number; status?: string; customerId?: number }) {
+// Pass a request's `ctx.scope` to restrict to the caller's visible entities. `filters` are
+// non-security refinements (status/customerId, and companyId for trusted internal callers).
+export async function getOrders(scope?: Scope, filters?: { companyId?: number; status?: string; customerId?: number }) {
   const db = await getDb();
   if (!db) return [];
-  
+
   const conditions = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return []; // scoped user with no visible entities
+    conditions.push(inArray(orders.companyId, ids));
+  }
   if (filters?.companyId) conditions.push(eq(orders.companyId, filters.companyId));
   if (filters?.status) conditions.push(eq(orders.status, filters.status as any));
   if (filters?.customerId) conditions.push(eq(orders.customerId, filters.customerId));
-  
+
   if (conditions.length > 0) {
     return db.select().from(orders).where(and(...conditions)).orderBy(desc(orders.createdAt));
   }
   return db.select().from(orders).orderBy(desc(orders.createdAt));
 }
 
-export async function getOrderById(id: number) {
+// Pass `ctx.scope` to enforce entity visibility: an order outside the caller's scope is reported
+// as not found (undefined). Omit for internal callers.
+export async function getOrderById(id: number, scope?: Scope) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
-  return result[0];
+  const order = result[0];
+  if (!order) return undefined;
+  if (scope && !scopeAllows(scope, order.companyId)) return undefined;
+  return order;
 }
 
 export async function getOrderByShopifyId(shopifyOrderId: string) {
@@ -1158,11 +1208,11 @@ export async function getProductByShopifyId(shopifyProductId: string) {
   return result[0];
 }
 
-export async function getOrderWithItems(id: number) {
+export async function getOrderWithItems(id: number, scope?: Scope) {
   const db = await getDb();
   if (!db) return undefined;
-  
-  const order = await getOrderById(id);
+
+  const order = await getOrderById(id, scope);
   if (!order) return undefined;
   
   const items = await db.select().from(orderItems).where(eq(orderItems.orderId, id));
