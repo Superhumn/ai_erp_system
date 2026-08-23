@@ -270,6 +270,12 @@ const blankInvestor = {
   type: "angel" as string, status: "lead" as string,
 };
 
+// Mirrors the server-side constraint on `crm.addCampaignInvestment.amount`.
+// Checked before the investor is created so a malformed amount can't leave a
+// CRM row behind with no link to the round.
+const AMOUNT_RE = /^\d+(\.\d{1,2})?$/;
+const AMOUNT_ERROR = "Amount must be a positive number with up to 2 decimals";
+
 // Investors linked to a single round, pulled from and added to the investor CRM.
 // New investors can be created inline here — they land in the CRM and, when an
 // amount is given, are linked to this round in the same step.
@@ -281,6 +287,9 @@ function RoundInvestorsDialog({ round, onClose }: { round: any; onClose: () => v
   const [amount, setAmount] = useState("");
   const [newInvestor, setNewInvestor] = useState({ ...blankInvestor });
   const [newAmount, setNewAmount] = useState("");
+  // Set once the CRM row exists but linking it to the round hasn't succeeded
+  // yet, so retrying links that investor instead of creating a duplicate.
+  const [createdId, setCreatedId] = useState<number | null>(null);
 
   // These run as chained awaits below, so success/error is reported by the
   // caller rather than in per-mutation callbacks (avoids double toasts).
@@ -292,6 +301,10 @@ function RoundInvestorsDialog({ round, onClose }: { round: any; onClose: () => v
   });
 
   const addExisting = async () => {
+    if (!AMOUNT_RE.test(amount.trim())) {
+      toast.error(AMOUNT_ERROR);
+      return;
+    }
     try {
       await add.mutateAsync({ campaignId: round.id, investorId: parseInt(investorId), amount });
       toast.success("Investor added to round");
@@ -307,21 +320,34 @@ function RoundInvestorsDialog({ round, onClose }: { round: any; onClose: () => v
     const name = newInvestor.name.trim();
     if (!name) return;
     const committed = newAmount.trim();
+    if (committed && !AMOUNT_RE.test(committed)) {
+      toast.error(AMOUNT_ERROR);
+      return;
+    }
     try {
-      const created = await createInvestor.mutateAsync({
-        name,
-        email: newInvestor.email.trim() || undefined,
-        company: newInvestor.company.trim() || undefined,
-        title: newInvestor.title.trim() || undefined,
-        type: newInvestor.type,
-        status: newInvestor.status,
-      });
+      let linkId = createdId;
+      if (linkId == null) {
+        const created = await createInvestor.mutateAsync({
+          name,
+          email: newInvestor.email.trim() || undefined,
+          company: newInvestor.company.trim() || undefined,
+          title: newInvestor.title.trim() || undefined,
+          type: newInvestor.type,
+          status: newInvestor.status,
+        });
+        linkId = created.id;
+        setCreatedId(linkId);
+        // Surface the new record in the picker right away, so it stays
+        // reachable even if the link below fails.
+        refetchInvestors();
+      }
       if (committed) {
-        await add.mutateAsync({ campaignId: round.id, investorId: created.id, amount: committed });
+        await add.mutateAsync({ campaignId: round.id, investorId: linkId, amount: committed });
       }
       toast.success(committed ? `${name} added to your CRM and this round` : `${name} added to your CRM`);
       setNewInvestor({ ...blankInvestor });
       setNewAmount("");
+      setCreatedId(null);
       setMode("existing");
       refetchInvestors();
       refetch();
@@ -420,7 +446,10 @@ function RoundInvestorsDialog({ round, onClose }: { round: any; onClose: () => v
                   <Input
                     placeholder="Name *" aria-label="Investor name"
                     value={newInvestor.name}
-                    onChange={(e) => setNewInvestor({ ...newInvestor, name: e.target.value })}
+                    onChange={(e) => {
+                      setCreatedId(null);
+                      setNewInvestor({ ...newInvestor, name: e.target.value });
+                    }}
                   />
                   <Input
                     type="email" placeholder="Email" aria-label="Investor email"
