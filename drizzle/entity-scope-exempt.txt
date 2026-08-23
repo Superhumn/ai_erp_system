@@ -82,6 +82,7 @@ freightCostAllocations
 freightEmails
 freightQuotes
 fundraisingReminders
+fxRates
 googleOAuthTokens
 grantBidDocuments
 grantBidFieldMappings
@@ -97,6 +98,7 @@ ingredientQuoteRequests
 ingredientVendors
 intakeFormSubmissions
 intakeForms
+intercompanyLinks
 inventoryReservations
 inventoryTransactions
 inventoryTransferItems
@@ -130,6 +132,7 @@ poReceivingRecords
 proRataIndications
 productPriceTiers
 productRegionalSkus
+productSourcing
 productVolumeDiscounts
 projectMilestones
 projectTasks

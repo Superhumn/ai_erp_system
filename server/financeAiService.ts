@@ -202,7 +202,7 @@ export async function forecastRevenue(params?: {
   // Gather historical data
   const invoices = await db.getInvoices({ companyId: params?.companyId });
   const transactions = await db.getTransactions({ companyId: params?.companyId });
-  const orders = await db.getOrders({ companyId: params?.companyId });
+  const orders = await db.getOrders(undefined, { companyId: params?.companyId });
 
   // Aggregate by month
   const monthlyRevenue: Record<string, number> = {};
