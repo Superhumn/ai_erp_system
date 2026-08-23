@@ -1,5 +1,11 @@
 # Autonomous Vendor Quote Procurement Workflow
 
+> **See also:** [`QUOTE_NORMALIZATION.md`](./QUOTE_NORMALIZATION.md) — how an inbound
+> supplier reply is parsed into a quote, and how quotes are put on one comparable
+> basis (FX, Incoterms, MOQ, tooling amortization, freight) before anything ranks
+> them. The ranking described below as "price comparison" is the legacy
+> headline-price sort; landed cost is the basis awards should be defended on.
+
 ## Overview
 
 The Autonomous Vendor Quote Procurement Workflow is an AI-powered system that automates the entire vendor quote procurement process, from vendor selection to quote analysis and approval. The workflow integrates seamlessly with the existing ERP system and provides intelligent automation while maintaining human oversight for critical decisions.

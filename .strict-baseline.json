@@ -1,9 +1,9 @@
 {
   "version": 1,
-  "generatedAt": "2026-07-22",
-  "totalErrors": 20,
+  "generatedAt": "2026-08-21",
+  "totalErrors": 6,
   "files": {
     "client/src/pages/finance/FinancialReports.tsx": 1,
-    "server/routers.ts": 19
+    "server/routers.ts": 5
   }
 }
