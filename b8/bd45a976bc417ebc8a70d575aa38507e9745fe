@@ -1,0 +1,453 @@
+client/src/pages/operations/CoreOperations.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 62-77,349-351,357-359,403
+server/routers.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 18,20,50,647,651,810-812,7155-7200,11046-11048,11069-11072,11075-11112,11121,11126
+client/src/pages/AIAssistant.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 7,9,20-27,39-52,59-77,80-105,107-116,120-123,147,188,217-225,237,242,244-246,267,270-282
+client/src/pages/finance/FinanceAI.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 36,152-154,169,177,213,215,239-242
+client/src/pages/freight/CarrierQuotes.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 177-182
+client/src/pages/crm/CRMAdmin.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 166-171
+client/src/pages/hr/EquityReports.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 105-107,450,583,610,631,779,783,787,791,823
+client/src/pages/freight/control-tower/views/TodayView.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 1-81
+client/src/pages/legal/Contracts.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 122-127
+client/src/pages/Settings.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 52-55,188-189
+server/_core/index.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 510-527,538-546,730,734,739-748,750
+client/src/components/DocumentsCell.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 47,49-50
+server/_core/localAuth.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 6,14-24,26,29-34,38-39,60-61,63-67,69,72,75,77,81,90,92-93,150,171-172,181-185,189-195,204,213,237,264-266,268-272,281-289,291-308,419-420,422-432,434,444,535-536,553-568,594,614,646-647,652-653,658-671,676,678
+client/src/pages/operations/ProductionBatches.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 27-31
+client/src/pages/SupplierPortal.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 205,215,233,256,325,329,333,336,342
+client/src/pages/Code.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 295,623
+client/src/pages/sales/CustomerDetail.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 116-120,126-133,140-141,144
+ROUTERS_INDEX.md
+  s_8abb44e9c81370::t_a13cea3c777a93 138
+  s_c2bc34cc15eb7f::t_bf27a5cc0c8464 5,13-136,142-195,201-270
+client/src/pages/sales/CRMDashboard.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 100,113,126,139,213,215,247-249,277-279
+client/src/pages/operations/ProductDetail.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 64-67,73-77
+client/src/pages/finance/AccountsAndTransactions.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 50-54,58-63
+client/src/components/WhatsAppDrawer.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 102,128,137,150
+client/src/pages/freight/control-tower/lib/Mark.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 1-57
+client/src/pages/SOPs.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 778-790
+drizzle/manual/step2_10_marketing.sql
+  s_8abb44e9c81370::t_a13cea3c777a93 1-30
+client/public/freight-control-tower/lane-map.html
+  s_8abb44e9c81370::t_a13cea3c777a93 1-285
+drizzle/manual/step2_04_copacker.sql
+  s_8abb44e9c81370::t_a13cea3c777a93 1-20
+server/aiAgentService.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 1-6,61-62,2151,2154-2155,2233,2238-2245,2385-2592,2594
+  s_8abb44e9c81370::t_d4a2ecfd9726b5 2593,2595
+server/auth.register.test.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 1-187
+shared/freight-control-tower/fixtures.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 1-372
+client/src/pages/freight/control-tower/overlays/DocumentViewer.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 1-146
+drizzle/0056_auth_tokens_email_verified_user_region.sql
+  s_8abb44e9c81370::t_a13cea3c777a93 1-121
+client/src/pages/settings/QuickBooksIntegration.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 198,278,286,291,299
+client/src/components/ModuleErrorBoundary.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 39
+client/src/pages/operations/BOM.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 69,71,73,191-192,202-203,213-214,305
+client/src/main.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 9,97-100
+client/src/pages/ai/Recommendations.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 50-54
+drizzle/manual/step2_12_email.sql
+  s_8abb44e9c81370::t_a13cea3c777a93 1-15
+client/src/pages/hr/Payroll.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 59-62,97,106,115,124
+client/src/pages/freight/control-tower/ControlTower.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 1-293
+client/src/components/AutonomousAgentBar.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 102,106-107,127,131,135,150,161,164,176,179,202-203
+client/src/pages/edi/EDITransactions.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 43-51,174,210-211,215,275,277,461-463
+client/src/pages/operations/EmailInbox.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 67-75,358-361,388,393,436,462,464,528,588,621,718,741,793-795,809,820,1220
+client/src/pages/projects/InvestmentGrantChecklist.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 52-59,63-67,244,251,257,265,323,612,618,626,684
+.github/workflows/deploy-staging.yml
+  s_8abb44e9c81370::t_a13cea3c777a93 55-58,60-66,68-75
+client/src/pages/operations/DocumentImport.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 546,559,572,738,893,897,899
+client/src/pages/freight/control-tower/lib/paper.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 1-227
+client/src/pages/operations/InventoryCosting.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 164,178,190,192,196,210
+client/src/pages/sales/Customers.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 43-45,49-50,459,465,470,478
+client/src/pages/settings/TransactionalEmails.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 134,136,140,148,180,186,192,198,204,210,220-221,229,242,246,250,254,387,410,698-699
+server/_core/llm.test.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 12,38-205
+  s_8abb44e9c81370::t_d2c2f83b120776 206
+client/src/pages/freight/control-tower/lib/drawer.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 1-208
+client/src/pages/operations/ManufacturingHub.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 18-22,231,233,242,244,253,255
+client/src/pages/ops/FormFill.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 40
+client/src/pages/operations/ManufacturingAI.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 27,80,82,126,237
+scripts/seed-entities.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 1-105
+client/src/pages/settings/Integrations.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 234,247,251,299-300,308-309,317-318,330-331,343-344,356-357,365-366,431-433,490,583,585,587,670,672,674,708-709,733,788,790,792,809,811,859-860,885,940,942,944,972-973,987,989,998,1043-1044,1069
+client/src/pages/finance/Invoices.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 595
+client/src/pages/operations/Inventory.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 66,72,78,84,196-198,203-205
+scripts/gen-entity-scope-exempt.mjs
+  s_8abb44e9c81370::t_a13cea3c777a93 1-18
+client/src/pages/Projects.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 735
+drizzle/manual/step2_09_crm.sql
+  s_8abb44e9c81370::t_a13cea3c777a93 1-20
+client/src/pages/freight/FreightDashboard.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 49-54
+client/src/pages/freight/control-tower/views/PlantWallView.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 1-47
+client/src/pages/operations/Shipments.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 62-66,70-71,645,651,657,663
+drizzle/manual/step2_06_sales_channels.sql
+  s_8abb44e9c81370::t_a13cea3c777a93 1-15
+client/src/index.css
+  s_8abb44e9c81370::t_a13cea3c777a93 2-5,112-140,185-213,536-543
+  s_8abb44e9c81370::t_9ba67d00c46e55 544
+client/src/pages/freight/control-tower/overlays/MovementDrawer.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 1-160
+drizzle/manual/step2_03_manufacturing_catalog.sql
+  s_8abb44e9c81370::t_a13cea3c777a93 1-22
+client/src/components/QuickCreateDialog.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 666
+client/src/pages/freight/FDAPriorNotice.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 77-80
+client/src/pages/marketing/MarketingHub.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 58,75-76,414,1051
+client/src/components/NotificationCenter.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 30-36,40-42
+drizzle/manual/step1_entity_tree.sql
+  s_8abb44e9c81370::t_a13cea3c777a93 1-39
+drizzle/manual/step2_07_dataroom.sql
+  s_8abb44e9c81370::t_a13cea3c777a93 1-15
+client/src/components/BackgroundTasksTray.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 39,41,101
+client/src/pages/autonomous/Settings.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 458,472,572
+client/src/pages/operations/Locations.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 124-129,317,321
+drizzle/schema.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 245-250,536,1129,1453,1573,1654,1710,1816,1848,2072,2108,2246,2347,2375,2430,2502,2524,2707,2787,2870,3030,4181,4841
+  s_64784b89dc290b::t_1f32095393cdaa 4572,4657,4721,4741,4768,6456,6488,7241,7259
+client/src/pages/freight/FreightTracking.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 62-67,410
+client/src/pages/operations/BOMDetail.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 136,138,140,444,464,472,480,488
+drizzle/manual/step2_13_pm.sql
+  s_8abb44e9c81370::t_a13cea3c777a93 1-20
+server/recipeSheetImport.test.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 2,94-146
+client/src/pages/operations/PurchaseOrderDetailSheet.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 757
+scripts/entity-scope-lib.mjs
+  s_8abb44e9c81370::t_a13cea3c777a93 1-30
+shared/aiChat.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 1-35
+client/src/pages/settings/ShopifySettings.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 138,547
+client/src/pages/finance/Accounts.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 33-37
+server/freightControlTowerProjection.test.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 1-112
+.github/workflows/deploy-production.yml
+  s_8abb44e9c81370::t_a13cea3c777a93 59-64,66-72,74-81
+client/src/pages/freight/control-tower/overlays/RequestComposer.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 1-84
+client/src/pages/marketing/BrandAmbassadors.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 41-51,157,159,571
+server/inboundInbox.integration.test.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 1-91
+client/src/pages/operations/Allocations.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 132-136
+client/src/pages/freight/control-tower/overlays/DockMode.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 1-72
+client/src/pages/freight/control-tower/lib/selectors.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 1-469
+client/src/pages/Meetings.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 297,299,301,303,305,472-473,559-561,630,633,713,719,722,852,901,973,990,1024,1061,1075-1076,1102
+client/src/pages/grants/GovernmentTenders.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 53-62,157,159,163-164,385,477
+client/src/pages/operations/WorkOrderDetail.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 97-102,204,206,225-227,277,283,285,287,291,293,318,328,339
+client/src/pages/sales/FundraisingCampaigns.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 28-32,243-244
+client/src/pages/RecoverAccount.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 100
+client/src/pages/freight/control-tower/views/MapView.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 1-71
+client/src/pages/operations/Transfers.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 87-92,203,213,223,233
+client/src/components/SentEmailsTab.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 13-17
+client/src/pages/freight/control-tower/lib/tokens.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 1-136
+client/src/pages/settings/Team.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 479,484,525,534,602,608,614,620,644,713,719,725,731,745,776,780-782,787-789,794-795,800-801,806-808,813-815,820-822,827-829
+client/src/pages/legal/RegulatoryLicenses.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 56-66,157,159,163-164,169-170,372,450-451
+client/src/pages/sales/Orders.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 43-49
+client/src/components/DashboardLayout.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 201-206
+client/src/pages/portal/CopackerPortal.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 537-540,546,561,564,572,575,583,586,594,597,605,608,1503
+shared/freight-control-tower/projection.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 1-131
+server/entity-scope.test.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 1-57
+client/src/pages/legal/LegalAI.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 33,135
+client/src/pages/hr/OfferLetters.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 203-207
+client/src/pages/operations/Vendors.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 370-372,630,645,683,806,826
+client/src/pages/freight/CustomsDetail.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 222,225,346
+client/src/pages/operations/ReconciliationReport.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 39,41,43,171,176,216,221,223
+client/src/pages/cx/CustomerSupport.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 46-49,53-57,221-224,231,331-332
+client/src/pages/grants/GrantBidSubmitter.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 72-76,80-89,145,147,149,151,270,875,884,893,902,910,913,928,981,1073,1169-1176,1247,1328,1332,1352,1355,1362,1365,1403,1424,1477,1561,1653,1660-1662,1667,1693,1714,1759,1789,1848,1895,1898-1899,1915,1919-1921,1925-1927,1936,1940,1944,1948,1970-1973,2018,2026,2028,2042,2045,2054,2065,2068,2076,2111
+client/src/pages/freight/control-tower/lib/useTokens.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 1-26
+client/src/pages/hr/TimeTracking.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 52-56,223,226,234,237,245,248,385,424,542
+server/_core/passwordHash.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 1-61
+client/src/pages/finance/Payments.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 33-34,38-41
+client/src/pages/operations/TransferDetail.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 105-110,346,380
+client/src/pages/freight/control-tower/views/RunwayView.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 1-70
+client/src/pages/hr/Recruiting.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 24-30,169,267
+client/src/pages/freight/Carriers.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 379,454,497-498,531-532
+client/src/pages/operations/ProductPriceBook.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 632
+drizzle/manual/step2_01_operations.sql
+  s_8abb44e9c81370::t_a13cea3c777a93 1-40
+client/src/pages/freight/RFQs.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 518,523
+server/auth.signup-schema.test.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 1-43
+client/src/components/QuickNoteDialog.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 27-30,158-159,161
+client/src/pages/hr/Employees.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 113-121,125,127-129,178,182,214-215,221-222,226,1103,1107,1111
+client/src/pages/hr/EquityPortal.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 76,79,83,85,336,342,348,356,363,423,427,433,474,477,480,498,504,506-507,538,570-571,776
+client/src/components/LinkContactDialog.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 147
+client/src/pages/operations/SupplierScoring.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 16-20,30,53,63
+client/src/pages/operations/VendorNegotiations.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 204,210,213,219,222,228,231,237,240,325,332,422,428,673,787
+client/src/pages/freight/control-tower/views/JourneysView.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 1-68
+server/localAuth.recovery.test.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 1-210
+client/src/pages/settings/Fireflies.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 102,104,106,108,110,214,216,223,230-231,236,243,391,394,397
+client/src/components/FloatingAIAssistant.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 67-69,139-140,169,180
+client/src/pages/marketing/SocialPosts.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 30-35,177,236-237,241,374,377
+client/src/pages/InvestorUpdates.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 37-39
+drizzle/manual/step2_08_procurement.sql
+  s_8abb44e9c81370::t_a13cea3c777a93 1-15
+client/src/pages/finance/RdTaxCredit.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 44-48,125,307,311,313-315,400,402,411,415,419,423,504,506,749-750
+client/src/pages/InvestorPortal.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 516,519,645,1005,1023
+client/src/pages/edi/EDIDashboard.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 39-47,95,103,138,147,156,165,198-201,248,352
+client/src/pages/autonomous/Approvals.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 79,81,83,85,93-96,99,144,148,157,161,170,174,183,189,204,222,244,254
+client/src/pages/edi/TradingPartners.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 319-322,492,495,497,499,509-510,514,1176-1179
+client/src/pages/operations/Ingredients.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 140-145,389
+client/src/pages/legal/Documents.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 104-110
+client/src/pages/autonomous/Exceptions.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 80,82,84,86,97,99,101,129,134,136,145,147,156,160,169,178,244,266,268,292
+client/src/pages/sales/SalesAutomation.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 70-73,77-80,200-203,210,354
+client/src/pages/operations/PurchaseOrders.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 433,438,493,631,827
+client/src/pages/DataRoomDetail.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 470,473,476,479,766,1571-1577,1641,1664,2424-2425,2588,2923,3387,3403,3422,3424,3432,3434,3486,3507,3514,3517,3529,3546,3557,3592,3611
+client/src/pages/hr/DashboardGenerator.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 295-297,308,602,691,705,885-886,1043
+client/src/pages/Messaging.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 46,48,50,58-61,74,265,270,596-597,625,627,662-663
+client/src/pages/Notifications.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 60,62,64,66
+client/src/pages/Login.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 20,28-30,74-83,119-120,123,195
+client/src/pages/edi/RetailerOnboarding.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 384,387-388,563,677,680,682,684,700,715
+client/src/pages/operations/WorkOrders.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 62-67,73-77,190,198,206,214,284,290
+drizzle/manual/step2_05_forecasting.sql
+  s_8abb44e9c81370::t_a13cea3c777a93 1-25
+client/src/pages/operations/Products.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 122-124
+client/src/pages/operations/Procurement.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 407-410
+client/src/pages/operations/RawMaterials.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 294,296-297,321
+client/src/pages/freight/RFQDetail.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 506,510,538,540,591,633,696
+client/src/components/AICommandBar.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 12,16,676-683,723-724,793-880,883-889,901-902,1180,1281,1364,1413,1415,1418,1427-1428,1437-1438,1444,1456,1477,1503-1504,1506-1508,1510,1512-1516,1522-1523,1525-1526,1649,1662,1716,1750,1763,1787,1822,1830,1832,1834-1835,1914-1919,1932,1934-1935,1948,1956-1985,2057,2089,2111,2133
+client/src/pages/freight/control-tower/views/BoardView.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 1-103
+client/src/pages/DataRoomFinancialsPublic.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 278,396,490
+server/recipeSheetImport.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 40,50-60,62-69,76-107,111,123-130,132-135,141-166,196-198,202,210-211,215-219
+client/src/pages/hr/EmployeePortal.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 77-79,81-82,84,86-87,186,200,218,232,435,443,458,609,793
+client/src/components/SpreadsheetTable.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 715
+client/src/App.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 122,388
+client/src/pages/legal/Disputes.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 30-33,37-42,46-51,301,305-307,320,327,492,505
+client/src/pages/operations/InventoryPlanning.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 82-85,91-94
+client/src/pages/finance/Transactions.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 27-32,36-39
+DB_INDEX.md
+  s_8abb44e9c81370::t_a13cea3c777a93 5,14-126,134,146-382,384,386-394,396,398-399,401,403-405,407,409-1558
+client/src/pages/operations/Recipes.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 25-56,163-164,169-204,206,210,213,215-217,219,221,226-230,232-281,607-608,611,615-617,621-630,632-670,679-752,754,756,760-762,764-765,767-771,775-776
+client/src/pages/DataRoomPublic.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 114,117,121,124,131,139-142,144,1035,1071-1072,1185,1400
+client/src/pages/sales/OrderDetail.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 97-104
+client/src/pages/projects/ProjectsAI.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 29,173
+server/freightControlTowerRouter.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 1-17
+client/src/components/OfflineIndicator.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 25,42
+client/src/pages/Notes.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 149,161,165
+drizzle/manual/step2_11_investors.sql
+  s_8abb44e9c81370::t_a13cea3c777a93 1-20
+server/passwordHash.test.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 1-49
+drizzle/manual/step2_02_freight.sql
+  s_8abb44e9c81370::t_a13cea3c777a93 1-30
+client/src/pages/operations/POReceiving.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 154-155,224,228,230
+client/src/pages/operations/LogisticsHub.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 43-48,52-59,313-316,361,363,365,367,371
+client/src/pages/sales/CRMInvestors.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 92-97,99,104-107,109,412
+shared/freight-control-tower/marks.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 1-75
+client/src/pages/legal/CaseTracker.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 54-59,63-66,282-285,298,371,376
+client/src/pages/freight/control-tower/lib/palette.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 1-64
+server/_core/llm.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 629-973
+client/src/pages/DataRooms.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 138
+client/src/pages/autonomous/Dashboard.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 62,64,66,68,70,77,79,81,83,138,154,173,190,205,209,213,217,221,273,338,340
+client/src/pages/ResetPassword.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 80
+client/src/pages/operations/Forecasting.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 146-148,237,245,253,261,270,327,358,596,618
+server/db.ts
+  s_8abb44e9c81370::t_a13cea3c777a93 356-363,495-525
+  s_8abb44e9c81370::t_b6237f3d106797 526-527
+client/src/pages/hr/SubsidiaryFundraising.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 48-51,56-61,358
+client/src/pages/hr/HRAIInsights.tsx
+  s_8abb44e9c81370::t_a13cea3c777a93 36,164,253,259,261,284
+client/public/freight-control-tower/vendor/countries-110m.json
+  s_8abb44e9c81370::t_783d661bf06156 1
+client/public/freight-control-tower/vendor/d3.min.js
+  s_8abb44e9c81370::t_c9d62a9c0a7af1 1-2
+client/public/freight-control-tower/vendor/topojson-client.min.js
+  s_8abb44e9c81370::t_13aa56233c967f 1-2
+drizzle/entity-scope-exempt.txt
+  s_8abb44e9c81370::t_cdc69302cb6746 1-184
+drizzle/meta/_journal.json
+  s_8abb44e9c81370::t_9f830cd3faf468 396-402
+server/_core/env.ts
+  s_64784b89dc290b::t_f790328a218fc3 42-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "b8bd45a976bc417ebc8a70d575aa38507e9745fe",
+  "prompts": {},
+  "sessions": {
+    "s_64784b89dc290b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "da540588-d9db-44c1-8dab-eef308494a52",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    },
+    "s_8abb44e9c81370": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c663859-537c-475d-9207-e5c606452f1b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    },
+    "s_c2bc34cc15eb7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9928e53-5247-4262-810c-098bf219ad0b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    }
+  }
+}
