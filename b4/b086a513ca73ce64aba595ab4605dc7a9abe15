@@ -1,0 +1,63 @@
+DB_INDEX.md
+  s_c2bc34cc15eb7f::t_ecc87be67d548c 5,16-127,154,168-386,388-396,398,400-401,403-407,409,411-1570
+ROUTERS_INDEX.md
+  s_c2bc34cc15eb7f::t_73dc3aeeb61253 5,13-140,146-204,210-278
+client/src/components/AICommandBar.tsx
+  s_c2bc34cc15eb7f::t_65da66110cfe1d 1065
+client/src/pages/operations/VendorNegotiations.tsx
+  s_c2bc34cc15eb7f::t_5455c1960d33fa 95
+drizzle/entity-scope-exempt.txt
+  s_c2bc34cc15eb7f::t_dfa71d6c8d1913 85,101,135
+drizzle/manual/step3_user_entity_access.sql
+  s_c2bc34cc15eb7f::t_e33d081db27547 1-24
+drizzle/manual/step4_fx.sql
+  s_c2bc34cc15eb7f::t_ce176bfca5f9a2 1-39
+drizzle/manual/step5_group_views.sql
+  s_c2bc34cc15eb7f::t_db7702a81c8c32 1-59
+drizzle/manual/step6_cap_table_ownership.sql
+  s_c2bc34cc15eb7f::t_fe673d43493986 1-27
+drizzle/schema.ts
+  s_c2bc34cc15eb7f::t_9cef6895e15eaa 100-117,241-297,454-457,493-496,520-523,562-565
+server/_core/scope.ts
+  s_c2bc34cc15eb7f::t_142b54e79c1c78 29-33,68-95
+server/db.ts
+  s_c2bc34cc15eb7f::t_373a02604100cc 23,530-553,718-721,724-728,730-733,736-738,742-745,1144-1146,1149,1151-1155,1159,1166-1168,1172-1175,1192,1195-1196
+server/erp.test.ts
+  s_c2bc34cc15eb7f::t_0ee7296b4e11ac 12-16
+server/financeAiService.ts
+  s_c2bc34cc15eb7f::t_2653e828b3b0cc 205
+server/fx.test.ts
+  s_c2bc34cc15eb7f::t_33ce4d57a7e514 1-49
+server/fxService.ts
+  s_c2bc34cc15eb7f::t_3e1e58140855cc 1-70
+server/groupReporting.test.ts
+  s_c2bc34cc15eb7f::t_dea358cdf4fbb6 1-110
+server/groupReporting.ts
+  s_c2bc34cc15eb7f::t_8802dac11c36fd 1-111
+server/routers.ts
+  s_c2bc34cc15eb7f::t_886d8760cd8e84 55,147-150,152-158,162,165-168,1517-1520,1522,1543-1549,1589,1613,1623,2596-2598,2603-2604,2606,2635-2641
+server/routers/procurement.ts
+  s_c2bc34cc15eb7f::t_52427021075f6a 28-30,32
+server/routers/sales.ts
+  s_c2bc34cc15eb7f::t_152742fe1273aa 148-150,157
+server/scope.test.ts
+  s_c2bc34cc15eb7f::t_6fa3ecf8ce0842 2-9,103-153
+server/supplierScoringService.ts
+  s_c2bc34cc15eb7f::t_a64ed9539b9709 74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "b4b086a513ca73ce64aba595ab4605dc7a9abe15",
+  "prompts": {},
+  "sessions": {
+    "s_c2bc34cc15eb7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9928e53-5247-4262-810c-098bf219ad0b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    }
+  }
+}
