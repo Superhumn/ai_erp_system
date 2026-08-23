@@ -7,6 +7,7 @@ export type EmailCategory =
   | "invoice"
   | "shipping_confirmation"
   | "freight_quote"
+  | "vendor_quote"
   | "delivery_notification"
   | "order_confirmation"
   | "payment_confirmation"
@@ -107,6 +108,7 @@ CATEGORIES:
 - invoice: Bills requesting payment, invoices from vendors
 - shipping_confirmation: Shipment notifications, tracking info, dispatch notices
 - freight_quote: Freight rate quotes, shipping cost estimates, carrier bids
+- vendor_quote: A supplier quoting materials/goods against our RFQ — unit prices, MOQ, lead time, tooling charges, Incoterms. Distinct from freight_quote, which is a carrier quoting transport.
 - delivery_notification: Delivery confirmations, proof of delivery, signed receipts
 - order_confirmation: Order acknowledgments, sales order confirmations
 - payment_confirmation: Payment received notices, wire transfer confirmations
@@ -124,7 +126,7 @@ INSTRUCTIONS:
 
 Return JSON with this structure:
 {
-  "category": "receipt|purchase_order|invoice|shipping_confirmation|freight_quote|delivery_notification|order_confirmation|payment_confirmation|inventory_report|general",
+  "category": "receipt|purchase_order|invoice|shipping_confirmation|freight_quote|vendor_quote|delivery_notification|order_confirmation|payment_confirmation|inventory_report|general",
   "confidence": 85,
   "subcategory": "optional specific type",
   "keywords": ["keyword1", "keyword2", "keyword3"],
@@ -189,7 +191,7 @@ Return JSON with this structure:
 function validateCategory(category: string): EmailCategory {
   const validCategories: EmailCategory[] = [
     "receipt", "purchase_order", "invoice", "shipping_confirmation",
-    "freight_quote", "delivery_notification", "order_confirmation",
+    "freight_quote", "vendor_quote", "delivery_notification", "order_confirmation",
     "payment_confirmation", "inventory_report", "hr_recruiting", "legal", "general"
   ];
   return validCategories.includes(category as EmailCategory) 
@@ -261,6 +263,17 @@ const INGREDIENT_KEYWORDS = [
  * Quick categorization using pattern matching (no AI call)
  * Use this for fast initial sorting before full AI analysis
  */
+/**
+ * Transport-side vocabulary. Presence of any of these means the message is about
+ * moving goods, not about buying them, so it must not be classified as a
+ * supplier quotation. See the note in `quickCategorize`.
+ */
+const CARRIER_SIGNALS: RegExp[] = [
+  /\bfreight\b/i, /\bcarrier\b/i, /\bdrayage\b/i, /\bvessel\b/i, /\bbill of lading\b/i,
+  /\bdemurrage\b/i, /\bdetention\b/i, /\bcustoms clearance\b/i, /\btransit time\b/i,
+  /\b(ltl|ftl|fcl|lcl)\b/i, /\b\d{2}(hq|gp|rf)\b/i, /\blogistics\b/i,
+];
+
 export function quickCategorize(subject: string, fromEmail: string, bodyText?: string): EmailCategorization {
   const subjectLower = subject.toLowerCase();
   const emailLower = fromEmail.toLowerCase();
@@ -322,6 +335,40 @@ export function quickCategorize(subject: string, fromEmail: string, bodyText?: s
       emailPatterns: [/ups\.com/i, /fedex\.com/i, /dhl\.com/i, /usps\.com/i, /maersk/i],
       priority: "medium",
       action: "Update shipment tracking"
+    },
+    {
+      // Material/RFQ quotations from suppliers. Listed before freight_quote so a
+      // supplier's reply to our RFQ is not misfiled as a carrier rate sheet.
+      category: "vendor_quote",
+      // Patterns are deliberately narrow. This entry sits ahead of freight_quote
+      // and the first match wins, so anything that could equally be a carrier
+      // rate sheet ("quote", "rate") is left out — a carrier quote must still
+      // reach freight_quote. What is kept are signals only a goods supplier
+      // sends: our RFQ reference, an MOQ, a per-unit price, a tooling charge.
+      subjectPatterns: [
+        /\brfq\b/i,
+        /request for quot/i,
+        /\bre:\s*rfq/i,
+        /\bquotation\b/i,
+        /\bquote\b.*\b(material|ingredient|supply|unit price|price list)\b/i,
+        /price list/i,
+        /pro ?forma/i,
+      ],
+      // No sender-domain signal: material suppliers have no shared domain shape
+      // the way carriers do, so classification rests on subject and body.
+      emailPatterns: [],
+      bodyPatterns: [
+        /\bmoq\b/i,
+        /minimum order (quantity|qty)/i,
+        /unit price/i,
+        /price per (kg|kilo|ton|lb|pound|unit|piece|pc)\b/i,
+        /\btooling (cost|charge|fee)\b/i,
+        /\bnre\b/i,
+        /(mould|mold) (charge|cost|fee)/i,
+        /quotation (is )?valid/i,
+      ],
+      priority: "high",
+      action: "Parse quote and compare against other bids"
     },
     {
       category: "freight_quote",
@@ -391,7 +438,18 @@ export function quickCategorize(subject: string, fromEmail: string, bodyText?: s
   
   let matchedKeywords: string[] = [];
 
+  // vendor_quote is checked before freight_quote so a supplier's reply to our
+  // RFQ is not swallowed by the carrier patterns. The trade-off is that a
+  // carrier writing "quotation" would be caught first, so transport language
+  // anywhere in the message disqualifies the vendor_quote entry outright.
+  // (A negative lookahead cannot express this: the carrier word may appear
+  // before the matched term, as in "Freight quotation Ningbo - Long Beach".)
+  const looksLikeCarrier = CARRIER_SIGNALS.some(
+    p => p.test(subjectLower) || p.test(emailLower) || p.test(bodyLower),
+  );
+
   for (const pattern of patterns) {
+    if (pattern.category === "vendor_quote" && looksLikeCarrier) continue;
     const subjectMatch = pattern.subjectPatterns.some(p => {
       const match = p.test(subjectLower);
       if (match) {
@@ -747,6 +805,7 @@ export function getCategoryDisplayInfo(category: EmailCategory): {
     invoice: { label: "Invoice", color: "orange", icon: "file-invoice" },
     shipping_confirmation: { label: "Shipping", color: "purple", icon: "truck" },
     freight_quote: { label: "Freight Quote", color: "cyan", icon: "ship" },
+    vendor_quote: { label: "Vendor Quote", color: "violet", icon: "file-text" },
     delivery_notification: { label: "Delivery", color: "emerald", icon: "package-check" },
     order_confirmation: { label: "Order Confirmation", color: "indigo", icon: "check-circle" },
     payment_confirmation: { label: "Payment", color: "teal", icon: "credit-card" },

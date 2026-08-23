@@ -190,6 +190,8 @@ import {
   pmTasks, InsertPmTask,
   pmDependencies, InsertPmDependency,
   pmMilestones, InsertPmMilestone,
+  // Recruiting
+  recruitingCandidates, InsertRecruitingCandidate,
   // Ops Toolkit
   savedViews, InsertSavedView,
   intakeForms, InsertIntakeForm,
@@ -2913,6 +2915,35 @@ export async function updateFreightCarrier(id: number, data: Partial<InsertFreig
   if (!db) throw new Error("Database not available");
   await db.update(freightCarriers).set(data).where(eq(freightCarriers.id, id));
   return { success: true };
+}
+
+/**
+ * Find a CRM contact for a carrier by matching email or phone, the same way
+ * `findCrmContactForVendor` does. Carriers are companies we correspond with by
+ * email, so the contact record belongs in the CRM alongside vendor contacts.
+ */
+export async function findCrmContactForCarrier(carrier: {
+  email?: string | null;
+  phone?: string | null;
+}) {
+  return findCrmContactMatch({
+    email: carrier.email,
+    phone: carrier.phone,
+    whatsappNumber: carrier.phone,
+  });
+}
+
+/** Link a CRM contact to a freight carrier. */
+export async function linkFreightCarrierContact(carrierId: number, contactId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(freightCarriers).set({ contactId }).where(eq(freightCarriers.id, carrierId));
+}
+
+export async function unlinkFreightCarrierContact(carrierId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(freightCarriers).set({ contactId: null }).where(eq(freightCarriers.id, carrierId));
 }
 
 // ============================================
@@ -15479,4 +15510,32 @@ export async function deleteSavedReport(id: number) {
   const db = await getDb();
   if (!db) return;
   await db.delete(savedReports).where(eq(savedReports.id, id));
+}
+
+// ============================================
+// RECRUITING CANDIDATES
+// ============================================
+export async function listRecruitingCandidates() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(recruitingCandidates).orderBy(desc(recruitingCandidates.appliedAt));
+}
+
+export async function createRecruitingCandidate(data: InsertRecruitingCandidate) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(recruitingCandidates).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateRecruitingCandidate(id: number, data: Partial<InsertRecruitingCandidate>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(recruitingCandidates).set({ ...data, updatedAt: new Date() } as any).where(eq(recruitingCandidates.id, id));
+}
+
+export async function deleteRecruitingCandidate(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(recruitingCandidates).where(eq(recruitingCandidates.id, id));
 }
