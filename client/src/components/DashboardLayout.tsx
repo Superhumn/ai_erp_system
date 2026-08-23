@@ -397,9 +397,13 @@ function DashboardLayoutContent({
             </div>
           </SidebarHeader>
 
-          {/* Flat navigation - all items visible, no dropdowns */}
+          {/* Flat navigation - all items visible, no dropdowns.
+              flex-1 + justify-between distributes the groups evenly across the
+              full sidebar height (no squished stack + dead space above the
+              footer); when the menu is taller than the viewport the groups
+              pack naturally and SidebarContent scrolls as before. */}
           <SidebarContent className="overflow-y-auto p-0 gap-0">
-            <nav className="flex flex-col m-px">
+            <nav className="flex flex-1 flex-col justify-between m-px">
               {getMenuGroups(user?.role).map((group, gi) => (
                 <div key={group.label}>
                   {gi > 0 && !isCollapsed && <div className="border-t border-border/30" />}
