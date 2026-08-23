@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
+import { safeExternalUrl } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -30,7 +31,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Building2, Plus, Search, Loader2, Upload, ShoppingBag, Star, ExternalLink, CheckCircle2, Trash2, MessageCircle, Pencil } from "lucide-react";
+import { Building2, Plus, Search, Loader2, Upload, ShoppingBag, Star, ExternalLink, CheckCircle2, Trash2, MessageCircle, Pencil, Globe, Download, ShieldCheck, ShieldAlert } from "lucide-react";
 import WhatsAppDrawer from "@/components/WhatsAppDrawer";
 import LinkContactDialog from "@/components/LinkContactDialog";
 import {
@@ -98,6 +99,7 @@ export default function Vendors() {
     state: "",
     country: "",
     postalCode: "",
+    website: "",
     paymentTerms: 30,
     defaultLeadTimeDays: 14,
     notes: "",
@@ -171,6 +173,25 @@ export default function Vendors() {
   });
 
   const autoLinkMutation = trpc.vendors.autoLinkContact.useMutation();
+
+  // Reads the vendor's own website for contact details. Only values published on
+  // the vendor's own domain are written, and only an own-domain email marks the
+  // record verified — see server/companyWebsiteSource.ts.
+  const [sourcingVendorId, setSourcingVendorId] = useState<number | null>(null);
+  const sourceVendorContacts = trpc.vendors.sourceFromWebsite.useMutation({
+    onSuccess: (result: any) => {
+      utils.vendors.list.invalidate();
+      if (result.verified) {
+        toast.success(`Verified from ${result.source?.fetchedUrl ?? "the vendor's website"}`);
+      } else if (result.status === "no_website") {
+        toast.warning("No website on this vendor — add one first.");
+      } else {
+        toast.warning(result.skipped?.[0]?.reason || "Nothing usable found on the vendor's own site.");
+      }
+    },
+    onError: (error: any) => toast.error(error.message || "Could not read that website"),
+    onSettled: () => setSourcingVendorId(null),
+  });
 
   async function handleOpenChat(vendor: any, e: React.MouseEvent) {
     e.stopPropagation();
@@ -246,7 +267,7 @@ export default function Vendors() {
     setEditingVendorId(null);
     setFormData({
       name: "", contactName: "", email: "", phone: "", type: "supplier",
-      address: "", city: "", state: "", country: "", postalCode: "",
+      address: "", city: "", state: "", country: "", postalCode: "", website: "",
       paymentTerms: 30, defaultLeadTimeDays: 14, notes: "",
     });
   };
@@ -264,6 +285,7 @@ export default function Vendors() {
       state: vendor.state ?? "",
       country: vendor.country ?? "",
       postalCode: vendor.postalCode ?? "",
+      website: vendor.website ?? "",
       paymentTerms: vendor.paymentTerms ?? 30,
       defaultLeadTimeDays: vendor.defaultLeadTimeDays ?? 14,
       notes: vendor.notes ?? "",
@@ -513,6 +535,19 @@ export default function Vendors() {
                       onChange={(e) => setFormData({ ...formData, country: e.target.value })}
                     />
                   </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="website">Website</Label>
+                  <Input
+                    id="website"
+                    value={formData.website}
+                    onChange={(e) => setFormData({ ...formData, website: e.target.value })}
+                    placeholder="vendor.com"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Contact details can be read from this site — only addresses published on the
+                    vendor's own domain are used.
+                  </p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="paymentTerms">Payment Terms (days)</Label>
@@ -869,6 +904,62 @@ export default function Vendors() {
                               <div><span className="text-xs text-muted-foreground block">Lead Time</span>{vendor.defaultLeadTimeDays || 14} days</div>
                               <div><span className="text-xs text-muted-foreground block">Payment Terms</span>Net {vendor.paymentTerms || 30}</div>
                               <div><span className="text-xs text-muted-foreground block">Tax ID</span>{vendor.taxId || "-"}</div>
+                              <div>
+                                <span className="text-xs text-muted-foreground block">Website</span>
+                                {(() => {
+                                  // Typed by a person, so not safe to link blind.
+                                  const href = safeExternalUrl(vendor.website);
+                                  if (!vendor.website) return "-";
+                                  return href ? (
+                                    <a href={href} target="_blank" rel="noreferrer noopener" className="text-primary hover:underline inline-flex items-center gap-1">
+                                      <Globe className="h-3 w-3" />{vendor.website}
+                                    </a>
+                                  ) : (
+                                    <span className="text-muted-foreground">{vendor.website}</span>
+                                  );
+                                })()}
+                              </div>
+                              <div className="col-span-2">
+                                <span className="text-xs text-muted-foreground block">Contact details</span>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {vendor.contactSource === "website" ? (
+                                    <Badge variant="outline" className="gap-1 border-emerald-500/50 text-emerald-600">
+                                      <ShieldCheck className="h-3 w-3" />
+                                      {safeExternalUrl(vendor.contactSourceUrl) ? (
+                                        <a href={safeExternalUrl(vendor.contactSourceUrl)!} target="_blank" rel="noreferrer noopener" className="hover:underline">
+                                          From their website
+                                        </a>
+                                      ) : "From their website"}
+                                    </Badge>
+                                  ) : vendor.contactSource === "discovered" ? (
+                                    <Badge variant="outline" className="gap-1 border-amber-500/50 text-amber-600">
+                                      <ShieldAlert className="h-3 w-3" />Unverified
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="outline" className="text-muted-foreground">
+                                      {vendor.contactSource === "inbound_email" ? "From their email"
+                                        : vendor.contactSource === "import" ? "Imported"
+                                        : "Entered by hand"}
+                                    </Badge>
+                                  )}
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 text-xs"
+                                    disabled={!vendor.website || sourcingVendorId === vendor.id}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSourcingVendorId(vendor.id);
+                                      sourceVendorContacts.mutate({ vendorId: vendor.id });
+                                    }}
+                                  >
+                                    {sourcingVendorId === vendor.id
+                                      ? <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                      : <Download className="h-3 w-3 mr-1" />}
+                                    Source from website
+                                  </Button>
+                                </div>
+                              </div>
                             </div>
                             {vendor.notes && <p className="text-sm text-muted-foreground mb-4 whitespace-pre-wrap">{vendor.notes}</p>}
 

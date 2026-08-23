@@ -300,7 +300,16 @@ export const vendors = mysqlTable("vendors", {
   bankRouting: varchar("bankRouting", { length: 64 }),
   notes: text("notes"),
   quickbooksVendorId: varchar("quickbooksVendorId", { length: 64 }),
+  website: varchar("website", { length: 512 }), // Company site — the source of record for contact info
+  // Provenance. `contactSource` says where name/email/phone came from; "discovered"
+  // means a model proposed them and nothing has confirmed them yet.
+  // See server/companyWebsiteSource.ts.
+  contactSource: mysqlEnum("contactSource", ["manual", "discovered", "website", "inbound_email", "import"]).default("manual"),
+  contactVerifiedAt: timestamp("contactVerifiedAt"), // Set only when found on the company's own domain
+  contactSourceUrl: varchar("contactSourceUrl", { length: 1024 }), // The exact page the contact was read from
   defaultLeadTimeDays: int("defaultLeadTimeDays").default(14), // Default lead time for this vendor
+  defaultCurrency: varchar("defaultCurrency", { length: 3 }), // Currency this vendor normally quotes in
+  defaultIncoterms: varchar("defaultIncoterms", { length: 10 }), // Incoterm this vendor normally quotes on
   minOrderAmount: decimal("minOrderAmount", { precision: 12, scale: 2 }), // Minimum order amount
   shippingMethod: varchar("shippingMethod", { length: 64 }), // Preferred shipping method
   contactId: int("contactId").references(() => crmContacts.id, { onDelete: "set null" }), // FK to crm_contacts.id (set on auto-link by phone or manual picker)
@@ -1112,9 +1121,16 @@ export const emailCategoryEnum = mysqlEnum("email_category", [
   "invoice",
   "shipping_confirmation",
   "freight_quote",
+  // Supplier quotations against our RFQs (material pricing, not carrier rates).
+  "vendor_quote",
   "delivery_notification",
   "order_confirmation",
   "payment_confirmation",
+  // These three were already produced by the classifier but were missing from
+  // the enum, so they were silently rejected on write.
+  "inventory_report",
+  "hr_recruiting",
+  "legal",
   "general",
 ]);
 
@@ -1440,6 +1456,14 @@ export const freightCarriers = mysqlTable("freightCarriers", {
   country: varchar("country", { length: 100 }),
   website: varchar("website", { length: 500 }),
   notes: text("notes"),
+  // Carrier contacts join the CRM the same way vendor contacts do.
+  contactId: int("contactId").references((): AnyMySqlColumn => crmContacts.id, { onDelete: "set null" }),
+  // Provenance. A carrier proposed by `discoverCarriers` lands as "discovered";
+  // it becomes "website" (and gains contactVerifiedAt) only once its contact
+  // details are read off a page served by its own domain.
+  contactSource: mysqlEnum("contactSource", ["manual", "discovered", "website", "inbound_email", "import"]).default("manual"),
+  contactVerifiedAt: timestamp("contactVerifiedAt"),
+  contactSourceUrl: varchar("contactSourceUrl", { length: 1024 }),
   rating: int("rating"), // 1-5 star rating
   isPreferred: boolean("isPreferred").default(false),
   isActive: boolean("isActive").default(true),
@@ -1485,7 +1509,21 @@ export const freightRfqs = mysqlTable("freightRfqs", {
   // Related records
   purchaseOrderId: int("purchaseOrderId"),
   vendorId: int("vendorId"),
-  
+
+  // Comparison basis: every quote on this RFQ is normalized to these terms before
+  // ranking, so carriers quoting different scopes/currencies compare fairly.
+  // See server/freightQuoteNormalization.ts.
+  baseCurrency: varchar("baseCurrency", { length: 3 }).default("USD"),
+  targetServiceScope: varchar("targetServiceScope", { length: 20 }), // Scope to level to (default door_to_door)
+  // Volumetric divisor: kg billed per CBM. Defaults by mode when unset
+  // (air 167, LCL sea 1000, road 333) — see MODE_DIM_FACTORS.
+  dimFactorKgPerCbm: decimal("dimFactorKgPerCbm", { precision: 10, scale: 3 }),
+  // Allowances used to fill legs a carrier's quoted scope excludes.
+  originHaulageAllowance: decimal("originHaulageAllowance", { precision: 15, scale: 2 }),
+  destinationHaulageAllowance: decimal("destinationHaulageAllowance", { precision: 15, scale: 2 }),
+  customsClearanceAllowance: decimal("customsClearanceAllowance", { precision: 15, scale: 2 }),
+  insuranceRatePct: decimal("insuranceRatePct", { precision: 6, scale: 3 }), // % of declaredValue
+
   // Metadata
   notes: text("notes"),
   createdById: int("createdById"),
@@ -1518,7 +1556,31 @@ export const freightQuotes = mysqlTable("freightQuotes", {
   shippingMode: varchar("shippingMode", { length: 50 }),
   routeDescription: text("routeDescription"),
   validUntil: timestamp("validUntil"),
-  
+
+  // Commercial terms the carrier actually quoted (may differ from the RFQ ask)
+  serviceScope: varchar("serviceScope", { length: 20 }), // port_to_port, door_to_port, port_to_door, door_to_door
+  rateBasis: varchar("rateBasis", { length: 20 }), // per_kg, per_cbm, per_revenue_ton, per_container, flat
+  chargeableWeightKg: decimal("chargeableWeightKg", { precision: 15, scale: 3 }), // As stated by the carrier, if given
+
+  // Deterministic normalization to the RFQ's comparison basis
+  // (server/freightQuoteNormalization.ts). Computed in code, not by an LLM:
+  // chargeable-weight reconciled, scope-gap filled, FX-converted landed cost.
+  // `ai*` below stays the narrative layer.
+  normalizedCurrency: varchar("normalizedCurrency", { length: 3 }),
+  fxRate: decimal("fxRate", { precision: 18, scale: 8 }), // quote currency -> normalizedCurrency
+  fxRateAsOf: timestamp("fxRateAsOf"),
+  fxRateSource: varchar("fxRateSource", { length: 64 }),
+  landedTotalCost: decimal("landedTotalCost", { precision: 18, scale: 2 }), // All-in for the shipment, base currency
+  costPerChargeableKg: decimal("costPerChargeableKg", { precision: 18, scale: 6 }),
+  computedChargeableWeightKg: decimal("computedChargeableWeightKg", { precision: 15, scale: 3 }),
+  // JSON: breakdown is [{ key, label, amount, source }] with amounts in the
+  // quote's own currency (pre-conversion); warnings are
+  // [{ code, message, understatesCost? }].
+  normalizationBreakdown: text("normalizationBreakdown"),
+  normalizationWarnings: text("normalizationWarnings"),
+  normalizedRank: int("normalizedRank"), // 1 = lowest landed total cost
+  normalizedAt: timestamp("normalizedAt"),
+
   // AI analysis
   aiScore: int("aiScore"), // AI-generated score 1-100
   aiAnalysis: text("aiAnalysis"), // AI-generated analysis
@@ -4200,7 +4262,19 @@ export const vendorRfqs = mysqlTable("vendorRfqs", {
   // Timeline
   quoteDueDate: timestamp("quoteDueDate"),
   validityPeriod: int("validityPeriod"), // Days the quote should be valid
-  
+
+  // Comparison basis: every quote on this RFQ is normalized to these terms
+  // before ranking, so vendors quoting different Incoterms/currencies compare fairly.
+  baseCurrency: varchar("baseCurrency", { length: 3 }).default("USD"),
+  targetIncoterms: varchar("targetIncoterms", { length: 10 }), // Delivered basis to level to (default DDP)
+  destinationCountry: varchar("destinationCountry", { length: 64 }),
+  // Allowance rates used to fill cost buckets a vendor's Incoterm excludes.
+  freightAllowancePerUnit: decimal("freightAllowancePerUnit", { precision: 15, scale: 4 }),
+  freightAllowancePct: decimal("freightAllowancePct", { precision: 6, scale: 3 }), // % of goods value
+  dutyRatePct: decimal("dutyRatePct", { precision: 6, scale: 3 }),
+  insuranceRatePct: decimal("insuranceRatePct", { precision: 6, scale: 3 }),
+  amortizeToolingOverUnits: decimal("amortizeToolingOverUnits", { precision: 15, scale: 4 }), // Program volume for NRE amortization
+
   // Related records
   purchaseRequestId: int("purchaseRequestId"),
   projectId: int("projectId"),
@@ -4239,6 +4313,16 @@ export const vendorQuotes = mysqlTable("vendorQuotes", {
   taxAmount: decimal("taxAmount", { precision: 15, scale: 2 }),
   otherCharges: decimal("otherCharges", { precision: 15, scale: 2 }),
   totalWithCharges: decimal("totalWithCharges", { precision: 15, scale: 2 }),
+
+  // Commercial terms the vendor actually quoted (may differ from the RFQ ask)
+  incoterms: varchar("incoterms", { length: 10 }), // EXW, FCA, FOB, CFR, CIF, DAP, DDP, ...
+  namedPlace: varchar("namedPlace", { length: 255 }), // "FOB Ningbo" -> namedPlace = "Ningbo"
+  customsDutyAmount: decimal("customsDutyAmount", { precision: 15, scale: 2 }),
+  insuranceCost: decimal("insuranceCost", { precision: 15, scale: 2 }),
+  // One-time tooling / NRE and the volume it is amortized across
+  toolingCost: decimal("toolingCost", { precision: 15, scale: 2 }),
+  toolingAmortizationUnits: decimal("toolingAmortizationUnits", { precision: 15, scale: 4 }),
+  toolingIsRefundable: boolean("toolingIsRefundable").default(false),
   
   // Delivery details
   leadTimeDays: int("leadTimeDays"),
@@ -4256,6 +4340,27 @@ export const vendorQuotes = mysqlTable("vendorQuotes", {
   priceComparisonRank: int("priceComparisonRank"), // 1 = best price
   leadTimeComparisonRank: int("leadTimeComparisonRank"), // 1 = fastest
   overallRank: int("overallRank"), // Combined ranking
+
+  // Deterministic normalization to the RFQ's comparison basis (see server/quoteNormalization.ts).
+  // Computed in code, not by an LLM: FX-converted, Incoterm-gap-filled, MOQ-reconciled,
+  // tooling-amortized landed cost. `leveled*` below stays the AI narrative layer.
+  normalizedCurrency: varchar("normalizedCurrency", { length: 3 }),
+  fxRate: decimal("fxRate", { precision: 18, scale: 8 }), // quote currency -> normalizedCurrency
+  fxRateAsOf: timestamp("fxRateAsOf"),
+  fxRateSource: varchar("fxRateSource", { length: 64 }),
+  landedUnitCost: decimal("landedUnitCost", { precision: 18, scale: 6 }), // per RFQ unit, base currency
+  landedTotalCost: decimal("landedTotalCost", { precision: 18, scale: 2 }), // for the RFQ quantity, base currency
+  billableQuantity: decimal("billableQuantity", { precision: 15, scale: 4 }), // qty actually paid for after MOQ
+  moqShortfallUnits: decimal("moqShortfallUnits", { precision: 15, scale: 4 }), // units bought above requirement to clear MOQ
+  toolingPerUnit: decimal("toolingPerUnit", { precision: 18, scale: 6 }),
+  // JSON array of { key, label, amount, source } — amounts are in the quote's
+  // own currency; `fxRate` converts the total into `normalizedCurrency`.
+  normalizationBreakdown: text("normalizationBreakdown"),
+  // JSON array of { code, message, understatesCost? } — `understatesCost` marks
+  // a warning whose cause makes the landed cost a floor rather than an estimate.
+  normalizationWarnings: text("normalizationWarnings"),
+  normalizedRank: int("normalizedRank"), // 1 = lowest landed total cost
+  normalizedAt: timestamp("normalizedAt"),
 
   // Bid leveling (scope-normalized comparison)
   leveledTotalCost: decimal("leveledTotalCost", { precision: 15, scale: 2 }), // Normalized total cost adjusted to a common scope baseline
@@ -4328,6 +4433,10 @@ export const vendorRfqInvitations = mysqlTable("vendorRfqInvitations", {
   respondedAt: timestamp("respondedAt"),
   reminderSentAt: timestamp("reminderSentAt"),
   reminderCount: int("reminderCount").default(0),
+  // Measured responsiveness (written when a quote lands, see server/vendorResponsiveness.ts)
+  firstResponseHours: decimal("firstResponseHours", { precision: 10, scale: 2 }),
+  respondedBeforeDueDate: boolean("respondedBeforeDueDate"),
+  closedAt: timestamp("closedAt"), // set when the invitation is resolved as no_response
   
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -4345,6 +4454,61 @@ export type InsertVendorRfqEmail = typeof vendorRfqEmails.$inferInsert;
 
 export type VendorRfqInvitation = typeof vendorRfqInvitations.$inferSelect;
 export type InsertVendorRfqInvitation = typeof vendorRfqInvitations.$inferInsert;
+
+// ==========================================
+// CURRENCY RATES (FX normalization)
+// ==========================================
+
+// Stored FX rates. `rate` converts 1 unit of `fromCurrency` into `toCurrency`.
+// Lookups pick the newest row with asOf <= the requested date; inverse and
+// USD-triangulated pairs are derived in code (server/currencyService.ts).
+export const currencyRates = mysqlTable("currencyRates", {
+  id: int("id").autoincrement().primaryKey(),
+  fromCurrency: varchar("fromCurrency", { length: 3 }).notNull(),
+  toCurrency: varchar("toCurrency", { length: 3 }).notNull(),
+  rate: decimal("rate", { precision: 18, scale: 8 }).notNull(),
+  asOf: timestamp("asOf").notNull(),
+  source: varchar("source", { length: 64 }).default("manual").notNull(),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  currencyRatePairAsOfIdx: uniqueIndex("currencyRates_pair_asof_idx").on(table.fromCurrency, table.toCurrency, table.asOf),
+}));
+
+export type CurrencyRate = typeof currencyRates.$inferSelect;
+export type InsertCurrencyRate = typeof currencyRates.$inferInsert;
+
+// ==========================================
+// COMPANY WEBSITE SOURCING
+// ==========================================
+
+// One row per attempt to read a company's contact details off its own website.
+// An append-only log rather than a cache: when someone asks "where did this
+// email come from", the answer is a URL, an HTTP status and a timestamp.
+export const companyWebSources = mysqlTable("companyWebSources", {
+  id: int("id").autoincrement().primaryKey(),
+  entityType: mysqlEnum("entityType", ["vendor", "freight_carrier"]).notNull(),
+  entityId: int("entityId").notNull(),
+  websiteUrl: varchar("websiteUrl", { length: 1024 }).notNull(),
+  fetchedUrl: varchar("fetchedUrl", { length: 1024 }), // after redirects
+  httpStatus: int("httpStatus"),
+  status: mysqlEnum("status", ["ok", "no_contact_found", "fetch_failed", "blocked", "skipped"]).notNull(),
+  // Contact details read verbatim off the page — never generated.
+  // JSON: { emails: [{ value, sourceUrl, onOwnDomain }], phones: [...], addresses: [...] }
+  extracted: text("extracted"),
+  // Why a candidate was or was not accepted, e.g. an off-domain email rejected.
+  warnings: text("warnings"),
+  pagesFetched: int("pagesFetched").default(0),
+  durationMs: int("durationMs"),
+  error: text("error"),
+  requestedBy: int("requestedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CompanyWebSource = typeof companyWebSources.$inferSelect;
+export type InsertCompanyWebSource = typeof companyWebSources.$inferInsert;
 
 // ============================================
 // CRM MODULE - Contacts, Messaging & Tracking
@@ -6864,6 +7028,12 @@ export const supplierPerformance = mysqlTable("supplierPerformance", {
   totalSpend: decimal("totalSpend", { precision: 18, scale: 2 }),
   averagePriceVariancePercent: decimal("averagePriceVariancePercent", { precision: 6, scale: 2 }),
   averageResponseTimeHours: decimal("averageResponseTimeHours", { precision: 8, scale: 2 }),
+  rfqsInvited: int("rfqsInvited").default(0),
+  rfqsResponded: int("rfqsResponded").default(0),
+  rfqsDeclined: int("rfqsDeclined").default(0),
+  rfqsNoResponse: int("rfqsNoResponse").default(0),
+  rfqResponseRatePct: decimal("rfqResponseRatePct", { precision: 5, scale: 2 }),
+  onTimeQuoteRatePct: decimal("onTimeQuoteRatePct", { precision: 5, scale: 2 }),
   issuesReported: int("issuesReported").default(0),
   issuesResolved: int("issuesResolved").default(0),
   deliveryScore: decimal("deliveryScore", { precision: 5, scale: 2 }),

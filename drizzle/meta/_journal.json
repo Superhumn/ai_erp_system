@@ -404,8 +404,29 @@
 		{
 			"idx": 57,
 			"version": "5",
-			"when": 1784823841000,
-			"tag": "0057_supply_chain_workflow_tables",
+			"when": 1787000000000,
+			"tag": "0057_quote_normalization_and_responsiveness",
+			"breakpoints": true
+		},
+		{
+			"idx": 58,
+			"version": "5",
+			"when": 1787100000000,
+			"tag": "0058_freight_quote_normalization",
+			"breakpoints": true
+		},
+		{
+			"idx": 59,
+			"version": "5",
+			"when": 1787200000000,
+			"tag": "0059_company_website_sourcing",
+			"breakpoints": true
+		},
+		{
+			"idx": 60,
+			"version": "5",
+			"when": 1787300000000,
+			"tag": "0060_supply_chain_workflow_tables",
 			"breakpoints": true
 		}
 	]

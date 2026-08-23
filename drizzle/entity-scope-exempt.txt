@@ -23,6 +23,7 @@ codeExecutions
 codeSnippets
 cogsTransactions
 companies
+companyWebSources
 compensationHistory
 contactCaptures
 contractKeyDates
@@ -35,6 +36,7 @@ crmContactTags
 crmInteractions
 crmPipelines
 crmTags
+currencyRates
 customsDocuments
 dataRoomChecklistItems
 dataRoomChecklists
