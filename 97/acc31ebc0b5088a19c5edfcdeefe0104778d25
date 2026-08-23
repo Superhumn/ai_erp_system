@@ -1,0 +1,74 @@
+DB_INDEX.md
+  h_11a4578b84bb53 5,16-127,154,168-386,388-396,398,400-401,403-407,409,411-1570
+ROUTERS_INDEX.md
+  h_11a4578b84bb53 5,13-140,146-204,210-278
+client/src/App.tsx
+  h_11a4578b84bb53 126,402
+client/src/components/AICommandBar.tsx
+  h_11a4578b84bb53 1065
+client/src/pages/freight/FreightDashboard.tsx
+  h_11a4578b84bb53 13,72-77
+client/src/pages/freight/RateEstimator.test.tsx
+  h_11a4578b84bb53 1-102
+client/src/pages/freight/RateEstimator.tsx
+  h_11a4578b84bb53 1-465
+client/src/pages/operations/LogisticsHub.tsx
+  h_11a4578b84bb53 31,377-384
+client/src/pages/operations/VendorNegotiations.tsx
+  h_11a4578b84bb53 95
+docs/OCEAN_RATE_ESTIMATOR.md
+  h_11a4578b84bb53 1-57
+drizzle/entity-scope-exempt.txt
+  h_11a4578b84bb53 85,101,135
+drizzle/manual/step3_user_entity_access.sql
+  h_11a4578b84bb53 1-24
+drizzle/manual/step4_fx.sql
+  h_11a4578b84bb53 1-39
+drizzle/manual/step5_group_views.sql
+  h_11a4578b84bb53 1-59
+drizzle/manual/step6_cap_table_ownership.sql
+  h_11a4578b84bb53 1-27
+drizzle/schema.ts
+  h_11a4578b84bb53 100-117,241-297,454-457,493-496,520-523,562-565
+server/_core/scope.ts
+  h_11a4578b84bb53 29-33,68-95
+server/db.ts
+  h_11a4578b84bb53 23,603-626,791-794,797-801,803-806,809-811,815-818,1217-1219,1222,1224-1228,1232,1239-1241,1245-1248,1265,1268-1269
+server/erp.test.ts
+  h_11a4578b84bb53 12-16
+server/financeAiService.ts
+  h_11a4578b84bb53 205
+server/fx.test.ts
+  h_11a4578b84bb53 1-49
+server/fxService.ts
+  h_11a4578b84bb53 1-70
+server/groupReporting.test.ts
+  h_11a4578b84bb53 1-110
+server/groupReporting.ts
+  h_11a4578b84bb53 1-111
+server/oceanFreightEstimator.test.ts
+  h_11a4578b84bb53 1-186
+server/routers.ts
+  h_11a4578b84bb53 32,55,147-150,152-158,162,165-168,1515-1518,1520,1541-1547,1587,1611,1621,2594-2596,2601-2602,2604,2633-2639,8722-8744
+server/routers/procurement.ts
+  h_11a4578b84bb53 28-30,32
+server/routers/sales.ts
+  h_11a4578b84bb53 148-150,157
+server/scope.test.ts
+  h_11a4578b84bb53 2-9,103-153
+server/supplierScoringService.ts
+  h_11a4578b84bb53 74
+shared/oceanFreightRates.ts
+  h_11a4578b84bb53 1-409
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "97acc31ebc0b5088a19c5edfcdeefe0104778d25",
+  "prompts": {},
+  "humans": {
+    "h_11a4578b84bb53": {
+      "author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    }
+  }
+}
