@@ -1,0 +1,107 @@
+.strict-baseline.json
+  s_c2bc34cc15eb7f::t_eb6c736eb1ef8e 3-4,7
+DB_INDEX.md
+  s_c2bc34cc15eb7f::t_402efc5075014c 5,46-127,435,442-1570
+ROUTERS_INDEX.md
+  s_c2bc34cc15eb7f::t_52809d94a84e08 5,13-140,142,146-204,206,210-278
+client/src/components/DashboardLayout.tsx
+  s_c2bc34cc15eb7f::t_e27ee41cbad735 400-404,406,549-556
+client/src/components/ui/button.tsx
+  s_c2bc34cc15eb7f::t_6dcaa8dc6aaf18 8,13,15,17
+client/src/components/ui/card.tsx
+  s_c2bc34cc15eb7f::t_b4cb699f21f1f4 10
+client/src/components/ui/progress.tsx
+  s_c2bc34cc15eb7f::t_b0e9ddb42383a6 22
+client/src/index.css
+  s_c2bc34cc15eb7f::t_8068c7f04b2af0 246-360
+client/src/lib/utils.test.ts
+  s_c2bc34cc15eb7f::t_1667ae0169f881 2,30-60
+client/src/lib/utils.ts
+  s_c2bc34cc15eb7f::t_c782a52e6a4c16 7-32
+client/src/pages/freight/Carriers.tsx
+  s_c2bc34cc15eb7f::t_25a1e79b2e4850 3,49-51,62-101,109,162-192,194,196-199,428-434,451-453,457-463,567-570,599-632
+client/src/pages/freight/RFQDetail.tsx
+  s_c2bc34cc15eb7f::t_c0780c5f0b18fa 1,34,36,40,58-76,115-128,159-172,175,177,376-389,535,537-539,554,556-559,569,571-575,578-588,605-608,612-671
+client/src/pages/operations/Vendors.tsx
+  s_c2bc34cc15eb7f::t_c96a57c4e0ed0b 3,34,102,177-195,270,288,539-551,907-962
+client/src/pages/sales/FundraisingCampaigns.test.tsx
+  s_c2bc34cc15eb7f::t_8582444e0112c9 1-151
+client/src/pages/sales/FundraisingCampaigns.tsx
+  s_c2bc34cc15eb7f::t_9350851c7b00a7 16,267-278,280-281,284-285,288-292,294-297,303-358,361,376,398-401,403-406,408-412,415-505
+client/src/pages/superhumn/theme.css
+  s_c2bc34cc15eb7f::t_e27b5fe4796b3e 23-34
+docs/COMPANY_WEBSITE_SOURCING.md
+  s_c2bc34cc15eb7f::t_0d4f29bbeaf41b 1-189
+docs/FREIGHT_QUOTE_NORMALIZATION.md
+  s_c2bc34cc15eb7f::t_2a430abbb308a0 1-158
+drizzle/0058_freight_quote_normalization.sql
+  s_c2bc34cc15eb7f::t_cceca361fe586a 1-90
+drizzle/0059_company_website_sourcing.sql
+  s_c2bc34cc15eb7f::t_650a256fb0e056 1-79
+drizzle/entity-scope-exempt.txt
+  s_c2bc34cc15eb7f::t_a2e19e036978e0 26
+drizzle/meta/_journal.json
+  s_c2bc34cc15eb7f::t_23ca4715dfdc7d 410-423
+drizzle/schema.ts
+  s_c2bc34cc15eb7f::t_c310770f45665a 378-384,1550-1557,1603-1617,1650-1674,4574-4603
+server/attachmentUrl.test.ts
+  s_c2bc34cc15eb7f::t_89a4da1a6f2562 1-136
+server/attachmentUrl.ts
+  s_c2bc34cc15eb7f::t_3dbfef4a75ea89 1-108
+server/companyContactSourcing.test.ts
+  s_c2bc34cc15eb7f::t_e89940cd30084f 1-133
+server/companyContactSourcing.ts
+  s_c2bc34cc15eb7f::t_0967c7be16d105 1-310
+server/companyWebsiteSource.test.ts
+  s_c2bc34cc15eb7f::t_4e1c2c47ab9614 1-355
+server/companyWebsiteSource.ts
+  s_c2bc34cc15eb7f::t_5c17cba38b5aba 1-593
+server/db.ts
+  s_c2bc34cc15eb7f::t_fdddd1ad7bd8b5 2950-2978
+server/db/freight.ts
+  s_c2bc34cc15eb7f::t_638018dc84a4b5 52-64
+server/documentImportService.ts
+  s_c2bc34cc15eb7f::t_c12307d9f40a8a 9,173-193,200-210,227,229,260,262,379
+server/freightQuoteNormalization.test.ts
+  s_c2bc34cc15eb7f::t_cee077747e4f99 1-464
+server/freightQuoteNormalization.ts
+  s_c2bc34cc15eb7f::t_e202643c9105db 1-796
+server/freightQuoteParser.test.ts
+  s_c2bc34cc15eb7f::t_1264e2957cb9cc 1-195
+server/freightQuoteParser.ts
+  s_c2bc34cc15eb7f::t_f4f260c0de94f0 1-330
+server/jsdom.d.ts
+  s_c2bc34cc15eb7f::t_823704690d6627 1-34
+server/llmJson.test.ts
+  s_c2bc34cc15eb7f::t_6882ed345c1299 1-61
+server/llmJson.ts
+  s_c2bc34cc15eb7f::t_1039dd04398d7a 1-63
+server/routers.ts
+  s_c2bc34cc15eb7f::t_dc6d6fa740fc71 47-48,52,79-80,1536,1564,1627-1683,8741-8751,8761,8768-8769,8772-8776,8791-8801,8850-8860,8864-9015,9053-9060,9082-9089,9117,9123-9144,9269-9273,9275-9276,9278,9311-9314,9332-9334,9348-9367,9372-9374,9378-9383,9386-9397,9399-9441,9445,9449-9454,9456-9477,9479-9504,9506-9518,9520,9576-9586,9589-9595,9597-9604,9606,9612,9618,9621-9639,9643-9654,9656-9671,12907-12926,13534-13537,13702-13707
+server/routers/freight.ts
+  s_c2bc34cc15eb7f::t_0cb411bbad00eb 9-13,67-77,81-232,270-277,299-306,334,340-361,365,487-491,493-494,496,529-531,549-551,564-583,588-590,594-657,661,665-670,672-693,695-720,722-734,736,791-801,804-810,812-818,820-822,827,833,836-854,858-869,871-886
+server/routers/procurement.ts
+  s_c2bc34cc15eb7f::t_3185b2b3215de7 16,52,72,87-134,889-908
+server/vendorQuoteParser.ts
+  s_c2bc34cc15eb7f::t_51165921b59ca3 30,155-157,214-216
+server/webFetchGuard.test.ts
+  s_c2bc34cc15eb7f::t_f5eb346f8d9419 1-343
+server/webFetchGuard.ts
+  s_c2bc34cc15eb7f::t_03f3106bbb71dc 1-419
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "8b8c1bdc1d99a0c72a4487a8aea2388771784e72",
+  "prompts": {},
+  "sessions": {
+    "s_c2bc34cc15eb7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9928e53-5247-4262-810c-098bf219ad0b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    }
+  }
+}
