@@ -25,9 +25,11 @@ export const procurementRouter = router({
   // VENDOR MANAGEMENT
   // ============================================
   vendors: router({
+    // ⚠️ SECURITY: this extracted router is orphaned (not wired into the live app — see CLAUDE.md).
+    // Before wiring it up, `list`/`get` MUST adopt server-derived scoping (scopedProcedure + ctx.scope,
+    // like the live server/routers.ts vendors router) or they reintroduce the cross-entity data leak.
     list: protectedProcedure
-      .input(z.object({ companyId: z.number().optional() }).optional())
-      .query(({ input }) => db.getVendors(input?.companyId)),
+      .query(() => db.getVendors()),
     get: protectedProcedure
       .input(z.object({ id: z.number() }))
       .query(({ input }) => db.getVendorById(input.id)),
