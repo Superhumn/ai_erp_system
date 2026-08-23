@@ -39,7 +39,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ClipboardList, Plus, Search, Loader2, Sparkles, Send, Trash2, MoreHorizontal, CheckCircle, MessageCircle, Copy, X } from "lucide-react";
+import { ClipboardList, Plus, Search, Loader2, Sparkles, Send, Trash2, MoreHorizontal, CheckCircle, MessageCircle, Copy, X, Download, ArrowUp, ArrowDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
@@ -48,6 +48,9 @@ import WhatsAppDrawer from "@/components/WhatsAppDrawer";
 import LinkContactDialog from "@/components/LinkContactDialog";
 import PurchaseOrderDetailSheet from "./PurchaseOrderDetailSheet";
 import { useSearch, useLocation, Link } from "wouter";
+
+type SortKey =
+  | "poNumber" | "vendor" | "totalAmount" | "status" | "orderDate" | "expectedDate" | "createdAt";
 
 type LineItem = {
   productId?: number;
@@ -69,6 +72,13 @@ export default function PurchaseOrders() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [duplicatesOnly, setDuplicatesOnly] = useState(false);
+  const [vendorFilter, setVendorFilter] = useState<string>("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [sortBy, setSortBy] = useState<SortKey>("createdAt");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
 
   // Deep-link support: /operations/purchase-orders?po=<id> opens that PO's
   // detail drawer (used by status-change notifications). Depends on the search
@@ -111,12 +121,44 @@ export default function PurchaseOrders() {
   });
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
 
-  const { data: purchaseOrders, isLoading, refetch } = trpc.purchaseOrders.list.useQuery();
   const { data: vendors } = trpc.vendors.list.useQuery();
   const { data: products } = trpc.products.list.useQuery();
   const utils = trpc.useUtils();
 
+  // Filtering, sorting and paging all happen server-side: the list used to pull
+  // every PO and filter in the browser, which is why a few hundred imported
+  // rows rendered as one endless table.
+  const filters = useMemo(() => ({
+    status: statusFilter === "all" ? undefined : statusFilter,
+    vendorId: vendorFilter === "all" ? undefined : Number(vendorFilter),
+    search: search.trim() || undefined,
+    orderDateFrom: dateFrom ? new Date(`${dateFrom}T00:00:00`) : undefined,
+    // Inclusive end date: the picker gives a day, not an instant.
+    orderDateTo: dateTo ? new Date(`${dateTo}T23:59:59.999`) : undefined,
+    duplicatesOnly: duplicatesOnly || undefined,
+  }), [statusFilter, vendorFilter, search, dateFrom, dateTo, duplicatesOnly]);
+
+  const { data: pagedData, isLoading } = trpc.purchaseOrders.listPaged.useQuery({
+    ...filters,
+    sortBy,
+    sortDir,
+    limit: pageSize,
+    offset: page * pageSize,
+  });
+  const { data: summary } = trpc.purchaseOrders.summary.useQuery(filters);
+
+  const purchaseOrders = pagedData?.rows;
+  const totalCount = pagedData?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(totalCount / pageSize));
+
   const poIds = (purchaseOrders || []).map((po) => po.id);
+  const { data: receiptProgress } = trpc.purchaseOrders.receiptProgress.useQuery(
+    { purchaseOrderIds: poIds },
+    { enabled: poIds.length > 0 }
+  );
+  const receiptProgressMap = new Map(
+    (receiptProgress || []).map((r) => [r.purchaseOrderId, r])
+  );
   const { data: documentCounts } = trpc.purchaseOrders.documentCounts.useQuery(
     { purchaseOrderIds: poIds },
     { enabled: poIds.length > 0 }
@@ -128,17 +170,6 @@ export default function PurchaseOrders() {
   // Duplicate groups: POs sharing (poNumber, vendor, total). `keepId` is the
   // original import; everything in `duplicateIds` is a later copy.
   const { data: duplicateGroups } = trpc.purchaseOrders.duplicates.useQuery();
-
-  // Every PO that belongs to a duplicate group, original included — the filter
-  // shows whole groups so the original is visible next to its copies.
-  const duplicateIdSet = useMemo(() => {
-    const set = new Set<number>();
-    for (const g of duplicateGroups || []) {
-      set.add(g.keepId);
-      for (const id of g.duplicateIds) set.add(id);
-    }
-    return set;
-  }, [duplicateGroups]);
 
   // The copies only — what "Select duplicates" ticks, so the oldest of each
   // group survives the cleanup.
@@ -204,7 +235,7 @@ export default function PurchaseOrders() {
       toast.success("Purchase order created successfully");
       setIsOpen(false);
       resetForm();
-      utils.purchaseOrders.list.invalidate();
+      invalidateLists();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -234,7 +265,7 @@ export default function PurchaseOrders() {
       setTextInput("");
       setPoPreview(null);
       setActiveAction(null);
-      utils.purchaseOrders.list.invalidate();
+      invalidateLists();
     },
     onError: (error) => {
       toast.error(`Failed to create PO: ${error.message}`);
@@ -286,11 +317,76 @@ export default function PurchaseOrders() {
         next.delete(deletePOId);
         return next;
       });
-      utils.purchaseOrders.list.invalidate();
-      utils.purchaseOrders.duplicates.invalidate();
+      invalidateLists();
     },
     onError: (error) => toast.error(error.message),
   });
+
+  // Every list-affecting mutation goes through this: the page reads from
+  // listPaged + summary + duplicates, and refreshing only one of them leaves
+  // the header totals or the duplicate badge contradicting the table.
+  const invalidateLists = () => {
+    utils.purchaseOrders.list.invalidate();
+    utils.purchaseOrders.listPaged.invalidate();
+    utils.purchaseOrders.summary.invalidate();
+    utils.purchaseOrders.duplicates.invalidate();
+    utils.purchaseOrders.receiptProgress.invalidate();
+  };
+
+  const bulkUpdateStatus = trpc.purchaseOrders.bulkUpdateStatus.useMutation({
+    onSuccess: (data) => {
+      if (data.failed.length > 0) {
+        toast.warning(
+          `Updated ${data.updated} PO(s). ${data.failed.length} failed: ${data.failed.map((f) => f.poNumber).join(", ")}`
+        );
+      } else {
+        toast.success(`Updated ${data.updated} purchase order(s)`);
+        setSelectedIds(new Set());
+      }
+      invalidateLists();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  // Export pulls the full filtered set from the server rather than the visible
+  // page, so an export after paging isn't silently just those 50 rows.
+  const [isExporting, setIsExporting] = useState(false);
+  const handleExportCsv = async () => {
+    setIsExporting(true);
+    try {
+      const rows = await utils.purchaseOrders.exportRows.fetch({ ...filters, sortBy, sortDir });
+      if (!rows || rows.length === 0) {
+        toast.info("Nothing to export for the current filters");
+        return;
+      }
+      const headers = ["PO #", "Vendor", "Status", "Order Date", "Expected Date", "Subtotal", "Tax", "Shipping", "Total", "Currency", "Notes"];
+      // Quote every field and double any embedded quotes — vendor names and
+      // notes routinely contain commas, quotes and newlines.
+      const escape = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+      const isoDate = (d: unknown) => (d ? new Date(d as string).toISOString().slice(0, 10) : "");
+      const csv = [
+        headers.map(escape).join(","),
+        ...rows.map((r: any) => [
+          r.poNumber, r.vendor?.name ?? "", r.status, isoDate(r.orderDate), isoDate(r.expectedDate),
+          r.subtotal ?? "", r.taxAmount ?? "", r.shippingAmount ?? "", r.totalAmount ?? "", r.currency ?? "", r.notes ?? "",
+        ].map(escape).join(",")),
+      ].join("\n");
+
+      // BOM so Excel reads the file as UTF-8 rather than mangling vendor names.
+      const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `purchase-orders-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Exported ${rows.length} purchase order(s)`);
+    } catch (err: any) {
+      toast.error(err?.message || "Export failed");
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   const bulkDeletePOs = trpc.purchaseOrders.bulkDelete.useMutation({
     onSuccess: (data) => {
@@ -308,8 +404,7 @@ export default function PurchaseOrders() {
         setSelectedIds(new Set());
       }
       setBulkDeleteOpen(false);
-      utils.purchaseOrders.list.invalidate();
-      utils.purchaseOrders.duplicates.invalidate();
+      invalidateLists();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -317,7 +412,7 @@ export default function PurchaseOrders() {
   const updatePO = trpc.purchaseOrders.update.useMutation({
     onSuccess: () => {
       toast.success("Purchase order updated");
-      utils.purchaseOrders.list.invalidate();
+      invalidateLists();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -325,7 +420,7 @@ export default function PurchaseOrders() {
   const approvePO = trpc.purchaseOrders.approve.useMutation({
     onSuccess: () => {
       toast.success("Purchase order approved");
-      utils.purchaseOrders.list.invalidate();
+      invalidateLists();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -333,28 +428,57 @@ export default function PurchaseOrders() {
   const sendPOToSupplier = trpc.purchaseOrders.sendToSupplier.useMutation({
     onSuccess: () => {
       toast.success("PO sent to supplier");
-      utils.purchaseOrders.list.invalidate();
+      invalidateLists();
     },
     onError: (error) => toast.error(error.message),
   });
 
-  const filteredPOs = purchaseOrders?.filter((po) => {
-    // Search covers the vendor name too — with a screen full of near-identical
-    // imported rows, PO number alone is rarely what you have to hand.
-    const term = search.trim().toLowerCase();
-    const vendorName = (po.vendor?.name ?? "").toLowerCase();
-    const matchesSearch = !term || po.poNumber.toLowerCase().includes(term) || vendorName.includes(term);
-    const matchesStatus = statusFilter === "all" || po.status === statusFilter;
-    const matchesDuplicates = !duplicatesOnly || duplicateIdSet.has(po.id);
-    return matchesSearch && matchesStatus && matchesDuplicates;
-  });
+  const filteredPOs = purchaseOrders;
 
-  // Selection is scoped to what's on screen: "select all" ticks the current
-  // filter, and hidden rows are never silently swept into a delete.
+  // Changing what the list is showing clears the selection: a selection made
+  // under one filter shouldn't stay armed behind the delete button under
+  // another, where the user can no longer see what it covers.
+  useEffect(() => {
+    setSelectedIds(new Set());
+    setPage(0);
+  }, [statusFilter, vendorFilter, search, dateFrom, dateTo, duplicatesOnly]);
+
+  // Selection persists across pages — the ids are what matter, not which page
+  // they were ticked on — so bulk actions apply to everything selected.
   const visibleIds = (filteredPOs || []).map((po) => po.id);
   const selectedVisibleIds = visibleIds.filter((id) => selectedIds.has(id));
   const allVisibleSelected = visibleIds.length > 0 && selectedVisibleIds.length === visibleIds.length;
   const someVisibleSelected = selectedVisibleIds.length > 0 && !allVisibleSelected;
+  const selectedAllIds = Array.from(selectedIds);
+
+  const SortableHead = ({ label, sortKey, className }: { label: string; sortKey: SortKey; className?: string }) => (
+    <TableHead className={className}>
+      <button
+        type="button"
+        className="inline-flex items-center gap-1 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
+        onClick={() => toggleSort(sortKey)}
+        // Announces the current sort to screen readers, and which way the next
+        // click will take it.
+        aria-label={`Sort by ${label}${sortBy === sortKey ? ` (currently ${sortDir === "asc" ? "ascending" : "descending"})` : ""}`}
+      >
+        {label}
+        {sortBy === sortKey &&
+          (sortDir === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}
+      </button>
+    </TableHead>
+  );
+
+  const toggleSort = (key: SortKey) => {
+    if (sortBy === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(key);
+      // Text sorts read naturally ascending; amounts and dates are almost
+      // always wanted largest/newest first.
+      setSortDir(key === "poNumber" || key === "vendor" || key === "status" ? "asc" : "desc");
+    }
+    setPage(0);
+  };
 
   const toggleRow = (id: number, checked: boolean) => {
     setSelectedIds((prev) => {
@@ -376,21 +500,20 @@ export default function PurchaseOrders() {
     });
   };
 
-  // Tick the redundant copies only (the oldest PO in each group is left alone),
-  // limited to rows the current filter actually shows.
+  // Ticks every redundant copy in the table, not just the current page: the
+  // duplicates are spread across pages and cleaning them up one page at a time
+  // is the tedium this button exists to remove. The oldest PO of each group is
+  // never selected.
   const selectDuplicates = () => {
-    const target = visibleIds.filter((id) => redundantIds.has(id));
-    if (target.length === 0) {
-      toast.info("No duplicate copies in the current view");
+    if (redundantIds.size === 0) {
+      toast.info("No duplicate copies found");
       return;
     }
-    setSelectedIds(new Set(target));
-    toast.success(`Selected ${target.length} duplicate copy(ies) — originals kept`);
+    setSelectedIds(new Set(redundantIds));
+    toast.success(`Selected ${redundantIds.size} duplicate copy(ies) — originals kept`);
   };
 
-  // Selecting rows then filtering them away would otherwise leave an invisible
-  // selection armed behind the delete button.
-  const selectedCount = selectedVisibleIds.length;
+  const selectedCount = selectedIds.size;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -813,6 +936,38 @@ export default function PurchaseOrders() {
                 <SelectItem value="cancelled">Cancelled</SelectItem>
               </SelectContent>
             </Select>
+            <Select value={vendorFilter} onValueChange={setVendorFilter}>
+              <SelectTrigger className="w-[190px]">
+                <SelectValue placeholder="Vendor" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Vendors</SelectItem>
+                {(vendors || []).map((v: any) => (
+                  <SelectItem key={v.id} value={String(v.id)}>{v.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="flex items-center gap-2">
+              <Label htmlFor="po-date-from" className="text-sm text-muted-foreground whitespace-nowrap">
+                Ordered
+              </Label>
+              <Input
+                id="po-date-from"
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="w-[150px]"
+                aria-label="Order date from"
+              />
+              <span className="text-muted-foreground">–</span>
+              <Input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="w-[150px]"
+                aria-label="Order date to"
+              />
+            </div>
             <Button
               variant={duplicatesOnly ? "default" : "outline"}
               onClick={() => setDuplicatesOnly((v) => !v)}
@@ -826,17 +981,84 @@ export default function PurchaseOrders() {
                 </Badge>
               )}
             </Button>
+            <Button variant="outline" onClick={handleExportCsv} disabled={isExporting}>
+              {isExporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
+              Export CSV
+            </Button>
+            {(statusFilter !== "all" || vendorFilter !== "all" || dateFrom || dateTo || duplicatesOnly || search) && (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setStatusFilter("all");
+                  setVendorFilter("all");
+                  setDateFrom("");
+                  setDateTo("");
+                  setDuplicatesOnly(false);
+                  setSearch("");
+                }}
+              >
+                <X className="h-4 w-4 mr-2" />
+                Reset filters
+              </Button>
+            )}
           </div>
+
+          {/* Totals describe the whole filtered set, not the visible page. */}
+          {summary && summary.total > 0 && (
+            <div className="mt-3 flex items-center gap-4 flex-wrap text-sm">
+              <span className="text-muted-foreground">
+                <span className="font-medium text-foreground font-mono">{summary.total}</span> PO
+                {summary.total === 1 ? "" : "s"}
+              </span>
+              <span className="text-muted-foreground">
+                Total value{" "}
+                <span className="font-medium text-foreground font-mono">{formatCurrency(summary.totalValue)}</span>
+              </span>
+              <div className="flex items-center gap-2 flex-wrap">
+                {summary.byStatus.map((b) => (
+                  <Badge key={b.status} variant="outline" className={getStatusColor(b.status) || ""}>
+                    {b.status}: {b.count} · {formatCurrency(b.value)}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
 
           {selectedCount > 0 && (
             <div className="mt-3 flex items-center gap-3 flex-wrap rounded-md border bg-muted/50 px-3 py-2">
-              <span className="text-sm font-medium">{selectedCount} selected</span>
+              <span className="text-sm font-medium">
+                {selectedCount} selected
+                {selectedVisibleIds.length !== selectedCount && (
+                  <span className="font-normal text-muted-foreground">
+                    {" "}({selectedVisibleIds.length} on this page)
+                  </span>
+                )}
+              </span>
               {redundantIds.size > 0 && (
                 <Button variant="outline" size="sm" onClick={selectDuplicates}>
                   <Copy className="h-4 w-4 mr-2" />
                   Select duplicates only
                 </Button>
               )}
+              <Select
+                value=""
+                onValueChange={(status) => {
+                  if (status) bulkUpdateStatus.mutate({ ids: selectedAllIds, status: status as any });
+                }}
+                disabled={bulkUpdateStatus.isPending}
+              >
+                <SelectTrigger className="w-[170px] h-8">
+                  <SelectValue placeholder={bulkUpdateStatus.isPending ? "Updating…" : "Set status…"} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="draft">Draft</SelectItem>
+                  <SelectItem value="sent">Sent</SelectItem>
+                  <SelectItem value="confirmed">Confirmed</SelectItem>
+                  <SelectItem value="partial">Partial</SelectItem>
+                  <SelectItem value="received">Received</SelectItem>
+                  <SelectItem value="cancelled">Cancelled</SelectItem>
+                </SelectContent>
+              </Select>
               <Button
                 variant="destructive"
                 size="sm"
@@ -896,12 +1118,13 @@ export default function PurchaseOrders() {
                       aria-label="Select all purchase orders in view"
                     />
                   </TableHead>
-                  <TableHead>PO #</TableHead>
-                  <TableHead>Vendor Name</TableHead>
-                  <TableHead className="text-right">Total Amount</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Order Date</TableHead>
-                  <TableHead>Expected Date</TableHead>
+                  <SortableHead label="PO #" sortKey="poNumber" />
+                  <SortableHead label="Vendor Name" sortKey="vendor" />
+                  <SortableHead label="Total Amount" sortKey="totalAmount" className="text-right" />
+                  <SortableHead label="Status" sortKey="status" />
+                  <SortableHead label="Order Date" sortKey="orderDate" />
+                  <SortableHead label="Expected Date" sortKey="expectedDate" />
+                  <TableHead>Received</TableHead>
                   <TableHead className="text-right">Documents</TableHead>
                   <TableHead>Notes</TableHead>
                   <TableHead></TableHead>
@@ -981,6 +1204,44 @@ export default function PurchaseOrders() {
                       <TableCell>
                         {po.expectedDate ? format(new Date(po.expectedDate), "MMM d, yyyy") : "-"}
                       </TableCell>
+                      <TableCell>
+                        {(() => {
+                          const progress = receiptProgressMap.get(po.id);
+                          if (!progress || progress.lineCount === 0) {
+                            return <span className="text-muted-foreground">-</span>;
+                          }
+                          const pct = Math.round(progress.percentReceived);
+                          return (
+                            <div className="flex items-center gap-2 min-w-[90px]">
+                              <div
+                                className="h-1.5 flex-1 rounded-full bg-muted overflow-hidden"
+                                role="progressbar"
+                                aria-valuenow={pct}
+                                aria-valuemin={0}
+                                aria-valuemax={100}
+                                aria-label={`${pct}% received`}
+                              >
+                                <div
+                                  className={`h-full rounded-full ${
+                                    progress.isOverReceived
+                                      ? "bg-amber-500"
+                                      : pct >= 100
+                                        ? "bg-emerald-500"
+                                        : "bg-primary"
+                                  }`}
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+                              <span className="text-xs font-mono text-muted-foreground tabular-nums">
+                                {pct}%
+                              </span>
+                              {progress.isOverReceived && (
+                                <Badge variant="outline" className="text-amber-600 border-amber-300">over</Badge>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </TableCell>
                       <TableCell className="text-right">
                         {documentCountMap.get(po.id) ? (
                           <Badge variant="outline" className="font-mono">
@@ -1051,6 +1312,59 @@ export default function PurchaseOrders() {
               </TableBody>
             </Table>
           )}
+
+          {totalCount > 0 && (
+            <div className="flex items-center justify-between gap-4 flex-wrap pt-4">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span>
+                  Showing{" "}
+                  <span className="font-mono text-foreground">
+                    {page * pageSize + 1}–{Math.min((page + 1) * pageSize, totalCount)}
+                  </span>{" "}
+                  of <span className="font-mono text-foreground">{totalCount}</span>
+                </span>
+                <Select
+                  value={String(pageSize)}
+                  onValueChange={(v) => {
+                    setPageSize(Number(v));
+                    setPage(0);
+                  }}
+                >
+                  <SelectTrigger className="w-[110px] h-8">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {[25, 50, 100, 200].map((n) => (
+                      <SelectItem key={n} value={String(n)}>{n} / page</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={page === 0}
+                >
+                  <ChevronLeft className="h-4 w-4 mr-1" />
+                  Previous
+                </Button>
+                <span className="text-sm text-muted-foreground tabular-nums">
+                  Page {page + 1} of {pageCount}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+                  disabled={page >= pageCount - 1}
+                >
+                  Next
+                  <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -1110,7 +1424,7 @@ export default function PurchaseOrders() {
             <Button
               variant="destructive"
               disabled={bulkDeletePOs.isPending || selectedCount === 0}
-              onClick={() => bulkDeletePOs.mutate({ ids: selectedVisibleIds })}
+              onClick={() => bulkDeletePOs.mutate({ ids: selectedAllIds })}
             >
               {bulkDeletePOs.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Delete {selectedCount}

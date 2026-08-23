@@ -2,10 +2,17 @@ import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray
 import { drizzle } from "drizzle-orm/mysql2";
 import { scopeAllows, scopeCompanyIds, type Scope } from "./_core/scope";
 import {
+  reconcileThreeWayMatch,
+  resolveApprovalPolicy,
+  toNumber,
+  MATCH_EPSILON,
+} from "./purchaseOrderMatching";
+import {
   InsertUser, users, authTokens, InsertAuthToken, localAuthCredentials, InsertLocalAuthCredential, companies, customers, vendors, products,
   accounts, invoices, invoiceItems, payments, transactions, transactionLines,
   orders, orderItems, inventory, warehouses, productionBatches,
-  purchaseOrders, purchaseOrderItems, shipments,
+  purchaseOrders, purchaseOrderItems, purchaseOrderApprovals, approvalThresholds, shipments,
+  type InsertPurchaseOrderApproval,
   departments, employees, compensationHistory, employeePayments,
   ptoBalances, leaveRequests, onboardingTasks, employeeBenefits, employeeEmergencyContacts,
   contracts, contractKeyDates, disputes, documents,
@@ -1445,6 +1452,173 @@ export async function getPurchaseOrders(filters?: { companyId?: number; status?:
   return rows.map((r) => ({ ...r.po, vendor: r.vendor }));
 }
 
+export type PurchaseOrderListFilters = {
+  companyId?: number;
+  status?: string;
+  vendorId?: number;
+  /** Matches PO number or vendor name. */
+  search?: string;
+  orderDateFrom?: Date;
+  orderDateTo?: Date;
+  /** Restrict to POs that share (poNumber, vendor, total) with another PO. */
+  duplicatesOnly?: boolean;
+  sortBy?: "poNumber" | "vendor" | "totalAmount" | "status" | "orderDate" | "expectedDate" | "createdAt";
+  sortDir?: "asc" | "desc";
+  limit?: number;
+  offset?: number;
+};
+
+/**
+ * Build the WHERE clause shared by the paged list, the summary and the export
+ * so all three always describe the same set of POs — a filter that narrowed the
+ * table but not its totals would be worse than no totals at all.
+ *
+ * Returns null when the filters can't match anything (duplicatesOnly with no
+ * duplicates), which callers short-circuit on rather than issuing the query.
+ */
+async function buildPurchaseOrderConditions(filters: PurchaseOrderListFilters) {
+  const conditions = [];
+  if (filters.companyId) conditions.push(eq(purchaseOrders.companyId, filters.companyId));
+  if (filters.status) conditions.push(eq(purchaseOrders.status, filters.status as any));
+  if (filters.vendorId) conditions.push(eq(purchaseOrders.vendorId, filters.vendorId));
+  if (filters.orderDateFrom) conditions.push(gte(purchaseOrders.orderDate, filters.orderDateFrom));
+  if (filters.orderDateTo) conditions.push(lte(purchaseOrders.orderDate, filters.orderDateTo));
+
+  const term = filters.search?.trim();
+  if (term) {
+    // Escape the LIKE wildcards so a literal % or _ in a PO number searches for
+    // itself instead of matching everything.
+    const escaped = term.replace(/[\\%_]/g, (c) => `\\${c}`);
+    conditions.push(
+      or(like(purchaseOrders.poNumber, `%${escaped}%`), like(vendors.name, `%${escaped}%`))!,
+    );
+  }
+
+  if (filters.duplicatesOnly) {
+    const groups = await getDuplicatePurchaseOrderGroups();
+    const ids = groups.flatMap((g) => [g.keepId, ...g.duplicateIds]);
+    if (ids.length === 0) return null;
+    conditions.push(inArray(purchaseOrders.id, ids));
+  }
+
+  return conditions;
+}
+
+function purchaseOrderSortColumn(sortBy: PurchaseOrderListFilters["sortBy"]) {
+  switch (sortBy) {
+    case "poNumber": return purchaseOrders.poNumber;
+    case "vendor": return vendors.name;
+    case "totalAmount": return purchaseOrders.totalAmount;
+    case "status": return purchaseOrders.status;
+    case "orderDate": return purchaseOrders.orderDate;
+    case "expectedDate": return purchaseOrders.expectedDate;
+    default: return purchaseOrders.createdAt;
+  }
+}
+
+/**
+ * Filtered, sorted, paged PO list plus the total row count for the same filters.
+ *
+ * Kept separate from getPurchaseOrders (which returns everything) so the many
+ * existing callers of that helper keep their current shape and behaviour.
+ */
+export async function getPurchaseOrdersPaged(filters: PurchaseOrderListFilters = {}) {
+  const db = await getDb();
+  if (!db) return { rows: [], total: 0 };
+
+  const conditions = await buildPurchaseOrderConditions(filters);
+  if (conditions === null) return { rows: [], total: 0 };
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+  // The vendor join is always present: search and vendor sorting both read
+  // vendors.name, and the row shape must stay identical either way.
+  const [{ value: total }] = await db
+    .select({ value: count() })
+    .from(purchaseOrders)
+    .leftJoin(vendors, eq(purchaseOrders.vendorId, vendors.id))
+    .where(where);
+
+  const sortCol = purchaseOrderSortColumn(filters.sortBy);
+  const direction = filters.sortDir === "asc" ? asc : desc;
+
+  let query = db
+    .select({ po: purchaseOrders, vendor: vendors })
+    .from(purchaseOrders)
+    .leftJoin(vendors, eq(purchaseOrders.vendorId, vendors.id))
+    .where(where)
+    // id is the tiebreak so rows can't shuffle between pages when the sort
+    // column ties — which it constantly does on these bulk-imported POs.
+    .orderBy(direction(sortCol), desc(purchaseOrders.id)) as any;
+
+  if (filters.limit != null) query = query.limit(filters.limit);
+  if (filters.offset != null) query = query.offset(filters.offset);
+
+  const rows = await query;
+  return {
+    rows: rows.map((r: any) => ({ ...r.po, vendor: r.vendor })),
+    total,
+  };
+}
+
+/**
+ * Count and value of the POs matching `filters`, overall and per status, for
+ * the list header. Deliberately ignores limit/offset: the totals describe the
+ * whole filtered set, not the visible page.
+ */
+export async function getPurchaseOrderSummary(filters: PurchaseOrderListFilters = {}) {
+  const db = await getDb();
+  const empty = { total: 0, totalValue: "0", byStatus: [] as { status: string; count: number; value: string }[] };
+  if (!db) return empty;
+
+  const conditions = await buildPurchaseOrderConditions(filters);
+  if (conditions === null) return empty;
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+  const rows = await db
+    .select({
+      status: purchaseOrders.status,
+      count: count(),
+      value: sql<string>`COALESCE(SUM(${purchaseOrders.totalAmount}), 0)`,
+    })
+    .from(purchaseOrders)
+    .leftJoin(vendors, eq(purchaseOrders.vendorId, vendors.id))
+    .where(where)
+    .groupBy(purchaseOrders.status);
+
+  const byStatus = rows.map((r) => ({ status: r.status as string, count: Number(r.count), value: String(r.value ?? "0") }));
+  return {
+    total: byStatus.reduce((sum, r) => sum + r.count, 0),
+    totalValue: byStatus.reduce((sum, r) => sum + Number(r.value || 0), 0).toFixed(2),
+    byStatus,
+  };
+}
+
+/**
+ * Set the status on many POs at once. Mirrors the single-PO update rather than
+ * one bulk UPDATE so each row's status transition is validated and reported
+ * individually.
+ */
+export async function bulkUpdatePurchaseOrderStatus(ids: number[], status: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const updated: number[] = [];
+  const failed: { id: number; reason: string }[] = [];
+  for (const id of ids) {
+    try {
+      await db
+        .update(purchaseOrders)
+        // A PO leaving "received" must not keep a stale received date, matching
+        // setPurchaseOrderReceivedQuantities.
+        .set({ status: status as any, receivedDate: status === "received" ? new Date() : null })
+        .where(eq(purchaseOrders.id, id));
+      updated.push(id);
+    } catch (e: any) {
+      failed.push({ id, reason: e?.message || "Update failed" });
+    }
+  }
+  return { updated, failed };
+}
+
 export async function getPurchaseOrderById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
@@ -1867,6 +2041,7 @@ export async function deletePurchaseOrder(id: number) {
     await tx.delete(supplierDocuments).where(eq(supplierDocuments.purchaseOrderId, id));
     await tx.delete(supplierFreightInfo).where(eq(supplierFreightInfo.purchaseOrderId, id));
     await tx.delete(supplierPortalSessions).where(eq(supplierPortalSessions.purchaseOrderId, id));
+    await tx.delete(purchaseOrderApprovals).where(eq(purchaseOrderApprovals.purchaseOrderId, id));
     await tx.delete(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, id));
     await tx.delete(purchaseOrders).where(eq(purchaseOrders.id, id));
   });
@@ -1957,6 +2132,160 @@ export async function findPurchaseOrderByNumberExact(poNumber: string, vendorId?
     .orderBy(asc(purchaseOrders.id))
     .limit(1);
   return result[0] || null;
+}
+
+/**
+ * Three-way match for one PO: what was ordered (PO lines), what arrived
+ * (receivedQuantity) and what the vendor billed (invoice documents linked to
+ * the PO), reconciled line by line with the variances flagged.
+ *
+ * Fetches the three sides; the reconciliation itself lives in
+ * server/purchaseOrderMatching.ts so it can be unit-tested directly.
+ */
+export async function getPurchaseOrderThreeWayMatch(purchaseOrderId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const po = await getPurchaseOrderById(purchaseOrderId);
+  if (!po) return null;
+
+  const items = await db
+    .select()
+    .from(purchaseOrderItems)
+    .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
+
+  // Only actual bills count toward "invoiced" — a packing list or customs form
+  // linked to the same PO says nothing about what was charged.
+  const invoiceDocs = await db
+    .select()
+    .from(parsedDocuments)
+    .where(
+      and(
+        eq(parsedDocuments.purchaseOrderId, purchaseOrderId),
+        eq(parsedDocuments.documentType, "invoice" as any),
+      ),
+    );
+
+  const invoiceLines = invoiceDocs.length
+    ? await db
+        .select()
+        .from(parsedDocumentLineItems)
+        .where(inArray(parsedDocumentLineItems.documentId, invoiceDocs.map((d) => d.id)))
+    : [];
+
+  const result = reconcileThreeWayMatch(items as any, invoiceDocs as any, invoiceLines as any);
+  return {
+    purchaseOrderId,
+    poNumber: po.poNumber,
+    status: po.status,
+    ...result,
+  };
+}
+
+/**
+ * Per-PO receipt progress for the list view: how much of each PO has actually
+ * arrived, without loading every line item into the client.
+ */
+export async function getPurchaseOrderReceiptProgress(purchaseOrderIds: number[]) {
+  const db = await getDb();
+  if (!db || purchaseOrderIds.length === 0) return [];
+
+  const rows = await db
+    .select({
+      purchaseOrderId: purchaseOrderItems.purchaseOrderId,
+      orderedQty: sql<string>`COALESCE(SUM(${purchaseOrderItems.quantity}), 0)`,
+      receivedQty: sql<string>`COALESCE(SUM(${purchaseOrderItems.receivedQuantity}), 0)`,
+      lineCount: count(),
+    })
+    .from(purchaseOrderItems)
+    .where(inArray(purchaseOrderItems.purchaseOrderId, purchaseOrderIds))
+    .groupBy(purchaseOrderItems.purchaseOrderId);
+
+  return rows.map((r) => {
+    const ordered = toNumber(r.orderedQty);
+    const received = toNumber(r.receivedQty);
+    return {
+      purchaseOrderId: r.purchaseOrderId,
+      orderedQty: ordered,
+      receivedQty: received,
+      lineCount: Number(r.lineCount),
+      // Capped at 100 so an over-receipt shows a full bar plus the over_received
+      // flag, rather than a progress bar past its own end.
+      percentReceived: ordered > MATCH_EPSILON ? Math.min(100, (received / ordered) * 100) : 0,
+      isOverReceived: received - ordered > MATCH_EPSILON,
+    };
+  });
+}
+
+/**
+ * Resolve the approval chain a PO of this value has to clear, from the
+ * approvalThresholds row configured for entityType 'purchase_order'.
+ *
+ * Mirrors AutonomousWorkflowEngine.checkApprovalRequired so a PO approved by
+ * hand and one approved by the workflow engine answer to the same policy.
+ * With no threshold configured, anything over 500 needs one ops-level
+ * approval — the same fallback the engine uses.
+ */
+export async function getPurchaseOrderApprovalPolicy(amount: number) {
+  const db = await getDb();
+  if (!db) return resolveApprovalPolicy(null, amount);
+
+  const [threshold] = await db
+    .select()
+    .from(approvalThresholds)
+    .where(and(eq(approvalThresholds.entityType, "purchase_order" as any), eq(approvalThresholds.isActive, true)))
+    .limit(1);
+
+  return resolveApprovalPolicy((threshold as any) ?? null, amount);
+}
+
+export async function getPurchaseOrderApprovals(purchaseOrderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(purchaseOrderApprovals)
+    .where(eq(purchaseOrderApprovals.purchaseOrderId, purchaseOrderId))
+    .orderBy(asc(purchaseOrderApprovals.level), asc(purchaseOrderApprovals.id));
+}
+
+export async function createPurchaseOrderApproval(data: InsertPurchaseOrderApproval) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(purchaseOrderApprovals).values(data);
+  return { id: result[0].insertId };
+}
+
+/**
+ * Where a PO stands in its approval chain: which levels are signed off, which
+ * level is next, and who may sign it. Drives both the approve mutation's
+ * permission check and what the UI offers.
+ */
+export async function getPurchaseOrderApprovalState(purchaseOrderId: number) {
+  const po = await getPurchaseOrderById(purchaseOrderId);
+  if (!po) return null;
+
+  const amount = Number(po.totalAmount ?? "0");
+  const policy = await getPurchaseOrderApprovalPolicy(Number.isFinite(amount) ? amount : 0);
+  const decisions = await getPurchaseOrderApprovals(purchaseOrderId);
+
+  const rejected = decisions.find((d) => d.decision === "rejected") ?? null;
+  const approvedLevels = new Set(decisions.filter((d) => d.decision === "approved").map((d) => d.level));
+  const nextLevel = policy.levels.find((l) => !approvedLevels.has(l.level)) ?? null;
+
+  return {
+    purchaseOrderId,
+    amount,
+    thresholdName: policy.thresholdName,
+    autoApprove: policy.autoApprove,
+    requiredLevels: policy.levels,
+    decisions,
+    rejected,
+    nextLevel,
+    // A rejected PO is not "fully approved" no matter how many levels signed
+    // off before the rejection.
+    fullyApproved: !rejected && (policy.autoApprove || nextLevel === null),
+  };
 }
 
 export async function getAllPurchaseOrderItems() {
