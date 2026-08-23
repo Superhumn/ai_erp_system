@@ -1,0 +1,79 @@
+DB_INDEX.md
+  s_c2bc34cc15eb7f::t_0824cd3bb0244b 5,16-127,154,168-386,388-396,398,400-401,403-407,409,411-1570
+ROUTERS_INDEX.md
+  s_c2bc34cc15eb7f::t_05bd3f59970337 5,13-140,146-204,210-278
+client/src/App.tsx
+  s_c2bc34cc15eb7f::t_07af90c65b685a 126,402
+client/src/components/AICommandBar.tsx
+  s_c2bc34cc15eb7f::t_b29be4bc250efb 1065
+client/src/pages/freight/FreightDashboard.tsx
+  s_c2bc34cc15eb7f::t_9a4a858d43e5c4 13,72-77
+client/src/pages/freight/RateEstimator.test.tsx
+  s_c2bc34cc15eb7f::t_74e80de93f8b3c 1-102
+client/src/pages/freight/RateEstimator.tsx
+  s_c2bc34cc15eb7f::t_d64d7c5d7fe6aa 1-465
+client/src/pages/operations/LogisticsHub.tsx
+  s_c2bc34cc15eb7f::t_d6c3dffa50416f 31,377-384
+client/src/pages/operations/VendorNegotiations.tsx
+  s_c2bc34cc15eb7f::t_410756e4633a05 95
+docs/OCEAN_RATE_ESTIMATOR.md
+  s_c2bc34cc15eb7f::t_68d7dda282ba3e 1-57
+drizzle/entity-scope-exempt.txt
+  s_c2bc34cc15eb7f::t_87dc06ab457d2b 85,101,135
+drizzle/manual/step3_user_entity_access.sql
+  s_c2bc34cc15eb7f::t_d4193141d658d6 1-24
+drizzle/manual/step4_fx.sql
+  s_c2bc34cc15eb7f::t_914557573d634f 1-39
+drizzle/manual/step5_group_views.sql
+  s_c2bc34cc15eb7f::t_01a520cca8563e 1-59
+drizzle/manual/step6_cap_table_ownership.sql
+  s_c2bc34cc15eb7f::t_b964ee7896a96e 1-27
+drizzle/schema.ts
+  s_c2bc34cc15eb7f::t_1e60a8986147a2 100-117,241-297,454-457,493-496,520-523,562-565
+server/_core/scope.ts
+  s_c2bc34cc15eb7f::t_35f90b95be922e 29-33,68-95
+server/db.ts
+  s_c2bc34cc15eb7f::t_68f942b1846090 24,549-572,737-740,743-747,749-752,755-757,761-764,1163-1165,1168,1170-1174,1178,1185-1187,1191-1194,1211,1214-1215
+server/erp.test.ts
+  s_c2bc34cc15eb7f::t_b7b04e9879170f 12-16
+server/financeAiService.ts
+  s_c2bc34cc15eb7f::t_cb86ec06b2085f 205
+server/fx.test.ts
+  s_c2bc34cc15eb7f::t_dd307df0c5e897 1-49
+server/fxService.ts
+  s_c2bc34cc15eb7f::t_b6f687b4ecc1aa 1-70
+server/groupReporting.test.ts
+  s_c2bc34cc15eb7f::t_def900e722472b 1-110
+server/groupReporting.ts
+  s_c2bc34cc15eb7f::t_978ed8cda2c48e 1-111
+server/oceanFreightEstimator.test.ts
+  s_c2bc34cc15eb7f::t_c1f9d0838c2513 1-186
+server/routers.ts
+  s_c2bc34cc15eb7f::t_1ecab85044d4ff 32,55,147-150,152-158,162,165-168,1515-1518,1520,1541-1547,1587,1611,1621,2594-2596,2601-2602,2604,2633-2639,8722-8744
+server/routers/procurement.ts
+  s_c2bc34cc15eb7f::t_8cfcd74762098d 28-30,32
+server/routers/sales.ts
+  s_c2bc34cc15eb7f::t_d60517a6c0e9ea 148-150,157
+server/scope.test.ts
+  s_c2bc34cc15eb7f::t_93db932b38880b 2-9,103-153
+server/supplierScoringService.ts
+  s_c2bc34cc15eb7f::t_65a9c33dd90782 74
+shared/oceanFreightRates.ts
+  s_c2bc34cc15eb7f::t_12c23d742c05ab 1-409
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "406609f8a6f43828eac07c29daba086667692dcd",
+  "prompts": {},
+  "sessions": {
+    "s_c2bc34cc15eb7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9928e53-5247-4262-810c-098bf219ad0b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    }
+  }
+}
