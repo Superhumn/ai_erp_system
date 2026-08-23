@@ -1,0 +1,25 @@
+.github/workflows/deploy-production.yml
+  s_c2bc34cc15eb7f::t_cf8d61bd45b110 11-16
+.github/workflows/deploy-staging.yml
+  s_c2bc34cc15eb7f::t_c7e374ffe971ca 8-16,18-21,24
+DEPLOYMENT.md
+  s_c2bc34cc15eb7f::t_e0c70e53bcd123 90-92,101-104
+docs/deployment-setup.md
+  s_c2bc34cc15eb7f::t_0a728476b8d4c0 10-11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "356195efdaf49d559a60ef25fb0393c9010c7e59",
+  "prompts": {},
+  "sessions": {
+    "s_c2bc34cc15eb7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9928e53-5247-4262-810c-098bf219ad0b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    }
+  }
+}
