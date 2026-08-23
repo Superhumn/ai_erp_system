@@ -13,6 +13,7 @@ import { listDriveFolders } from "../_core/googleDrive";
 import { normalizeQuotesForRfq, basisFromRfq, INCOTERM_CODES } from "../quoteNormalization";
 import { ingestVendorQuoteEmail, parseVendorQuoteAttachment, parseVendorQuoteEmail } from "../vendorQuoteParser";
 import { computeResponsivenessForVendors, computeVendorResponsiveness, markStaleInvitationsNoResponse, responsivenessScoreFromMetrics } from "../vendorResponsiveness";
+import { getCompanyWebSources, sourceCompanyContacts, sourceCompanyContactsBatch } from "../companyContactSourcing";
 import { router, publicProcedure, protectedProcedure, opsProcedure, copackerProcedure, vendorProcedure, createAuditLog, generateNumber } from "./middleware";
 
 // Upper bound on a single RFQ blast — mirrors MAX_RFQ_VENDORS_PER_SEND in
@@ -48,6 +49,7 @@ export const procurementRouter = router({
         paymentTerms: z.number().optional(),
         defaultLeadTimeDays: z.number().optional(),
         taxId: z.string().optional(),
+        website: z.string().optional(),
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
@@ -67,6 +69,7 @@ export const procurementRouter = router({
         paymentTerms: z.number().optional(),
         defaultLeadTimeDays: z.number().optional(),
         notes: z.string().optional(),
+        website: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
@@ -80,6 +83,54 @@ export const procurementRouter = router({
         await db.deleteVendor(input.id);
         await createAuditLog(ctx.user.id, 'delete', 'vendor', input.id);
         return { success: true };
+      }),
+
+    /**
+     * Read this vendor's own website and fill in contact details from it.
+     * Only own-domain pages are trusted; only an own-domain email verifies.
+     */
+    sourceFromWebsite: opsProcedure
+      .input(z.object({
+        vendorId: z.number(),
+        website: z.string().optional(),
+        overwriteExisting: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const vendor = await db.getVendorById(input.vendorId);
+        if (!vendor) throw new TRPCError({ code: "NOT_FOUND", message: "Vendor not found" });
+        const result = await sourceCompanyContacts({
+          entityType: "vendor",
+          entityId: input.vendorId,
+          website: input.website,
+          overwriteExisting: input.overwriteExisting,
+          requestedBy: ctx.user.id,
+        });
+        await createAuditLog(
+          ctx.user.id, "update", "vendor", input.vendorId, vendor.name, null,
+          { contactSourcing: result.status, verified: result.verified, applied: result.applied },
+        );
+        return result;
+      }),
+
+    webSources: protectedProcedure
+      .input(z.object({ vendorId: z.number(), limit: z.number().min(1).max(100).optional() }))
+      .query(({ input }) => getCompanyWebSources("vendor", input.vendorId, input.limit)),
+
+    sourceFromWebsiteBatch: opsProcedure
+      .input(z.object({
+        vendorIds: z.array(z.number()).min(1).max(25),
+        overwriteExisting: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const summary = await sourceCompanyContactsBatch(
+          Array.from(new Set(input.vendorIds)).map(entityId => ({ entityType: "vendor" as const, entityId })),
+          { overwriteExisting: input.overwriteExisting, requestedBy: ctx.user.id },
+        );
+        await createAuditLog(
+          ctx.user.id, "update", "vendor", 0,
+          `Sourced contacts from ${input.vendorIds.length} vendor websites (${summary.verifiedCount} verified)`,
+        );
+        return summary;
       }),
   }),
   // ============================================
@@ -835,6 +886,26 @@ export const procurementRouter = router({
             const vendor = await db.getVendorById(vendorId);
             if (!vendor || !vendor.email) {
               results.failed++;
+              results.emails.push({
+                vendorId,
+                vendorName: vendor?.name,
+                status: 'failed',
+                error: vendor ? 'No email address on this vendor' : 'Vendor not found',
+              });
+              continue;
+            }
+
+            // Same rule as carriers: an address nothing has confirmed is not an
+            // address to send an RFQ to.
+            if (vendor.contactSource === 'discovered') {
+              results.skipped++;
+              results.emails.push({
+                vendorId,
+                vendorName: vendor.name,
+                status: 'blocked',
+                error: 'Contact details are unverified — source them from the vendor\'s website '
+                  + 'or enter them by hand before sending.',
+              });
               continue;
             }
 

@@ -243,6 +243,121 @@
   h4 { @apply text-base font-medium tracking-[-0.01em] leading-snug; }
 }
 
+/* ============================================
+   SUPERHUMN MOTION SYSTEM
+   One speed language for the whole app: fast
+   ease-out curves, subtle physical press
+   feedback, soft elevation. Restrained — no
+   bounce, nothing slower than 300ms.
+   ============================================ */
+
+:root {
+  --motion-fast: 120ms;
+  --motion-base: 180ms;
+  --motion-slow: 280ms;
+  /* Decisive deceleration — starts fast, lands softly. */
+  --ease-out: cubic-bezier(0.25, 1, 0.5, 1);
+  /* For elements entering the view (panels, pages). */
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@layer base {
+  /* Press physics: every real control compresses slightly under the
+     pointer. transform-only, so it never causes layout or paint jank. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [type="button"]:not(:disabled),
+  [type="submit"]:not(:disabled),
+  [type="reset"]:not(:disabled) {
+    transition:
+      transform var(--motion-fast) var(--ease-out),
+      box-shadow var(--motion-base) var(--ease-out),
+      background-color var(--motion-fast) var(--ease-out),
+      border-color var(--motion-fast) var(--ease-out),
+      color var(--motion-fast) var(--ease-out),
+      opacity var(--motion-fast) var(--ease-out);
+  }
+  button:not(:disabled):active,
+  [role="button"]:not([aria-disabled="true"]):active,
+  [type="button"]:not(:disabled):active,
+  [type="submit"]:not(:disabled):active,
+  [type="reset"]:not(:disabled):active {
+    transform: scale(0.97);
+  }
+
+  /* Links and table rows ease their color/tint changes. */
+  a[href] {
+    transition: color var(--motion-fast) var(--ease-out),
+      opacity var(--motion-fast) var(--ease-out);
+  }
+  tr {
+    transition: background-color var(--motion-fast) var(--ease-out);
+  }
+
+  /* Form fields: smooth border + ring on focus. */
+  input, select, textarea {
+    transition:
+      border-color var(--motion-fast) var(--ease-out),
+      box-shadow var(--motion-base) var(--ease-out),
+      background-color var(--motion-fast) var(--ease-out);
+  }
+}
+
+@layer components {
+  /* Route/page entrance: content rises 6px and fades in. Applied by the
+     dashboard shell, keyed by route, so every navigation feels placed
+     rather than swapped. No fill-mode: once the animation ends the transform
+     reverts to `none`, so this wrapper stops being a containing block and
+     position:fixed descendants (e.g. bulk-action bars) anchor to the
+     viewport again. */
+  .page-enter {
+    animation: page-enter var(--motion-slow) var(--ease-enter);
+  }
+
+  /* Tab panels cross-fade instead of hard-cutting. */
+  [role="tabpanel"][data-state="active"] {
+    animation: content-fade var(--motion-base) var(--ease-out) both;
+  }
+
+  /* Meter / progress fills glide to their value instead of jumping. */
+  .meter-fill,
+  [data-slot="progress-indicator"] {
+    transition: width var(--motion-slow) var(--ease-out),
+      transform var(--motion-slow) var(--ease-out);
+  }
+}
+
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    /* End at the base value so there is no visual jump when the animation
+       finishes and the element's own (transform-free) style takes over. */
+    transform: none;
+  }
+}
+
+@keyframes content-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Accessibility: honor reduced-motion — collapse all animation to
+   imperceptible durations without changing final states. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 @layer components {
   .container {
     width: 100%;

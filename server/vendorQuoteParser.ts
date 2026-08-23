@@ -27,6 +27,7 @@ import { buildDocumentMessageContent } from "./documentImportService";
 import { normalizeQuotesForRfq } from "./quoteNormalization";
 import { currencyOr, normalizeCurrencyCode } from "./currencyService";
 import { recordInvitationResponse } from "./vendorResponsiveness";
+import { parseLlmJson } from "./llmJson";
 
 // ─── Extraction shape ──────────────────────────────────────────────────
 
@@ -151,20 +152,9 @@ const EXTRACTION_SCHEMA = {
 
 /** Tolerant JSON extraction — `response_format` is a prompt hint here, not a guarantee. */
 export function parseExtractionJson(raw: unknown): VendorQuoteExtraction {
-  const text = typeof raw === "string" ? raw : JSON.stringify(raw ?? "");
-  const stripped = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "");
-  let parsed: any;
-  try {
-    parsed = JSON.parse(stripped);
-  } catch {
-    const match = stripped.match(/\{[\s\S]*\}/);
-    if (!match) return { ...EMPTY_EXTRACTION };
-    try {
-      parsed = JSON.parse(match[0]);
-    } catch {
-      return { ...EMPTY_EXTRACTION };
-    }
-  }
+  // Shared tolerant recovery, so a fenced block behind a sentence still parses.
+  const parsed = parseLlmJson(raw);
+  if (parsed === null || typeof parsed !== "object") return { ...EMPTY_EXTRACTION };
   return coerceExtraction(parsed);
 }
 
@@ -221,7 +211,9 @@ export function coerceExtraction(parsed: any): VendorQuoteExtraction {
 export function findRfqNumber(...texts: (string | null | undefined)[]): string | null {
   for (const text of texts) {
     if (!text) continue;
-    const match = text.match(/\bRFQ[-\s]?(?:ING[-\s]?)?[A-Z0-9]{2,}(?:[-\s]?[A-Z0-9]{2,})*/i);
+    // Segments after the first must be hyphen-joined: allowing whitespace here
+    // lets the match run on into the next word ("RFQ-1-AB rates" -> "...-RATES").
+    const match = text.match(/\bRFQ[-\s]?(?:ING[-\s]?)?[A-Z0-9]{2,}(?:-[A-Z0-9]{2,})*/i);
     if (match) return match[0].replace(/\s+/g, "-").toUpperCase();
   }
   return null;

@@ -23,6 +23,7 @@ codeExecutions
 codeSnippets
 cogsTransactions
 companies
+companyWebSources
 compensationHistory
 contactCaptures
 contractKeyDates

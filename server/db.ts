@@ -2948,6 +2948,35 @@ export async function updateFreightCarrier(id: number, data: Partial<InsertFreig
   return { success: true };
 }
 
+/**
+ * Find a CRM contact for a carrier by matching email or phone, the same way
+ * `findCrmContactForVendor` does. Carriers are companies we correspond with by
+ * email, so the contact record belongs in the CRM alongside vendor contacts.
+ */
+export async function findCrmContactForCarrier(carrier: {
+  email?: string | null;
+  phone?: string | null;
+}) {
+  return findCrmContactMatch({
+    email: carrier.email,
+    phone: carrier.phone,
+    whatsappNumber: carrier.phone,
+  });
+}
+
+/** Link a CRM contact to a freight carrier. */
+export async function linkFreightCarrierContact(carrierId: number, contactId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(freightCarriers).set({ contactId }).where(eq(freightCarriers.id, carrierId));
+}
+
+export async function unlinkFreightCarrierContact(carrierId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(freightCarriers).set({ contactId: null }).where(eq(freightCarriers.id, carrierId));
+}
+
 // ============================================
 // FREIGHT RFQs
 // ============================================
