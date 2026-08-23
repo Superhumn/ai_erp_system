@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
+import { safeExternalUrl } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -905,11 +906,18 @@ export default function Vendors() {
                               <div><span className="text-xs text-muted-foreground block">Tax ID</span>{vendor.taxId || "-"}</div>
                               <div>
                                 <span className="text-xs text-muted-foreground block">Website</span>
-                                {vendor.website ? (
-                                  <a href={vendor.website} target="_blank" rel="noreferrer noopener" className="text-primary hover:underline inline-flex items-center gap-1">
-                                    <Globe className="h-3 w-3" />{vendor.website}
-                                  </a>
-                                ) : "-"}
+                                {(() => {
+                                  // Typed by a person, so not safe to link blind.
+                                  const href = safeExternalUrl(vendor.website);
+                                  if (!vendor.website) return "-";
+                                  return href ? (
+                                    <a href={href} target="_blank" rel="noreferrer noopener" className="text-primary hover:underline inline-flex items-center gap-1">
+                                      <Globe className="h-3 w-3" />{vendor.website}
+                                    </a>
+                                  ) : (
+                                    <span className="text-muted-foreground">{vendor.website}</span>
+                                  );
+                                })()}
                               </div>
                               <div className="col-span-2">
                                 <span className="text-xs text-muted-foreground block">Contact details</span>
@@ -917,8 +925,8 @@ export default function Vendors() {
                                   {vendor.contactSource === "website" ? (
                                     <Badge variant="outline" className="gap-1 border-emerald-500/50 text-emerald-600">
                                       <ShieldCheck className="h-3 w-3" />
-                                      {vendor.contactSourceUrl ? (
-                                        <a href={vendor.contactSourceUrl} target="_blank" rel="noreferrer noopener" className="hover:underline">
+                                      {safeExternalUrl(vendor.contactSourceUrl) ? (
+                                        <a href={safeExternalUrl(vendor.contactSourceUrl)!} target="_blank" rel="noreferrer noopener" className="hover:underline">
                                           From their website
                                         </a>
                                       ) : "From their website"}

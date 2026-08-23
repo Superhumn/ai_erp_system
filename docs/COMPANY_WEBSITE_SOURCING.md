@@ -84,15 +84,52 @@ typed in by users, so the fetch is a server-side request forgery risk. The guard
 
 - allows `http:` and `https:` only, and rejects credentials embedded in the URL
 - resolves the hostname and requires **every** returned address to be public —
-  loopback, link-local (incl. `169.254.169.254`), private, CGNAT, multicast,
-  reserved, and their IPv6 equivalents including `::ffff:` v4-mapped and NAT64
-- follows redirects manually, re-running the check on every hop (max 4)
+  loopback, link-local (incl. `169.254.169.254`), private, CGNAT, multicast, and
+  the reserved ranges (TEST-NET, benchmarking, 6to4 relay anycast)
+- for IPv6, parses the address into its eight groups and compares numerically
+  rather than matching text prefixes, so `::1` and `0:0:0:0:0:0:0:1` are the same
+  address to it. Blocks link-local, ULA, multicast, discard-only, documentation,
+  and — importantly — the transition mechanisms that can carry a request into
+  IPv4 private space while looking like an ordinary v6 address: `::ffff:`
+  v4-mapped, `::a.b.c.d` v4-compatible, `2002::/16` 6to4, `2001::/32` Teredo and
+  `64:ff9b::/96` NAT64. A 6to4 address wrapping `10.0.0.1` is refused exactly as
+  `10.0.0.1` would be.
+- **pins the connection to the address it checked**, via a custom `lookup` on the
+  agent. Checking DNS and then letting the socket resolve again is a rebinding
+  hole — the second answer can differ from the first. Pinning closes it while
+  leaving the hostname in the URL, so SNI and certificate validation are
+  unaffected. This is why the fetch uses `node:http`/`node:https` rather than
+  global `fetch`, which has no way to supply a lookup.
+- follows redirects manually, re-running the whole check on every hop (max 4)
 - refuses non-text content types
 - caps the body at 2 MB by `Content-Length` and again while streaming
 - times out at 12 s
 
 This is the deny-private shape, distinct from `server/attachmentUrl.ts`, which
 allowlists our own storage hosts. Different threat, different rule.
+
+`safeFetchHtml` takes an optional `request` transport so the redirect and size
+handling can be tested without a network; production always uses the pinned node
+transport.
+
+### Public suffixes
+
+`isSameSite` refuses a base host that is really a public suffix. Without that, a
+vendor whose website was recorded as `co.uk` would treat every address at every
+UK company as its own. `isPublicSuffixLike` is a heuristic — a bare TLD, or a
+two-label registry suffix under a ccTLD (`co.uk`, `com.au`, `ne.jp`) — not the
+Public Suffix List, which is a large and frequently-updated dataset not worth the
+dependency for one check here. The failure is closed either way: an unrecognised
+public suffix means values do not verify, never that an unrelated domain is
+accepted as the company's own.
+
+`normalizeWebsiteUrl` rejects rather than normalizes anything that should not be
+stored as a website — a non-http scheme, embedded credentials, a bare public
+suffix — because that value is also written to `vendors.website` and rendered as
+a link. On the client, `safeExternalUrl` (in `client/src/lib/utils.ts`) is the
+second half of that: a stored value only becomes an `href` or a `window.open`
+target if it parses as an absolute `http(s)` URL, and renders as plain text
+otherwise.
 
 ## Audit trail
 
@@ -119,6 +156,11 @@ here explaining where the new value came from.
 Batches are deliberately serial. A burst of parallel requests at one company's
 infrastructure is how you get rate-limited or blocked.
 
+A batch reports three counts, which are not complements of each other:
+`verifiedCount` (an own-domain email was found), `unverifiedCount` (everything
+else, most of which is a normal outcome — a site publishing only a phone number
+is not an error), and `failedCount` (the site could not be read at all).
+
 ## What `discoverCarriers` returns now
 
 Name, type, country, website and notes — nothing else. The prompt explicitly
@@ -138,9 +180,10 @@ so a carrier's contact is one CRM record rather than a duplicate.
 
 | File                                  | Covers                                              |
 |---------------------------------------|-----------------------------------------------------|
-| `server/webFetchGuard.test.ts`         | 36 — address classification, scheme, DNS, redirects |
-| `server/companyWebsiteSource.test.ts`  | 35 — domain matching, HTML/JSON-LD extraction, patch choice |
+| `server/webFetchGuard.test.ts`         | 63 — address classification (v4 and v6, incl. the transition mechanisms), scheme, DNS, redirect chains into blocked ranges, size caps |
+| `server/companyWebsiteSource.test.ts`  | 54 — domain matching, public suffixes, HTML/JSON-LD extraction, patch choice |
 | `server/companyContactSourcing.test.ts`| 11 — the promotion rule and existing-value handling |
+| `client/src/lib/utils.test.ts`         | 6 — `safeExternalUrl` scheme and shape rejection |
 
 The extraction tests run against HTML fixtures, so they cover the parsing without
 any network access.

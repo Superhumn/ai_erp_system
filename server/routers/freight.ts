@@ -70,7 +70,7 @@ export const freightRouter = router({
           const patch: Record<string, any> = { ...data };
           if (data.email || data.phone) {
             const existing = await db.getFreightCarrierById(id);
-            if (existing && (existing as any).contactSource === 'discovered') {
+            if (existing && existing.contactSource === 'discovered') {
               patch.contactSource = 'manual';
             }
           }
@@ -104,7 +104,7 @@ export const freightRouter = router({
             website: input.website,
             notes: input.notes,
             contactSource: 'discovered',
-          } as any);
+          });
           await createAuditLog(ctx.user.id, 'create', 'freight_carrier', created.id, input.name);
 
           if (!input.website) {
@@ -188,8 +188,8 @@ export const freightRouter = router({
         .mutation(async ({ input, ctx }) => {
           const carrier = await db.getFreightCarrierById(input.carrierId);
           if (!carrier) throw new TRPCError({ code: 'NOT_FOUND', message: 'Carrier not found' });
-          if ((carrier as any).contactId) {
-            const contact = await db.getCrmContactById((carrier as any).contactId);
+          if (carrier.contactId) {
+            const contact = await db.getCrmContactById(carrier.contactId);
             if (contact) return { contact, autoLinked: false };
           }
           const match = await db.findCrmContactForCarrier({
@@ -350,7 +350,7 @@ export const freightRouter = router({
             // own website (or a person) confirms it, sending an RFQ here means
             // mailing our shipment details to whoever happens to own that
             // mailbox. Refuse, and say what unblocks it.
-            if ((carrier as any).contactSource === 'discovered') {
+            if (carrier.contactSource === 'discovered') {
               results.blocked++;
               results.emails.push({
                 carrierId,

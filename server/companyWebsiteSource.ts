@@ -104,12 +104,49 @@ export function registrableHost(url: string): string | null {
 }
 
 /**
+ * Second-level labels that are registries rather than companies. `acme.co.uk` is
+ * a company; `co.uk` is where companies are registered, and treating it as a
+ * "site" would make every `*.co.uk` host count as the same company.
+ *
+ * This is a heuristic, not the Public Suffix List. The full PSL is a large,
+ * frequently-updated dataset and pulling it in for one check is not worth the
+ * dependency here — the realistic input is a person typing a vendor's website,
+ * not an attacker choosing one. What matters is that the failure is closed: an
+ * unrecognised public suffix means values simply do not verify, never that an
+ * unrelated domain is accepted as the company's own.
+ */
+const REGISTRY_SECOND_LEVELS = new Set([
+  "co", "com", "net", "org", "gov", "edu", "ac", "mil", "int",
+  "or", "ne", "gr", "lg", "ad", "ed", "go", "nom", "web", "info", "biz",
+]);
+
+/**
+ * True when a host looks like a public suffix rather than somebody's domain:
+ * a bare TLD (`uk`), or a two-label registry suffix under a ccTLD (`co.uk`,
+ * `com.au`, `co.jp`).
+ */
+export function isPublicSuffixLike(host: string): boolean {
+  const labels = host.split(".").filter(Boolean);
+  if (labels.length < 2) return true; // "uk", "localhost" — not a registrable domain
+  if (labels.length > 2) return false;
+  const [second, tld] = labels;
+  // Only ccTLDs (two letters) carry these registry second-levels; "co.com" is a
+  // perfectly ordinary domain someone owns.
+  return tld.length === 2 && REGISTRY_SECOND_LEVELS.has(second);
+}
+
+/**
  * True when `candidate` is the same site as `base` — an exact match or a
  * subdomain of it. Deliberately strict about the boundary: "evil-maersk.com"
  * and "maersk.com.attacker.net" are both different sites.
+ *
+ * A `base` that is really a public suffix matches nothing. Without that, a
+ * vendor whose website was recorded as "co.uk" would treat every address at
+ * every UK company as its own.
  */
 export function isSameSite(candidate: string | null, base: string | null): boolean {
   if (!candidate || !base) return false;
+  if (isPublicSuffixLike(base)) return false;
   if (candidate === base) return true;
   return candidate.endsWith(`.${base}`);
 }
@@ -322,14 +359,24 @@ function formatPostalAddress(address: unknown): string | null {
 
 // ─── Orchestration ─────────────────────────────────────────────────────
 
-/** Ensure a bare "maersk.com" becomes a fetchable https URL. */
+/**
+ * Ensure a bare "maersk.com" becomes a fetchable https URL.
+ *
+ * Rejects rather than normalizes anything that should never be stored as a
+ * website: a non-http scheme, or embedded credentials. `safeFetchHtml` would
+ * refuse those too, but this value is also written to `vendors.website` and
+ * rendered as a link, so it must not survive that far.
+ */
 export function normalizeWebsiteUrl(raw: string): string | null {
   const trimmed = (raw ?? "").trim();
   if (!trimmed) return null;
-  const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
   try {
     const url = new URL(withScheme);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    if (url.username || url.password) return null;
     if (!url.hostname.includes(".")) return null;
+    if (isPublicSuffixLike(url.hostname.replace(/^www\./, ""))) return null;
     return url.toString();
   } catch {
     return null;

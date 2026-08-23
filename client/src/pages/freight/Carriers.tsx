@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { safeExternalUrl } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -76,7 +77,8 @@ function ContactProvenance({ carrier }: { carrier: any }) {
     );
   }
   if (source === "website") {
-    const href = carrier.contactSourceUrl;
+    // Server-extracted, but still untrusted data from the DB at render time.
+    const href = safeExternalUrl(carrier.contactSourceUrl);
     return (
       <Badge variant="outline" className="w-fit gap-1 border-emerald-500/50 text-emerald-600">
         <ShieldCheck className="h-3 w-3" />
@@ -598,8 +600,12 @@ export default function Carriers() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              title="Open website"
-                              onClick={() => window.open(carrier.website!, "_blank", "noopener,noreferrer")}
+                              title={safeExternalUrl(carrier.website) ? "Open website" : "Website is not a usable http(s) URL"}
+                              disabled={!safeExternalUrl(carrier.website)}
+                              onClick={() => {
+                                const href = safeExternalUrl(carrier.website);
+                                if (href) window.open(href, "_blank", "noopener,noreferrer");
+                              }}
                             >
                               <Globe className="h-4 w-4" />
                             </Button>

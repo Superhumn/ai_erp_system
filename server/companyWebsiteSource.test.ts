@@ -6,6 +6,7 @@ import {
   extractContactsFromHtml,
   isPlausibleEmail,
   isRoleAddress,
+  isPublicSuffixLike,
   isSameSite,
   normalizePhone,
   normalizeWebsiteUrl,
@@ -35,6 +36,30 @@ describe("registrableHost / isSameSite", () => {
     expect(registrableHost("not a url")).toBeNull();
     expect(isSameSite(null, SITE)).toBe(false);
   });
+
+  it("refuses to treat a public suffix as a company's site", () => {
+    // Otherwise a vendor recorded as "co.uk" would own every UK address.
+    expect(isSameSite("someone-else.co.uk", "co.uk")).toBe(false);
+    expect(isSameSite("anything.com", "com")).toBe(false);
+    expect(emailOnOwnDomain("ops@someone-else.co.uk", "co.uk")).toBe(false);
+  });
+
+  it("still treats a real domain under a public suffix as a site", () => {
+    expect(isSameSite("acme.co.uk", "acme.co.uk")).toBe(true);
+    expect(isSameSite("mail.acme.co.uk", "acme.co.uk")).toBe(true);
+  });
+});
+
+describe("isPublicSuffixLike", () => {
+  it.each(["uk", "com", "co.uk", "com.au", "co.jp", "ne.jp", "org.uk"])(
+    "flags %s",
+    host => expect(isPublicSuffixLike(host)).toBe(true),
+  );
+
+  it.each(["acme.com", "acme.co.uk", "co.com", "info.net", "acme-freight.com"])(
+    "leaves %s alone",
+    host => expect(isPublicSuffixLike(host)).toBe(false),
+  );
 });
 
 describe("emailOnOwnDomain", () => {
@@ -105,6 +130,21 @@ describe("normalizeWebsiteUrl", () => {
   it("rejects something with no dot in the host", () => {
     expect(normalizeWebsiteUrl("localhost")).toBeNull();
     expect(normalizeWebsiteUrl("   ")).toBeNull();
+  });
+
+  it("rejects embedded credentials rather than storing them", () => {
+    // This value is written to vendors.website and rendered as a link.
+    expect(normalizeWebsiteUrl("https://user:pass@acme-freight.com")).toBeNull();
+  });
+
+  it("rejects a non-http scheme", () => {
+    expect(normalizeWebsiteUrl("javascript:alert(1)")).toBeNull();
+    expect(normalizeWebsiteUrl("file:///etc/passwd")).toBeNull();
+    expect(normalizeWebsiteUrl("ftp://acme-freight.com")).toBeNull();
+  });
+
+  it("rejects a bare public suffix", () => {
+    expect(normalizeWebsiteUrl("co.uk")).toBeNull();
   });
 });
 

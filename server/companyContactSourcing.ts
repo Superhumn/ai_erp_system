@@ -187,7 +187,7 @@ export async function sourceCompanyContacts(
     throw new Error(`${input.entityType} ${input.entityId} not found`);
   }
 
-  const website = (input.website ?? (entity as any).website ?? "").trim();
+  const website = (input.website ?? entity.website ?? "").trim();
   if (!website) {
     return {
       entityType: input.entityType,
@@ -203,7 +203,7 @@ export async function sourceCompanyContacts(
 
   const result = await sourceContactsFromWebsite(website, { maxPages: input.maxPages });
   const { patch, applied, skipped, verified } = planContactUpdate(
-    entity as ContactRecordState,
+    entity,
     result,
     { overwriteExisting: input.overwriteExisting },
   );
@@ -265,7 +265,15 @@ export async function sourceCompanyContactsBatch(
   options: { overwriteExisting?: boolean; requestedBy?: number } = {},
 ): Promise<{
   results: SourceCompanyContactsResult[];
+  /** Records now carrying an own-domain email. */
   verifiedCount: number;
+  /**
+   * Records still unverified. Most of these are not errors — a site that
+   * publishes only a phone number, or only a role address on a third-party
+   * listing, is a normal outcome.
+   */
+  unverifiedCount: number;
+  /** Records whose site could not be read at all. */
   failedCount: number;
 }> {
   const results: SourceCompanyContactsResult[] = [];
@@ -294,6 +302,9 @@ export async function sourceCompanyContactsBatch(
   return {
     results,
     verifiedCount: results.filter(r => r.verified).length,
-    failedCount: results.filter(r => !r.verified).length,
+    unverifiedCount: results.filter(r => !r.verified).length,
+    failedCount: results.filter(
+      r => r.status === "fetch_failed" || r.status === "blocked" || r.status === "no_website",
+    ).length,
   };
 }

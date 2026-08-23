@@ -895,7 +895,7 @@ export const procurementRouter = router({
 
             // Same rule as carriers: an address nothing has confirmed is not an
             // address to send an RFQ to.
-            if ((vendor as any).contactSource === 'discovered') {
+            if (vendor.contactSource === 'discovered') {
               results.skipped++;
               results.emails.push({
                 vendorId,
