@@ -333,20 +333,37 @@ export default function PurchaseOrders() {
     utils.purchaseOrders.receiptProgress.invalidate();
   };
 
-  const bulkUpdateStatus = trpc.purchaseOrders.bulkUpdateStatus.useMutation({
-    onSuccess: (data) => {
-      if (data.failed.length > 0) {
+  const bulkStatusMutation = trpc.purchaseOrders.bulkUpdateStatus.useMutation();
+  const [isBulkUpdating, setIsBulkUpdating] = useState(false);
+
+  const runBulkStatus = async (status: string) => {
+    const ids = selectedAllIds;
+    if (ids.length === 0) return;
+    setIsBulkUpdating(true);
+    try {
+      let updated = 0;
+      const failed: { id: number; poNumber: string }[] = [];
+      for (const batch of chunk(ids, BULK_CHUNK)) {
+        const result = await bulkStatusMutation.mutateAsync({ ids: batch, status: status as any });
+        updated += result.updated;
+        failed.push(...result.failed);
+      }
+      if (failed.length > 0) {
         toast.warning(
-          `Updated ${data.updated} PO(s). ${data.failed.length} failed: ${data.failed.map((f) => f.poNumber).join(", ")}`
+          `Updated ${updated} PO(s). ${failed.length} failed: ${failed.map((f) => f.poNumber).join(", ")}`
         );
       } else {
-        toast.success(`Updated ${data.updated} purchase order(s)`);
+        toast.success(`Updated ${updated} purchase order(s)`);
         setSelectedIds(new Set());
       }
       invalidateLists();
-    },
-    onError: (error) => toast.error(error.message),
-  });
+    } catch (err: any) {
+      toast.error(err?.message || "Bulk status update failed");
+      invalidateLists();
+    } finally {
+      setIsBulkUpdating(false);
+    }
+  };
 
   // Export pulls the full filtered set from the server rather than the visible
   // page, so an export after paging isn't silently just those 50 rows.
@@ -388,26 +405,53 @@ export default function PurchaseOrders() {
     }
   };
 
-  const bulkDeletePOs = trpc.purchaseOrders.bulkDelete.useMutation({
-    onSuccess: (data) => {
+  // The server caps a single call at 500 ids, and "Select duplicates" can
+  // easily exceed that on a table this polluted — so send the selection in
+  // chunks rather than letting the mutation reject the whole thing.
+  const BULK_CHUNK = 500;
+  const chunk = <T,>(items: T[], size: number) => {
+    const out: T[][] = [];
+    for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+    return out;
+  };
+
+  const bulkDeleteMutation = trpc.purchaseOrders.bulkDelete.useMutation();
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+
+  const runBulkDelete = async () => {
+    const ids = selectedAllIds;
+    if (ids.length === 0) return;
+    setIsBulkDeleting(true);
+    try {
+      let deleted = 0;
+      const failed: { id: number; poNumber: string }[] = [];
+      for (const batch of chunk(ids, BULK_CHUNK)) {
+        const result = await bulkDeleteMutation.mutateAsync({ ids: batch });
+        deleted += result.deleted;
+        failed.push(...result.failed);
+      }
       // A partial run is reported as a partial run: the POs that couldn't be
       // deleted stay selected so they can be retried or inspected.
-      if (data.failed.length > 0) {
+      if (failed.length > 0) {
         toast.warning(
-          `Deleted ${data.deleted} PO(s). ${data.failed.length} could not be deleted: ${data.failed
+          `Deleted ${deleted} PO(s). ${failed.length} could not be deleted: ${failed
             .map((f) => f.poNumber)
             .join(", ")}`
         );
-        setSelectedIds(new Set(data.failed.map((f) => f.id)));
+        setSelectedIds(new Set(failed.map((f) => f.id)));
       } else {
-        toast.success(`Deleted ${data.deleted} purchase order(s)`);
+        toast.success(`Deleted ${deleted} purchase order(s)`);
         setSelectedIds(new Set());
       }
       setBulkDeleteOpen(false);
       invalidateLists();
-    },
-    onError: (error) => toast.error(error.message),
-  });
+    } catch (err: any) {
+      toast.error(err?.message || "Bulk delete failed");
+      invalidateLists();
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
 
   const updatePO = trpc.purchaseOrders.update.useMutation({
     onSuccess: () => {
@@ -1043,12 +1087,12 @@ export default function PurchaseOrders() {
               <Select
                 value=""
                 onValueChange={(status) => {
-                  if (status) bulkUpdateStatus.mutate({ ids: selectedAllIds, status: status as any });
+                  if (status) runBulkStatus(status);
                 }}
-                disabled={bulkUpdateStatus.isPending}
+                disabled={isBulkUpdating}
               >
                 <SelectTrigger className="w-[170px] h-8">
-                  <SelectValue placeholder={bulkUpdateStatus.isPending ? "Updating…" : "Set status…"} />
+                  <SelectValue placeholder={isBulkUpdating ? "Updating…" : "Set status…"} />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="draft">Draft</SelectItem>
@@ -1063,9 +1107,9 @@ export default function PurchaseOrders() {
                 variant="destructive"
                 size="sm"
                 onClick={() => setBulkDeleteOpen(true)}
-                disabled={bulkDeletePOs.isPending}
+                disabled={isBulkDeleting}
               >
-                {bulkDeletePOs.isPending ? (
+                {isBulkDeleting ? (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                 ) : (
                   <Trash2 className="h-4 w-4 mr-2" />
@@ -1080,21 +1124,31 @@ export default function PurchaseOrders() {
           )}
 
           {selectedCount === 0 && redundantIds.size > 0 && (
-            <p className="mt-3 text-sm text-muted-foreground">
-              {redundantIds.size} duplicate {redundantIds.size === 1 ? "copy" : "copies"} found from repeated
-              document imports.{" "}
-              <button
-                type="button"
-                className="text-primary underline underline-offset-2"
-                onClick={() => {
-                  setDuplicatesOnly(true);
-                  setStatusFilter("all");
-                  setSearch("");
-                }}
-              >
-                Review them
-              </button>
-            </p>
+            <div className="mt-3 flex items-center gap-3 flex-wrap rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/20 px-3 py-2">
+              <span className="text-sm">
+                {redundantIds.size} duplicate {redundantIds.size === 1 ? "copy" : "copies"} found from repeated
+                document imports.
+              </span>
+              {/* Offered up front: making the user tick a row before the
+                  one-click cleanup appears defeats the point of it. */}
+              <Button variant="outline" size="sm" onClick={selectDuplicates}>
+                <Copy className="h-4 w-4 mr-2" />
+                Select {redundantIds.size} duplicate {redundantIds.size === 1 ? "copy" : "copies"}
+              </Button>
+              {!duplicatesOnly && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setDuplicatesOnly(true);
+                    setStatusFilter("all");
+                    setSearch("");
+                  }}
+                >
+                  Review them
+                </Button>
+              )}
+            </div>
           )}
         </CardHeader>
         <CardContent>
@@ -1415,18 +1469,20 @@ export default function PurchaseOrders() {
             <DialogTitle>Delete {selectedCount} purchase order{selectedCount === 1 ? "" : "s"}?</DialogTitle>
             <DialogDescription>
               This permanently deletes the selected purchase orders, their line items, and any
-              receiving records and supplier-portal uploads attached to them. Linked shipments,
-              payments and source documents are kept and unlinked. This cannot be undone.
+              receiving records, material links, approvals and supplier-portal uploads attached
+              to them. Linked shipments, payments, parsed and uploaded documents, freight RFQs,
+              quotes and cost allocations, and inventory cost layers are kept — their link to the
+              PO is cleared. This cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setBulkDeleteOpen(false)}>Cancel</Button>
             <Button
               variant="destructive"
-              disabled={bulkDeletePOs.isPending || selectedCount === 0}
-              onClick={() => bulkDeletePOs.mutate({ ids: selectedAllIds })}
+              disabled={isBulkDeleting || selectedCount === 0}
+              onClick={runBulkDelete}
             >
-              {bulkDeletePOs.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {isBulkDeleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Delete {selectedCount}
             </Button>
           </DialogFooter>

@@ -983,10 +983,28 @@ export async function importPurchaseOrder(
       createdRecords.push({ type: "vendor", id: vendorResult.id, name: po.vendorName });
     }
 
-    // 2. Match line items to raw materials
+    // 2. Bail out before anything is written if this document has already been
+    // imported. This has to run ahead of the material matching below: that step
+    // creates rawMaterials rows, so a guard placed after it would skip the
+    // duplicate PO but still leave new materials behind on every re-import.
+    const existingPo = await db.findPurchaseOrderByNumberExact(po.poNumber, vendor!.id);
+    if (existingPo) {
+      warnings.push(
+        `PO ${po.poNumber} was already imported (#${existingPo.id}) — skipped to avoid a duplicate.`
+      );
+      return {
+        success: true,
+        documentType: "purchase_order",
+        createdRecords,
+        updatedRecords,
+        warnings,
+      };
+    }
+
+    // 3. Match line items to raw materials
     const matchedItems = await matchLineItemsToMaterials(po.lineItems);
-    
-    // 3. Create raw materials for unmatched items (skip services/charges/SaaS lines)
+
+    // 3b. Create raw materials for unmatched items (skip services/charges/SaaS lines)
     for (const item of matchedItems) {
       if (!item.rawMaterialId) {
         if (isNonMaterialLineItem(item)) {
@@ -1005,22 +1023,7 @@ export async function importPurchaseOrder(
       }
     }
 
-    // 4. Create the purchase order. Same idempotency guard as the vendor-invoice
-    // path: a document imported twice should resolve to one PO, not two.
-    const existingPo = await db.findPurchaseOrderByNumberExact(po.poNumber, vendor!.id);
-    if (existingPo) {
-      warnings.push(
-        `PO ${po.poNumber} was already imported (#${existingPo.id}) — skipped to avoid a duplicate.`
-      );
-      return {
-        success: true,
-        documentType: "purchase_order",
-        createdRecords,
-        updatedRecords,
-        warnings,
-      };
-    }
-
+    // 4. Create the purchase order.
     const poResult = await db.createPurchaseOrder({
       poNumber: po.poNumber,
       vendorId: vendor!.id,
@@ -1253,10 +1256,33 @@ export async function importVendorInvoice(
       createdRecords.push({ type: "vendor", id: vendorResult.id, name: invoice.vendorName });
     }
 
-    // 2. Match line items to raw materials
+    // 2. Bail out before anything is written if this invoice has already been
+    // imported. poNumber has no unique constraint, so without this every re-run
+    // of a document (or a re-processed mailbox) added another identical PO and
+    // re-ran the step-7 inventory update on top of it.
+    //
+    // Must run ahead of the material matching below, which creates rawMaterials
+    // rows: a guard placed after it would skip the duplicate PO but still leave
+    // new materials behind on every re-import.
+    const poNumberForInvoice = invoice.relatedPoNumber || `INV-${invoice.invoiceNumber}`;
+    const existingPo = await db.findPurchaseOrderByNumberExact(poNumberForInvoice, vendor!.id);
+    if (existingPo) {
+      warnings.push(
+        `Invoice ${invoice.invoiceNumber} was already imported as PO ${existingPo.poNumber} (#${existingPo.id}) — skipped to avoid a duplicate.`
+      );
+      return {
+        success: true,
+        documentType: "vendor_invoice",
+        createdRecords,
+        updatedRecords,
+        warnings,
+      };
+    }
+
+    // 3. Match line items to raw materials
     const matchedItems = await matchLineItemsToMaterials(invoice.lineItems);
 
-    // 3. Try to find related PO if specified
+    // 4. Try to find related PO if specified
     let relatedPoId: number | undefined;
     if (invoice.relatedPoNumber) {
       const po = await db.findPurchaseOrderByNumber(invoice.relatedPoNumber);
@@ -1267,7 +1293,7 @@ export async function importVendorInvoice(
       }
     }
 
-    // 4. Create raw materials for unmatched items (skip services/charges/SaaS lines)
+    // 5. Create raw materials for unmatched items (skip services/charges/SaaS lines)
     for (const item of matchedItems) {
       if (!item.rawMaterialId) {
         if (isNonMaterialLineItem(item)) {
@@ -1286,26 +1312,7 @@ export async function importVendorInvoice(
       }
     }
 
-    // 5. Create a purchase order from the invoice (as a received order).
-    // Re-importing the same invoice must not mint a second PO: poNumber has no
-    // unique constraint, so before this guard every re-run of a document (or a
-    // re-processed mailbox) added another identical row, and — worse — ran the
-    // step-7 inventory update again on top of it.
-    const poNumberForInvoice = invoice.relatedPoNumber || `INV-${invoice.invoiceNumber}`;
-    const existingPo = await db.findPurchaseOrderByNumberExact(poNumberForInvoice, vendor!.id);
-    if (existingPo) {
-      warnings.push(
-        `Invoice ${invoice.invoiceNumber} was already imported as PO ${existingPo.poNumber} (#${existingPo.id}) — skipped to avoid a duplicate.`
-      );
-      return {
-        success: true,
-        documentType: "vendor_invoice",
-        createdRecords,
-        updatedRecords,
-        warnings,
-      };
-    }
-
+    // 6. Create a purchase order from the invoice (as a received order).
     const poResult = await db.createPurchaseOrder({
       poNumber: poNumberForInvoice,
       vendorId: vendor!.id,
@@ -1319,7 +1326,7 @@ export async function importVendorInvoice(
     });
     createdRecords.push({ type: "purchase_order", id: poResult.id, name: invoice.invoiceNumber });
 
-    // 6. Create PO line items
+    // 7. Create PO line items
     for (const item of matchedItems) {
       await db.createPurchaseOrderItem({
         purchaseOrderId: poResult.id,
@@ -1331,7 +1338,7 @@ export async function importVendorInvoice(
       });
     }
 
-    // 7. If marking as received, update inventory
+    // 8. If marking as received, update inventory
     if (markAsReceived) {
       // Batch load all raw materials instead of N+1
       const rmIds = matchedItems.map(i => i.rawMaterialId).filter((id): id is number => id != null);

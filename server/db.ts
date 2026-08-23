@@ -2002,21 +2002,32 @@ export async function updatePurchaseOrder(id: number, data: Partial<InsertPurcha
   await db.update(purchaseOrders).set(data).where(eq(purchaseOrders.id, id));
 }
 
-export async function deletePurchaseOrder(id: number) {
+/** @returns true if a PO row was actually removed, false if the id no longer existed. */
+export async function deletePurchaseOrder(id: number): Promise<boolean> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     // Records that outlive the PO (money, physical goods, source documents) are
     // detached rather than deleted, so the history stays queryable instead of
-    // pointing at a dangling id. shipments carries a real FK to purchase_orders,
+    // pointing at a dangling id. shipments carry a real FK to purchase_orders,
     // so without this the DELETE below fails outright on any received PO.
     await tx.update(shipments).set({ purchaseOrderId: null }).where(eq(shipments.purchaseOrderId, id));
+    // rawMaterials.lastPoId is a real FK too, so this is not just tidiness:
+    // without it the DELETE fails for any material whose last PO is this one.
+    await tx.update(rawMaterials).set({ lastPoId: null }).where(eq(rawMaterials.lastPoId, id));
     await tx.update(payments).set({ purchaseOrderId: null }).where(eq(payments.purchaseOrderId, id));
     await tx.update(parsedDocuments).set({ purchaseOrderId: null }).where(eq(parsedDocuments.purchaseOrderId, id));
     await tx.update(freightRfqs).set({ purchaseOrderId: null }).where(eq(freightRfqs.purchaseOrderId, id));
     await tx.update(freightQuotesStandalone).set({ purchaseOrderId: null }).where(eq(freightQuotesStandalone.purchaseOrderId, id));
     await tx.update(freightCostAllocations).set({ purchaseOrderId: null }).where(eq(freightCostAllocations.purchaseOrderId, id));
     await tx.update(inventoryCostLayers).set({ purchaseOrderId: null }).where(eq(inventoryCostLayers.purchaseOrderId, id));
+    // Operator uploads point at the PO through the polymorphic
+    // referenceType/referenceId pair rather than a FK column, so they need
+    // clearing explicitly — the file is kept, only the dead pointer goes.
+    await tx
+      .update(documents)
+      .set({ referenceType: null, referenceId: null })
+      .where(and(inArray(documents.referenceType, ["purchase_order", "po"]), eq(documents.referenceId, id)));
 
     // Rows below only exist as part of this PO — they have no meaning once it is
     // gone, and their purchaseOrderId is NOT NULL so they can't be detached.
@@ -2043,7 +2054,10 @@ export async function deletePurchaseOrder(id: number) {
     await tx.delete(supplierPortalSessions).where(eq(supplierPortalSessions.purchaseOrderId, id));
     await tx.delete(purchaseOrderApprovals).where(eq(purchaseOrderApprovals.purchaseOrderId, id));
     await tx.delete(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, id));
-    await tx.delete(purchaseOrders).where(eq(purchaseOrders.id, id));
+    const result: any = await tx.delete(purchaseOrders).where(eq(purchaseOrders.id, id));
+    // Callers report per-id outcomes, so "threw nothing" isn't good enough:
+    // a already-deleted or bogus id must not be counted as a deletion.
+    return (result?.[0]?.affectedRows ?? result?.affectedRows ?? 0) > 0;
   });
 }
 
@@ -2057,8 +2071,8 @@ export async function bulkDeletePurchaseOrders(ids: number[]) {
   const failed: { id: number; reason: string }[] = [];
   for (const id of ids) {
     try {
-      await deletePurchaseOrder(id);
-      deleted.push(id);
+      if (await deletePurchaseOrder(id)) deleted.push(id);
+      else failed.push({ id, reason: "Purchase order no longer exists" });
     } catch (e: any) {
       failed.push({ id, reason: e?.message || "Delete failed" });
     }
@@ -2075,13 +2089,39 @@ export async function bulkDeletePurchaseOrders(ids: number[]) {
  * existing PO; this finds the copies that predate that fix.
  *
  * Within a group the lowest id — the original import — is the keeper, and the
- * later copies are the ones offered for deletion. Grouping happens in JS
- * rather than GROUP_CONCAT, whose 1024-byte default would silently truncate
- * large groups.
+ * later copies are the ones offered for deletion. Ids are collected in JS
+ * rather than with GROUP_CONCAT, whose 1024-byte default would silently
+ * truncate large groups.
  */
 export async function getDuplicatePurchaseOrderGroups() {
   const db = await getDb();
   if (!db) return [];
+
+  // Two steps so the whole table never lands in application memory: MySQL
+  // reports which (poNumber, vendorId, totalAmount) keys occur more than once,
+  // then only the rows under those keys are fetched. Grouping every PO in JS
+  // scaled with total history rather than with the number of duplicates.
+  const dupKeys = await db
+    .select({
+      poNumber: purchaseOrders.poNumber,
+      vendorId: purchaseOrders.vendorId,
+      totalAmount: purchaseOrders.totalAmount,
+    })
+    .from(purchaseOrders)
+    .groupBy(purchaseOrders.poNumber, purchaseOrders.vendorId, purchaseOrders.totalAmount)
+    .having(sql`COUNT(*) > 1`);
+
+  if (dupKeys.length === 0) return [];
+
+  // \u0000 can't appear in any of the parts, so the composite key is unambiguous.
+  const keyOf = (poNumber: string, vendorId: number, totalAmount: string | null) =>
+    [poNumber, vendorId, totalAmount ?? "0"].join("\u0000");
+
+  const wanted = new Set(dupKeys.map((k) => keyOf(k.poNumber, k.vendorId, k.totalAmount)));
+
+  // Restricting on poNumber alone is enough to keep the fetch small; the exact
+  // key match below then discards same-number rows from a different vendor or
+  // with a different total.
   const rows = await db
     .select({
       id: purchaseOrders.id,
@@ -2090,18 +2130,16 @@ export async function getDuplicatePurchaseOrderGroups() {
       totalAmount: purchaseOrders.totalAmount,
     })
     .from(purchaseOrders)
+    .where(inArray(purchaseOrders.poNumber, dupKeys.map((k) => k.poNumber)))
     .orderBy(asc(purchaseOrders.id));
 
   const groups = new Map<string, { poNumber: string; vendorId: number; totalAmount: string; ids: number[] }>();
   for (const r of rows) {
-    // \u0000 can't appear in any of the parts, so the key is unambiguous.
-    const key = [r.poNumber, r.vendorId, r.totalAmount].join("\u0000");
+    const key = keyOf(r.poNumber, r.vendorId, r.totalAmount);
+    if (!wanted.has(key)) continue;
     const existing = groups.get(key);
-    if (existing) {
-      existing.ids.push(r.id);
-    } else {
-      groups.set(key, { poNumber: r.poNumber, vendorId: r.vendorId, totalAmount: r.totalAmount ?? "0", ids: [r.id] });
-    }
+    if (existing) existing.ids.push(r.id);
+    else groups.set(key, { poNumber: r.poNumber, vendorId: r.vendorId, totalAmount: r.totalAmount ?? "0", ids: [r.id] });
   }
 
   return Array.from(groups.values())
@@ -2110,6 +2148,7 @@ export async function getDuplicatePurchaseOrderGroups() {
       poNumber: g.poNumber,
       vendorId: g.vendorId,
       totalAmount: g.totalAmount,
+      // Lowest id is the original import; the rest are the copies.
       keepId: g.ids[0],
       duplicateIds: g.ids.slice(1),
     }));

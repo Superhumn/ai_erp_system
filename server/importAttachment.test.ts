@@ -143,6 +143,33 @@ describe("importEmailAttachmentToErp — document-type routing", () => {
     expect(db.createPurchaseOrderItem).not.toHaveBeenCalled();
   });
 
+  // The guard has to sit ahead of line-item matching, which creates rawMaterials
+  // rows. Placed after it, a re-import would skip the duplicate PO but still
+  // leave a fresh material behind every single time.
+  it("creates no raw materials when a duplicate purchase order import is skipped", async () => {
+    (db.findPurchaseOrderByNumberExact as any).mockResolvedValueOnce({ id: 20, poNumber: "PO-1001" });
+    mockParse("purchase_order", { purchaseOrder: PO });
+    await importEmailAttachmentToErp(baseOpts);
+
+    expect(db.createRawMaterial).not.toHaveBeenCalled();
+    expect(db.createPurchaseOrder).not.toHaveBeenCalled();
+  });
+
+  it("creates no raw materials when a duplicate vendor invoice import is skipped", async () => {
+    (db.findPurchaseOrderByNumberExact as any).mockResolvedValueOnce({ id: 20, poNumber: "INV-INV-2002" });
+    // A material line, so the unmatched-item loop would fire if it were reached.
+    mockParse("vendor_invoice", {
+      vendorInvoice: {
+        ...VENDOR_INVOICE,
+        lineItems: [{ description: "Steel bolt", quantity: 5, unit: "ea", unitPrice: 2, totalPrice: 10 }],
+      },
+    });
+    await importEmailAttachmentToErp(baseOpts);
+
+    expect(db.createRawMaterial).not.toHaveBeenCalled();
+    expect(db.createPurchaseOrder).not.toHaveBeenCalled();
+  });
+
   it("routes a freight invoice to an invoice parsed document", async () => {
     mockParse("freight_invoice", { freightInvoice: FREIGHT_INVOICE });
     const result = await importEmailAttachmentToErp(baseOpts);
