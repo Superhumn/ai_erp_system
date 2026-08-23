@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/table";
 import {
   Truck, FileText, Package, ClipboardList, Building2,
-  AlertCircle, Plus, Loader2, Search, Ship, Plane,
+  AlertCircle, Plus, Loader2, Search, Ship, Plane, Calculator,
 } from "lucide-react";
 import { Link } from "wouter";
 import { format } from "date-fns";
@@ -67,6 +67,12 @@ export default function FreightDashboard() {
           <Link href="/freight/carrier-quotes">
             <Button variant="outline">
               Carrier Quotes
+            </Button>
+          </Link>
+          <Link href="/freight/rate-estimator">
+            <Button variant="outline">
+              <Calculator className="h-4 w-4 mr-2" />
+              Rate Estimator
             </Button>
           </Link>
           <Link href="/freight/rfqs">

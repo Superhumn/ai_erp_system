@@ -29,6 +29,7 @@ import { agentRouter } from "./agent";
 import { parseNoteWithLLM } from "./notesParser";
 import type { NoteAppliedItem, NoteParseResult, NoteParsedItem } from "@shared/notes";
 import { buildImportRecord } from "@shared/importFields";
+import { estimateOceanFreight } from "@shared/oceanFreightRates";
 import { employeePortalRouter } from "./routers/employeePortal";
 import { codeRouter } from "./routers/code";
 import { parseCopackerInventoryEmail, applyCopackerInventoryUpdate } from "./copackerEmailExtractor";
@@ -8694,6 +8695,29 @@ Be concise and helpful. Always give actionable guidance.`;
       .mutation(async ({ input }) => {
         return getFreightRates(input);
       }),
+
+    // Ocean freight matrix: indicative pricing off the Superhumn rate matrix,
+    // no carrier API call. The matrix itself lives in @shared/oceanFreightRates
+    // so the client can render the same numbers without a round trip.
+    rateEstimate: router({
+      estimate: protectedProcedure
+        .input(z.object({
+          originCountry: z.string().trim().min(1),
+          destination: z.string().trim().min(1),
+          loadPort: z.string().trim().min(1).optional(),
+          mode: z.enum(["fcl20", "fcl40", "lcl"]),
+          containers: z.number().int().min(1).max(100).optional(),
+          volumeCbm: z.number().min(0).optional(),
+          weightKg: z.number().min(0).optional(),
+          cargoValueUsd: z.number().min(0).optional(),
+          rateScenario: z.number().min(0.1).max(5).optional(),
+          shipDate: z.string().optional(),
+          includeDrayage: z.boolean().optional(),
+          includeInsurance: z.boolean().optional(),
+          applyPeakSeason: z.boolean().optional(),
+        }))
+        .query(({ input }) => estimateOceanFreight(input)),
+    }),
 
     // SeaRates: List supported shipping lines
     shippingLines: protectedProcedure.query(async () => {
