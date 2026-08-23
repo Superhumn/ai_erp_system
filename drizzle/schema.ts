@@ -97,6 +97,24 @@ export const userPermissions = mysqlTable("userPermissions", {
 export type UserPermission = typeof userPermissions.$inferSelect;
 export type InsertUserPermission = typeof userPermissions.$inferInsert;
 
+// Multi-entity access (STEP 3): a user may belong to several entities, each with a per-entity role.
+// The permitted-entity set for scoping is the union of these rows' companies (expanded to
+// descendants via entity_tree). Access to a parent (e.g. GLOBAL) reaches its children.
+export const userEntityAccess = mysqlTable("user_entity_access", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().references(() => users.id),
+  companyId: int("companyId").notNull().references((): AnyMySqlColumn => companies.id),
+  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "sales", "copacker", "vendor", "contractor", "investor"]).default("user").notNull(),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  userCompanyUnique: uniqueIndex("uq_user_entity_access_user_company").on(t.userId, t.companyId),
+}));
+
+export type UserEntityAccess = typeof userEntityAccess.$inferSelect;
+export type InsertUserEntityAccess = typeof userEntityAccess.$inferInsert;
+
 // Google OAuth tokens for Drive/Sheets access
 export const googleOAuthTokens = mysqlTable("googleOAuthTokens", {
   id: int("id").autoincrement().primaryKey(),
@@ -219,6 +237,63 @@ export const regions = mysqlTable("regions", {
 
 export type Region = typeof regions.$inferSelect;
 export type InsertRegion = typeof regions.$inferInsert;
+
+// FX rates (multi-entity STEP 4). Global reference data (no entity). A money row freezes the rate
+// used at its transaction date; historical rows are never recomputed. Look up the latest rate on
+// or before a given date. Unique per (from, to, as-of date).
+export const fxRates = mysqlTable("fx_rates", {
+  id: int("id").autoincrement().primaryKey(),
+  fromCcy: varchar("fromCcy", { length: 3 }).notNull(),
+  toCcy: varchar("toCcy", { length: 3 }).notNull(),
+  rate: decimal("rate", { precision: 18, scale: 8 }).notNull(),
+  asOfDate: timestamp("asOfDate").notNull(),
+  source: varchar("source", { length: 64 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (t) => ({
+  fromToDateUnique: uniqueIndex("uq_fx_rates_from_to_date").on(t.fromCcy, t.toCcy, t.asOfDate),
+}));
+
+export type FxRate = typeof fxRates.$inferSelect;
+export type InsertFxRate = typeof fxRates.$inferInsert;
+
+// Intercompany links (STEP 5): match a transaction in one entity with its counterpart in another
+// (e.g. a SA→US internal sale ↔ the US purchase) so both sides are eliminated at group level.
+// Inherently cross-entity — no single companyId.
+export const intercompanyLinks = mysqlTable("intercompany_links", {
+  id: int("id").autoincrement().primaryKey(),
+  transactionAId: int("transaction_a_id").notNull().references((): AnyMySqlColumn => transactions.id),
+  transactionBId: int("transaction_b_id").notNull().references((): AnyMySqlColumn => transactions.id),
+  linkType: mysqlEnum("linkType", ["sale_purchase", "loan", "transfer", "allocation", "other"]).default("sale_purchase").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (t) => ({
+  pairUnique: uniqueIndex("uq_intercompany_links_pair").on(t.transactionAId, t.transactionBId),
+}));
+
+export type IntercompanyLink = typeof intercompanyLinks.$inferSelect;
+export type InsertIntercompanyLink = typeof intercompanyLinks.$inferInsert;
+
+// Product sourcing (STEP 5): the explicit "entity X manufactures product P for entity Y" relationship
+// (e.g. SA makes jerky for US), carrying the intercompany transfer price. Drives supply planning and
+// freezes the transfer price for STEP 4 money. Group-level config — not owned by a single entity.
+export const productSourcing = mysqlTable("product_sourcing", {
+  id: int("id").autoincrement().primaryKey(),
+  productId: int("productId").notNull().references((): AnyMySqlColumn => products.id),
+  makerEntityId: int("makerEntityId").notNull().references((): AnyMySqlColumn => companies.id),
+  forEntityId: int("forEntityId").notNull().references((): AnyMySqlColumn => companies.id),
+  transferPriceMethod: mysqlEnum("transferPriceMethod", ["cost_plus", "fixed", "market"]).default("cost_plus").notNull(),
+  markupPct: decimal("markupPct", { precision: 7, scale: 4 }),
+  transferCurrency: varchar("transferCurrency", { length: 3 }).default("USD"),
+  isActive: boolean("isActive").default(true).notNull(),
+  effectiveFrom: timestamp("effectiveFrom"),
+  effectiveTo: timestamp("effectiveTo"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  productMakerForUnique: uniqueIndex("uq_product_sourcing_product_maker_for").on(t.productId, t.makerEntityId, t.forEntityId),
+}));
+
+export type ProductSourcing = typeof productSourcing.$inferSelect;
+export type InsertProductSourcing = typeof productSourcing.$inferInsert;
 
 export const companies = mysqlTable("companies", {
   id: int("id").autoincrement().primaryKey(),
@@ -376,6 +451,10 @@ export const invoices = mysqlTable("invoices", {
   totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).notNull(),
   paidAmount: decimal("paidAmount", { precision: 15, scale: 2 }).default("0"),
   currency: varchar("currency", { length: 3 }).default("USD"),
+  amountFunc: decimal("amountFunc", { precision: 15, scale: 2 }),      // entity functional currency
+  amountGroup: decimal("amountGroup", { precision: 15, scale: 2 }),    // group reporting (USD)
+  fxRateUsed: decimal("fxRateUsed", { precision: 18, scale: 8 }),      // rate frozen at txn date
+  fxRateDate: timestamp("fxRateDate"),                                 // date the rate was taken
   notes: text("notes"),
   terms: text("terms"),
   quickbooksInvoiceId: varchar("quickbooksInvoiceId", { length: 64 }),
@@ -411,6 +490,10 @@ export const payments = mysqlTable("payments", {
   accountId: int("accountId").references(() => accounts.id),
   amount: decimal("amount", { precision: 15, scale: 2 }).notNull(),
   currency: varchar("currency", { length: 3 }).default("USD"),
+  amountFunc: decimal("amountFunc", { precision: 15, scale: 2 }),      // entity functional currency
+  amountGroup: decimal("amountGroup", { precision: 15, scale: 2 }),    // group reporting (USD)
+  fxRateUsed: decimal("fxRateUsed", { precision: 18, scale: 8 }),      // rate frozen at txn date
+  fxRateDate: timestamp("fxRateDate"),                                 // date the rate was taken
   paymentMethod: mysqlEnum("paymentMethod", ["cash", "check", "bank_transfer", "credit_card", "ach", "wire", "other"]).default("bank_transfer"),
   paymentDate: timestamp("paymentDate").notNull(),
   referenceNumber: varchar("referenceNumber", { length: 128 }),
@@ -434,6 +517,10 @@ export const transactions = mysqlTable("transactions", {
   description: text("description"),
   totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).notNull(),
   currency: varchar("currency", { length: 3 }).default("USD"),
+  amountFunc: decimal("amountFunc", { precision: 15, scale: 2 }),      // entity functional currency
+  amountGroup: decimal("amountGroup", { precision: 15, scale: 2 }),    // group reporting (USD)
+  fxRateUsed: decimal("fxRateUsed", { precision: 18, scale: 8 }),      // rate frozen at txn date
+  fxRateDate: timestamp("fxRateDate"),                                 // date the rate was taken
   status: mysqlEnum("status", ["draft", "posted", "void"]).default("draft").notNull(),
   createdBy: int("createdBy").references(() => users.id),
   postedBy: int("postedBy").references(() => users.id),
@@ -472,6 +559,10 @@ export const orders = mysqlTable("orders", {
   discountAmount: decimal("discountAmount", { precision: 15, scale: 2 }).default("0"),
   totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).notNull(),
   currency: varchar("currency", { length: 3 }).default("USD"),
+  amountFunc: decimal("amountFunc", { precision: 15, scale: 2 }),      // entity functional currency
+  amountGroup: decimal("amountGroup", { precision: 15, scale: 2 }),    // group reporting (USD)
+  fxRateUsed: decimal("fxRateUsed", { precision: 18, scale: 8 }),      // rate frozen at txn date
+  fxRateDate: timestamp("fxRateDate"),                                 // date the rate was taken
   notes: text("notes"),
   shopifyOrderId: varchar("shopifyOrderId", { length: 64 }),
   invoiceId: int("invoiceId").references(() => invoices.id),

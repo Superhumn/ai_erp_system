@@ -1,5 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
-import { resolveScope, scopeAllows, scopeCompanyIds, type ScopeLookup } from "./_core/scope";
+import {
+  resolveScope,
+  resolveScopeFromAccess,
+  scopeAllows,
+  scopeCompanyIds,
+  type AccessScopeLookup,
+  type ScopeLookup,
+} from "./_core/scope";
 
 // A user in region 1 (companies 10, 11); a lone company 20 in region 2.
 const lookup: ScopeLookup = {
@@ -91,5 +98,56 @@ describe("scopeAllows (by-id visibility)", () => {
     expect(scopeAllows(entity, 20)).toBe(false);
     expect(scopeAllows(entity, null)).toBe(false);
     expect(scopeAllows(entity, undefined)).toBe(false);
+  });
+});
+
+describe("resolveScopeFromAccess (multi-entity, STEP 3)", () => {
+  // Entity tree: GLOBAL(1) → US(2) → US_WEST(5); GLOBAL(1) → SA(3), IN(4).
+  const descendants: Record<number, number[]> = {
+    1: [1, 2, 3, 4, 5], // GLOBAL (holdco) reaches everything
+    2: [2, 5], // US + its sub-entity
+    3: [3], // SA
+    4: [4], // IN (India)
+    5: [5], // US_WEST
+  };
+  const accessLookup: AccessScopeLookup = {
+    ...lookup,
+    getEntityAndDescendants: async (id) => descendants[id] ?? [id],
+  };
+
+  it("a US-scoped user CANNOT see an India row", async () => {
+    const scope = await resolveScopeFromAccess({ companyId: 2, regionScope: "entity" }, [2], accessLookup);
+    expect(scope.companyIds).toEqual([2, 5]); // US + US_WEST
+    expect(scopeAllows(scope, 4)).toBe(false); // India(4) is invisible
+    expect(scopeAllows(scope, 3)).toBe(false); // Saudi(3) too
+    expect(scopeAllows(scope, 2)).toBe(true); // own US row visible
+  });
+
+  it("a multi-entity user sees the union of their entities' subtrees", async () => {
+    const scope = await resolveScopeFromAccess({ companyId: 2, regionScope: "entity" }, [2, 4], accessLookup);
+    expect(scope.companyIds).toEqual([2, 4, 5]); // US + US_WEST + India
+    expect(scopeAllows(scope, 4)).toBe(true);
+    expect(scopeAllows(scope, 3)).toBe(false); // still not Saudi
+  });
+
+  it("access to GLOBAL (holdco) reaches every operating company", async () => {
+    const scope = await resolveScopeFromAccess({ companyId: 1, regionScope: "entity" }, [1], accessLookup);
+    expect(scope.companyIds).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("exec (regionScope global) sees everything regardless of access rows", async () => {
+    const scope = await resolveScopeFromAccess({ companyId: 2, regionScope: "global" }, [2], accessLookup);
+    expect(scope.companyIds).toBe("all");
+  });
+
+  it("no access rows → falls back to legacy single-home resolution", async () => {
+    // regionScope 'region', home company 10 (region 1 = [10,11]) — the pre-STEP-3 path.
+    const scope = await resolveScopeFromAccess({ companyId: 10, regionScope: "region" }, [], accessLookup);
+    expect(scope.companyIds).toEqual([10, 11]);
+  });
+
+  it("fails closed: non-global user with no access rows and no home entity sees nothing", async () => {
+    const scope = await resolveScopeFromAccess({ companyId: null, regionScope: "entity" }, [], accessLookup);
+    expect(scope.companyIds).toEqual([]);
   });
 });

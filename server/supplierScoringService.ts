@@ -71,7 +71,7 @@ export async function scoreSuppliers(params?: {
   vendorIds?: number[];
   companyId?: number;
 }): Promise<SupplierScoreResult> {
-  const allVendors = await db.getVendors(params?.companyId);
+  const allVendors = await db.getVendors(undefined, { companyId: params?.companyId });
   const targetVendors = params?.vendorIds
     ? allVendors.filter(v => params.vendorIds!.includes(v.id))
     : allVendors;
