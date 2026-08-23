@@ -164,11 +164,18 @@ export async function resolveRequestScope(user: { id: number; companyId: number 
   );
 }
 
-export const scopedProcedure = protectedProcedure.use(async ({ ctx, next }) => {
-  const scope = await resolveRequestScope(ctx.user);
+// Reject a non-global scope that resolved to zero entities (a non-global user with no home/access
+// entity), matching scopedProcedure's behavior. Use in role-gated handlers that resolve scope
+// inline so they don't silently return empty instead of a clear FORBIDDEN.
+export function assertNonEmptyScope(scope: Awaited<ReturnType<typeof resolveRequestScope>>) {
   if (scope.companyIds !== 'all' && scope.companyIds.length === 0) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'No entity scope assigned' });
   }
+  return scope;
+}
+
+export const scopedProcedure = protectedProcedure.use(async ({ ctx, next }) => {
+  const scope = assertNonEmptyScope(await resolveRequestScope(ctx.user));
   return next({ ctx: { ...ctx, scope } });
 });
 
@@ -2728,7 +2735,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         limit: z.number().min(1).max(1000).optional(),
       }).optional())
       .query(async ({ input, ctx }) =>
-        db.getInventory(await resolveRequestScope(ctx.user), {
+        db.getInventory(assertNonEmptyScope(await resolveRequestScope(ctx.user)), {
           warehouseId: input?.warehouseId,
           productId: input?.productId,
           limit: input?.limit,
