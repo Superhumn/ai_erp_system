@@ -94,6 +94,21 @@ Do **not** read these in full. Use one of: the generated index, `rg`/`grep`, or 
 
 Regenerate both indexes with `pnpm index:legacy` after any change to either legacy file or to `server/routers/*.ts` / `server/db/*.ts`. The output is deterministic — no manual edits.
 
+Because both files are generated *and* tracked, any two PRs that touch `server/routers.ts` or
+`server/db.ts` will conflict in them on merge. Never hand-resolve those conflicts — take either
+side and regenerate:
+
+```sh
+git checkout --theirs ROUTERS_INDEX.md DB_INDEX.md   # or --ours; the content is discarded either way
+pnpm index:legacy
+git add ROUTERS_INDEX.md DB_INDEX.md
+```
+
+The same applies to `drizzle/meta/_journal.json`: parallel branches all claim the next free
+migration number, so the last one merged must renumber its `.sql` file and its journal entry to
+sit after everything already on `main`. Migration `idx` values need not be contiguous, but `when`
+must increase monotonically.
+
 ### ⚠️ The extracted trees are partial and unwired
 
 `server/routers/` and `server/db/` look like finished refactors but aren't. Someone extracted ~70% of the routers + db helpers into per-feature files, built `server/routers/index.ts` with `mergeRouters(...)`, and stopped before flipping the import. **Nothing consumes `server/routers/index.ts`** — the live tree is still the monolith. Same shape for `server/db/index.ts`: it re-exports from `./auth`, `./finance`, etc., but most callers still `import * as db from "./db"` (the file).
