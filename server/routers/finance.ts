@@ -57,7 +57,7 @@ export const financeRouter = router({
         status: z.string().optional(),
         customerId: z.number().optional(),
       }).optional())
-      .query(({ input }) => db.getInvoices(input)),
+      .query(({ input }) => db.getInvoices(undefined, input)),
     get: financeProcedure
       .input(z.object({ id: z.number() }))
       .query(({ input }) => db.getInvoiceWithItems(input.id)),
@@ -268,7 +268,7 @@ export const financeRouter = router({
         type: z.string().optional(),
         status: z.string().optional(),
       }).optional())
-      .query(({ input }) => db.getPayments(input)),
+      .query(({ input }) => db.getPayments(undefined, input)),
     get: financeProcedure
       .input(z.object({ id: z.number() }))
       .query(({ input }) => db.getPaymentById(input.id)),
@@ -327,7 +327,7 @@ export const financeRouter = router({
         type: z.string().optional(),
         status: z.string().optional(),
       }).optional())
-      .query(({ input }) => db.getTransactions(input)),
+      .query(({ input }) => db.getTransactions(undefined, input)),
     create: financeProcedure
       .input(z.object({
         companyId: z.number().optional(),
@@ -850,12 +850,12 @@ export const financeRouter = router({
         switch (input.reportType) {
           // ---- Profit & Loss ----
           case "profit_loss": {
-            const invoices = (await db.getInvoices({ status: 'paid' })).filter(i => inRange(i.issueDate));
+            const invoices = (await db.getInvoices(undefined, { status: 'paid' })).filter(i => inRange(i.issueDate));
             const totalRevenue = invoices.reduce((s, i) => s + toNum(i.totalAmount), 0);
             const cogsRecords = (await db.getCogsRecords()).filter((r: any) => inRange(r.soldAt || r.createdAt));
             const totalCOGS = cogsRecords.reduce((s: number, r: any) => s + toNum(r.totalCost), 0);
             const grossProfit = totalRevenue - totalCOGS;
-            const transactions = (await db.getTransactions({ type: 'expense' })).filter(t => inRange(t.date));
+            const transactions = (await db.getTransactions(undefined, { type: 'expense' })).filter(t => inRange(t.date));
             const expenseMap: Record<string, number> = {};
             for (const t of transactions) {
               const cat = (t as any).category || (t as any).accountName || 'Uncategorized';
@@ -991,7 +991,7 @@ export const financeRouter = router({
 
           // ---- Revenue by Customer ----
           case "revenue_by_customer": {
-            const invoices = (await db.getInvoices({ status: 'paid' })).filter(i => inRange(i.issueDate));
+            const invoices = (await db.getInvoices(undefined, { status: 'paid' })).filter(i => inRange(i.issueDate));
             const customers = await db.getCustomers();
             const custMap = new Map(customers.map((c: any) => [c.id, c.name || c.email || `Customer ${c.id}`]));
             const revenueMap: Record<string, number> = {};
@@ -1046,7 +1046,7 @@ export const financeRouter = router({
 
           // ---- Expenses by Category ----
           case "expense_by_category": {
-            const transactions = (await db.getTransactions({ type: 'expense' })).filter(t => inRange(t.date));
+            const transactions = (await db.getTransactions(undefined, { type: 'expense' })).filter(t => inRange(t.date));
             const expenseMap: Record<string, number> = {};
             for (const t of transactions) {
               const cat = (t as any).category || (t as any).accountName || 'Uncategorized';
@@ -1224,10 +1224,10 @@ export const financeRouter = router({
 
           // ---- Tax Summary ----
           case "tax_summary": {
-            const invoices = (await db.getInvoices({ status: 'paid' })).filter(i => inRange(i.issueDate));
+            const invoices = (await db.getInvoices(undefined, { status: 'paid' })).filter(i => inRange(i.issueDate));
             const totalRevenue = invoices.reduce((s, i) => s + toNum(i.totalAmount), 0);
             const totalTaxCollected = invoices.reduce((s, i) => s + toNum((i as any).taxAmount || 0), 0);
-            const transactions = (await db.getTransactions({ type: 'expense' })).filter(t => inRange(t.date));
+            const transactions = (await db.getTransactions(undefined, { type: 'expense' })).filter(t => inRange(t.date));
             const deductibleExpenses = transactions.reduce((s, t) => s + toNum(t.totalAmount), 0);
             const taxableIncome = totalRevenue - deductibleExpenses;
             const estimatedTax = Math.max(0, taxableIncome * 0.21); // 21% corporate rate
@@ -1250,8 +1250,8 @@ export const financeRouter = router({
 
           // ---- Monthly Financial Summary ----
           case "monthly_summary": {
-            const invoices = (await db.getInvoices({ status: 'paid' })).filter(i => inRange(i.issueDate));
-            const transactions = (await db.getTransactions({ type: 'expense' })).filter(t => inRange(t.date));
+            const invoices = (await db.getInvoices(undefined, { status: 'paid' })).filter(i => inRange(i.issueDate));
+            const transactions = (await db.getTransactions(undefined, { type: 'expense' })).filter(t => inRange(t.date));
 
             const monthlyData: Record<string, { revenue: number; expenses: number }> = {};
             for (const inv of invoices) {

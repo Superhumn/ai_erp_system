@@ -253,7 +253,7 @@ export async function applyCopackerInventoryUpdate(
         await db.updateInventory(currentInv.id, { quantity: newQty.toFixed(4) });
       } else {
         // Upsert: update existing record at this warehouse, or create one
-        const warehouseInv = (await db.getInventory({ warehouseId, productId: product.id })) as any[];
+        const warehouseInv = (await db.getInventory(undefined, { warehouseId, productId: product.id })) as any[];
         if (warehouseInv.length > 0) {
           await db.updateInventory(warehouseInv[0].id, { quantity: newQty.toFixed(4) });
         } else {

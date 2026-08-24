@@ -65,13 +65,16 @@ export const operationsRouter = router({
   // OPERATIONS - INVENTORY
   // ============================================
   inventory: router({
+    // ⚠️ SECURITY: orphaned extracted router (not wired into the live app — see CLAUDE.md).
+    // Before wiring up, apply server-derived scoping like the live server/routers.ts inventory
+    // router (resolveRequestScope + ctx.scope), or this reintroduces cross-entity reads.
     list: opsProcedure
       .input(z.object({
         companyId: z.number().optional(),
         warehouseId: z.number().optional(),
         productId: z.number().optional(),
       }).optional())
-      .query(({ input }) => db.getInventory(input)),
+      .query(({ input }) => db.getInventory(undefined, input)),
     create: opsProcedure
       .input(z.object({
         companyId: z.number().optional(),
@@ -96,7 +99,7 @@ export const operationsRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
-        const [oldInventory] = await db.getInventory({ id } as any) || [];
+        const [oldInventory] = await db.getInventory(undefined, { id } as any) || [];
         await db.updateInventory(id, data);
         await createAuditLog(ctx.user.id, 'update', 'inventory', id);
 
