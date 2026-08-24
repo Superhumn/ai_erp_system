@@ -10,7 +10,7 @@ import { ENV } from "../_core/env";
 
 const client = new Anthropic();
 const DEFAULT_MAX_ITERATIONS = 20;
-const DEFAULT_AGENT_MODEL = "claude-sonnet-4-20250514";
+const DEFAULT_AGENT_MODEL = "claude-opus-5";
 
 function resolveAgentModel(): string {
   const configured = ENV.llmModel;
