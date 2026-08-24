@@ -52,6 +52,21 @@ import { computeResponsivenessForVendors, computeVendorResponsiveness, markStale
 import { deleteCurrencyRate, getFxRate, listCurrencyRates, upsertCurrencyRate } from "./currencyService";
 import { getCompanyWebSources, sourceCompanyContacts, sourceCompanyContactsBatch } from "./companyContactSourcing";
 import * as db from "./db";
+import {
+  PLAN_UNITS,
+  PlanUnitError,
+  bomBatchMultiplier,
+  componentRequiredQuantity,
+  computeMaterialShortage,
+  computePlanTargets,
+  convertPlanQuantity,
+  isOrderUrgent,
+  latestOrderDate,
+  normalizePlanUnit,
+  toGrams,
+  type PlanUnit,
+  type UnitContext,
+} from "./productionPlanning";
 import { resolveScopeFromAccess, scopeAllows } from "./_core/scope";
 import * as manufacturingDb from "./db/manufacturing";
 import { storagePut, storageDelete } from "./storage";
@@ -885,6 +900,518 @@ async function resolveInvestorContext(
 
 const investorCompanyIdInput = z.object({ companyId: z.number().optional() }).optional();
 
+
+// ============================================
+// PRODUCTION PLANNING
+// Shared by the forecast-driven and the manual (recipe/BOM) planning routes.
+// ============================================
+
+const DEFAULT_LEAD_TIME_DAYS = 14;
+const DEFAULT_REQUIRED_BY_DAYS = 30;
+
+/** A material line for a plan, before it's written to materialRequirements. */
+type PlanRequirementDraft = {
+  rawMaterialId: number | null;
+  ingredientId?: number;
+  name: string;
+  sku?: string;
+  requiredQuantity: number;
+  unit: string;
+  currentInventory: number;
+  onOrderQuantity: number;
+  shortageQuantity: number;
+  suggestedOrderQuantity: number;
+  preferredVendorId?: number;
+  vendorName?: string;
+  estimatedUnitCost: number;
+  /** Cost of everything the run consumes. */
+  estimatedRunCost: number;
+  /** Cost of what still has to be purchased. */
+  estimatedPurchaseCost: number;
+  leadTimeDays: number;
+  requiredByDate?: Date;
+  latestOrderDate?: Date;
+  estimatedDeliveryDate?: Date;
+  isUrgent: boolean;
+  note?: string;
+};
+
+type PlanRequirementsResult = {
+  requirements: PlanRequirementDraft[];
+  warnings: string[];
+  batches: number;
+};
+
+/** Net a gross requirement against stock and open POs, and work out order timing. */
+async function netRequirementAgainstStock(args: {
+  rawMaterialId: number | null;
+  requiredQuantity: number;
+  orderBufferPercent: number;
+  leadTimeDays: number;
+  requiredByDate: Date;
+}) {
+  let currentInventory = 0;
+  let onOrderQuantity = 0;
+
+  if (args.rawMaterialId) {
+    const stock = await db.getRawMaterialInventory({ rawMaterialId: args.rawMaterialId });
+    currentInventory = stock.reduce((sum, inv) => sum + parseFloat(inv.quantity?.toString() || "0"), 0);
+
+    const pendingOrders = await db.getPendingOrdersForMaterial(args.rawMaterialId);
+    onOrderQuantity = pendingOrders.reduce((sum, po) => {
+      const ordered = parseFloat(po.quantity?.toString() || "0");
+      const received = parseFloat(po.receivedQuantity?.toString() || "0");
+      return sum + Math.max(0, ordered - received);
+    }, 0);
+  }
+
+  const { shortageQuantity, suggestedOrderQuantity } = computeMaterialShortage({
+    requiredQuantity: args.requiredQuantity,
+    onHand: currentInventory,
+    onOrder: onOrderQuantity,
+    orderBufferPercent: args.orderBufferPercent,
+  });
+
+  const now = new Date();
+  return {
+    currentInventory,
+    onOrderQuantity,
+    shortageQuantity,
+    suggestedOrderQuantity,
+    latestOrderDate: latestOrderDate(args.requiredByDate, args.leadTimeDays),
+    estimatedDeliveryDate: new Date(now.getTime() + args.leadTimeDays * 24 * 60 * 60 * 1000),
+    isUrgent: isOrderUrgent(now, args.requiredByDate, args.leadTimeDays),
+  };
+}
+
+/**
+ * Explode a BOM into material requirements.
+ * Component quantities are stated per BOM batch, so they scale by the number of
+ * batches the planned quantity represents — not by the planned quantity itself.
+ */
+async function planRequirementsFromBom(args: {
+  bomId: number;
+  plannedQuantity: number;
+  planUnit: PlanUnit;
+  unitContext: UnitContext;
+  orderBufferPercent: number;
+  requiredByDate: Date;
+}): Promise<PlanRequirementsResult> {
+  const warnings: string[] = [];
+  const bom = await db.getBomById(args.bomId);
+  if (!bom) throw new TRPCError({ code: "NOT_FOUND", message: "BOM not found" });
+
+  const batchSize = parseFloat(bom.batchSize?.toString() || "1");
+  const batchUnit = normalizePlanUnit(bom.batchUnit) ?? "EA";
+  if (!normalizePlanUnit(bom.batchUnit)) {
+    warnings.push(`BOM batch unit "${bom.batchUnit}" isn't recognised — treating the batch as ${batchSize} EA.`);
+  }
+
+  let batches: number;
+  try {
+    batches = bomBatchMultiplier({
+      plannedQuantity: args.plannedQuantity,
+      planUnit: args.planUnit,
+      batchSize,
+      batchUnit,
+      ctx: args.unitContext,
+    });
+  } catch (error) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: error instanceof PlanUnitError
+        ? `${error.message} The BOM measures a batch in ${batchUnit}.`
+        : String(error),
+    });
+  }
+
+  const components = await db.getBomComponents(args.bomId);
+  const requirements: PlanRequirementDraft[] = [];
+
+  for (const comp of components) {
+    const requiredQuantity = componentRequiredQuantity({
+      componentQuantity: parseFloat(comp.quantity?.toString() || "0"),
+      wastagePercent: parseFloat(comp.wastagePercent?.toString() || "0"),
+      batchMultiplier: batches,
+    });
+    if (requiredQuantity <= 0) continue;
+
+    if (!comp.rawMaterialId) {
+      warnings.push(`"${comp.name}" isn't linked to a raw material — it can't be purchased from this plan.`);
+      continue;
+    }
+
+    const rawMaterial = await db.getRawMaterialById(comp.rawMaterialId);
+    const leadTimeDays = rawMaterial?.leadTimeDays ?? DEFAULT_LEAD_TIME_DAYS;
+    const netted = await netRequirementAgainstStock({
+      rawMaterialId: comp.rawMaterialId,
+      requiredQuantity,
+      orderBufferPercent: args.orderBufferPercent,
+      leadTimeDays,
+      requiredByDate: args.requiredByDate,
+    });
+
+    const unitCost = parseFloat(
+      comp.unitCost?.toString() || rawMaterial?.unitCost?.toString() || "0",
+    );
+    const vendor = rawMaterial?.preferredVendorId
+      ? await db.getVendorById(rawMaterial.preferredVendorId)
+      : await db.getPreferredVendorForMaterial(comp.rawMaterialId);
+
+    requirements.push({
+      rawMaterialId: comp.rawMaterialId,
+      name: comp.name,
+      sku: comp.sku ?? rawMaterial?.sku ?? undefined,
+      requiredQuantity,
+      unit: comp.unit || rawMaterial?.unit || "EA",
+      preferredVendorId: vendor?.id,
+      vendorName: vendor?.name,
+      estimatedUnitCost: unitCost,
+      estimatedRunCost: requiredQuantity * unitCost,
+      estimatedPurchaseCost: netted.suggestedOrderQuantity * unitCost,
+      leadTimeDays,
+      requiredByDate: args.requiredByDate,
+      ...netted,
+    });
+  }
+
+  return { requirements, warnings, batches };
+}
+
+/**
+ * Explode a recipe (sub-recipes included) into material requirements, so
+ * purchase orders can be raised for the exact ingredient amounts a run needs.
+ * Ingredients are matched to raw materials by SKU/name; when `createMissing`
+ * is set, an unmatched ingredient gets a raw material created for it.
+ */
+async function planRequirementsFromRecipe(args: {
+  recipeId: number;
+  formulation: "wet" | "dry";
+  grams: number;
+  accountForYield: boolean;
+  orderBufferPercent: number;
+  requiredByDate: Date;
+  createMissing: boolean;
+}): Promise<PlanRequirementsResult & { totalIngredientCost: number }> {
+  const warnings: string[] = [];
+  const explosion = await manufacturingDb.explodeRecipeToIngredients({
+    recipeId: args.recipeId,
+    formulation: args.formulation,
+    batchGrams: args.grams,
+    accountForYield: args.accountForYield,
+  });
+  if (!explosion) throw new TRPCError({ code: "NOT_FOUND", message: "Recipe not found" });
+  if (explosion.ingredients.length === 0) {
+    warnings.push("This recipe has no ingredient lines with a quantity — nothing to purchase.");
+  }
+
+  const requirements: PlanRequirementDraft[] = [];
+
+  for (const ing of explosion.ingredients) {
+    let rawMaterial = await db.getRawMaterialByNameOrSku(ing.name, ing.sku);
+    if (!rawMaterial && args.createMissing) {
+      await db.createRawMaterial({
+        name: ing.name,
+        sku: ing.sku,
+        unit: ing.unit === "EA" ? "EA" : "g",
+        unitCost: ing.costPerUnit.toString(),
+        preferredVendorId: ing.supplierId ?? undefined,
+        leadTimeDays: ing.leadTimeDays ?? DEFAULT_LEAD_TIME_DAYS,
+        status: "active",
+      });
+      rawMaterial = await db.getRawMaterialByNameOrSku(ing.name, ing.sku);
+    }
+    if (!rawMaterial) {
+      warnings.push(`"${ing.name}" has no raw material record yet — it won't appear on a purchase order.`);
+    }
+
+    // Requirements are stated in the raw material's stocking unit so stock,
+    // open POs and purchase quantities all line up.
+    const stockUnit = normalizePlanUnit(rawMaterial?.unit) ?? (ing.unit === "EA" ? "EA" : "G");
+    let requiredQuantity = ing.quantity;
+    let unitLabel = rawMaterial?.unit || (ing.unit === "EA" ? "EA" : "g");
+    if (ing.unit === "g" && stockUnit !== "G") {
+      try {
+        requiredQuantity = convertPlanQuantity(ing.quantity, "G", stockUnit, {});
+      } catch {
+        unitLabel = "g";
+        warnings.push(
+          `"${ing.name}" is stocked in ${rawMaterial?.unit} — the requirement is left in grams, convert before ordering.`,
+        );
+      }
+    } else if (ing.unit === "EA" && stockUnit !== "EA") {
+      unitLabel = "EA";
+      warnings.push(
+        `"${ing.name}" is costed per each but stocked in ${rawMaterial?.unit} — the requirement is left in units.`,
+      );
+    }
+
+    const leadTimeDays = rawMaterial?.leadTimeDays ?? ing.leadTimeDays ?? DEFAULT_LEAD_TIME_DAYS;
+    const netted = await netRequirementAgainstStock({
+      rawMaterialId: rawMaterial?.id ?? null,
+      requiredQuantity,
+      orderBufferPercent: args.orderBufferPercent,
+      leadTimeDays,
+      requiredByDate: args.requiredByDate,
+    });
+
+    const vendorId = rawMaterial?.preferredVendorId ?? ing.supplierId ?? undefined;
+    const vendor = vendorId
+      ? await db.getVendorById(vendorId)
+      : rawMaterial
+        ? await db.getPreferredVendorForMaterial(rawMaterial.id)
+        : undefined;
+
+    // Cost comes from the recipe's ingredient costing, restated per stocking unit.
+    const unitCost = requiredQuantity > 0 ? ing.cost / requiredQuantity : 0;
+
+    requirements.push({
+      rawMaterialId: rawMaterial?.id ?? null,
+      ingredientId: ing.ingredientId,
+      name: ing.name,
+      sku: ing.sku,
+      requiredQuantity,
+      unit: unitLabel,
+      preferredVendorId: vendor?.id,
+      vendorName: vendor?.name,
+      estimatedUnitCost: unitCost,
+      estimatedRunCost: ing.cost,
+      estimatedPurchaseCost: netted.suggestedOrderQuantity * unitCost,
+      leadTimeDays,
+      requiredByDate: args.requiredByDate,
+      ...netted,
+    });
+  }
+
+  return {
+    requirements,
+    warnings,
+    batches: explosion.batches,
+    totalIngredientCost: explosion.totalCost,
+  };
+}
+
+/** Write a plan's drafted requirements to materialRequirements. */
+async function persistPlanRequirements(planId: number, requirements: PlanRequirementDraft[]) {
+  for (const req of requirements) {
+    if (!req.rawMaterialId) continue;
+    await db.createMaterialRequirement({
+      productionPlanId: planId,
+      rawMaterialId: req.rawMaterialId,
+      requiredQuantity: req.requiredQuantity.toFixed(4),
+      unit: req.unit,
+      currentInventory: req.currentInventory.toFixed(4),
+      onOrderQuantity: req.onOrderQuantity.toFixed(4),
+      shortageQuantity: req.shortageQuantity.toFixed(4),
+      suggestedOrderQuantity: req.suggestedOrderQuantity.toFixed(4),
+      preferredVendorId: req.preferredVendorId,
+      estimatedUnitCost: req.estimatedUnitCost.toFixed(4),
+      estimatedTotalCost: req.estimatedPurchaseCost.toFixed(2),
+      leadTimeDays: req.leadTimeDays,
+      requiredByDate: req.requiredByDate,
+      latestOrderDate: req.latestOrderDate,
+      estimatedDeliveryDate: req.estimatedDeliveryDate,
+      isUrgent: req.isUrgent,
+      status: "pending",
+    });
+  }
+}
+
+/** Input shared by the plan preview (query) and plan create (mutation) routes. */
+const manualProductionPlanInput = z.object({
+  /** Finished product the plan produces. Optional when the recipe already points at one. */
+  productId: z.number().optional(),
+  recipeId: z.number().optional(),
+  bomId: z.number().optional(),
+  formulation: z.enum(["wet", "dry"]).default("wet"),
+  quantity: z.number().positive(),
+  unit: z.enum(PLAN_UNITS).default("EA"),
+  /** Needed to plan in cases. */
+  unitsPerCase: z.number().positive().optional(),
+  /** Needed to move between counts (EA/CASE) and weights (LB/KG/G/OZ). */
+  unitWeightGrams: z.number().positive().optional(),
+  safetyMarginPercent: z.number().min(0).max(500).default(0),
+  netOffInventory: z.boolean().default(false),
+  orderBufferPercent: z.number().min(0).max(100).default(0),
+  /** Gross the run up so the finished output matches the target despite yield loss. */
+  accountForYield: z.boolean().default(true),
+  plannedStartDate: z.date().optional(),
+  plannedEndDate: z.date().optional(),
+  notes: z.string().optional(),
+});
+
+type ManualProductionPlanInput = z.infer<typeof manualProductionPlanInput>;
+
+/**
+ * Work out everything a manual production plan needs: how much to make, and
+ * what to buy for it. Used unchanged for preview (persist = false) and create.
+ */
+async function buildManualProductionPlan(
+  input: ManualProductionPlanInput,
+  ctx: { userId?: number },
+  opts: { persist: boolean },
+) {
+  const warnings: string[] = [];
+
+  let recipe = input.recipeId ? await manufacturingDb.getRecipeById(input.recipeId) : undefined;
+  if (input.recipeId && !recipe) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Recipe not found" });
+  }
+  if (input.recipeId && ctx.userId) {
+    await requireRecipeAccess(ctx.userId, input.recipeId, "view");
+  }
+
+  const productId = input.productId ?? recipe?.outputProductId ?? undefined;
+  if (!productId) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Pick the finished product this plan produces (or link the recipe to a product first).",
+    });
+  }
+  const product = await db.getProductById(productId);
+  if (!product) throw new TRPCError({ code: "NOT_FOUND", message: "Product not found" });
+
+  // Source: an explicit recipe, an explicit BOM, or the product's active BOM.
+  let bomId = input.bomId;
+  if (!recipe && !bomId) {
+    const boms = await db.getBillOfMaterials({ productId });
+    const active = boms.find((b) => b.status === "active") ?? boms[0];
+    if (!active) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "No recipe or BOM for this product — pick a recipe, or build a BOM first.",
+      });
+    }
+    bomId = active.id;
+  }
+
+  const unitContext: UnitContext = {
+    unitsPerCase: input.unitsPerCase,
+    unitWeightGrams: input.unitWeightGrams,
+    batchGrams: recipe ? parseFloat(recipe.baseBatchGrams?.toString() || "0") : undefined,
+  };
+
+  // Finished goods already on hand, restated in the plan's unit.
+  let currentInventory = 0;
+  if (input.netOffInventory) {
+    const inventoryRecords = await db.getInventory({ productId });
+    const onHandEach = inventoryRecords.reduce(
+      (sum, inv) => sum + parseFloat(inv.quantity?.toString() || "0"),
+      0,
+    );
+    try {
+      currentInventory = convertPlanQuantity(onHandEach, "EA", input.unit, unitContext);
+    } catch {
+      warnings.push(
+        `On-hand stock is counted in units — can't net it off a plan in ${input.unit} without a unit weight.`,
+      );
+    }
+  }
+
+  const targets = computePlanTargets({
+    quantity: input.quantity,
+    safetyMarginPercent: input.safetyMarginPercent,
+    currentInventory,
+    netOffInventory: input.netOffInventory,
+  });
+
+  const requiredByDate =
+    input.plannedStartDate ?? new Date(Date.now() + DEFAULT_REQUIRED_BY_DAYS * 24 * 60 * 60 * 1000);
+
+  let result: PlanRequirementsResult & { totalIngredientCost?: number };
+  if (recipe) {
+    let grams: number;
+    try {
+      grams = toGrams(targets.plannedQuantity, input.unit, unitContext);
+    } catch (error) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: error instanceof PlanUnitError
+          ? `${error.message} Add a unit weight (grams per finished unit) to plan a recipe in ${input.unit}.`
+          : String(error),
+      });
+    }
+    result = await planRequirementsFromRecipe({
+      recipeId: recipe.id,
+      formulation: input.formulation,
+      grams,
+      accountForYield: input.accountForYield,
+      orderBufferPercent: input.orderBufferPercent,
+      requiredByDate,
+      createMissing: opts.persist,
+    });
+  } else {
+    result = await planRequirementsFromBom({
+      bomId: bomId!,
+      plannedQuantity: targets.plannedQuantity,
+      planUnit: input.unit,
+      unitContext,
+      orderBufferPercent: input.orderBufferPercent,
+      requiredByDate,
+    });
+  }
+
+  const requirements = result.requirements;
+  const summary = {
+    productId,
+    productName: product.name,
+    recipeId: recipe?.id,
+    recipeName: recipe?.name,
+    bomId,
+    unit: input.unit,
+    targetQuantity: targets.targetQuantity,
+    safetyStock: targets.safetyStock,
+    plannedQuantity: targets.plannedQuantity,
+    currentInventory,
+    batches: result.batches,
+    requiredByDate,
+    materialCount: requirements.length,
+    shortageCount: requirements.filter((r) => r.shortageQuantity > 0).length,
+    urgentCount: requirements.filter((r) => r.isUrgent && r.shortageQuantity > 0).length,
+    estimatedRunCost: requirements.reduce((sum, r) => sum + r.estimatedRunCost, 0),
+    estimatedPurchaseCost: requirements.reduce((sum, r) => sum + r.estimatedPurchaseCost, 0),
+  };
+
+  if (!opts.persist) {
+    return { plan: null, summary, requirements, warnings: [...warnings, ...result.warnings] };
+  }
+
+  if (targets.plannedQuantity <= 0) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "On-hand stock already covers this target — nothing to produce.",
+    });
+  }
+
+  const plan = await db.createProductionPlan({
+    productId,
+    bomId: bomId ?? recipe?.bomId ?? undefined,
+    plannedQuantity: targets.plannedQuantity.toFixed(4),
+    unit: input.unit,
+    plannedStartDate: input.plannedStartDate,
+    plannedEndDate: input.plannedEndDate,
+    currentInventory: currentInventory.toFixed(4),
+    safetyStock: targets.safetyStock.toFixed(4),
+    status: "draft",
+    notes: [
+      recipe ? `Recipe: ${recipe.name} (${input.formulation})` : `BOM #${bomId}`,
+      `Target ${input.quantity} ${input.unit}${input.safetyMarginPercent ? ` + ${input.safetyMarginPercent}% margin` : ""}`,
+      input.notes,
+    ]
+      .filter(Boolean)
+      .join(" · "),
+    createdBy: ctx.userId,
+  });
+
+  await persistPlanRequirements(plan.id, requirements);
+
+  return {
+    plan: { ...plan, ...summary },
+    summary,
+    requirements,
+    warnings: [...warnings, ...result.warnings],
+  };
+}
 
 export const appRouter = router({
   system: systemRouter,
@@ -12418,6 +12945,22 @@ Provide your forecast in JSON format with the following structure:
         return db.getProductionPlans(input);
       }),
 
+    // Preview a manual production plan: what to make, and what to buy for it.
+    // Same maths as createProductionPlan, but nothing is written.
+    previewProductionPlan: protectedProcedure
+      .input(manualProductionPlanInput)
+      .query(async ({ input, ctx }) =>
+        buildManualProductionPlan(input, { userId: ctx.user?.id }, { persist: false }),
+      ),
+
+    // Create a production plan from a target quantity (no forecast needed).
+    // Materials come from the recipe when one is given, otherwise from the BOM.
+    createProductionPlan: protectedProcedure
+      .input(manualProductionPlanInput)
+      .mutation(async ({ input, ctx }) =>
+        buildManualProductionPlan(input, { userId: ctx.user?.id }, { persist: true }),
+      ),
+
     // Generate production plan from forecast
     generateProductionPlan: protectedProcedure
       .input(z.object({
@@ -12461,48 +13004,17 @@ Provide your forecast in JSON format with the following structure:
         
         // If we have a BOM, calculate material requirements
         if (bom) {
-          const components = await db.getBomComponents(bom.id);
-          
-          for (const comp of components) {
-            if (!comp.rawMaterialId) continue;
-            
-            const requiredQty = parseFloat(comp.quantity?.toString() || '0') * plannedQuantity;
-            
-            // Get current raw material inventory
-            const rmInventory = await db.getRawMaterialInventory({ rawMaterialId: comp.rawMaterialId });
-            const currentRmQty = rmInventory.reduce((sum, inv) => sum + parseFloat(inv.quantity?.toString() || '0'), 0);
-            
-            // Get pending orders
-            const pendingOrders = await db.getPendingOrdersForMaterial(comp.rawMaterialId);
-            const onOrderQty = pendingOrders.reduce((sum, po) => {
-              const ordered = parseFloat(po.quantity?.toString() || '0');
-              const received = parseFloat(po.receivedQuantity?.toString() || '0');
-              return sum + (ordered - received);
-            }, 0);
-            
-            const shortageQty = Math.max(0, requiredQty - currentRmQty - onOrderQty);
-            
-            // Get preferred vendor and estimated cost
-            const vendor = await db.getPreferredVendorForMaterial(comp.rawMaterialId);
-            const rawMaterial = await db.getRawMaterialById(comp.rawMaterialId);
-            const unitCost = parseFloat(rawMaterial?.unitCost?.toString() || '0');
-            
-            await db.createMaterialRequirement({
-              productionPlanId: plan.id,
-              rawMaterialId: comp.rawMaterialId,
-              requiredQuantity: requiredQty.toFixed(4),
-              unit: comp.unit || 'KG',
-              currentInventory: currentRmQty.toFixed(4),
-              onOrderQuantity: onOrderQty.toFixed(4),
-              shortageQuantity: shortageQty.toFixed(4),
-              suggestedOrderQuantity: (shortageQty * 1.1).toFixed(4), // Add 10% buffer
-              preferredVendorId: vendor?.id,
-              estimatedUnitCost: unitCost.toFixed(4),
-              estimatedTotalCost: (shortageQty * 1.1 * unitCost).toFixed(2),
-              leadTimeDays: 14, // Default lead time
-              status: 'pending',
-            });
-          }
+          const { requirements } = await planRequirementsFromBom({
+            bomId: bom.id,
+            plannedQuantity,
+            planUnit: 'EA',
+            unitContext: {},
+            orderBufferPercent: 10,
+            requiredByDate: forecast.forecastPeriodStart
+              ? new Date(forecast.forecastPeriodStart)
+              : new Date(Date.now() + DEFAULT_REQUIRED_BY_DAYS * 24 * 60 * 60 * 1000),
+          });
+          await persistPlanRequirements(plan.id, requirements);
         }
         
         return plan;
@@ -12512,7 +13024,17 @@ Provide your forecast in JSON format with the following structure:
     getMaterialRequirements: protectedProcedure
       .input(z.object({ productionPlanId: z.number() }))
       .query(async ({ input }) => {
-        return db.getMaterialRequirements(input.productionPlanId);
+        const requirements = await db.getMaterialRequirements(input.productionPlanId);
+        return Promise.all(requirements.map(async (req) => {
+          const rawMaterial = req.rawMaterialId ? await db.getRawMaterialById(req.rawMaterialId) : undefined;
+          const vendor = req.preferredVendorId ? await db.getVendorById(req.preferredVendorId) : undefined;
+          return {
+            ...req,
+            materialName: rawMaterial?.name || `Material #${req.rawMaterialId}`,
+            materialSku: rawMaterial?.sku || null,
+            vendorName: vendor?.name || null,
+          };
+        }));
       }),
 
     // Get suggested purchase orders

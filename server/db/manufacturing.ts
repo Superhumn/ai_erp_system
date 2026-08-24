@@ -1443,6 +1443,154 @@ export async function calculateRecipeBatchCost(input: {
   };
 }
 
+/**
+ * One leaf ingredient's total requirement for a production run.
+ * `quantity` is grams for weight/volume ingredients and an item count for
+ * ingredients costed per_each (matching how recipe lines store them).
+ */
+export type RecipeIngredientRequirement = {
+  ingredientId: number;
+  name: string;
+  sku: string;
+  unitOfMeasure: string;
+  costUnit: string;
+  costPerUnit: number;
+  supplierId: number | null;
+  leadTimeDays: number | null;
+  quantity: number;
+  unit: "g" | "EA";
+  cost: number;
+};
+
+async function collectRecipeIngredients(
+  recipeId: number,
+  scale: number,
+  formulation: "wet" | "dry",
+  visitedIds: Set<number>,
+  out: Map<number, RecipeIngredientRequirement>,
+): Promise<void> {
+  if (visitedIds.has(recipeId)) {
+    throw new Error(`Cyclic sub-recipe reference detected: recipe ${recipeId} is already an ancestor in this tree`);
+  }
+  if (visitedIds.size > 50) {
+    throw new Error(`Sub-recipe nesting too deep (>${visitedIds.size} levels) when processing recipe ${recipeId}`);
+  }
+  const visited = new Set(visitedIds);
+  visited.add(recipeId);
+
+  const lines = await getRecipeLines(recipeId);
+  for (const line of lines) {
+    const wetGrams = parseFloat(line.quantityGrams?.toString() || "0");
+    const dryGrams = parseFloat(line.quantityGramsDry?.toString() || "0");
+    const baseGrams = formulation === "dry" && dryGrams > 0 ? dryGrams : wetGrams;
+    const quantity = baseGrams * scale;
+    if (quantity <= 0) continue;
+
+    if (line.subRecipeId) {
+      const subRecipe = await getRecipeById(line.subRecipeId);
+      if (!subRecipe) continue;
+      const subBase = parseFloat(subRecipe.baseBatchGrams?.toString() || "0");
+      // The parent asks for `quantity` grams of the sub-recipe: scale the
+      // sub-recipe's own base batch to produce exactly that much.
+      const subScale = subBase > 0 ? quantity / subBase : 1;
+      await collectRecipeIngredients(line.subRecipeId, subScale, formulation, visited, out);
+      continue;
+    }
+
+    if (!line.ingredientId) continue;
+    const ingredient = await getIngredientById(line.ingredientId);
+    if (!ingredient) continue;
+
+    const costPerUnit = parseFloat(ingredient.costPerUnit?.toString() || "0");
+    const costUnit = ingredient.costUnit || "per_kg";
+    const cost = ingredientLineCost(quantity, costPerUnit, costUnit);
+    const existing = out.get(ingredient.id);
+    if (existing) {
+      existing.quantity += quantity;
+      existing.cost += cost;
+      continue;
+    }
+    out.set(ingredient.id, {
+      ingredientId: ingredient.id,
+      name: ingredient.name,
+      sku: ingredient.sku,
+      unitOfMeasure: ingredient.unitOfMeasure,
+      costUnit,
+      costPerUnit,
+      supplierId: ingredient.supplierId ?? null,
+      leadTimeDays: ingredient.leadTimeDays ?? null,
+      quantity,
+      unit: costUnit === "per_each" ? "EA" : "g",
+      cost,
+    });
+  }
+}
+
+/**
+ * Flatten a recipe (sub-recipes included) into the total amount of each leaf
+ * ingredient a production run consumes. This is what drives material
+ * requirements and purchase orders for recipe-based production plans.
+ *
+ * Scale can be given as a target batch weight, a multiple of the base batch,
+ * a target weight in lbs, or a batch count. `accountForYield` grosses the run
+ * up so the *output* matches the target when the recipe loses weight in
+ * production (expectedYieldPct < 1).
+ */
+export async function explodeRecipeToIngredients(input: {
+  recipeId: number;
+  formulation?: "wet" | "dry";
+  batchGrams?: number;
+  scaleFactor?: number;
+  targetLbs?: number;
+  batches?: number;
+  accountForYield?: boolean;
+}) {
+  const recipe = await getRecipeById(input.recipeId);
+  if (!recipe) return null;
+
+  const formulation = input.formulation ?? "wet";
+  const baseBatch = parseFloat(recipe.baseBatchGrams?.toString() || "0");
+  const yieldPct = parseFloat(recipe.expectedYieldPct?.toString() || "1");
+
+  const requestedGrams =
+    input.targetLbs !== undefined
+      ? input.targetLbs * GRAMS_PER_LB
+      : input.batchGrams !== undefined
+        ? input.batchGrams
+        : input.batches !== undefined
+          ? input.batches * baseBatch
+          : input.scaleFactor !== undefined
+            ? baseBatch * input.scaleFactor
+            : baseBatch;
+
+  // A yield below 100% means we must start more than we want to end with.
+  const inputGrams =
+    input.accountForYield && yieldPct > 0 && yieldPct < 1 ? requestedGrams / yieldPct : requestedGrams;
+  const effectiveScale = baseBatch > 0 ? inputGrams / baseBatch : 1;
+
+  const collected = new Map<number, RecipeIngredientRequirement>();
+  await collectRecipeIngredients(input.recipeId, effectiveScale, formulation, new Set(), collected);
+
+  const ingredients = Array.from(collected.values()).sort((a, b) => b.cost - a.cost);
+  const totalCost = ingredients.reduce((sum, i) => sum + i.cost, 0);
+  const totalGrams = ingredients.reduce((sum, i) => (i.unit === "g" ? sum + i.quantity : sum), 0);
+
+  return {
+    recipeId: recipe.id,
+    recipeName: recipe.name,
+    formulation,
+    baseBatchGrams: baseBatch,
+    expectedYieldPct: yieldPct,
+    requestedGrams,
+    inputGrams,
+    batches: baseBatch > 0 ? inputGrams / baseBatch : 1,
+    effectiveScale,
+    ingredients,
+    totalGrams,
+    totalCost,
+  };
+}
+
 export async function saveBatchCostSnapshot(data: Omit<InsertBatchCostSnapshot, "id" | "createdAt">) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
