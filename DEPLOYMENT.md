@@ -87,7 +87,9 @@ See `.env.example` for the full list of optional integrations (email, Google OAu
 
 ### CI/CD (Auto-Deploy on Push)
 
-The included `.github/workflows/deploy.yml` deploys to Railway automatically when you push to `main`. You need two GitHub secrets per environment:
+The included `.github/workflows/deploy-staging.yml` deploys to Railway staging automatically when you push to `main`.
+Production is deliberately manual — run the **Deploy to Production** workflow and type `deploy` to confirm.
+You need these per environment (GitHub → Settings → Secrets and variables → Actions):
 
 | GitHub Secret | Value |
 |---|---|
@@ -95,6 +97,10 @@ The included `.github/workflows/deploy.yml` deploys to Railway automatically whe
 | `RAILWAY_SERVICE_ID` | Railway dashboard → Service → Settings → Service ID |
 
 Create two environments in GitHub (**Settings → Environments**): `staging` and `production`, each with their own `RAILWAY_TOKEN` and `RAILWAY_SERVICE_ID`.
+
+> **Check this.** `RAILWAY_SERVICE_ID` set only at the repository level resolves to the *same* value in both
+> environments, which points a "production" deploy at the staging service. Define it as an
+> environment-scoped variable under each environment, not repo-wide.
 
 ---
 

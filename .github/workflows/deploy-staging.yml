@@ -5,9 +5,23 @@ on:
     branches:
       - main
 
+# Railway serves one container per service, so two `railway up` calls racing
+# each other replace the container mid-healthcheck and the older run fails with
+# "service unavailable". Queue deploys instead of running them in parallel;
+# cancel-in-progress stays false so an in-flight deploy is never torn down
+# halfway (migrations have already run by that point).
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
 jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
   deploy-staging:
     name: Deploy to Railway Staging
+    needs: ci
     runs-on: ubuntu-latest
     environment: staging
     permissions:
