@@ -5,7 +5,7 @@ vi.mock('./env', () => ({
   ENV: {
     llmApiKey: 'test-key',
     llmApiUrl: '',
-    llmModel: 'claude-sonnet-4-20250514',
+    llmModel: 'claude-opus-5',
   },
 }));
 
@@ -24,7 +24,7 @@ function mockFetch(usage?: Record<string, number>): {
       ok: true,
       json: async () => ({
         id: 'msg_1',
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-opus-5',
         content: [{ type: 'text', text: 'hi' }],
         stop_reason: 'end_turn',
         usage: { input_tokens: 10, output_tokens: 5, ...usage },
@@ -98,7 +98,7 @@ describe('invokeLLMStream', () => {
 
   it('streams text deltas in order and aggregates the final message', async () => {
     mockStreamFetch([
-      { type: 'message_start', message: { id: 'msg_1', model: 'claude-sonnet-4-20250514', usage: { input_tokens: 10 } } },
+      { type: 'message_start', message: { id: 'msg_1', model: 'claude-opus-5', usage: { input_tokens: 10 } } },
       { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
       { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Hello' } },
       { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: ', ' } },
@@ -132,7 +132,7 @@ describe('invokeLLMStream', () => {
 
   it('aggregates a streamed tool_use block into tool_calls', async () => {
     mockStreamFetch([
-      { type: 'message_start', message: { id: 'msg_2', model: 'claude-sonnet-4-20250514', usage: { input_tokens: 12 } } },
+      { type: 'message_start', message: { id: 'msg_2', model: 'claude-opus-5', usage: { input_tokens: 12 } } },
       { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'tu_1', name: 'create_shipment', input: {} } },
       { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"orderId":' } },
       { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '42}' } },
@@ -153,7 +153,7 @@ describe('invokeLLMStream', () => {
 
   it('falls back to content_block_start input when no json deltas are streamed', async () => {
     mockStreamFetch([
-      { type: 'message_start', message: { id: 'msg_c', model: 'claude-sonnet-4-20250514', usage: { input_tokens: 5 } } },
+      { type: 'message_start', message: { id: 'msg_c', model: 'claude-opus-5', usage: { input_tokens: 5 } } },
       { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'tu_2', name: 'query_system', input: { module: 'inventory' } } },
       { type: 'content_block_stop', index: 0 },
       { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 4 } },
@@ -172,7 +172,7 @@ describe('invokeLLMStream', () => {
     const { fetchMock, captured } = mockStreamFetchSequence([
       // First request pauses mid-turn (as server-side web search does).
       [
-        { type: 'message_start', message: { id: 'msg_a', model: 'claude-sonnet-4-20250514', usage: { input_tokens: 10 } } },
+        { type: 'message_start', message: { id: 'msg_a', model: 'claude-opus-5', usage: { input_tokens: 10 } } },
         { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
         { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Let me check. ' } },
         { type: 'content_block_stop', index: 0 },
@@ -180,7 +180,7 @@ describe('invokeLLMStream', () => {
       ],
       // Continuation completes the turn.
       [
-        { type: 'message_start', message: { id: 'msg_b', model: 'claude-sonnet-4-20250514', usage: { input_tokens: 20 } } },
+        { type: 'message_start', message: { id: 'msg_b', model: 'claude-opus-5', usage: { input_tokens: 20 } } },
         { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
         { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'The answer is 42.' } },
         { type: 'content_block_stop', index: 0 },
