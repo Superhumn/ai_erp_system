@@ -915,12 +915,19 @@ export async function updateAccount(id: number, data: Partial<InsertAccount>) {
 // FINANCE - INVOICES
 // ============================================
 
-export async function getInvoices(filters?: { companyId?: number; status?: string; customerId?: number }) {
+// Pass `ctx.scope` to restrict to the caller's visible entities. `filters` are non-security
+// refinements (status/customerId, and companyId for trusted internal callers).
+export async function getInvoices(scope?: Scope, filters?: { companyId?: number; status?: string; customerId?: number }) {
   const db = await getDb();
   if (!db) return [];
-  
+
   const conditions = [];
-  
+
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return []; // scoped user with no visible entities
+    conditions.push(inArray(invoices.companyId, ids));
+  }
   if (filters?.companyId) conditions.push(eq(invoices.companyId, filters.companyId));
   if (filters?.status) conditions.push(eq(invoices.status, filters.status as any));
   if (filters?.customerId) conditions.push(eq(invoices.customerId, filters.customerId));
@@ -1045,11 +1052,16 @@ export async function createInvoiceItem(data: typeof invoiceItems.$inferInsert) 
 // FINANCE - PAYMENTS
 // ============================================
 
-export async function getPayments(filters?: { companyId?: number; type?: string; status?: string }) {
+export async function getPayments(scope?: Scope, filters?: { companyId?: number; type?: string; status?: string }) {
   const db = await getDb();
   if (!db) return [];
-  
+
   const conditions = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return [];
+    conditions.push(inArray(payments.companyId, ids));
+  }
   if (filters?.companyId) conditions.push(eq(payments.companyId, filters.companyId));
   if (filters?.type) conditions.push(eq(payments.type, filters.type as any));
   if (filters?.status) conditions.push(eq(payments.status, filters.status as any));
@@ -1084,11 +1096,16 @@ export async function updatePayment(id: number, data: Partial<InsertPayment>) {
 // FINANCE - TRANSACTIONS
 // ============================================
 
-export async function getTransactions(filters?: { companyId?: number; type?: string; status?: string }) {
+export async function getTransactions(scope?: Scope, filters?: { companyId?: number; type?: string; status?: string }) {
   const db = await getDb();
   if (!db) return [];
-  
+
   const conditions = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return [];
+    conditions.push(inArray(transactions.companyId, ids));
+  }
   if (filters?.companyId) conditions.push(eq(transactions.companyId, filters.companyId));
   if (filters?.type) conditions.push(eq(transactions.type, filters.type as any));
   if (filters?.status) conditions.push(eq(transactions.status, filters.status as any));

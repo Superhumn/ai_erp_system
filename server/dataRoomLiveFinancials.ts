@@ -82,7 +82,7 @@ export async function computeLiveFinancials(opts: {
   const companyId = opts.companyId;
 
   // Revenue from invoices, bucketed by issueDate (fallback createdAt).
-  const invoices = await db.getInvoices(companyId ? { companyId } : undefined);
+  const invoices = await db.getInvoices(undefined, companyId ? { companyId } : undefined);
   const revenueByMonth: Record<string, number> = Object.fromEntries(
     buckets.map((b) => [b.monthKey, 0]),
   );
@@ -108,7 +108,7 @@ export async function computeLiveFinancials(opts: {
   // Burn from the in-system expense ledger. We do not wire QuickBooks here —
   // the point of the live page is to stay simple and reflect the ERP's
   // authoritative view rather than depending on a third-party sync.
-  const expenseTxns = await db.getTransactions({ type: "expense", ...(companyId ? { companyId } : {}) });
+  const expenseTxns = await db.getTransactions(undefined, { type: "expense", ...(companyId ? { companyId } : {}) });
   const burnByMonth: Record<string, number> = Object.fromEntries(
     buckets.map((b) => [b.monthKey, 0]),
   );

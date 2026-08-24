@@ -2036,13 +2036,15 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
   // FINANCE - INVOICES
   // ============================================
   invoices: router({
+    // financeProcedure keeps the role gate; scope is resolved server-side. companyId is not client input.
     list: financeProcedure
       .input(z.object({
-        companyId: z.number().optional(),
         status: z.string().optional(),
         customerId: z.number().optional(),
       }).optional())
-      .query(({ input }) => db.getInvoices(input)),
+      .query(async ({ input, ctx }) =>
+        db.getInvoices(assertNonEmptyScope(await resolveRequestScope(ctx.user)), { status: input?.status, customerId: input?.customerId }),
+      ),
     get: financeProcedure
       .input(z.object({ id: z.number() }))
       .query(({ input }) => db.getInvoiceWithItems(input.id)),
@@ -2472,11 +2474,12 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
   payments: router({
     list: financeProcedure
       .input(z.object({
-        companyId: z.number().optional(),
         type: z.string().optional(),
         status: z.string().optional(),
       }).optional())
-      .query(({ input }) => db.getPayments(input)),
+      .query(async ({ input, ctx }) =>
+        db.getPayments(assertNonEmptyScope(await resolveRequestScope(ctx.user)), { type: input?.type, status: input?.status }),
+      ),
     get: financeProcedure
       .input(z.object({ id: z.number() }))
       .query(({ input }) => db.getPaymentById(input.id)),
@@ -2572,11 +2575,12 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
   transactions: router({
     list: financeProcedure
       .input(z.object({
-        companyId: z.number().optional(),
         type: z.string().optional(),
         status: z.string().optional(),
       }).optional())
-      .query(({ input }) => db.getTransactions(input)),
+      .query(async ({ input, ctx }) =>
+        db.getTransactions(assertNonEmptyScope(await resolveRequestScope(ctx.user)), { type: input?.type, status: input?.status }),
+      ),
     create: financeProcedure
       .input(z.object({
         companyId: z.number().optional(),
