@@ -3,10 +3,18 @@ import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2";
 import { scopeAllows, scopeCompanyIds, type Scope } from "./_core/scope";
 import {
+  reconcileThreeWayMatch,
+  resolveApprovalPolicy,
+  toNumber,
+  MATCH_EPSILON,
+} from "./purchaseOrderMatching";
+import { classifyDuplicateGroup, resolveMergedQuantities } from "./inventoryDeduplication";
+import {
   InsertUser, users, authTokens, InsertAuthToken, localAuthCredentials, InsertLocalAuthCredential, companies, customers, vendors, products,
   accounts, invoices, invoiceItems, payments, transactions, transactionLines,
   orders, orderItems, inventory, warehouses, productionBatches,
-  purchaseOrders, purchaseOrderItems, shipments,
+  purchaseOrders, purchaseOrderItems, purchaseOrderApprovals, approvalThresholds, shipments,
+  type InsertPurchaseOrderApproval,
   departments, employees, compensationHistory, employeePayments,
   ptoBalances, leaveRequests, onboardingTasks, employeeBenefits, employeeEmergencyContacts,
   contracts, contractKeyDates, disputes, documents,
@@ -1464,6 +1472,179 @@ export async function getPurchaseOrders(filters?: { companyId?: number; status?:
   return rows.map((r) => ({ ...r.po, vendor: r.vendor }));
 }
 
+/** Backstop when a caller omits `limit`, so the list can never read unbounded. */
+const DEFAULT_PO_PAGE_LIMIT = 1000;
+
+export type PurchaseOrderListFilters = {
+  companyId?: number;
+  status?: string;
+  vendorId?: number;
+  /** Matches PO number or vendor name. */
+  search?: string;
+  orderDateFrom?: Date;
+  orderDateTo?: Date;
+  /** Restrict to POs that share (poNumber, vendor, total) with another PO. */
+  duplicatesOnly?: boolean;
+  sortBy?: "poNumber" | "vendor" | "totalAmount" | "status" | "orderDate" | "expectedDate" | "createdAt";
+  sortDir?: "asc" | "desc";
+  limit?: number;
+  offset?: number;
+};
+
+/**
+ * Build the WHERE clause shared by the paged list, the summary and the export
+ * so all three always describe the same set of POs — a filter that narrowed the
+ * table but not its totals would be worse than no totals at all.
+ *
+ * Returns null when the filters can't match anything (duplicatesOnly with no
+ * duplicates), which callers short-circuit on rather than issuing the query.
+ */
+async function buildPurchaseOrderConditions(filters: PurchaseOrderListFilters) {
+  const conditions = [];
+  if (filters.companyId) conditions.push(eq(purchaseOrders.companyId, filters.companyId));
+  if (filters.status) conditions.push(eq(purchaseOrders.status, filters.status as any));
+  if (filters.vendorId) conditions.push(eq(purchaseOrders.vendorId, filters.vendorId));
+  if (filters.orderDateFrom) conditions.push(gte(purchaseOrders.orderDate, filters.orderDateFrom));
+  if (filters.orderDateTo) conditions.push(lte(purchaseOrders.orderDate, filters.orderDateTo));
+
+  const term = filters.search?.trim();
+  if (term) {
+    // Escape the LIKE wildcards so a literal % or _ in a PO number searches for
+    // itself instead of matching everything.
+    const escaped = term.replace(/[\\%_]/g, (c) => `\\${c}`);
+    conditions.push(
+      or(like(purchaseOrders.poNumber, `%${escaped}%`), like(vendors.name, `%${escaped}%`))!,
+    );
+  }
+
+  if (filters.duplicatesOnly) {
+    const groups = await getDuplicatePurchaseOrderGroups();
+    const ids = groups.flatMap((g) => [g.keepId, ...g.duplicateIds]);
+    if (ids.length === 0) return null;
+    conditions.push(inArray(purchaseOrders.id, ids));
+  }
+
+  return conditions;
+}
+
+function purchaseOrderSortColumn(sortBy: PurchaseOrderListFilters["sortBy"]) {
+  switch (sortBy) {
+    case "poNumber": return purchaseOrders.poNumber;
+    case "vendor": return vendors.name;
+    case "totalAmount": return purchaseOrders.totalAmount;
+    case "status": return purchaseOrders.status;
+    case "orderDate": return purchaseOrders.orderDate;
+    case "expectedDate": return purchaseOrders.expectedDate;
+    default: return purchaseOrders.createdAt;
+  }
+}
+
+/**
+ * Filtered, sorted, paged PO list plus the total row count for the same filters.
+ *
+ * Kept separate from getPurchaseOrders (which returns everything) so the many
+ * existing callers of that helper keep their current shape and behaviour.
+ */
+export async function getPurchaseOrdersPaged(filters: PurchaseOrderListFilters = {}) {
+  const db = await getDb();
+  if (!db) return { rows: [], total: 0 };
+
+  const conditions = await buildPurchaseOrderConditions(filters);
+  if (conditions === null) return { rows: [], total: 0 };
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+  // The vendor join is always present: search and vendor sorting both read
+  // vendors.name, and the row shape must stay identical either way.
+  const [{ value: total }] = await db
+    .select({ value: count() })
+    .from(purchaseOrders)
+    .leftJoin(vendors, eq(purchaseOrders.vendorId, vendors.id))
+    .where(where);
+
+  const sortCol = purchaseOrderSortColumn(filters.sortBy);
+  const direction = filters.sortDir === "asc" ? asc : desc;
+
+  // limit/offset are applied unconditionally rather than built up behind a
+  // cast: conditionally chaining them needs the builder typed as `any`, which
+  // erased the row type all the way out to the page component. Every caller
+  // passes a limit; DEFAULT_PO_PAGE_LIMIT is just a backstop against an
+  // unbounded read.
+  const rows = await db
+    .select({ po: purchaseOrders, vendor: vendors })
+    .from(purchaseOrders)
+    .leftJoin(vendors, eq(purchaseOrders.vendorId, vendors.id))
+    .where(where)
+    // id is the tiebreak so rows can't shuffle between pages when the sort
+    // column ties — which it constantly does on these bulk-imported POs.
+    .orderBy(direction(sortCol), desc(purchaseOrders.id))
+    .limit(filters.limit ?? DEFAULT_PO_PAGE_LIMIT)
+    .offset(filters.offset ?? 0);
+
+  return {
+    rows: rows.map((r) => ({ ...r.po, vendor: r.vendor })),
+    total,
+  };
+}
+
+/**
+ * Count and value of the POs matching `filters`, overall and per status, for
+ * the list header. Deliberately ignores limit/offset: the totals describe the
+ * whole filtered set, not the visible page.
+ */
+export async function getPurchaseOrderSummary(filters: PurchaseOrderListFilters = {}) {
+  const db = await getDb();
+  const empty = { total: 0, totalValue: "0", byStatus: [] as { status: string; count: number; value: string }[] };
+  if (!db) return empty;
+
+  const conditions = await buildPurchaseOrderConditions(filters);
+  if (conditions === null) return empty;
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+  const rows = await db
+    .select({
+      status: purchaseOrders.status,
+      count: count(),
+      value: sql<string>`COALESCE(SUM(${purchaseOrders.totalAmount}), 0)`,
+    })
+    .from(purchaseOrders)
+    .leftJoin(vendors, eq(purchaseOrders.vendorId, vendors.id))
+    .where(where)
+    .groupBy(purchaseOrders.status);
+
+  const byStatus = rows.map((r) => ({ status: r.status as string, count: Number(r.count), value: String(r.value ?? "0") }));
+  return {
+    total: byStatus.reduce((sum, r) => sum + r.count, 0),
+    totalValue: byStatus.reduce((sum, r) => sum + Number(r.value || 0), 0).toFixed(2),
+    byStatus,
+  };
+}
+
+/**
+ * Set the status on many POs at once. Mirrors the single-PO update rather than
+ * one bulk UPDATE so each row's status transition is validated and reported
+ * individually.
+ */
+export async function bulkUpdatePurchaseOrderStatus(ids: number[], status: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const updated: number[] = [];
+  const failed: { id: number; reason: string }[] = [];
+  for (const id of ids) {
+    try {
+      await db
+        .update(purchaseOrders)
+        // A PO leaving "received" must not keep a stale received date, matching
+        // setPurchaseOrderReceivedQuantities.
+        .set({ status: status as any, receivedDate: status === "received" ? new Date() : null })
+        .where(eq(purchaseOrders.id, id));
+      updated.push(id);
+    } catch (e: any) {
+      failed.push({ id, reason: e?.message || "Update failed" });
+    }
+  }
+  return { updated, failed };
+}
+
 export async function getPurchaseOrderById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
@@ -1847,13 +2028,331 @@ export async function updatePurchaseOrder(id: number, data: Partial<InsertPurcha
   await db.update(purchaseOrders).set(data).where(eq(purchaseOrders.id, id));
 }
 
-export async function deletePurchaseOrder(id: number) {
+/** @returns true if a PO row was actually removed, false if the id no longer existed. */
+export async function deletePurchaseOrder(id: number): Promise<boolean> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
+    // Records that outlive the PO (money, physical goods, source documents) are
+    // detached rather than deleted, so the history stays queryable instead of
+    // pointing at a dangling id. shipments carry a real FK to purchase_orders,
+    // so without this the DELETE below fails outright on any received PO.
+    await tx.update(shipments).set({ purchaseOrderId: null }).where(eq(shipments.purchaseOrderId, id));
+    // rawMaterials.lastPoId is a real FK too, so this is not just tidiness:
+    // without it the DELETE fails for any material whose last PO is this one.
+    await tx.update(rawMaterials).set({ lastPoId: null }).where(eq(rawMaterials.lastPoId, id));
+    await tx.update(payments).set({ purchaseOrderId: null }).where(eq(payments.purchaseOrderId, id));
+    await tx.update(parsedDocuments).set({ purchaseOrderId: null }).where(eq(parsedDocuments.purchaseOrderId, id));
+    await tx.update(freightRfqs).set({ purchaseOrderId: null }).where(eq(freightRfqs.purchaseOrderId, id));
+    await tx.update(freightQuotesStandalone).set({ purchaseOrderId: null }).where(eq(freightQuotesStandalone.purchaseOrderId, id));
+    await tx.update(freightCostAllocations).set({ purchaseOrderId: null }).where(eq(freightCostAllocations.purchaseOrderId, id));
+    await tx.update(inventoryCostLayers).set({ purchaseOrderId: null }).where(eq(inventoryCostLayers.purchaseOrderId, id));
+    // Deliberately NOT touched: the polymorphic referenceType/referenceId pairs
+    // on documents, rawMaterialTransactions, inventoryTransactions,
+    // inventoryCostLayers and transactions. Those record where a file or a stock
+    // movement came from, and "received against PO 4711" stays true after the PO
+    // row is gone — erasing it would destroy the provenance that makes keeping
+    // these records worthwhile. They are plain nullable ints with no FK, and PO
+    // ids are never reused, so nothing dangles into a live row. Queries filtered
+    // by the pair simply return nothing, which is the correct answer for a
+    // deleted PO.
+
+    // Rows below only exist as part of this PO — they have no meaning once it is
+    // gone, and their purchaseOrderId is NOT NULL so they can't be detached.
+    const itemRows = await tx
+      .select({ id: purchaseOrderItems.id })
+      .from(purchaseOrderItems)
+      .where(eq(purchaseOrderItems.purchaseOrderId, id));
+    const itemIds = itemRows.map((r) => r.id);
+
+    const receivingRows = await tx
+      .select({ id: poReceivingRecords.id })
+      .from(poReceivingRecords)
+      .where(eq(poReceivingRecords.purchaseOrderId, id));
+    const receivingIds = receivingRows.map((r) => r.id);
+    if (receivingIds.length > 0) {
+      await tx.delete(poReceivingItems).where(inArray(poReceivingItems.receivingRecordId, receivingIds));
+      await tx.delete(poReceivingRecords).where(eq(poReceivingRecords.purchaseOrderId, id));
+    }
+    if (itemIds.length > 0) {
+      await tx.delete(purchaseOrderRawMaterials).where(inArray(purchaseOrderRawMaterials.purchaseOrderItemId, itemIds));
+    }
+    await tx.delete(supplierDocuments).where(eq(supplierDocuments.purchaseOrderId, id));
+    await tx.delete(supplierFreightInfo).where(eq(supplierFreightInfo.purchaseOrderId, id));
+    await tx.delete(supplierPortalSessions).where(eq(supplierPortalSessions.purchaseOrderId, id));
+    await tx.delete(purchaseOrderApprovals).where(eq(purchaseOrderApprovals.purchaseOrderId, id));
     await tx.delete(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, id));
-    await tx.delete(purchaseOrders).where(eq(purchaseOrders.id, id));
+    const result: any = await tx.delete(purchaseOrders).where(eq(purchaseOrders.id, id));
+    // Callers report per-id outcomes, so "threw nothing" isn't good enough:
+    // a already-deleted or bogus id must not be counted as a deletion.
+    return (result?.[0]?.affectedRows ?? result?.affectedRows ?? 0) > 0;
   });
+}
+
+/**
+ * Delete many POs, one transaction each, so a single undeletable PO doesn't
+ * abort the whole batch. Callers get the per-id outcome and surface the
+ * failures rather than reporting a partial run as a clean success.
+ */
+export async function bulkDeletePurchaseOrders(ids: number[]) {
+  const deleted: number[] = [];
+  const failed: { id: number; reason: string }[] = [];
+  for (const id of ids) {
+    try {
+      if (await deletePurchaseOrder(id)) deleted.push(id);
+      else failed.push({ id, reason: "Purchase order no longer exists" });
+    } catch (e: any) {
+      failed.push({ id, reason: e?.message || "Delete failed" });
+    }
+  }
+  return { deleted, failed };
+}
+
+/**
+ * POs that duplicate another PO on (poNumber, vendorId, totalAmount).
+ *
+ * Re-importing the same vendor document used to mint a fresh PO every run
+ * (poNumber has no unique constraint), so an invoice imported three times
+ * shows up as three identical rows. The importers now refuse to re-create an
+ * existing PO; this finds the copies that predate that fix.
+ *
+ * Within a group the lowest id — the original import — is the keeper, and the
+ * later copies are the ones offered for deletion. Ids are collected in JS
+ * rather than with GROUP_CONCAT, whose 1024-byte default would silently
+ * truncate large groups.
+ */
+export async function getDuplicatePurchaseOrderGroups() {
+  const db = await getDb();
+  if (!db) return [];
+
+  // Two steps so the whole table never lands in application memory: MySQL
+  // reports which (poNumber, vendorId, totalAmount) keys occur more than once,
+  // then only the rows under those keys are fetched. Grouping every PO in JS
+  // scaled with total history rather than with the number of duplicates.
+  const dupKeys = await db
+    .select({
+      poNumber: purchaseOrders.poNumber,
+      vendorId: purchaseOrders.vendorId,
+      totalAmount: purchaseOrders.totalAmount,
+    })
+    .from(purchaseOrders)
+    .groupBy(purchaseOrders.poNumber, purchaseOrders.vendorId, purchaseOrders.totalAmount)
+    .having(sql`COUNT(*) > 1`);
+
+  if (dupKeys.length === 0) return [];
+
+  // \u0000 can't appear in any of the parts, so the composite key is unambiguous.
+  const keyOf = (poNumber: string, vendorId: number, totalAmount: string | null) =>
+    [poNumber, vendorId, totalAmount ?? "0"].join("\u0000");
+
+  const wanted = new Set(dupKeys.map((k) => keyOf(k.poNumber, k.vendorId, k.totalAmount)));
+
+  // Restricting on poNumber alone is enough to keep the fetch small; the exact
+  // key match below then discards same-number rows from a different vendor or
+  // with a different total.
+  const rows = await db
+    .select({
+      id: purchaseOrders.id,
+      poNumber: purchaseOrders.poNumber,
+      vendorId: purchaseOrders.vendorId,
+      totalAmount: purchaseOrders.totalAmount,
+    })
+    .from(purchaseOrders)
+    .where(inArray(purchaseOrders.poNumber, dupKeys.map((k) => k.poNumber)))
+    .orderBy(asc(purchaseOrders.id));
+
+  const groups = new Map<string, { poNumber: string; vendorId: number; totalAmount: string; ids: number[] }>();
+  for (const r of rows) {
+    const key = keyOf(r.poNumber, r.vendorId, r.totalAmount);
+    if (!wanted.has(key)) continue;
+    const existing = groups.get(key);
+    if (existing) existing.ids.push(r.id);
+    else groups.set(key, { poNumber: r.poNumber, vendorId: r.vendorId, totalAmount: r.totalAmount ?? "0", ids: [r.id] });
+  }
+
+  return Array.from(groups.values())
+    .filter((g) => g.ids.length > 1)
+    .map((g) => ({
+      poNumber: g.poNumber,
+      vendorId: g.vendorId,
+      totalAmount: g.totalAmount,
+      // Lowest id is the original import; the rest are the copies.
+      keepId: g.ids[0],
+      duplicateIds: g.ids.slice(1),
+    }));
+}
+
+/**
+ * Exact poNumber lookup, for the importers' "have I already imported this?"
+ * guard. Distinct from findPurchaseOrderByNumber, whose LIKE %...% match is
+ * deliberately fuzzy and would treat PO-1 as an existing PO-100.
+ */
+export async function findPurchaseOrderByNumberExact(poNumber: string, vendorId?: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const conditions = [eq(purchaseOrders.poNumber, poNumber)];
+  if (vendorId != null) conditions.push(eq(purchaseOrders.vendorId, vendorId));
+  const result = await db
+    .select()
+    .from(purchaseOrders)
+    .where(and(...conditions))
+    .orderBy(asc(purchaseOrders.id))
+    .limit(1);
+  return result[0] || null;
+}
+
+/**
+ * Three-way match for one PO: what was ordered (PO lines), what arrived
+ * (receivedQuantity) and what the vendor billed (invoice documents linked to
+ * the PO), reconciled line by line with the variances flagged.
+ *
+ * Fetches the three sides; the reconciliation itself lives in
+ * server/purchaseOrderMatching.ts so it can be unit-tested directly.
+ */
+export async function getPurchaseOrderThreeWayMatch(purchaseOrderId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const po = await getPurchaseOrderById(purchaseOrderId);
+  if (!po) return null;
+
+  const items = await db
+    .select()
+    .from(purchaseOrderItems)
+    .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
+
+  // Only actual bills count toward "invoiced" — a packing list or customs form
+  // linked to the same PO says nothing about what was charged.
+  const invoiceDocs = await db
+    .select()
+    .from(parsedDocuments)
+    .where(
+      and(
+        eq(parsedDocuments.purchaseOrderId, purchaseOrderId),
+        eq(parsedDocuments.documentType, "invoice" as any),
+      ),
+    );
+
+  const invoiceLines = invoiceDocs.length
+    ? await db
+        .select()
+        .from(parsedDocumentLineItems)
+        .where(inArray(parsedDocumentLineItems.documentId, invoiceDocs.map((d) => d.id)))
+    : [];
+
+  const result = reconcileThreeWayMatch(items as any, invoiceDocs as any, invoiceLines as any);
+  return {
+    purchaseOrderId,
+    poNumber: po.poNumber,
+    status: po.status,
+    ...result,
+  };
+}
+
+/**
+ * Per-PO receipt progress for the list view: how much of each PO has actually
+ * arrived, without loading every line item into the client.
+ */
+export async function getPurchaseOrderReceiptProgress(purchaseOrderIds: number[]) {
+  const db = await getDb();
+  if (!db || purchaseOrderIds.length === 0) return [];
+
+  const rows = await db
+    .select({
+      purchaseOrderId: purchaseOrderItems.purchaseOrderId,
+      orderedQty: sql<string>`COALESCE(SUM(${purchaseOrderItems.quantity}), 0)`,
+      receivedQty: sql<string>`COALESCE(SUM(${purchaseOrderItems.receivedQuantity}), 0)`,
+      lineCount: count(),
+    })
+    .from(purchaseOrderItems)
+    .where(inArray(purchaseOrderItems.purchaseOrderId, purchaseOrderIds))
+    .groupBy(purchaseOrderItems.purchaseOrderId);
+
+  return rows.map((r) => {
+    const ordered = toNumber(r.orderedQty);
+    const received = toNumber(r.receivedQty);
+    return {
+      purchaseOrderId: r.purchaseOrderId,
+      orderedQty: ordered,
+      receivedQty: received,
+      lineCount: Number(r.lineCount),
+      // Capped at 100 so an over-receipt shows a full bar plus the over_received
+      // flag, rather than a progress bar past its own end.
+      percentReceived: ordered > MATCH_EPSILON ? Math.min(100, (received / ordered) * 100) : 0,
+      isOverReceived: received - ordered > MATCH_EPSILON,
+    };
+  });
+}
+
+/**
+ * Resolve the approval chain a PO of this value has to clear, from the
+ * approvalThresholds row configured for entityType 'purchase_order'.
+ *
+ * Mirrors AutonomousWorkflowEngine.checkApprovalRequired so a PO approved by
+ * hand and one approved by the workflow engine answer to the same policy.
+ * With no threshold configured, anything over 500 needs one ops-level
+ * approval — the same fallback the engine uses.
+ */
+export async function getPurchaseOrderApprovalPolicy(amount: number) {
+  const db = await getDb();
+  if (!db) return resolveApprovalPolicy(null, amount);
+
+  const [threshold] = await db
+    .select()
+    .from(approvalThresholds)
+    .where(and(eq(approvalThresholds.entityType, "purchase_order" as any), eq(approvalThresholds.isActive, true)))
+    .limit(1);
+
+  return resolveApprovalPolicy((threshold as any) ?? null, amount);
+}
+
+export async function getPurchaseOrderApprovals(purchaseOrderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(purchaseOrderApprovals)
+    .where(eq(purchaseOrderApprovals.purchaseOrderId, purchaseOrderId))
+    .orderBy(asc(purchaseOrderApprovals.level), asc(purchaseOrderApprovals.id));
+}
+
+export async function createPurchaseOrderApproval(data: InsertPurchaseOrderApproval) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(purchaseOrderApprovals).values(data);
+  return { id: result[0].insertId };
+}
+
+/**
+ * Where a PO stands in its approval chain: which levels are signed off, which
+ * level is next, and who may sign it. Drives both the approve mutation's
+ * permission check and what the UI offers.
+ */
+export async function getPurchaseOrderApprovalState(purchaseOrderId: number) {
+  const po = await getPurchaseOrderById(purchaseOrderId);
+  if (!po) return null;
+
+  const amount = Number(po.totalAmount ?? "0");
+  const policy = await getPurchaseOrderApprovalPolicy(Number.isFinite(amount) ? amount : 0);
+  const decisions = await getPurchaseOrderApprovals(purchaseOrderId);
+
+  const rejected = decisions.find((d) => d.decision === "rejected") ?? null;
+  const approvedLevels = new Set(decisions.filter((d) => d.decision === "approved").map((d) => d.level));
+  const nextLevel = policy.levels.find((l) => !approvedLevels.has(l.level)) ?? null;
+
+  return {
+    purchaseOrderId,
+    amount,
+    thresholdName: policy.thresholdName,
+    autoApprove: policy.autoApprove,
+    requiredLevels: policy.levels,
+    decisions,
+    rejected,
+    nextLevel,
+    // A rejected PO is not "fully approved" no matter how many levels signed
+    // off before the rejection.
+    fullyApproved: !rejected && (policy.autoApprove || nextLevel === null),
+  };
 }
 
 export async function getAllPurchaseOrderItems() {
@@ -3397,27 +3896,170 @@ export async function getInventoryByProductIds(productIds: number[]) {
 export async function updateInventoryQuantity(productId: number, warehouseId: number, quantityChange: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
-  // Check if inventory record exists
-  const existing = await db.select().from(inventory)
-    .where(and(eq(inventory.productId, productId), eq(inventory.warehouseId, warehouseId)))
-    .limit(1);
-  
-  if (existing.length > 0) {
-    const currentQty = parseFloat(existing[0].quantity as string) || 0;
-    const newQty = currentQty + quantityChange;
-    await db.update(inventory)
-      .set({ quantity: newQty.toString() })
-      .where(and(eq(inventory.productId, productId), eq(inventory.warehouseId, warehouseId)));
-  } else {
-    await db.insert(inventory).values({
-      productId,
-      warehouseId,
-      quantity: quantityChange.toString(),
-    });
+
+  // The read and the write run in one transaction with the row locked, so two
+  // concurrent movements on the same product/warehouse can't both observe "no
+  // row" and each INSERT — which is how the duplicate inventory rows appeared.
+  // (inventory has no unique key on (productId, warehouseId), so nothing at the
+  // DB level catches that; see getDuplicateInventoryGroups for the cleanup.)
+  return db.transaction(async (tx) => {
+    const existing = await tx
+      .select()
+      .from(inventory)
+      .where(and(eq(inventory.productId, productId), eq(inventory.warehouseId, warehouseId)))
+      .orderBy(asc(inventory.id))
+      .limit(1)
+      .for("update");
+
+    if (existing.length > 0) {
+      const currentQty = parseFloat(existing[0].quantity as string) || 0;
+      const newQty = currentQty + quantityChange;
+      // Scoped to the row actually read. The previous version matched on
+      // (productId, warehouseId) with no limit, so where duplicates existed it
+      // overwrote every copy with one row's total — quietly multiplying stock
+      // for anything that sums the rows.
+      await tx
+        .update(inventory)
+        .set({ quantity: newQty.toString() })
+        .where(eq(inventory.id, existing[0].id));
+    } else {
+      await tx.insert(inventory).values({
+        productId,
+        warehouseId,
+        quantity: quantityChange.toString(),
+      });
+    }
+
+    return { success: true };
+  });
+}
+
+/**
+ * Inventory rows that share a (productId, warehouseId) pair with another row.
+ *
+ * The table has no unique key on that pair and every writer does a
+ * read-then-insert, so a race (or a stray createInventory) leaves two rows for
+ * the same stock. Whatever sums or counts rows then double-counts — the
+ * inventory page's "Total SKUs" is a row count, so duplicates show up there
+ * directly.
+ *
+ * `allIdentical` drives the safe resolution. updateInventoryQuantity used to
+ * write the same total to every copy, so identical quantities are that
+ * overwrite artifact and only one row should survive. Differing quantities mean
+ * the copies were incremented independently and summing is the honest repair —
+ * but that is a judgement call, so it is surfaced rather than applied.
+ */
+export async function getDuplicateInventoryGroups() {
+  const db = await getDb();
+  if (!db) return [];
+
+  const dupKeys = await db
+    .select({ productId: inventory.productId, warehouseId: inventory.warehouseId })
+    .from(inventory)
+    .groupBy(inventory.productId, inventory.warehouseId)
+    .having(sql`COUNT(*) > 1`);
+
+  if (dupKeys.length === 0) return [];
+
+  // Fetch by productId alone and filter the exact pair in JS: warehouseId is
+  // nullable, and a NULL can't be matched with an equality predicate.
+  const rows = await db
+    .select({
+      id: inventory.id,
+      productId: inventory.productId,
+      warehouseId: inventory.warehouseId,
+      quantity: inventory.quantity,
+      reservedQuantity: inventory.reservedQuantity,
+      updatedAt: inventory.updatedAt,
+      productName: products.name,
+      productSku: products.sku,
+      warehouseName: warehouses.name,
+    })
+    .from(inventory)
+    .leftJoin(products, eq(inventory.productId, products.id))
+    .leftJoin(warehouses, eq(inventory.warehouseId, warehouses.id))
+    .where(inArray(inventory.productId, dupKeys.map((k) => k.productId)))
+    .orderBy(asc(inventory.id));
+
+  const keyOf = (productId: number, warehouseId: number | null) => `${productId}\u0000${warehouseId ?? "null"}`;
+  const wanted = new Set(dupKeys.map((k) => keyOf(k.productId, k.warehouseId)));
+
+  const groups = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const key = keyOf(r.productId, r.warehouseId);
+    if (!wanted.has(key)) continue;
+    const existing = groups.get(key);
+    if (existing) existing.push(r);
+    else groups.set(key, [r]);
   }
-  
-  return { success: true };
+
+  return Array.from(groups.values())
+    .filter((g) => g.length > 1)
+    .map((g) => {
+      const classified = classifyDuplicateGroup(g);
+      return {
+        productId: g[0].productId,
+        productName: g[0].productName,
+        productSku: g[0].productSku,
+        warehouseId: g[0].warehouseId,
+        warehouseName: g[0].warehouseName,
+        rows: g.map((r) => ({
+          id: r.id,
+          quantity: toNumber(r.quantity),
+          reservedQuantity: toNumber(r.reservedQuantity),
+          updatedAt: r.updatedAt,
+        })),
+        ...classified,
+      };
+    });
+}
+
+/**
+ * Collapse one duplicate group into a single row.
+ *
+ * "keep_one" leaves the surviving row's quantity untouched (the copies were
+ * overwrites of the same number); "sum" totals every copy into it. Reserved
+ * quantities are always summed — those are genuine separate reservations.
+ */
+export async function mergeDuplicateInventoryRows(
+  keepId: number,
+  removeIds: number[],
+  strategy: "keep_one" | "sum",
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (removeIds.includes(keepId)) throw new Error("The surviving row cannot also be removed.");
+
+  return db.transaction(async (tx) => {
+    const keeper = (await tx.select().from(inventory).where(eq(inventory.id, keepId)).limit(1).for("update"))[0];
+    if (!keeper) throw new Error(`Inventory row ${keepId} no longer exists.`);
+
+    const doomed = removeIds.length
+      ? await tx.select().from(inventory).where(inArray(inventory.id, removeIds)).for("update")
+      : [];
+
+    // Only merge rows that really are the same stock — a stale id from a
+    // client that has been sitting on the page must not silently fold an
+    // unrelated product's quantity into the keeper.
+    for (const row of doomed) {
+      if (row.productId !== keeper.productId || row.warehouseId !== keeper.warehouseId) {
+        throw new Error(`Inventory row ${row.id} is not a duplicate of row ${keepId}.`);
+      }
+    }
+
+    const { quantity, reservedQuantity } = resolveMergedQuantities(keeper, doomed, strategy);
+
+    await tx
+      .update(inventory)
+      .set({ quantity: quantity.toFixed(4), reservedQuantity: reservedQuantity.toFixed(4) })
+      .where(eq(inventory.id, keepId));
+
+    if (doomed.length > 0) {
+      await tx.delete(inventory).where(inArray(inventory.id, doomed.map((r) => r.id)));
+    }
+
+    return { keepId, removed: doomed.map((r) => r.id), quantity, reservedQuantity };
+  });
 }
 
 // ============================================

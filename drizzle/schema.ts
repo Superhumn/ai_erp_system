@@ -7020,6 +7020,32 @@ export const approvalThresholds = mysqlTable("approvalThresholds", {
 export type ApprovalThreshold = typeof approvalThresholds.$inferSelect;
 export type InsertApprovalThreshold = typeof approvalThresholds.$inferInsert;
 
+/**
+ * One row per approval decision recorded against a purchase order.
+ *
+ * purchase_orders.approvedBy/approvedAt only hold a single approver, which is
+ * enough for a one-step sign-off but can't express the level-1/2/3 chain that
+ * approvalThresholds already configures for entityType 'purchase_order'. This
+ * table records each level's decision so a high-value PO can require several,
+ * while the PO's own approvedBy/approvedAt keep meaning "final approval".
+ */
+export const purchaseOrderApprovals = mysqlTable("purchaseOrderApprovals", {
+  id: int("id").autoincrement().primaryKey(),
+  purchaseOrderId: int("purchaseOrderId").notNull().references(() => purchaseOrders.id),
+  level: int("level").notNull(),
+  decision: mysqlEnum("decision", ["approved", "rejected"]).notNull(),
+  decidedBy: int("decidedBy").notNull().references(() => users.id),
+  decidedAt: timestamp("decidedAt").defaultNow().notNull(),
+  // The role the decider held at decision time — roles change, and an audit
+  // trail that silently rewrites who was allowed to sign off is worthless.
+  decidedByRole: varchar("decidedByRole", { length: 64 }),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type PurchaseOrderApproval = typeof purchaseOrderApprovals.$inferSelect;
+export type InsertPurchaseOrderApproval = typeof purchaseOrderApprovals.$inferInsert;
+
 export const exceptionRules = mysqlTable("exceptionRules", {
   id: int("id").autoincrement().primaryKey(),
   companyId: int("companyId"),

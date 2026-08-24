@@ -2781,6 +2781,25 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
 
         return { success: true };
       }),
+    // Inventory rows sharing a (product, warehouse) pair. The table has no
+    // unique key on that pair, so a race between two stock movements leaves two
+    // rows for the same stock and every row count / sum double-counts it.
+    duplicates: opsProcedure.query(() => db.getDuplicateInventoryGroups()),
+    mergeDuplicates: opsProcedure
+      .input(z.object({
+        keepId: z.number(),
+        removeIds: z.array(z.number()).min(1).max(100),
+        strategy: z.enum(['keep_one', 'sum']),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.mergeDuplicateInventoryRows(input.keepId, input.removeIds, input.strategy);
+        await createAuditLog(
+          ctx.user.id, 'update', 'inventory', input.keepId, undefined,
+          { duplicateRowIds: input.removeIds },
+          { strategy: input.strategy, quantity: result.quantity, removed: result.removed },
+        );
+        return result;
+      }),
     bulkUpdate: opsProcedure
       .input(z.object({
         ids: z.array(z.number()),
@@ -3464,9 +3483,51 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         await createAuditLog(ctx.user.id, 'update', 'purchaseOrder', input.id, po.poNumber, { status: po.status }, { status: result.status });
         return { success: true, status: result.status };
       }),
+    // Records one approval decision against the PO's threshold chain. A PO only
+    // moves to "sent" (and reaches the vendor) once every level configured for
+    // its value has signed off — previously any ops user could release a PO of
+    // any size in one click, bypassing the approvalThresholds config entirely.
     approve: opsProcedure
-      .input(z.object({ id: z.number() }))
+      .input(z.object({ id: z.number(), notes: z.string().max(1000).optional() }))
       .mutation(async ({ input, ctx }) => {
+        const state = await db.getPurchaseOrderApprovalState(input.id);
+        if (!state) throw new TRPCError({ code: 'NOT_FOUND', message: 'Purchase order not found' });
+        if (state.rejected) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'This PO was rejected and cannot be approved.' });
+        }
+
+        if (!state.autoApprove) {
+          const next = state.nextLevel;
+          if (!next) {
+            throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'This PO is already fully approved.' });
+          }
+          if (!next.roles.includes(ctx.user.role)) {
+            throw new TRPCError({
+              code: 'FORBIDDEN',
+              message: `Level ${next.level} approval for this amount requires one of: ${next.roles.join(', ')}.`,
+            });
+          }
+          await db.createPurchaseOrderApproval({
+            purchaseOrderId: input.id,
+            level: next.level,
+            decision: 'approved',
+            decidedBy: ctx.user.id,
+            decidedByRole: ctx.user.role,
+            notes: input.notes,
+          });
+        }
+
+        // Re-read rather than reasoning from the pre-insert state, so a
+        // concurrent approval of the same level can't release the PO twice.
+        const after = await db.getPurchaseOrderApprovalState(input.id);
+        if (!after?.fullyApproved) {
+          await createAuditLog(ctx.user.id, 'approve', 'purchaseOrder', input.id, undefined, undefined, {
+            level: state.nextLevel?.level,
+            remainingLevels: after?.requiredLevels.filter((l) => l.level !== state.nextLevel?.level).length ?? 0,
+          });
+          return { success: true, fullyApproved: false, nextLevel: after?.nextLevel ?? null };
+        }
+
         await db.updatePurchaseOrder(input.id, { status: 'sent', approvedBy: ctx.user.id, approvedAt: new Date() });
         await createAuditLog(ctx.user.id, 'approve', 'purchaseOrder', input.id);
 
@@ -3487,6 +3548,32 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           console.warn("[PO Approval] Failed to auto-send PO to vendor:", e);
         }
 
+        return { success: true, fullyApproved: true, nextLevel: null };
+      }),
+    reject: opsProcedure
+      .input(z.object({ id: z.number(), notes: z.string().max(1000).optional() }))
+      .mutation(async ({ input, ctx }) => {
+        const state = await db.getPurchaseOrderApprovalState(input.id);
+        if (!state) throw new TRPCError({ code: 'NOT_FOUND', message: 'Purchase order not found' });
+        if (state.rejected) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'This PO was already rejected.' });
+        }
+        // Anyone in the chain may reject — including a later level reviewing a
+        // PO an earlier level already passed.
+        const canReject = state.requiredLevels.some((l) => l.roles.includes(ctx.user.role));
+        if (state.requiredLevels.length > 0 && !canReject) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'You are not an approver for this purchase order.' });
+        }
+        await db.createPurchaseOrderApproval({
+          purchaseOrderId: input.id,
+          level: state.nextLevel?.level ?? 1,
+          decision: 'rejected',
+          decidedBy: ctx.user.id,
+          decidedByRole: ctx.user.role,
+          notes: input.notes,
+        });
+        await db.updatePurchaseOrder(input.id, { status: 'cancelled' });
+        await createAuditLog(ctx.user.id, 'reject', 'purchaseOrder', input.id, undefined, { status: state.decisions.length }, { decision: 'rejected' });
         return { success: true };
       }),
     // Parse text to PO preview
@@ -3656,6 +3743,122 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         await db.deletePurchaseOrder(input.id);
         await createAuditLog(ctx.user.id, 'delete', 'purchaseOrder', input.id);
         return { success: true };
+      }),
+    // POs that duplicate another PO on (poNumber, vendor, total). Lets the list
+    // filter down to the copies left behind by repeated document imports.
+    duplicates: opsProcedure.query(() => db.getDuplicatePurchaseOrderGroups()),
+    // Filtered / sorted / paged list for the PO page. `list` stays as-is for
+    // its many other callers.
+    listPaged: opsProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        status: z.string().optional(),
+        vendorId: z.number().optional(),
+        search: z.string().optional(),
+        orderDateFrom: z.date().optional(),
+        orderDateTo: z.date().optional(),
+        duplicatesOnly: z.boolean().optional(),
+        sortBy: z.enum(['poNumber', 'vendor', 'totalAmount', 'status', 'orderDate', 'expectedDate', 'createdAt']).optional(),
+        sortDir: z.enum(['asc', 'desc']).optional(),
+        limit: z.number().min(1).max(200).optional(),
+        offset: z.number().min(0).optional(),
+      }).optional())
+      .query(({ input }) => db.getPurchaseOrdersPaged(input ?? {})),
+    // Count + value for the current filters, across the whole filtered set
+    // rather than the visible page.
+    summary: opsProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        status: z.string().optional(),
+        vendorId: z.number().optional(),
+        search: z.string().optional(),
+        orderDateFrom: z.date().optional(),
+        orderDateTo: z.date().optional(),
+        duplicatesOnly: z.boolean().optional(),
+      }).optional())
+      .query(({ input }) => db.getPurchaseOrderSummary(input ?? {})),
+    // Flat rows for CSV export: same filters, no pagination, hard-capped so a
+    // stray export can't try to stream the entire table.
+    exportRows: opsProcedure
+      .input(z.object({
+        status: z.string().optional(),
+        vendorId: z.number().optional(),
+        search: z.string().optional(),
+        orderDateFrom: z.date().optional(),
+        orderDateTo: z.date().optional(),
+        duplicatesOnly: z.boolean().optional(),
+        sortBy: z.enum(['poNumber', 'vendor', 'totalAmount', 'status', 'orderDate', 'expectedDate', 'createdAt']).optional(),
+        sortDir: z.enum(['asc', 'desc']).optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const { rows } = await db.getPurchaseOrdersPaged({ ...(input ?? {}), limit: 5000 });
+        return rows;
+      }),
+    // How much of each PO has actually arrived — drives the receipt progress
+    // column without pulling every line item into the list.
+    receiptProgress: opsProcedure
+      .input(z.object({ purchaseOrderIds: z.array(z.number()) }))
+      .query(({ input }) => db.getPurchaseOrderReceiptProgress(input.purchaseOrderIds)),
+    // PO vs receipt vs vendor invoice, reconciled line by line.
+    threeWayMatch: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const result = await db.getPurchaseOrderThreeWayMatch(input.id);
+        if (!result) throw new TRPCError({ code: 'NOT_FOUND', message: 'Purchase order not found' });
+        return result;
+      }),
+    // The approval chain this PO must clear, and how far through it is.
+    approvalState: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const state = await db.getPurchaseOrderApprovalState(input.id);
+        if (!state) throw new TRPCError({ code: 'NOT_FOUND', message: 'Purchase order not found' });
+        return state;
+      }),
+    bulkUpdateStatus: opsProcedure
+      .input(z.object({
+        ids: z.array(z.number()).min(1).max(500),
+        status: z.enum(['draft', 'sent', 'confirmed', 'partial', 'received', 'cancelled']),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const poNumbers = new Map<number, string>();
+        for (const id of input.ids) {
+          const po = await db.getPurchaseOrderById(id);
+          if (po) poNumbers.set(id, po.poNumber);
+        }
+
+        const { updated, failed } = await db.bulkUpdatePurchaseOrderStatus(input.ids, input.status);
+        for (const id of updated) {
+          await createAuditLog(ctx.user.id, 'update', 'purchaseOrder', id, poNumbers.get(id), undefined, { status: input.status });
+        }
+        return {
+          success: failed.length === 0,
+          updated: updated.length,
+          failed: failed.map((f) => ({ ...f, poNumber: poNumbers.get(f.id) ?? `#${f.id}` })),
+        };
+      }),
+    bulkDelete: opsProcedure
+      .input(z.object({ ids: z.array(z.number()).min(1).max(500) }))
+      .mutation(async ({ input, ctx }) => {
+        // Resolve po numbers up front so the audit log still names what was
+        // deleted after the rows are gone.
+        const poNumbers = new Map<number, string>();
+        for (const id of input.ids) {
+          const po = await db.getPurchaseOrderById(id);
+          if (po) poNumbers.set(id, po.poNumber);
+        }
+
+        const { deleted, failed } = await db.bulkDeletePurchaseOrders(input.ids);
+
+        for (const id of deleted) {
+          await createAuditLog(ctx.user.id, 'delete', 'purchaseOrder', id, poNumbers.get(id));
+        }
+
+        return {
+          success: failed.length === 0,
+          deleted: deleted.length,
+          failed: failed.map((f) => ({ ...f, poNumber: poNumbers.get(f.id) ?? `#${f.id}` })),
+        };
       }),
   }),
 

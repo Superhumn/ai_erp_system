@@ -106,6 +106,53 @@ export default function Inventory() {
 
   const { data: inventory, isLoading } = trpc.inventory.list.useQuery();
   const { data: warehouses } = trpc.warehouses.list.useQuery();
+  // Rows sharing a (product, warehouse) pair. Each extra row is counted again
+  // by every total on this page, so they inflate the numbers directly.
+  const { data: duplicateGroups } = trpc.inventory.duplicates.useQuery();
+
+  const mergeDuplicates = trpc.inventory.mergeDuplicates.useMutation({
+    onSuccess: () => {
+      utils.inventory.list.invalidate();
+      utils.inventory.duplicates.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const [dupDialogOpen, setDupDialogOpen] = useState(false);
+  const [isMerging, setIsMerging] = useState(false);
+
+  // Only the unambiguous groups are safe to fix in one go: identical quantities
+  // are the artifact of the old update writing one total to every copy. Where
+  // the copies differ they were incremented independently, and choosing between
+  // "sum" and "keep one" is a stock-count judgement the operator has to make.
+  const identicalGroups = (duplicateGroups || []).filter((g) => g.allIdentical);
+  const divergentGroups = (duplicateGroups || []).filter((g) => !g.allIdentical);
+  const duplicateRowCount = (duplicateGroups || []).reduce((sum, g) => sum + g.rows.length - 1, 0);
+
+  const mergeGroups = async (groups: NonNullable<typeof duplicateGroups>, strategy: "keep_one" | "sum") => {
+    setIsMerging(true);
+    let merged = 0;
+    try {
+      for (const group of groups) {
+        await mergeDuplicates.mutateAsync({
+          keepId: group.keepId,
+          removeIds: group.rows.filter((r) => r.id !== group.keepId).map((r) => r.id),
+          strategy,
+        });
+        merged++;
+      }
+      toast.success(`Merged ${merged} duplicate group(s)`);
+      setDupDialogOpen(false);
+    } catch {
+      // The mutation's onError already surfaced the reason; report the partial
+      // run rather than letting it look like nothing happened.
+      if (merged > 0) toast.warning(`Merged ${merged} group(s) before stopping`);
+    } finally {
+      setIsMerging(false);
+      utils.inventory.list.invalidate();
+      utils.inventory.duplicates.invalidate();
+    }
+  };
 
   const bulkUpdateMutation = trpc.inventory.bulkUpdate.useMutation({
     onSuccess: (data) => {
@@ -401,6 +448,122 @@ export default function Inventory() {
       </div>
 
       {/* Summary Cards — memoized to avoid recalculation on every render */}
+      {duplicateRowCount > 0 && (
+        <div className="flex items-center gap-3 flex-wrap rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/20 px-3 py-2">
+          <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+          <span className="text-sm">
+            {duplicateRowCount} duplicate inventory {duplicateRowCount === 1 ? "row" : "rows"} across{" "}
+            {duplicateGroups?.length} product/warehouse{" "}
+            {duplicateGroups?.length === 1 ? "pair" : "pairs"} — the counts below include each copy.
+          </span>
+          <Button variant="outline" size="sm" onClick={() => setDupDialogOpen(true)}>
+            Review and merge
+          </Button>
+        </div>
+      )}
+
+      <Dialog open={dupDialogOpen} onOpenChange={(open) => { if (!open && !isMerging) setDupDialogOpen(false); }}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Duplicate inventory rows</DialogTitle>
+            <DialogDescription>
+              These product/warehouse pairs have more than one inventory row. Every total on this
+              page counts each row, so the stock figures are inflated until they are merged.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-5 py-2">
+            {identicalGroups.length > 0 && (
+              <section className="space-y-2">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div>
+                    <h3 className="text-sm font-medium">
+                      Safe to merge ({identicalGroups.length})
+                    </h3>
+                    <p className="text-xs text-muted-foreground">
+                      Every copy holds the same quantity, so only one row is real. Merging keeps
+                      that quantity and removes the extra rows.
+                    </p>
+                  </div>
+                  <Button size="sm" disabled={isMerging} onClick={() => mergeGroups(identicalGroups, "keep_one")}>
+                    {isMerging && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                    Merge all {identicalGroups.length}
+                  </Button>
+                </div>
+                <ul className="space-y-1">
+                  {identicalGroups.map((g) => (
+                    <li key={`${g.productId}-${g.warehouseId}`} className="flex justify-between gap-4 text-sm border-b pb-1 last:border-0">
+                      <span className="text-muted-foreground truncate">
+                        {g.productName || `Product #${g.productId}`}
+                        {g.warehouseName ? ` · ${g.warehouseName}` : ""}
+                      </span>
+                      <span className="font-mono tabular-nums whitespace-nowrap">
+                        {g.rows.length} rows × {g.keepQuantity} → {g.keepQuantity}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {divergentGroups.length > 0 && (
+              <section className="space-y-2">
+                <h3 className="text-sm font-medium">Needs a decision ({divergentGroups.length})</h3>
+                <p className="text-xs text-muted-foreground">
+                  These copies hold different quantities, so they were counted up separately. Sum
+                  them if each copy recorded real stock movements; keep the first row's figure if
+                  the others are stale. Check the numbers against a physical count where you can.
+                </p>
+                {divergentGroups.map((g) => (
+                  <div key={`${g.productId}-${g.warehouseId}`} className="rounded-md border p-3 space-y-2">
+                    <div className="text-sm font-medium truncate">
+                      {g.productName || `Product #${g.productId}`}
+                      {g.warehouseName ? ` · ${g.warehouseName}` : ""}
+                      {g.productSku && <span className="ml-2 text-xs font-mono text-muted-foreground">{g.productSku}</span>}
+                    </div>
+                    <ul className="text-sm space-y-0.5">
+                      {g.rows.map((r) => (
+                        <li key={r.id} className="flex justify-between gap-4">
+                          <span className="text-muted-foreground">
+                            Row #{r.id}
+                            {r.id === g.keepId && <span className="ml-2 text-xs">(oldest — kept)</span>}
+                          </span>
+                          <span className="font-mono tabular-nums">{r.quantity}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="flex gap-2 flex-wrap">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={isMerging}
+                        onClick={() => mergeGroups([g], "sum")}
+                      >
+                        Sum to {g.summedQuantity}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={isMerging}
+                        onClick={() => mergeGroups([g], "keep_one")}
+                      >
+                        Keep {g.keepQuantity}
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </section>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDupDialogOpen(false)} disabled={isMerging}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <InventorySummaryCards inventory={inventory as any} />
 
       <Card>
