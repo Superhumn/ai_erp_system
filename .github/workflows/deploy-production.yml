@@ -27,6 +27,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      # Runs before the migration step, so a misrouted deploy is refused while
+      # the production database is still untouched.
+      - name: Verify production is not pointing at the staging service
+        env:
+          RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
+          # Known staging service, kept as a literal so this check still works
+          # while both environments resolve the same repo-level variable.
+          STAGING_SERVICE_ID: 696669c7-01e4-4d7a-8509-4abd2c96dac1
+        run: |
+          if [ -z "$RAILWAY_SERVICE_ID" ]; then
+            echo "::error title=Railway service id missing::RAILWAY_SERVICE_ID is not set. Add it as an environment variable on the 'production' environment (GitHub → Settings → Environments → production)."
+            exit 1
+          fi
+          if [ "$RAILWAY_SERVICE_ID" = "$STAGING_SERVICE_ID" ]; then
+            echo "::error title=Production is pointing at the staging service::RAILWAY_SERVICE_ID resolved to ${RAILWAY_SERVICE_ID}, which is the staging service — a 'production' deploy would ship to staging and migrations would run against whichever DATABASE_URL the production environment holds. Define RAILWAY_SERVICE_ID as an environment-scoped variable on the 'production' environment with the production service ID from the Railway dashboard, then delete the repository-level variable."
+            exit 1
+          fi
+          echo "Production service: $RAILWAY_SERVICE_ID"
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
         with:
