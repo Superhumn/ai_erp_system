@@ -1,0 +1,19 @@
+DEPLOYMENT.md
+  s_c2bc34cc15eb7f::t_a02c6ddfb71729 101-110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "5f45af0d5afa166b397c9ffe267bfa835e888dfa",
+  "prompts": {},
+  "sessions": {
+    "s_c2bc34cc15eb7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9928e53-5247-4262-810c-098bf219ad0b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    }
+  }
+}
