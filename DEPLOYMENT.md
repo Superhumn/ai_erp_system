@@ -177,7 +177,7 @@ Optional: use PM2 for process management (`pm2 start dist/_core/index.js --name 
 |---|---|
 | `LLM_PROVIDER` | `anthropic` |
 | `LLM_API_KEY` | Your Anthropic API key |
-| `LLM_MODEL` | Model name (default: `claude-sonnet-4-20250514`) |
+| `LLM_MODEL` | Model name (default: `claude-opus-5`). Set this to override without a redeploy — e.g. `claude-sonnet-5` for lower cost per token. |
 
 ### Optional Integrations
 
