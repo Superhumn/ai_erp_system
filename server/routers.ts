@@ -74,7 +74,7 @@ import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile, type GmailSendOptions, type GmailDraftOptions } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
 import { parseFormulationSheet, suggestColumnMapping, type ColumnKey } from "./recipeSheetImport";
-import { getGoogleFullAccessAuthUrl, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
+import { getGoogleFullAccessAuthUrl, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType, searchDriveFoldersByName } from "./_core/googleDrive";
 import { getServiceAccountEmail, isServiceAccountConfigured } from "./_core/googleServiceAccount";
 import { getQuickBooksAuthUrl, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems, getProfitAndLoss, parseProfitAndLossReport } from "./_core/quickbooks";
 import { listAllTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
@@ -369,8 +369,10 @@ async function getValidGoogleToken(userId: number): Promise<{ accessToken: strin
     return { accessToken: '', error: 'Google account not connected' };
   }
   
-  // Check if token needs refresh
-  if (token.expiresAt && new Date(token.expiresAt) < new Date()) {
+  // Refresh a bit early so a long-running Drive sync that re-checks the token
+  // between folder listings doesn't keep using a token that's about to expire.
+  const refreshSkewMs = 5 * 60 * 1000;
+  if (token.expiresAt && new Date(token.expiresAt).getTime() - refreshSkewMs < Date.now()) {
     if (!token.refreshToken) {
       return { accessToken: '', error: 'Google token has expired. Please reconnect your Google account.' };
     }
@@ -17320,8 +17322,15 @@ Then rank all quotes by best leveled value (1 = best; quotes marked NOT COMPARAB
           throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
         }
 
-        // Get valid Google OAuth token
-        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        // Prefer the room owner's Google token (the folder is usually linked to
+        // their Drive). Fall back to the acting user so an admin who has access
+        // can still sync when the owner hasn't connected Google.
+        let tokenUserId = room.ownerId;
+        let { accessToken, error } = await getValidGoogleToken(tokenUserId);
+        if (error && ctx.user.id !== room.ownerId) {
+          tokenUserId = ctx.user.id;
+          ({ accessToken, error } = await getValidGoogleToken(tokenUserId));
+        }
         if (error) {
           throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
         }
@@ -17330,17 +17339,12 @@ Then rank all quotes by best leveled value (1 = best; quotes marked NOT COMPARAB
 
         // If no folder ID provided and none linked, search for a "Data Room" folder in Drive
         if (!folderId) {
-          const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
-            "name contains 'Data Room' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-          )}&fields=files(id,name)&pageSize=5`;
-          const searchResponse = await fetch(searchUrl, {
-            headers: { Authorization: `Bearer ${accessToken}` },
-          });
-          if (searchResponse.ok) {
-            const searchData = await searchResponse.json();
-            if (searchData.files?.length > 0) {
-              folderId = searchData.files[0].id;
-            }
+          const { folders: found, error: searchErr } = await searchDriveFoldersByName(accessToken, 'Data Room');
+          if (searchErr) {
+            console.warn('[DataRoom] Drive folder search failed:', searchErr);
+          }
+          if (found.length > 0) {
+            folderId = found[0].id;
           }
           if (!folderId) {
             throw new TRPCError({
@@ -17360,13 +17364,21 @@ Then rank all quotes by best leveled value (1 = best; quotes marked NOT COMPARAB
         // and files, and (for this user-initiated re-sync) remove Drive-backed
         // items that were deleted in Drive. Shared with the background auto-sync
         // scheduler so both behave identically.
-        const { reconcileDataRoomFromDrive } = await import('./googleDriveSyncService');
+        const {
+          reconcileDataRoomFromDrive,
+          isTotalDriveImportFailure,
+          totalDriveImportFailureMessage,
+        } = await import('./googleDriveSyncService');
         let recon;
         try {
           recon = await reconcileDataRoomFromDrive({
             dataRoomId: input.dataRoomId,
             rootFolderId: folderId,
-            accessToken,
+            accessToken: async () => {
+              const t = await getValidGoogleToken(tokenUserId);
+              if (t.error || !t.accessToken) throw new Error(t.error || 'Google token unavailable');
+              return t.accessToken;
+            },
             uploadedBy: ctx.user.id,
             allowDelete: true,
           });
@@ -17377,6 +17389,13 @@ Then rank all quotes by best leveled value (1 = best; quotes marked NOT COMPARAB
           console.error(`[DataRoom] syncFromDrive failed for room ${input.dataRoomId}:`, err);
           const msg = err instanceof Error ? err.message : 'Sync failed';
           throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: msg });
+        }
+
+        if (isTotalDriveImportFailure(recon)) {
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: totalDriveImportFailureMessage(recon),
+          });
         }
 
         // Always link the folder; only stamp lastSyncedAt on a complete listing
@@ -17427,24 +17446,25 @@ Then rank all quotes by best leveled value (1 = best; quotes marked NOT COMPARAB
           throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
         }
 
-        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        // Prefer the room owner's Google token; fall back to the acting user.
+        let tokenUserId = room.ownerId;
+        let { accessToken, error } = await getValidGoogleToken(tokenUserId);
+        if (error && ctx.user.id !== room.ownerId) {
+          tokenUserId = ctx.user.id;
+          ({ accessToken, error } = await getValidGoogleToken(tokenUserId));
+        }
         if (error) {
           throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
         }
 
         let folderId = input.driveFolderId || room.googleDriveFolderId;
         if (!folderId) {
-          const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
-            "name contains 'Data Room' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-          )}&fields=files(id,name)&pageSize=5`;
-          const searchResponse = await fetch(searchUrl, {
-            headers: { Authorization: `Bearer ${accessToken}` },
-          });
-          if (searchResponse.ok) {
-            const searchData = await searchResponse.json();
-            if (searchData.files?.length > 0) {
-              folderId = searchData.files[0].id;
-            }
+          const { folders: found, error: searchErr } = await searchDriveFoldersByName(accessToken, 'Data Room');
+          if (searchErr) {
+            console.warn('[DataRoom] Drive folder search failed:', searchErr);
+          }
+          if (found.length > 0) {
+            folderId = found[0].id;
           }
           if (!folderId) {
             throw new TRPCError({
@@ -17462,10 +17482,15 @@ Then rank all quotes by best leveled value (1 = best; quotes marked NOT COMPARAB
         // Capture non-null values for the detached closure.
         const resolvedFolderId = folderId;
         const userId = ctx.user.id;
+        const googleTokenUserId = tokenUserId;
         const { dataRoomId } = input;
 
         const { runBackgroundTask } = await import('./_core/backgroundTasks');
-        const { reconcileDataRoomFromDrive } = await import('./googleDriveSyncService');
+        const {
+          reconcileDataRoomFromDrive,
+          isTotalDriveImportFailure,
+          totalDriveImportFailureMessage,
+        } = await import('./googleDriveSyncService');
 
         const { taskId } = await runBackgroundTask(
           {
@@ -17476,17 +17501,25 @@ Then rank all quotes by best leveled value (1 = best; quotes marked NOT COMPARAB
             message: 'Starting…',
             entityType: 'data_room',
             entityId: dataRoomId,
-            link: `/data-rooms/${dataRoomId}`,
+            link: `/dataroom/${dataRoomId}`,
           },
           async (handle) => {
             const recon = await reconcileDataRoomFromDrive({
               dataRoomId,
               rootFolderId: resolvedFolderId,
-              accessToken,
+              accessToken: async () => {
+                const t = await getValidGoogleToken(googleTokenUserId);
+                if (t.error || !t.accessToken) throw new Error(t.error || 'Google token unavailable');
+                return t.accessToken;
+              },
               uploadedBy: userId,
               allowDelete: true,
               onProgress: (u) => handle.report(u),
             });
+
+            if (isTotalDriveImportFailure(recon)) {
+              throw new Error(totalDriveImportFailureMessage(recon));
+            }
 
             await db.updateDataRoom(dataRoomId, {
               googleDriveFolderId: resolvedFolderId,
@@ -17500,7 +17533,9 @@ Then rank all quotes by best leveled value (1 = best; quotes marked NOT COMPARAB
             if (recon.filesFailed) summaryParts.push(`${recon.filesFailed} failed`);
             const summaryMsg = summaryParts.length
               ? `Synced ${folderInfo.folder!.name}: ${summaryParts.join(', ')}`
-              : `${folderInfo.folder!.name} is already up to date`;
+              : recon.filesFound === 0 && recon.foldersFound === 0
+                ? `No files found in "${folderInfo.folder!.name}"`
+                : `${folderInfo.folder!.name} is already up to date`;
 
             return {
               message: recon.partial ? `${summaryMsg} (partial)` : summaryMsg,
@@ -18075,9 +18110,15 @@ Then rank all quotes by best leveled value (1 = best; quotes marked NOT COMPARAB
 
           if (existingConfig) {
             await db.updateDriveSyncConfig(existingConfig.id, configData);
+            await db.updateDataRoom(input.dataRoomId, {
+              googleDriveFolderId: input.googleDriveFolderId,
+            });
             return { id: existingConfig.id, updated: true };
           } else {
             const id = await db.createDriveSyncConfig(configData);
+            await db.updateDataRoom(input.dataRoomId, {
+              googleDriveFolderId: input.googleDriveFolderId,
+            });
             return { id, updated: false };
           }
         }),
@@ -18135,49 +18176,86 @@ Then rank all quotes by best leveled value (1 = best; quotes marked NOT COMPARAB
           });
 
           try {
-            // Get Google OAuth token for the user configured for sync (or current user as fallback)
-            const syncUserId = config.syncUserId || ctx.user.id;
-            const { accessToken: syncAccessToken, error: syncTokenErr } = await getValidGoogleToken(syncUserId);
-            if (syncTokenErr || !syncAccessToken) {
+            // Get Google OAuth token for the user configured for sync (or room
+            // owner / current user as fallback)
+            const syncUserId = config.syncUserId || room.ownerId || ctx.user.id;
+            const { accessToken: _preflightToken, error: syncTokenErr } = await getValidGoogleToken(syncUserId);
+            if (syncTokenErr || !_preflightToken) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected. Please connect your Google account first.' });
             }
 
-            // Import Google Drive sync service
-            const { syncGoogleDriveFolder } = await import('./googleDriveSyncService');
+            // Use the same reconcile engine as one-click / auto-sync so renames,
+            // moves, metadata refresh, and delete-propagation stay consistent.
+            const {
+              reconcileDataRoomFromDrive,
+              isTotalDriveImportFailure,
+              totalDriveImportFailureMessage,
+            } = await import('./googleDriveSyncService');
 
-            const result = await syncGoogleDriveFolder({
+            const syncStartMs = Date.now();
+            const recon = await reconcileDataRoomFromDrive({
               dataRoomId: input.dataRoomId,
-              folderId: config.googleDriveFolderId,
-              accessToken: syncAccessToken,
+              rootFolderId: config.googleDriveFolderId,
+              accessToken: async () => {
+                const t = await getValidGoogleToken(syncUserId);
+                if (t.error || !t.accessToken) throw new Error(t.error || 'Google token unavailable');
+                return t.accessToken;
+              },
+              uploadedBy: ctx.user.id,
+              allowDelete: true,
               syncSubfolders: config.syncSubfolders,
               includeFileTypes: config.includeFileTypes ? JSON.parse(config.includeFileTypes) : undefined,
               excludeFileTypes: config.excludeFileTypes ? JSON.parse(config.excludeFileTypes) : undefined,
-              maxFileSizeMb: config.maxFileSizeMb || 100,
-              uploadedBy: ctx.user.id,
+              maxFileSizeMb: config.maxFileSizeMb ?? undefined,
             });
+            const syncDurationMs = Date.now() - syncStartMs;
+
+            if (isTotalDriveImportFailure(recon)) {
+              throw new Error(totalDriveImportFailureMessage(recon));
+            }
+
+            // Keep the data room's linked folder ID in sync with the config so
+            // the daily auto-sync scheduler also picks this room up.
+            await db.updateDataRoom(input.dataRoomId, {
+              googleDriveFolderId: config.googleDriveFolderId,
+              ...(recon.partial ? {} : { lastSyncedAt: new Date() }),
+            });
+
+            const result = {
+              filesScanned: recon.filesFound,
+              filesAdded: recon.filesCreated,
+              filesUpdated: recon.filesUpdated,
+              filesSkipped: 0,
+              foldersCreated: recon.foldersCreated,
+              durationMs: syncDurationMs,
+              warnings: recon.errors,
+            };
 
             // Update sync log with results
             await db.updateDriveSyncLog(logId, {
               status: 'completed',
               completedAt: new Date(),
-              filesScanned: result.filesScanned,
-              filesAdded: result.filesAdded,
-              filesUpdated: result.filesUpdated,
-              filesSkipped: result.filesSkipped,
-              foldersCreated: result.foldersCreated,
-              durationMs: result.durationMs,
-              warnings: result.warnings?.length ? JSON.stringify(result.warnings) : null,
+              filesScanned: recon.filesFound,
+              filesAdded: recon.filesCreated,
+              filesUpdated: recon.filesUpdated,
+              filesRemoved: recon.filesRemoved,
+              filesSkipped: 0,
+              foldersCreated: recon.foldersCreated,
+              durationMs: syncDurationMs,
+              warnings: recon.errors?.length ? JSON.stringify(recon.errors) : null,
             });
 
             // Update config last sync status
             await db.updateDriveSyncConfig(config.id, {
               lastSyncAt: new Date(),
-              lastSyncStatus: 'success',
-              lastSyncFilesAdded: result.filesAdded,
-              lastSyncFilesUpdated: result.filesUpdated,
+              lastSyncStatus: recon.filesFailed || recon.partial ? 'partial' : 'success',
+              lastSyncFilesAdded: recon.filesCreated,
+              lastSyncFilesUpdated: recon.filesUpdated,
+              lastSyncFilesRemoved: recon.filesRemoved,
+              lastSyncError: recon.errors[0] || null,
             });
 
-            return { success: true, ...result };
+            return { success: true, ...result, filesRemoved: recon.filesRemoved, foldersUpdated: recon.foldersUpdated, filesFailed: recon.filesFailed, partial: recon.partial, errors: recon.errors };
           } catch (error: any) {
             await db.updateDriveSyncLog(logId, {
               status: 'failed',
