@@ -1,5 +1,6 @@
 import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray, ne, sum, max, min } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
+import mysql from "mysql2";
 import { scopeAllows, scopeCompanyIds, type Scope } from "./_core/scope";
 import {
   assertTransition, computeVariance, computeVarianceValue, resolveAdjustment,
@@ -215,15 +216,33 @@ import {
   type MaterialSupplyInventoryLine,
 } from "../shared/materialSupply";
 
+let _pool: mysql.Pool | null = null;
 let _db: ReturnType<typeof drizzle> | null = null;
 
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      // Use an explicit connection pool rather than passing the URL string to
+      // drizzle() directly. A bare cached connection gets left holding a dead
+      // socket when the DB proxy (e.g. Railway) closes an idle connection,
+      // which then surfaces as intermittent PROTOCOL_CONNECTION_LOST / 500s on
+      // the next query until the process restarts. A pool evicts dead
+      // connections and hands out a live one, and keepAlive stops the proxy
+      // from reaping idle connections in the first place. Mirrors the pool the
+      // startup migration path already uses in server/_core/index.ts.
+      _pool = mysql.createPool({
+        uri: process.env.DATABASE_URL,
+        connectionLimit: 10,
+        maxIdle: 10,
+        idleTimeout: 60_000,
+        enableKeepAlive: true,
+        keepAliveInitialDelay: 10_000,
+      });
+      _db = drizzle(_pool);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
+      _pool = null;
     }
   }
   return _db;

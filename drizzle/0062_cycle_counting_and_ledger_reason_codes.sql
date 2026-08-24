@@ -1,4 +1,4 @@
--- Migration 0061: cycle counting + structured adjustment reason codes.
+-- Migration 0062: cycle counting + structured adjustment reason codes.
 --
 -- Adds the physical-inventory verification workflow (`cycleCounts` /
 -- `cycleCountLines`) and a `reasonCode` column on the inventory ledger so
@@ -54,9 +54,9 @@ CREATE TABLE IF NOT EXISTS `cycleCountLines` (
   CONSTRAINT `cycleCountLines_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
-DROP PROCEDURE IF EXISTS `_migrate_0061_cycle_counting`;
+DROP PROCEDURE IF EXISTS `_migrate_0062_cycle_counting`;
 --> statement-breakpoint
-CREATE PROCEDURE `_migrate_0061_cycle_counting`()
+CREATE PROCEDURE `_migrate_0062_cycle_counting`()
 BEGIN
   -- MySQL 8.0 has no ADD COLUMN / CREATE INDEX "IF NOT EXISTS", so each
   -- statement is guarded against INFORMATION_SCHEMA.
@@ -74,6 +74,6 @@ BEGIN
   END IF;
 END;
 --> statement-breakpoint
-CALL `_migrate_0061_cycle_counting`();
+CALL `_migrate_0062_cycle_counting`();
 --> statement-breakpoint
-DROP PROCEDURE IF EXISTS `_migrate_0061_cycle_counting`;
+DROP PROCEDURE IF EXISTS `_migrate_0062_cycle_counting`;
