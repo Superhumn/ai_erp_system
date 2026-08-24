@@ -7,6 +7,7 @@ import {
   syncDriveFolder,
   listDriveFolders,
   getSimpleFileType,
+  type DriveAccessToken,
 } from './_core/googleDrive';
 import * as db from './db';
 
@@ -290,9 +291,18 @@ function errMessage(err: unknown): string {
 export async function reconcileDataRoomFromDrive(params: {
   dataRoomId: number;
   rootFolderId: string;
-  accessToken: string;
+  /** Static token or a getter refreshed before each Drive listing. */
+  accessToken: DriveAccessToken;
   uploadedBy?: number;
   allowDelete?: boolean;
+  /** When false, subfolders are excluded from sync (root files only). Defaults to true. */
+  syncSubfolders?: boolean;
+  /** Only include files matching these extensions or simple file types (e.g. ['pdf', 'image']). */
+  includeFileTypes?: string[];
+  /** Exclude files matching these extensions or simple file types. */
+  excludeFileTypes?: string[];
+  /** Skip files larger than this size in MB. */
+  maxFileSizeMb?: number;
   /**
    * Optional progress reporter, invoked as the Drive tree is reconciled. Used by
    * the background-task runner to surface live progress in the client. Throwing
@@ -300,7 +310,8 @@ export async function reconcileDataRoomFromDrive(params: {
    */
   onProgress?: (update: { processed: number; total: number; message?: string }) => void | Promise<void>;
 }): Promise<ReconcileResult> {
-  const { dataRoomId, rootFolderId, accessToken, uploadedBy, allowDelete, onProgress } = params;
+  const { dataRoomId, rootFolderId, accessToken, uploadedBy, allowDelete, onProgress,
+    syncSubfolders = true, includeFileTypes, excludeFileTypes, maxFileSizeMb } = params;
 
   await onProgress?.({ processed: 0, total: 0, message: 'Listing Google Drive folder…' });
   const sync = await syncDriveFolder(accessToken, rootFolderId);
@@ -338,7 +349,8 @@ export async function reconcileDataRoomFromDrive(params: {
 
     // Reconcile folder hierarchy (DFS pre-order → parents precede children):
     // create new folders, and rename/re-parent existing ones that moved in Drive.
-    for (const driveFolder of sync.folders) {
+    // When syncSubfolders is disabled, skip all subfolders (root-only sync).
+    for (const driveFolder of syncSubfolders ? sync.folders : []) {
       processedItems++;
       await onProgress?.({ processed: processedItems, total: totalItems, message: 'Syncing folders…' });
       const parentDriveId = driveFolder.parents?.[0];
@@ -387,6 +399,12 @@ export async function reconcileDataRoomFromDrive(params: {
       processedItems++;
       await onProgress?.({ processed: processedItems, total: totalItems, message: 'Syncing files…' });
       const parentDriveId = driveFile.parents?.[0];
+
+      // When subfolder sync is disabled, only process root-level files.
+      if (!syncSubfolders && parentDriveId && parentDriveId !== rootFolderId) {
+        continue;
+      }
+
       let folderId: number | null = null;
       if (parentDriveId && parentDriveId !== rootFolderId) {
         folderId = folderMap.get(parentDriveId) ?? existingFolderByDriveId.get(parentDriveId)?.id ?? null;
@@ -397,6 +415,27 @@ export async function reconcileDataRoomFromDrive(params: {
 
       const newName = trunc(driveFile.name, 255) || 'Untitled';
       const newSize = driveFile.size && !isNaN(parseInt(driveFile.size)) ? parseInt(driveFile.size) : undefined;
+
+      // Apply file-type and size filters from the sync config.
+      const fileExt = driveFile.name.split('.').pop()?.toLowerCase() || '';
+      const fileType = getSimpleFileType(driveFile.mimeType);
+      if (includeFileTypes && includeFileTypes.length > 0) {
+        if (!includeFileTypes.includes(fileExt) && !includeFileTypes.includes(fileType)) {
+          continue;
+        }
+      }
+      if (excludeFileTypes && excludeFileTypes.length > 0) {
+        if (excludeFileTypes.includes(fileExt) || excludeFileTypes.includes(fileType)) {
+          continue;
+        }
+      }
+      if (maxFileSizeMb !== undefined && newSize !== undefined) {
+        const fileSizeMb = newSize / (1024 * 1024);
+        if (fileSizeMb > maxFileSizeMb) {
+          continue;
+        }
+      }
+
       const existing = existingDocByDriveId.get(driveFile.id);
 
       if (existing) {
@@ -550,6 +589,30 @@ export async function reconcileDataRoomFromDrive(params: {
     partial: !!sync.partial,
     errors,
   };
+}
+
+/**
+ * True when Drive returned files but every create/update attempt failed — the
+ * sync must not be reported as success (historical regression: green toast /
+ * background-task "success" with 0 imports).
+ */
+export function isTotalDriveImportFailure(recon: Pick<ReconcileResult, 'filesFound' | 'filesCreated' | 'filesUpdated' | 'filesFailed'>): boolean {
+  return (
+    recon.filesFound > 0 &&
+    recon.filesCreated === 0 &&
+    recon.filesUpdated === 0 &&
+    recon.filesFailed > 0
+  );
+}
+
+/**
+ * Build a user-facing error for a total import failure.
+ */
+export function totalDriveImportFailureMessage(
+  recon: Pick<ReconcileResult, 'filesFound' | 'errors'>,
+): string {
+  const detail = recon.errors[0] ? ` ${recon.errors[0]}` : '';
+  return `Found ${recon.filesFound} file(s) in Google Drive but failed to import any.${detail}`;
 }
 
 /**

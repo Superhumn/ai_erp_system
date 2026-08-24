@@ -1168,8 +1168,12 @@ async function startServer() {
         let user: any = null;
         try { user = await sdk.authenticateRequest(req); } catch { /* unauthenticated */ }
         if (!user) return res.status(401).send('Not authenticated');
-        if (user.id !== dataRoom.ownerId) return res.status(403).send('Forbidden');
-        ownerUserId = user.id;
+        // Owner or admin can stream; always use the room owner's Google token so
+        // Shared Drive / owner-linked folders keep working for admins.
+        if (user.id !== dataRoom.ownerId && user.role !== 'admin') {
+          return res.status(403).send('Forbidden');
+        }
+        ownerUserId = dataRoom.ownerId;
       }
 
       if (!ownerUserId) return res.status(500).send('Unable to resolve Drive owner');
@@ -1879,7 +1883,11 @@ async function startServer() {
               const recon = await reconcileDataRoomFromDrive({
                 dataRoomId: room.id,
                 rootFolderId: room.googleDriveFolderId,
-                accessToken: roomAccessToken,
+                accessToken: async () => {
+                  const t = await getValidGoogleToken(room.ownerId);
+                  if (t.error || !t.accessToken) throw new Error(t.error || 'Google token unavailable');
+                  return t.accessToken;
+                },
                 uploadedBy: room.ownerId,
                 allowDelete: false,
               });
