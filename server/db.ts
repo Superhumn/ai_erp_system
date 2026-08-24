@@ -7,6 +7,7 @@ import {
   toNumber,
   MATCH_EPSILON,
 } from "./purchaseOrderMatching";
+import { classifyDuplicateGroup, resolveMergedQuantities } from "./inventoryDeduplication";
 import {
   InsertUser, users, authTokens, InsertAuthToken, localAuthCredentials, InsertLocalAuthCredential, companies, customers, vendors, products,
   accounts, invoices, invoiceItems, payments, transactions, transactionLines,
@@ -3876,27 +3877,170 @@ export async function getInventoryByProductIds(productIds: number[]) {
 export async function updateInventoryQuantity(productId: number, warehouseId: number, quantityChange: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
-  // Check if inventory record exists
-  const existing = await db.select().from(inventory)
-    .where(and(eq(inventory.productId, productId), eq(inventory.warehouseId, warehouseId)))
-    .limit(1);
-  
-  if (existing.length > 0) {
-    const currentQty = parseFloat(existing[0].quantity as string) || 0;
-    const newQty = currentQty + quantityChange;
-    await db.update(inventory)
-      .set({ quantity: newQty.toString() })
-      .where(and(eq(inventory.productId, productId), eq(inventory.warehouseId, warehouseId)));
-  } else {
-    await db.insert(inventory).values({
-      productId,
-      warehouseId,
-      quantity: quantityChange.toString(),
-    });
+
+  // The read and the write run in one transaction with the row locked, so two
+  // concurrent movements on the same product/warehouse can't both observe "no
+  // row" and each INSERT — which is how the duplicate inventory rows appeared.
+  // (inventory has no unique key on (productId, warehouseId), so nothing at the
+  // DB level catches that; see getDuplicateInventoryGroups for the cleanup.)
+  return db.transaction(async (tx) => {
+    const existing = await tx
+      .select()
+      .from(inventory)
+      .where(and(eq(inventory.productId, productId), eq(inventory.warehouseId, warehouseId)))
+      .orderBy(asc(inventory.id))
+      .limit(1)
+      .for("update");
+
+    if (existing.length > 0) {
+      const currentQty = parseFloat(existing[0].quantity as string) || 0;
+      const newQty = currentQty + quantityChange;
+      // Scoped to the row actually read. The previous version matched on
+      // (productId, warehouseId) with no limit, so where duplicates existed it
+      // overwrote every copy with one row's total — quietly multiplying stock
+      // for anything that sums the rows.
+      await tx
+        .update(inventory)
+        .set({ quantity: newQty.toString() })
+        .where(eq(inventory.id, existing[0].id));
+    } else {
+      await tx.insert(inventory).values({
+        productId,
+        warehouseId,
+        quantity: quantityChange.toString(),
+      });
+    }
+
+    return { success: true };
+  });
+}
+
+/**
+ * Inventory rows that share a (productId, warehouseId) pair with another row.
+ *
+ * The table has no unique key on that pair and every writer does a
+ * read-then-insert, so a race (or a stray createInventory) leaves two rows for
+ * the same stock. Whatever sums or counts rows then double-counts — the
+ * inventory page's "Total SKUs" is a row count, so duplicates show up there
+ * directly.
+ *
+ * `allIdentical` drives the safe resolution. updateInventoryQuantity used to
+ * write the same total to every copy, so identical quantities are that
+ * overwrite artifact and only one row should survive. Differing quantities mean
+ * the copies were incremented independently and summing is the honest repair —
+ * but that is a judgement call, so it is surfaced rather than applied.
+ */
+export async function getDuplicateInventoryGroups() {
+  const db = await getDb();
+  if (!db) return [];
+
+  const dupKeys = await db
+    .select({ productId: inventory.productId, warehouseId: inventory.warehouseId })
+    .from(inventory)
+    .groupBy(inventory.productId, inventory.warehouseId)
+    .having(sql`COUNT(*) > 1`);
+
+  if (dupKeys.length === 0) return [];
+
+  // Fetch by productId alone and filter the exact pair in JS: warehouseId is
+  // nullable, and a NULL can't be matched with an equality predicate.
+  const rows = await db
+    .select({
+      id: inventory.id,
+      productId: inventory.productId,
+      warehouseId: inventory.warehouseId,
+      quantity: inventory.quantity,
+      reservedQuantity: inventory.reservedQuantity,
+      updatedAt: inventory.updatedAt,
+      productName: products.name,
+      productSku: products.sku,
+      warehouseName: warehouses.name,
+    })
+    .from(inventory)
+    .leftJoin(products, eq(inventory.productId, products.id))
+    .leftJoin(warehouses, eq(inventory.warehouseId, warehouses.id))
+    .where(inArray(inventory.productId, dupKeys.map((k) => k.productId)))
+    .orderBy(asc(inventory.id));
+
+  const keyOf = (productId: number, warehouseId: number | null) => `${productId}\u0000${warehouseId ?? "null"}`;
+  const wanted = new Set(dupKeys.map((k) => keyOf(k.productId, k.warehouseId)));
+
+  const groups = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const key = keyOf(r.productId, r.warehouseId);
+    if (!wanted.has(key)) continue;
+    const existing = groups.get(key);
+    if (existing) existing.push(r);
+    else groups.set(key, [r]);
   }
-  
-  return { success: true };
+
+  return Array.from(groups.values())
+    .filter((g) => g.length > 1)
+    .map((g) => {
+      const classified = classifyDuplicateGroup(g);
+      return {
+        productId: g[0].productId,
+        productName: g[0].productName,
+        productSku: g[0].productSku,
+        warehouseId: g[0].warehouseId,
+        warehouseName: g[0].warehouseName,
+        rows: g.map((r) => ({
+          id: r.id,
+          quantity: toNumber(r.quantity),
+          reservedQuantity: toNumber(r.reservedQuantity),
+          updatedAt: r.updatedAt,
+        })),
+        ...classified,
+      };
+    });
+}
+
+/**
+ * Collapse one duplicate group into a single row.
+ *
+ * "keep_one" leaves the surviving row's quantity untouched (the copies were
+ * overwrites of the same number); "sum" totals every copy into it. Reserved
+ * quantities are always summed — those are genuine separate reservations.
+ */
+export async function mergeDuplicateInventoryRows(
+  keepId: number,
+  removeIds: number[],
+  strategy: "keep_one" | "sum",
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (removeIds.includes(keepId)) throw new Error("The surviving row cannot also be removed.");
+
+  return db.transaction(async (tx) => {
+    const keeper = (await tx.select().from(inventory).where(eq(inventory.id, keepId)).limit(1).for("update"))[0];
+    if (!keeper) throw new Error(`Inventory row ${keepId} no longer exists.`);
+
+    const doomed = removeIds.length
+      ? await tx.select().from(inventory).where(inArray(inventory.id, removeIds)).for("update")
+      : [];
+
+    // Only merge rows that really are the same stock — a stale id from a
+    // client that has been sitting on the page must not silently fold an
+    // unrelated product's quantity into the keeper.
+    for (const row of doomed) {
+      if (row.productId !== keeper.productId || row.warehouseId !== keeper.warehouseId) {
+        throw new Error(`Inventory row ${row.id} is not a duplicate of row ${keepId}.`);
+      }
+    }
+
+    const { quantity, reservedQuantity } = resolveMergedQuantities(keeper, doomed, strategy);
+
+    await tx
+      .update(inventory)
+      .set({ quantity: quantity.toFixed(4), reservedQuantity: reservedQuantity.toFixed(4) })
+      .where(eq(inventory.id, keepId));
+
+    if (doomed.length > 0) {
+      await tx.delete(inventory).where(inArray(inventory.id, doomed.map((r) => r.id)));
+    }
+
+    return { keepId, removed: doomed.map((r) => r.id), quantity, reservedQuantity };
+  });
 }
 
 // ============================================

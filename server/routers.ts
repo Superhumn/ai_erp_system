@@ -2779,6 +2779,25 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
 
         return { success: true };
       }),
+    // Inventory rows sharing a (product, warehouse) pair. The table has no
+    // unique key on that pair, so a race between two stock movements leaves two
+    // rows for the same stock and every row count / sum double-counts it.
+    duplicates: opsProcedure.query(() => db.getDuplicateInventoryGroups()),
+    mergeDuplicates: opsProcedure
+      .input(z.object({
+        keepId: z.number(),
+        removeIds: z.array(z.number()).min(1).max(100),
+        strategy: z.enum(['keep_one', 'sum']),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.mergeDuplicateInventoryRows(input.keepId, input.removeIds, input.strategy);
+        await createAuditLog(
+          ctx.user.id, 'update', 'inventory', input.keepId, undefined,
+          { duplicateRowIds: input.removeIds },
+          { strategy: input.strategy, quantity: result.quantity, removed: result.removed },
+        );
+        return result;
+      }),
     bulkUpdate: opsProcedure
       .input(z.object({
         ids: z.array(z.number()),
