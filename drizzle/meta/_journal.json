@@ -428,6 +428,13 @@
 			"when": 1787300000000,
 			"tag": "0060_supply_chain_workflow_tables",
 			"breakpoints": true
+		},
+		{
+			"idx": 61,
+			"version": "5",
+			"when": 1787400000000,
+			"tag": "0061_cycle_counting_and_ledger_reason_codes",
+			"breakpoints": true
 		}
 	]
 }

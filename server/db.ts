@@ -2,6 +2,10 @@ import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray
 import { drizzle } from "drizzle-orm/mysql2";
 import { scopeAllows, scopeCompanyIds, type Scope } from "./_core/scope";
 import {
+  assertTransition, computeVariance, computeVarianceValue, resolveAdjustment,
+  summarizeVariance, uncountedLines,
+} from "./cycleCountLogic";
+import {
   InsertUser, users, authTokens, InsertAuthToken, localAuthCredentials, InsertLocalAuthCredential, companies, customers, vendors, products,
   accounts, invoices, invoiceItems, payments, transactions, transactionLines,
   orders, orderItems, inventory, warehouses, productionBatches,
@@ -28,6 +32,8 @@ import {
   demandForecasts, productionPlans, materialRequirements, suggestedPurchaseOrders, suggestedPoItems, forecastAccuracy,
   // New lot/batch tracking tables
   inventoryLots, inventoryBalances, inventoryTransactions, workOrderOutputs,
+  // Cycle counting / physical inventory
+  cycleCounts, cycleCountLines, InsertCycleCount, InsertCycleCountLine,
   // Alert system
   alerts, recommendations,
   // Shopify integration
@@ -5713,6 +5719,458 @@ export async function shipInventory(lotId: number, productId: number, warehouseI
   });
   
   return { success: true };
+}
+
+// ============================================
+// INVENTORY ADJUSTMENTS (ledger-backed)
+// ============================================
+
+/**
+ * The single primitive for changing stock outside of receive/ship/transfer.
+ *
+ * Every call posts an `inventoryTransactions` row, so shrinkage, damage and
+ * count variances are attributable. It keeps the two stock stores in step:
+ * the `inventory` aggregate (product x warehouse) always moves, and the
+ * lot-level `inventoryBalances` row moves too when a lot is supplied.
+ */
+export async function adjustInventoryQuantity(params: {
+  productId: number;
+  warehouseId: number;
+  lotId?: number | null;
+  quantityDelta: number;
+  transactionType?: 'adjust' | 'scrap' | 'count_adjust';
+  reasonCode: string;
+  reason?: string;
+  referenceType?: string;
+  referenceId?: number;
+  companyId?: number;
+  unit?: string;
+  balanceStatus?: 'available' | 'hold' | 'reserved' | 'quarantine' | 'damaged';
+  performedBy?: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const {
+    productId, warehouseId, lotId, quantityDelta,
+    transactionType = 'adjust', reasonCode, reason,
+    referenceType = 'adjustment', referenceId,
+    companyId, unit = 'EA', balanceStatus = 'available', performedBy,
+  } = params;
+
+  // Resolve every balance before writing any of them, so a rejected
+  // adjustment cannot leave the lot and aggregate stores disagreeing.
+  const [existingBalance] = lotId
+    ? await db.select().from(inventoryBalances)
+        .where(and(
+          eq(inventoryBalances.lotId, lotId),
+          eq(inventoryBalances.warehouseId, warehouseId),
+          eq(inventoryBalances.status, balanceStatus),
+        ))
+        .limit(1)
+    : [];
+
+  const [aggregate] = await db.select().from(inventory)
+    .where(and(eq(inventory.productId, productId), eq(inventory.warehouseId, warehouseId)))
+    .limit(1);
+
+  let lotPrevious: number | null = null;
+  let lotNew: number | null = null;
+  if (lotId) {
+    const resolved = resolveAdjustment({
+      currentQuantity: existingBalance ? parseFloat(existingBalance.quantity) || 0 : 0,
+      quantityDelta,
+      label: 'lot balance',
+    });
+    lotPrevious = resolved.previousQuantity;
+    lotNew = resolved.newQuantity;
+  }
+
+  const { previousQuantity, newQuantity } = resolveAdjustment({
+    currentQuantity: aggregate ? parseFloat(aggregate.quantity as string) || 0 : 0,
+    quantityDelta,
+  });
+
+  // Both guards passed — now write.
+  if (lotId && lotNew !== null) {
+    await upsertInventoryBalance(lotId, productId, warehouseId, balanceStatus, lotNew, existingBalance?.unit || unit);
+  }
+
+  if (aggregate) {
+    await db.update(inventory)
+      .set({ quantity: newQuantity.toString() })
+      .where(eq(inventory.id, aggregate.id));
+  } else {
+    await db.insert(inventory).values({
+      companyId: companyId ?? null,
+      productId,
+      warehouseId,
+      quantity: newQuantity.toString(),
+    });
+  }
+
+  const decrease = quantityDelta < 0;
+  const txn = await createInventoryTransaction({
+    transactionType,
+    lotId: lotId ?? null,
+    productId,
+    fromWarehouseId: decrease ? warehouseId : null,
+    toWarehouseId: decrease ? null : warehouseId,
+    fromStatus: decrease ? balanceStatus : null,
+    toStatus: decrease ? null : balanceStatus,
+    quantity: Math.abs(quantityDelta).toString(),
+    unit,
+    previousBalance: (lotPrevious ?? previousQuantity).toString(),
+    newBalance: (lotNew ?? newQuantity).toString(),
+    referenceType,
+    referenceId: referenceId ?? null,
+    reasonCode,
+    reason: reason ?? null,
+    performedBy: performedBy ?? null,
+  });
+
+  return {
+    ...txn,
+    previousQuantity,
+    newQuantity,
+    lotPreviousQuantity: lotPrevious,
+    lotNewQuantity: lotNew,
+  };
+}
+
+/** Write stock off entirely — a scrap posting, always a decrease. */
+export async function scrapInventory(params: {
+  productId: number;
+  warehouseId: number;
+  lotId?: number | null;
+  quantity: number;
+  reasonCode: string;
+  reason?: string;
+  companyId?: number;
+  unit?: string;
+  performedBy?: number;
+}) {
+  if (params.quantity <= 0) throw new Error("Scrap quantity must be greater than zero");
+  return adjustInventoryQuantity({
+    ...params,
+    quantityDelta: -Math.abs(params.quantity),
+    transactionType: 'scrap',
+    referenceType: 'scrap',
+  });
+}
+
+// ============================================
+// CYCLE COUNTING / PHYSICAL INVENTORY
+// ============================================
+
+export async function createCycleCount(data: Omit<InsertCycleCount, 'countNumber'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const countNumber = `CC-${Date.now().toString(36).toUpperCase()}`;
+  const result = await db.insert(cycleCounts).values({ ...data, countNumber });
+  return { id: result[0].insertId, countNumber };
+}
+
+export async function getCycleCounts(filters?: {
+  companyId?: number;
+  warehouseId?: number;
+  status?: string;
+  limit?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.companyId) conditions.push(eq(cycleCounts.companyId, filters.companyId));
+  if (filters?.warehouseId) conditions.push(eq(cycleCounts.warehouseId, filters.warehouseId));
+  if (filters?.status) conditions.push(eq(cycleCounts.status, filters.status as any));
+  return db.select().from(cycleCounts)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(cycleCounts.createdAt))
+    .limit(filters?.limit ?? 100);
+}
+
+export async function getCycleCountById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(cycleCounts).where(eq(cycleCounts.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getCycleCountLines(countId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(cycleCountLines)
+    .where(eq(cycleCountLines.countId, countId))
+    .orderBy(asc(cycleCountLines.id));
+}
+
+export async function updateCycleCount(id: number, data: Partial<InsertCycleCount>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(cycleCounts).set(data).where(eq(cycleCounts.id, id));
+}
+
+/**
+ * Snapshot current book quantities into count lines.
+ *
+ * Lot-tracked products get one line per lot balance; everything else gets a
+ * single aggregate line. Re-generating replaces any lines not yet counted.
+ */
+export async function generateCycleCountLines(countId: number, options?: {
+  productIds?: number[];
+  includeZeroQuantity?: boolean;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const count = await getCycleCountById(countId);
+  if (!count) throw new Error("Cycle count not found");
+  if (count.status !== 'draft') {
+    throw new Error(`Lines can only be generated while the count is in draft (currently ${count.status})`);
+  }
+
+  await db.delete(cycleCountLines).where(and(
+    eq(cycleCountLines.countId, countId),
+    eq(cycleCountLines.status, 'pending'),
+  ));
+
+  const balanceConditions: any[] = [eq(inventoryBalances.warehouseId, count.warehouseId)];
+  if (options?.productIds?.length) {
+    balanceConditions.push(inArray(inventoryBalances.productId, options.productIds));
+  }
+  const lotBalances = await db.select().from(inventoryBalances).where(and(...balanceConditions));
+
+  const aggregateConditions: any[] = [eq(inventory.warehouseId, count.warehouseId)];
+  if (options?.productIds?.length) {
+    aggregateConditions.push(inArray(inventory.productId, options.productIds));
+  }
+  const aggregates = await db.select().from(inventory).where(and(...aggregateConditions));
+
+  const lotTrackedProducts = new Set(lotBalances.map((b) => b.productId));
+  const rows: InsertCycleCountLine[] = [];
+
+  for (const balance of lotBalances) {
+    const qty = parseFloat(balance.quantity) || 0;
+    if (qty === 0 && !options?.includeZeroQuantity) continue;
+    rows.push({
+      countId,
+      productId: balance.productId,
+      lotId: balance.lotId,
+      warehouseId: count.warehouseId,
+      zoneId: balance.zoneId,
+      binId: balance.binId,
+      systemQuantity: qty.toString(),
+      unit: balance.unit,
+      status: 'pending',
+    });
+  }
+
+  for (const row of aggregates) {
+    if (lotTrackedProducts.has(row.productId)) continue;
+    const qty = parseFloat(row.quantity as string) || 0;
+    if (qty === 0 && !options?.includeZeroQuantity) continue;
+    rows.push({
+      countId,
+      productId: row.productId,
+      lotId: null,
+      warehouseId: count.warehouseId,
+      systemQuantity: qty.toString(),
+      unit: 'EA',
+      status: 'pending',
+    });
+  }
+
+  if (rows.length > 0) {
+    await db.insert(cycleCountLines).values(rows);
+  }
+  return { countId, linesGenerated: rows.length };
+}
+
+/** Record a physical count against one line. Variance is derived, never sent by the client. */
+export async function recordCycleCountLine(lineId: number, params: {
+  countedQuantity: number;
+  reasonCode?: string;
+  notes?: string;
+  countedBy?: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const existing = await db.select().from(cycleCountLines).where(eq(cycleCountLines.id, lineId)).limit(1);
+  const line = existing[0];
+  if (!line) throw new Error("Cycle count line not found");
+
+  const count = await getCycleCountById(line.countId);
+  if (!count) throw new Error("Cycle count not found");
+  if (count.status !== 'in_progress' && count.status !== 'pending_review') {
+    throw new Error(`Counts can only be recorded while the count is open (currently ${count.status})`);
+  }
+  if (params.countedQuantity < 0) throw new Error("Counted quantity cannot be negative");
+
+  const systemQuantity = parseFloat(line.systemQuantity) || 0;
+  const variance = computeVariance(systemQuantity, params.countedQuantity);
+
+  // Value the variance at the product's average cost where one is known.
+  const [aggregate] = await db.select().from(inventory)
+    .where(and(eq(inventory.productId, line.productId), eq(inventory.warehouseId, line.warehouseId)))
+    .limit(1);
+  const avgCost = aggregate?.averageCost ? parseFloat(aggregate.averageCost) : 0;
+
+  await db.update(cycleCountLines).set({
+    countedQuantity: params.countedQuantity.toString(),
+    variance: variance.toString(),
+    varianceValue: computeVarianceValue(variance, avgCost).toFixed(2),
+    reasonCode: params.reasonCode ?? line.reasonCode,
+    notes: params.notes ?? line.notes,
+    status: 'counted',
+    countedBy: params.countedBy ?? null,
+    countedAt: new Date(),
+  }).where(eq(cycleCountLines.id, lineId));
+
+  return { id: lineId, systemQuantity, countedQuantity: params.countedQuantity, variance };
+}
+
+export async function flagCycleCountLineForRecount(lineId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(cycleCountLines)
+    .set({ status: 'recount', countedQuantity: null, variance: null, varianceValue: null })
+    .where(eq(cycleCountLines.id, lineId));
+  return { success: true };
+}
+
+export async function startCycleCount(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const count = await getCycleCountById(id);
+  if (!count) throw new Error("Cycle count not found");
+  assertTransition(count.status, 'in_progress');
+
+  const lines = await getCycleCountLines(id);
+  if (lines.length === 0) throw new Error("Generate count lines before starting the count");
+
+  await db.update(cycleCounts)
+    .set({ status: 'in_progress', startedAt: new Date() })
+    .where(eq(cycleCounts.id, id));
+  return { success: true, lineCount: lines.length };
+}
+
+export async function submitCycleCountForReview(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const count = await getCycleCountById(id);
+  if (!count) throw new Error("Cycle count not found");
+  assertTransition(count.status, 'pending_review');
+
+  const lines = await getCycleCountLines(id);
+  const uncounted = uncountedLines(lines);
+  if (uncounted.length > 0) {
+    throw new Error(`${uncounted.length} line(s) still need a count before review`);
+  }
+
+  await db.update(cycleCounts)
+    .set({ status: 'pending_review', completedAt: new Date() })
+    .where(eq(cycleCounts.id, id));
+  return { success: true };
+}
+
+export async function cancelCycleCount(id: number, reason?: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const count = await getCycleCountById(id);
+  if (!count) throw new Error("Cycle count not found");
+  assertTransition(count.status, 'cancelled');
+
+  await db.update(cycleCounts)
+    .set({ status: 'cancelled', notes: reason ?? count.notes })
+    .where(eq(cycleCounts.id, id));
+  return { success: true };
+}
+
+/**
+ * Approve a count and post every non-zero variance to the inventory ledger as
+ * a `count_adjust` transaction. Also stamps lastCount* on the underlying
+ * balance rows so "when was this last verified" is answerable.
+ */
+export async function approveCycleCount(id: number, approvedBy: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const count = await getCycleCountById(id);
+  if (!count) throw new Error("Cycle count not found");
+  assertTransition(count.status, 'approved');
+
+  const lines = await getCycleCountLines(id);
+  const countedAt = new Date();
+  const posted: { lineId: number; variance: number; transactionNumber: string }[] = [];
+  const failed: { lineId: number; error: string }[] = [];
+
+  for (const line of lines) {
+    const variance = parseFloat(line.variance ?? '0') || 0;
+    const countedQuantity = parseFloat(line.countedQuantity ?? '0') || 0;
+
+    if (variance !== 0) {
+      try {
+        const txn = await adjustInventoryQuantity({
+          productId: line.productId,
+          warehouseId: line.warehouseId,
+          lotId: line.lotId,
+          quantityDelta: variance,
+          transactionType: 'count_adjust',
+          reasonCode: line.reasonCode || 'data_entry_error',
+          reason: `Cycle count ${count.countNumber}: system ${line.systemQuantity}, counted ${line.countedQuantity}`,
+          referenceType: 'cycle_count',
+          referenceId: id,
+          companyId: count.companyId ?? undefined,
+          unit: line.unit,
+          performedBy: approvedBy,
+        });
+        posted.push({ lineId: line.id, variance, transactionNumber: txn.transactionNumber });
+      } catch (error) {
+        failed.push({ lineId: line.id, error: (error as Error).message });
+        continue;
+      }
+    }
+
+    await db.update(cycleCountLines)
+      .set({ status: 'approved' })
+      .where(eq(cycleCountLines.id, line.id));
+
+    // Stamp the verification date on whichever store the line represents.
+    if (line.lotId) {
+      await db.update(inventoryBalances)
+        .set({ lastCountDate: countedAt, lastCountQuantity: countedQuantity.toString() })
+        .where(and(
+          eq(inventoryBalances.lotId, line.lotId),
+          eq(inventoryBalances.warehouseId, line.warehouseId),
+        ));
+    }
+    await db.update(inventory)
+      .set({ lastCountDate: countedAt, lastCountQuantity: countedQuantity.toString() })
+      .where(and(
+        eq(inventory.productId, line.productId),
+        eq(inventory.warehouseId, line.warehouseId),
+      ));
+  }
+
+  await db.update(cycleCounts)
+    .set({ status: 'approved', approvedBy, approvedAt: countedAt })
+    .where(eq(cycleCounts.id, id));
+
+  return {
+    success: true,
+    countNumber: count.countNumber,
+    linesApproved: lines.length,
+    adjustmentsPosted: posted.length,
+    adjustmentsFailed: failed.length,
+    posted,
+    failed,
+  };
+}
+
+/** Accuracy + variance rollup for one count. */
+export async function getCycleCountVarianceSummary(countId: number) {
+  return summarizeVariance(await getCycleCountLines(countId));
 }
 
 // ============================================

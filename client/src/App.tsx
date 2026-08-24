@@ -102,6 +102,7 @@ const Departments = lazy(() => import("./pages/hr/Departments"));
 const Ingredients = lazy(() => import("./pages/operations/Ingredients"));
 const Allocations = lazy(() => import("./pages/operations/Allocations"));
 const InventoryPlanning = lazy(() => import("./pages/operations/InventoryPlanning"));
+const CycleCounts = lazy(() => import("./pages/operations/CycleCounts"));
 const Recommendations = lazy(() => import("./pages/ai/Recommendations"));
 const EDIInsights = lazy(() => import("./pages/edi/EDIInsights"));
 const CarrierQuotes = lazy(() => import("./pages/freight/CarrierQuotes"));
@@ -347,6 +348,7 @@ function Router() {
           <Route path="/operations/products/:id" component={ProductDetail} />
           <Route path="/operations/products" component={Products} />
           <Route path="/operations/inventory" component={Inventory} />
+          <Route path="/operations/cycle-counts" component={CycleCounts} />
           <Route path="/operations/material-supply" component={MaterialSupply} />
           <Route path="/operations/vendors" component={Vendors} />
           <Route path="/operations/purchase-orders" component={PurchaseOrders} />

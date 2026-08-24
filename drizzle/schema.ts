@@ -2712,6 +2712,8 @@ export const inventoryTransactions = mysqlTable("inventoryTransactions", {
   newBalance: decimal("newBalance", { precision: 15, scale: 4 }),
   referenceType: varchar("referenceType", { length: 64 }), // 'work_order', 'purchase_order', 'sales_order', 'transfer', 'adjustment'
   referenceId: int("referenceId"),
+  // Structured reason for adjust/scrap/count_adjust movements (see ADJUSTMENT_REASON_CODES).
+  reasonCode: varchar("reasonCode", { length: 64 }),
   reason: text("reason"),
   performedBy: int("performedBy"),
   performedAt: timestamp("performedAt").defaultNow().notNull(),
@@ -8072,3 +8074,61 @@ export const recruitingCandidates = mysqlTable("recruiting_candidates", {
 
 export type RecruitingCandidate = typeof recruitingCandidates.$inferSelect;
 export type InsertRecruitingCandidate = typeof recruitingCandidates.$inferInsert;
+
+// ============================================
+// CYCLE COUNTING / PHYSICAL INVENTORY
+// Book-vs-physical verification. A count snapshots system quantity per line
+// at generation time, records a physical count, and on approval posts the
+// variance through the inventory ledger as a `count_adjust` transaction.
+// ============================================
+export const cycleCounts = mysqlTable("cycleCounts", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
+  countNumber: varchar("countNumber", { length: 64 }).notNull(),
+  warehouseId: int("warehouseId").notNull().references(() => warehouses.id),
+  countType: mysqlEnum("countType", ["full", "cycle", "spot", "abc"]).default("cycle").notNull(),
+  status: mysqlEnum("status", [
+    "draft", "in_progress", "pending_review", "approved", "cancelled",
+  ]).default("draft").notNull(),
+  // Blind counts hide system quantity from the counter until review.
+  blindCount: boolean("blindCount").default(true).notNull(),
+  scheduledDate: timestamp("scheduledDate"),
+  startedAt: timestamp("startedAt"),
+  completedAt: timestamp("completedAt"),
+  approvedBy: int("approvedBy").references(() => users.id),
+  approvedAt: timestamp("approvedAt"),
+  notes: text("notes"),
+  createdBy: int("createdBy").references(() => users.id),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CycleCount = typeof cycleCounts.$inferSelect;
+export type InsertCycleCount = typeof cycleCounts.$inferInsert;
+
+export const cycleCountLines = mysqlTable("cycleCountLines", {
+  id: int("id").autoincrement().primaryKey(),
+  countId: int("countId").notNull().references(() => cycleCounts.id),
+  productId: int("productId").notNull().references(() => products.id),
+  // Lot-tracked lines carry lotId; aggregate lines leave it null.
+  lotId: int("lotId"),
+  warehouseId: int("warehouseId").notNull().references(() => warehouses.id),
+  zoneId: varchar("zoneId", { length: 64 }),
+  binId: varchar("binId", { length: 64 }),
+  // Book quantity snapshotted when the line was generated.
+  systemQuantity: decimal("systemQuantity", { precision: 15, scale: 4 }).notNull(),
+  countedQuantity: decimal("countedQuantity", { precision: 15, scale: 4 }),
+  variance: decimal("variance", { precision: 15, scale: 4 }),
+  varianceValue: decimal("varianceValue", { precision: 15, scale: 2 }),
+  unit: varchar("unit", { length: 32 }).default("EA").notNull(),
+  status: mysqlEnum("status", ["pending", "counted", "recount", "approved"]).default("pending").notNull(),
+  reasonCode: varchar("reasonCode", { length: 64 }),
+  notes: text("notes"),
+  countedBy: int("countedBy").references(() => users.id),
+  countedAt: timestamp("countedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CycleCountLine = typeof cycleCountLines.$inferSelect;
+export type InsertCycleCountLine = typeof cycleCountLines.$inferInsert;

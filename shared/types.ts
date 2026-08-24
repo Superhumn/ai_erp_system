@@ -6,3 +6,4 @@
 export type * from "../drizzle/schema";
 export * from "./_core/errors";
 export * from "./materialSupply";
+export * from "./inventoryAdjustments";

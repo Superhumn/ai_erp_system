@@ -38,6 +38,7 @@ crmPipelines
 crmTags
 currencyRates
 customsDocuments
+cycleCountLines
 dataRoomChecklistItems
 dataRoomChecklists
 dataRoomDocuments

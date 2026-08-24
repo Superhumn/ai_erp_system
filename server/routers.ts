@@ -3,6 +3,7 @@ import { z } from "zod";
 import { eq, and, inArray, desc, lte, gte, or, isNull } from "drizzle-orm";
 import { safeDecryptToken } from "./_core/crypto";
 import { COOKIE_NAME } from "@shared/const";
+import { ADJUSTMENT_REASON_CODES, CYCLE_COUNT_TYPES, CYCLE_COUNT_STATUSES } from "@shared/inventoryAdjustments";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
@@ -249,6 +250,35 @@ export async function createAuditLog(userId: number, action: 'create' | 'update'
     oldValues,
     newValues,
   });
+}
+
+/**
+ * Raise a low-stock notification when a quantity change leaves a product at or
+ * below its reorder level. Called from every ledger-backed stock movement so
+ * the alert does not depend on someone editing the row by hand.
+ */
+async function notifyIfBelowReorderLevel(productId: number, warehouseId: number, newQuantity: number) {
+  const record = await db.getInventoryByProductAndWarehouse(productId, warehouseId);
+  if (!record) return;
+
+  const reorderLevel = parseFloat(record.reorderLevel || '0');
+  if (!(reorderLevel > 0) || newQuantity > reorderLevel) return;
+
+  const [opsUsers, product] = await Promise.all([
+    db.getUsersByRoles(['admin', 'ops', 'exec']),
+    db.getProductById(productId),
+  ]);
+
+  await db.notifyUsersOfEvent({
+    type: 'inventory_low',
+    title: `Low Stock Alert: ${product?.name || 'Product'}`,
+    message: `Inventory for ${product?.name || 'Product'} is at ${newQuantity} units, below reorder level of ${reorderLevel}`,
+    entityType: 'inventory',
+    entityId: record.id,
+    severity: newQuantity <= 0 ? 'critical' : 'warning',
+    link: `/operations/inventory`,
+    metadata: { productId, warehouseId, quantity: newQuantity, reorderLevel },
+  }, opsUsers.map((u) => u.id));
 }
 
 // ---- Planner / quick-add helpers ----
@@ -2748,35 +2778,54 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         reservedQuantity: z.string().optional(),
         reorderLevel: z.string().optional(),
         reorderQuantity: z.string().optional(),
+        // Recorded on the ledger when `quantity` is set to a new absolute value.
+        reasonCode: z.enum(ADJUSTMENT_REASON_CODES).default('other'),
+        reason: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const { id, ...data } = input;
-        const [oldInventory] = await db.getInventory({ id } as any) || [];
-        await db.updateInventory(id, data);
-        await createAuditLog(ctx.user.id, 'update', 'inventory', id);
+        const { id, quantity, reasonCode, reason, ...data } = input;
+        const [existing] = await db.getInventoryByIds([id]);
+        if (!existing) throw new TRPCError({ code: 'NOT_FOUND', message: 'Inventory row not found' });
 
-        // Check for low stock and create notification
-        if (data.quantity && oldInventory) {
-          const newQty = parseFloat(data.quantity);
-          const reorderLevel = parseFloat(oldInventory.reorderLevel || '0');
+        if (Object.values(data).some((v) => v !== undefined)) {
+          await db.updateInventory(id, data);
+        }
 
-          if (newQty <= reorderLevel && newQty > 0) {
-            const opsUsers = await db.getUsersByRoles(['admin', 'ops', 'exec']);
-            const product = await db.getProductById(oldInventory.productId);
+        // A quantity set posts the implied delta to the ledger rather than
+        // overwriting the number, so the movement stays attributable.
+        if (quantity !== undefined) {
+          if (existing.warehouseId == null) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Cannot adjust quantity on a row with no warehouse' });
+          }
+          const target = parseFloat(quantity);
+          if (!Number.isFinite(target) || target < 0) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Quantity must be a non-negative number' });
+          }
 
-            await db.notifyUsersOfEvent({
-              type: 'inventory_low',
-              title: `Low Stock Alert: ${product?.name || 'Product'}`,
-              message: `Inventory for ${product?.name} is at ${newQty} units, below reorder level of ${reorderLevel}`,
-              entityType: 'inventory',
-              entityId: id,
-              severity: 'warning',
-              link: `/operations/inventory`,
-              metadata: { productId: oldInventory.productId, quantity: newQty, reorderLevel },
-            }, opsUsers.map(u => u.id));
+          const current = parseFloat(existing.quantity as string) || 0;
+          const delta = target - current;
+
+          if (delta !== 0) {
+            const result = await db.adjustInventoryQuantity({
+              productId: existing.productId,
+              warehouseId: existing.warehouseId,
+              quantityDelta: delta,
+              transactionType: 'adjust',
+              reasonCode,
+              reason,
+              companyId: existing.companyId ?? undefined,
+              performedBy: ctx.user.id,
+            });
+            await createAuditLog(
+              ctx.user.id, 'update', 'inventory', id, result.transactionNumber,
+              { quantity: current }, { quantity: result.newQuantity, reasonCode },
+            );
+            await notifyIfBelowReorderLevel(existing.productId, existing.warehouseId, result.newQuantity);
+            return { success: true, transactionNumber: result.transactionNumber };
           }
         }
 
+        await createAuditLog(ctx.user.id, 'update', 'inventory', id);
         return { success: true };
       }),
     bulkUpdate: opsProcedure
@@ -2787,72 +2836,77 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         warehouseId: z.number().optional(),
         reorderLevel: z.string().optional(),
         reorderQuantity: z.string().optional(),
+        // Applied to every adjusted line; recorded on the inventory ledger.
+        reasonCode: z.enum(ADJUSTMENT_REASON_CODES).default('other'),
+        reason: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const { ids, action, ...data } = input;
+        const { ids, action, reasonCode, reason, ...data } = input;
 
-        // Build the update data based on action
+        // Quantity changes go through the ledger so each one carries a reason
+        // and a transaction row, rather than silently rewriting the number.
+        if (action === 'adjust_quantity') {
+          if (data.quantityAdjustment === undefined || data.quantityAdjustment === 0) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'A non-zero quantityAdjustment is required' });
+          }
+
+          const items = await db.getInventoryByIds(ids);
+          const itemById = new Map(items.map((i) => [i.id, i]));
+          const results: { id: number; success: boolean; error?: string }[] = [];
+
+          for (const id of ids) {
+            const item = itemById.get(id);
+            if (!item || item.warehouseId == null) {
+              results.push({ id, success: false, error: 'Inventory row not found or has no warehouse' });
+              continue;
+            }
+            try {
+              const result = await db.adjustInventoryQuantity({
+                productId: item.productId,
+                warehouseId: item.warehouseId,
+                quantityDelta: data.quantityAdjustment,
+                transactionType: 'adjust',
+                reasonCode,
+                reason,
+                companyId: item.companyId ?? undefined,
+                performedBy: ctx.user.id,
+              });
+              await createAuditLog(
+                ctx.user.id, 'update', 'inventory', id, result.transactionNumber,
+                { quantity: result.previousQuantity }, { quantity: result.newQuantity, reasonCode },
+              );
+              await notifyIfBelowReorderLevel(item.productId, item.warehouseId, result.newQuantity);
+              results.push({ id, success: true });
+            } catch (error) {
+              results.push({ id, success: false, error: (error as Error).message });
+            }
+          }
+
+          return {
+            success: results.some((r) => r.success),
+            results,
+            totalUpdated: results.reduce((n, r) => n + (r.success ? 1 : 0), 0),
+            totalFailed: results.reduce((n, r) => n + (r.success ? 0 : 1), 0),
+          };
+        }
+
+        // Non-quantity attribute changes carry no stock movement.
         const updateData: {
-          quantityAdjustment?: number;
           warehouseId?: number;
           reorderLevel?: string;
           reorderQuantity?: string;
         } = {};
 
-        switch (action) {
-          case 'adjust_quantity':
-            if (data.quantityAdjustment !== undefined) {
-              updateData.quantityAdjustment = data.quantityAdjustment;
-            }
-            break;
-          case 'change_location':
-            if (data.warehouseId !== undefined) {
-              updateData.warehouseId = data.warehouseId;
-            }
-            break;
-          case 'update_reorder_point':
-            if (data.reorderLevel !== undefined) {
-              updateData.reorderLevel = data.reorderLevel;
-            }
-            if (data.reorderQuantity !== undefined) {
-              updateData.reorderQuantity = data.reorderQuantity;
-            }
-            break;
+        if (action === 'change_location') {
+          if (data.warehouseId !== undefined) updateData.warehouseId = data.warehouseId;
+        } else {
+          if (data.reorderLevel !== undefined) updateData.reorderLevel = data.reorderLevel;
+          if (data.reorderQuantity !== undefined) updateData.reorderQuantity = data.reorderQuantity;
         }
 
         const results = await db.bulkUpdateInventory(ids, updateData);
-
-        // Create audit logs for each updated item
-        for (const result of results.filter(r => r.success)) {
+        for (const result of results.filter((r) => r.success)) {
           await createAuditLog(ctx.user.id, 'update', 'inventory', result.id);
-        }
-
-        // Check for low stock alerts on quantity adjustments
-        if (action === 'adjust_quantity' && data.quantityAdjustment !== undefined) {
-          const updatedItems = await db.getInventoryByIds(ids);
-          const opsUsers = await db.getUsersByRoles(['admin', 'ops', 'exec']);
-          // Bulk-load products for the adjusted items to avoid a query per row.
-          const productIds = [...new Set(updatedItems.map((i) => i.productId).filter((id): id is number => id != null))];
-          const productById = new Map((await db.getProductsByIds(productIds)).map((p) => [p.id, p]));
-
-          for (const item of updatedItems) {
-            const qty = parseFloat(item.quantity || '0');
-            const reorderLevel = parseFloat(item.reorderLevel || '0');
-
-            if (qty <= reorderLevel && qty > 0) {
-              const product = productById.get(item.productId);
-              await db.notifyUsersOfEvent({
-                type: 'inventory_low',
-                title: `Low Stock Alert: ${product?.name || 'Product'}`,
-                message: `Inventory for ${product?.name || 'Product'} is at ${qty} units, below reorder level of ${reorderLevel}`,
-                entityType: 'inventory',
-                entityId: item.id,
-                severity: 'warning',
-                link: `/operations/inventory`,
-                metadata: { productId: item.productId, quantity: qty, reorderLevel },
-              }, opsUsers.map(u => u.id));
-            }
-          }
         }
 
         return {
@@ -2862,6 +2916,70 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           totalFailed: results.reduce((n, r) => n + (r.success ? 0 : 1), 0),
         };
       }),
+
+    /**
+     * Ledger-backed single-item adjustment. Unlike `update`, this posts an
+     * inventoryTransactions row with a structured reason and keeps the
+     * aggregate and lot-level balances in step.
+     */
+    adjust: opsProcedure
+      .input(z.object({
+        productId: z.number(),
+        warehouseId: z.number(),
+        lotId: z.number().optional(),
+        quantityDelta: z.number().refine((n) => n !== 0, "Adjustment cannot be zero"),
+        reasonCode: z.enum(ADJUSTMENT_REASON_CODES),
+        reason: z.string().optional(),
+        companyId: z.number().optional(),
+        unit: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.adjustInventoryQuantity({
+          ...input,
+          transactionType: 'adjust',
+          performedBy: ctx.user.id,
+        });
+        await createAuditLog(
+          ctx.user.id, 'update', 'inventory', input.productId, result.transactionNumber,
+          { quantity: result.previousQuantity }, { quantity: result.newQuantity, reasonCode: input.reasonCode },
+        );
+        await notifyIfBelowReorderLevel(input.productId, input.warehouseId, result.newQuantity);
+        return result;
+      }),
+
+    /** Write stock off (damage, expiry, theft, ...). Always a decrease. */
+    scrap: opsProcedure
+      .input(z.object({
+        productId: z.number(),
+        warehouseId: z.number(),
+        lotId: z.number().optional(),
+        quantity: z.number().gt(0),
+        reasonCode: z.enum(ADJUSTMENT_REASON_CODES),
+        reason: z.string().optional(),
+        companyId: z.number().optional(),
+        unit: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.scrapInventory({ ...input, performedBy: ctx.user.id });
+        await createAuditLog(
+          ctx.user.id, 'update', 'inventory', input.productId, result.transactionNumber,
+          { quantity: result.previousQuantity }, { quantity: result.newQuantity, reasonCode: input.reasonCode },
+        );
+        await notifyIfBelowReorderLevel(input.productId, input.warehouseId, result.newQuantity);
+        return result;
+      }),
+
+    /** Movement ledger for a product/warehouse — the audit trail for stock. */
+    getMovementHistory: opsProcedure
+      .input(z.object({
+        productId: z.number().optional(),
+        warehouseId: z.number().optional(),
+        lotId: z.number().optional(),
+        type: z.string().optional(),
+        limit: z.number().min(1).max(500).default(100),
+      }))
+      .query(({ input }) => db.getInventoryTransactionHistory(input, input.limit)),
+
     // Get pending inventory from POs (on order or in transit)
     getPendingFromPOs: opsProcedure
       .query(() => db.getPendingInventoryFromPOs()),
@@ -14592,6 +14710,125 @@ Then rank all quotes by best leveled value (1 = best; quotes marked NOT COMPARAB
       .query(async ({ input }) => {
         return db.getAvailableInventoryByProduct(input.productId);
       }),
+  }),
+
+  // ============================================
+  // CYCLE COUNTING / PHYSICAL INVENTORY
+  // ============================================
+  cycleCounts: router({
+    list: opsProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        warehouseId: z.number().optional(),
+        status: z.enum(CYCLE_COUNT_STATUSES).optional(),
+        limit: z.number().min(1).max(500).optional(),
+      }).optional())
+      .query(({ input }) => db.getCycleCounts(input)),
+
+    getById: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const count = await db.getCycleCountById(input.id);
+        if (!count) return null;
+        const [lines, summary] = await Promise.all([
+          db.getCycleCountLines(input.id),
+          db.getCycleCountVarianceSummary(input.id),
+        ]);
+        // Blind counts withhold book quantity until the count is closed.
+        const hideSystemQty = count.blindCount && (count.status === 'draft' || count.status === 'in_progress');
+        return {
+          ...count,
+          summary,
+          lines: hideSystemQty
+            ? lines.map((l) => ({ ...l, systemQuantity: null, variance: null, varianceValue: null }))
+            : lines,
+        };
+      }),
+
+    create: opsProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        warehouseId: z.number(),
+        countType: z.enum(CYCLE_COUNT_TYPES).default('cycle'),
+        blindCount: z.boolean().default(true),
+        scheduledDate: z.date().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createCycleCount({ ...input, createdBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'create', 'cycleCount', result.id, result.countNumber);
+        return result;
+      }),
+
+    /** Snapshot current book quantities into count lines. */
+    generateLines: opsProcedure
+      .input(z.object({
+        countId: z.number(),
+        productIds: z.array(z.number()).optional(),
+        includeZeroQuantity: z.boolean().optional(),
+      }))
+      .mutation(({ input }) => db.generateCycleCountLines(input.countId, {
+        productIds: input.productIds,
+        includeZeroQuantity: input.includeZeroQuantity,
+      })),
+
+    start: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.startCycleCount(input.id);
+        await createAuditLog(ctx.user.id, 'update', 'cycleCount', input.id);
+        return result;
+      }),
+
+    recordLine: opsProcedure
+      .input(z.object({
+        lineId: z.number(),
+        countedQuantity: z.number().min(0),
+        reasonCode: z.enum(ADJUSTMENT_REASON_CODES).optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(({ input, ctx }) => db.recordCycleCountLine(input.lineId, {
+        countedQuantity: input.countedQuantity,
+        reasonCode: input.reasonCode,
+        notes: input.notes,
+        countedBy: ctx.user.id,
+      })),
+
+    flagForRecount: opsProcedure
+      .input(z.object({ lineId: z.number() }))
+      .mutation(({ input }) => db.flagCycleCountLineForRecount(input.lineId)),
+
+    submitForReview: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.submitCycleCountForReview(input.id);
+        await createAuditLog(ctx.user.id, 'update', 'cycleCount', input.id);
+        return result;
+      }),
+
+    /**
+     * Approve and post variances to the inventory ledger. Restricted to admin
+     * so the person counting cannot also sign off their own variance.
+     */
+    approve: adminProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.approveCycleCount(input.id, ctx.user.id);
+        await createAuditLog(ctx.user.id, 'approve', 'cycleCount', input.id, result.countNumber);
+        return result;
+      }),
+
+    cancel: opsProcedure
+      .input(z.object({ id: z.number(), reason: z.string().optional() }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.cancelCycleCount(input.id, input.reason);
+        await createAuditLog(ctx.user.id, 'update', 'cycleCount', input.id);
+        return result;
+      }),
+
+    varianceSummary: opsProcedure
+      .input(z.object({ countId: z.number() }))
+      .query(({ input }) => db.getCycleCountVarianceSummary(input.countId)),
   }),
 
   // ============================================

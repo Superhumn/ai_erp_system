@@ -21,6 +21,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  ADJUSTMENT_REASON_CODES,
+  ADJUSTMENT_REASON_LABELS,
+  type AdjustmentReasonCode,
+} from "@shared/inventoryAdjustments";
 import { SpreadsheetTable, Column, BulkAction } from "@/components/SpreadsheetTable";
 import {
   Warehouse,
@@ -30,6 +35,7 @@ import {
   MapPin,
   Target,
   Plus,
+  ClipboardCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -98,6 +104,8 @@ export default function Inventory() {
 
   // Form states for bulk actions
   const [quantityAdjustment, setQuantityAdjustment] = useState<string>("0");
+  const [adjustmentReasonCode, setAdjustmentReasonCode] = useState<AdjustmentReasonCode>("other");
+  const [adjustmentReason, setAdjustmentReason] = useState<string>("");
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>("");
   const [newReorderLevel, setNewReorderLevel] = useState<string>("");
   const [newReorderQuantity, setNewReorderQuantity] = useState<string>("");
@@ -123,6 +131,8 @@ export default function Inventory() {
 
   const resetFormStates = () => {
     setQuantityAdjustment("0");
+    setAdjustmentReasonCode("other");
+    setAdjustmentReason("");
     setSelectedWarehouseId("");
     setNewReorderLevel("");
     setNewReorderQuantity("");
@@ -243,13 +253,21 @@ export default function Inventory() {
     const ids = Array.from(selectedRows).map(id => Number(id));
 
     switch (currentBulkAction) {
-      case 'adjust_quantity':
+      case 'adjust_quantity': {
+        const delta = parseFloat(quantityAdjustment);
+        if (!delta) {
+          toast.error("Enter a non-zero quantity adjustment.");
+          return;
+        }
         bulkUpdateMutation.mutate({
           ids,
           action: 'adjust_quantity',
-          quantityAdjustment: parseFloat(quantityAdjustment) || 0,
+          quantityAdjustment: delta,
+          reasonCode: adjustmentReasonCode,
+          reason: adjustmentReason || undefined,
         });
         break;
+      }
       case 'change_location':
         if (!selectedWarehouseId) {
           toast.error("Please select a warehouse location.");
@@ -301,6 +319,36 @@ export default function Inventory() {
                     ? `Will subtract ${Math.abs(parseFloat(quantityAdjustment))} units from each selected item`
                     : 'Enter a value to adjust quantities'}
                 </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="adjustment-reason-code">Reason</Label>
+                <Select
+                  value={adjustmentReasonCode}
+                  onValueChange={(v) => setAdjustmentReasonCode(v as AdjustmentReasonCode)}
+                >
+                  <SelectTrigger id="adjustment-reason-code">
+                    <SelectValue placeholder="Select a reason" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ADJUSTMENT_REASON_CODES.map((code) => (
+                      <SelectItem key={code} value={code}>
+                        {ADJUSTMENT_REASON_LABELS[code]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-sm text-muted-foreground">
+                  Recorded on the inventory ledger so this movement stays attributable.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="adjustment-note">Note (optional)</Label>
+                <Input
+                  id="adjustment-note"
+                  value={adjustmentReason}
+                  onChange={(e) => setAdjustmentReason(e.target.value)}
+                  placeholder="e.g., pallet crushed in transit"
+                />
               </div>
             </div>
           </>
@@ -393,10 +441,16 @@ export default function Inventory() {
               Track stock levels and manage inventory across locations.
             </p>
           </div>
-          <Button onClick={() => setCreateDialogOpen(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add Inventory
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => navigate("/operations/cycle-counts")}>
+              <ClipboardCheck className="h-4 w-4 mr-2" />
+              Cycle Counts
+            </Button>
+            <Button onClick={() => setCreateDialogOpen(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Add Inventory
+            </Button>
+          </div>
         </div>
       </div>
 
