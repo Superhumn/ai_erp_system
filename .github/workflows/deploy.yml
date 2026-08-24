@@ -126,31 +126,35 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
-      - name: Deploy to Production (Railway CLI, optional)
-        # App deploys are handled by Railway's native GitHub integration.
-        # This CLI step is a best-effort fallback: it runs only if a token is
-        # present, and never fails the run (a bad/absent token just logs a
-        # warning and defers to the GitHub integration). Migrations above are
-        # strict and still gate the deploy.
+      - name: Deploy to Production (Railway CLI)
+        # This is the real production deploy: every push to main that passes
+        # CI + staging ships here automatically. It was previously a
+        # best-effort no-op that deferred to Railway's GitHub integration
+        # (which isn't connected), so production silently never updated.
+        # Preflight the Railway config so a misconfiguration surfaces as a
+        # clear, actionable message instead of the CLI's cryptic
+        # "error decoding response body / expected ident".
+        # NB: DB migrations already ran in the step above, so a deploy that
+        # fails here leaves the DB migrated but the app un-updated — fix the
+        # config and re-run rather than rolling back migrations.
+        # To gate this behind a one-click approval, add Required reviewers to
+        # the 'production' environment in GitHub Settings → Environments.
         run: |
           if [ -z "$RAILWAY_TOKEN" ]; then
-            echo "No RAILWAY_TOKEN set — skipping CLI deploy; Railway's GitHub integration handles deploys."
-            exit 0
+            echo "::error title=Railway token missing::RAILWAY_TOKEN secret is not set for the 'production' environment. Add it in GitHub → Settings → Secrets and variables → Actions → Secrets (generate a project/service token in the Railway dashboard)."
+            exit 1
           fi
-          npm install -g @railway/cli || {
-            echo "::warning::Railway CLI install failed. Deferring to Railway's GitHub integration."
-            exit 0
+          if [ -z "$RAILWAY_SERVICE_ID" ]; then
+            echo "::error title=Railway service id missing::RAILWAY_SERVICE_ID variable is not set, so 'railway up' cannot target a service. Add it in GitHub → Settings → Secrets and variables → Actions → Variables (copy the service ID from the Railway dashboard)."
+            exit 1
+          fi
+          # Constrain the CLI to the v4 major line so a v5 breaking release
+          # can't change deploy behavior.
+          npm install -g @railway/cli@^4 || {
+            echo "::error title=Railway CLI install failed::Could not install @railway/cli."
+            exit 1
           }
-          rc=0
-          if [ -n "$RAILWAY_SERVICE_ID" ]; then
-            railway up --service "$RAILWAY_SERVICE_ID" || rc=$?
-          else
-            railway up || rc=$?
-          fi
-          if [ "$rc" -ne 0 ]; then
-            echo "::warning::railway up failed (exit $rc; token invalid or lacks access). Deferring to Railway's GitHub integration."
-          fi
-          exit 0
+          railway up --service "$RAILWAY_SERVICE_ID"
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
