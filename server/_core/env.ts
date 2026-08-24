@@ -100,6 +100,12 @@ export const ENV = {
     // Airtable integration
     airtablePersonalAccessToken: process.env.AIRTABLE_PERSONAL_ACCESS_TOKEN ?? "",
 
+    // FX reference-rate feed. Empty means "use the built-in default", which
+    // lives in server/fxFeed.ts next to the code that knows the response shape.
+    // Set this to point at a mirror or self-hosted instance. Fetched through
+    // server/webFetchGuard.ts either way — configuration is not trusted input.
+    fxFeedUrl: process.env.FX_FEED_URL ?? "",
+
     // CRM deduplication: set to "true" on the first deploy that includes
     // migration 0035 so the app merges existing duplicates *before* the
     // UNIQUE indexes are created. After migration 0035 is applied, unset

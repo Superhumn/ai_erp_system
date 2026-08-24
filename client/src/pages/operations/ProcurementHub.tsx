@@ -116,6 +116,7 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
   const [selectedVendorIds, setSelectedVendorIds] = useState<number[]>([]);
   const [isEnterQuoteOpen, setIsEnterQuoteOpen] = useState(false);
   const [isFxRatesOpen, setIsFxRatesOpen] = useState(false);
+  const [fxPaste, setFxPaste] = useState('');
   const [fxForm, setFxForm] = useState({ fromCurrency: 'EUR', toCurrency: 'USD', rate: '', asOf: '' });
   const [quoteForm, setQuoteForm] = useState(EMPTY_QUOTE_FORM);
   const [rfqForm, setRfqForm] = useState({
@@ -253,6 +254,48 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
   const removeFxRate = trpc.currency.remove.useMutation({
     onSuccess: () => {
       toast.success('Rate removed');
+      utils.currency.list.invalidate();
+      utils.vendorQuotes.quotes.comparison.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const { data: fxFeedConfig } = trpc.currency.feedConfig.useQuery(undefined, { enabled: isFxRatesOpen });
+
+  // Pulls ECB reference rates. Rates entered by hand are left alone — see
+  // server/fxFeed.ts for why a typed rate outranks a published one.
+  const refreshFxFeed = trpc.currency.refreshFromFeed.useMutation({
+    onSuccess: (res: any) => {
+      const day = new Date(res.asOf).toISOString().slice(0, 10);
+      toast.success(
+        `Stored ${res.written.length} rate${res.written.length === 1 ? '' : 's'} as of ${day}` +
+        (res.skippedManual.length > 0
+          ? ` — kept ${res.skippedManual.length} you had entered by hand`
+          : ''),
+      );
+      utils.currency.list.invalidate();
+      utils.vendorQuotes.quotes.comparison.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const testFxFeed = trpc.currency.testFeed.useMutation({
+    onSuccess: (res: any) => {
+      if (res.ok) {
+        toast.success(
+          `Feed reachable — ${res.currencyCount} currencies as of ${new Date(res.asOf).toISOString().slice(0, 10)}`,
+        );
+      } else {
+        toast.error(res.error, { description: res.detail });
+      }
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const importFxPaste = trpc.currency.importPaste.useMutation({
+    onSuccess: (res: any) => {
+      toast.success(`Imported ${res.count} rate${res.count === 1 ? '' : 's'}`);
+      setFxPaste('');
       utils.currency.list.invalidate();
       utils.vendorQuotes.quotes.comparison.invalidate();
     },
@@ -1226,6 +1269,68 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
               recorded alongside the converted number.
             </DialogDescription>
           </DialogHeader>
+
+          {/* ECB reference rates. Published once a day and dated, which is what
+              makes a conversion defensible months later. */}
+          <div className="rounded-lg border p-3 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-medium">European Central Bank reference rates</p>
+                <p className="text-xs text-muted-foreground">
+                  Covers roughly 30 currencies. Anything else — CNY, INR, VND — you enter below.
+                  Rates you typed yourself are never overwritten.
+                </p>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={testFxFeed.isPending}
+                  onClick={() => testFxFeed.mutate({})}
+                >
+                  {testFxFeed.isPending ? 'Checking…' : 'Test'}
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={refreshFxFeed.isPending}
+                  onClick={() => refreshFxFeed.mutate({})}
+                >
+                  {refreshFxFeed.isPending ? 'Fetching…' : 'Fetch latest'}
+                </Button>
+              </div>
+            </div>
+            {fxFeedConfig && (
+              <p className="text-xs text-muted-foreground font-mono">{fxFeedConfig.url}</p>
+            )}
+          </div>
+
+          {/* Bulk entry for everything the feed does not publish. */}
+          <div className="rounded-lg border p-3 space-y-2">
+            <Label htmlFor="fxPaste" className="text-sm font-medium">Paste rates</Label>
+            <p className="text-xs text-muted-foreground">
+              One per line. <code>CNY 7.24</code>, <code>USD/CNY 7.24</code> and{' '}
+              <code>1 EUR = 1.08 USD</code> all work; a bare code converts from USD.
+              If any line cannot be read, nothing is imported.
+            </p>
+            <Textarea
+              id="fxPaste"
+              rows={4}
+              value={fxPaste}
+              onChange={(e) => setFxPaste(e.target.value)}
+              placeholder={'CNY 7.24\nINR 83.12\nVND 25400'}
+              className="font-mono text-sm"
+            />
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!fxPaste.trim() || importFxPaste.isPending}
+                onClick={() => importFxPaste.mutate({ text: fxPaste })}
+              >
+                {importFxPaste.isPending ? 'Importing…' : 'Import pasted rates'}
+              </Button>
+            </div>
+          </div>
 
           <div className="grid grid-cols-4 gap-2 items-end">
             <div>
