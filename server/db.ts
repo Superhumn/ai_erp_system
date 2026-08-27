@@ -3,6 +3,18 @@ import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2";
 import { scopeAllows, scopeCompanyIds, type Scope } from "./_core/scope";
 import {
+  assertTransition, computeVariance, computeVarianceValue, resolveAdjustment,
+  summarizeVariance, uncountedLines,
+} from "./cycleCountLogic";
+import {
+  expiredLots, expiryBucket, daysUntilExpiry, roundQty, selectFefoLots,
+  type PickableLot,
+} from "./fefo";
+import {
+  compareByUrgency, dailyDemand, round as replenishmentRound,
+  suggestReplenishment,
+} from "./replenishment";
+import {
   InsertUser, users, authTokens, InsertAuthToken, localAuthCredentials, InsertLocalAuthCredential, companies, customers, vendors, products,
   accounts, invoices, invoiceItems, payments, transactions, transactionLines,
   orders, orderItems, inventory, warehouses, productionBatches,
@@ -29,6 +41,10 @@ import {
   demandForecasts, productionPlans, materialRequirements, suggestedPurchaseOrders, suggestedPoItems, forecastAccuracy,
   // New lot/batch tracking tables
   inventoryLots, inventoryBalances, inventoryTransactions, workOrderOutputs,
+  warehouseZones, warehouseBins, InsertWarehouseZone, InsertWarehouseBin,
+  serialNumbers, serialNumberEvents,
+  // Cycle counting / physical inventory
+  cycleCounts, cycleCountLines, InsertCycleCount, InsertCycleCountLine,
   // Alert system
   alerts, recommendations,
   // Shopify integration
@@ -5507,15 +5523,26 @@ export async function getInventoryBalances(filters?: { lotId?: number; productId
     .orderBy(desc(inventoryBalances.updatedAt));
 }
 
-export async function upsertInventoryBalance(lotId: number, productId: number, warehouseId: number, status: string, quantity: number, unit: string) {
+/**
+ * Writes a balance for one lot, warehouse, status and bin.
+ *
+ * The bin is part of the identity. Without it the same lot could not be held
+ * in two bins — the write path would keep overwriting a single row — which is
+ * why `zoneId` / `binId` sat on this table unused. Callers that do not care
+ * about bins pass nothing and operate on the unbinned row, which is what every
+ * row written before bins existed is.
+ */
+export async function upsertInventoryBalance(lotId: number, productId: number, warehouseId: number, status: string, quantity: number, unit: string, binCode?: string | null) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
+
+  const bin = binCode ?? null;
   const existing = await db.select().from(inventoryBalances)
     .where(and(
       eq(inventoryBalances.lotId, lotId),
       eq(inventoryBalances.warehouseId, warehouseId),
-      eq(inventoryBalances.status, status as any)
+      eq(inventoryBalances.status, status as any),
+      bin === null ? isNull(inventoryBalances.binId) : eq(inventoryBalances.binId, bin)
     ))
     .limit(1);
   
@@ -5529,6 +5556,7 @@ export async function upsertInventoryBalance(lotId: number, productId: number, w
       lotId,
       productId,
       warehouseId,
+      binId: bin,
       status: status as any,
       quantity: quantity.toString(),
       unit
@@ -5690,48 +5718,1512 @@ export async function releaseReservation(lotId: number, productId: number, wareh
 }
 
 // Ship inventory (reserved -> 0, decreases on_hand)
-export async function shipInventory(lotId: number, productId: number, warehouseId: number, quantity: number, referenceType: string, referenceId: number, performedBy?: number) {
+/**
+ * Ships stock out of a lot, from either its reserved or available balance.
+ *
+ * Shipping is the one movement that reduces total on-hand, so unlike
+ * reserve/release it must move BOTH stores: the lot-level `inventoryBalances`
+ * row and the `inventory` aggregate. The previous implementation only touched
+ * the lot balance, which would have left the two disagreeing by the shipped
+ * quantity on every call — the same defect `adjustInventoryQuantity` exists to
+ * prevent. It was never called, so the drift never happened; it would have
+ * started the moment anything used it.
+ *
+ * Both balances are resolved before either is written, so a rejected shipment
+ * cannot leave the stores half-updated.
+ */
+export async function shipInventory(
+  lotId: number,
+  productId: number,
+  warehouseId: number,
+  quantity: number,
+  referenceType: string,
+  referenceId: number,
+  performedBy?: number,
+  options?: { fromStatus?: 'reserved' | 'available'; binCode?: string | null },
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
-  // Get reserved balance
-  const reserved = await db.select().from(inventoryBalances)
+
+  const shipQty = roundQty(quantity);
+  if (!Number.isFinite(shipQty) || shipQty <= 0) {
+    throw new Error("Ship quantity must be greater than zero");
+  }
+
+  const fromStatus = options?.fromStatus ?? 'reserved';
+
+  // The bin is part of the balance identity, so shipping targets exactly the
+  // row the pick selected. Omitting it ships the unbinned row, which is what
+  // every balance written before bins existed is.
+  const binCode = options?.binCode ?? null;
+  const [balance] = await db.select().from(inventoryBalances)
     .where(and(
       eq(inventoryBalances.lotId, lotId),
       eq(inventoryBalances.warehouseId, warehouseId),
-      eq(inventoryBalances.status, 'reserved')
+      eq(inventoryBalances.status, fromStatus),
+      binCode === null ? isNull(inventoryBalances.binId) : eq(inventoryBalances.binId, binCode)
     ))
     .limit(1);
-  
-  if (!reserved[0] || parseFloat(reserved[0].quantity) < quantity) {
-    throw new Error("Insufficient reserved inventory to ship");
+
+  const previousBalance = balance ? roundQty(parseFloat(balance.quantity)) : 0;
+  if (!balance || previousBalance < shipQty) {
+    throw new Error(
+      `Insufficient ${fromStatus} inventory to ship: have ${previousBalance}, need ${shipQty}`,
+    );
   }
-  
-  const previousReserved = parseFloat(reserved[0].quantity);
-  const newReserved = previousReserved - quantity;
-  
-  // Decrease reserved
+
+  const [aggregate] = await db.select().from(inventory)
+    .where(and(eq(inventory.productId, productId), eq(inventory.warehouseId, warehouseId)))
+    .limit(1);
+
+  // Resolve the aggregate before writing anything, so an aggregate that cannot
+  // absorb the shipment rejects it rather than leaving the lot already reduced.
+  const previousAggregate = aggregate ? roundQty(parseFloat(aggregate.quantity)) : 0;
+  const { newQuantity: newAggregate } = resolveAdjustment({
+    currentQuantity: previousAggregate,
+    quantityDelta: -shipQty,
+    label: 'inventory',
+  });
+
+  const newBalance = roundQty(previousBalance - shipQty);
+
   await db.update(inventoryBalances)
-    .set({ quantity: newReserved.toString(), updatedAt: new Date() })
-    .where(eq(inventoryBalances.id, reserved[0].id));
-  
-  // Create transaction
-  await createInventoryTransaction({
+    .set({ quantity: newBalance.toString(), updatedAt: new Date() })
+    .where(eq(inventoryBalances.id, balance.id));
+
+  if (aggregate) {
+    await db.update(inventory)
+      .set({ quantity: newAggregate.toString() })
+      .where(eq(inventory.id, aggregate.id));
+  }
+
+  const txn = await createInventoryTransaction({
     transactionType: 'ship',
     lotId,
     productId,
     fromWarehouseId: warehouseId,
-    fromStatus: 'reserved',
-    quantity: quantity.toString(),
-    unit: reserved[0].unit,
-    previousBalance: previousReserved.toString(),
-    newBalance: newReserved.toString(),
+    fromStatus,
+    quantity: shipQty.toString(),
+    unit: balance.unit,
+    previousBalance: previousBalance.toString(),
+    newBalance: newBalance.toString(),
     referenceType,
     referenceId,
     performedBy
   });
-  
+
+  return {
+    success: true,
+    ...txn,
+    lotPreviousQuantity: previousBalance,
+    lotNewQuantity: newBalance,
+    previousQuantity: previousAggregate,
+    newQuantity: newAggregate,
+  };
+}
+
+// ============================================
+// WAREHOUSE ZONES & BINS
+// ============================================
+
+export async function getWarehouseZones(warehouseId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(warehouseZones)
+    .where(warehouseId ? eq(warehouseZones.warehouseId, warehouseId) : undefined)
+    .orderBy(asc(warehouseZones.pickSequence), asc(warehouseZones.code));
+}
+
+export async function createWarehouseZone(data: InsertWarehouseZone) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(warehouseZones).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateWarehouseZone(id: number, data: Partial<InsertWarehouseZone>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(warehouseZones).set({ ...data, updatedAt: new Date() })
+    .where(eq(warehouseZones.id, id));
+  return { id };
+}
+
+/** Bins with their zone, in the order a picker would walk them. */
+export async function getWarehouseBins(params?: { warehouseId?: number; zoneId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions: any[] = [];
+  if (params?.warehouseId) conditions.push(eq(warehouseBins.warehouseId, params.warehouseId));
+  if (params?.zoneId) conditions.push(eq(warehouseBins.zoneId, params.zoneId));
+
+  return db.select({
+    id: warehouseBins.id,
+    warehouseId: warehouseBins.warehouseId,
+    zoneId: warehouseBins.zoneId,
+    code: warehouseBins.code,
+    name: warehouseBins.name,
+    pickSequence: warehouseBins.pickSequence,
+    capacity: warehouseBins.capacity,
+    status: warehouseBins.status,
+    notes: warehouseBins.notes,
+    zoneCode: warehouseZones.code,
+    zoneName: warehouseZones.name,
+    zoneType: warehouseZones.zoneType,
+    zonePickSequence: warehouseZones.pickSequence,
+  })
+    .from(warehouseBins)
+    .leftJoin(warehouseZones, eq(warehouseBins.zoneId, warehouseZones.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(asc(warehouseZones.pickSequence), asc(warehouseBins.pickSequence), asc(warehouseBins.code));
+}
+
+export async function createWarehouseBin(data: InsertWarehouseBin) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(warehouseBins).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateWarehouseBin(id: number, data: Partial<InsertWarehouseBin>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(warehouseBins).set({ ...data, updatedAt: new Date() })
+    .where(eq(warehouseBins.id, id));
+  return { id };
+}
+
+/**
+ * The effective walk order for each bin code in a warehouse.
+ *
+ * Zone sequence dominates bin sequence, so bins are walked zone by zone.
+ */
+async function binPickSequences(warehouseId: number): Promise<Map<string, number>> {
+  const bins = await getWarehouseBins({ warehouseId });
+  const sequences = new Map<string, number>();
+  bins.forEach((bin, index) => {
+    // The query is already in walk order, so the row index is the sequence.
+    sequences.set(bin.code, index);
+  });
+  return sequences;
+}
+
+/** What is physically sitting in each bin. */
+export async function getBinContents(params: { warehouseId: number; binCode?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [
+    eq(inventoryBalances.warehouseId, params.warehouseId),
+    ne(inventoryBalances.quantity, '0'),
+  ];
+  if (params.binCode) conditions.push(eq(inventoryBalances.binId, params.binCode));
+
+  const rows = await db.select({
+    balanceId: inventoryBalances.id,
+    binCode: inventoryBalances.binId,
+    zoneCode: inventoryBalances.zoneId,
+    lotId: inventoryBalances.lotId,
+    lotCode: inventoryLots.lotCode,
+    productId: inventoryBalances.productId,
+    productName: products.name,
+    sku: products.sku,
+    status: inventoryBalances.status,
+    quantity: inventoryBalances.quantity,
+    unit: inventoryBalances.unit,
+    expiryDate: inventoryLots.expiryDate,
+  })
+    .from(inventoryBalances)
+    .leftJoin(inventoryLots, eq(inventoryBalances.lotId, inventoryLots.id))
+    .leftJoin(products, eq(inventoryBalances.productId, products.id))
+    .where(and(...conditions));
+
+  const sequences = await binPickSequences(params.warehouseId);
+  return rows
+    .map((row) => ({
+      ...row,
+      quantity: roundQty(parseFloat(row.quantity)),
+      pickSequence: row.binCode ? sequences.get(row.binCode) ?? null : null,
+    }))
+    .filter((row) => row.quantity > 0)
+    .sort((a, b) => (a.pickSequence ?? Number.MAX_SAFE_INTEGER) - (b.pickSequence ?? Number.MAX_SAFE_INTEGER));
+}
+
+/**
+ * Moves stock between bins within one warehouse, lot and status.
+ *
+ * Nothing leaves the building, so neither the `inventory` aggregate nor the
+ * total across bins changes — only where the units sit. Passing null as the
+ * source moves previously unbinned stock into a bin, which is how existing
+ * balances get put away for the first time.
+ */
+export async function moveBetweenBins(params: {
+  lotId: number;
+  productId: number;
+  warehouseId: number;
+  quantity: number;
+  /** null / omitted = the unbinned row, which is what pre-bin stock sits in. */
+  fromBinCode?: string | null;
+  toBinCode: string;
+  status?: 'available' | 'hold' | 'reserved' | 'quarantine' | 'damaged';
+  performedBy?: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const moveQty = roundQty(params.quantity);
+  if (!Number.isFinite(moveQty) || moveQty <= 0) {
+    throw new Error("Move quantity must be greater than zero");
+  }
+  if (params.fromBinCode === params.toBinCode) {
+    throw new Error("Source and destination bin are the same");
+  }
+
+  const status = params.status ?? 'available';
+  const from = params.fromBinCode ?? null;
+
+  const [source] = await db.select().from(inventoryBalances)
+    .where(and(
+      eq(inventoryBalances.lotId, params.lotId),
+      eq(inventoryBalances.warehouseId, params.warehouseId),
+      eq(inventoryBalances.status, status),
+      from === null ? isNull(inventoryBalances.binId) : eq(inventoryBalances.binId, from),
+    ))
+    .limit(1);
+
+  const sourceQty = source ? roundQty(parseFloat(source.quantity)) : 0;
+  if (!source || sourceQty < moveQty) {
+    throw new Error(
+      `Insufficient stock in ${from ?? 'unbinned'}: have ${sourceQty}, need ${moveQty}`,
+    );
+  }
+
+  // Refuse to exceed a bin's stated capacity — the reason to record one.
+  const [destinationBin] = await db.select().from(warehouseBins)
+    .where(and(
+      eq(warehouseBins.warehouseId, params.warehouseId),
+      eq(warehouseBins.code, params.toBinCode),
+    ))
+    .limit(1);
+
+  if (destinationBin?.status === 'blocked') {
+    throw new Error(`Bin ${params.toBinCode} is blocked`);
+  }
+
+  const [destination] = await db.select().from(inventoryBalances)
+    .where(and(
+      eq(inventoryBalances.lotId, params.lotId),
+      eq(inventoryBalances.warehouseId, params.warehouseId),
+      eq(inventoryBalances.status, status),
+      eq(inventoryBalances.binId, params.toBinCode),
+    ))
+    .limit(1);
+
+  const destinationQty = destination ? roundQty(parseFloat(destination.quantity)) : 0;
+  const newDestination = roundQty(destinationQty + moveQty);
+
+  if (destinationBin?.capacity != null) {
+    const capacity = parseFloat(destinationBin.capacity);
+    if (Number.isFinite(capacity) && newDestination > capacity) {
+      throw new Error(
+        `Bin ${params.toBinCode} holds ${capacity}; this move would put ${newDestination} in it`,
+      );
+    }
+  }
+
+  // Both sides resolved — now write.
+  await db.update(inventoryBalances)
+    .set({ quantity: roundQty(sourceQty - moveQty).toString(), updatedAt: new Date() })
+    .where(eq(inventoryBalances.id, source.id));
+
+  await upsertInventoryBalance(
+    params.lotId, params.productId, params.warehouseId, status,
+    newDestination, source.unit, params.toBinCode,
+  );
+
+  await createInventoryTransaction({
+    transactionType: 'adjust',
+    lotId: params.lotId,
+    productId: params.productId,
+    fromWarehouseId: params.warehouseId,
+    toWarehouseId: params.warehouseId,
+    fromStatus: status,
+    toStatus: status,
+    quantity: moveQty.toString(),
+    unit: source.unit,
+    previousBalance: sourceQty.toString(),
+    newBalance: roundQty(sourceQty - moveQty).toString(),
+    referenceType: 'bin_move',
+    reasonCode: 'repack',
+    reason: `Moved from ${from ?? 'unbinned'} to ${params.toBinCode}`,
+    performedBy: params.performedBy,
+  });
+
+  return {
+    moved: moveQty,
+    from: from,
+    to: params.toBinCode,
+    fromQuantity: roundQty(sourceQty - moveQty),
+    toQuantity: newDestination,
+  };
+}
+
+// ============================================
+// SERIAL NUMBERS
+// ============================================
+
+/**
+ * Records serials against a receipt.
+ *
+ * Serials are unique per product, so re-receiving one that is already in stock
+ * is rejected rather than silently duplicated — a duplicate serial makes the
+ * whole trace worthless.
+ */
+export async function receiveSerialNumbers(params: {
+  productId: number;
+  serialNumbers: string[];
+  lotId?: number | null;
+  warehouseId?: number | null;
+  binCode?: string | null;
+  sourceType?: string;
+  sourceReferenceId?: number;
+  companyId?: number;
+  performedBy?: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const cleaned = [...new Set(
+    params.serialNumbers.map((serial) => serial.trim()).filter(Boolean),
+  )];
+  if (cleaned.length === 0) throw new Error("No serial numbers supplied");
+
+  const existing = await db.select({ serialNumber: serialNumbers.serialNumber })
+    .from(serialNumbers)
+    .where(and(
+      eq(serialNumbers.productId, params.productId),
+      inArray(serialNumbers.serialNumber, cleaned),
+    ));
+
+  if (existing.length > 0) {
+    throw new Error(
+      `Already recorded for this product: ${existing.map((row) => row.serialNumber).join(', ')}`,
+    );
+  }
+
+  const now = new Date();
+  const created: Array<{ id: number; serialNumber: string }> = [];
+  for (const serial of cleaned) {
+    const result = await db.insert(serialNumbers).values({
+      companyId: params.companyId,
+      serialNumber: serial,
+      productId: params.productId,
+      lotId: params.lotId ?? null,
+      warehouseId: params.warehouseId ?? null,
+      binCode: params.binCode ?? null,
+      status: 'in_stock',
+      sourceType: params.sourceType,
+      sourceReferenceId: params.sourceReferenceId,
+      receivedAt: now,
+      createdBy: params.performedBy,
+    });
+    const id = result[0].insertId;
+    created.push({ id, serialNumber: serial });
+    await db.insert(serialNumberEvents).values({
+      serialId: id,
+      fromStatus: null,
+      toStatus: 'in_stock',
+      warehouseId: params.warehouseId ?? null,
+      referenceType: params.sourceType,
+      referenceId: params.sourceReferenceId,
+      performedBy: params.performedBy,
+    });
+  }
+
+  return { received: created.length, serials: created };
+}
+
+const SERIAL_TRANSITIONS: Record<string, string[]> = {
+  in_stock: ['allocated', 'shipped', 'scrapped'],
+  allocated: ['shipped', 'in_stock', 'scrapped'],
+  shipped: ['returned'],
+  returned: ['in_stock', 'scrapped'],
+  scrapped: [],
+};
+
+/** Moves a serial through its lifecycle, recording the transition. */
+export async function updateSerialStatus(params: {
+  serialId: number;
+  toStatus: 'in_stock' | 'allocated' | 'shipped' | 'returned' | 'scrapped';
+  warehouseId?: number | null;
+  binCode?: string | null;
+  referenceType?: string;
+  referenceId?: number;
+  notes?: string;
+  performedBy?: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const [serial] = await db.select().from(serialNumbers)
+    .where(eq(serialNumbers.id, params.serialId)).limit(1);
+  if (!serial) throw new Error("Serial number not found");
+
+  const allowed = SERIAL_TRANSITIONS[serial.status] ?? [];
+  if (!allowed.includes(params.toStatus)) {
+    throw new Error(
+      `A serial that is "${serial.status}" cannot become "${params.toStatus}"`,
+    );
+  }
+
+  await db.update(serialNumbers).set({
+    status: params.toStatus,
+    warehouseId: params.warehouseId !== undefined ? params.warehouseId : serial.warehouseId,
+    binCode: params.binCode !== undefined ? params.binCode : serial.binCode,
+    outboundReferenceType: params.toStatus === 'shipped' ? params.referenceType : serial.outboundReferenceType,
+    outboundReferenceId: params.toStatus === 'shipped' ? params.referenceId : serial.outboundReferenceId,
+    shippedAt: params.toStatus === 'shipped' ? new Date() : serial.shippedAt,
+    updatedAt: new Date(),
+  }).where(eq(serialNumbers.id, params.serialId));
+
+  await db.insert(serialNumberEvents).values({
+    serialId: params.serialId,
+    fromStatus: serial.status,
+    toStatus: params.toStatus,
+    warehouseId: params.warehouseId ?? serial.warehouseId,
+    referenceType: params.referenceType,
+    referenceId: params.referenceId,
+    notes: params.notes,
+    performedBy: params.performedBy,
+  });
+
+  return { id: params.serialId, fromStatus: serial.status, toStatus: params.toStatus };
+}
+
+export async function getSerialNumbers(filters?: {
+  productId?: number;
+  lotId?: number;
+  warehouseId?: number;
+  status?: string;
+  search?: string;
+  limit?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions: any[] = [];
+  if (filters?.productId) conditions.push(eq(serialNumbers.productId, filters.productId));
+  if (filters?.lotId) conditions.push(eq(serialNumbers.lotId, filters.lotId));
+  if (filters?.warehouseId) conditions.push(eq(serialNumbers.warehouseId, filters.warehouseId));
+  if (filters?.status) conditions.push(eq(serialNumbers.status, filters.status as any));
+  if (filters?.search) conditions.push(like(serialNumbers.serialNumber, `%${filters.search}%`));
+
+  return db.select({
+    id: serialNumbers.id,
+    serialNumber: serialNumbers.serialNumber,
+    productId: serialNumbers.productId,
+    productName: products.name,
+    sku: products.sku,
+    lotId: serialNumbers.lotId,
+    lotCode: inventoryLots.lotCode,
+    warehouseId: serialNumbers.warehouseId,
+    binCode: serialNumbers.binCode,
+    status: serialNumbers.status,
+    receivedAt: serialNumbers.receivedAt,
+    shippedAt: serialNumbers.shippedAt,
+    outboundReferenceType: serialNumbers.outboundReferenceType,
+    outboundReferenceId: serialNumbers.outboundReferenceId,
+  })
+    .from(serialNumbers)
+    .leftJoin(products, eq(serialNumbers.productId, products.id))
+    .leftJoin(inventoryLots, eq(serialNumbers.lotId, inventoryLots.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(serialNumbers.updatedAt))
+    .limit(filters?.limit ?? 200);
+}
+
+/**
+ * Everything known about one unit: where it is now and every move it made.
+ *
+ * This is the question a warranty claim or a recall actually asks, and the one
+ * lot-level tracking alone could not answer.
+ */
+export async function traceSerialNumber(serialNumber: string, productId?: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const conditions = [eq(serialNumbers.serialNumber, serialNumber)];
+  if (productId) conditions.push(eq(serialNumbers.productId, productId));
+
+  const [serial] = await db.select().from(serialNumbers)
+    .where(and(...conditions)).limit(1);
+  if (!serial) return null;
+
+  const [lot] = serial.lotId
+    ? await db.select().from(inventoryLots).where(eq(inventoryLots.id, serial.lotId)).limit(1)
+    : [];
+
+  const events = await db.select().from(serialNumberEvents)
+    .where(eq(serialNumberEvents.serialId, serial.id))
+    .orderBy(asc(serialNumberEvents.performedAt));
+
+  return { serial, lot: lot ?? null, events };
+}
+
+/** Serials belonging to a lot — the recall direction that starts from a batch. */
+export async function getSerialsForLot(lotId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(serialNumbers)
+    .where(eq(serialNumbers.lotId, lotId))
+    .orderBy(asc(serialNumbers.serialNumber));
+}
+
+// ============================================
+// REPLENISHMENT PLANNING
+// ============================================
+
+/**
+ * Units sold per product over a window, from shipped and delivered orders.
+ *
+ * Only fulfilled orders count — a pending order is demand that has not
+ * happened yet, and counting it would double up with the reservation that
+ * already holds the stock.
+ */
+export async function getProductDemand(windowDays: number) {
+  const db = await getDb();
+  if (!db) return new Map<number, number>();
+
+  const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
+
+  const rows = await db.select({
+    productId: orderItems.productId,
+    quantity: sql<string>`SUM(${orderItems.quantity})`,
+  })
+    .from(orderItems)
+    .innerJoin(orders, eq(orderItems.orderId, orders.id))
+    .where(and(
+      gte(orders.createdAt, since),
+      or(eq(orders.status, 'shipped'), eq(orders.status, 'delivered')),
+    ))
+    .groupBy(orderItems.productId);
+
+  const demand = new Map<number, number>();
+  for (const row of rows) {
+    if (row.productId == null) continue;
+    demand.set(row.productId, parseFloat(row.quantity ?? '0') || 0);
+  }
+  return demand;
+}
+
+/** Units on order per product: ordered but not yet received, on live POs. */
+export async function getOnOrderQuantities() {
+  const db = await getDb();
+  if (!db) return new Map<number, number>();
+
+  const rows = await db.select({
+    productId: purchaseOrderItems.productId,
+    ordered: purchaseOrderItems.quantity,
+    received: purchaseOrderItems.receivedQuantity,
+  })
+    .from(purchaseOrderItems)
+    .innerJoin(purchaseOrders, eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id))
+    .where(or(
+      eq(purchaseOrders.status, 'sent'),
+      eq(purchaseOrders.status, 'confirmed'),
+      eq(purchaseOrders.status, 'partial'),
+    ));
+
+  const onOrder = new Map<number, number>();
+  for (const row of rows) {
+    if (row.productId == null) continue;
+    const outstanding = Math.max(
+      0,
+      (parseFloat(row.ordered ?? '0') || 0) - (parseFloat(row.received ?? '0') || 0),
+    );
+    onOrder.set(row.productId, (onOrder.get(row.productId) ?? 0) + outstanding);
+  }
+  return onOrder;
+}
+
+/**
+ * A replenishment plan across every stocked product/warehouse.
+ *
+ * Pulls demand, on-hand, on-order and vendor lead time together and runs each
+ * row through `suggestReplenishment`. Rows are returned most pressing first.
+ */
+export async function getReplenishmentPlan(params?: {
+  windowDays?: number;
+  warehouseId?: number;
+  safetyDays?: number;
+  coverageDays?: number;
+  onlyActionable?: boolean;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const windowDays = params?.windowDays ?? 90;
+  const [demand, onOrder] = await Promise.all([
+    getProductDemand(windowDays),
+    getOnOrderQuantities(),
+  ]);
+
+  const conditions = [eq(products.status, 'active')];
+  if (params?.warehouseId) {
+    conditions.push(eq(inventory.warehouseId, params.warehouseId));
+  }
+
+  const rows = await db.select({
+    inventoryId: inventory.id,
+    productId: inventory.productId,
+    warehouseId: inventory.warehouseId,
+    quantity: inventory.quantity,
+    reservedQuantity: inventory.reservedQuantity,
+    reorderLevel: inventory.reorderLevel,
+    reorderQuantity: inventory.reorderQuantity,
+    sku: products.sku,
+    productName: products.name,
+    preferredVendorId: products.preferredVendorId,
+    vendorName: vendors.name,
+    vendorLeadTimeDays: vendors.defaultLeadTimeDays,
+  })
+    .from(inventory)
+    .innerJoin(products, eq(inventory.productId, products.id))
+    .leftJoin(vendors, eq(products.preferredVendorId, vendors.id))
+    .where(and(...conditions));
+
+  // Demand is per product; split it across the warehouses stocking that
+  // product so a multi-warehouse product is not planned as if every site
+  // carried the whole company's sales.
+  const warehousesPerProduct = new Map<number, number>();
+  for (const row of rows) {
+    warehousesPerProduct.set(
+      row.productId,
+      (warehousesPerProduct.get(row.productId) ?? 0) + 1,
+    );
+  }
+
+  const plan = rows.map((row) => {
+    const sites = warehousesPerProduct.get(row.productId) ?? 1;
+    const productDemand = (demand.get(row.productId) ?? 0) / sites;
+    const productOnOrder = (onOrder.get(row.productId) ?? 0) / sites;
+
+    const suggestion = suggestReplenishment({
+      onHand: parseFloat(row.quantity ?? '0') || 0,
+      reserved: parseFloat(row.reservedQuantity ?? '0') || 0,
+      onOrder: productOnOrder,
+      dailyDemand: dailyDemand(productDemand, windowDays),
+      leadTimeDays: row.vendorLeadTimeDays ?? undefined,
+      reorderLevel: row.reorderLevel != null ? parseFloat(row.reorderLevel) : null,
+      reorderQuantity: row.reorderQuantity != null ? parseFloat(row.reorderQuantity) : null,
+      safetyDays: params?.safetyDays,
+      coverageDays: params?.coverageDays,
+    });
+
+    return {
+      inventoryId: row.inventoryId,
+      productId: row.productId,
+      warehouseId: row.warehouseId,
+      sku: row.sku,
+      productName: row.productName,
+      preferredVendorId: row.preferredVendorId,
+      vendorName: row.vendorName,
+      windowDays,
+      onOrder: replenishmentRound(productOnOrder),
+      ...suggestion,
+    };
+  });
+
+  const filtered = params?.onlyActionable
+    ? plan.filter((row) => row.shouldOrder)
+    : plan;
+
+  return filtered.sort(compareByUrgency);
+}
+
+// ============================================
+// FEFO PICKING & EXPIRY
+// ============================================
+
+/**
+ * Lots that can be picked for a product at a warehouse, newest data first.
+ *
+ * Only `available` balances of `active` lots are pickable — stock that is
+ * reserved, on hold, quarantined or damaged is deliberately excluded.
+ */
+export async function getPickableLots(
+  productId: number,
+  warehouseId: number,
+  options?: { includeExpired?: boolean; asOf?: Date },
+): Promise<Array<PickableLot & { unit: string; balanceId: number; lotCode: string }>> {
+  const db = await getDb();
+  if (!db) return [];
+
+  const rows = await db.select({
+    balanceId: inventoryBalances.id,
+    lotId: inventoryBalances.lotId,
+    quantity: inventoryBalances.quantity,
+    unit: inventoryBalances.unit,
+    binCode: inventoryBalances.binId,
+    lotCode: inventoryLots.lotCode,
+    expiryDate: inventoryLots.expiryDate,
+  })
+    .from(inventoryBalances)
+    .innerJoin(inventoryLots, eq(inventoryBalances.lotId, inventoryLots.id))
+    .where(and(
+      eq(inventoryBalances.productId, productId),
+      eq(inventoryBalances.warehouseId, warehouseId),
+      eq(inventoryBalances.status, 'available'),
+      eq(inventoryLots.status, 'active'),
+    ));
+
+  const asOf = options?.asOf ?? new Date();
+  const sequences = await binPickSequences(warehouseId);
+  return rows
+    .map((row) => ({
+      balanceId: row.balanceId,
+      lotId: row.lotId,
+      lotCode: row.lotCode,
+      unit: row.unit,
+      binCode: row.binCode,
+      pickSequence: row.binCode ? sequences.get(row.binCode) ?? null : null,
+      quantity: roundQty(parseFloat(row.quantity)),
+      expiryDate: row.expiryDate,
+    }))
+    .filter((lot) => lot.quantity > 0)
+    .filter((lot) => {
+      if (options?.includeExpired) return true;
+      const days = daysUntilExpiry(lot, asOf);
+      return days === null || days >= 0;
+    });
+}
+
+/**
+ * Plans a FEFO pick without moving anything.
+ *
+ * Used to show which lots a shipment would consume, and what it would be short
+ * by, before committing to it.
+ */
+export async function planFefoPick(params: {
+  productId: number;
+  warehouseId: number;
+  quantity: number;
+  includeExpired?: boolean;
+  asOf?: Date;
+}) {
+  const lots = await getPickableLots(params.productId, params.warehouseId, {
+    includeExpired: params.includeExpired,
+    asOf: params.asOf,
+  });
+  const byLot = new Map(lots.map((lot) => [lot.lotId, lot]));
+  const { allocations, shortfall } = selectFefoLots(lots, params.quantity);
+
+  return {
+    shortfall,
+    allocations: allocations.map((allocation) => ({
+      ...allocation,
+      lotCode: byLot.get(allocation.lotId)?.lotCode ?? null,
+      expiryDate: byLot.get(allocation.lotId)?.expiryDate ?? null,
+    })),
+  };
+}
+
+/**
+ * Picks and ships `quantity` of a product, consuming the soonest-expiring lots
+ * first.
+ *
+ * This is what makes `shipInventory` reachable: callers ship a product and a
+ * quantity, and the lots are chosen for them. A short pick is refused outright
+ * rather than shipping what is available — a partial shipment posted as a whole
+ * one is worse than no shipment.
+ */
+export async function pickInventoryFEFO(params: {
+  productId: number;
+  warehouseId: number;
+  quantity: number;
+  referenceType: string;
+  referenceId: number;
+  performedBy?: number;
+  /** Ship straight from available stock instead of a prior reservation. */
+  fromStatus?: 'reserved' | 'available';
+  asOf?: Date;
+}) {
+  const fromStatus = params.fromStatus ?? 'available';
+
+  const lots = fromStatus === 'available'
+    ? await getPickableLots(params.productId, params.warehouseId, { asOf: params.asOf })
+    : await reservedLotsForPicking(params.productId, params.warehouseId, params.asOf);
+
+  const { allocations, shortfall } = selectFefoLots(lots, params.quantity);
+  if (shortfall > 0) {
+    throw new Error(
+      `Insufficient ${fromStatus} stock to pick: short by ${shortfall}`,
+    );
+  }
+
+  const shipments = [];
+  for (const allocation of allocations) {
+    shipments.push(
+      await shipInventory(
+        allocation.lotId,
+        params.productId,
+        params.warehouseId,
+        allocation.quantity,
+        params.referenceType,
+        params.referenceId,
+        params.performedBy,
+        { fromStatus, binCode: allocation.binCode ?? null },
+      ),
+    );
+  }
+
+  return {
+    quantity: roundQty(params.quantity),
+    allocations,
+    shipments,
+  };
+}
+
+/** The reserved-status equivalent of `getPickableLots`. */
+async function reservedLotsForPicking(
+  productId: number,
+  warehouseId: number,
+  asOf?: Date,
+): Promise<Array<PickableLot & { unit: string }>> {
+  const db = await getDb();
+  if (!db) return [];
+
+  const rows = await db.select({
+    lotId: inventoryBalances.lotId,
+    quantity: inventoryBalances.quantity,
+    unit: inventoryBalances.unit,
+    expiryDate: inventoryLots.expiryDate,
+  })
+    .from(inventoryBalances)
+    .innerJoin(inventoryLots, eq(inventoryBalances.lotId, inventoryLots.id))
+    .where(and(
+      eq(inventoryBalances.productId, productId),
+      eq(inventoryBalances.warehouseId, warehouseId),
+      eq(inventoryBalances.status, 'reserved'),
+    ));
+
+  return rows
+    .map((row) => ({
+      lotId: row.lotId,
+      unit: row.unit,
+      quantity: roundQty(parseFloat(row.quantity)),
+      expiryDate: row.expiryDate,
+    }))
+    .filter((lot) => lot.quantity > 0);
+}
+
+/**
+ * Stock approaching or past its expiry date, bucketed by urgency.
+ *
+ * `expiryDate` has been captured on every lot since lots existed and read by
+ * nothing, so there was no way to see what was about to go out of date.
+ */
+export async function getExpiringInventory(params?: {
+  withinDays?: number;
+  warehouseId?: number;
+  includeUndated?: boolean;
+  asOf?: Date;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [
+    eq(inventoryLots.status, 'active'),
+    ne(inventoryBalances.status, 'reserved'),
+  ];
+  if (params?.warehouseId) {
+    conditions.push(eq(inventoryBalances.warehouseId, params.warehouseId));
+  }
+
+  const rows = await db.select({
+    lotId: inventoryLots.id,
+    lotCode: inventoryLots.lotCode,
+    productId: inventoryBalances.productId,
+    warehouseId: inventoryBalances.warehouseId,
+    quantity: inventoryBalances.quantity,
+    unit: inventoryBalances.unit,
+    status: inventoryBalances.status,
+    expiryDate: inventoryLots.expiryDate,
+  })
+    .from(inventoryBalances)
+    .innerJoin(inventoryLots, eq(inventoryBalances.lotId, inventoryLots.id))
+    .where(and(...conditions))
+    .orderBy(asc(inventoryLots.expiryDate));
+
+  const asOf = params?.asOf ?? new Date();
+  const withinDays = params?.withinDays ?? 90;
+
+  return rows
+    .map((row) => {
+      const lot = { lotId: row.lotId, quantity: roundQty(parseFloat(row.quantity)), expiryDate: row.expiryDate };
+      return {
+        ...row,
+        quantity: lot.quantity,
+        daysUntilExpiry: daysUntilExpiry(lot, asOf),
+        bucket: expiryBucket(lot, asOf),
+      };
+    })
+    .filter((row) => row.quantity > 0)
+    .filter((row) => {
+      if (row.daysUntilExpiry === null) return params?.includeUndated ?? false;
+      return row.daysUntilExpiry <= withinDays;
+    });
+}
+
+/**
+ * Moves expired stock out of `available` and marks its lots expired.
+ *
+ * Quarantining does not change how much stock is physically on the shelf, so
+ * the `inventory` aggregate deliberately does not move — only the lot balance
+ * changes status. Writing it off is a separate, explicit decision (`scrap`),
+ * because disposal is not something a sweep should decide on its own.
+ */
+export async function sweepExpiredLots(params?: {
+  asOf?: Date;
+  warehouseId?: number;
+  performedBy?: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const asOf = params?.asOf ?? new Date();
+  const conditions = [
+    eq(inventoryLots.status, 'active'),
+    eq(inventoryBalances.status, 'available'),
+  ];
+  if (params?.warehouseId) {
+    conditions.push(eq(inventoryBalances.warehouseId, params.warehouseId));
+  }
+
+  const rows = await db.select({
+    balanceId: inventoryBalances.id,
+    lotId: inventoryLots.id,
+    lotCode: inventoryLots.lotCode,
+    productId: inventoryBalances.productId,
+    warehouseId: inventoryBalances.warehouseId,
+    quantity: inventoryBalances.quantity,
+    unit: inventoryBalances.unit,
+    expiryDate: inventoryLots.expiryDate,
+  })
+    .from(inventoryBalances)
+    .innerJoin(inventoryLots, eq(inventoryBalances.lotId, inventoryLots.id))
+    .where(and(...conditions));
+
+  const stale = expiredLots(
+    rows.map((row) => ({ ...row, quantity: roundQty(parseFloat(row.quantity)) })),
+    asOf,
+  );
+
+  const quarantined = [];
+  for (const row of stale) {
+    const existing = await db.select().from(inventoryBalances)
+      .where(and(
+        eq(inventoryBalances.lotId, row.lotId),
+        eq(inventoryBalances.warehouseId, row.warehouseId),
+        eq(inventoryBalances.status, 'quarantine'),
+      ))
+      .limit(1);
+
+    const previousQuarantine = existing[0] ? roundQty(parseFloat(existing[0].quantity)) : 0;
+    const newQuarantine = roundQty(previousQuarantine + row.quantity);
+
+    await upsertInventoryBalance(
+      row.lotId, row.productId, row.warehouseId, 'quarantine', newQuarantine, row.unit,
+    );
+    await db.update(inventoryBalances)
+      .set({ quantity: '0', updatedAt: new Date() })
+      .where(eq(inventoryBalances.id, row.balanceId));
+    await db.update(inventoryLots)
+      .set({ status: 'expired', updatedAt: new Date() })
+      .where(eq(inventoryLots.id, row.lotId));
+
+    await createInventoryTransaction({
+      transactionType: 'adjust',
+      lotId: row.lotId,
+      productId: row.productId,
+      fromWarehouseId: row.warehouseId,
+      toWarehouseId: row.warehouseId,
+      fromStatus: 'available',
+      toStatus: 'quarantine',
+      quantity: row.quantity.toString(),
+      unit: row.unit,
+      previousBalance: row.quantity.toString(),
+      newBalance: '0',
+      referenceType: 'expiry_sweep',
+      reasonCode: 'expiry',
+      reason: `Lot ${row.lotCode} expired`,
+      performedBy: params?.performedBy,
+    });
+
+    quarantined.push({
+      lotId: row.lotId,
+      lotCode: row.lotCode,
+      productId: row.productId,
+      warehouseId: row.warehouseId,
+      quantity: row.quantity,
+      expiryDate: row.expiryDate,
+    });
+  }
+
+  return { sweptAt: asOf, quarantined, count: quarantined.length };
+}
+
+// ============================================
+// INVENTORY ADJUSTMENTS (ledger-backed)
+// ============================================
+
+/**
+ * The single primitive for changing stock outside of receive/ship/transfer.
+ *
+ * Every call posts an `inventoryTransactions` row, so shrinkage, damage and
+ * count variances are attributable. It keeps the two stock stores in step:
+ * the `inventory` aggregate (product x warehouse) always moves, and the
+ * lot-level `inventoryBalances` row moves too when a lot is supplied.
+ */
+export async function adjustInventoryQuantity(params: {
+  productId: number;
+  warehouseId: number;
+  lotId?: number | null;
+  quantityDelta: number;
+  transactionType?: 'adjust' | 'scrap' | 'count_adjust';
+  reasonCode: string;
+  reason?: string;
+  referenceType?: string;
+  referenceId?: number;
+  companyId?: number;
+  unit?: string;
+  balanceStatus?: 'available' | 'hold' | 'reserved' | 'quarantine' | 'damaged';
+  performedBy?: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const {
+    productId, warehouseId, lotId, quantityDelta,
+    transactionType = 'adjust', reasonCode, reason,
+    referenceType = 'adjustment', referenceId,
+    companyId, unit = 'EA', balanceStatus = 'available', performedBy,
+  } = params;
+
+  // Resolve every balance before writing any of them, so a rejected
+  // adjustment cannot leave the lot and aggregate stores disagreeing.
+  const [existingBalance] = lotId
+    ? await db.select().from(inventoryBalances)
+        .where(and(
+          eq(inventoryBalances.lotId, lotId),
+          eq(inventoryBalances.warehouseId, warehouseId),
+          eq(inventoryBalances.status, balanceStatus),
+        ))
+        .limit(1)
+    : [];
+
+  const [aggregate] = await db.select().from(inventory)
+    .where(and(eq(inventory.productId, productId), eq(inventory.warehouseId, warehouseId)))
+    .limit(1);
+
+  let lotPrevious: number | null = null;
+  let lotNew: number | null = null;
+  if (lotId) {
+    const resolved = resolveAdjustment({
+      currentQuantity: existingBalance ? parseFloat(existingBalance.quantity) || 0 : 0,
+      quantityDelta,
+      label: 'lot balance',
+    });
+    lotPrevious = resolved.previousQuantity;
+    lotNew = resolved.newQuantity;
+  }
+
+  const { previousQuantity, newQuantity } = resolveAdjustment({
+    currentQuantity: aggregate ? parseFloat(aggregate.quantity as string) || 0 : 0,
+    quantityDelta,
+  });
+
+  // Both guards passed — now write.
+  if (lotId && lotNew !== null) {
+    await upsertInventoryBalance(lotId, productId, warehouseId, balanceStatus, lotNew, existingBalance?.unit || unit);
+  }
+
+  if (aggregate) {
+    await db.update(inventory)
+      .set({ quantity: newQuantity.toString() })
+      .where(eq(inventory.id, aggregate.id));
+  } else {
+    await db.insert(inventory).values({
+      companyId: companyId ?? null,
+      productId,
+      warehouseId,
+      quantity: newQuantity.toString(),
+    });
+  }
+
+  const decrease = quantityDelta < 0;
+  const txn = await createInventoryTransaction({
+    transactionType,
+    lotId: lotId ?? null,
+    productId,
+    fromWarehouseId: decrease ? warehouseId : null,
+    toWarehouseId: decrease ? null : warehouseId,
+    fromStatus: decrease ? balanceStatus : null,
+    toStatus: decrease ? null : balanceStatus,
+    quantity: Math.abs(quantityDelta).toString(),
+    unit,
+    previousBalance: (lotPrevious ?? previousQuantity).toString(),
+    newBalance: (lotNew ?? newQuantity).toString(),
+    referenceType,
+    referenceId: referenceId ?? null,
+    reasonCode,
+    reason: reason ?? null,
+    performedBy: performedBy ?? null,
+  });
+
+  return {
+    ...txn,
+    previousQuantity,
+    newQuantity,
+    lotPreviousQuantity: lotPrevious,
+    lotNewQuantity: lotNew,
+  };
+}
+
+/** Write stock off entirely — a scrap posting, always a decrease. */
+export async function scrapInventory(params: {
+  productId: number;
+  warehouseId: number;
+  lotId?: number | null;
+  quantity: number;
+  reasonCode: string;
+  reason?: string;
+  companyId?: number;
+  unit?: string;
+  performedBy?: number;
+}) {
+  if (params.quantity <= 0) throw new Error("Scrap quantity must be greater than zero");
+  return adjustInventoryQuantity({
+    ...params,
+    quantityDelta: -Math.abs(params.quantity),
+    transactionType: 'scrap',
+    referenceType: 'scrap',
+  });
+}
+
+// ============================================
+// CYCLE COUNTING / PHYSICAL INVENTORY
+// ============================================
+
+export async function createCycleCount(data: Omit<InsertCycleCount, 'countNumber'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const countNumber = `CC-${Date.now().toString(36).toUpperCase()}`;
+  const result = await db.insert(cycleCounts).values({ ...data, countNumber });
+  return { id: result[0].insertId, countNumber };
+}
+
+export async function getCycleCounts(filters?: {
+  companyId?: number;
+  warehouseId?: number;
+  status?: string;
+  limit?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.companyId) conditions.push(eq(cycleCounts.companyId, filters.companyId));
+  if (filters?.warehouseId) conditions.push(eq(cycleCounts.warehouseId, filters.warehouseId));
+  if (filters?.status) conditions.push(eq(cycleCounts.status, filters.status as any));
+  return db.select().from(cycleCounts)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(cycleCounts.createdAt))
+    .limit(filters?.limit ?? 100);
+}
+
+export async function getCycleCountById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(cycleCounts).where(eq(cycleCounts.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getCycleCountLines(countId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(cycleCountLines)
+    .where(eq(cycleCountLines.countId, countId))
+    .orderBy(asc(cycleCountLines.id));
+}
+
+export async function updateCycleCount(id: number, data: Partial<InsertCycleCount>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(cycleCounts).set(data).where(eq(cycleCounts.id, id));
+}
+
+/**
+ * Snapshot current book quantities into count lines.
+ *
+ * Lot-tracked products get one line per lot balance; everything else gets a
+ * single aggregate line. Re-generating replaces any lines not yet counted.
+ */
+export async function generateCycleCountLines(countId: number, options?: {
+  productIds?: number[];
+  includeZeroQuantity?: boolean;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const count = await getCycleCountById(countId);
+  if (!count) throw new Error("Cycle count not found");
+  if (count.status !== 'draft') {
+    throw new Error(`Lines can only be generated while the count is in draft (currently ${count.status})`);
+  }
+
+  await db.delete(cycleCountLines).where(and(
+    eq(cycleCountLines.countId, countId),
+    eq(cycleCountLines.status, 'pending'),
+  ));
+
+  const balanceConditions: any[] = [eq(inventoryBalances.warehouseId, count.warehouseId)];
+  if (options?.productIds?.length) {
+    balanceConditions.push(inArray(inventoryBalances.productId, options.productIds));
+  }
+  const lotBalances = await db.select().from(inventoryBalances).where(and(...balanceConditions));
+
+  const aggregateConditions: any[] = [eq(inventory.warehouseId, count.warehouseId)];
+  if (options?.productIds?.length) {
+    aggregateConditions.push(inArray(inventory.productId, options.productIds));
+  }
+  const aggregates = await db.select().from(inventory).where(and(...aggregateConditions));
+
+  const lotTrackedProducts = new Set(lotBalances.map((b) => b.productId));
+  const rows: InsertCycleCountLine[] = [];
+
+  for (const balance of lotBalances) {
+    const qty = parseFloat(balance.quantity) || 0;
+    if (qty === 0 && !options?.includeZeroQuantity) continue;
+    rows.push({
+      countId,
+      productId: balance.productId,
+      lotId: balance.lotId,
+      warehouseId: count.warehouseId,
+      zoneId: balance.zoneId,
+      binId: balance.binId,
+      systemQuantity: qty.toString(),
+      unit: balance.unit,
+      status: 'pending',
+    });
+  }
+
+  for (const row of aggregates) {
+    if (lotTrackedProducts.has(row.productId)) continue;
+    const qty = parseFloat(row.quantity as string) || 0;
+    if (qty === 0 && !options?.includeZeroQuantity) continue;
+    rows.push({
+      countId,
+      productId: row.productId,
+      lotId: null,
+      warehouseId: count.warehouseId,
+      systemQuantity: qty.toString(),
+      unit: 'EA',
+      status: 'pending',
+    });
+  }
+
+  if (rows.length > 0) {
+    await db.insert(cycleCountLines).values(rows);
+  }
+  return { countId, linesGenerated: rows.length };
+}
+
+/** Record a physical count against one line. Variance is derived, never sent by the client. */
+export async function recordCycleCountLine(lineId: number, params: {
+  countedQuantity: number;
+  reasonCode?: string;
+  notes?: string;
+  countedBy?: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const existing = await db.select().from(cycleCountLines).where(eq(cycleCountLines.id, lineId)).limit(1);
+  const line = existing[0];
+  if (!line) throw new Error("Cycle count line not found");
+
+  const count = await getCycleCountById(line.countId);
+  if (!count) throw new Error("Cycle count not found");
+  if (count.status !== 'in_progress' && count.status !== 'pending_review') {
+    throw new Error(`Counts can only be recorded while the count is open (currently ${count.status})`);
+  }
+  if (params.countedQuantity < 0) throw new Error("Counted quantity cannot be negative");
+
+  const systemQuantity = parseFloat(line.systemQuantity) || 0;
+  const variance = computeVariance(systemQuantity, params.countedQuantity);
+
+  // Value the variance at the product's average cost where one is known.
+  const [aggregate] = await db.select().from(inventory)
+    .where(and(eq(inventory.productId, line.productId), eq(inventory.warehouseId, line.warehouseId)))
+    .limit(1);
+  const avgCost = aggregate?.averageCost ? parseFloat(aggregate.averageCost) : 0;
+
+  await db.update(cycleCountLines).set({
+    countedQuantity: params.countedQuantity.toString(),
+    variance: variance.toString(),
+    varianceValue: computeVarianceValue(variance, avgCost).toFixed(2),
+    reasonCode: params.reasonCode ?? line.reasonCode,
+    notes: params.notes ?? line.notes,
+    status: 'counted',
+    countedBy: params.countedBy ?? null,
+    countedAt: new Date(),
+  }).where(eq(cycleCountLines.id, lineId));
+
+  return { id: lineId, systemQuantity, countedQuantity: params.countedQuantity, variance };
+}
+
+export async function flagCycleCountLineForRecount(lineId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(cycleCountLines)
+    .set({ status: 'recount', countedQuantity: null, variance: null, varianceValue: null })
+    .where(eq(cycleCountLines.id, lineId));
   return { success: true };
+}
+
+export async function startCycleCount(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const count = await getCycleCountById(id);
+  if (!count) throw new Error("Cycle count not found");
+  assertTransition(count.status, 'in_progress');
+
+  const lines = await getCycleCountLines(id);
+  if (lines.length === 0) throw new Error("Generate count lines before starting the count");
+
+  await db.update(cycleCounts)
+    .set({ status: 'in_progress', startedAt: new Date() })
+    .where(eq(cycleCounts.id, id));
+  return { success: true, lineCount: lines.length };
+}
+
+export async function submitCycleCountForReview(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const count = await getCycleCountById(id);
+  if (!count) throw new Error("Cycle count not found");
+  assertTransition(count.status, 'pending_review');
+
+  const lines = await getCycleCountLines(id);
+  const uncounted = uncountedLines(lines);
+  if (uncounted.length > 0) {
+    throw new Error(`${uncounted.length} line(s) still need a count before review`);
+  }
+
+  await db.update(cycleCounts)
+    .set({ status: 'pending_review', completedAt: new Date() })
+    .where(eq(cycleCounts.id, id));
+  return { success: true };
+}
+
+export async function cancelCycleCount(id: number, reason?: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const count = await getCycleCountById(id);
+  if (!count) throw new Error("Cycle count not found");
+  assertTransition(count.status, 'cancelled');
+
+  await db.update(cycleCounts)
+    .set({ status: 'cancelled', notes: reason ?? count.notes })
+    .where(eq(cycleCounts.id, id));
+  return { success: true };
+}
+
+/**
+ * Approve a count and post every non-zero variance to the inventory ledger as
+ * a `count_adjust` transaction. Also stamps lastCount* on the underlying
+ * balance rows so "when was this last verified" is answerable.
+ */
+export async function approveCycleCount(id: number, approvedBy: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const count = await getCycleCountById(id);
+  if (!count) throw new Error("Cycle count not found");
+  assertTransition(count.status, 'approved');
+
+  const lines = await getCycleCountLines(id);
+  const countedAt = new Date();
+  const posted: { lineId: number; variance: number; transactionNumber: string }[] = [];
+  const failed: { lineId: number; error: string }[] = [];
+
+  for (const line of lines) {
+    const variance = parseFloat(line.variance ?? '0') || 0;
+    const countedQuantity = parseFloat(line.countedQuantity ?? '0') || 0;
+
+    if (variance !== 0) {
+      try {
+        const txn = await adjustInventoryQuantity({
+          productId: line.productId,
+          warehouseId: line.warehouseId,
+          lotId: line.lotId,
+          quantityDelta: variance,
+          transactionType: 'count_adjust',
+          reasonCode: line.reasonCode || 'data_entry_error',
+          reason: `Cycle count ${count.countNumber}: system ${line.systemQuantity}, counted ${line.countedQuantity}`,
+          referenceType: 'cycle_count',
+          referenceId: id,
+          companyId: count.companyId ?? undefined,
+          unit: line.unit,
+          performedBy: approvedBy,
+        });
+        posted.push({ lineId: line.id, variance, transactionNumber: txn.transactionNumber });
+      } catch (error) {
+        failed.push({ lineId: line.id, error: (error as Error).message });
+        continue;
+      }
+    }
+
+    await db.update(cycleCountLines)
+      .set({ status: 'approved' })
+      .where(eq(cycleCountLines.id, line.id));
+
+    // Stamp the verification date on whichever store the line represents.
+    if (line.lotId) {
+      await db.update(inventoryBalances)
+        .set({ lastCountDate: countedAt, lastCountQuantity: countedQuantity.toString() })
+        .where(and(
+          eq(inventoryBalances.lotId, line.lotId),
+          eq(inventoryBalances.warehouseId, line.warehouseId),
+        ));
+    }
+    await db.update(inventory)
+      .set({ lastCountDate: countedAt, lastCountQuantity: countedQuantity.toString() })
+      .where(and(
+        eq(inventory.productId, line.productId),
+        eq(inventory.warehouseId, line.warehouseId),
+      ));
+  }
+
+  await db.update(cycleCounts)
+    .set({ status: 'approved', approvedBy, approvedAt: countedAt })
+    .where(eq(cycleCounts.id, id));
+
+  return {
+    success: true,
+    countNumber: count.countNumber,
+    linesApproved: lines.length,
+    adjustmentsPosted: posted.length,
+    adjustmentsFailed: failed.length,
+    posted,
+    failed,
+  };
+}
+
+/** Accuracy + variance rollup for one count. */
+export async function getCycleCountVarianceSummary(countId: number) {
+  return summarizeVariance(await getCycleCountLines(countId));
 }
 
 // ============================================

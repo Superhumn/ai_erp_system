@@ -38,6 +38,7 @@ crmPipelines
 crmTags
 currencyRates
 customsDocuments
+cycleCountLines
 dataRoomChecklistItems
 dataRoomChecklists
 dataRoomDocuments
@@ -157,6 +158,7 @@ salesEvents
 salesOrderLines
 savedReports
 savedViews
+serialNumberEvents
 sentEmails
 shopifyLocationMappings
 shopifySkuMappings
