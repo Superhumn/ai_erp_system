@@ -53,39 +53,10 @@ const CustomerSupport = lazy(() => import("./pages/cx/CustomerSupport"));
 const CRMHub = lazy(() => import("./pages/crm/CRMHub"));
 
 // Operations
-const Products = lazy(() => import("./pages/operations/Products"));
-const ProductDetail = lazy(() => import("./pages/operations/ProductDetail"));
-const Inventory = lazy(() => import("./pages/operations/Inventory"));
-const Vendors = lazy(() => import("./pages/operations/Vendors"));
-const PurchaseOrders = lazy(() => import("./pages/operations/PurchaseOrders"));
-const Shipments = lazy(() => import("./pages/operations/Shipments"));
-const Locations = lazy(() => import("./pages/operations/Locations"));
-const Transfers = lazy(() => import("./pages/operations/Transfers"));
-const TransferDetail = lazy(() => import("./pages/operations/TransferDetail"));
-const BOM = lazy(() => import("./pages/operations/BOM"));
-const Recipes = lazy(() => import("./pages/operations/Recipes"));
-const BOMDetail = lazy(() => import("./pages/operations/BOMDetail"));
-const RawMaterials = lazy(() => import("./pages/operations/RawMaterials"));
-const WorkOrders = lazy(() => import("./pages/operations/WorkOrders"));
-const ProductionBatches = lazy(() => import("./pages/operations/ProductionBatches"));
-const WorkOrderDetail = lazy(() => import("./pages/operations/WorkOrderDetail"));
-const POReceiving = lazy(() => import("./pages/operations/POReceiving"));
-const Forecasting = lazy(() => import("./pages/operations/Forecasting"));
-const CoreOperations = lazy(() => import("./pages/operations/CoreOperations"));
 const EmailInbox = lazy(() => import("./pages/operations/EmailInbox"));
-const Procurement = lazy(() => import("./pages/operations/Procurement"));
-const ManufacturingHub = lazy(() => import("./pages/operations/ManufacturingHub"));
-const ProcurementHub = lazy(() => import("./pages/operations/ProcurementHub"));
+const OperationsSection = lazy(() => import("./pages/operations/OperationsSection"));
 const LogisticsHub = lazy(() => import("./pages/operations/LogisticsHub"));
-const InventoryHub = lazy(() => import("./pages/operations/InventoryHub"));
-const OperationsHub = lazy(() => import("./pages/operations/OperationsHub"));
-const DocumentImport = lazy(() => import("./pages/operations/DocumentImport"));
-const Profitability = lazy(() => import("./pages/operations/Profitability"));
-const ReconciliationReport = lazy(() => import("./pages/operations/ReconciliationReport"));
-const InventoryCosting = lazy(() => import("./pages/operations/InventoryCosting"));
-const VendorNegotiations = lazy(() => import("./pages/operations/VendorNegotiations"));
 const SupplierPortal = lazy(() => import("./pages/SupplierPortal"));
-const MaterialSupply = lazy(() => import("./pages/operations/MaterialSupply"));
 
 // Ops Toolkit (Stackby-style views / forms / automations / reports)
 const OpsWorkspace = lazy(() => import("./pages/ops/OpsWorkspace"));
@@ -99,10 +70,6 @@ const Costing = lazy(() => import("./pages/finance/Costing"));
 const EmailScanning = lazy(() => import("./pages/settings/EmailScanning"));
 const OfferLetters = lazy(() => import("./pages/hr/OfferLetters"));
 const Departments = lazy(() => import("./pages/hr/Departments"));
-const Ingredients = lazy(() => import("./pages/operations/Ingredients"));
-const Allocations = lazy(() => import("./pages/operations/Allocations"));
-const InventoryPlanning = lazy(() => import("./pages/operations/InventoryPlanning"));
-const CycleCounts = lazy(() => import("./pages/operations/CycleCounts"));
 const Recommendations = lazy(() => import("./pages/ai/Recommendations"));
 const EDIInsights = lazy(() => import("./pages/edi/EDIInsights"));
 const CarrierQuotes = lazy(() => import("./pages/freight/CarrierQuotes"));
@@ -220,10 +187,8 @@ const ApprovalQueue = lazy(() => import("./pages/ai/ApprovalQueue"));
 // AI Analytics Pages
 const FinanceAI = lazy(() => import("./pages/finance/FinanceAI"));
 const HRAIInsights = lazy(() => import("./pages/hr/HRAIInsights"));
-const ManufacturingAI = lazy(() => import("./pages/operations/ManufacturingAI"));
 const LegalAI = lazy(() => import("./pages/legal/LegalAI"));
 const ProjectsAI = lazy(() => import("./pages/projects/ProjectsAI"));
-const SupplierScoring = lazy(() => import("./pages/operations/SupplierScoring"));
 
 // Autonomous Supply Chain
 const AutonomousDashboard = lazy(() => import("./pages/autonomous/Dashboard"));
@@ -343,45 +308,14 @@ function Router() {
           <Route path="/crm/dashboard" component={CRMDashboard} />
           <Route path="/crm"><Redirect to="/crm/hub" /></Route>
 
-          {/* Operations */}
-          <Route path="/operations" component={OperationsHub} />
-          <Route path="/operations/products/:id" component={ProductDetail} />
-          <Route path="/operations/products" component={Products} />
-          <Route path="/operations/inventory" component={Inventory} />
-          <Route path="/operations/cycle-counts" component={CycleCounts} />
-          <Route path="/operations/material-supply" component={MaterialSupply} />
-          <Route path="/operations/vendors" component={Vendors} />
-          <Route path="/operations/purchase-orders" component={PurchaseOrders} />
-          <Route path="/operations/shipments" component={Shipments} />
-          <Route path="/operations/locations" component={Locations} />
-          <Route path="/operations/transfers" component={Transfers} />
-          <Route path="/operations/transfers/:id" component={TransferDetail} />
-          <Route path="/operations/bom" component={BOM} />
-          <Route path="/operations/recipes" component={Recipes} />
-          <Route path="/operations/bom/:id" component={BOMDetail} />
-          <Route path="/operations/raw-materials" component={RawMaterials} />
-          <Route path="/operations/work-orders" component={WorkOrders} />
-          <Route path="/operations/work-orders/:id" component={WorkOrderDetail} />
-          <Route path="/operations/production-batches" component={ProductionBatches} />
-          <Route path="/operations/receiving" component={POReceiving} />
-          <Route path="/operations/forecasting" component={Forecasting} />
-          <Route path="/operations/core" component={CoreOperations} />
+          {/* Operations — every /operations route lives in OperationsSection,
+              which wraps them in the shared Operations shell. Email Inbox and
+              Logistics are their own top-level sidebar destinations, so they
+              are matched first and stay outside that shell. */}
           <Route path="/operations/email-inbox" component={EmailInbox} />
-          <Route path="/operations/procurement" component={Procurement} />
-          <Route path="/operations/manufacturing-hub" component={ManufacturingHub} />
-          <Route path="/operations/procurement-hub" component={ProcurementHub} />
           <Route path="/operations/logistics-hub" component={LogisticsHub} />
-          <Route path="/operations/inventory-hub" component={InventoryHub} />
-          <Route path="/operations/profitability" component={Profitability} />
-          <Route path="/operations/document-import" component={DocumentImport} />
-          <Route path="/operations/reconciliation" component={ReconciliationReport} />
-          <Route path="/operations/inventory-costing" component={InventoryCosting} />
-          <Route path="/operations/vendor-negotiations" component={VendorNegotiations} />
-          <Route path="/operations/manufacturing-ai" component={ManufacturingAI} />
-          <Route path="/operations/supplier-scoring" component={SupplierScoring} />
-          <Route path="/operations/ingredients" component={Ingredients} />
-          <Route path="/operations/allocations" component={Allocations} />
-          <Route path="/operations/inventory-planning" component={InventoryPlanning} />
+          <Route path="/operations/*" component={OperationsSection} />
+          <Route path="/operations" component={OperationsSection} />
 
           {/* EDI */}
           <Route path="/edi" component={EDIDashboard} />
