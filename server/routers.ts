@@ -3021,6 +3021,24 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         return result;
       }),
 
+    /**
+     * What to reorder, how much, and why.
+     *
+     * Replenishment was previously hand-entered reorder levels plus an
+     * after-the-fact low-stock notification: nothing consulted demand, vendor
+     * lead time, or stock already on order. A hand-entered level still wins
+     * where one is set.
+     */
+    replenishmentPlan: opsProcedure
+      .input(z.object({
+        windowDays: z.number().min(7).max(730).default(90),
+        warehouseId: z.number().optional(),
+        safetyDays: z.number().min(0).max(365).optional(),
+        coverageDays: z.number().min(1).max(365).optional(),
+        onlyActionable: z.boolean().default(false),
+      }).optional())
+      .query(({ input }) => db.getReplenishmentPlan(input)),
+
     /** Stock approaching or past its expiry date, bucketed by urgency. */
     expiring: opsProcedure
       .input(z.object({
@@ -3096,6 +3114,197 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         await createAuditLog(ctx.user.id, 'create', 'inventory_transfer', result.id, result.transferNumber);
         return { transferNumber: result.transferNumber, id: result.id };
       }),
+  }),
+
+  // ============================================
+  // OPERATIONS - ZONES & BINS
+  // ============================================
+  // `inventoryBalances.zoneId` / `binId` were free text with nothing behind
+  // them. These give the codes a master table, a walk order, and a capacity.
+  warehouseLocations: router({
+    zones: opsProcedure
+      .input(z.object({ warehouseId: z.number().optional() }).optional())
+      .query(({ input }) => db.getWarehouseZones(input?.warehouseId)),
+
+    createZone: opsProcedure
+      .input(z.object({
+        warehouseId: z.number(),
+        code: z.string().min(1).max(64),
+        name: z.string().min(1).max(255),
+        zoneType: z.enum(['picking', 'bulk', 'receiving', 'staging', 'quarantine', 'returns']).default('picking'),
+        pickSequence: z.number().int().min(0).default(0),
+        companyId: z.number().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createWarehouseZone(input);
+        await createAuditLog(ctx.user.id, 'create', 'warehouse_zone', result.id, input.code);
+        return result;
+      }),
+
+    updateZone: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().min(1).max(255).optional(),
+        zoneType: z.enum(['picking', 'bulk', 'receiving', 'staging', 'quarantine', 'returns']).optional(),
+        pickSequence: z.number().int().min(0).optional(),
+        status: z.enum(['active', 'inactive']).optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        const result = await db.updateWarehouseZone(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'warehouse_zone', id);
+        return result;
+      }),
+
+    bins: opsProcedure
+      .input(z.object({
+        warehouseId: z.number().optional(),
+        zoneId: z.number().optional(),
+      }).optional())
+      .query(({ input }) => db.getWarehouseBins(input)),
+
+    createBin: opsProcedure
+      .input(z.object({
+        warehouseId: z.number(),
+        zoneId: z.number().optional(),
+        code: z.string().min(1).max(64),
+        name: z.string().max(255).optional(),
+        pickSequence: z.number().int().min(0).default(0),
+        capacity: z.number().positive().optional(),
+        companyId: z.number().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createWarehouseBin({
+          ...input,
+          capacity: input.capacity != null ? input.capacity.toString() : undefined,
+        });
+        await createAuditLog(ctx.user.id, 'create', 'warehouse_bin', result.id, input.code);
+        return result;
+      }),
+
+    updateBin: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        zoneId: z.number().optional(),
+        name: z.string().max(255).optional(),
+        pickSequence: z.number().int().min(0).optional(),
+        capacity: z.number().positive().optional(),
+        status: z.enum(['active', 'inactive', 'blocked']).optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, capacity, ...rest } = input;
+        const result = await db.updateWarehouseBin(id, {
+          ...rest,
+          ...(capacity != null ? { capacity: capacity.toString() } : {}),
+        });
+        await createAuditLog(ctx.user.id, 'update', 'warehouse_bin', id);
+        return result;
+      }),
+
+    /** What is sitting in each bin, in walk order. */
+    contents: opsProcedure
+      .input(z.object({
+        warehouseId: z.number(),
+        binCode: z.string().optional(),
+      }))
+      .query(({ input }) => db.getBinContents(input)),
+
+    /**
+     * Move stock between bins. Nothing leaves the warehouse, so the aggregate
+     * does not change — only where the units sit.
+     */
+    moveBetweenBins: opsProcedure
+      .input(z.object({
+        lotId: z.number(),
+        productId: z.number(),
+        warehouseId: z.number(),
+        quantity: z.number().gt(0),
+        fromBinCode: z.string().nullable(),
+        toBinCode: z.string().min(1),
+        status: z.enum(['available', 'hold', 'reserved', 'quarantine', 'damaged']).default('available'),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.moveBetweenBins({ ...input, performedBy: ctx.user.id });
+        await createAuditLog(
+          ctx.user.id, 'update', 'inventory', input.productId,
+          `Moved ${result.moved} from ${result.from ?? 'unbinned'} to ${result.to}`,
+        );
+        return result;
+      }),
+  }),
+
+  // ============================================
+  // OPERATIONS - SERIAL NUMBERS
+  // ============================================
+  // Unit-level tracking beneath lots: a lot says which batch a unit came from,
+  // a serial says where that exact unit is now.
+  serials: router({
+    list: opsProcedure
+      .input(z.object({
+        productId: z.number().optional(),
+        lotId: z.number().optional(),
+        warehouseId: z.number().optional(),
+        status: z.enum(['in_stock', 'allocated', 'shipped', 'returned', 'scrapped']).optional(),
+        search: z.string().optional(),
+        limit: z.number().min(1).max(500).default(200),
+      }).optional())
+      .query(({ input }) => db.getSerialNumbers(input)),
+
+    receive: opsProcedure
+      .input(z.object({
+        productId: z.number(),
+        serialNumbers: z.array(z.string().min(1)).min(1).max(1000),
+        lotId: z.number().optional(),
+        warehouseId: z.number().optional(),
+        binCode: z.string().optional(),
+        sourceType: z.string().default('manual'),
+        sourceReferenceId: z.number().optional(),
+        companyId: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.receiveSerialNumbers({ ...input, performedBy: ctx.user.id });
+        await createAuditLog(
+          ctx.user.id, 'create', 'serial_number', input.productId,
+          `Received ${result.received} serial(s)`,
+        );
+        return result;
+      }),
+
+    updateStatus: opsProcedure
+      .input(z.object({
+        serialId: z.number(),
+        toStatus: z.enum(['in_stock', 'allocated', 'shipped', 'returned', 'scrapped']),
+        warehouseId: z.number().nullable().optional(),
+        binCode: z.string().nullable().optional(),
+        referenceType: z.string().optional(),
+        referenceId: z.number().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.updateSerialStatus({ ...input, performedBy: ctx.user.id });
+        await createAuditLog(
+          ctx.user.id, 'update', 'serial_number', input.serialId,
+          `${result.fromStatus} -> ${result.toStatus}`,
+        );
+        return result;
+      }),
+
+    /** Where one unit is now and every move it made. */
+    trace: opsProcedure
+      .input(z.object({
+        serialNumber: z.string().min(1),
+        productId: z.number().optional(),
+      }))
+      .query(({ input }) => db.traceSerialNumber(input.serialNumber, input.productId)),
+
+    /** Serials in a lot — the recall direction that starts from a batch. */
+    forLot: opsProcedure
+      .input(z.object({ lotId: z.number() }))
+      .query(({ input }) => db.getSerialsForLot(input.lotId)),
   }),
 
   // ============================================

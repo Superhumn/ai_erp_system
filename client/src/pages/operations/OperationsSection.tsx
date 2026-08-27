@@ -16,6 +16,8 @@ const ExpiryAndPicking = lazy(() => import("./ExpiryAndPicking"));
 const Transfers = lazy(() => import("./Transfers"));
 const TransferDetail = lazy(() => import("./TransferDetail"));
 const Locations = lazy(() => import("./Locations"));
+const BinLocations = lazy(() => import("./BinLocations"));
+const SerialNumbers = lazy(() => import("./SerialNumbers"));
 const InventoryCosting = lazy(() => import("./InventoryCosting"));
 const ReconciliationReport = lazy(() => import("./ReconciliationReport"));
 
@@ -44,6 +46,7 @@ const DocumentImport = lazy(() => import("./DocumentImport"));
 
 // Planning
 const InventoryPlanning = lazy(() => import("./InventoryPlanning"));
+const Replenishment = lazy(() => import("./Replenishment"));
 const Forecasting = lazy(() => import("./Forecasting"));
 const Allocations = lazy(() => import("./Allocations"));
 
@@ -85,6 +88,8 @@ export default function OperationsSection() {
           <Route path="/operations/transfers/:id" component={TransferDetail} />
           <Route path="/operations/transfers" component={Transfers} />
           <Route path="/operations/locations" component={Locations} />
+          <Route path="/operations/bins" component={BinLocations} />
+          <Route path="/operations/serials" component={SerialNumbers} />
           <Route
             path="/operations/inventory-costing"
             component={InventoryCosting}
@@ -143,6 +148,7 @@ export default function OperationsSection() {
             path="/operations/inventory-planning"
             component={InventoryPlanning}
           />
+          <Route path="/operations/replenishment" component={Replenishment} />
           <Route path="/operations/forecasting" component={Forecasting} />
           <Route path="/operations/allocations" component={Allocations} />
 

@@ -8132,3 +8132,106 @@ export const cycleCountLines = mysqlTable("cycleCountLines", {
 
 export type CycleCountLine = typeof cycleCountLines.$inferSelect;
 export type InsertCycleCountLine = typeof cycleCountLines.$inferInsert;
+
+// ============================================
+// WAREHOUSE ZONES & BINS
+// ============================================
+// `inventoryBalances` has carried free-text `zoneId` / `binId` since it was
+// created, with no table behind them: nothing validated a code, listed the
+// locations in a warehouse, or gave a bin a pick sequence. These tables give
+// those codes meaning.
+//
+// They key on the *code*, not on an id, precisely so the existing free-text
+// values keep resolving — turning the balance columns into integer foreign
+// keys would strand every row already written.
+
+export const warehouseZones = mysqlTable("warehouseZones", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
+  warehouseId: int("warehouseId").notNull().references(() => warehouses.id),
+  /** Matches `inventoryBalances.zoneId`. */
+  code: varchar("code", { length: 64 }).notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  zoneType: mysqlEnum("zoneType", ["picking", "bulk", "receiving", "staging", "quarantine", "returns"]).default("picking").notNull(),
+  /** Order zones are walked when picking. Lower is earlier. */
+  pickSequence: int("pickSequence").default(0).notNull(),
+  status: mysqlEnum("status", ["active", "inactive"]).default("active").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const warehouseBins = mysqlTable("warehouseBins", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
+  warehouseId: int("warehouseId").notNull().references(() => warehouses.id),
+  zoneId: int("zoneId").references(() => warehouseZones.id),
+  /** Matches `inventoryBalances.binId`. */
+  code: varchar("code", { length: 64 }).notNull(),
+  name: varchar("name", { length: 255 }),
+  /** Order bins are walked within their zone. Lower is earlier. */
+  pickSequence: int("pickSequence").default(0).notNull(),
+  /** Maximum units this bin holds. null = uncapped. */
+  capacity: decimal("capacity", { precision: 15, scale: 4 }),
+  status: mysqlEnum("status", ["active", "inactive", "blocked"]).default("active").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type WarehouseZone = typeof warehouseZones.$inferSelect;
+export type InsertWarehouseZone = typeof warehouseZones.$inferInsert;
+export type WarehouseBin = typeof warehouseBins.$inferSelect;
+export type InsertWarehouseBin = typeof warehouseBins.$inferInsert;
+
+// ============================================
+// SERIAL NUMBERS
+// ============================================
+// Unit-level tracking. Lots answer "which batch did this come from"; serials
+// answer "where is this exact unit now" — which is what a warranty claim or a
+// targeted recall actually needs.
+//
+// A serial belongs to a lot where the product is lot-tracked, so a recall can
+// go either way: lot -> affected serials, or serial -> its lot.
+
+export const serialNumbers = mysqlTable("serialNumbers", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
+  serialNumber: varchar("serialNumber", { length: 128 }).notNull(),
+  productId: int("productId").notNull().references(() => products.id),
+  lotId: int("lotId"),
+  warehouseId: int("warehouseId").references(() => warehouses.id),
+  binCode: varchar("binCode", { length: 64 }),
+  status: mysqlEnum("status", ["in_stock", "allocated", "shipped", "returned", "scrapped"]).default("in_stock").notNull(),
+  /** How it came in — a PO receipt, a work order, an opening balance. */
+  sourceType: varchar("sourceType", { length: 64 }),
+  sourceReferenceId: int("sourceReferenceId"),
+  /** Where it went — a sales order, a transfer. */
+  outboundReferenceType: varchar("outboundReferenceType", { length: 64 }),
+  outboundReferenceId: int("outboundReferenceId"),
+  receivedAt: timestamp("receivedAt"),
+  shippedAt: timestamp("shippedAt"),
+  notes: text("notes"),
+  createdBy: int("createdBy").references(() => users.id),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+/** Every status change, so a unit's whole life is reconstructable. */
+export const serialNumberEvents = mysqlTable("serialNumberEvents", {
+  id: int("id").autoincrement().primaryKey(),
+  serialId: int("serialId").notNull().references(() => serialNumbers.id),
+  fromStatus: varchar("fromStatus", { length: 32 }),
+  toStatus: varchar("toStatus", { length: 32 }).notNull(),
+  warehouseId: int("warehouseId"),
+  referenceType: varchar("referenceType", { length: 64 }),
+  referenceId: int("referenceId"),
+  notes: text("notes"),
+  performedBy: int("performedBy").references(() => users.id),
+  performedAt: timestamp("performedAt").defaultNow().notNull(),
+});
+
+export type SerialNumber = typeof serialNumbers.$inferSelect;
+export type InsertSerialNumber = typeof serialNumbers.$inferInsert;
+export type SerialNumberEvent = typeof serialNumberEvents.$inferSelect;
+export type InsertSerialNumberEvent = typeof serialNumberEvents.$inferInsert;

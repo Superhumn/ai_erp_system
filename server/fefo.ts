@@ -28,11 +28,20 @@ export interface PickableLot {
   quantity: number;
   /** null / undefined = does not expire. */
   expiryDate?: Date | string | null;
+  /**
+   * Bin holding this stock. The same lot can sit in several bins, so a lot id
+   * alone no longer identifies a pickable position.
+   */
+  binCode?: string | null;
+  /** Walk order within the warehouse. Lower is picked first. */
+  pickSequence?: number | null;
 }
 
 export interface LotAllocation {
   lotId: number;
   quantity: number;
+  /** Bin the units come from, when the stock is binned. */
+  binCode?: string | null;
 }
 
 export interface FefoSelection {
@@ -51,19 +60,31 @@ function expiryTime(lot: PickableLot): number | null {
  * FEFO order: soonest expiry first.
  *
  * Lots with no expiry sort last — they are never at risk, so consuming them
- * ahead of a dated lot is exactly the waste FEFO exists to prevent. Equal
- * expiry (including two undated lots) falls back to the lower lot id, so the
- * order is stable and the older lot goes first.
+ * ahead of a dated lot is exactly the waste FEFO exists to prevent.
+ *
+ * Ties (equal expiry, or two undated lots) fall through to the bin walk order,
+ * then the older lot, then the bin code — so the order is fully deterministic
+ * and a picker is routed forwards through the warehouse rather than back and
+ * forth between bins holding equally-dated stock.
  */
 export function compareByExpiry(a: PickableLot, b: PickableLot): number {
   const aTime = expiryTime(a);
   const bTime = expiryTime(b);
 
-  if (aTime === null && bTime === null) return a.lotId - b.lotId;
-  if (aTime === null) return 1;
-  if (bTime === null) return -1;
-  if (aTime !== bTime) return aTime - bTime;
-  return a.lotId - b.lotId;
+  if (aTime !== null || bTime !== null) {
+    if (aTime === null) return 1;
+    if (bTime === null) return -1;
+    if (aTime !== bTime) return aTime - bTime;
+  }
+
+  // Same expiry (or both undated): fall back to the walk order, so a picker is
+  // routed through the warehouse in sequence rather than doubling back.
+  const aSeq = a.pickSequence ?? Number.MAX_SAFE_INTEGER;
+  const bSeq = b.pickSequence ?? Number.MAX_SAFE_INTEGER;
+  if (aSeq !== bSeq) return aSeq - bSeq;
+
+  if (a.lotId !== b.lotId) return a.lotId - b.lotId;
+  return (a.binCode ?? "").localeCompare(b.binCode ?? "");
 }
 
 /** Lots in the order FEFO would consume them. Does not mutate the input. */
@@ -98,7 +119,7 @@ export function selectFefoLots(
     if (available <= 0) continue;
 
     const take = roundQty(Math.min(available, remaining));
-    allocations.push({ lotId: lot.lotId, quantity: take });
+    allocations.push({ lotId: lot.lotId, quantity: take, binCode: lot.binCode ?? null });
     remaining = roundQty(remaining - take);
   }
 

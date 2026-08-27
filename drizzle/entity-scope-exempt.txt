@@ -158,6 +158,7 @@ salesEvents
 salesOrderLines
 savedReports
 savedViews
+serialNumberEvents
 sentEmails
 shopifyLocationMappings
 shopifySkuMappings

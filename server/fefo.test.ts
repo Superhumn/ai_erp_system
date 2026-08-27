@@ -73,7 +73,7 @@ describe("FEFO allocation", () => {
       [lot(1, 100, "2026-07-01")],
       30,
     );
-    expect(allocations).toEqual([{ lotId: 1, quantity: 30 }]);
+    expect(allocations).toEqual([{ lotId: 1, quantity: 30, binCode: null }]);
     expect(shortfall).toBe(0);
   });
 
@@ -83,8 +83,8 @@ describe("FEFO allocation", () => {
       30,
     );
     expect(allocations).toEqual([
-      { lotId: 2, quantity: 25 },
-      { lotId: 1, quantity: 5 },
+      { lotId: 2, quantity: 25, binCode: null },
+      { lotId: 1, quantity: 5, binCode: null },
     ]);
     expect(shortfall).toBe(0);
   });
@@ -94,7 +94,7 @@ describe("FEFO allocation", () => {
       [lot(1, 4, "2026-07-01")],
       10,
     );
-    expect(allocations).toEqual([{ lotId: 1, quantity: 4 }]);
+    expect(allocations).toEqual([{ lotId: 1, quantity: 4, binCode: null }]);
     expect(shortfall).toBe(6);
   });
 
@@ -107,7 +107,7 @@ describe("FEFO allocation", () => {
       [lot(1, 0, "2026-07-01"), lot(2, -5, "2026-07-15"), lot(3, 8, "2026-08-01")],
       5,
     );
-    expect(allocations).toEqual([{ lotId: 3, quantity: 5 }]);
+    expect(allocations).toEqual([{ lotId: 3, quantity: 5, binCode: null }]);
   });
 
   it("stops once the pick is satisfied", () => {
@@ -127,8 +127,8 @@ describe("FEFO allocation", () => {
     );
     expect(shortfall).toBe(0);
     expect(allocations).toEqual([
-      { lotId: 1, quantity: 0.1 },
-      { lotId: 2, quantity: 0.2 },
+      { lotId: 1, quantity: 0.1, binCode: null },
+      { lotId: 2, quantity: 0.2, binCode: null },
     ]);
   });
 
@@ -202,5 +202,62 @@ describe("roundQty", () => {
     expect(roundQty(1.00004)).toBe(1);
     expect(roundQty(1.00006)).toBe(1.0001);
     expect(roundQty(12.3456789)).toBe(12.3457);
+  });
+});
+
+describe("bins", () => {
+  const binned = (
+    lotId: number,
+    quantity: number,
+    binCode: string,
+    pickSequence: number,
+    expiryDate?: string | null,
+  ): PickableLot => ({
+    lotId, quantity, binCode, pickSequence, expiryDate: expiryDate ?? null,
+  });
+
+  it("treats the same lot in two bins as two pickable positions", () => {
+    const { allocations, shortfall } = selectFefoLots(
+      [binned(1, 6, "A-01", 1, "2026-07-01"), binned(1, 6, "B-02", 2, "2026-07-01")],
+      10,
+    );
+    expect(shortfall).toBe(0);
+    expect(allocations).toEqual([
+      { lotId: 1, quantity: 6, binCode: "A-01" },
+      { lotId: 1, quantity: 4, binCode: "B-02" },
+    ]);
+  });
+
+  it("walks bins in pick sequence when expiry ties", () => {
+    const order = sortByFefo([
+      binned(1, 5, "Z-99", 9, "2026-07-01"),
+      binned(2, 5, "A-01", 1, "2026-07-01"),
+    ]).map((l) => l.binCode);
+    expect(order).toEqual(["A-01", "Z-99"]);
+  });
+
+  it("still puts expiry ahead of the walk order", () => {
+    // The far bin holds the older stock — FEFO sends the picker there first.
+    const order = sortByFefo([
+      binned(1, 5, "A-01", 1, "2026-12-01"),
+      binned(2, 5, "Z-99", 9, "2026-07-01"),
+    ]).map((l) => l.binCode);
+    expect(order).toEqual(["Z-99", "A-01"]);
+  });
+
+  it("sorts unsequenced bins after sequenced ones", () => {
+    const order = sortByFefo([
+      { lotId: 1, quantity: 5, expiryDate: "2026-07-01" },
+      binned(2, 5, "A-01", 3, "2026-07-01"),
+    ]).map((l) => l.binCode ?? "unbinned");
+    expect(order).toEqual(["A-01", "unbinned"]);
+  });
+
+  it("is deterministic for two bins with the same sequence", () => {
+    const order = sortByFefo([
+      binned(1, 5, "B-02", 1, "2026-07-01"),
+      binned(1, 5, "A-01", 1, "2026-07-01"),
+    ]).map((l) => l.binCode);
+    expect(order).toEqual(["A-01", "B-02"]);
   });
 });
