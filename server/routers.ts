@@ -2971,6 +2971,88 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         return result;
       }),
 
+    /** Lots that could be picked now, in the order FEFO would consume them. */
+    pickableLots: opsProcedure
+      .input(z.object({
+        productId: z.number(),
+        warehouseId: z.number(),
+        includeExpired: z.boolean().default(false),
+      }))
+      .query(({ input }) => db.getPickableLots(input.productId, input.warehouseId, {
+        includeExpired: input.includeExpired,
+      })),
+
+    /** What a FEFO pick would consume, and what it would be short by. */
+    planPick: opsProcedure
+      .input(z.object({
+        productId: z.number(),
+        warehouseId: z.number(),
+        quantity: z.number().gt(0),
+        includeExpired: z.boolean().default(false),
+      }))
+      .query(({ input }) => db.planFefoPick(input)),
+
+    /**
+     * Ship stock, consuming the soonest-expiring lots first.
+     *
+     * Until now nothing decremented stock on fulfilment — `shipInventory` was
+     * defined and never called — so book quantity drifted from physical on
+     * every shipment.
+     */
+    pickFefo: opsProcedure
+      .input(z.object({
+        productId: z.number(),
+        warehouseId: z.number(),
+        quantity: z.number().gt(0),
+        referenceType: z.string().default('manual'),
+        referenceId: z.number(),
+        fromStatus: z.enum(['reserved', 'available']).default('available'),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.pickInventoryFEFO({ ...input, performedBy: ctx.user.id });
+        await createAuditLog(
+          ctx.user.id, 'update', 'inventory', input.productId,
+          `Picked ${result.quantity} across ${result.allocations.length} lot(s)`,
+        );
+        const last = result.shipments[result.shipments.length - 1];
+        if (last) {
+          await notifyIfBelowReorderLevel(input.productId, input.warehouseId, last.newQuantity);
+        }
+        return result;
+      }),
+
+    /** Stock approaching or past its expiry date, bucketed by urgency. */
+    expiring: opsProcedure
+      .input(z.object({
+        withinDays: z.number().min(0).max(3650).default(90),
+        warehouseId: z.number().optional(),
+        includeUndated: z.boolean().default(false),
+      }))
+      .query(({ input }) => db.getExpiringInventory(input)),
+
+    /**
+     * Move expired stock out of available into quarantine.
+     *
+     * Admin-only: it takes stock out of circulation across the whole warehouse
+     * in one action. It does not write anything off — disposal stays an
+     * explicit `scrap`.
+     */
+    sweepExpired: adminProcedure
+      .input(z.object({ warehouseId: z.number().optional() }).optional())
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.sweepExpiredLots({
+          warehouseId: input?.warehouseId,
+          performedBy: ctx.user.id,
+        });
+        if (result.count > 0) {
+          await createAuditLog(
+            ctx.user.id, 'update', 'inventory', 0,
+            `Expiry sweep quarantined ${result.count} lot(s)`,
+          );
+        }
+        return result;
+      }),
+
     /** Movement ledger for a product/warehouse — the audit trail for stock. */
     getMovementHistory: opsProcedure
       .input(z.object({

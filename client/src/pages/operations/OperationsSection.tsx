@@ -12,6 +12,7 @@ const Products = lazy(() => import("./Products"));
 const ProductDetail = lazy(() => import("./ProductDetail"));
 const CoreOperations = lazy(() => import("./CoreOperations"));
 const CycleCounts = lazy(() => import("./CycleCounts"));
+const ExpiryAndPicking = lazy(() => import("./ExpiryAndPicking"));
 const Transfers = lazy(() => import("./Transfers"));
 const TransferDetail = lazy(() => import("./TransferDetail"));
 const Locations = lazy(() => import("./Locations"));
@@ -80,6 +81,7 @@ export default function OperationsSection() {
           <Route path="/operations/products" component={Products} />
           <Route path="/operations/core" component={CoreOperations} />
           <Route path="/operations/cycle-counts" component={CycleCounts} />
+          <Route path="/operations/expiry" component={ExpiryAndPicking} />
           <Route path="/operations/transfers/:id" component={TransferDetail} />
           <Route path="/operations/transfers" component={Transfers} />
           <Route path="/operations/locations" component={Locations} />

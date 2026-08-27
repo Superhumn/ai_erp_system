@@ -7,6 +7,10 @@ import {
   summarizeVariance, uncountedLines,
 } from "./cycleCountLogic";
 import {
+  expiredLots, expiryBucket, daysUntilExpiry, roundQty, selectFefoLots,
+  type PickableLot,
+} from "./fefo";
+import {
   InsertUser, users, authTokens, InsertAuthToken, localAuthCredentials, InsertLocalAuthCredential, companies, customers, vendors, products,
   accounts, invoices, invoiceItems, payments, transactions, transactionLines,
   orders, orderItems, inventory, warehouses, productionBatches,
@@ -5696,48 +5700,431 @@ export async function releaseReservation(lotId: number, productId: number, wareh
 }
 
 // Ship inventory (reserved -> 0, decreases on_hand)
-export async function shipInventory(lotId: number, productId: number, warehouseId: number, quantity: number, referenceType: string, referenceId: number, performedBy?: number) {
+/**
+ * Ships stock out of a lot, from either its reserved or available balance.
+ *
+ * Shipping is the one movement that reduces total on-hand, so unlike
+ * reserve/release it must move BOTH stores: the lot-level `inventoryBalances`
+ * row and the `inventory` aggregate. The previous implementation only touched
+ * the lot balance, which would have left the two disagreeing by the shipped
+ * quantity on every call — the same defect `adjustInventoryQuantity` exists to
+ * prevent. It was never called, so the drift never happened; it would have
+ * started the moment anything used it.
+ *
+ * Both balances are resolved before either is written, so a rejected shipment
+ * cannot leave the stores half-updated.
+ */
+export async function shipInventory(
+  lotId: number,
+  productId: number,
+  warehouseId: number,
+  quantity: number,
+  referenceType: string,
+  referenceId: number,
+  performedBy?: number,
+  options?: { fromStatus?: 'reserved' | 'available' },
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
-  // Get reserved balance
-  const reserved = await db.select().from(inventoryBalances)
+
+  const shipQty = roundQty(quantity);
+  if (!Number.isFinite(shipQty) || shipQty <= 0) {
+    throw new Error("Ship quantity must be greater than zero");
+  }
+
+  const fromStatus = options?.fromStatus ?? 'reserved';
+
+  const [balance] = await db.select().from(inventoryBalances)
     .where(and(
       eq(inventoryBalances.lotId, lotId),
       eq(inventoryBalances.warehouseId, warehouseId),
-      eq(inventoryBalances.status, 'reserved')
+      eq(inventoryBalances.status, fromStatus)
     ))
     .limit(1);
-  
-  if (!reserved[0] || parseFloat(reserved[0].quantity) < quantity) {
-    throw new Error("Insufficient reserved inventory to ship");
+
+  const previousBalance = balance ? roundQty(parseFloat(balance.quantity)) : 0;
+  if (!balance || previousBalance < shipQty) {
+    throw new Error(
+      `Insufficient ${fromStatus} inventory to ship: have ${previousBalance}, need ${shipQty}`,
+    );
   }
-  
-  const previousReserved = parseFloat(reserved[0].quantity);
-  const newReserved = previousReserved - quantity;
-  
-  // Decrease reserved
+
+  const [aggregate] = await db.select().from(inventory)
+    .where(and(eq(inventory.productId, productId), eq(inventory.warehouseId, warehouseId)))
+    .limit(1);
+
+  // Resolve the aggregate before writing anything, so an aggregate that cannot
+  // absorb the shipment rejects it rather than leaving the lot already reduced.
+  const previousAggregate = aggregate ? roundQty(parseFloat(aggregate.quantity)) : 0;
+  const { newQuantity: newAggregate } = resolveAdjustment({
+    currentQuantity: previousAggregate,
+    quantityDelta: -shipQty,
+    label: 'inventory',
+  });
+
+  const newBalance = roundQty(previousBalance - shipQty);
+
   await db.update(inventoryBalances)
-    .set({ quantity: newReserved.toString(), updatedAt: new Date() })
-    .where(eq(inventoryBalances.id, reserved[0].id));
-  
-  // Create transaction
-  await createInventoryTransaction({
+    .set({ quantity: newBalance.toString(), updatedAt: new Date() })
+    .where(eq(inventoryBalances.id, balance.id));
+
+  if (aggregate) {
+    await db.update(inventory)
+      .set({ quantity: newAggregate.toString() })
+      .where(eq(inventory.id, aggregate.id));
+  }
+
+  const txn = await createInventoryTransaction({
     transactionType: 'ship',
     lotId,
     productId,
     fromWarehouseId: warehouseId,
-    fromStatus: 'reserved',
-    quantity: quantity.toString(),
-    unit: reserved[0].unit,
-    previousBalance: previousReserved.toString(),
-    newBalance: newReserved.toString(),
+    fromStatus,
+    quantity: shipQty.toString(),
+    unit: balance.unit,
+    previousBalance: previousBalance.toString(),
+    newBalance: newBalance.toString(),
     referenceType,
     referenceId,
     performedBy
   });
-  
-  return { success: true };
+
+  return {
+    success: true,
+    ...txn,
+    lotPreviousQuantity: previousBalance,
+    lotNewQuantity: newBalance,
+    previousQuantity: previousAggregate,
+    newQuantity: newAggregate,
+  };
+}
+
+// ============================================
+// FEFO PICKING & EXPIRY
+// ============================================
+
+/**
+ * Lots that can be picked for a product at a warehouse, newest data first.
+ *
+ * Only `available` balances of `active` lots are pickable — stock that is
+ * reserved, on hold, quarantined or damaged is deliberately excluded.
+ */
+export async function getPickableLots(
+  productId: number,
+  warehouseId: number,
+  options?: { includeExpired?: boolean; asOf?: Date },
+): Promise<Array<PickableLot & { unit: string; balanceId: number; lotCode: string }>> {
+  const db = await getDb();
+  if (!db) return [];
+
+  const rows = await db.select({
+    balanceId: inventoryBalances.id,
+    lotId: inventoryBalances.lotId,
+    quantity: inventoryBalances.quantity,
+    unit: inventoryBalances.unit,
+    lotCode: inventoryLots.lotCode,
+    expiryDate: inventoryLots.expiryDate,
+  })
+    .from(inventoryBalances)
+    .innerJoin(inventoryLots, eq(inventoryBalances.lotId, inventoryLots.id))
+    .where(and(
+      eq(inventoryBalances.productId, productId),
+      eq(inventoryBalances.warehouseId, warehouseId),
+      eq(inventoryBalances.status, 'available'),
+      eq(inventoryLots.status, 'active'),
+    ));
+
+  const asOf = options?.asOf ?? new Date();
+  return rows
+    .map((row) => ({
+      balanceId: row.balanceId,
+      lotId: row.lotId,
+      lotCode: row.lotCode,
+      unit: row.unit,
+      quantity: roundQty(parseFloat(row.quantity)),
+      expiryDate: row.expiryDate,
+    }))
+    .filter((lot) => lot.quantity > 0)
+    .filter((lot) => {
+      if (options?.includeExpired) return true;
+      const days = daysUntilExpiry(lot, asOf);
+      return days === null || days >= 0;
+    });
+}
+
+/**
+ * Plans a FEFO pick without moving anything.
+ *
+ * Used to show which lots a shipment would consume, and what it would be short
+ * by, before committing to it.
+ */
+export async function planFefoPick(params: {
+  productId: number;
+  warehouseId: number;
+  quantity: number;
+  includeExpired?: boolean;
+  asOf?: Date;
+}) {
+  const lots = await getPickableLots(params.productId, params.warehouseId, {
+    includeExpired: params.includeExpired,
+    asOf: params.asOf,
+  });
+  const byLot = new Map(lots.map((lot) => [lot.lotId, lot]));
+  const { allocations, shortfall } = selectFefoLots(lots, params.quantity);
+
+  return {
+    shortfall,
+    allocations: allocations.map((allocation) => ({
+      ...allocation,
+      lotCode: byLot.get(allocation.lotId)?.lotCode ?? null,
+      expiryDate: byLot.get(allocation.lotId)?.expiryDate ?? null,
+    })),
+  };
+}
+
+/**
+ * Picks and ships `quantity` of a product, consuming the soonest-expiring lots
+ * first.
+ *
+ * This is what makes `shipInventory` reachable: callers ship a product and a
+ * quantity, and the lots are chosen for them. A short pick is refused outright
+ * rather than shipping what is available — a partial shipment posted as a whole
+ * one is worse than no shipment.
+ */
+export async function pickInventoryFEFO(params: {
+  productId: number;
+  warehouseId: number;
+  quantity: number;
+  referenceType: string;
+  referenceId: number;
+  performedBy?: number;
+  /** Ship straight from available stock instead of a prior reservation. */
+  fromStatus?: 'reserved' | 'available';
+  asOf?: Date;
+}) {
+  const fromStatus = params.fromStatus ?? 'available';
+
+  const lots = fromStatus === 'available'
+    ? await getPickableLots(params.productId, params.warehouseId, { asOf: params.asOf })
+    : await reservedLotsForPicking(params.productId, params.warehouseId, params.asOf);
+
+  const { allocations, shortfall } = selectFefoLots(lots, params.quantity);
+  if (shortfall > 0) {
+    throw new Error(
+      `Insufficient ${fromStatus} stock to pick: short by ${shortfall}`,
+    );
+  }
+
+  const shipments = [];
+  for (const allocation of allocations) {
+    shipments.push(
+      await shipInventory(
+        allocation.lotId,
+        params.productId,
+        params.warehouseId,
+        allocation.quantity,
+        params.referenceType,
+        params.referenceId,
+        params.performedBy,
+        { fromStatus },
+      ),
+    );
+  }
+
+  return {
+    quantity: roundQty(params.quantity),
+    allocations,
+    shipments,
+  };
+}
+
+/** The reserved-status equivalent of `getPickableLots`. */
+async function reservedLotsForPicking(
+  productId: number,
+  warehouseId: number,
+  asOf?: Date,
+): Promise<Array<PickableLot & { unit: string }>> {
+  const db = await getDb();
+  if (!db) return [];
+
+  const rows = await db.select({
+    lotId: inventoryBalances.lotId,
+    quantity: inventoryBalances.quantity,
+    unit: inventoryBalances.unit,
+    expiryDate: inventoryLots.expiryDate,
+  })
+    .from(inventoryBalances)
+    .innerJoin(inventoryLots, eq(inventoryBalances.lotId, inventoryLots.id))
+    .where(and(
+      eq(inventoryBalances.productId, productId),
+      eq(inventoryBalances.warehouseId, warehouseId),
+      eq(inventoryBalances.status, 'reserved'),
+    ));
+
+  return rows
+    .map((row) => ({
+      lotId: row.lotId,
+      unit: row.unit,
+      quantity: roundQty(parseFloat(row.quantity)),
+      expiryDate: row.expiryDate,
+    }))
+    .filter((lot) => lot.quantity > 0);
+}
+
+/**
+ * Stock approaching or past its expiry date, bucketed by urgency.
+ *
+ * `expiryDate` has been captured on every lot since lots existed and read by
+ * nothing, so there was no way to see what was about to go out of date.
+ */
+export async function getExpiringInventory(params?: {
+  withinDays?: number;
+  warehouseId?: number;
+  includeUndated?: boolean;
+  asOf?: Date;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [
+    eq(inventoryLots.status, 'active'),
+    ne(inventoryBalances.status, 'reserved'),
+  ];
+  if (params?.warehouseId) {
+    conditions.push(eq(inventoryBalances.warehouseId, params.warehouseId));
+  }
+
+  const rows = await db.select({
+    lotId: inventoryLots.id,
+    lotCode: inventoryLots.lotCode,
+    productId: inventoryBalances.productId,
+    warehouseId: inventoryBalances.warehouseId,
+    quantity: inventoryBalances.quantity,
+    unit: inventoryBalances.unit,
+    status: inventoryBalances.status,
+    expiryDate: inventoryLots.expiryDate,
+  })
+    .from(inventoryBalances)
+    .innerJoin(inventoryLots, eq(inventoryBalances.lotId, inventoryLots.id))
+    .where(and(...conditions))
+    .orderBy(asc(inventoryLots.expiryDate));
+
+  const asOf = params?.asOf ?? new Date();
+  const withinDays = params?.withinDays ?? 90;
+
+  return rows
+    .map((row) => {
+      const lot = { lotId: row.lotId, quantity: roundQty(parseFloat(row.quantity)), expiryDate: row.expiryDate };
+      return {
+        ...row,
+        quantity: lot.quantity,
+        daysUntilExpiry: daysUntilExpiry(lot, asOf),
+        bucket: expiryBucket(lot, asOf),
+      };
+    })
+    .filter((row) => row.quantity > 0)
+    .filter((row) => {
+      if (row.daysUntilExpiry === null) return params?.includeUndated ?? false;
+      return row.daysUntilExpiry <= withinDays;
+    });
+}
+
+/**
+ * Moves expired stock out of `available` and marks its lots expired.
+ *
+ * Quarantining does not change how much stock is physically on the shelf, so
+ * the `inventory` aggregate deliberately does not move — only the lot balance
+ * changes status. Writing it off is a separate, explicit decision (`scrap`),
+ * because disposal is not something a sweep should decide on its own.
+ */
+export async function sweepExpiredLots(params?: {
+  asOf?: Date;
+  warehouseId?: number;
+  performedBy?: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const asOf = params?.asOf ?? new Date();
+  const conditions = [
+    eq(inventoryLots.status, 'active'),
+    eq(inventoryBalances.status, 'available'),
+  ];
+  if (params?.warehouseId) {
+    conditions.push(eq(inventoryBalances.warehouseId, params.warehouseId));
+  }
+
+  const rows = await db.select({
+    balanceId: inventoryBalances.id,
+    lotId: inventoryLots.id,
+    lotCode: inventoryLots.lotCode,
+    productId: inventoryBalances.productId,
+    warehouseId: inventoryBalances.warehouseId,
+    quantity: inventoryBalances.quantity,
+    unit: inventoryBalances.unit,
+    expiryDate: inventoryLots.expiryDate,
+  })
+    .from(inventoryBalances)
+    .innerJoin(inventoryLots, eq(inventoryBalances.lotId, inventoryLots.id))
+    .where(and(...conditions));
+
+  const stale = expiredLots(
+    rows.map((row) => ({ ...row, quantity: roundQty(parseFloat(row.quantity)) })),
+    asOf,
+  );
+
+  const quarantined = [];
+  for (const row of stale) {
+    const existing = await db.select().from(inventoryBalances)
+      .where(and(
+        eq(inventoryBalances.lotId, row.lotId),
+        eq(inventoryBalances.warehouseId, row.warehouseId),
+        eq(inventoryBalances.status, 'quarantine'),
+      ))
+      .limit(1);
+
+    const previousQuarantine = existing[0] ? roundQty(parseFloat(existing[0].quantity)) : 0;
+    const newQuarantine = roundQty(previousQuarantine + row.quantity);
+
+    await upsertInventoryBalance(
+      row.lotId, row.productId, row.warehouseId, 'quarantine', newQuarantine, row.unit,
+    );
+    await db.update(inventoryBalances)
+      .set({ quantity: '0', updatedAt: new Date() })
+      .where(eq(inventoryBalances.id, row.balanceId));
+    await db.update(inventoryLots)
+      .set({ status: 'expired', updatedAt: new Date() })
+      .where(eq(inventoryLots.id, row.lotId));
+
+    await createInventoryTransaction({
+      transactionType: 'adjust',
+      lotId: row.lotId,
+      productId: row.productId,
+      fromWarehouseId: row.warehouseId,
+      toWarehouseId: row.warehouseId,
+      fromStatus: 'available',
+      toStatus: 'quarantine',
+      quantity: row.quantity.toString(),
+      unit: row.unit,
+      previousBalance: row.quantity.toString(),
+      newBalance: '0',
+      referenceType: 'expiry_sweep',
+      reasonCode: 'expiry',
+      reason: `Lot ${row.lotCode} expired`,
+      performedBy: params?.performedBy,
+    });
+
+    quarantined.push({
+      lotId: row.lotId,
+      lotCode: row.lotCode,
+      productId: row.productId,
+      warehouseId: row.warehouseId,
+      quantity: row.quantity,
+      expiryDate: row.expiryDate,
+    });
+  }
+
+  return { sweptAt: asOf, quarantined, count: quarantined.length };
 }
 
 // ============================================

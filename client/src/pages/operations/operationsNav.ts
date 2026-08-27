@@ -3,6 +3,7 @@ import {
   Boxes,
   Brain,
   Calculator,
+  CalendarClock,
   ClipboardCheck,
   ClipboardList,
   Factory,
@@ -111,6 +112,12 @@ export const OPERATIONS_SECTIONS: readonly OperationsSection[] = [
         path: "/operations/cycle-counts",
         desc: "Count sheets, variance review, and approval",
         icon: ClipboardCheck,
+      },
+      {
+        label: "Expiry & Picking",
+        path: "/operations/expiry",
+        desc: "What is about to expire, and FEFO lot selection for shipments",
+        icon: CalendarClock,
       },
       {
         label: "Transfers",
