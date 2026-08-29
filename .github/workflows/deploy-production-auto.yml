@@ -1,41 +1,44 @@
-name: Deploy to Production
+name: Deploy to Production (gated)
 
+# Runs after every successful "Deploy to Staging" on main and promotes that
+# exact commit to production — but only once a required reviewer approves the
+# run (the gate lives on the 'production' GitHub environment, not in this
+# file). Until the staging tier exists (second Railway service + env-scoped
+# service ids, see DEPLOYMENT.md "Staging tier"), the guard below refuses to
+# deploy before migrations run, so merging this workflow early is safe.
 on:
-  workflow_dispatch:
-    inputs:
-      confirm:
-        description: 'type "deploy" to confirm production deployment'
-        required: true
-        default: ''
+  workflow_run:
+    workflows: ["Deploy to Staging"]
+    types: [completed]
 
-# Same reasoning as deploy-staging.yml: Railway serves one container per
-# service, so never let two production deploys overlap.
+# Shares the manual deploy-production.yml group so a gated promotion and an
+# ad-hoc manual deploy can never replace the container mid-healthcheck.
 concurrency:
   group: deploy-production
   cancel-in-progress: false
 
 jobs:
   deploy-production:
-    name: Deploy to Railway Production
+    name: Promote staging build to Production
     runs-on: ubuntu-latest
     environment: production
     permissions:
       contents: read
-    if: github.event.inputs.confirm == 'deploy'
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
 
     steps:
-      - name: Checkout code
+      - name: Checkout the commit staging deployed
         uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       # Runs before the migration step, so a misrouted deploy is refused while
-      # the production database is still untouched. The current (original)
-      # service stays production — it owns the domain, the production DB, and
-      # every registered OAuth callback — and the staging tier is a NEW
-      # service whose id lives in the STAGING_SERVICE_ID repository variable
-      # (set when it is created; see DEPLOYMENT.md "Staging tier"). While that
-      # variable is unset the staging tier does not exist yet, and a
-      # "production" deploy would race the staging auto-deploys on the one
-      # shared container, so the deploy is refused.
+      # the production database is still untouched. STAGING_SERVICE_ID is a
+      # repository variable set when the staging service is created; while it
+      # is unset, staging and production share one container and promoting
+      # would just redeploy the same box, so the deploy is refused.
       - name: Verify production and staging are distinct services
         env:
           RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
@@ -46,14 +49,14 @@ jobs:
             exit 1
           fi
           if [ -z "$STAGING_SERVICE_ID" ]; then
-            echo "::error title=Staging tier not configured::STAGING_SERVICE_ID repository variable is not set, which means the second (staging) Railway service does not exist yet — staging and production share one container and this deploy would race the staging auto-deploys. Follow the 'Staging tier' section of DEPLOYMENT.md, then set STAGING_SERVICE_ID to the staging service id."
+            echo "::error title=Staging tier not configured::STAGING_SERVICE_ID repository variable is not set, which means the second (staging) Railway service does not exist yet — staging and production would be the same container. Follow the 'Staging tier' section of DEPLOYMENT.md, then set STAGING_SERVICE_ID to the staging service id."
             exit 1
           fi
           if [ "$RAILWAY_SERVICE_ID" = "$STAGING_SERVICE_ID" ]; then
-            echo "::error title=Production is pointing at the staging service::RAILWAY_SERVICE_ID resolved to ${RAILWAY_SERVICE_ID}, which is the staging service — a 'production' deploy would ship to staging and migrations would run against whichever DATABASE_URL the production environment holds. Set the 'production' environment's RAILWAY_SERVICE_ID to the production service id from the Railway dashboard."
+            echo "::error title=Production is pointing at the staging service::RAILWAY_SERVICE_ID resolved to ${RAILWAY_SERVICE_ID}, which is the staging service. Set the 'production' environment's RAILWAY_SERVICE_ID to the production service id from the Railway dashboard."
             exit 1
           fi
-          echo "Production service: $RAILWAY_SERVICE_ID"
+          echo "Promoting to production service: $RAILWAY_SERVICE_ID"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -99,10 +102,6 @@ jobs:
         run: |
           if [ -z "$RAILWAY_TOKEN" ]; then
             echo "::error title=Railway token missing::RAILWAY_TOKEN secret is not set for the 'production' environment. Add it in GitHub → Settings → Secrets and variables → Actions → Secrets (generate a project/service token in the Railway dashboard)."
-            exit 1
-          fi
-          if [ -z "$RAILWAY_SERVICE_ID" ]; then
-            echo "::error title=Railway service id missing::RAILWAY_SERVICE_ID variable is not set, so 'railway up' cannot target a service. Add it in GitHub → Settings → Secrets and variables → Actions → Variables (copy the service ID from the Railway dashboard)."
             exit 1
           fi
           # Constrain the CLI to the v4 major line so a v5 breaking release
