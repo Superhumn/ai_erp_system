@@ -25,7 +25,7 @@ export const ENV = {
     llmProvider: process.env.LLM_PROVIDER ?? "anthropic",
     llmApiUrl: process.env.LLM_API_URL ?? "",
     llmApiKey: process.env.LLM_API_KEY ?? "",
-    llmModel: process.env.LLM_MODEL ?? "claude-sonnet-4-20250514",
+    llmModel: process.env.LLM_MODEL ?? "claude-opus-5",
 
     // SendGrid email configuration
     sendgridApiKey: process.env.SENDGRID_API_KEY ?? "",

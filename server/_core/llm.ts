@@ -506,7 +506,7 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
   const converted = convertMessagesToAnthropic(messages);
 
   const payload: Record<string, unknown> = {
-        model: ENV.llmModel || "claude-sonnet-4-20250514",
+        model: ENV.llmModel || "claude-opus-5",
         messages: converted.messages,
         max_tokens: maxTokens ?? max_tokens ?? 8192,
   };
@@ -659,7 +659,7 @@ function buildAnthropicPayload(params: InvokeParams): Record<string, unknown> {
   const converted = convertMessagesToAnthropic(messages);
 
   const payload: Record<string, unknown> = {
-    model: ENV.llmModel || "claude-sonnet-4-20250514",
+    model: ENV.llmModel || "claude-opus-5",
     messages: converted.messages,
     max_tokens: maxTokens ?? max_tokens ?? 8192,
   };

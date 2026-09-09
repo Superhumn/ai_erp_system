@@ -7,7 +7,8 @@ This guide walks through configuring the CI/CD pipeline for the AI ERP System.
 | Workflow | File | Trigger | Purpose |
 |----------|------|---------|---------|
 | **CI** | `.github/workflows/ci.yml` | PRs to `main`, pushes to `main` | Type-check, test, and build |
-| **Deploy** | `.github/workflows/deploy.yml` | Push to `main`, manual dispatch | Deploy to staging then production |
+| **Deploy to Staging** | `.github/workflows/deploy-staging.yml` | Push to `main` | Run CI, migrate, deploy staging |
+| **Deploy to Production** | `.github/workflows/deploy-production.yml` | Manual dispatch (type `deploy` to confirm) | Migrate and deploy production |
 | **Delete Branches** | `.github/workflows/delete-merged-branches.yml` | PR closed (merged) | Clean up merged branches |
 
 ## CI Pipeline

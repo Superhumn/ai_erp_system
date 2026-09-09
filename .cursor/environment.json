@@ -1,0 +1,18 @@
+{
+  "name": "AI ERP System",
+  "user": "ubuntu",
+  "install": "bash scripts/cloud-agent-install.sh",
+  "start": "bash scripts/cloud-agent-start.sh",
+  "terminals": [
+    {
+      "name": "dev-server",
+      "command": "pnpm dev"
+    }
+  ],
+  "ports": [
+    {
+      "name": "app",
+      "port": 3000
+    }
+  ]
+}
