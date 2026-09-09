@@ -98,9 +98,16 @@ You need these per environment (GitHub → Settings → Secrets and variables �
 
 Create two environments in GitHub (**Settings → Environments**): `staging` and `production`, each with their own `RAILWAY_TOKEN` and `RAILWAY_SERVICE_ID`.
 
-> **Check this.** `RAILWAY_SERVICE_ID` set only at the repository level resolves to the *same* value in both
-> environments, which points a "production" deploy at the staging service. Define it as an
-> environment-scoped variable under each environment, not repo-wide.
+> **There is currently only one Railway service.** `RAILWAY_SERVICE_ID` is defined only at the
+> repository level (`696669c7-01e4-4d7a-8509-4abd2c96dac1`, in project
+> `c1100dc7-dcf2-41bd-9505-0946431bf022`), so both the `staging` and `production` environments
+> deploy the *same container* — the staging/production split is nominal for the app itself.
+> Only `RAILWAY_TOKEN` and `DATABASE_URL` are environment-scoped, so migrations may run against
+> different databases while the running app is shared.
+>
+> A push to `main` therefore redeploys the live service. If you want a real staging tier, create a
+> second Railway service and set `RAILWAY_SERVICE_ID` as an environment-scoped variable on each
+> environment; until then, treat every merge to `main` as a production release.
 
 ---
 
