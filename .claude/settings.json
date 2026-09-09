@@ -18,8 +18,39 @@
       "Bash(pnpm test:*)",
       "Bash(pnpm check:*)",
       "Bash(pnpm format:*)",
+      "Bash(pnpm index:legacy:*)",
+      "Bash(pnpm strict:audit)",
+      "Bash(pnpm strict:check)",
+      "Bash(pnpm audit:coverage)",
       "Bash(pnpm --version)",
       "Bash(node --version)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/regen-legacy-index.sh",
+            "timeout": 120,
+            "statusMessage": "Regenerating legacy indexes"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/typecheck-on-stop.sh",
+            "timeout": 600,
+            "statusMessage": "pnpm check on edited TypeScript"
+          }
+        ]
+      }
     ]
   }
 }
