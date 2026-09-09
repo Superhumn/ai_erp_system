@@ -1,0 +1,103 @@
+DB_INDEX.md
+  s_c2bc34cc15eb7f::t_76ded2c6f615d0 5,13-133,137-405,407-415,417,419-420,422-428,430-1645
+DEPLOYMENT.md
+  s_c2bc34cc15eb7f::t_ba10df7dec5130 101-110
+ROUTERS_INDEX.md
+  s_c2bc34cc15eb7f::t_8205efa4eff1ec 5,13-143,145,149-210,216-284
+client/src/App.tsx
+  s_c2bc34cc15eb7f::t_4f2f4b8aef67e6 57,311-314,317-318
+client/src/pages/operations/BinLocations.tsx
+  s_c2bc34cc15eb7f::t_a90f527d73ab83 1-525
+client/src/pages/operations/CycleCountDetail.tsx
+  s_c2bc34cc15eb7f::t_2378ea3dbbd9b9 1-330
+client/src/pages/operations/CycleCounts.tsx
+  s_c2bc34cc15eb7f::t_226326c5ef530a 1-229
+client/src/pages/operations/ExpiryAndPicking.tsx
+  s_c2bc34cc15eb7f::t_f2d1225967d088 1-417
+client/src/pages/operations/Inventory.tsx
+  s_c2bc34cc15eb7f::t_23ea45caa27c14 24-28,38,107-108,117-163,181-182,303-308,312-314,317,370-399,491-500,505-620
+client/src/pages/operations/OperationsHub.tsx
+  s_c2bc34cc15eb7f::t_5cbb2dee3cbc23 1,3,5-6,8-16,18-19,21-24,26-29,31-33,35-37,39-41,43-71,73-103,107-142
+client/src/pages/operations/OperationsLayout.tsx
+  s_c2bc34cc15eb7f::t_e8069777f461fb 1-119
+client/src/pages/operations/OperationsSection.tsx
+  s_c2bc34cc15eb7f::t_4ee5fe38afb2aa 1-169
+client/src/pages/operations/PurchaseOrderDetailSheet.tsx
+  s_c2bc34cc15eb7f::t_f14a6581bb74dd 47,55-101,162-169,211-214,243-259,261,424-445,520-526,693-868
+client/src/pages/operations/PurchaseOrders.tsx
+  s_c2bc34cc15eb7f::t_a10725678bae91 1,41-42,52-54,72-81,128-153,155-161,170-183,238,268,314-320,325-455,459,467,475,480-560,983-1047,1049-1152,1162,1168-1181,1200-1201,1204-1210,1261-1298,1369-1421,1465-1492
+client/src/pages/operations/Replenishment.tsx
+  s_c2bc34cc15eb7f::t_b7f569def41fc9 1-240
+client/src/pages/operations/SerialNumbers.tsx
+  s_c2bc34cc15eb7f::t_92820084c21c4c 1-428
+client/src/pages/operations/cycleCountLabels.ts
+  s_c2bc34cc15eb7f::t_92103ac01ee7ec 1-24
+client/src/pages/operations/operationsNav.test.ts
+  s_c2bc34cc15eb7f::t_9990597d9c7e2c 1-187
+client/src/pages/operations/operationsNav.ts
+  s_c2bc34cc15eb7f::t_1147a8fb38630c 1-354
+client/src/pages/operations/operationsRouting.test.tsx
+  s_c2bc34cc15eb7f::t_eebbf9e5e18bd3 1-102
+drizzle/0062_cycle_counting_and_ledger_reason_codes.sql
+  s_c2bc34cc15eb7f::t_57228a136fb44f 1-79
+drizzle/0063_warehouse_bins_and_serial_numbers.sql
+  s_c2bc34cc15eb7f::t_cfe5a9b6bacaec 1-167
+drizzle/0064_purchase_order_approvals.sql
+  s_c2bc34cc15eb7f::t_5094c3dddcc7c0 1-18
+drizzle/entity-scope-exempt.txt
+  s_c2bc34cc15eb7f::t_9295802a2a1351 41,141,162
+drizzle/meta/_journal.json
+  s_c2bc34cc15eb7f::t_d984ecc187fb3c 438-458
+drizzle/schema.ts
+  s_c2bc34cc15eb7f::t_890f66805190a8 2715-2716,7025-7050,8103-8263
+server/_core/index.ts
+  s_c2bc34cc15eb7f::t_2873b1f2531bcb 356-367
+server/cycleCount.test.ts
+  s_c2bc34cc15eb7f::t_786e640bb3b46b 1-203
+server/cycleCountLogic.ts
+  s_c2bc34cc15eb7f::t_5ef8fb7d68b4d8 1-116
+server/db.ts
+  s_c2bc34cc15eb7f::t_51a6c56e5fa1ad 5-23,28-29,52-55,1564-1736,2120-2121,2124-2172,2174-2372,2376-2446,3988-4082,4084-4151,6241-6250,6253-6254,6259-6260,6274,6436-6474,6478-6479,6482-6487,6489-6504,6506-6515,6520-6524,6529-7941
+server/documentImportService.ts
+  s_c2bc34cc15eb7f::t_118d564f2a053b 986-1004,1006-1007,1026,1259-1282,1285,1296,1315,1317,1329,1341
+server/fefo.test.ts
+  s_c2bc34cc15eb7f::t_d12aad0ac9a9bc 1-263
+server/fefo.ts
+  s_c2bc34cc15eb7f::t_915846069d6af2 1-175
+server/importAttachment.test.ts
+  s_c2bc34cc15eb7f::t_aa403292ee2cb3 21,112-172
+server/inventoryDeduplication.test.ts
+  s_c2bc34cc15eb7f::t_6d5d98bc956a32 1-92
+server/inventoryDeduplication.ts
+  s_c2bc34cc15eb7f::t_b0217be903f405 1-83
+server/purchaseOrderMatching.test.ts
+  s_c2bc34cc15eb7f::t_957ee902019bd0 1-218
+server/purchaseOrderMatching.ts
+  s_c2bc34cc15eb7f::t_2c8adeb386f305 1-252
+server/replenishment.test.ts
+  s_c2bc34cc15eb7f::t_24681baeffccd5 1-202
+server/replenishment.ts
+  s_c2bc34cc15eb7f::t_a22db4b1f28f46 1-244
+server/routers.ts
+  s_c2bc34cc15eb7f::t_c01bba228c8fae 6,255-283,2783-2785,2788-2794,2796-2805,2807-2808,2810-2826,2830,2833-2851,2860-2862,2865,2867-2914,2921-2925,2929,2940-3103,3138-3328,3895-3898,3900,3902-3939,3960-3985,4156-4271,15211-15329
+shared/inventoryAdjustments.ts
+  s_c2bc34cc15eb7f::t_88ed2528d46972 1-58
+shared/types.ts
+  s_c2bc34cc15eb7f::t_aeb849928b4c60 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "1bd957b46b0a4dcf705fb54c5fd2b02494b3f735",
+  "prompts": {},
+  "sessions": {
+    "s_c2bc34cc15eb7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9928e53-5247-4262-810c-098bf219ad0b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    }
+  }
+}
