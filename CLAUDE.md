@@ -57,6 +57,32 @@ Any change to `getMenuGroups()` will fail CI.
 | `pnpm test:e2e`      | Playwright e2e tests                                          |
 | `pnpm db:push`       | Generate + apply Drizzle migrations                           |
 | `pnpm format`        | Prettier write                                                |
+| `pnpm strict:check`  | CI gate: no file's strict-error count may grow (`.strict-baseline.json`) |
+| `pnpm strict:audit`  | Show current strict-error counts per file                     |
+| `pnpm strict:update` | Lower the baseline after fixing strict errors                 |
+| `pnpm index:legacy`  | Regenerate `ROUTERS_INDEX.md` + `DB_INDEX.md` (CI checks freshness) |
+| `pnpm audit:coverage`| List tRPC procedures with no client caller → `docs/FEATURE_COVERAGE.md` |
+
+CI (`.github/workflows/ci.yml`) runs: `check`, `check:strict`, `strict:check`, `test`, `index:legacy:check`. Run the same five before pushing.
+
+## Testing expectations
+
+- 95 server unit tests (`server/**/*.test.ts`, node) + 10 client tests (`client/src/**/*.test.ts(x)`, jsdom). One Playwright smoke spec.
+- New service logic in `server/` → sibling `.test.ts`. Mock `./db` at module level; no live MySQL.
+- New pure helper in `client/src/lib/` → sibling `.test.ts`.
+- Bug fix → a test that fails before the fix.
+- New table in `drizzle/schema.ts` → `pnpm test server/entity-scope.test.ts` must pass (companyId rule).
+- Run one file: `pnpm test <path>`.
+
+## Hooks (`.claude/settings.json`)
+
+- `PostToolUse` on Edit/Write → `.claude/hooks/regen-legacy-index.sh` regenerates the indexes when `server/routers.ts`, `server/db.ts`, `server/routers/*`, or `server/db/*` change.
+- `Stop` → `.claude/hooks/typecheck-on-stop.sh` runs `pnpm check` once per turn when `.ts`/`.tsx` files are dirty. A failure is fed back so the turn ends with a fix.
+- Both no-op when `node_modules` is absent.
+
+## Nested guides
+
+Each directory below has its own `CLAUDE.md`, loaded when you work there: `server/`, `server/_core/`, `client/src/pages/`, `client/src/components/`, `drizzle/`, `shared/`, `scripts/`.
 
 ## Repo map
 
@@ -70,13 +96,14 @@ client/src/          React app
 server/              Express + tRPC backend
   _core/             Entry point, tRPC setup, infra (llm, email,
                      oauth, gmail, googleDrive, quickbooks, shopify, ...)
-  routers/           Per-feature tRPC routers (preferred home for new routes)
-  routers/index.ts   Router aggregation
-  routers.ts         LEGACY (21k lines) — see warning below
-  db/                Preferred home for new DB helpers
-  db.ts              LEGACY (12k lines) — see warning below
+  routers/           Extracted per-feature routers — UNWIRED (see warning below)
+  routers/index.ts   Router aggregation — nothing imports it
+  routers.ts         LIVE monolith (28k lines) — see warning below
+  db/                Extracted DB helpers — mostly unwired
+  db.ts              LIVE monolith (16k lines) — see warning below
+  agent/             Autonomous agent loop (tools, memory, prompts)
 shared/              Types + constants used by both client and server
-drizzle/             SQL migrations + schema.ts (6.4k lines)
+drizzle/             SQL migrations + schema.ts (8k lines)
 scripts/             One-off imports / cleanups
 e2e/                 Playwright specs
 docs/                Feature + integration docs
@@ -86,9 +113,9 @@ docs/                Feature + integration docs
 
 Do **not** read these in full. Use one of: the generated index, `rg`/`grep`, or `Read` with `offset`/`limit`.
 
-- `server/routers.ts` — **21,798 lines, 103 top-level routers**. See [`ROUTERS_INDEX.md`](./ROUTERS_INDEX.md) for feature → line range. **This is the live tRPC router** — `server/_core/index.ts` imports `appRouter` from `"../routers"`, which resolves to this file.
-- `server/db.ts` — **12,503 lines, 911 exports, 108 banner sections**. See [`DB_INDEX.md`](./DB_INDEX.md) for section map and per-export coverage. Still the default import target for most of the codebase (~95 importers).
-- `drizzle/schema.ts` — **6,413 lines**. Drizzle table definitions.
+- `server/routers.ts` — **~27.7k lines, 128 top-level routers** (exact counts in the index header). See [`ROUTERS_INDEX.md`](./ROUTERS_INDEX.md) for feature → line range. **This is the live tRPC router** — `server/_core/index.ts` imports `appRouter` from `"../routers"`, which resolves to this file.
+- `server/db.ts` — **~15.6k lines, ~1,100 exports, 114 banner sections**. See [`DB_INDEX.md`](./DB_INDEX.md) for section map and per-export coverage. Still the default import target for most of the codebase.
+- `drizzle/schema.ts` — **~8k lines, ~295 tables**. Drizzle table definitions.
 
 **Rule: for any investigation that requires scanning `server/routers.ts` or `server/db.ts` beyond a single feature's line range, delegate to an `Explore` subagent.** Keeps the main context lean and avoids accidentally pulling tens of thousands of lines into the transcript.
 
