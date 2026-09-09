@@ -1,0 +1,98 @@
+DB_INDEX.md
+  h_11a4578b84bb53 5,13-133,137-405,407-415,417,419-420,422-428,430-1645
+DEPLOYMENT.md
+  h_11a4578b84bb53 101-110
+ROUTERS_INDEX.md
+  h_11a4578b84bb53 5,13-143,145,149-210,216-284
+client/src/App.tsx
+  h_11a4578b84bb53 57,311-314,317-318
+client/src/pages/operations/BinLocations.tsx
+  h_11a4578b84bb53 1-525
+client/src/pages/operations/CycleCountDetail.tsx
+  h_11a4578b84bb53 1-330
+client/src/pages/operations/CycleCounts.tsx
+  h_11a4578b84bb53 1-229
+client/src/pages/operations/ExpiryAndPicking.tsx
+  h_11a4578b84bb53 1-417
+client/src/pages/operations/Inventory.tsx
+  h_11a4578b84bb53 24-28,38,107-108,117-163,181-182,303-308,312-314,317,370-399,491-500,505-620
+client/src/pages/operations/OperationsHub.tsx
+  h_11a4578b84bb53 1,3,5-6,8-16,18-19,21-24,26-29,31-33,35-37,39-41,43-71,73-103,107-142
+client/src/pages/operations/OperationsLayout.tsx
+  h_11a4578b84bb53 1-119
+client/src/pages/operations/OperationsSection.tsx
+  h_11a4578b84bb53 1-169
+client/src/pages/operations/PurchaseOrderDetailSheet.tsx
+  h_11a4578b84bb53 47,55-101,162-169,211-214,243-259,261,424-445,520-526,693-868
+client/src/pages/operations/PurchaseOrders.tsx
+  h_11a4578b84bb53 1,41-42,52-54,72-81,128-153,155-161,170-183,238,268,314-320,325-455,459,467,475,480-560,983-1047,1049-1152,1162,1168-1181,1200-1201,1204-1210,1261-1298,1369-1421,1465-1492
+client/src/pages/operations/Replenishment.tsx
+  h_11a4578b84bb53 1-240
+client/src/pages/operations/SerialNumbers.tsx
+  h_11a4578b84bb53 1-428
+client/src/pages/operations/cycleCountLabels.ts
+  h_11a4578b84bb53 1-24
+client/src/pages/operations/operationsNav.test.ts
+  h_11a4578b84bb53 1-187
+client/src/pages/operations/operationsNav.ts
+  h_11a4578b84bb53 1-354
+client/src/pages/operations/operationsRouting.test.tsx
+  h_11a4578b84bb53 1-102
+drizzle/0062_cycle_counting_and_ledger_reason_codes.sql
+  h_11a4578b84bb53 1-79
+drizzle/0063_warehouse_bins_and_serial_numbers.sql
+  h_11a4578b84bb53 1-167
+drizzle/0064_purchase_order_approvals.sql
+  h_11a4578b84bb53 1-18
+drizzle/entity-scope-exempt.txt
+  h_11a4578b84bb53 41,141,162
+drizzle/meta/_journal.json
+  h_11a4578b84bb53 438-458
+drizzle/schema.ts
+  h_11a4578b84bb53 2715-2716,7025-7050,8103-8263
+server/_core/index.ts
+  h_11a4578b84bb53 297-308
+server/cycleCount.test.ts
+  h_11a4578b84bb53 1-203
+server/cycleCountLogic.ts
+  h_11a4578b84bb53 1-116
+server/db.ts
+  h_11a4578b84bb53 5-23,28-29,52-55,1491-1663,2047-2048,2051-2099,2101-2299,2303-2373,3915-4009,4011-4078,6168-6177,6180-6181,6186-6187,6201,6363-6401,6405-6406,6409-6414,6416-6431,6433-6442,6447-6451,6456-7868
+server/documentImportService.ts
+  h_11a4578b84bb53 986-1004,1006-1007,1026,1259-1282,1285,1296,1315,1317,1329,1341
+server/fefo.test.ts
+  h_11a4578b84bb53 1-263
+server/fefo.ts
+  h_11a4578b84bb53 1-175
+server/importAttachment.test.ts
+  h_11a4578b84bb53 21,112-172
+server/inventoryDeduplication.test.ts
+  h_11a4578b84bb53 1-92
+server/inventoryDeduplication.ts
+  h_11a4578b84bb53 1-83
+server/purchaseOrderMatching.test.ts
+  h_11a4578b84bb53 1-218
+server/purchaseOrderMatching.ts
+  h_11a4578b84bb53 1-252
+server/replenishment.test.ts
+  h_11a4578b84bb53 1-202
+server/replenishment.ts
+  h_11a4578b84bb53 1-244
+server/routers.ts
+  h_11a4578b84bb53 6,256-284,2784-2786,2789-2795,2797-2806,2808-2809,2811-2827,2831,2834-2852,2861-2863,2866,2868-2915,2922-2926,2930,2941-3104,3139-3329,3896-3899,3901,3903-3940,3961-3986,4157-4272,15331-15449
+shared/inventoryAdjustments.ts
+  h_11a4578b84bb53 1-58
+shared/types.ts
+  h_11a4578b84bb53 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "2888a756b29f18b323598d5e63cd1d6f9e6d8e3e",
+  "prompts": {},
+  "humans": {
+    "h_11a4578b84bb53": {
+      "author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    }
+  }
+}
