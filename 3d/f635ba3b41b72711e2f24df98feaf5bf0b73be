@@ -1,0 +1,35 @@
+ROUTERS_INDEX.md
+  s_c2bc34cc15eb7f::t_7dca0062d18d23 5,13-143,149-210,216-284
+client/src/pages/operations/ProcurementHub.tsx
+  s_c2bc34cc15eb7f::t_c9a8b950299818 119,263-304,1273-1334
+docs/FX_RATES.md
+  s_c2bc34cc15eb7f::t_12eb3df88c8507 1-107
+server/_core/env.ts
+  s_c2bc34cc15eb7f::t_af7605a4790cc8 103-108
+server/currencyService.test.ts
+  s_c2bc34cc15eb7f::t_514e4b5adb4518 2,43-131
+server/currencyService.ts
+  s_c2bc34cc15eb7f::t_27e2a873ebfb7f 287-393
+server/fxFeed.test.ts
+  s_c2bc34cc15eb7f::t_1d3ed0113b1bb3 1-91
+server/fxFeed.ts
+  s_c2bc34cc15eb7f::t_fa8fae88f33465 1-276
+server/routers.ts
+  s_c2bc34cc15eb7f::t_20b20a81abdc7c 53-54,15000-15118
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "3df635ba3b41b72711e2f24df98feaf5bf0b73be",
+  "prompts": {},
+  "sessions": {
+    "s_c2bc34cc15eb7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9928e53-5247-4262-810c-098bf219ad0b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    }
+  }
+}
