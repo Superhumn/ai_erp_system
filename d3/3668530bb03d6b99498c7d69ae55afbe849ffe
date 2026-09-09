@@ -1,0 +1,67 @@
+.cursor/environment.json
+  s_c2bc34cc15eb7f::t_33a0712846ee29 1-18
+.github/workflows/deploy-production.yml
+  s_c2bc34cc15eb7f::t_247e3ab28c06c6 11-16,30-48
+.github/workflows/deploy-staging.yml
+  s_c2bc34cc15eb7f::t_4ba070a8847e17 8-16,18-21,24
+CLAUDE.md
+  s_c2bc34cc15eb7f::t_5333e58125d366 97-111
+DB_INDEX.md
+  s_c2bc34cc15eb7f::t_170cb5b0db3e9b 5,13-127,131-386,388-396,398,400-401,403-407,409,411-1570
+DEPLOYMENT.md
+  s_c2bc34cc15eb7f::t_26dbcb52488e59 90-92,101-104,173
+ROUTERS_INDEX.md
+  s_c2bc34cc15eb7f::t_f0371069214c06 5,13-140,146-204,210-278
+docs/deployment-setup.md
+  s_c2bc34cc15eb7f::t_548f9ddb6051a5 10-11
+drizzle/0061_data_room_drive_sync_tables.sql
+  s_c2bc34cc15eb7f::t_4285d67c238756 1-53
+drizzle/meta/_journal.json
+  s_c2bc34cc15eb7f::t_fd6bb2f5aef4b1 260,267,274,281,288,295,431-437
+scripts/cloud-agent-install.sh
+  s_c2bc34cc15eb7f::t_8ddd022ef3fa5c 1-87
+scripts/cloud-agent-start.sh
+  s_c2bc34cc15eb7f::t_49310003f529c3 1-43
+scripts/cloud-db-setup.mjs
+  s_c2bc34cc15eb7f::t_f5f0bb7bef4f7a 1-85
+server/_core/env.ts
+  s_c2bc34cc15eb7f::t_9ddf1925615b1c 28
+server/_core/googleDrive.test.ts
+  s_c2bc34cc15eb7f::t_571e186ae36029 1-5,29-186
+server/_core/googleDrive.ts
+  s_c2bc34cc15eb7f::t_c1c80275b737c1 16-20,26,171-178,181,184,188,198,202,205,220-223,273,275,291-336,351-357,371,393-397,399,412-416
+server/_core/googleToken.ts
+  s_c2bc34cc15eb7f::t_267d8d369824ab 51-54
+server/_core/index.ts
+  s_c2bc34cc15eb7f::t_b5169425f63dc5 1171-1176,1886-1890
+server/_core/llm.test.ts
+  s_c2bc34cc15eb7f::t_f2ae31f4870613 8,27,101,135,156,175,183
+server/_core/llm.ts
+  s_c2bc34cc15eb7f::t_12cf4471ff2eb7 509,662
+server/agent/loop.ts
+  s_c2bc34cc15eb7f::t_35ca37da44bbb3 13
+server/db.ts
+  s_c2bc34cc15eb7f::t_2cf558776f2024 3,213,219-235,239
+server/googleDriveSyncService.ts
+  s_c2bc34cc15eb7f::t_880058abeeca9d 10,294-295,298-305,313-314,352-353,402-407,418-438,594-617
+server/routers.ts
+  s_c2bc34cc15eb7f::t_a1ba7e9331f533 63,358-361,16923-16931,16940-16945,16965-16969,16975-16979,16992-16998,17047-17053,17060-17065,17083,17087-17091,17102,17108-17112,17118-17121,17134-17136,17711-17713,17717-17719,17777-17781,17785-17791,17793-17794,17796-17803,17807-17819,17822-17831,17836-17843,17849-17853,17856
+server/routers/middleware.ts
+  s_c2bc34cc15eb7f::t_d62aa58af0b987 127-130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "d33668530bb03d6b99498c7d69ae55afbe849ffe",
+  "prompts": {},
+  "sessions": {
+    "s_c2bc34cc15eb7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9928e53-5247-4262-810c-098bf219ad0b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    }
+  }
+}
