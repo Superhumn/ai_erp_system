@@ -294,6 +294,18 @@ async function ensureTables() {
         createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
         updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
       )`,
+      `CREATE TABLE IF NOT EXISTS purchaseOrderApprovals (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        purchaseOrderId INT NOT NULL,
+        level INT NOT NULL,
+        decision ENUM('approved','rejected') NOT NULL,
+        decidedBy INT NOT NULL,
+        decidedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        decidedByRole VARCHAR(64),
+        notes TEXT,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        INDEX purchaseOrderApprovals_po_idx (purchaseOrderId)
+      )`,
       `CREATE TABLE IF NOT EXISTS exceptionRules (
         id INT AUTO_INCREMENT PRIMARY KEY,
         companyId INT,

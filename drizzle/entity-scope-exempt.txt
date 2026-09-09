@@ -138,6 +138,7 @@ productVolumeDiscounts
 projectMilestones
 projectTasks
 ptoBalances
+purchaseOrderApprovals
 purchaseOrderItems
 purchaseOrderRawMaterials
 quickbooksOAuthTokens

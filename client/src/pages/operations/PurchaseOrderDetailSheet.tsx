@@ -44,12 +44,60 @@ import {
   X,
   Building2,
   Truck,
+  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
 import { getStatusColor } from "@/lib/statusColors";
 import { printPurchaseOrder } from "./printPurchaseOrder";
+
+// ── Three-way match presentation ──
+
+const MATCH_STATUS_LABELS: Record<string, string> = {
+  matched: "Fully matched",
+  variance: "Variances found",
+  awaiting_receipt: "Awaiting receipt",
+  awaiting_invoice: "Awaiting invoice",
+  no_lines: "No line items",
+};
+
+const MATCH_STATUS_STYLES: Record<string, string> = {
+  matched: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200",
+  variance: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200",
+  awaiting_receipt: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200",
+  awaiting_invoice: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200",
+  no_lines: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200",
+};
+
+const MATCH_ISSUE_LABELS: Record<string, string> = {
+  not_received: "not received",
+  over_received: "over-received",
+  under_received: "short",
+  not_invoiced: "not invoiced",
+  invoice_qty_variance: "qty mismatch",
+  price_variance: "price variance",
+};
+
+const MATCH_ISSUE_STYLES: Record<string, string> = {
+  not_received: "text-slate-600 border-slate-300",
+  over_received: "text-amber-600 border-amber-300",
+  under_received: "text-amber-600 border-amber-300",
+  not_invoiced: "text-slate-600 border-slate-300",
+  invoice_qty_variance: "text-amber-600 border-amber-300",
+  price_variance: "text-red-600 border-red-300",
+};
+
+function MatchStat({ label, value, tone }: { label: string; value: string; tone?: "ok" | "warn" }) {
+  return (
+    <div className="rounded-md border p-3">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className={`text-sm font-mono tabular-nums mt-1 ${tone === "warn" ? "text-amber-600 font-medium" : ""}`}>
+        {value}
+      </p>
+    </div>
+  );
+}
 
 type EditItem = {
   description: string;
@@ -111,6 +159,14 @@ export default function PurchaseOrderDetailSheet({
     { enabled: open && poId != null },
   );
   const { data: products } = trpc.products.list.useQuery(undefined, { enabled: open });
+  const { data: match, isLoading: matchLoading } = trpc.purchaseOrders.threeWayMatch.useQuery(
+    { id: poId as number },
+    { enabled: open && poId != null },
+  );
+  const { data: approvalState } = trpc.purchaseOrders.approvalState.useQuery(
+    { id: poId as number },
+    { enabled: open && poId != null },
+  );
 
   const [mode, setMode] = useState<"view" | "edit" | "receive">("view");
   const [header, setHeader] = useState({ expectedDate: "", shippingAddress: "", notes: "" });
@@ -152,6 +208,10 @@ export default function PurchaseOrderDetailSheet({
   const invalidate = () => {
     refetch();
     utils.purchaseOrders.list.invalidate();
+    // Receiving or approving changes what the match and the approval chain say,
+    // so both have to be refetched alongside the PO itself.
+    utils.purchaseOrders.threeWayMatch.invalidate();
+    utils.purchaseOrders.approvalState.invalidate();
     onChanged?.();
   };
 
@@ -180,8 +240,25 @@ export default function PurchaseOrderDetailSheet({
     onError: (e) => toast.error(e.message),
   });
   const approvePO = trpc.purchaseOrders.approve.useMutation({
+    onSuccess: (r) => {
+      // A PO above the auto-approve threshold may need several sign-offs, so
+      // don't claim it reached the vendor until the chain is actually complete.
+      if (r.fullyApproved) {
+        toast.success("Approved and emailed to vendor");
+      } else {
+        toast.success(
+          r.nextLevel
+            ? `Approval recorded — still needs level ${r.nextLevel.level} (${r.nextLevel.roles.join(", ")})`
+            : "Approval recorded",
+        );
+      }
+      invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const rejectPO = trpc.purchaseOrders.reject.useMutation({
     onSuccess: () => {
-      toast.success("Approved and emailed to vendor");
+      toast.success("Purchase order rejected");
       invalidate();
     },
     onError: (e) => toast.error(e.message),
@@ -344,10 +421,28 @@ export default function PurchaseOrderDetailSheet({
             {mode === "view" && (
               <div className="flex flex-wrap gap-2 p-4 border-b bg-muted/30">
                 {po.status === "draft" && (
-                  <Button size="sm" onClick={() => approvePO.mutate({ id: po.id })} disabled={approvePO.isPending}>
-                    {approvePO.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle className="h-4 w-4 mr-2" />}
-                    Approve &amp; email
-                  </Button>
+                  <>
+                    <Button size="sm" onClick={() => approvePO.mutate({ id: po.id })} disabled={approvePO.isPending}>
+                      {approvePO.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle className="h-4 w-4 mr-2" />}
+                      {/* Only the last outstanding level actually releases the PO
+                          to the vendor — label the button for what it will do. */}
+                      {approvalState && !approvalState.autoApprove && approvalState.requiredLevels.length > 1 && approvalState.nextLevel
+                        ? `Approve (level ${approvalState.nextLevel.level} of ${approvalState.requiredLevels.length})`
+                        : "Approve & email"}
+                    </Button>
+                    {approvalState && !approvalState.autoApprove && approvalState.requiredLevels.length > 0 && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-destructive"
+                        onClick={() => rejectPO.mutate({ id: po.id })}
+                        disabled={rejectPO.isPending}
+                      >
+                        {rejectPO.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <XCircle className="h-4 w-4 mr-2" />}
+                        Reject
+                      </Button>
+                    )}
+                  </>
                 )}
                 {(po.status === "draft" || po.status === "sent") && (
                   <Button size="sm" variant="outline" onClick={() => sendToSupplier.mutate({ poId: po.id })} disabled={sendToSupplier.isPending}>
@@ -422,6 +517,13 @@ export default function PurchaseOrderDetailSheet({
                   <TabsTrigger value="overview">Overview</TabsTrigger>
                   <TabsTrigger value="items">Line items ({po.items?.length ?? 0})</TabsTrigger>
                   <TabsTrigger value="documents">Documents ({documents?.length ?? 0})</TabsTrigger>
+                  <TabsTrigger value="match" className="gap-1">
+                    Match
+                    {match && match.matchStatus === "variance" && (
+                      <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-label="variances found" />
+                    )}
+                  </TabsTrigger>
+                  <TabsTrigger value="approvals">Approvals</TabsTrigger>
                 </TabsList>
 
                 {/* Overview */}
@@ -586,6 +688,182 @@ export default function PurchaseOrderDetailSheet({
                       </div>
                       );
                     })
+                  )}
+                </TabsContent>
+
+                {/* ── Three-way match: ordered vs received vs invoiced ── */}
+                <TabsContent value="match" className="p-4 space-y-4">
+                  {matchLoading ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : !match ? (
+                    <p className="text-sm text-muted-foreground">No match data available.</p>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Badge className={MATCH_STATUS_STYLES[match.matchStatus]}>
+                          {MATCH_STATUS_LABELS[match.matchStatus]}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground">
+                          {match.header.invoiceCount} invoice{match.header.invoiceCount === 1 ? "" : "s"} linked ·
+                          price tolerance {match.header.priceTolerancePct}%
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <MatchStat label="Ordered" value={formatCurrency(match.header.orderedTotal)} />
+                        <MatchStat label="Received (at PO price)" value={formatCurrency(match.header.receivedValue)} />
+                        <MatchStat label="Invoiced" value={formatCurrency(match.header.invoicedTotal)} />
+                        <MatchStat
+                          label="Variance"
+                          value={`${formatCurrency(match.header.totalVariance)} (${match.header.totalVariancePct}%)`}
+                          // Only a real over/under-bill is worth colouring red.
+                          tone={Math.abs(Number(match.header.totalVariance)) > 0.01 ? "warn" : "ok"}
+                        />
+                      </div>
+
+                      {match.lines.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">This PO has no line items to match.</p>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b text-left text-xs text-muted-foreground">
+                                <th className="py-2 pr-2 font-medium">Item</th>
+                                <th className="py-2 px-2 font-medium text-right">Ordered</th>
+                                <th className="py-2 px-2 font-medium text-right">Received</th>
+                                <th className="py-2 px-2 font-medium text-right">Invoiced</th>
+                                <th className="py-2 px-2 font-medium text-right">Unit price</th>
+                                <th className="py-2 pl-2 font-medium">Flags</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {match.lines.map((line) => (
+                                <tr key={line.purchaseOrderItemId} className="border-b last:border-0 align-top">
+                                  <td className="py-2 pr-2 max-w-[220px]">{line.description}</td>
+                                  <td className="py-2 px-2 text-right font-mono tabular-nums">{line.orderedQty}</td>
+                                  <td className="py-2 px-2 text-right font-mono tabular-nums">{line.receivedQty}</td>
+                                  <td className="py-2 px-2 text-right font-mono tabular-nums">
+                                    {line.issues.includes("not_invoiced") ? "—" : line.invoicedQty}
+                                  </td>
+                                  <td className="py-2 px-2 text-right font-mono tabular-nums">
+                                    {formatCurrency(line.orderedUnitPrice)}
+                                    {!line.issues.includes("not_invoiced") &&
+                                      Math.abs(line.priceVariance) > 0.005 && (
+                                        <span className="block text-xs text-amber-600">
+                                          billed {formatCurrency(line.invoicedUnitPrice)}
+                                        </span>
+                                      )}
+                                  </td>
+                                  <td className="py-2 pl-2">
+                                    {line.matched ? (
+                                      <Badge variant="outline" className="text-emerald-600 border-emerald-300">matched</Badge>
+                                    ) : (
+                                      <div className="flex flex-wrap gap-1">
+                                        {line.issues.map((issue) => (
+                                          <Badge key={issue} variant="outline" className={MATCH_ISSUE_STYLES[issue] || ""}>
+                                            {MATCH_ISSUE_LABELS[issue] || issue}
+                                          </Badge>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+
+                      {match.unmatchedInvoiceLines.length > 0 && (
+                        <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-3">
+                          <p className="text-sm font-medium mb-2">
+                            Billed but not on this PO ({match.unmatchedInvoiceLines.length})
+                          </p>
+                          <ul className="space-y-1 text-sm">
+                            {match.unmatchedInvoiceLines.map((line, i) => (
+                              <li key={i} className="flex justify-between gap-4">
+                                <span className="text-muted-foreground">{line.description || "(no description)"}</span>
+                                <span className="font-mono tabular-nums">
+                                  {line.quantity} × {formatCurrency(line.unitPrice)} = {formatCurrency(line.totalPrice)}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </TabsContent>
+
+                {/* ── Approval chain ── */}
+                <TabsContent value="approvals" className="p-4 space-y-4">
+                  {!approvalState ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : approvalState.autoApprove ? (
+                    <p className="text-sm text-muted-foreground">
+                      {formatCurrency(approvalState.amount)} is below the auto-approve threshold
+                      {approvalState.thresholdName ? ` (${approvalState.thresholdName})` : ""} — no sign-off required.
+                    </p>
+                  ) : (
+                    <>
+                      <p className="text-sm text-muted-foreground">
+                        {formatCurrency(approvalState.amount)} requires {approvalState.requiredLevels.length} level
+                        {approvalState.requiredLevels.length === 1 ? "" : "s"} of approval
+                        {approvalState.thresholdName ? ` under "${approvalState.thresholdName}"` : ""}.
+                      </p>
+
+                      {approvalState.rejected && (
+                        <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
+                          <p className="font-medium text-destructive">Rejected</p>
+                          {approvalState.rejected.notes && (
+                            <p className="text-muted-foreground mt-1">{approvalState.rejected.notes}</p>
+                          )}
+                        </div>
+                      )}
+
+                      <ol className="space-y-2">
+                        {approvalState.requiredLevels.map((level) => {
+                          const decision = approvalState.decisions.find(
+                            (d) => d.level === level.level && d.decision === "approved",
+                          );
+                          const isNext = approvalState.nextLevel?.level === level.level;
+                          return (
+                            <li
+                              key={level.level}
+                              className={`flex items-start gap-3 rounded-md border p-3 ${isNext ? "border-primary/50 bg-primary/5" : ""}`}
+                            >
+                              {decision ? (
+                                <CheckCircle className="h-4 w-4 mt-0.5 text-emerald-600 shrink-0" />
+                              ) : (
+                                <div className="h-4 w-4 mt-0.5 rounded-full border-2 border-muted-foreground/40 shrink-0" />
+                              )}
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium">
+                                  Level {level.level}
+                                  {isNext && !approvalState.rejected && (
+                                    <span className="ml-2 text-xs font-normal text-primary">awaiting approval</span>
+                                  )}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {decision
+                                    ? `Approved${decision.decidedByRole ? ` by ${decision.decidedByRole}` : ""}${
+                                        decision.decidedAt ? ` on ${format(new Date(decision.decidedAt), "MMM d, yyyy")}` : ""
+                                      }`
+                                    : `Requires: ${level.roles.join(", ")}`}
+                                </p>
+                                {decision?.notes && (
+                                  <p className="text-xs text-muted-foreground mt-1">{decision.notes}</p>
+                                )}
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ol>
+                    </>
                   )}
                 </TabsContent>
               </Tabs>
