@@ -13,15 +13,17 @@ import {
 
 /**
  * Fetch a Drive API URL with Bearer auth, and if the user's token is
- * forbidden, retry with the service-account token when configured. This lets
- * private folders that are shared with the service account be read even when
- * the logged-in user has no direct access.
+ * forbidden / not found, retry with the service-account token when configured.
+ * Drive often returns 404 (not 403) when a file exists but is inaccessible to
+ * the current user, so 404 is included. This lets private folders that are
+ * shared with the service account be read even when the logged-in user has no
+ * direct access.
  */
 export async function driveFetch(url: string, userAccessToken: string): Promise<Response> {
   const primary = await fetch(url, {
     headers: { Authorization: `Bearer ${userAccessToken}` },
   });
-  if (primary.status !== 403 && primary.status !== 401) return primary;
+  if (primary.status !== 403 && primary.status !== 401 && primary.status !== 404) return primary;
   if (!isServiceAccountConfigured()) return primary;
 
   const saToken = await getServiceAccountAccessToken();
@@ -166,16 +168,24 @@ async function driveFilesListAll(
   accessToken: string,
   query: string,
   fields: string,
-): Promise<{ files: any[]; error?: string }> {
+): Promise<{ files: any[]; error?: string; incomplete?: boolean }> {
+  // Always ask for incompleteSearch — corpora=allDrives can omit results and
+  // set this flag. Callers must treat incomplete listings as partial so
+  // delete-propagation does not wipe items that were simply unlisted.
+  const listFields = fields.includes("incompleteSearch")
+    ? fields
+    : `incompleteSearch,${fields}`;
+
   const collect = async (
     useAllDrives: boolean,
-  ): Promise<{ files: any[]; ok: boolean; status: number; text: string }> => {
+  ): Promise<{ files: any[]; ok: boolean; status: number; text: string; incomplete: boolean }> => {
     const files: any[] = [];
     let pageToken: string | undefined;
+    let incomplete = false;
     do {
       const params = new URLSearchParams({
         q: query,
-        fields,
+        fields: listFields,
         pageSize: "1000",
         supportsAllDrives: "true",
         includeItemsFromAllDrives: "true",
@@ -185,13 +195,14 @@ async function driveFilesListAll(
 
       const response = await driveFetch(`${GOOGLE_DRIVE_API}/files?${params.toString()}`, accessToken);
       if (!response.ok) {
-        return { files, ok: false, status: response.status, text: await response.text() };
+        return { files, ok: false, status: response.status, text: await response.text(), incomplete };
       }
       const data = await response.json();
       if (Array.isArray(data.files)) files.push(...data.files);
+      if (data.incompleteSearch) incomplete = true;
       pageToken = data.nextPageToken;
     } while (pageToken);
-    return { files, ok: true, status: 200, text: "" };
+    return { files, ok: true, status: 200, text: "", incomplete };
   };
 
   // Prefer allDrives; on a 400 (unsupported param combo / account type), fall
@@ -206,7 +217,10 @@ async function driveFilesListAll(
     const hint = result.status === 403 || result.status === 404 ? permissionHint() : "";
     return { files: [], error: `Failed to list Drive contents: ${result.status}.${hint}` };
   }
-  return { files: result.files };
+  if (result.incomplete) {
+    console.warn("[GoogleDrive] files.list returned incompleteSearch=true — treating listing as partial.");
+  }
+  return { files: result.files, incomplete: result.incomplete };
 }
 
 const byName = (a: { name?: string }, b: { name?: string }) => (a.name || "").localeCompare(b.name || "");
@@ -256,9 +270,9 @@ export async function listDriveFiles(
 async function listDriveItems(
   accessToken: string,
   parentFolderId: string
-): Promise<{ folders: DriveFolder[]; files: DriveFile[]; error?: string }> {
+): Promise<{ folders: DriveFolder[]; files: DriveFile[]; error?: string; incomplete?: boolean }> {
   const query = `'${parentFolderId}' in parents and trashed=false`;
-  const { files: items, error } = await driveFilesListAll(
+  const { files: items, error, incomplete } = await driveFilesListAll(
     accessToken,
     query,
     "nextPageToken,files(id,name,mimeType,size,webViewLink,thumbnailLink,iconLink,createdTime,modifiedTime,parents)",
@@ -274,7 +288,52 @@ async function listDriveItems(
       files.push(item as DriveFile);
     }
   }
-  return { folders: folders.sort(byName), files: files.sort(byName) };
+  return { folders: folders.sort(byName), files: files.sort(byName), incomplete };
+}
+
+/**
+ * Search Drive for folders whose name contains `nameContains` (Shared Drive–aware).
+ * Used when a data room has no linked folder ID yet.
+ */
+export async function searchDriveFoldersByName(
+  accessToken: string,
+  nameContains: string,
+  pageSize = 5,
+): Promise<{ folders: DriveFolder[]; error?: string }> {
+  const safe = nameContains.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  const query = `name contains '${safe}' and mimeType='${FOLDER_MIME_TYPE}' and trashed=false`;
+  const fields = "incompleteSearch,files(id,name,mimeType,webViewLink,parents)";
+
+  const run = async (useAllDrives: boolean) => {
+    const params = new URLSearchParams({
+      q: query,
+      fields,
+      pageSize: String(pageSize),
+      supportsAllDrives: "true",
+      includeItemsFromAllDrives: "true",
+    });
+    if (useAllDrives) params.set("corpora", "allDrives");
+    return driveFetch(`${GOOGLE_DRIVE_API}/files?${params.toString()}`, accessToken);
+  };
+
+  let res = await run(true);
+  if (!res.ok && res.status === 400) {
+    console.warn("[GoogleDrive] corpora=allDrives rejected (400); retrying with default corpus.");
+    res = await run(false);
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    console.error("[GoogleDrive] folder search failed:", res.status, text);
+    const hint = res.status === 403 || res.status === 404 ? permissionHint() : "";
+    return { folders: [], error: `Failed to search Drive folders: ${res.status}.${hint}` };
+  }
+
+  const data = await res.json();
+  if (data.incompleteSearch) {
+    console.warn("[GoogleDrive] files.list returned incompleteSearch=true during folder search.");
+  }
+  const files = Array.isArray(data.files) ? (data.files as DriveFolder[]) : [];
+  return { folders: files.sort(byName) };
 }
 
 /**
@@ -287,6 +346,13 @@ async function listDriveItems(
 export function isConfidentialFolderName(name: string): boolean {
   const n = (name || "").trim().toLowerCase();
   return n.startsWith("_") || n === "private" || n === "confidential";
+}
+
+/** Static OAuth access token, or a getter that refreshes on each Drive listing. */
+export type DriveAccessToken = string | (() => Promise<string>);
+
+async function resolveDriveAccessToken(token: DriveAccessToken): Promise<string> {
+  return typeof token === "function" ? token() : token;
 }
 
 /**
@@ -302,7 +368,7 @@ export function isConfidentialFolderName(name: string): boolean {
  * enters the data room.
  */
 export async function syncDriveFolder(
-  accessToken: string,
+  accessToken: DriveAccessToken,
   folderId: string,
   maxDepth: number = 5
 ): Promise<DriveSyncResult> {
@@ -324,8 +390,13 @@ export async function syncDriveFolder(
       return;
     }
 
+    // Resolve (and optionally refresh) the token before each listing so a
+    // multi-hour sync of a large tree doesn't die mid-run on an expired OAuth
+    // access token.
+    const token = await resolveDriveAccessToken(accessToken);
+
     // Single call returns both folders and files; split is done client-side.
-    const { folders, files, error } = await listDriveItems(accessToken, currentFolderId);
+    const { folders, files, error, incomplete } = await listDriveItems(token, currentFolderId);
     if (error) {
       console.error(`[GoogleDrive] Error listing contents of ${currentFolderId}:`, error);
       // Root folder failure is fatal; record it so the caller can report why
@@ -337,6 +408,11 @@ export async function syncDriveFolder(
       else partial = true;
       return;
     }
+
+    // Shared Drive searches can omit items and set incompleteSearch — treat as
+    // partial so delete-propagation cannot remove "missing" files that were
+    // simply never returned by Drive.
+    if (incomplete) partial = true;
 
     // Drop confidential sub-folders before recording or recursing so neither
     // they nor their contents ever enter the data room. The root (depth 1) is
