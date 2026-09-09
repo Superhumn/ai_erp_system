@@ -38,6 +38,7 @@ crmPipelines
 crmTags
 currencyRates
 customsDocuments
+cycleCountLines
 dataRoomChecklistItems
 dataRoomChecklists
 dataRoomDocuments
@@ -137,6 +138,7 @@ productVolumeDiscounts
 projectMilestones
 projectTasks
 ptoBalances
+purchaseOrderApprovals
 purchaseOrderItems
 purchaseOrderRawMaterials
 quickbooksOAuthTokens
@@ -157,6 +159,7 @@ salesEvents
 salesOrderLines
 savedReports
 savedViews
+serialNumberEvents
 sentEmails
 shopifyLocationMappings
 shopifySkuMappings
