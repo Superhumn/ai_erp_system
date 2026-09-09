@@ -48,7 +48,10 @@ export async function getValidGoogleAccessToken(
   const token = await getGoogleOAuthToken(userId);
   if (!token) return { accessToken: "", error: "Google account not connected" };
 
-  if (token.expiresAt && new Date(token.expiresAt) < new Date()) {
+  // Refresh a bit early so long-running jobs that re-check the token don't keep
+  // using one that's about to expire.
+  const refreshSkewMs = 5 * 60 * 1000;
+  if (token.expiresAt && new Date(token.expiresAt).getTime() - refreshSkewMs < Date.now()) {
     if (!token.refreshToken) {
       return { accessToken: "", error: "Google token has expired. Please reconnect your Google account." };
     }

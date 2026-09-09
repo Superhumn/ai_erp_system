@@ -124,8 +124,10 @@ export async function getValidGoogleToken(userId: number): Promise<{ accessToken
     return { accessToken: '', error: 'Google account not connected' };
   }
   
-  // Check if token needs refresh
-  if (token.expiresAt && new Date(token.expiresAt) < new Date()) {
+  // Refresh a bit early so a long-running Drive sync that re-checks the token
+  // between folder listings doesn't keep using a token that's about to expire.
+  const refreshSkewMs = 5 * 60 * 1000;
+  if (token.expiresAt && new Date(token.expiresAt).getTime() - refreshSkewMs < Date.now()) {
     if (!token.refreshToken) {
       return { accessToken: '', error: 'Google token has expired. Please reconnect your Google account.' };
     }
