@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
+import { ProductionPlanDialog, PlanMaterialsDialog } from "./ProductionPlanDialog";
 import { 
   Brain, 
   TrendingUp, 
@@ -37,6 +38,7 @@ export default function Forecasting() {
   const [selectedPlanId, setSelectedPlanId] = useState<number | null>(null);
   const [forecastMonths, setForecastMonths] = useState("3");
   const [showForecastDialog, setShowForecastDialog] = useState(false);
+  const [safetyStockPercent, setSafetyStockPercent] = useState("20");
 
   // Queries
   const { data: dashboardData, refetch: refetchDashboard } = trpc.forecasting.getDashboardSummary.useQuery();
@@ -121,7 +123,7 @@ export default function Forecasting() {
     setSelectedForecastId(forecastId);
     generatePlanMutation.mutate({
       demandForecastId: forecastId,
-      safetyStockPercent: 20,
+      safetyStockPercent: parseFloat(safetyStockPercent) || 0,
     });
   };
 
@@ -429,13 +431,28 @@ export default function Forecasting() {
         <TabsContent value="forecasts">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Brain className="h-5 w-5" />
-                Demand Forecasts
-              </CardTitle>
-              <CardDescription>
-                AI-generated demand predictions based on historical sales data and market trends.
-              </CardDescription>
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Brain className="h-5 w-5" />
+                    Demand Forecasts
+                  </CardTitle>
+                  <CardDescription>
+                    AI-generated demand predictions based on historical sales data and market trends.
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="safety-stock" className="text-sm whitespace-nowrap">Safety stock %</Label>
+                  <Input
+                    id="safety-stock"
+                    type="number"
+                    min="0"
+                    className="w-20"
+                    value={safetyStockPercent}
+                    onChange={(e) => setSafetyStockPercent(e.target.value)}
+                  />
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
               {forecasts && forecasts.length > 0 ? (
@@ -515,13 +532,18 @@ export default function Forecasting() {
         <TabsContent value="plans">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="h-5 w-5" />
-                Production Plans
-              </CardTitle>
-              <CardDescription>
-                Production plans derived from demand forecasts with material requirements.
-              </CardDescription>
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <FileText className="h-5 w-5" />
+                    Production Plans
+                  </CardTitle>
+                  <CardDescription>
+                    Plan a run from a recipe or BOM — or from a forecast — and turn the shortfall into purchase orders.
+                  </CardDescription>
+                </div>
+                <ProductionPlanDialog onCreated={() => { refetchPlans(); refetchDashboard(); }} />
+              </div>
             </CardHeader>
             <CardContent>
               {productionPlans && productionPlans.length > 0 ? (
@@ -531,6 +553,7 @@ export default function Forecasting() {
                       <TableHead>Plan #</TableHead>
                       <TableHead>Product</TableHead>
                       <TableHead>Planned Qty</TableHead>
+                      <TableHead>Unit</TableHead>
                       <TableHead>Current Inventory</TableHead>
                       <TableHead>Safety Stock</TableHead>
                       <TableHead>Status</TableHead>
@@ -545,8 +568,9 @@ export default function Forecasting() {
                           <TableCell className="font-medium">{plan.planNumber}</TableCell>
                           <TableCell>{product?.name || `Product #${plan.productId}`}</TableCell>
                           <TableCell className="font-medium">
-                            {parseFloat(plan.plannedQuantity?.toString() || '0').toLocaleString()}
+                            {parseFloat(plan.plannedQuantity?.toString() || '0').toLocaleString(undefined, { maximumFractionDigits: 2 })}
                           </TableCell>
+                          <TableCell className="text-muted-foreground">{plan.unit || 'EA'}</TableCell>
                           <TableCell>
                             {parseFloat(plan.currentInventory?.toString() || '0').toLocaleString()}
                           </TableCell>
@@ -555,6 +579,8 @@ export default function Forecasting() {
                           </TableCell>
                           <TableCell>{getStatusBadge(plan.status)}</TableCell>
                           <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                            <PlanMaterialsDialog planId={plan.id} planNumber={plan.planNumber} />
                             {plan.status === 'draft' && (
                               <Button
                                 size="sm"
@@ -571,6 +597,7 @@ export default function Forecasting() {
                                 )}
                               </Button>
                             )}
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -581,7 +608,7 @@ export default function Forecasting() {
                 <div className="text-center py-8 text-muted-foreground">
                   <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
                   <p>No production plans yet.</p>
-                  <p className="text-sm">Create a plan from an active forecast to calculate material requirements.</p>
+                  <p className="text-sm">Start one from a recipe or BOM with "New Production Plan", or create one from an active forecast.</p>
                 </div>
               )}
             </CardContent>
