@@ -96,7 +96,10 @@ Production deploys two ways, both against the same hardened steps:
 - **Manual** (`deploy-production.yml`) — run the **Deploy to Production** workflow and type `deploy` to
   confirm. Kept for ad-hoc redeploys.
 
-Both refuse to deploy (before running any migrations) until the staging tier below actually exists.
+Until the staging tier below exists, the **gated promotion refuses to run** (promoting on a single
+service would only duplicate the staging deploy), while the **manual workflow deploys the one live
+service** with a notice. Once the tier exists, both enforce that production and staging are distinct
+services before running any migrations.
 
 ### Staging tier (one-time setup)
 
@@ -133,9 +136,16 @@ the **new service becomes staging**.
 | `RAILWAY_SERVICE_ID` (variable) | Railway dashboard → Service → Settings → Service ID |
 | `DATABASE_URL` (secret) | That environment's database |
 
-> **Check this.** `RAILWAY_SERVICE_ID` set only at the repository level resolves to the *same* value in both
-> environments, which points a "production" deploy at the staging service. Define it as an
-> environment-scoped variable under each environment, not repo-wide.
+> **There is currently only one Railway service.** `RAILWAY_SERVICE_ID` is defined only at the
+> repository level (`696669c7-01e4-4d7a-8509-4abd2c96dac1`, in project
+> `c1100dc7-dcf2-41bd-9505-0946431bf022`), so both the `staging` and `production` environments
+> deploy the *same container* — the staging/production split is nominal for the app itself.
+> Only `RAILWAY_TOKEN` and `DATABASE_URL` are environment-scoped, so migrations may run against
+> different databases while the running app is shared.
+>
+> A push to `main` therefore redeploys the live service. If you want a real staging tier, create a
+> second Railway service and set `RAILWAY_SERVICE_ID` as an environment-scoped variable on each
+> environment; until then, treat every merge to `main` as a production release.
 
 ---
 

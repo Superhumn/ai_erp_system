@@ -3,6 +3,7 @@ import { z } from "zod";
 import { eq, and, inArray, desc, lte, gte, or, isNull } from "drizzle-orm";
 import { safeDecryptToken } from "./_core/crypto";
 import { COOKIE_NAME } from "@shared/const";
+import { ADJUSTMENT_REASON_CODES, CYCLE_COUNT_TYPES, CYCLE_COUNT_STATUSES } from "@shared/inventoryAdjustments";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
@@ -49,9 +50,25 @@ import { normalizeFreightQuotesForRfq, SERVICE_SCOPES } from "./freightQuoteNorm
 import { parseFreightQuoteEmail, parseFreightQuoteAttachment, mergeFreightExtractions, quoteValuesFromExtraction } from "./freightQuoteParser";
 import { ingestVendorQuoteEmail, parseVendorQuoteAttachment, parseVendorQuoteEmail } from "./vendorQuoteParser";
 import { computeResponsivenessForVendors, computeVendorResponsiveness, markStaleInvitationsNoResponse, responsivenessScoreFromMetrics } from "./vendorResponsiveness";
-import { deleteCurrencyRate, getFxRate, listCurrencyRates, upsertCurrencyRate } from "./currencyService";
+import { deleteCurrencyRate, getFxRate, listCurrencyRates, parseRatePaste, upsertCurrencyRate } from "./currencyService";
+import { fetchFeedRates, feedBaseUrl, feedUrlIsOverridden, refreshFxRatesFromFeed, FX_FEED_SOURCE } from "./fxFeed";
 import { getCompanyWebSources, sourceCompanyContacts, sourceCompanyContactsBatch } from "./companyContactSourcing";
 import * as db from "./db";
+import {
+  PLAN_UNITS,
+  PlanUnitError,
+  bomBatchMultiplier,
+  componentRequiredQuantity,
+  computeMaterialShortage,
+  computePlanTargets,
+  convertPlanQuantity,
+  isOrderUrgent,
+  latestOrderDate,
+  normalizePlanUnit,
+  toGrams,
+  type PlanUnit,
+  type UnitContext,
+} from "./productionPlanning";
 import { resolveScopeFromAccess, scopeAllows } from "./_core/scope";
 import * as manufacturingDb from "./db/manufacturing";
 import { storagePut, storageDelete } from "./storage";
@@ -249,6 +266,35 @@ export async function createAuditLog(userId: number, action: 'create' | 'update'
     oldValues,
     newValues,
   });
+}
+
+/**
+ * Raise a low-stock notification when a quantity change leaves a product at or
+ * below its reorder level. Called from every ledger-backed stock movement so
+ * the alert does not depend on someone editing the row by hand.
+ */
+async function notifyIfBelowReorderLevel(productId: number, warehouseId: number, newQuantity: number) {
+  const record = await db.getInventoryByProductAndWarehouse(productId, warehouseId);
+  if (!record) return;
+
+  const reorderLevel = parseFloat(record.reorderLevel || '0');
+  if (!(reorderLevel > 0) || newQuantity > reorderLevel) return;
+
+  const [opsUsers, product] = await Promise.all([
+    db.getUsersByRoles(['admin', 'ops', 'exec']),
+    db.getProductById(productId),
+  ]);
+
+  await db.notifyUsersOfEvent({
+    type: 'inventory_low',
+    title: `Low Stock Alert: ${product?.name || 'Product'}`,
+    message: `Inventory for ${product?.name || 'Product'} is at ${newQuantity} units, below reorder level of ${reorderLevel}`,
+    entityType: 'inventory',
+    entityId: record.id,
+    severity: newQuantity <= 0 ? 'critical' : 'warning',
+    link: `/operations/inventory`,
+    metadata: { productId, warehouseId, quantity: newQuantity, reorderLevel },
+  }, opsUsers.map((u) => u.id));
 }
 
 // ---- Planner / quick-add helpers ----
@@ -887,6 +933,518 @@ async function resolveInvestorContext(
 
 const investorCompanyIdInput = z.object({ companyId: z.number().optional() }).optional();
 
+
+// ============================================
+// PRODUCTION PLANNING
+// Shared by the forecast-driven and the manual (recipe/BOM) planning routes.
+// ============================================
+
+const DEFAULT_LEAD_TIME_DAYS = 14;
+const DEFAULT_REQUIRED_BY_DAYS = 30;
+
+/** A material line for a plan, before it's written to materialRequirements. */
+type PlanRequirementDraft = {
+  rawMaterialId: number | null;
+  ingredientId?: number;
+  name: string;
+  sku?: string;
+  requiredQuantity: number;
+  unit: string;
+  currentInventory: number;
+  onOrderQuantity: number;
+  shortageQuantity: number;
+  suggestedOrderQuantity: number;
+  preferredVendorId?: number;
+  vendorName?: string;
+  estimatedUnitCost: number;
+  /** Cost of everything the run consumes. */
+  estimatedRunCost: number;
+  /** Cost of what still has to be purchased. */
+  estimatedPurchaseCost: number;
+  leadTimeDays: number;
+  requiredByDate?: Date;
+  latestOrderDate?: Date;
+  estimatedDeliveryDate?: Date;
+  isUrgent: boolean;
+  note?: string;
+};
+
+type PlanRequirementsResult = {
+  requirements: PlanRequirementDraft[];
+  warnings: string[];
+  batches: number;
+};
+
+/** Net a gross requirement against stock and open POs, and work out order timing. */
+async function netRequirementAgainstStock(args: {
+  rawMaterialId: number | null;
+  requiredQuantity: number;
+  orderBufferPercent: number;
+  leadTimeDays: number;
+  requiredByDate: Date;
+}) {
+  let currentInventory = 0;
+  let onOrderQuantity = 0;
+
+  if (args.rawMaterialId) {
+    const stock = await db.getRawMaterialInventory({ rawMaterialId: args.rawMaterialId });
+    currentInventory = stock.reduce((sum, inv) => sum + parseFloat(inv.quantity?.toString() || "0"), 0);
+
+    const pendingOrders = await db.getPendingOrdersForMaterial(args.rawMaterialId);
+    onOrderQuantity = pendingOrders.reduce((sum, po) => {
+      const ordered = parseFloat(po.quantity?.toString() || "0");
+      const received = parseFloat(po.receivedQuantity?.toString() || "0");
+      return sum + Math.max(0, ordered - received);
+    }, 0);
+  }
+
+  const { shortageQuantity, suggestedOrderQuantity } = computeMaterialShortage({
+    requiredQuantity: args.requiredQuantity,
+    onHand: currentInventory,
+    onOrder: onOrderQuantity,
+    orderBufferPercent: args.orderBufferPercent,
+  });
+
+  const now = new Date();
+  return {
+    currentInventory,
+    onOrderQuantity,
+    shortageQuantity,
+    suggestedOrderQuantity,
+    latestOrderDate: latestOrderDate(args.requiredByDate, args.leadTimeDays),
+    estimatedDeliveryDate: new Date(now.getTime() + args.leadTimeDays * 24 * 60 * 60 * 1000),
+    isUrgent: isOrderUrgent(now, args.requiredByDate, args.leadTimeDays),
+  };
+}
+
+/**
+ * Explode a BOM into material requirements.
+ * Component quantities are stated per BOM batch, so they scale by the number of
+ * batches the planned quantity represents — not by the planned quantity itself.
+ */
+async function planRequirementsFromBom(args: {
+  bomId: number;
+  plannedQuantity: number;
+  planUnit: PlanUnit;
+  unitContext: UnitContext;
+  orderBufferPercent: number;
+  requiredByDate: Date;
+}): Promise<PlanRequirementsResult> {
+  const warnings: string[] = [];
+  const bom = await db.getBomById(args.bomId);
+  if (!bom) throw new TRPCError({ code: "NOT_FOUND", message: "BOM not found" });
+
+  const batchSize = parseFloat(bom.batchSize?.toString() || "1");
+  const batchUnit = normalizePlanUnit(bom.batchUnit) ?? "EA";
+  if (!normalizePlanUnit(bom.batchUnit)) {
+    warnings.push(`BOM batch unit "${bom.batchUnit}" isn't recognised — treating the batch as ${batchSize} EA.`);
+  }
+
+  let batches: number;
+  try {
+    batches = bomBatchMultiplier({
+      plannedQuantity: args.plannedQuantity,
+      planUnit: args.planUnit,
+      batchSize,
+      batchUnit,
+      ctx: args.unitContext,
+    });
+  } catch (error) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: error instanceof PlanUnitError
+        ? `${error.message} The BOM measures a batch in ${batchUnit}.`
+        : String(error),
+    });
+  }
+
+  const components = await db.getBomComponents(args.bomId);
+  const requirements: PlanRequirementDraft[] = [];
+
+  for (const comp of components) {
+    const requiredQuantity = componentRequiredQuantity({
+      componentQuantity: parseFloat(comp.quantity?.toString() || "0"),
+      wastagePercent: parseFloat(comp.wastagePercent?.toString() || "0"),
+      batchMultiplier: batches,
+    });
+    if (requiredQuantity <= 0) continue;
+
+    if (!comp.rawMaterialId) {
+      warnings.push(`"${comp.name}" isn't linked to a raw material — it can't be purchased from this plan.`);
+      continue;
+    }
+
+    const rawMaterial = await db.getRawMaterialById(comp.rawMaterialId);
+    const leadTimeDays = rawMaterial?.leadTimeDays ?? DEFAULT_LEAD_TIME_DAYS;
+    const netted = await netRequirementAgainstStock({
+      rawMaterialId: comp.rawMaterialId,
+      requiredQuantity,
+      orderBufferPercent: args.orderBufferPercent,
+      leadTimeDays,
+      requiredByDate: args.requiredByDate,
+    });
+
+    const unitCost = parseFloat(
+      comp.unitCost?.toString() || rawMaterial?.unitCost?.toString() || "0",
+    );
+    const vendor = rawMaterial?.preferredVendorId
+      ? await db.getVendorById(rawMaterial.preferredVendorId)
+      : await db.getPreferredVendorForMaterial(comp.rawMaterialId);
+
+    requirements.push({
+      rawMaterialId: comp.rawMaterialId,
+      name: comp.name,
+      sku: comp.sku ?? rawMaterial?.sku ?? undefined,
+      requiredQuantity,
+      unit: comp.unit || rawMaterial?.unit || "EA",
+      preferredVendorId: vendor?.id,
+      vendorName: vendor?.name,
+      estimatedUnitCost: unitCost,
+      estimatedRunCost: requiredQuantity * unitCost,
+      estimatedPurchaseCost: netted.suggestedOrderQuantity * unitCost,
+      leadTimeDays,
+      requiredByDate: args.requiredByDate,
+      ...netted,
+    });
+  }
+
+  return { requirements, warnings, batches };
+}
+
+/**
+ * Explode a recipe (sub-recipes included) into material requirements, so
+ * purchase orders can be raised for the exact ingredient amounts a run needs.
+ * Ingredients are matched to raw materials by SKU/name; when `createMissing`
+ * is set, an unmatched ingredient gets a raw material created for it.
+ */
+async function planRequirementsFromRecipe(args: {
+  recipeId: number;
+  formulation: "wet" | "dry";
+  grams: number;
+  accountForYield: boolean;
+  orderBufferPercent: number;
+  requiredByDate: Date;
+  createMissing: boolean;
+}): Promise<PlanRequirementsResult & { totalIngredientCost: number }> {
+  const warnings: string[] = [];
+  const explosion = await manufacturingDb.explodeRecipeToIngredients({
+    recipeId: args.recipeId,
+    formulation: args.formulation,
+    batchGrams: args.grams,
+    accountForYield: args.accountForYield,
+  });
+  if (!explosion) throw new TRPCError({ code: "NOT_FOUND", message: "Recipe not found" });
+  if (explosion.ingredients.length === 0) {
+    warnings.push("This recipe has no ingredient lines with a quantity — nothing to purchase.");
+  }
+
+  const requirements: PlanRequirementDraft[] = [];
+
+  for (const ing of explosion.ingredients) {
+    let rawMaterial = await db.getRawMaterialByNameOrSku(ing.name, ing.sku);
+    if (!rawMaterial && args.createMissing) {
+      await db.createRawMaterial({
+        name: ing.name,
+        sku: ing.sku,
+        unit: ing.unit === "EA" ? "EA" : "g",
+        unitCost: ing.costPerUnit.toString(),
+        preferredVendorId: ing.supplierId ?? undefined,
+        leadTimeDays: ing.leadTimeDays ?? DEFAULT_LEAD_TIME_DAYS,
+        status: "active",
+      });
+      rawMaterial = await db.getRawMaterialByNameOrSku(ing.name, ing.sku);
+    }
+    if (!rawMaterial) {
+      warnings.push(`"${ing.name}" has no raw material record yet — it won't appear on a purchase order.`);
+    }
+
+    // Requirements are stated in the raw material's stocking unit so stock,
+    // open POs and purchase quantities all line up.
+    const stockUnit = normalizePlanUnit(rawMaterial?.unit) ?? (ing.unit === "EA" ? "EA" : "G");
+    let requiredQuantity = ing.quantity;
+    let unitLabel = rawMaterial?.unit || (ing.unit === "EA" ? "EA" : "g");
+    if (ing.unit === "g" && stockUnit !== "G") {
+      try {
+        requiredQuantity = convertPlanQuantity(ing.quantity, "G", stockUnit, {});
+      } catch {
+        unitLabel = "g";
+        warnings.push(
+          `"${ing.name}" is stocked in ${rawMaterial?.unit} — the requirement is left in grams, convert before ordering.`,
+        );
+      }
+    } else if (ing.unit === "EA" && stockUnit !== "EA") {
+      unitLabel = "EA";
+      warnings.push(
+        `"${ing.name}" is costed per each but stocked in ${rawMaterial?.unit} — the requirement is left in units.`,
+      );
+    }
+
+    const leadTimeDays = rawMaterial?.leadTimeDays ?? ing.leadTimeDays ?? DEFAULT_LEAD_TIME_DAYS;
+    const netted = await netRequirementAgainstStock({
+      rawMaterialId: rawMaterial?.id ?? null,
+      requiredQuantity,
+      orderBufferPercent: args.orderBufferPercent,
+      leadTimeDays,
+      requiredByDate: args.requiredByDate,
+    });
+
+    const vendorId = rawMaterial?.preferredVendorId ?? ing.supplierId ?? undefined;
+    const vendor = vendorId
+      ? await db.getVendorById(vendorId)
+      : rawMaterial
+        ? await db.getPreferredVendorForMaterial(rawMaterial.id)
+        : undefined;
+
+    // Cost comes from the recipe's ingredient costing, restated per stocking unit.
+    const unitCost = requiredQuantity > 0 ? ing.cost / requiredQuantity : 0;
+
+    requirements.push({
+      rawMaterialId: rawMaterial?.id ?? null,
+      ingredientId: ing.ingredientId,
+      name: ing.name,
+      sku: ing.sku,
+      requiredQuantity,
+      unit: unitLabel,
+      preferredVendorId: vendor?.id,
+      vendorName: vendor?.name,
+      estimatedUnitCost: unitCost,
+      estimatedRunCost: ing.cost,
+      estimatedPurchaseCost: netted.suggestedOrderQuantity * unitCost,
+      leadTimeDays,
+      requiredByDate: args.requiredByDate,
+      ...netted,
+    });
+  }
+
+  return {
+    requirements,
+    warnings,
+    batches: explosion.batches,
+    totalIngredientCost: explosion.totalCost,
+  };
+}
+
+/** Write a plan's drafted requirements to materialRequirements. */
+async function persistPlanRequirements(planId: number, requirements: PlanRequirementDraft[]) {
+  for (const req of requirements) {
+    if (!req.rawMaterialId) continue;
+    await db.createMaterialRequirement({
+      productionPlanId: planId,
+      rawMaterialId: req.rawMaterialId,
+      requiredQuantity: req.requiredQuantity.toFixed(4),
+      unit: req.unit,
+      currentInventory: req.currentInventory.toFixed(4),
+      onOrderQuantity: req.onOrderQuantity.toFixed(4),
+      shortageQuantity: req.shortageQuantity.toFixed(4),
+      suggestedOrderQuantity: req.suggestedOrderQuantity.toFixed(4),
+      preferredVendorId: req.preferredVendorId,
+      estimatedUnitCost: req.estimatedUnitCost.toFixed(4),
+      estimatedTotalCost: req.estimatedPurchaseCost.toFixed(2),
+      leadTimeDays: req.leadTimeDays,
+      requiredByDate: req.requiredByDate,
+      latestOrderDate: req.latestOrderDate,
+      estimatedDeliveryDate: req.estimatedDeliveryDate,
+      isUrgent: req.isUrgent,
+      status: "pending",
+    });
+  }
+}
+
+/** Input shared by the plan preview (query) and plan create (mutation) routes. */
+const manualProductionPlanInput = z.object({
+  /** Finished product the plan produces. Optional when the recipe already points at one. */
+  productId: z.number().optional(),
+  recipeId: z.number().optional(),
+  bomId: z.number().optional(),
+  formulation: z.enum(["wet", "dry"]).default("wet"),
+  quantity: z.number().positive(),
+  unit: z.enum(PLAN_UNITS).default("EA"),
+  /** Needed to plan in cases. */
+  unitsPerCase: z.number().positive().optional(),
+  /** Needed to move between counts (EA/CASE) and weights (LB/KG/G/OZ). */
+  unitWeightGrams: z.number().positive().optional(),
+  safetyMarginPercent: z.number().min(0).max(500).default(0),
+  netOffInventory: z.boolean().default(false),
+  orderBufferPercent: z.number().min(0).max(100).default(0),
+  /** Gross the run up so the finished output matches the target despite yield loss. */
+  accountForYield: z.boolean().default(true),
+  plannedStartDate: z.date().optional(),
+  plannedEndDate: z.date().optional(),
+  notes: z.string().optional(),
+});
+
+type ManualProductionPlanInput = z.infer<typeof manualProductionPlanInput>;
+
+/**
+ * Work out everything a manual production plan needs: how much to make, and
+ * what to buy for it. Used unchanged for preview (persist = false) and create.
+ */
+async function buildManualProductionPlan(
+  input: ManualProductionPlanInput,
+  ctx: { userId?: number },
+  opts: { persist: boolean },
+) {
+  const warnings: string[] = [];
+
+  let recipe = input.recipeId ? await manufacturingDb.getRecipeById(input.recipeId) : undefined;
+  if (input.recipeId && !recipe) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Recipe not found" });
+  }
+  if (input.recipeId && ctx.userId) {
+    await requireRecipeAccess(ctx.userId, input.recipeId, "view");
+  }
+
+  const productId = input.productId ?? recipe?.outputProductId ?? undefined;
+  if (!productId) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Pick the finished product this plan produces (or link the recipe to a product first).",
+    });
+  }
+  const product = await db.getProductById(productId);
+  if (!product) throw new TRPCError({ code: "NOT_FOUND", message: "Product not found" });
+
+  // Source: an explicit recipe, an explicit BOM, or the product's active BOM.
+  let bomId = input.bomId;
+  if (!recipe && !bomId) {
+    const boms = await db.getBillOfMaterials({ productId });
+    const active = boms.find((b) => b.status === "active") ?? boms[0];
+    if (!active) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "No recipe or BOM for this product — pick a recipe, or build a BOM first.",
+      });
+    }
+    bomId = active.id;
+  }
+
+  const unitContext: UnitContext = {
+    unitsPerCase: input.unitsPerCase,
+    unitWeightGrams: input.unitWeightGrams,
+    batchGrams: recipe ? parseFloat(recipe.baseBatchGrams?.toString() || "0") : undefined,
+  };
+
+  // Finished goods already on hand, restated in the plan's unit.
+  let currentInventory = 0;
+  if (input.netOffInventory) {
+    const inventoryRecords = await db.getInventory({ productId });
+    const onHandEach = inventoryRecords.reduce(
+      (sum, inv) => sum + parseFloat(inv.quantity?.toString() || "0"),
+      0,
+    );
+    try {
+      currentInventory = convertPlanQuantity(onHandEach, "EA", input.unit, unitContext);
+    } catch {
+      warnings.push(
+        `On-hand stock is counted in units — can't net it off a plan in ${input.unit} without a unit weight.`,
+      );
+    }
+  }
+
+  const targets = computePlanTargets({
+    quantity: input.quantity,
+    safetyMarginPercent: input.safetyMarginPercent,
+    currentInventory,
+    netOffInventory: input.netOffInventory,
+  });
+
+  const requiredByDate =
+    input.plannedStartDate ?? new Date(Date.now() + DEFAULT_REQUIRED_BY_DAYS * 24 * 60 * 60 * 1000);
+
+  let result: PlanRequirementsResult & { totalIngredientCost?: number };
+  if (recipe) {
+    let grams: number;
+    try {
+      grams = toGrams(targets.plannedQuantity, input.unit, unitContext);
+    } catch (error) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: error instanceof PlanUnitError
+          ? `${error.message} Add a unit weight (grams per finished unit) to plan a recipe in ${input.unit}.`
+          : String(error),
+      });
+    }
+    result = await planRequirementsFromRecipe({
+      recipeId: recipe.id,
+      formulation: input.formulation,
+      grams,
+      accountForYield: input.accountForYield,
+      orderBufferPercent: input.orderBufferPercent,
+      requiredByDate,
+      createMissing: opts.persist,
+    });
+  } else {
+    result = await planRequirementsFromBom({
+      bomId: bomId!,
+      plannedQuantity: targets.plannedQuantity,
+      planUnit: input.unit,
+      unitContext,
+      orderBufferPercent: input.orderBufferPercent,
+      requiredByDate,
+    });
+  }
+
+  const requirements = result.requirements;
+  const summary = {
+    productId,
+    productName: product.name,
+    recipeId: recipe?.id,
+    recipeName: recipe?.name,
+    bomId,
+    unit: input.unit,
+    targetQuantity: targets.targetQuantity,
+    safetyStock: targets.safetyStock,
+    plannedQuantity: targets.plannedQuantity,
+    currentInventory,
+    batches: result.batches,
+    requiredByDate,
+    materialCount: requirements.length,
+    shortageCount: requirements.filter((r) => r.shortageQuantity > 0).length,
+    urgentCount: requirements.filter((r) => r.isUrgent && r.shortageQuantity > 0).length,
+    estimatedRunCost: requirements.reduce((sum, r) => sum + r.estimatedRunCost, 0),
+    estimatedPurchaseCost: requirements.reduce((sum, r) => sum + r.estimatedPurchaseCost, 0),
+  };
+
+  if (!opts.persist) {
+    return { plan: null, summary, requirements, warnings: [...warnings, ...result.warnings] };
+  }
+
+  if (targets.plannedQuantity <= 0) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "On-hand stock already covers this target — nothing to produce.",
+    });
+  }
+
+  const plan = await db.createProductionPlan({
+    productId,
+    bomId: bomId ?? recipe?.bomId ?? undefined,
+    plannedQuantity: targets.plannedQuantity.toFixed(4),
+    unit: input.unit,
+    plannedStartDate: input.plannedStartDate,
+    plannedEndDate: input.plannedEndDate,
+    currentInventory: currentInventory.toFixed(4),
+    safetyStock: targets.safetyStock.toFixed(4),
+    status: "draft",
+    notes: [
+      recipe ? `Recipe: ${recipe.name} (${input.formulation})` : `BOM #${bomId}`,
+      `Target ${input.quantity} ${input.unit}${input.safetyMarginPercent ? ` + ${input.safetyMarginPercent}% margin` : ""}`,
+      input.notes,
+    ]
+      .filter(Boolean)
+      .join(" · "),
+    createdBy: ctx.userId,
+  });
+
+  await persistPlanRequirements(plan.id, requirements);
+
+  return {
+    plan: { ...plan, ...summary },
+    summary,
+    requirements,
+    warnings: [...warnings, ...result.warnings],
+  };
+}
 
 export const appRouter = router({
   system: systemRouter,
@@ -2750,36 +3308,74 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         reservedQuantity: z.string().optional(),
         reorderLevel: z.string().optional(),
         reorderQuantity: z.string().optional(),
+        // Recorded on the ledger when `quantity` is set to a new absolute value.
+        reasonCode: z.enum(ADJUSTMENT_REASON_CODES).default('other'),
+        reason: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const { id, ...data } = input;
-        const [oldInventory] = await db.getInventory({ id } as any) || [];
-        await db.updateInventory(id, data);
-        await createAuditLog(ctx.user.id, 'update', 'inventory', id);
+        const { id, quantity, reasonCode, reason, ...data } = input;
+        const [existing] = await db.getInventoryByIds([id]);
+        if (!existing) throw new TRPCError({ code: 'NOT_FOUND', message: 'Inventory row not found' });
 
-        // Check for low stock and create notification
-        if (data.quantity && oldInventory) {
-          const newQty = parseFloat(data.quantity);
-          const reorderLevel = parseFloat(oldInventory.reorderLevel || '0');
+        if (Object.values(data).some((v) => v !== undefined)) {
+          await db.updateInventory(id, data);
+        }
 
-          if (newQty <= reorderLevel && newQty > 0) {
-            const opsUsers = await db.getUsersByRoles(['admin', 'ops', 'exec']);
-            const product = await db.getProductById(oldInventory.productId);
+        // A quantity set posts the implied delta to the ledger rather than
+        // overwriting the number, so the movement stays attributable.
+        if (quantity !== undefined) {
+          if (existing.warehouseId == null) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Cannot adjust quantity on a row with no warehouse' });
+          }
+          const target = parseFloat(quantity);
+          if (!Number.isFinite(target) || target < 0) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Quantity must be a non-negative number' });
+          }
 
-            await db.notifyUsersOfEvent({
-              type: 'inventory_low',
-              title: `Low Stock Alert: ${product?.name || 'Product'}`,
-              message: `Inventory for ${product?.name} is at ${newQty} units, below reorder level of ${reorderLevel}`,
-              entityType: 'inventory',
-              entityId: id,
-              severity: 'warning',
-              link: `/operations/inventory`,
-              metadata: { productId: oldInventory.productId, quantity: newQty, reorderLevel },
-            }, opsUsers.map(u => u.id));
+          const current = parseFloat(existing.quantity as string) || 0;
+          const delta = target - current;
+
+          if (delta !== 0) {
+            const result = await db.adjustInventoryQuantity({
+              productId: existing.productId,
+              warehouseId: existing.warehouseId,
+              quantityDelta: delta,
+              transactionType: 'adjust',
+              reasonCode,
+              reason,
+              companyId: existing.companyId ?? undefined,
+              performedBy: ctx.user.id,
+            });
+            await createAuditLog(
+              ctx.user.id, 'update', 'inventory', id, result.transactionNumber,
+              { quantity: current }, { quantity: result.newQuantity, reasonCode },
+            );
+            await notifyIfBelowReorderLevel(existing.productId, existing.warehouseId, result.newQuantity);
+            return { success: true, transactionNumber: result.transactionNumber };
           }
         }
 
+        await createAuditLog(ctx.user.id, 'update', 'inventory', id);
         return { success: true };
+      }),
+    // Inventory rows sharing a (product, warehouse) pair. The table has no
+    // unique key on that pair, so a race between two stock movements leaves two
+    // rows for the same stock and every row count / sum double-counts it.
+    duplicates: opsProcedure.query(() => db.getDuplicateInventoryGroups()),
+    mergeDuplicates: opsProcedure
+      .input(z.object({
+        keepId: z.number(),
+        removeIds: z.array(z.number()).min(1).max(100),
+        strategy: z.enum(['keep_one', 'sum']),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.mergeDuplicateInventoryRows(input.keepId, input.removeIds, input.strategy);
+        await createAuditLog(
+          ctx.user.id, 'update', 'inventory', input.keepId, undefined,
+          { duplicateRowIds: input.removeIds },
+          { strategy: input.strategy, quantity: result.quantity, removed: result.removed },
+        );
+        return result;
       }),
     bulkUpdate: opsProcedure
       .input(z.object({
@@ -2789,72 +3385,77 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         warehouseId: z.number().optional(),
         reorderLevel: z.string().optional(),
         reorderQuantity: z.string().optional(),
+        // Applied to every adjusted line; recorded on the inventory ledger.
+        reasonCode: z.enum(ADJUSTMENT_REASON_CODES).default('other'),
+        reason: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const { ids, action, ...data } = input;
+        const { ids, action, reasonCode, reason, ...data } = input;
 
-        // Build the update data based on action
+        // Quantity changes go through the ledger so each one carries a reason
+        // and a transaction row, rather than silently rewriting the number.
+        if (action === 'adjust_quantity') {
+          if (data.quantityAdjustment === undefined || data.quantityAdjustment === 0) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'A non-zero quantityAdjustment is required' });
+          }
+
+          const items = await db.getInventoryByIds(ids);
+          const itemById = new Map(items.map((i) => [i.id, i]));
+          const results: { id: number; success: boolean; error?: string }[] = [];
+
+          for (const id of ids) {
+            const item = itemById.get(id);
+            if (!item || item.warehouseId == null) {
+              results.push({ id, success: false, error: 'Inventory row not found or has no warehouse' });
+              continue;
+            }
+            try {
+              const result = await db.adjustInventoryQuantity({
+                productId: item.productId,
+                warehouseId: item.warehouseId,
+                quantityDelta: data.quantityAdjustment,
+                transactionType: 'adjust',
+                reasonCode,
+                reason,
+                companyId: item.companyId ?? undefined,
+                performedBy: ctx.user.id,
+              });
+              await createAuditLog(
+                ctx.user.id, 'update', 'inventory', id, result.transactionNumber,
+                { quantity: result.previousQuantity }, { quantity: result.newQuantity, reasonCode },
+              );
+              await notifyIfBelowReorderLevel(item.productId, item.warehouseId, result.newQuantity);
+              results.push({ id, success: true });
+            } catch (error) {
+              results.push({ id, success: false, error: (error as Error).message });
+            }
+          }
+
+          return {
+            success: results.some((r) => r.success),
+            results,
+            totalUpdated: results.reduce((n, r) => n + (r.success ? 1 : 0), 0),
+            totalFailed: results.reduce((n, r) => n + (r.success ? 0 : 1), 0),
+          };
+        }
+
+        // Non-quantity attribute changes carry no stock movement.
         const updateData: {
-          quantityAdjustment?: number;
           warehouseId?: number;
           reorderLevel?: string;
           reorderQuantity?: string;
         } = {};
 
-        switch (action) {
-          case 'adjust_quantity':
-            if (data.quantityAdjustment !== undefined) {
-              updateData.quantityAdjustment = data.quantityAdjustment;
-            }
-            break;
-          case 'change_location':
-            if (data.warehouseId !== undefined) {
-              updateData.warehouseId = data.warehouseId;
-            }
-            break;
-          case 'update_reorder_point':
-            if (data.reorderLevel !== undefined) {
-              updateData.reorderLevel = data.reorderLevel;
-            }
-            if (data.reorderQuantity !== undefined) {
-              updateData.reorderQuantity = data.reorderQuantity;
-            }
-            break;
+        if (action === 'change_location') {
+          if (data.warehouseId !== undefined) updateData.warehouseId = data.warehouseId;
+        } else {
+          if (data.reorderLevel !== undefined) updateData.reorderLevel = data.reorderLevel;
+          if (data.reorderQuantity !== undefined) updateData.reorderQuantity = data.reorderQuantity;
         }
 
         const results = await db.bulkUpdateInventory(ids, updateData);
-
-        // Create audit logs for each updated item
-        for (const result of results.filter(r => r.success)) {
+        for (const result of results.filter((r) => r.success)) {
           await createAuditLog(ctx.user.id, 'update', 'inventory', result.id);
-        }
-
-        // Check for low stock alerts on quantity adjustments
-        if (action === 'adjust_quantity' && data.quantityAdjustment !== undefined) {
-          const updatedItems = await db.getInventoryByIds(ids);
-          const opsUsers = await db.getUsersByRoles(['admin', 'ops', 'exec']);
-          // Bulk-load products for the adjusted items to avoid a query per row.
-          const productIds = [...new Set(updatedItems.map((i) => i.productId).filter((id): id is number => id != null))];
-          const productById = new Map((await db.getProductsByIds(productIds)).map((p) => [p.id, p]));
-
-          for (const item of updatedItems) {
-            const qty = parseFloat(item.quantity || '0');
-            const reorderLevel = parseFloat(item.reorderLevel || '0');
-
-            if (qty <= reorderLevel && qty > 0) {
-              const product = productById.get(item.productId);
-              await db.notifyUsersOfEvent({
-                type: 'inventory_low',
-                title: `Low Stock Alert: ${product?.name || 'Product'}`,
-                message: `Inventory for ${product?.name || 'Product'} is at ${qty} units, below reorder level of ${reorderLevel}`,
-                entityType: 'inventory',
-                entityId: item.id,
-                severity: 'warning',
-                link: `/operations/inventory`,
-                metadata: { productId: item.productId, quantity: qty, reorderLevel },
-              }, opsUsers.map(u => u.id));
-            }
-          }
         }
 
         return {
@@ -2864,6 +3465,170 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           totalFailed: results.reduce((n, r) => n + (r.success ? 0 : 1), 0),
         };
       }),
+
+    /**
+     * Ledger-backed single-item adjustment. Unlike `update`, this posts an
+     * inventoryTransactions row with a structured reason and keeps the
+     * aggregate and lot-level balances in step.
+     */
+    adjust: opsProcedure
+      .input(z.object({
+        productId: z.number(),
+        warehouseId: z.number(),
+        lotId: z.number().optional(),
+        quantityDelta: z.number().refine((n) => n !== 0, "Adjustment cannot be zero"),
+        reasonCode: z.enum(ADJUSTMENT_REASON_CODES),
+        reason: z.string().optional(),
+        companyId: z.number().optional(),
+        unit: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.adjustInventoryQuantity({
+          ...input,
+          transactionType: 'adjust',
+          performedBy: ctx.user.id,
+        });
+        await createAuditLog(
+          ctx.user.id, 'update', 'inventory', input.productId, result.transactionNumber,
+          { quantity: result.previousQuantity }, { quantity: result.newQuantity, reasonCode: input.reasonCode },
+        );
+        await notifyIfBelowReorderLevel(input.productId, input.warehouseId, result.newQuantity);
+        return result;
+      }),
+
+    /** Write stock off (damage, expiry, theft, ...). Always a decrease. */
+    scrap: opsProcedure
+      .input(z.object({
+        productId: z.number(),
+        warehouseId: z.number(),
+        lotId: z.number().optional(),
+        quantity: z.number().gt(0),
+        reasonCode: z.enum(ADJUSTMENT_REASON_CODES),
+        reason: z.string().optional(),
+        companyId: z.number().optional(),
+        unit: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.scrapInventory({ ...input, performedBy: ctx.user.id });
+        await createAuditLog(
+          ctx.user.id, 'update', 'inventory', input.productId, result.transactionNumber,
+          { quantity: result.previousQuantity }, { quantity: result.newQuantity, reasonCode: input.reasonCode },
+        );
+        await notifyIfBelowReorderLevel(input.productId, input.warehouseId, result.newQuantity);
+        return result;
+      }),
+
+    /** Lots that could be picked now, in the order FEFO would consume them. */
+    pickableLots: opsProcedure
+      .input(z.object({
+        productId: z.number(),
+        warehouseId: z.number(),
+        includeExpired: z.boolean().default(false),
+      }))
+      .query(({ input }) => db.getPickableLots(input.productId, input.warehouseId, {
+        includeExpired: input.includeExpired,
+      })),
+
+    /** What a FEFO pick would consume, and what it would be short by. */
+    planPick: opsProcedure
+      .input(z.object({
+        productId: z.number(),
+        warehouseId: z.number(),
+        quantity: z.number().gt(0),
+        includeExpired: z.boolean().default(false),
+      }))
+      .query(({ input }) => db.planFefoPick(input)),
+
+    /**
+     * Ship stock, consuming the soonest-expiring lots first.
+     *
+     * Until now nothing decremented stock on fulfilment — `shipInventory` was
+     * defined and never called — so book quantity drifted from physical on
+     * every shipment.
+     */
+    pickFefo: opsProcedure
+      .input(z.object({
+        productId: z.number(),
+        warehouseId: z.number(),
+        quantity: z.number().gt(0),
+        referenceType: z.string().default('manual'),
+        referenceId: z.number(),
+        fromStatus: z.enum(['reserved', 'available']).default('available'),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.pickInventoryFEFO({ ...input, performedBy: ctx.user.id });
+        await createAuditLog(
+          ctx.user.id, 'update', 'inventory', input.productId,
+          `Picked ${result.quantity} across ${result.allocations.length} lot(s)`,
+        );
+        const last = result.shipments[result.shipments.length - 1];
+        if (last) {
+          await notifyIfBelowReorderLevel(input.productId, input.warehouseId, last.newQuantity);
+        }
+        return result;
+      }),
+
+    /**
+     * What to reorder, how much, and why.
+     *
+     * Replenishment was previously hand-entered reorder levels plus an
+     * after-the-fact low-stock notification: nothing consulted demand, vendor
+     * lead time, or stock already on order. A hand-entered level still wins
+     * where one is set.
+     */
+    replenishmentPlan: opsProcedure
+      .input(z.object({
+        windowDays: z.number().min(7).max(730).default(90),
+        warehouseId: z.number().optional(),
+        safetyDays: z.number().min(0).max(365).optional(),
+        coverageDays: z.number().min(1).max(365).optional(),
+        onlyActionable: z.boolean().default(false),
+      }).optional())
+      .query(({ input }) => db.getReplenishmentPlan(input)),
+
+    /** Stock approaching or past its expiry date, bucketed by urgency. */
+    expiring: opsProcedure
+      .input(z.object({
+        withinDays: z.number().min(0).max(3650).default(90),
+        warehouseId: z.number().optional(),
+        includeUndated: z.boolean().default(false),
+      }))
+      .query(({ input }) => db.getExpiringInventory(input)),
+
+    /**
+     * Move expired stock out of available into quarantine.
+     *
+     * Admin-only: it takes stock out of circulation across the whole warehouse
+     * in one action. It does not write anything off — disposal stays an
+     * explicit `scrap`.
+     */
+    sweepExpired: adminProcedure
+      .input(z.object({ warehouseId: z.number().optional() }).optional())
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.sweepExpiredLots({
+          warehouseId: input?.warehouseId,
+          performedBy: ctx.user.id,
+        });
+        if (result.count > 0) {
+          await createAuditLog(
+            ctx.user.id, 'update', 'inventory', 0,
+            `Expiry sweep quarantined ${result.count} lot(s)`,
+          );
+        }
+        return result;
+      }),
+
+    /** Movement ledger for a product/warehouse — the audit trail for stock. */
+    getMovementHistory: opsProcedure
+      .input(z.object({
+        productId: z.number().optional(),
+        warehouseId: z.number().optional(),
+        lotId: z.number().optional(),
+        type: z.string().optional(),
+        limit: z.number().min(1).max(500).default(100),
+      }))
+      .query(({ input }) => db.getInventoryTransactionHistory(input, input.limit)),
+
     // Get pending inventory from POs (on order or in transit)
     getPendingFromPOs: opsProcedure
       .query(() => db.getPendingInventoryFromPOs()),
@@ -2896,6 +3661,197 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         await createAuditLog(ctx.user.id, 'create', 'inventory_transfer', result.id, result.transferNumber);
         return { transferNumber: result.transferNumber, id: result.id };
       }),
+  }),
+
+  // ============================================
+  // OPERATIONS - ZONES & BINS
+  // ============================================
+  // `inventoryBalances.zoneId` / `binId` were free text with nothing behind
+  // them. These give the codes a master table, a walk order, and a capacity.
+  warehouseLocations: router({
+    zones: opsProcedure
+      .input(z.object({ warehouseId: z.number().optional() }).optional())
+      .query(({ input }) => db.getWarehouseZones(input?.warehouseId)),
+
+    createZone: opsProcedure
+      .input(z.object({
+        warehouseId: z.number(),
+        code: z.string().min(1).max(64),
+        name: z.string().min(1).max(255),
+        zoneType: z.enum(['picking', 'bulk', 'receiving', 'staging', 'quarantine', 'returns']).default('picking'),
+        pickSequence: z.number().int().min(0).default(0),
+        companyId: z.number().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createWarehouseZone(input);
+        await createAuditLog(ctx.user.id, 'create', 'warehouse_zone', result.id, input.code);
+        return result;
+      }),
+
+    updateZone: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().min(1).max(255).optional(),
+        zoneType: z.enum(['picking', 'bulk', 'receiving', 'staging', 'quarantine', 'returns']).optional(),
+        pickSequence: z.number().int().min(0).optional(),
+        status: z.enum(['active', 'inactive']).optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        const result = await db.updateWarehouseZone(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'warehouse_zone', id);
+        return result;
+      }),
+
+    bins: opsProcedure
+      .input(z.object({
+        warehouseId: z.number().optional(),
+        zoneId: z.number().optional(),
+      }).optional())
+      .query(({ input }) => db.getWarehouseBins(input)),
+
+    createBin: opsProcedure
+      .input(z.object({
+        warehouseId: z.number(),
+        zoneId: z.number().optional(),
+        code: z.string().min(1).max(64),
+        name: z.string().max(255).optional(),
+        pickSequence: z.number().int().min(0).default(0),
+        capacity: z.number().positive().optional(),
+        companyId: z.number().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createWarehouseBin({
+          ...input,
+          capacity: input.capacity != null ? input.capacity.toString() : undefined,
+        });
+        await createAuditLog(ctx.user.id, 'create', 'warehouse_bin', result.id, input.code);
+        return result;
+      }),
+
+    updateBin: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        zoneId: z.number().optional(),
+        name: z.string().max(255).optional(),
+        pickSequence: z.number().int().min(0).optional(),
+        capacity: z.number().positive().optional(),
+        status: z.enum(['active', 'inactive', 'blocked']).optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, capacity, ...rest } = input;
+        const result = await db.updateWarehouseBin(id, {
+          ...rest,
+          ...(capacity != null ? { capacity: capacity.toString() } : {}),
+        });
+        await createAuditLog(ctx.user.id, 'update', 'warehouse_bin', id);
+        return result;
+      }),
+
+    /** What is sitting in each bin, in walk order. */
+    contents: opsProcedure
+      .input(z.object({
+        warehouseId: z.number(),
+        binCode: z.string().optional(),
+      }))
+      .query(({ input }) => db.getBinContents(input)),
+
+    /**
+     * Move stock between bins. Nothing leaves the warehouse, so the aggregate
+     * does not change — only where the units sit.
+     */
+    moveBetweenBins: opsProcedure
+      .input(z.object({
+        lotId: z.number(),
+        productId: z.number(),
+        warehouseId: z.number(),
+        quantity: z.number().gt(0),
+        fromBinCode: z.string().nullable(),
+        toBinCode: z.string().min(1),
+        status: z.enum(['available', 'hold', 'reserved', 'quarantine', 'damaged']).default('available'),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.moveBetweenBins({ ...input, performedBy: ctx.user.id });
+        await createAuditLog(
+          ctx.user.id, 'update', 'inventory', input.productId,
+          `Moved ${result.moved} from ${result.from ?? 'unbinned'} to ${result.to}`,
+        );
+        return result;
+      }),
+  }),
+
+  // ============================================
+  // OPERATIONS - SERIAL NUMBERS
+  // ============================================
+  // Unit-level tracking beneath lots: a lot says which batch a unit came from,
+  // a serial says where that exact unit is now.
+  serials: router({
+    list: opsProcedure
+      .input(z.object({
+        productId: z.number().optional(),
+        lotId: z.number().optional(),
+        warehouseId: z.number().optional(),
+        status: z.enum(['in_stock', 'allocated', 'shipped', 'returned', 'scrapped']).optional(),
+        search: z.string().optional(),
+        limit: z.number().min(1).max(500).default(200),
+      }).optional())
+      .query(({ input }) => db.getSerialNumbers(input)),
+
+    receive: opsProcedure
+      .input(z.object({
+        productId: z.number(),
+        serialNumbers: z.array(z.string().min(1)).min(1).max(1000),
+        lotId: z.number().optional(),
+        warehouseId: z.number().optional(),
+        binCode: z.string().optional(),
+        sourceType: z.string().default('manual'),
+        sourceReferenceId: z.number().optional(),
+        companyId: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.receiveSerialNumbers({ ...input, performedBy: ctx.user.id });
+        await createAuditLog(
+          ctx.user.id, 'create', 'serial_number', input.productId,
+          `Received ${result.received} serial(s)`,
+        );
+        return result;
+      }),
+
+    updateStatus: opsProcedure
+      .input(z.object({
+        serialId: z.number(),
+        toStatus: z.enum(['in_stock', 'allocated', 'shipped', 'returned', 'scrapped']),
+        warehouseId: z.number().nullable().optional(),
+        binCode: z.string().nullable().optional(),
+        referenceType: z.string().optional(),
+        referenceId: z.number().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.updateSerialStatus({ ...input, performedBy: ctx.user.id });
+        await createAuditLog(
+          ctx.user.id, 'update', 'serial_number', input.serialId,
+          `${result.fromStatus} -> ${result.toStatus}`,
+        );
+        return result;
+      }),
+
+    /** Where one unit is now and every move it made. */
+    trace: opsProcedure
+      .input(z.object({
+        serialNumber: z.string().min(1),
+        productId: z.number().optional(),
+      }))
+      .query(({ input }) => db.traceSerialNumber(input.serialNumber, input.productId)),
+
+    /** Serials in a lot — the recall direction that starts from a batch. */
+    forLot: opsProcedure
+      .input(z.object({ lotId: z.number() }))
+      .query(({ input }) => db.getSerialsForLot(input.lotId)),
   }),
 
   // ============================================
@@ -3464,9 +4420,51 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         await createAuditLog(ctx.user.id, 'update', 'purchaseOrder', input.id, po.poNumber, { status: po.status }, { status: result.status });
         return { success: true, status: result.status };
       }),
+    // Records one approval decision against the PO's threshold chain. A PO only
+    // moves to "sent" (and reaches the vendor) once every level configured for
+    // its value has signed off — previously any ops user could release a PO of
+    // any size in one click, bypassing the approvalThresholds config entirely.
     approve: opsProcedure
-      .input(z.object({ id: z.number() }))
+      .input(z.object({ id: z.number(), notes: z.string().max(1000).optional() }))
       .mutation(async ({ input, ctx }) => {
+        const state = await db.getPurchaseOrderApprovalState(input.id);
+        if (!state) throw new TRPCError({ code: 'NOT_FOUND', message: 'Purchase order not found' });
+        if (state.rejected) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'This PO was rejected and cannot be approved.' });
+        }
+
+        if (!state.autoApprove) {
+          const next = state.nextLevel;
+          if (!next) {
+            throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'This PO is already fully approved.' });
+          }
+          if (!next.roles.includes(ctx.user.role)) {
+            throw new TRPCError({
+              code: 'FORBIDDEN',
+              message: `Level ${next.level} approval for this amount requires one of: ${next.roles.join(', ')}.`,
+            });
+          }
+          await db.createPurchaseOrderApproval({
+            purchaseOrderId: input.id,
+            level: next.level,
+            decision: 'approved',
+            decidedBy: ctx.user.id,
+            decidedByRole: ctx.user.role,
+            notes: input.notes,
+          });
+        }
+
+        // Re-read rather than reasoning from the pre-insert state, so a
+        // concurrent approval of the same level can't release the PO twice.
+        const after = await db.getPurchaseOrderApprovalState(input.id);
+        if (!after?.fullyApproved) {
+          await createAuditLog(ctx.user.id, 'approve', 'purchaseOrder', input.id, undefined, undefined, {
+            level: state.nextLevel?.level,
+            remainingLevels: after?.requiredLevels.filter((l) => l.level !== state.nextLevel?.level).length ?? 0,
+          });
+          return { success: true, fullyApproved: false, nextLevel: after?.nextLevel ?? null };
+        }
+
         await db.updatePurchaseOrder(input.id, { status: 'sent', approvedBy: ctx.user.id, approvedAt: new Date() });
         await createAuditLog(ctx.user.id, 'approve', 'purchaseOrder', input.id);
 
@@ -3487,6 +4485,32 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           console.warn("[PO Approval] Failed to auto-send PO to vendor:", e);
         }
 
+        return { success: true, fullyApproved: true, nextLevel: null };
+      }),
+    reject: opsProcedure
+      .input(z.object({ id: z.number(), notes: z.string().max(1000).optional() }))
+      .mutation(async ({ input, ctx }) => {
+        const state = await db.getPurchaseOrderApprovalState(input.id);
+        if (!state) throw new TRPCError({ code: 'NOT_FOUND', message: 'Purchase order not found' });
+        if (state.rejected) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'This PO was already rejected.' });
+        }
+        // Anyone in the chain may reject — including a later level reviewing a
+        // PO an earlier level already passed.
+        const canReject = state.requiredLevels.some((l) => l.roles.includes(ctx.user.role));
+        if (state.requiredLevels.length > 0 && !canReject) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'You are not an approver for this purchase order.' });
+        }
+        await db.createPurchaseOrderApproval({
+          purchaseOrderId: input.id,
+          level: state.nextLevel?.level ?? 1,
+          decision: 'rejected',
+          decidedBy: ctx.user.id,
+          decidedByRole: ctx.user.role,
+          notes: input.notes,
+        });
+        await db.updatePurchaseOrder(input.id, { status: 'cancelled' });
+        await createAuditLog(ctx.user.id, 'reject', 'purchaseOrder', input.id, undefined, { status: state.decisions.length }, { decision: 'rejected' });
         return { success: true };
       }),
     // Parse text to PO preview
@@ -3656,6 +4680,122 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         await db.deletePurchaseOrder(input.id);
         await createAuditLog(ctx.user.id, 'delete', 'purchaseOrder', input.id);
         return { success: true };
+      }),
+    // POs that duplicate another PO on (poNumber, vendor, total). Lets the list
+    // filter down to the copies left behind by repeated document imports.
+    duplicates: opsProcedure.query(() => db.getDuplicatePurchaseOrderGroups()),
+    // Filtered / sorted / paged list for the PO page. `list` stays as-is for
+    // its many other callers.
+    listPaged: opsProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        status: z.string().optional(),
+        vendorId: z.number().optional(),
+        search: z.string().optional(),
+        orderDateFrom: z.date().optional(),
+        orderDateTo: z.date().optional(),
+        duplicatesOnly: z.boolean().optional(),
+        sortBy: z.enum(['poNumber', 'vendor', 'totalAmount', 'status', 'orderDate', 'expectedDate', 'createdAt']).optional(),
+        sortDir: z.enum(['asc', 'desc']).optional(),
+        limit: z.number().min(1).max(200).optional(),
+        offset: z.number().min(0).optional(),
+      }).optional())
+      .query(({ input }) => db.getPurchaseOrdersPaged(input ?? {})),
+    // Count + value for the current filters, across the whole filtered set
+    // rather than the visible page.
+    summary: opsProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        status: z.string().optional(),
+        vendorId: z.number().optional(),
+        search: z.string().optional(),
+        orderDateFrom: z.date().optional(),
+        orderDateTo: z.date().optional(),
+        duplicatesOnly: z.boolean().optional(),
+      }).optional())
+      .query(({ input }) => db.getPurchaseOrderSummary(input ?? {})),
+    // Flat rows for CSV export: same filters, no pagination, hard-capped so a
+    // stray export can't try to stream the entire table.
+    exportRows: opsProcedure
+      .input(z.object({
+        status: z.string().optional(),
+        vendorId: z.number().optional(),
+        search: z.string().optional(),
+        orderDateFrom: z.date().optional(),
+        orderDateTo: z.date().optional(),
+        duplicatesOnly: z.boolean().optional(),
+        sortBy: z.enum(['poNumber', 'vendor', 'totalAmount', 'status', 'orderDate', 'expectedDate', 'createdAt']).optional(),
+        sortDir: z.enum(['asc', 'desc']).optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const { rows } = await db.getPurchaseOrdersPaged({ ...(input ?? {}), limit: 5000 });
+        return rows;
+      }),
+    // How much of each PO has actually arrived — drives the receipt progress
+    // column without pulling every line item into the list.
+    receiptProgress: opsProcedure
+      .input(z.object({ purchaseOrderIds: z.array(z.number()) }))
+      .query(({ input }) => db.getPurchaseOrderReceiptProgress(input.purchaseOrderIds)),
+    // PO vs receipt vs vendor invoice, reconciled line by line.
+    threeWayMatch: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const result = await db.getPurchaseOrderThreeWayMatch(input.id);
+        if (!result) throw new TRPCError({ code: 'NOT_FOUND', message: 'Purchase order not found' });
+        return result;
+      }),
+    // The approval chain this PO must clear, and how far through it is.
+    approvalState: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const state = await db.getPurchaseOrderApprovalState(input.id);
+        if (!state) throw new TRPCError({ code: 'NOT_FOUND', message: 'Purchase order not found' });
+        return state;
+      }),
+    bulkUpdateStatus: opsProcedure
+      .input(z.object({
+        ids: z.array(z.number()).min(1).max(500),
+        status: z.enum(['draft', 'sent', 'confirmed', 'partial', 'received', 'cancelled']),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const poNumbers = new Map<number, string>();
+        for (const id of input.ids) {
+          const po = await db.getPurchaseOrderById(id);
+          if (po) poNumbers.set(id, po.poNumber);
+        }
+
+        const { updated, failed } = await db.bulkUpdatePurchaseOrderStatus(input.ids, input.status);
+        for (const id of updated) {
+          await createAuditLog(ctx.user.id, 'update', 'purchaseOrder', id, poNumbers.get(id), undefined, { status: input.status });
+        }
+        return {
+          success: failed.length === 0,
+          updated: updated.length,
+          failed: failed.map((f) => ({ ...f, poNumber: poNumbers.get(f.id) ?? `#${f.id}` })),
+        };
+      }),
+    bulkDelete: opsProcedure
+      .input(z.object({ ids: z.array(z.number()).min(1).max(500) }))
+      .mutation(async ({ input, ctx }) => {
+        // Resolve po numbers up front so the audit log still names what was
+        // deleted after the rows are gone.
+        const poNumbers = new Map<number, string>();
+        for (const id of input.ids) {
+          const po = await db.getPurchaseOrderById(id);
+          if (po) poNumbers.set(id, po.poNumber);
+        }
+
+        const { deleted, failed } = await db.bulkDeletePurchaseOrders(input.ids);
+
+        for (const id of deleted) {
+          await createAuditLog(ctx.user.id, 'delete', 'purchaseOrder', id, poNumbers.get(id));
+        }
+
+        return {
+          success: failed.length === 0,
+          deleted: deleted.length,
+          failed: failed.map((f) => ({ ...f, poNumber: poNumbers.get(f.id) ?? `#${f.id}` })),
+        };
       }),
   }),
 
@@ -12420,6 +13560,22 @@ Provide your forecast in JSON format with the following structure:
         return db.getProductionPlans(input);
       }),
 
+    // Preview a manual production plan: what to make, and what to buy for it.
+    // Same maths as createProductionPlan, but nothing is written.
+    previewProductionPlan: protectedProcedure
+      .input(manualProductionPlanInput)
+      .query(async ({ input, ctx }) =>
+        buildManualProductionPlan(input, { userId: ctx.user?.id }, { persist: false }),
+      ),
+
+    // Create a production plan from a target quantity (no forecast needed).
+    // Materials come from the recipe when one is given, otherwise from the BOM.
+    createProductionPlan: protectedProcedure
+      .input(manualProductionPlanInput)
+      .mutation(async ({ input, ctx }) =>
+        buildManualProductionPlan(input, { userId: ctx.user?.id }, { persist: true }),
+      ),
+
     // Generate production plan from forecast
     generateProductionPlan: protectedProcedure
       .input(z.object({
@@ -12463,48 +13619,17 @@ Provide your forecast in JSON format with the following structure:
         
         // If we have a BOM, calculate material requirements
         if (bom) {
-          const components = await db.getBomComponents(bom.id);
-          
-          for (const comp of components) {
-            if (!comp.rawMaterialId) continue;
-            
-            const requiredQty = parseFloat(comp.quantity?.toString() || '0') * plannedQuantity;
-            
-            // Get current raw material inventory
-            const rmInventory = await db.getRawMaterialInventory({ rawMaterialId: comp.rawMaterialId });
-            const currentRmQty = rmInventory.reduce((sum, inv) => sum + parseFloat(inv.quantity?.toString() || '0'), 0);
-            
-            // Get pending orders
-            const pendingOrders = await db.getPendingOrdersForMaterial(comp.rawMaterialId);
-            const onOrderQty = pendingOrders.reduce((sum, po) => {
-              const ordered = parseFloat(po.quantity?.toString() || '0');
-              const received = parseFloat(po.receivedQuantity?.toString() || '0');
-              return sum + (ordered - received);
-            }, 0);
-            
-            const shortageQty = Math.max(0, requiredQty - currentRmQty - onOrderQty);
-            
-            // Get preferred vendor and estimated cost
-            const vendor = await db.getPreferredVendorForMaterial(comp.rawMaterialId);
-            const rawMaterial = await db.getRawMaterialById(comp.rawMaterialId);
-            const unitCost = parseFloat(rawMaterial?.unitCost?.toString() || '0');
-            
-            await db.createMaterialRequirement({
-              productionPlanId: plan.id,
-              rawMaterialId: comp.rawMaterialId,
-              requiredQuantity: requiredQty.toFixed(4),
-              unit: comp.unit || 'KG',
-              currentInventory: currentRmQty.toFixed(4),
-              onOrderQuantity: onOrderQty.toFixed(4),
-              shortageQuantity: shortageQty.toFixed(4),
-              suggestedOrderQuantity: (shortageQty * 1.1).toFixed(4), // Add 10% buffer
-              preferredVendorId: vendor?.id,
-              estimatedUnitCost: unitCost.toFixed(4),
-              estimatedTotalCost: (shortageQty * 1.1 * unitCost).toFixed(2),
-              leadTimeDays: 14, // Default lead time
-              status: 'pending',
-            });
-          }
+          const { requirements } = await planRequirementsFromBom({
+            bomId: bom.id,
+            plannedQuantity,
+            planUnit: 'EA',
+            unitContext: {},
+            orderBufferPercent: 10,
+            requiredByDate: forecast.forecastPeriodStart
+              ? new Date(forecast.forecastPeriodStart)
+              : new Date(Date.now() + DEFAULT_REQUIRED_BY_DAYS * 24 * 60 * 60 * 1000),
+          });
+          await persistPlanRequirements(plan.id, requirements);
         }
         
         return plan;
@@ -12514,7 +13639,17 @@ Provide your forecast in JSON format with the following structure:
     getMaterialRequirements: protectedProcedure
       .input(z.object({ productionPlanId: z.number() }))
       .query(async ({ input }) => {
-        return db.getMaterialRequirements(input.productionPlanId);
+        const requirements = await db.getMaterialRequirements(input.productionPlanId);
+        return Promise.all(requirements.map(async (req) => {
+          const rawMaterial = req.rawMaterialId ? await db.getRawMaterialById(req.rawMaterialId) : undefined;
+          const vendor = req.preferredVendorId ? await db.getVendorById(req.preferredVendorId) : undefined;
+          return {
+            ...req,
+            materialName: rawMaterial?.name || `Material #${req.rawMaterialId}`,
+            materialSku: rawMaterial?.sku || null,
+            vendorName: vendor?.name || null,
+          };
+        }));
       }),
 
     // Get suggested purchase orders
@@ -13862,6 +14997,125 @@ Then rank all quotes by best leveled value (1 = best; quotes marked NOT COMPARAB
         await createAuditLog(ctx.user.id, 'delete', 'currency_rate', input.id);
         return { success: true };
       }),
+
+    // ── ECB reference rates via the configured feed ──
+    //
+    // Rates a person entered by hand are never overwritten by the feed: if
+    // someone typed the rate their bank actually charged, that beats a
+    // reference rate. See server/fxFeed.ts.
+
+    /** Where the feed points, without calling it. */
+    feedConfig: protectedProcedure.query(() => ({
+      url: feedBaseUrl(),
+      source: FX_FEED_SOURCE,
+      configuredVia: feedUrlIsOverridden() ? 'FX_FEED_URL' : 'default',
+    })),
+
+    /**
+     * Call the feed and report what came back, writing nothing.
+     *
+     * This is the one that answers "can this deployment actually reach the
+     * feed" — worth running once from the real environment before relying on
+     * the scheduled refresh.
+     */
+    testFeed: opsProcedure
+      .input(z.object({ base: z.string().length(3).optional() }).optional())
+      .mutation(async ({ input }) => {
+        try {
+          const feed = await fetchFeedRates({ base: input?.base });
+          return {
+            ok: true as const,
+            url: feedBaseUrl(),
+            base: feed.base,
+            asOf: feed.asOf,
+            currencyCount: Object.keys(feed.rates).length,
+            sample: Object.fromEntries(Object.entries(feed.rates).slice(0, 5)),
+          };
+        } catch (e: any) {
+          // A feed that is down is an ordinary answer here, not a 500 — the
+          // caller is asking whether it works.
+          return {
+            ok: false as const,
+            url: feedBaseUrl(),
+            error: e?.message ?? 'Feed request failed',
+            detail: e?.detail,
+          };
+        }
+      }),
+
+    refreshFromFeed: opsProcedure
+      .input(z.object({
+        base: z.string().length(3).optional(),
+        symbols: z.array(z.string().length(3)).max(50).optional(),
+        asOf: z.date().optional(),
+      }).optional())
+      .mutation(async ({ input, ctx }) => {
+        const result = await refreshFxRatesFromFeed({ ...(input ?? {}), createdBy: ctx.user.id });
+        await createAuditLog(
+          ctx.user.id, 'update', 'currency_rate', 0,
+          `Stored ${result.written.length} ${result.base} rates from the FX feed`
+            + ` as of ${result.asOf.toISOString().slice(0, 10)}`
+            + (result.skippedManual.length ? `; kept ${result.skippedManual.length} manual` : ''),
+        );
+        return result;
+      }),
+
+    /**
+     * Read pasted rate lines without storing anything, so the client can show
+     * what was understood before the user commits to it.
+     */
+    previewPaste: protectedProcedure
+      .input(z.object({ text: z.string().max(20000), base: z.string().length(3).optional() }))
+      .query(({ input }) => parseRatePaste(input.text, { base: input.base })),
+
+    /** Store pasted rates. Refuses the whole paste if any line is unreadable. */
+    importPaste: opsProcedure
+      .input(z.object({
+        text: z.string().max(20000),
+        base: z.string().length(3).optional(),
+        asOf: z.date().optional(),
+        notes: z.string().max(500).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const parsed = parseRatePaste(input.text, { base: input.base });
+        if (parsed.length === 0) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Nothing to import.' });
+        }
+        // All-or-nothing: importing 8 of 10 rates and reporting it in a toast is
+        // how two of them quietly stay wrong.
+        const bad = parsed.filter(r => r.error);
+        if (bad.length > 0) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: `${bad.length} line(s) could not be read; nothing was imported. `
+              + bad.slice(0, 3).map(b => `line ${b.line}: ${b.error}`).join('; '),
+          });
+        }
+
+        // One timestamp for the whole paste. Letting each row default to "now"
+        // independently would split a paste that straddles UTC midnight across
+        // two different as-of days.
+        const asOf = input.asOf ?? new Date();
+
+        const stored: Array<{ pair: string; rate: number }> = [];
+        for (const row of parsed) {
+          await upsertCurrencyRate({
+            fromCurrency: row.fromCurrency!,
+            toCurrency: row.toCurrency!,
+            rate: row.rate!,
+            asOf,
+            source: 'manual',
+            notes: input.notes,
+            createdBy: ctx.user.id,
+          });
+          stored.push({ pair: `${row.fromCurrency}->${row.toCurrency}`, rate: row.rate! });
+        }
+        await createAuditLog(
+          ctx.user.id, 'create', 'currency_rate', 0,
+          `Imported ${stored.length} FX rates by hand`,
+        );
+        return { stored, count: stored.length };
+      }),
   }),
 
   // ============================================
@@ -14594,6 +15848,125 @@ Then rank all quotes by best leveled value (1 = best; quotes marked NOT COMPARAB
       .query(async ({ input }) => {
         return db.getAvailableInventoryByProduct(input.productId);
       }),
+  }),
+
+  // ============================================
+  // CYCLE COUNTING / PHYSICAL INVENTORY
+  // ============================================
+  cycleCounts: router({
+    list: opsProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        warehouseId: z.number().optional(),
+        status: z.enum(CYCLE_COUNT_STATUSES).optional(),
+        limit: z.number().min(1).max(500).optional(),
+      }).optional())
+      .query(({ input }) => db.getCycleCounts(input)),
+
+    getById: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const count = await db.getCycleCountById(input.id);
+        if (!count) return null;
+        const [lines, summary] = await Promise.all([
+          db.getCycleCountLines(input.id),
+          db.getCycleCountVarianceSummary(input.id),
+        ]);
+        // Blind counts withhold book quantity until the count is closed.
+        const hideSystemQty = count.blindCount && (count.status === 'draft' || count.status === 'in_progress');
+        return {
+          ...count,
+          summary,
+          lines: hideSystemQty
+            ? lines.map((l) => ({ ...l, systemQuantity: null, variance: null, varianceValue: null }))
+            : lines,
+        };
+      }),
+
+    create: opsProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        warehouseId: z.number(),
+        countType: z.enum(CYCLE_COUNT_TYPES).default('cycle'),
+        blindCount: z.boolean().default(true),
+        scheduledDate: z.date().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createCycleCount({ ...input, createdBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'create', 'cycleCount', result.id, result.countNumber);
+        return result;
+      }),
+
+    /** Snapshot current book quantities into count lines. */
+    generateLines: opsProcedure
+      .input(z.object({
+        countId: z.number(),
+        productIds: z.array(z.number()).optional(),
+        includeZeroQuantity: z.boolean().optional(),
+      }))
+      .mutation(({ input }) => db.generateCycleCountLines(input.countId, {
+        productIds: input.productIds,
+        includeZeroQuantity: input.includeZeroQuantity,
+      })),
+
+    start: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.startCycleCount(input.id);
+        await createAuditLog(ctx.user.id, 'update', 'cycleCount', input.id);
+        return result;
+      }),
+
+    recordLine: opsProcedure
+      .input(z.object({
+        lineId: z.number(),
+        countedQuantity: z.number().min(0),
+        reasonCode: z.enum(ADJUSTMENT_REASON_CODES).optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(({ input, ctx }) => db.recordCycleCountLine(input.lineId, {
+        countedQuantity: input.countedQuantity,
+        reasonCode: input.reasonCode,
+        notes: input.notes,
+        countedBy: ctx.user.id,
+      })),
+
+    flagForRecount: opsProcedure
+      .input(z.object({ lineId: z.number() }))
+      .mutation(({ input }) => db.flagCycleCountLineForRecount(input.lineId)),
+
+    submitForReview: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.submitCycleCountForReview(input.id);
+        await createAuditLog(ctx.user.id, 'update', 'cycleCount', input.id);
+        return result;
+      }),
+
+    /**
+     * Approve and post variances to the inventory ledger. Restricted to admin
+     * so the person counting cannot also sign off their own variance.
+     */
+    approve: adminProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.approveCycleCount(input.id, ctx.user.id);
+        await createAuditLog(ctx.user.id, 'approve', 'cycleCount', input.id, result.countNumber);
+        return result;
+      }),
+
+    cancel: opsProcedure
+      .input(z.object({ id: z.number(), reason: z.string().optional() }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.cancelCycleCount(input.id, input.reason);
+        await createAuditLog(ctx.user.id, 'update', 'cycleCount', input.id);
+        return result;
+      }),
+
+    varianceSummary: opsProcedure
+      .input(z.object({ countId: z.number() }))
+      .query(({ input }) => db.getCycleCountVarianceSummary(input.countId)),
   }),
 
   // ============================================

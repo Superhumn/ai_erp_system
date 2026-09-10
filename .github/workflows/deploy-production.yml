@@ -27,33 +27,31 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      # Runs before the migration step, so a misrouted deploy is refused while
-      # the production database is still untouched. The current (original)
-      # service stays production — it owns the domain, the production DB, and
-      # every registered OAuth callback — and the staging tier is a NEW
-      # service whose id lives in the STAGING_SERVICE_ID repository variable
-      # (set when it is created; see DEPLOYMENT.md "Staging tier"). While that
-      # variable is unset the staging tier does not exist yet, and a
-      # "production" deploy would race the staging auto-deploys on the one
-      # shared container, so the deploy is refused.
-      - name: Verify production and staging are distinct services
+      # Runs before the migration step. Two regimes:
+      # - Staging tier not built (STAGING_SERVICE_ID repo variable unset):
+      #   there is only one Railway service, so a "production" deploy is just
+      #   a redeploy of that service — proceed with a notice (main dropped the
+      #   old hard guard for exactly this reason).
+      # - Staging tier built: production must be a distinct service; refuse a
+      #   deploy whose id resolves to the staging one, while the production
+      #   database is still untouched.
+      - name: Verify Railway service routing
         env:
           RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
           STAGING_SERVICE_ID: ${{ vars.STAGING_SERVICE_ID }}
         run: |
           if [ -z "$RAILWAY_SERVICE_ID" ]; then
-            echo "::error title=Railway service id missing::RAILWAY_SERVICE_ID is not set. Add it as an environment-scoped variable on the 'production' environment (GitHub → Settings → Environments → production)."
+            echo "::error title=Railway service id missing::RAILWAY_SERVICE_ID is not set. Add it as a variable (repository-level in the single-service setup, or environment-scoped on 'production' once the staging tier exists)."
             exit 1
           fi
           if [ -z "$STAGING_SERVICE_ID" ]; then
-            echo "::error title=Staging tier not configured::STAGING_SERVICE_ID repository variable is not set, which means the second (staging) Railway service does not exist yet — staging and production share one container and this deploy would race the staging auto-deploys. Follow the 'Staging tier' section of DEPLOYMENT.md, then set STAGING_SERVICE_ID to the staging service id."
+            echo "::notice title=Single-service setup::STAGING_SERVICE_ID is not set - no separate staging tier exists, so this deploys the one Railway service. See the 'Staging tier' section of DEPLOYMENT.md to add one."
+          elif [ "$RAILWAY_SERVICE_ID" = "$STAGING_SERVICE_ID" ]; then
+            echo "::error title=Production is pointing at the staging service::RAILWAY_SERVICE_ID resolved to ${RAILWAY_SERVICE_ID}, which is the staging service - a 'production' deploy would ship to staging and migrations would run against whichever DATABASE_URL the production environment holds. Set the 'production' environment's RAILWAY_SERVICE_ID to the production service id from the Railway dashboard."
             exit 1
+          else
+            echo "Production service: $RAILWAY_SERVICE_ID"
           fi
-          if [ "$RAILWAY_SERVICE_ID" = "$STAGING_SERVICE_ID" ]; then
-            echo "::error title=Production is pointing at the staging service::RAILWAY_SERVICE_ID resolved to ${RAILWAY_SERVICE_ID}, which is the staging service — a 'production' deploy would ship to staging and migrations would run against whichever DATABASE_URL the production environment holds. Set the 'production' environment's RAILWAY_SERVICE_ID to the production service id from the Railway dashboard."
-            exit 1
-          fi
-          echo "Production service: $RAILWAY_SERVICE_ID"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
