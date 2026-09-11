@@ -473,7 +473,6 @@ export const appRouter = router({
   // EDI MODULE - Retail Customer Connections
   // ============================================
   edi: ediRouter,
-  // (orderItems router defined earlier in file)
   // ============================================
   // INVENTORY MANAGEMENT (enriched view)
   // ============================================

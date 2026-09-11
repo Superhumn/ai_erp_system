@@ -4,7 +4,6 @@ import { router } from "../_core/trpc";
 import * as db from "../db";
 import { opsProcedure } from "./_shared";
 
-// (orderItems router defined earlier in file)
 // ============================================
 // INVENTORY MANAGEMENT (enriched view)
 // ============================================
