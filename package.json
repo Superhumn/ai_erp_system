@@ -22,7 +22,8 @@
     "db:baseline": "drizzle-kit pull",
     "index:legacy": "node scripts/generate-legacy-indexes.mjs",
     "index:legacy:check": "node scripts/generate-legacy-indexes.mjs && git diff --exit-code DB_INDEX.md",
-    "audit:coverage": "tsx scripts/dump-trpc-paths.ts > /tmp/server-procs.txt && node scripts/feature-coverage.mjs"
+    "audit:coverage": "tsx scripts/dump-trpc-paths.ts > /tmp/server-procs.txt && node scripts/feature-coverage.mjs",
+    "audit:sweep": "tsx scripts/sweep-procedures.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
@@ -75,6 +76,7 @@
     "imapflow": "^1.2.5",
     "input-otp": "^1.4.2",
     "jose": "6.1.0",
+    "jsdom": "^29.0.2",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.453.0",
     "mysql2": "^3.15.0",
@@ -126,7 +128,6 @@
     "drizzle-kit": "^0.31.4",
     "esbuild": "^0.25.0",
     "fake-indexeddb": "^6.2.5",
-    "jsdom": "^29.0.2",
     "pnpm": "^10.27.0",
     "postcss": "^8.4.47",
     "prettier": "^3.6.2",

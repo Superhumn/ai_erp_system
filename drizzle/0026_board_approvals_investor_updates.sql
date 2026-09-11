@@ -20,6 +20,7 @@ CREATE TABLE `board_resolutions` (
   CONSTRAINT `board_resolutions_id` PRIMARY KEY(`id`)
 );
 
+--> statement-breakpoint
 CREATE TABLE `board_signatures` (
   `id` int AUTO_INCREMENT NOT NULL,
   `resolutionId` int NOT NULL,
@@ -37,6 +38,7 @@ CREATE TABLE `board_signatures` (
   CONSTRAINT `board_signatures_id` PRIMARY KEY(`id`)
 );
 
+--> statement-breakpoint
 CREATE TABLE `investor_updates` (
   `id` int AUTO_INCREMENT NOT NULL,
   `companyId` int,

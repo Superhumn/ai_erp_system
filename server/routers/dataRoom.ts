@@ -2315,12 +2315,18 @@ export const dataRoomRouter = router({
           reviewStatus: z.enum(['pending', 'approved', 'needs_attention', 'rejected']),
           reviewNotes: z.string().optional(),
         }))
-        .mutation(async ({ input, ctx }) => {
-          await (db as any).updateChecklistItem(input.id, {
-            reviewStatus: input.reviewStatus,
-            reviewNotes: input.reviewNotes,
-            reviewedBy: ctx.user.id,
-            reviewedAt: new Date(),
+        .mutation(async ({ input }) => {
+          // dataRoomChecklistItems has `status` and `notes`, not review* columns;
+          // writing unknown keys produced `UPDATE … SET WHERE`, a SQL syntax error.
+          const statusMap = {
+            pending: "pending",
+            approved: "approved",
+            rejected: "rejected",
+            needs_attention: "partial",
+          } as const;
+          await db.updateChecklistItem(input.id, {
+            status: statusMap[input.reviewStatus],
+            ...(input.reviewNotes !== undefined && { notes: input.reviewNotes }),
           });
           return { success: true };
         }),

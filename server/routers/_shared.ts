@@ -19,7 +19,7 @@ import * as manufacturingDb from "../db/manufacturing";
 import { parseFormulationSheet, type ColumnKey } from "../recipeSheetImport";
 import { decrypt } from "../_core/crypto";
 import { ENV } from "../_core/env";
-import { createDecipheriv, createHash, scrypt, randomBytes, timingSafeEqual } from "crypto";
+import { createDecipheriv, createHash, scrypt, randomBytes, randomInt, timingSafeEqual } from "crypto";
 import { promisify } from "util";
 
 // Promisified scrypt, created once at module scope so the (hot) share-link auth
@@ -789,8 +789,7 @@ export function generateNumber(prefix: string) {
   const date = new Date();
   const year = date.getFullYear().toString().slice(-2);
   const month = (date.getMonth() + 1).toString().padStart(2, '0');
-  const crypto = require('crypto');
-  const random = crypto.randomInt(10000).toString().padStart(4, '0');
+  const random = randomInt(10000).toString().padStart(4, '0');
   return `${prefix}-${year}${month}-${random}`;
 }
 

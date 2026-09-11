@@ -558,7 +558,7 @@ async function ensureTables() {
       "ALTER TABLE companies ADD COLUMN taxRegime ENUM('vat','gst','sales_tax','none') NOT NULL DEFAULT 'none'",
     ];
     for (const alt of alterColumns) {
-      try { await database.execute(require('drizzle-orm/sql').sql.raw(alt)); } catch { /* already exists */ }
+      try { await database.execute(sql.raw(alt)); } catch { /* already exists */ }
     }
     for (const tableSQL of tables) {
       try { await database.execute(sql.raw(tableSQL)); } catch { /* already exists */ }
@@ -571,8 +571,8 @@ async function ensureTables() {
       "ALTER TABLE fireflies_meetings ADD COLUMN linkedEntityType VARCHAR(64)",
       "ALTER TABLE fireflies_meetings ADD COLUMN linkedEntityId INT",
     ];
-    for (const sql of alterStatements) {
-      try { await database.execute(require('drizzle-orm/sql').sql.raw(sql)); } catch { /* column already exists */ }
+    for (const stmt of alterStatements) {
+      try { await database.execute(sql.raw(stmt)); } catch { /* column already exists */ }
     }
     console.log("[Startup] Ensured critical tables exist");
   } catch (e) {

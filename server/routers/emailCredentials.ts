@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
+import { definedFields } from "../_core/definedFields";
 import { encrypt } from "../_core/crypto";
 import { decryptPassword } from "./_shared";
 
@@ -189,7 +190,9 @@ export const emailCredentialsRouter = router({
             updateData.nextRunAt = new Date(Date.now() + intervalMinutes * 60 * 1000);
           }
 
-          await db.updateScheduledScan(id, updateData);
+          const patch = definedFields(updateData);
+          if (!patch) return { success: true };
+          await db.updateScheduledScan(id, patch);
           return { success: true };
         }),
 

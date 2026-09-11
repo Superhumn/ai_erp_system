@@ -2,6 +2,7 @@
 import { z } from "zod";
 import { router } from "../_core/trpc";
 import * as db from "../db";
+import { definedFields } from "../_core/definedFields";
 import { opsProcedure } from "./_shared";
 
 // ============================================
@@ -19,11 +20,8 @@ export const inventoryManagementRouter = router({
       }))
       .mutation(async ({ input }) => {
         const { id, ...data } = input;
-        // Filter out undefined values
-        const updateData: Record<string, any> = {};
-        for (const [k, v] of Object.entries(data)) {
-          if (v !== undefined) updateData[k] = v;
-        }
-        return db.updateInventoryManagement(id, updateData);
+        const patch = definedFields(data);
+        if (!patch) return { success: true };
+        return db.updateInventoryManagement(id, patch);
       }),
   });

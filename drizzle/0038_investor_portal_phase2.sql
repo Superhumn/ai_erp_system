@@ -22,6 +22,7 @@ ALTER TABLE `stakeholders`
   ADD COLUMN `paymentPreference` TEXT NULL,
   ADD COLUMN `accreditedReAttestedAt` TIMESTAMP NULL;
 
+--> statement-breakpoint
 CREATE TABLE `stakeholder_documents` (
   `id` int NOT NULL AUTO_INCREMENT,
   `companyId` int NULL,

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi } from "../ediService";
+import { definedFields } from "../_core/definedFields";
 import { testConnection, generateAndDeliver, pollSftpForInbound, pollAllPartners } from "../ediTransportService";
 import { adminProcedure, opsProcedure, createAuditLog } from "./_shared";
 
@@ -104,7 +105,7 @@ export const ediRouter = router({
       create: opsProcedure
         .input(z.object({
           tradingPartnerId: z.number(),
-          transactionSetCode: z.string().min(1),
+          transactionSetCode: z.string().min(1).max(10),
           direction: z.enum(["inbound", "outbound"]),
           version: z.string().optional(),
           mappingRules: z.string(),
@@ -128,7 +129,9 @@ export const ediRouter = router({
         }))
         .mutation(async ({ input, ctx }) => {
           const { id, ...data } = input;
-          await db.updateEdiDocumentMap(id, data);
+          const patch = definedFields(data);
+          if (!patch) return { success: true };
+          await db.updateEdiDocumentMap(id, patch);
           await createAuditLog(ctx.user.id, 'update', 'edi_document_map', id);
           return { success: true };
         }),
@@ -235,7 +238,9 @@ export const ediRouter = router({
         }))
         .mutation(async ({ input, ctx }) => {
           const { id, ...data } = input;
-          await db.updateEdiProductCrosswalk(id, data);
+          const patch = definedFields(data);
+          if (!patch) return { success: true };
+          await db.updateEdiProductCrosswalk(id, patch);
           await createAuditLog(ctx.user.id, 'update', 'edi_product_crosswalk', id);
           return { success: true };
         }),

@@ -88,15 +88,60 @@ See `.env.example` for the full list of optional integrations (email, Google OAu
 ### CI/CD (Auto-Deploy on Push)
 
 The included `.github/workflows/deploy-staging.yml` deploys to Railway staging automatically when you push to `main`.
-Production is deliberately manual — run the **Deploy to Production** workflow and type `deploy` to confirm.
-You need these per environment (GitHub → Settings → Secrets and variables → Actions):
+Production deploys two ways, both against the same hardened steps:
 
-| GitHub Secret | Value |
+- **Gated promotion** (`deploy-production-auto.yml`) — after each successful staging deploy of `main`, a
+  production run starts and **pauses for required-reviewer approval** on the `production` environment.
+  Approve it and the exact commit staging just deployed is promoted to production.
+- **Manual** (`deploy-production.yml`) — run the **Deploy to Production** workflow and type `deploy` to
+  confirm. Kept for ad-hoc redeploys.
+
+Until the staging tier below exists, the **gated promotion refuses to run** (promoting on a single
+service would only duplicate the staging deploy), while the **manual workflow deploys the one live
+service** with a notice. Once the tier exists, both enforce that production and staging are distinct
+services before running any migrations.
+
+### Staging tier (one-time setup)
+
+Until this is done, "staging" and "production" are the **same Railway container** — every push to `main`
+ships straight to the live site. The setup below gives merges a rehearsal box and makes production a
+distinct, approved step. The **existing service stays production** (it owns the domain, the production
+database, and every registered OAuth callback — moving those to a new box risks breaking integrations);
+the **new service becomes staging**.
+
+**In Railway ([dashboard](https://railway.app)):**
+
+1. Create a **staging database** (e.g. a second PlanetScale database or branch, `ai-erp-staging`). Never
+   point staging at the production `DATABASE_URL` — staging runs migrations on every merge.
+2. In the existing project: **New → Service → Deploy from GitHub repo**, same repository. Name it e.g.
+   `ai-erp-staging`. Then in the service's **Settings**, disconnect/disable the GitHub **auto-deploy
+   trigger**: `deploy-staging.yml` already runs `railway up` on every push to `main`, and leaving
+   Railway's own trigger on would start two overlapping deployments per merge — recreating the
+   replace-the-container-mid-healthcheck race the Actions concurrency groups exist to prevent. GitHub
+   Actions must be the sole deployer.
+3. Copy the production service's **Variables** onto it, changing at minimum: `DATABASE_URL` (staging DB)
+   and the app-URL variables the code actually reads — `PUBLIC_APP_URL` (primary; `APP_URL` is its
+   fallback, see `server/_core/env.ts`) and `VITE_APP_URL` (client/OAuth fallback) — all set to the
+   staging service's own `*.up.railway.app` URL, so staging-generated links and origin checks don't
+   point at production.
+4. Note the new service's **Service ID** (Service → Settings).
+
+**In GitHub (Settings → Secrets and variables → Actions, and Settings → Environments):**
+
+5. Repository **variable** `STAGING_SERVICE_ID` = the new staging service id (the workflows' guard uses it
+   to prove staging ≠ production). Delete any repository-level `RAILWAY_SERVICE_ID`.
+6. `staging` environment: variable `RAILWAY_SERVICE_ID` = staging service id; secret `DATABASE_URL` =
+   staging DB. `RAILWAY_TOKEN` stays as it is.
+7. `production` environment: variable `RAILWAY_SERVICE_ID` = the **original** service id; secret
+   `DATABASE_URL` = production DB; `RAILWAY_TOKEN` stays as it is.
+8. `production` environment → **Required reviewers** → add yourself. This is the approval gate the
+   promotion workflow pauses on.
+
+| Per environment | Value |
 |---|---|
-| `RAILWAY_TOKEN` | Railway dashboard → Account → API Tokens |
-| `RAILWAY_SERVICE_ID` | Railway dashboard → Service → Settings → Service ID |
-
-Create two environments in GitHub (**Settings → Environments**): `staging` and `production`, each with their own `RAILWAY_TOKEN` and `RAILWAY_SERVICE_ID`.
+| `RAILWAY_TOKEN` (secret) | Railway dashboard → Account → API Tokens |
+| `RAILWAY_SERVICE_ID` (variable) | Railway dashboard → Service → Settings → Service ID |
+| `DATABASE_URL` (secret) | That environment's database |
 
 > **There is currently only one Railway service.** `RAILWAY_SERVICE_ID` is defined only at the
 > repository level (`696669c7-01e4-4d7a-8509-4abd2c96dac1`, in project

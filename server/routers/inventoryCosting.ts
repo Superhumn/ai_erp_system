@@ -3,6 +3,7 @@ import { z } from "zod";
 import { router } from "../_core/trpc";
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "../inventoryCostingService";
 import * as db from "../db";
+import { definedFields } from "../_core/definedFields";
 import { financeProcedure, opsProcedure, createAuditLog } from "./_shared";
 
 export const inventoryCostingRouter = router({
@@ -43,7 +44,9 @@ export const inventoryCostingRouter = router({
         }))
         .mutation(async ({ input, ctx }) => {
           const { id, ...data } = input;
-          await db.updateInventoryCostingConfig(id, data);
+          const patch = definedFields(data);
+          if (!patch) return { success: true };
+          await db.updateInventoryCostingConfig(id, patch);
           await createAuditLog(ctx.user.id, 'update', 'inventoryCostingConfig', id);
           return { success: true };
         }),

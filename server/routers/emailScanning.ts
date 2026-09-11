@@ -4,6 +4,8 @@ import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { ingestVendorQuoteEmail } from "../vendorQuoteParser";
 import * as db from "../db";
+import { autoReplyRules } from "../../drizzle/schema";
+import { randomBytes } from "crypto";
 import { sanitizeAttachments } from "./_shared";
 
 // ============================================
@@ -275,10 +277,10 @@ export const emailScanningRouter = router({
         // First, quick categorize for immediate feedback
         const { quickCategorize } = await import("../_core/emailParser");
         const quickCategory = quickCategorize(input.subject, input.fromEmail);
-
+        
         // Create inbound email record with initial category
         const { id: emailId } = await db.createInboundEmail({
-          messageId: `manual-${Date.now()}-${require('crypto').randomBytes(8).toString('hex')}`,
+          messageId: `manual-${Date.now()}-${randomBytes(8).toString('hex')}`,
           fromEmail: input.fromEmail,
           fromName: input.fromName || null,
           toEmail: "erp@system.local",
@@ -737,7 +739,7 @@ export const emailScanningRouter = router({
     createAutoReplyRule: protectedProcedure
       .input(z.object({
         name: z.string().min(1),
-        category: z.string(),
+        category: z.enum(autoReplyRules.category.enumValues),
         replyTemplate: z.string().min(1),
         senderPattern: z.string().optional(),
         subjectPattern: z.string().optional(),

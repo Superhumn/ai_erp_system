@@ -2,6 +2,7 @@
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
+import { definedFields } from "../_core/definedFields";
 
 // ============================================
 // INVENTORY ALLOCATIONS
@@ -41,7 +42,9 @@ export const allocationsRouter = router({
       }))
       .mutation(async ({ input }) => {
         const { id, ...data } = input;
-        await db.updateInventoryAllocation(id, data);
+        const patch = definedFields(data);
+        if (!patch) return { success: true };
+        await db.updateInventoryAllocation(id, patch);
         return { success: true };
       }),
   });

@@ -8,6 +8,7 @@ import { normalizeQuotesForRfq, basisFromRfq, INCOTERM_CODES } from "../quoteNor
 import { ingestVendorQuoteEmail, parseVendorQuoteAttachment, parseVendorQuoteEmail } from "../vendorQuoteParser";
 import { computeResponsivenessForVendors, computeVendorResponsiveness, markStaleInvitationsNoResponse, responsivenessScoreFromMetrics } from "../vendorResponsiveness";
 import * as db from "../db";
+import { randomBytes } from "crypto";
 import { parseLlmJson } from "../llmJson";
 import { isFetchableAttachmentUrl } from "../attachmentUrl";
 import { opsProcedure, MAX_RFQ_VENDORS_PER_SEND, createAuditLog } from "./_shared";
@@ -518,7 +519,7 @@ Ask if they received the original request and if they can provide a quote.`;
           
           // Create PO if requested
           if (input.createPO && rfq) {
-            const poNumber = `PO-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${require('crypto').randomBytes(2).toString('hex').toUpperCase()}`;
+            const poNumber = `PO-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${randomBytes(2).toString('hex').toUpperCase()}`;
             const poResult = await db.createPurchaseOrder({
               poNumber,
               vendorId: quote.vendorId,

@@ -173,11 +173,7 @@ export const crmRouter = router({
 
       deleteAll: protectedProcedure
         .mutation(async ({ ctx }) => {
-          const database = await db.getDb();
-          if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
-          const { crmContacts } = await import("../../drizzle/schema");
-          const result = await database.delete(crmContacts);
-          const count = (result as any)[0]?.affectedRows || 0;
+          const count = await db.deleteAllCrmContacts();
           await createAuditLog(ctx.user.id, 'delete', 'crm_contact', 0, `Bulk deleted all ${count} contacts`);
           return { deleted: count };
         }),
