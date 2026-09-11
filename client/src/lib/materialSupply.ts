@@ -259,7 +259,7 @@ export function buildMaterialSupplyView(overview: MaterialSupplyOverview): Mater
       return {
         short: e.copacker.short,
         covColor: e.dos < 7 ? "#DC2626" : e.dos < 21 ? "#2563EB" : "#9AA0AB",
-        covLabel: `${e.dos < 10 ? e.dos.toFixed(1) : Math.round(e.dos)}d → ${Math.round(e.runway)}d w/ inbound`,
+        covLabel: `${e.dos < 10 ? e.dos.toFixed(1) : Math.round(e.dos)}d → ${Math.round(e.runway)}d +inbound`,
         onHandPct,
         inboundPct,
         deficitPct: Math.max(0, 100 - onHandPct - inboundPct),
