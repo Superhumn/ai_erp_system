@@ -1461,7 +1461,7 @@ async function buildManualProductionPlan(
   // Finished goods already on hand, restated in the plan's unit.
   let currentInventory = 0;
   if (input.netOffInventory) {
-    const inventoryRecords = await db.getInventory({ productId });
+    const inventoryRecords = await db.getInventory(undefined, { productId });
     const onHandEach = inventoryRecords.reduce(
       (sum, inv) => sum + parseFloat(inv.quantity?.toString() || "0"),
       0,
