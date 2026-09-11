@@ -39,7 +39,12 @@ jobs:
         env:
           RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
           STAGING_SERVICE_ID: ${{ vars.STAGING_SERVICE_ID }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "::error title=Railway token missing::RAILWAY_TOKEN secret is not set for the 'production' environment. Add it in GitHub → Settings → Secrets and variables → Actions → Secrets (generate a project/service token in the Railway dashboard). Checked before migrations so a missing token can't leave the DB migrated with no matching release."
+            exit 1
+          fi
           if [ -z "$RAILWAY_SERVICE_ID" ]; then
             echo "::error title=Railway service id missing::RAILWAY_SERVICE_ID is not set. Add it as a variable (repository-level in the single-service setup, or environment-scoped on 'production' once the staging tier exists)."
             exit 1
@@ -95,14 +100,8 @@ jobs:
         # fails here leaves the DB migrated but the app un-updated — fix the
         # config and re-run rather than rolling back migrations.
         run: |
-          if [ -z "$RAILWAY_TOKEN" ]; then
-            echo "::error title=Railway token missing::RAILWAY_TOKEN secret is not set for the 'production' environment. Add it in GitHub → Settings → Secrets and variables → Actions → Secrets (generate a project/service token in the Railway dashboard)."
-            exit 1
-          fi
-          if [ -z "$RAILWAY_SERVICE_ID" ]; then
-            echo "::error title=Railway service id missing::RAILWAY_SERVICE_ID variable is not set, so 'railway up' cannot target a service. Add it in GitHub → Settings → Secrets and variables → Actions → Variables (copy the service ID from the Railway dashboard)."
-            exit 1
-          fi
+          # Token and service id were preflighted in the routing guard above,
+          # before migrations ran.
           # Constrain the CLI to the v4 major line so a v5 breaking release
           # can't change deploy behavior. 4.x minors still float — set an exact
           # version here if you need fully reproducible installs.

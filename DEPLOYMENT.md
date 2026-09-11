@@ -114,9 +114,16 @@ the **new service becomes staging**.
 1. Create a **staging database** (e.g. a second PlanetScale database or branch, `ai-erp-staging`). Never
    point staging at the production `DATABASE_URL` — staging runs migrations on every merge.
 2. In the existing project: **New → Service → Deploy from GitHub repo**, same repository. Name it e.g.
-   `ai-erp-staging`.
-3. Copy the production service's **Variables** onto it, changing at minimum: `DATABASE_URL` (staging DB),
-   `APP_URL`/`PUBLIC_URL` (the staging service's own `*.up.railway.app` URL).
+   `ai-erp-staging`. Then in the service's **Settings**, disconnect/disable the GitHub **auto-deploy
+   trigger**: `deploy-staging.yml` already runs `railway up` on every push to `main`, and leaving
+   Railway's own trigger on would start two overlapping deployments per merge — recreating the
+   replace-the-container-mid-healthcheck race the Actions concurrency groups exist to prevent. GitHub
+   Actions must be the sole deployer.
+3. Copy the production service's **Variables** onto it, changing at minimum: `DATABASE_URL` (staging DB)
+   and the app-URL variables the code actually reads — `PUBLIC_APP_URL` (primary; `APP_URL` is its
+   fallback, see `server/_core/env.ts`) and `VITE_APP_URL` (client/OAuth fallback) — all set to the
+   staging service's own `*.up.railway.app` URL, so staging-generated links and origin checks don't
+   point at production.
 4. Note the new service's **Service ID** (Service → Settings).
 
 **In GitHub (Settings → Secrets and variables → Actions, and Settings → Environments):**

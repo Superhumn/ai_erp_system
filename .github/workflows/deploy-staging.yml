@@ -51,6 +51,37 @@ jobs:
       - name: Build application
         run: pnpm run build
 
+      # Runs before migrations so a misconfigured deploy is refused while the
+      # staging DB is untouched. While STAGING_SERVICE_ID (repository
+      # variable, set when the staging tier is created) is unset there is only
+      # one Railway service and nothing to cross-check. Once it is set, this
+      # attests that the staging workflow really deploys the staging service:
+      # vars.RAILWAY_SERVICE_ID falls back to a repository-level value when
+      # the 'staging' environment doesn't define one, and if that fallback
+      # were the production id, staging deploys would silently ship to
+      # production while the gated promotion's distinct-services check still
+      # passed. The token is checked here too so a missing secret can't leave
+      # the staging DB migrated with no matching release.
+      - name: Verify staging deploys the staging service
+        env:
+          RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
+          STAGING_SERVICE_ID: ${{ vars.STAGING_SERVICE_ID }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "::error title=Railway token missing::RAILWAY_TOKEN secret is not set for the 'staging' environment. Add it in GitHub → Settings → Secrets and variables → Actions → Secrets (generate a project/service token in the Railway dashboard)."
+            exit 1
+          fi
+          if [ -z "$RAILWAY_SERVICE_ID" ]; then
+            echo "::error title=Railway service id missing::RAILWAY_SERVICE_ID variable is not set, so 'railway up' cannot target a service (bare 'railway up' has no linked project in CI and fails). Add it in GitHub → Settings → Secrets and variables → Actions → Variables (copy the service ID from the Railway dashboard)."
+            exit 1
+          fi
+          if [ -n "$STAGING_SERVICE_ID" ] && [ "$RAILWAY_SERVICE_ID" != "$STAGING_SERVICE_ID" ]; then
+            echo "::error title=Staging is not deploying the staging service::The staging tier exists (STAGING_SERVICE_ID is set) but this workflow's RAILWAY_SERVICE_ID resolved to ${RAILWAY_SERVICE_ID}, which is a different service — most likely a leftover repository-level RAILWAY_SERVICE_ID pointing at production. Set the 'staging' environment's RAILWAY_SERVICE_ID to ${STAGING_SERVICE_ID} (and delete the repository-level variable) so staging deploys never ship to production."
+            exit 1
+          fi
+          echo "Staging service: $RAILWAY_SERVICE_ID"
+
       - name: Run database migrations (staging)
         # Applies any new Drizzle migrations from drizzle/*.sql against the
         # staging DB before the new app build goes live. Idempotent — the
@@ -66,19 +97,11 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
       - name: Deploy to Railway staging
-        # Preflight the Railway config before invoking the CLI so a
-        # misconfiguration surfaces as a clear, actionable message instead of
-        # the CLI's cryptic "error decoding response body / expected ident"
-        # (which is what an invalid/expired token or missing service produces).
+        # Token and service id were preflighted in the guard step above,
+        # before migrations, so a misconfiguration surfaces there as a clear,
+        # actionable message instead of the CLI's cryptic "error decoding
+        # response body / expected ident".
         run: |
-          if [ -z "$RAILWAY_TOKEN" ]; then
-            echo "::error title=Railway token missing::RAILWAY_TOKEN secret is not set for the 'staging' environment. Add it in GitHub → Settings → Secrets and variables → Actions → Secrets (generate a project/service token in the Railway dashboard)."
-            exit 1
-          fi
-          if [ -z "$RAILWAY_SERVICE_ID" ]; then
-            echo "::error title=Railway service id missing::RAILWAY_SERVICE_ID variable is not set, so 'railway up' cannot target a service (bare 'railway up' has no linked project in CI and fails). Add it in GitHub → Settings → Secrets and variables → Actions → Variables (copy the service ID from the Railway dashboard)."
-            exit 1
-          fi
           # Constrain the CLI to the v4 major line so a v5 breaking release
           # can't change deploy behavior. 4.x minors still float — set an exact
           # version here if you need fully reproducible installs.

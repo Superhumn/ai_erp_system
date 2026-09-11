@@ -34,16 +34,24 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      # Runs before the migration step, so a misrouted deploy is refused while
-      # the production database is still untouched. STAGING_SERVICE_ID is a
-      # repository variable set when the staging service is created; while it
-      # is unset, staging and production share one container and promoting
-      # would just redeploy the same box, so the deploy is refused.
+      # Runs before the migration step, so a misrouted or under-configured
+      # deploy is refused while the production database is still untouched.
+      # STAGING_SERVICE_ID is a repository variable set when the staging
+      # service is created; while it is unset, staging and production share
+      # one container and promoting would just redeploy the same box, so the
+      # deploy is refused. RAILWAY_TOKEN is checked here too: discovering a
+      # missing token only at the deploy step would leave the schema migrated
+      # with no matching release.
       - name: Verify production and staging are distinct services
         env:
           RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
           STAGING_SERVICE_ID: ${{ vars.STAGING_SERVICE_ID }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "::error title=Railway token missing::RAILWAY_TOKEN secret is not set for the 'production' environment. Add it in GitHub → Settings → Secrets and variables → Actions → Secrets (generate a project/service token in the Railway dashboard)."
+            exit 1
+          fi
           if [ -z "$RAILWAY_SERVICE_ID" ]; then
             echo "::error title=Railway service id missing::RAILWAY_SERVICE_ID is not set. Add it as an environment-scoped variable on the 'production' environment (GitHub → Settings → Environments → production)."
             exit 1
@@ -82,28 +90,27 @@ jobs:
         # Applies any new Drizzle migrations from drizzle/*.sql against the
         # production DB before the new app build goes live. Idempotent — the
         # migration runner tracks which files have already been applied.
-        # Skipped automatically if DATABASE_URL isn't configured for the env.
+        # Unlike the staging workflow, a missing DATABASE_URL is a hard error:
+        # this job only runs once the staging tier exists (guard above), and
+        # the tier setup configures DATABASE_URL on the 'production'
+        # environment — promoting a build against an unmigrated schema is
+        # never intended.
         run: |
-          if [ -n "$DATABASE_URL" ]; then
-            node dist/migrate.js
-          else
-            echo "DATABASE_URL not set for production environment, skipping migrations"
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error title=Production DATABASE_URL missing::DATABASE_URL secret is not set for the 'production' environment, so production migrations cannot run. Refusing to promote a build against a possibly unmigrated schema. Set it in GitHub → Settings → Environments → production."
+            exit 1
           fi
+          node dist/migrate.js
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
       - name: Deploy to Railway production
-        # Preflight the Railway config before invoking the CLI so a
-        # misconfiguration surfaces as a clear, actionable message instead of
-        # the CLI's cryptic "error decoding response body / expected ident".
-        # NB: DB migrations already ran in the step above, so a deploy that
-        # fails here leaves the DB migrated but the app un-updated — fix the
-        # config and re-run rather than rolling back migrations.
+        # Token and service id were preflighted in the guard step, before
+        # migrations, so this step should only fail on genuine Railway-side
+        # errors. NB: DB migrations already ran in the step above, so a deploy
+        # that fails here leaves the DB migrated but the app un-updated — fix
+        # the config and re-run rather than rolling back migrations.
         run: |
-          if [ -z "$RAILWAY_TOKEN" ]; then
-            echo "::error title=Railway token missing::RAILWAY_TOKEN secret is not set for the 'production' environment. Add it in GitHub → Settings → Secrets and variables → Actions → Secrets (generate a project/service token in the Railway dashboard)."
-            exit 1
-          fi
           # Constrain the CLI to the v4 major line so a v5 breaking release
           # can't change deploy behavior. 4.x minors still float — set an exact
           # version here if you need fully reproducible installs.
