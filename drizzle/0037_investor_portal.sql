@@ -19,17 +19,20 @@ ALTER TABLE `users`
     'copacker','vendor','contractor','investor'
   ) NOT NULL DEFAULT 'user';
 
+--> statement-breakpoint
 ALTER TABLE `teamInvitations`
   MODIFY COLUMN `role` ENUM(
     'user','admin','finance','ops','legal','exec','sales',
     'copacker','vendor','contractor','investor'
   ) NOT NULL DEFAULT 'user';
 
+--> statement-breakpoint
 ALTER TABLE `team_invites`
   MODIFY COLUMN `role` ENUM(
     'user','admin','finance','ops','legal','exec','sales',
     'copacker','vendor','contractor','investor'
   ) NOT NULL DEFAULT 'user';
 
+--> statement-breakpoint
 ALTER TABLE `team_invites`
   ADD COLUMN `linkedStakeholderId` int DEFAULT NULL;

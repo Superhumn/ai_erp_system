@@ -14,6 +14,7 @@
  * file-system-based simulation for development/testing.
  */
 
+import { createSign } from "crypto";
 import * as db from "./db";
 import { processInboundEdi, generateOutboundEdi } from "./ediService";
 import type { Edi855Acknowledgment, Edi810Invoice, Edi856ShipNotice } from "./ediService";
@@ -237,8 +238,6 @@ function buildAs2Mime(
 
   if (hasCert) {
     try {
-      const crypto = require("crypto");
-
       // connectionCertificate holds the PEM-encoded signing key,
       // connectionPassword holds the passphrase (or PEM cert chain).
       const privateKey = partner.connectionCertificate;
@@ -252,7 +251,7 @@ function buildAs2Mime(
         content;
 
       // Create detached S/MIME signature (SHA-256)
-      const sign = crypto.createSign("SHA256");
+      const sign = createSign("SHA256");
       sign.update(innerMime);
       const signature = sign.sign(
         { key: privateKey, passphrase },

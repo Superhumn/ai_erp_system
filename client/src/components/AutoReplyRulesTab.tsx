@@ -12,17 +12,25 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { Plus, Pencil, Trash2, Zap, Mail, RefreshCw } from "lucide-react";
 
+// Mirrors the `email_category` enum in drizzle/schema.ts — the server rejects
+// anything else, and the DB column would truncate it.
 const categoryOptions = [
   { value: "receipt", label: "Receipt" },
   { value: "purchase_order", label: "Purchase Order" },
   { value: "invoice", label: "Invoice" },
   { value: "shipping_confirmation", label: "Shipping Confirmation" },
   { value: "freight_quote", label: "Freight Quote" },
+  { value: "vendor_quote", label: "Vendor Quote" },
   { value: "delivery_notification", label: "Delivery Notification" },
   { value: "order_confirmation", label: "Order Confirmation" },
   { value: "payment_confirmation", label: "Payment Confirmation" },
+  { value: "inventory_report", label: "Inventory Report" },
+  { value: "hr_recruiting", label: "HR / Recruiting" },
+  { value: "legal", label: "Legal" },
   { value: "general", label: "General" },
-];
+] as const;
+
+type RuleCategory = (typeof categoryOptions)[number]["value"];
 
 const toneOptions = [
   { value: "professional", label: "Professional" },
@@ -32,7 +40,7 @@ const toneOptions = [
 
 interface RuleFormData {
   name: string;
-  category: string;
+  category: RuleCategory;
   replyTemplate: string;
   senderPattern: string;
   subjectPattern: string;
@@ -313,7 +321,7 @@ export function AutoReplyRulesTab() {
                 <Label>Email Category *</Label>
                 <Select
                   value={formData.category}
-                  onValueChange={(value) => setFormData({ ...formData, category: value })}
+                  onValueChange={(value) => setFormData({ ...formData, category: value as RuleCategory })}
                 >
                   <SelectTrigger>
                     <SelectValue />
