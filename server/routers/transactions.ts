@@ -2,17 +2,18 @@
 import { z } from "zod";
 import { router } from "../_core/trpc";
 import * as db from "../db";
-import { financeProcedure, createAuditLog, generateNumber } from "./_shared";
+import { financeProcedure, resolveRequestScope, assertNonEmptyScope, createAuditLog, generateNumber } from "./_shared";
 
 // ============================================
 export const transactionsRouter = router({
     list: financeProcedure
       .input(z.object({
-        companyId: z.number().optional(),
         type: z.string().optional(),
         status: z.string().optional(),
       }).optional())
-      .query(({ input }) => db.getTransactions(input)),
+      .query(async ({ input, ctx }) =>
+        db.getTransactions(assertNonEmptyScope(await resolveRequestScope(ctx.user)), { type: input?.type, status: input?.status }),
+      ),
     create: financeProcedure
       .input(z.object({
         companyId: z.number().optional(),

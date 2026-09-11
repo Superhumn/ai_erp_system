@@ -4,6 +4,7 @@ import {
   resolveScopeFromAccess,
   scopeAllows,
   scopeCompanyIds,
+  partitionIdsByVisibility,
   type AccessScopeLookup,
   type ScopeLookup,
 } from "./_core/scope";
@@ -149,5 +150,50 @@ describe("resolveScopeFromAccess (multi-entity, STEP 3)", () => {
   it("fails closed: non-global user with no access rows and no home entity sees nothing", async () => {
     const scope = await resolveScopeFromAccess({ companyId: null, regionScope: "entity" }, [], accessLookup);
     expect(scope.companyIds).toEqual([]);
+  });
+});
+
+
+describe("partitionIdsByVisibility", () => {
+  const REASON = "Purchase order not found";
+
+  it("keeps visible ids and rejects the rest", () => {
+    const { allowed, rejected } = partitionIdsByVisibility([1, 2, 3], [1, 3], REASON);
+    expect(allowed).toEqual([1, 3]);
+    expect(rejected).toEqual([{ id: 2, reason: REASON }]);
+  });
+
+  it("rejects everything when nothing is visible", () => {
+    // A scoped user with no visible entities must not fall through to
+    // operating on the whole list.
+    const { allowed, rejected } = partitionIdsByVisibility([7, 8], [], REASON);
+    expect(allowed).toEqual([]);
+    expect(rejected.map((r) => r.id)).toEqual([7, 8]);
+  });
+
+  it("reports rejected ids rather than dropping them, so a partial run stays honest", () => {
+    const { allowed, rejected } = partitionIdsByVisibility([1, 2, 3, 4], [2], REASON);
+    expect(allowed.length + rejected.length).toBe(4);
+  });
+
+  it("does not confirm that an out-of-scope id exists", () => {
+    // "not found" rather than "forbidden": distinguishing the two would leak
+    // the existence of another entity's records.
+    const { rejected } = partitionIdsByVisibility([99], [], REASON);
+    expect(rejected[0].reason).toBe("Purchase order not found");
+  });
+
+  it("preserves the caller's order and tolerates duplicate ids", () => {
+    const { allowed } = partitionIdsByVisibility([3, 1, 3], [1, 3], REASON);
+    expect(allowed).toEqual([3, 1, 3]);
+  });
+
+  it("accepts a Set as well as an array", () => {
+    const { allowed } = partitionIdsByVisibility([1, 2], new Set([2]), REASON);
+    expect(allowed).toEqual([2]);
+  });
+
+  it("handles an empty id list", () => {
+    expect(partitionIdsByVisibility([], [1], REASON)).toEqual({ allowed: [], rejected: [] });
   });
 });

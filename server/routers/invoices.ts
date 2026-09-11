@@ -5,19 +5,21 @@ import { router } from "../_core/trpc";
 import * as emailService from "../_core/emailService";
 import { parseInvoiceText } from "../_core/invoiceTextParser";
 import * as db from "../db";
-import { financeProcedure, createAuditLog, generateNumber } from "./_shared";
+import { financeProcedure, resolveRequestScope, assertNonEmptyScope, createAuditLog, generateNumber } from "./_shared";
 
 // ============================================
 // FINANCE - INVOICES
 // ============================================
 export const invoicesRouter = router({
+    // financeProcedure keeps the role gate; scope is resolved server-side. companyId is not client input.
     list: financeProcedure
       .input(z.object({
-        companyId: z.number().optional(),
         status: z.string().optional(),
         customerId: z.number().optional(),
       }).optional())
-      .query(({ input }) => db.getInvoices(input)),
+      .query(async ({ input, ctx }) =>
+        db.getInvoices(assertNonEmptyScope(await resolveRequestScope(ctx.user)), { status: input?.status, customerId: input?.customerId }),
+      ),
     get: financeProcedure
       .input(z.object({ id: z.number() }))
       .query(({ input }) => db.getInvoiceWithItems(input.id)),

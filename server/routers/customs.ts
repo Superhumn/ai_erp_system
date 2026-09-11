@@ -69,7 +69,7 @@ export const customsRouter = router({
                 const poItems = await db.getPurchaseOrderItems(shipment.purchaseOrderId);
                 for (const item of poItems) {
                   const quantity = item.quantity || '0';
-                  const existingInventory = await db.getInventory({ productId: item.productId ?? undefined, warehouseId });
+                  const existingInventory = await db.getInventory(undefined, { productId: item.productId ?? undefined, warehouseId });
                   if (existingInventory.length > 0) {
                     const existing = existingInventory[0];
                     const newQty = (parseFloat(existing.quantity) + parseFloat(quantity)).toString();

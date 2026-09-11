@@ -610,5 +610,5 @@ export const appRouter = router({
 export type AppRouter = typeof appRouter;
 
 // Helpers the former server/routers.ts exported; still importable from this entry point.
-export { financeProcedure, opsProcedure, resolveRequestScope, scopedProcedure, createAuditLog, detectSheetType, generateNumber } from "./_shared";
+export { financeProcedure, opsProcedure, resolveRequestScope, assertNonEmptyScope, scopedProcedure, scopedOpsProcedure, createAuditLog, detectSheetType, generateNumber } from "./_shared";
 export type { DriveSyncResult } from "./_shared";

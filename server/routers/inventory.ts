@@ -5,20 +5,27 @@ import { ADJUSTMENT_REASON_CODES } from "@shared/inventoryAdjustments";
 import { router } from "../_core/trpc";
 import { invokeLLM } from "../_core/llm";
 import * as db from "../db";
-import { adminProcedure, opsProcedure, createAuditLog, notifyIfBelowReorderLevel } from "./_shared";
+import { adminProcedure, opsProcedure, resolveRequestScope, assertNonEmptyScope, createAuditLog, notifyIfBelowReorderLevel } from "./_shared";
 
 // ============================================
 // OPERATIONS - INVENTORY
 // ============================================
 export const inventoryRouter = router({
+    // opsProcedure keeps the role gate; scope is resolved server-side and applied on top so a
+    // user only sees their entities' inventory. companyId is no longer a client input.
     list: opsProcedure
       .input(z.object({
-        companyId: z.number().optional(),
         warehouseId: z.number().optional(),
         productId: z.number().optional(),
         limit: z.number().min(1).max(1000).optional(),
       }).optional())
-      .query(({ input }) => db.getInventory(input)),
+      .query(async ({ input, ctx }) =>
+        db.getInventory(assertNonEmptyScope(await resolveRequestScope(ctx.user)), {
+          warehouseId: input?.warehouseId,
+          productId: input?.productId,
+          limit: input?.limit,
+        }),
+      ),
     create: opsProcedure
       .input(z.object({
         companyId: z.number().optional(),

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { router } from "../_core/trpc";
 import { invokeLLM } from "../_core/llm";
 import * as db from "../db";
-import { financeProcedure, createAuditLog, generateNumber } from "./_shared";
+import { financeProcedure, resolveRequestScope, assertNonEmptyScope, createAuditLog, generateNumber } from "./_shared";
 
 // ============================================
 // FINANCE - PAYMENTS
@@ -11,11 +11,12 @@ import { financeProcedure, createAuditLog, generateNumber } from "./_shared";
 export const paymentsRouter = router({
     list: financeProcedure
       .input(z.object({
-        companyId: z.number().optional(),
         type: z.string().optional(),
         status: z.string().optional(),
       }).optional())
-      .query(({ input }) => db.getPayments(input)),
+      .query(async ({ input, ctx }) =>
+        db.getPayments(assertNonEmptyScope(await resolveRequestScope(ctx.user)), { type: input?.type, status: input?.status }),
+      ),
     get: financeProcedure
       .input(z.object({ id: z.number() }))
       .query(({ input }) => db.getPaymentById(input.id)),

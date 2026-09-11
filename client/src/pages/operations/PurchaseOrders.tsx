@@ -39,7 +39,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ClipboardList, Plus, Search, Loader2, Sparkles, Send, Trash2, MoreHorizontal, CheckCircle, MessageCircle, Copy, X, Download, ArrowUp, ArrowDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { ClipboardList, Plus, Search, Loader2, Sparkles, Send, Trash2, MoreHorizontal, CheckCircle, MessageCircle, Copy, X, Download, ArrowUp, ArrowDown, ChevronLeft, ChevronRight, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
@@ -71,6 +71,7 @@ export default function PurchaseOrders() {
   const [detailPoId, setDetailPoId] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [inflationOpen, setInflationOpen] = useState(false);
   const [duplicatesOnly, setDuplicatesOnly] = useState(false);
   const [vendorFilter, setVendorFilter] = useState<string>("all");
   const [dateFrom, setDateFrom] = useState("");
@@ -180,6 +181,32 @@ export default function PurchaseOrders() {
     }
     return set;
   }, [duplicateGroups]);
+
+  // How much of each raw material's received total came from the duplicate POs
+  // rather than real deliveries.
+  //
+  // Restricted to the redundant POs actually selected, so the figures describe
+  // what this delete is about to destroy rather than every duplicate in the
+  // table. Only asked for while the dialog is open — this is a warning about a
+  // specific destructive action, not a page-load cost.
+  const selectedRedundantIds = useMemo(
+    () => Array.from(selectedIds).filter((id) => redundantIds.has(id)),
+    [selectedIds, redundantIds],
+  );
+  const {
+    data: inflation,
+    isPending: inflationPending,
+    isError: inflationFailed,
+  } = trpc.purchaseOrders.receiptInflation.useQuery(
+    { purchaseOrderIds: selectedRedundantIds },
+    { enabled: bulkDeleteOpen && selectedRedundantIds.length > 0 },
+  );
+  const inflationUnresolved = bulkDeleteOpen && selectedRedundantIds.length > 0 && (inflationPending || inflationFailed);
+  // Unattributed receipts are evidence too: if every line fails to match a
+  // material, materialsAffected is 0 while the quantities are still real and
+  // still about to become untraceable.
+  const inflatedMaterials = inflation?.totals.materialsAffected ?? 0;
+  const inflationFindings = inflatedMaterials + (inflation?.unattributed.length ?? 0);
 
   const resetForm = () => {
     setFormData({ vendorId: 0, expectedDeliveryDate: "", notes: "" });
@@ -331,6 +358,10 @@ export default function PurchaseOrders() {
     utils.purchaseOrders.summary.invalidate();
     utils.purchaseOrders.duplicates.invalidate();
     utils.purchaseOrders.receiptProgress.invalidate();
+    // Without this the report stays cached after a cleanup: once the last
+    // duplicate is gone the query disables, keeps its stale data, and a later
+    // delete dialog for an unrelated PO shows the old warning and figures.
+    utils.purchaseOrders.receiptInflation.invalidate();
   };
 
   const bulkStatusMutation = trpc.purchaseOrders.bulkUpdateStatus.useMutation();
@@ -1476,16 +1507,142 @@ export default function PurchaseOrders() {
               from. This cannot be undone.
             </DialogDescription>
           </DialogHeader>
+
+          {inflationUnresolved && (
+            <div className="rounded-md border p-3 text-sm" role="status">
+              {inflationFailed ? (
+                <span className="text-destructive">
+                  The receipt-inflation report failed to load. Deleting is held back rather than
+                  destroying evidence that couldn't be checked — close and retry.
+                </span>
+              ) : (
+                <span className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Checking whether these duplicates inflated any received totals…
+                </span>
+              )}
+            </div>
+          )}
+
+          {!inflationUnresolved && inflationFindings > 0 && (
+            <div
+              className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950"
+              role="alert"
+            >
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-500" />
+                <div className="space-y-2">
+                  <p>
+                    <span className="font-medium">
+                      {inflatedMaterials > 0
+                        ? `${inflatedMaterials} raw material${inflatedMaterials === 1 ? " has" : "s have"} a received total inflated by these duplicates.`
+                        : `${inflation?.unattributed.length ?? 0} duplicate receipt${(inflation?.unattributed.length ?? 0) === 1 ? "" : "s"} moved stock that couldn't be traced to a material.`}
+                    </span>{" "}
+                    Nothing records which receipt added what, so the only evidence is these POs' line
+                    items — deleting them destroys it. Review the figures first.
+                  </p>
+                  <Button size="sm" variant="outline" onClick={() => setInflationOpen(true)}>
+                    Review receipt inflation
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setBulkDeleteOpen(false)}>Cancel</Button>
             <Button
               variant="destructive"
-              disabled={isBulkDeleting || selectedCount === 0}
+              disabled={isBulkDeleting || selectedCount === 0 || inflationUnresolved}
               onClick={runBulkDelete}
             >
               {isBulkDeleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Delete {selectedCount}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={inflationOpen} onOpenChange={setInflationOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Received totals inflated by duplicate POs</DialogTitle>
+            <DialogDescription>
+              Across {inflation?.scannedDuplicatePos ?? 0} duplicate purchase order
+              {(inflation?.scannedDuplicatePos ?? 0) === 1 ? "" : "s"} that were imported as received.
+              The importer adds to a running total without recording which receipt it came from, so
+              these figures are re-derived from the POs' line items — a persisted material link is
+              used where one exists, otherwise the description is re-matched. Read-only: nothing here
+              changes stock.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="max-h-[55vh] overflow-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Material</TableHead>
+                  <TableHead className="text-right">Received now</TableHead>
+                  <TableHead className="text-right">Over-added</TableHead>
+                  <TableHead className="text-right">Would become</TableHead>
+                  <TableHead>Confidence</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(inflation?.perMaterial ?? []).map((m) => (
+                  <TableRow key={m.materialId}>
+                    <TableCell className="font-medium">{m.materialName}</TableCell>
+                    <TableCell className="text-right font-mono">{m.currentReceived}</TableCell>
+                    <TableCell className="text-right font-mono text-amber-700 dark:text-amber-500">
+                      −{m.overAdded}
+                    </TableCell>
+                    <TableCell className="text-right font-mono">
+                      {m.exceedsCurrent ? "—" : m.correctedReceived}
+                    </TableCell>
+                    <TableCell>
+                      {m.exceedsCurrent ? (
+                        <Badge variant="destructive">Exceeds current — needs a look</Badge>
+                      ) : m.hasAmbiguity ? (
+                        <Badge variant="secondary">Description matched more than one material</Badge>
+                      ) : (
+                        <Badge variant="outline">{m.lineCount} receipt{m.lineCount === 1 ? "" : "s"}</Badge>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {(inflation?.perMaterial ?? []).length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center text-muted-foreground">
+                      No inflated received totals found.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+
+            {(inflation?.unattributed ?? []).length > 0 && (
+              <div className="mt-4 rounded-md border p-3 text-sm">
+                <p className="mb-2 font-medium">
+                  {inflation!.unattributed.length} duplicate receipt
+                  {inflation!.unattributed.length === 1 ? "" : "s"} could not be traced to a material
+                </p>
+                <p className="mb-2 text-muted-foreground">
+                  The description matches nothing in the raw material list, so the quantity these
+                  added can't be backed out automatically.
+                </p>
+                <ul className="space-y-1 font-mono text-xs">
+                  {inflation!.unattributed.slice(0, 10).map((u, i) => (
+                    <li key={`${u.purchaseOrderId}-${i}`}>
+                      {u.poNumber} · {u.description || "(blank description)"} · {u.quantity}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setInflationOpen(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

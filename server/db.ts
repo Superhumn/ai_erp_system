@@ -1,7 +1,7 @@
-import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray, ne, sum, max, min } from "drizzle-orm";
+import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray, ne, sum, notExists } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2";
-import { scopeAllows, scopeCompanyIds, type Scope } from "./_core/scope";
+import { scopeAllows, scopeCompanyIds, partitionIdsByVisibility, type Scope } from "./_core/scope";
 import {
   reconcileThreeWayMatch,
   resolveApprovalPolicy,
@@ -9,6 +9,7 @@ import {
   MATCH_EPSILON,
 } from "./purchaseOrderMatching";
 import { classifyDuplicateGroup, resolveMergedQuantities } from "./inventoryDeduplication";
+import { attributeLines, collapseLinkedLines, summarizeInflation, type RedundantLine } from "./receiptInflation";
 import {
   assertTransition, computeVariance, computeVarianceValue, resolveAdjustment,
   summarizeVariance, uncountedLines,
@@ -330,6 +331,50 @@ export async function upsertUser(user: InsertUser): Promise<void> {
   }
 }
 
+/** True when MySQL rejected a query for a missing column (schema drift). */
+function isUnknownColumnError(error: unknown): boolean {
+  const err = error as {
+    code?: string;
+    errno?: number;
+    message?: string;
+    cause?: { code?: string; errno?: number; message?: string };
+  };
+  const code = err?.code || err?.cause?.code;
+  const errno = err?.errno ?? err?.cause?.errno;
+  const message = `${err?.message || ""} ${err?.cause?.message || ""}`;
+  return code === "ER_BAD_FIELD_ERROR" || errno === 1054 || /Unknown column/i.test(message);
+}
+
+/**
+ * Core users columns that existed before emailVerified / multi-region.
+ * Used when the full Drizzle select fails due to missing columns so auth
+ * can keep working until ensureAuthSchema / migration 0056 catches up.
+ */
+function padUserRow(row: Record<string, unknown>) {
+  return {
+    ...row,
+    companyId: (row.companyId as number | null | undefined) ?? null,
+    regionScope: (row.regionScope as "entity" | "region" | "global" | undefined) ?? "global",
+    emailVerified: Boolean(row.emailVerified ?? false),
+  } as typeof users.$inferSelect;
+}
+
+function rowsFromExecute(result: unknown): Record<string, unknown>[] {
+  if (Array.isArray(result)) {
+    const first = result[0];
+    if (Array.isArray(first)) return first as Record<string, unknown>[];
+    if (first && typeof first === "object" && "id" in (first as object)) {
+      return result as Record<string, unknown>[];
+    }
+  }
+  const rows = (result as { rows?: Record<string, unknown>[] })?.rows;
+  return Array.isArray(rows) ? rows : [];
+}
+
+const USER_CORE_SELECT_SQL = `id, openId, name, email, loginMethod, \`role\`, departmentId,
+  avatarUrl, phone, linkedVendorId, linkedWarehouseId, isActive,
+  invitedBy, invitedAt, createdAt, updatedAt, lastSignedIn`;
+
 export async function getUserByOpenId(openId: string) {
   const db = await getDb();
   if (!db) {
@@ -337,8 +382,18 @@ export async function getUserByOpenId(openId: string) {
     return undefined;
   }
 
-  const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
+  try {
+    const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
+    return result.length > 0 ? result[0] : undefined;
+  } catch (error) {
+    if (!isUnknownColumnError(error)) throw error;
+    console.warn("[Database] getUserByOpenId falling back to core columns (schema drift)");
+    const result = await db.execute(
+      sql`SELECT ${sql.raw(USER_CORE_SELECT_SQL)} FROM users WHERE openId = ${openId} LIMIT 1`
+    );
+    const rows = rowsFromExecute(result);
+    return rows[0] ? padUserRow(rows[0]) : undefined;
+  }
 }
 
 export async function getUserByEmail(email: string) {
@@ -347,14 +402,33 @@ export async function getUserByEmail(email: string) {
     console.warn("[Database] Cannot get user by email: database not available");
     return undefined;
   }
-  const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
+  try {
+    const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
+    return result.length > 0 ? result[0] : undefined;
+  } catch (error) {
+    if (!isUnknownColumnError(error)) throw error;
+    console.warn("[Database] getUserByEmail falling back to core columns (schema drift)");
+    const result = await db.execute(
+      sql`SELECT ${sql.raw(USER_CORE_SELECT_SQL)} FROM users WHERE email = ${email} LIMIT 1`
+    );
+    const rows = rowsFromExecute(result);
+    return rows[0] ? padUserRow(rows[0]) : undefined;
+  }
 }
 
 export async function getAllUsers() {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(users).orderBy(desc(users.createdAt));
+  try {
+    return await db.select().from(users).orderBy(desc(users.createdAt));
+  } catch (error) {
+    if (!isUnknownColumnError(error)) throw error;
+    console.warn("[Database] getAllUsers falling back to core columns (schema drift)");
+    const result = await db.execute(
+      sql`SELECT ${sql.raw(USER_CORE_SELECT_SQL)} FROM users ORDER BY createdAt DESC`
+    );
+    return rowsFromExecute(result).map(padUserRow);
+  }
 }
 
 /**
@@ -959,12 +1033,19 @@ export async function updateAccount(id: number, data: Partial<InsertAccount>) {
 // FINANCE - INVOICES
 // ============================================
 
-export async function getInvoices(filters?: { companyId?: number; status?: string; customerId?: number }) {
+// Pass `ctx.scope` to restrict to the caller's visible entities. `filters` are non-security
+// refinements (status/customerId, and companyId for trusted internal callers).
+export async function getInvoices(scope?: Scope, filters?: { companyId?: number; status?: string; customerId?: number }) {
   const db = await getDb();
   if (!db) return [];
-  
+
   const conditions = [];
-  
+
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return []; // scoped user with no visible entities
+    conditions.push(inArray(invoices.companyId, ids));
+  }
   if (filters?.companyId) conditions.push(eq(invoices.companyId, filters.companyId));
   if (filters?.status) conditions.push(eq(invoices.status, filters.status as any));
   if (filters?.customerId) conditions.push(eq(invoices.customerId, filters.customerId));
@@ -1089,11 +1170,16 @@ export async function createInvoiceItem(data: typeof invoiceItems.$inferInsert) 
 // FINANCE - PAYMENTS
 // ============================================
 
-export async function getPayments(filters?: { companyId?: number; type?: string; status?: string }) {
+export async function getPayments(scope?: Scope, filters?: { companyId?: number; type?: string; status?: string }) {
   const db = await getDb();
   if (!db) return [];
-  
+
   const conditions = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return [];
+    conditions.push(inArray(payments.companyId, ids));
+  }
   if (filters?.companyId) conditions.push(eq(payments.companyId, filters.companyId));
   if (filters?.type) conditions.push(eq(payments.type, filters.type as any));
   if (filters?.status) conditions.push(eq(payments.status, filters.status as any));
@@ -1128,11 +1214,16 @@ export async function updatePayment(id: number, data: Partial<InsertPayment>) {
 // FINANCE - TRANSACTIONS
 // ============================================
 
-export async function getTransactions(filters?: { companyId?: number; type?: string; status?: string }) {
+export async function getTransactions(scope?: Scope, filters?: { companyId?: number; type?: string; status?: string }) {
   const db = await getDb();
   if (!db) return [];
-  
+
   const conditions = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return [];
+    conditions.push(inArray(transactions.companyId, ids));
+  }
   if (filters?.companyId) conditions.push(eq(transactions.companyId, filters.companyId));
   if (filters?.type) conditions.push(eq(transactions.type, filters.type as any));
   if (filters?.status) conditions.push(eq(transactions.status, filters.status as any));
@@ -1268,11 +1359,18 @@ export async function createOrderItem(data: typeof orderItems.$inferInsert) {
 // OPERATIONS - INVENTORY
 // ============================================
 
-export async function getInventory(filters?: { companyId?: number; warehouseId?: number; productId?: number; limit?: number }) {
+// Pass a request's `ctx.scope` to restrict to the caller's visible entities. `filters` are
+// non-security refinements (warehouse/product/limit, and companyId for trusted internal callers).
+export async function getInventory(scope?: Scope, filters?: { companyId?: number; warehouseId?: number; productId?: number; limit?: number }) {
   const db = await getDb();
   if (!db) return [];
 
   const conditions = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return []; // scoped user with no visible entities
+    conditions.push(inArray(inventory.companyId, ids));
+  }
   if (filters?.companyId) conditions.push(eq(inventory.companyId, filters.companyId));
   if (filters?.warehouseId) conditions.push(eq(inventory.warehouseId, filters.warehouseId));
   if (filters?.productId) conditions.push(eq(inventory.productId, filters.productId));
@@ -1516,8 +1614,20 @@ export type PurchaseOrderListFilters = {
  * Returns null when the filters can't match anything (duplicatesOnly with no
  * duplicates), which callers short-circuit on rather than issuing the query.
  */
-async function buildPurchaseOrderConditions(filters: PurchaseOrderListFilters) {
+async function buildPurchaseOrderConditions(filters: PurchaseOrderListFilters, scope?: Scope) {
   const conditions = [];
+
+  // Entity scope is derived from the caller's identity, never from input, and
+  // is applied first so a crafted `companyId` filter can only ever narrow the
+  // visible set rather than widen it.
+  if (scope) {
+    const scopeIds = scopeCompanyIds(scope);
+    if (scopeIds) {
+      if (scopeIds.length === 0) return null; // scoped user with no visible entities
+      conditions.push(inArray(purchaseOrders.companyId, scopeIds));
+    }
+  }
+
   if (filters.companyId) conditions.push(eq(purchaseOrders.companyId, filters.companyId));
   if (filters.status) conditions.push(eq(purchaseOrders.status, filters.status as any));
   if (filters.vendorId) conditions.push(eq(purchaseOrders.vendorId, filters.vendorId));
@@ -1535,7 +1645,7 @@ async function buildPurchaseOrderConditions(filters: PurchaseOrderListFilters) {
   }
 
   if (filters.duplicatesOnly) {
-    const groups = await getDuplicatePurchaseOrderGroups();
+    const groups = await getDuplicatePurchaseOrderGroups(scope);
     const ids = groups.flatMap((g) => [g.keepId, ...g.duplicateIds]);
     if (ids.length === 0) return null;
     conditions.push(inArray(purchaseOrders.id, ids));
@@ -1562,11 +1672,11 @@ function purchaseOrderSortColumn(sortBy: PurchaseOrderListFilters["sortBy"]) {
  * Kept separate from getPurchaseOrders (which returns everything) so the many
  * existing callers of that helper keep their current shape and behaviour.
  */
-export async function getPurchaseOrdersPaged(filters: PurchaseOrderListFilters = {}) {
+export async function getPurchaseOrdersPaged(filters: PurchaseOrderListFilters = {}, scope?: Scope) {
   const db = await getDb();
   if (!db) return { rows: [], total: 0 };
 
-  const conditions = await buildPurchaseOrderConditions(filters);
+  const conditions = await buildPurchaseOrderConditions(filters, scope);
   if (conditions === null) return { rows: [], total: 0 };
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -1608,12 +1718,12 @@ export async function getPurchaseOrdersPaged(filters: PurchaseOrderListFilters =
  * the list header. Deliberately ignores limit/offset: the totals describe the
  * whole filtered set, not the visible page.
  */
-export async function getPurchaseOrderSummary(filters: PurchaseOrderListFilters = {}) {
+export async function getPurchaseOrderSummary(filters: PurchaseOrderListFilters = {}, scope?: Scope) {
   const db = await getDb();
   const empty = { total: 0, totalValue: "0", byStatus: [] as { status: string; count: number; value: string }[] };
   if (!db) return empty;
 
-  const conditions = await buildPurchaseOrderConditions(filters);
+  const conditions = await buildPurchaseOrderConditions(filters, scope);
   if (conditions === null) return empty;
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -1641,12 +1751,47 @@ export async function getPurchaseOrderSummary(filters: PurchaseOrderListFilters 
  * one bulk UPDATE so each row's status transition is validated and reported
  * individually.
  */
-export async function bulkUpdatePurchaseOrderStatus(ids: number[], status: string) {
+/**
+ * Splits a caller-supplied id list into the ones their entity scope actually
+ * covers and the ones it doesn't.
+ *
+ * Bulk mutations take ids straight from the client, so without this a user can
+ * name another entity's purchase order and have it changed or deleted. Rejected
+ * ids come back as ordinary per-id failures rather than being dropped silently,
+ * so a partial run is still reported honestly. The message deliberately says
+ * "not found" — confirming that an id exists but belongs elsewhere would leak
+ * the existence of another entity's records.
+ */
+const NOT_IN_SCOPE = "Purchase order not found";
+
+async function partitionPurchaseOrderIdsByScope(ids: number[], scope?: Scope) {
+  if (!scope) return { allowed: ids, rejected: [] as { id: number; reason: string }[] };
+
+  const scopeIds = scopeCompanyIds(scope);
+  if (!scopeIds) return { allowed: ids, rejected: [] as { id: number; reason: string }[] };
+
+  if (scopeIds.length === 0 || ids.length === 0) {
+    return partitionIdsByVisibility(ids, [], NOT_IN_SCOPE);
+  }
+
+  const db = await getDb();
+  if (!db) return partitionIdsByVisibility(ids, [], NOT_IN_SCOPE);
+
+  const visible = await db
+    .select({ id: purchaseOrders.id })
+    .from(purchaseOrders)
+    .where(and(inArray(purchaseOrders.id, ids), inArray(purchaseOrders.companyId, scopeIds)));
+
+  return partitionIdsByVisibility(ids, visible.map((r) => r.id), NOT_IN_SCOPE);
+}
+
+export async function bulkUpdatePurchaseOrderStatus(ids: number[], status: string, scope?: Scope) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const updated: number[] = [];
-  const failed: { id: number; reason: string }[] = [];
-  for (const id of ids) {
+  const { allowed, rejected } = await partitionPurchaseOrderIdsByScope(ids, scope);
+  const failed: { id: number; reason: string }[] = [...rejected];
+  for (const id of allowed) {
     try {
       await db
         .update(purchaseOrders)
@@ -2039,6 +2184,47 @@ export async function createPurchaseOrder(data: InsertPurchaseOrder) {
   return { id: result[0].insertId };
 }
 
+/**
+ * Creates a purchase order only if (poNumber, vendorId) isn't already taken,
+ * atomically.
+ *
+ * The importers previously checked with findPurchaseOrderByNumberExact and then
+ * inserted as two separate statements. Two documents for the same invoice
+ * processed concurrently — a re-processed mailbox, a double-clicked upload —
+ * both saw nothing and both inserted, which is the duplicate-PO bug the guard
+ * was meant to close.
+ *
+ * `poNumber` has no unique constraint and can't get one until the duplicates
+ * already in the table are cleared, so this serializes with a pessimistic lock
+ * instead. Under InnoDB's REPEATABLE READ the `FOR UPDATE` takes a gap lock on
+ * the empty range, which blocks a concurrent insert of the same key until this
+ * transaction commits. That requires the index added alongside this helper —
+ * without it the lock degrades towards locking far more than it should.
+ *
+ * Returns the existing row untouched when there is one, so callers can tell a
+ * skip from a create.
+ */
+export async function createPurchaseOrderIfAbsent(data: InsertPurchaseOrder) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  return db.transaction(async (tx) => {
+    const existing = await tx
+      .select({ id: purchaseOrders.id, poNumber: purchaseOrders.poNumber, status: purchaseOrders.status })
+      .from(purchaseOrders)
+      .where(and(eq(purchaseOrders.poNumber, data.poNumber), eq(purchaseOrders.vendorId, data.vendorId)))
+      .limit(1)
+      .for("update");
+
+    if (existing.length > 0) {
+      return { created: false as const, id: existing[0].id, existing: existing[0] };
+    }
+
+    const result = await tx.insert(purchaseOrders).values(data);
+    return { created: true as const, id: result[0].insertId, existing: null };
+  });
+}
+
 export async function updatePurchaseOrder(id: number, data: Partial<InsertPurchaseOrder>) {
   const db = await getDb();
   if (!db) return;
@@ -2111,10 +2297,11 @@ export async function deletePurchaseOrder(id: number): Promise<boolean> {
  * abort the whole batch. Callers get the per-id outcome and surface the
  * failures rather than reporting a partial run as a clean success.
  */
-export async function bulkDeletePurchaseOrders(ids: number[]) {
+export async function bulkDeletePurchaseOrders(ids: number[], scope?: Scope) {
   const deleted: number[] = [];
-  const failed: { id: number; reason: string }[] = [];
-  for (const id of ids) {
+  const { allowed, rejected } = await partitionPurchaseOrderIdsByScope(ids, scope);
+  const failed: { id: number; reason: string }[] = [...rejected];
+  for (const id of allowed) {
     try {
       if (await deletePurchaseOrder(id)) deleted.push(id);
       else failed.push({ id, reason: "Purchase order no longer exists" });
@@ -2138,9 +2325,16 @@ export async function bulkDeletePurchaseOrders(ids: number[]) {
  * rather than with GROUP_CONCAT, whose 1024-byte default would silently
  * truncate large groups.
  */
-export async function getDuplicatePurchaseOrderGroups() {
+export async function getDuplicatePurchaseOrderGroups(scope?: Scope) {
   const db = await getDb();
   if (!db) return [];
+
+  // Scope narrows the grouping itself, not just the returned rows: two entities
+  // legitimately using the same PO number must not be grouped together and
+  // offered up as each other's duplicates.
+  const scopeIds = scope ? scopeCompanyIds(scope) : null;
+  if (scopeIds && scopeIds.length === 0) return [];
+  const scopeFilter = scopeIds ? inArray(purchaseOrders.companyId, scopeIds) : undefined;
 
   // Two steps so the whole table never lands in application memory: MySQL
   // reports which (poNumber, vendorId, totalAmount) keys occur more than once,
@@ -2153,6 +2347,7 @@ export async function getDuplicatePurchaseOrderGroups() {
       totalAmount: purchaseOrders.totalAmount,
     })
     .from(purchaseOrders)
+    .where(scopeFilter)
     .groupBy(purchaseOrders.poNumber, purchaseOrders.vendorId, purchaseOrders.totalAmount)
     .having(sql`COUNT(*) > 1`);
 
@@ -2175,7 +2370,11 @@ export async function getDuplicatePurchaseOrderGroups() {
       totalAmount: purchaseOrders.totalAmount,
     })
     .from(purchaseOrders)
-    .where(inArray(purchaseOrders.poNumber, dupKeys.map((k) => k.poNumber)))
+    .where(
+      scopeFilter
+        ? and(inArray(purchaseOrders.poNumber, dupKeys.map((k) => k.poNumber)), scopeFilter)
+        : inArray(purchaseOrders.poNumber, dupKeys.map((k) => k.poNumber)),
+    )
     .orderBy(asc(purchaseOrders.id));
 
   const groups = new Map<string, { poNumber: string; vendorId: number; totalAmount: string; ids: number[] }>();
@@ -2197,6 +2396,133 @@ export async function getDuplicatePurchaseOrderGroups() {
       keepId: g.ids[0],
       duplicateIds: g.ids.slice(1),
     }));
+}
+
+/** Keeps `inArray` placeholder counts inside what mysql2 will accept. */
+const RECEIPT_SCAN_CHUNK = 500;
+
+/**
+ * Reports how much of each raw material's `quantityReceived` came from
+ * duplicate purchase orders rather than real deliveries.
+ *
+ * Read-only by design. The attribution is partly re-derived (see
+ * receiptInflation.ts for why the database holds no ledger for these
+ * increments), so this produces a reviewable report and leaves the decision
+ * to correct — and by how much — to a human.
+ *
+ * Only redundant POs with status 'received' are counted: that is the status
+ * the importer sets when `markAsReceived` ran, which is the branch that
+ * incremented the running total in the first place.
+ */
+export async function getReceiptInflationReport(
+  scope?: Scope,
+  opts?: { purchaseOrderIds?: number[] },
+) {
+  const empty = {
+    perMaterial: [] as ReturnType<typeof summarizeInflation>["perMaterial"],
+    unattributed: [] as ReturnType<typeof summarizeInflation>["unattributed"],
+    totals: { redundantLines: 0, attributedLines: 0, materialsAffected: 0, materialsNeedingReview: 0 },
+    scannedDuplicatePos: 0,
+  };
+
+  const db = await getDb();
+  if (!db) return empty;
+
+  const groups = await getDuplicatePurchaseOrderGroups(scope);
+  let redundantIds = groups.flatMap((g) => g.duplicateIds);
+
+  // When the caller names a subset — the rows a delete dialog is actually about
+  // to remove — report on those only. Reporting the whole table there would
+  // attribute quantities to a destructive action that isn't going to touch them.
+  if (opts?.purchaseOrderIds) {
+    const wanted = new Set(opts.purchaseOrderIds);
+    redundantIds = redundantIds.filter((id) => wanted.has(id));
+  }
+  if (redundantIds.length === 0) return empty;
+
+  // status='received' alone is not evidence that this PO ran the importer's
+  // quantityReceived increment: the normal receiving flow sets the same status
+  // while posting to rawMaterialInventory and the transaction ledger instead,
+  // and counting those would invent inflation that never happened. A receiving
+  // record is the marker for that flow — the importer writes none — so POs that
+  // have one are excluded.
+  //
+  // Residual imprecision worth knowing about: a PO marked received by hand,
+  // with neither receiving records nor an importer run behind it, still looks
+  // like an import here. That is why the report stays read-only.
+  const receivedPos: { id: number; poNumber: string }[] = [];
+  for (let i = 0; i < redundantIds.length; i += RECEIPT_SCAN_CHUNK) {
+    const chunk = redundantIds.slice(i, i + RECEIPT_SCAN_CHUNK);
+    const rows = await db
+      .select({ id: purchaseOrders.id, poNumber: purchaseOrders.poNumber })
+      .from(purchaseOrders)
+      .where(
+        and(
+          inArray(purchaseOrders.id, chunk),
+          eq(purchaseOrders.status, "received" as any),
+          notExists(
+            db
+              .select({ one: sql`1` })
+              .from(poReceivingRecords)
+              .where(eq(poReceivingRecords.purchaseOrderId, purchaseOrders.id)),
+          ),
+        ),
+      );
+    receivedPos.push(...rows);
+  }
+  if (receivedPos.length === 0) return { ...empty, scannedDuplicatePos: 0 };
+
+  const poNumberById = new Map(receivedPos.map((p) => [p.id, p.poNumber]));
+  const receivedIds = receivedPos.map((p) => p.id);
+
+  // One query per chunk rather than per PO. The junction is joined in so a
+  // persisted material link is preferred over re-matching the description.
+  const lines: RedundantLine[] = [];
+  for (let i = 0; i < receivedIds.length; i += RECEIPT_SCAN_CHUNK) {
+    const chunk = receivedIds.slice(i, i + RECEIPT_SCAN_CHUNK);
+    const rows = await db
+      .select({
+        itemId: purchaseOrderItems.id,
+        purchaseOrderId: purchaseOrderItems.purchaseOrderId,
+        description: purchaseOrderItems.description,
+        quantity: purchaseOrderItems.quantity,
+        linkedMaterialId: purchaseOrderRawMaterials.rawMaterialId,
+      })
+      .from(purchaseOrderItems)
+      .leftJoin(
+        purchaseOrderRawMaterials,
+        eq(purchaseOrderRawMaterials.purchaseOrderItemId, purchaseOrderItems.id),
+      )
+      .where(inArray(purchaseOrderItems.purchaseOrderId, chunk));
+
+    // Collapsed to one entry per line item: the junction allows several links
+    // per item and the join emits a row for each. See collapseLinkedLines for
+    // how conflicting links are handled.
+    lines.push(...collapseLinkedLines(rows.map((r) => ({
+      itemId: r.itemId,
+      purchaseOrderId: r.purchaseOrderId,
+      poNumber: poNumberById.get(r.purchaseOrderId) ?? String(r.purchaseOrderId),
+      description: (r.description as string) ?? "",
+      quantity: parseFloat((r.quantity as string) ?? "0"),
+      linkedMaterialId: r.linkedMaterialId ?? null,
+    }))));
+  }
+
+  const materialRows = await db
+    .select({
+      id: rawMaterials.id,
+      name: rawMaterials.name,
+      sku: rawMaterials.sku,
+      quantityReceived: rawMaterials.quantityReceived,
+    })
+    .from(rawMaterials);
+
+  const currentReceivedById = new Map(
+    materialRows.map((m) => [m.id, parseFloat((m.quantityReceived as string) ?? "0") || 0]),
+  );
+
+  const report = summarizeInflation(attributeLines(lines, materialRows), currentReceivedById);
+  return { ...report, scannedDuplicatePos: receivedPos.length };
 }
 
 /**
@@ -2949,6 +3275,60 @@ export async function createProject(data: InsertProject) {
   if (!db) throw new Error("Database not available");
   const result = await db.insert(projects).values(data);
   return { id: result[0].insertId };
+}
+
+/**
+ * Look up a project by its exact name within one company. The column collation
+ * is case-insensitive, so "Website Redesign" and "website redesign" are the
+ * same project — which is what an imported spreadsheet expects.
+ *
+ * The company boundary is always applied: a null/omitted `companyId` matches
+ * only projects that have no company, never every company's projects. Without
+ * that, a lookup by name alone could hand back another tenant's project.
+ */
+export async function findProjectByName(name: string, companyId?: number | null) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const trimmed = name.trim();
+  if (!trimmed) return undefined;
+  const result = await db
+    .select()
+    .from(projects)
+    .where(and(
+      eq(projects.name, trimmed),
+      companyId ? eq(projects.companyId, companyId) : isNull(projects.companyId),
+    ))
+    .limit(1);
+  return result[0];
+}
+
+/**
+ * Attach to the project with this name inside `data.companyId`, or open it.
+ * Used by the spreadsheet importers so re-running the same sheet updates
+ * nothing and duplicates nothing — the existing project is reused as-is.
+ */
+export async function findOrCreateProjectByName(
+  name: string,
+  data: Omit<InsertProject, "name">,
+): Promise<{ id: number; created: boolean }> {
+  const existing = await findProjectByName(name.trim(), data.companyId ?? null);
+  if (existing) return { id: existing.id, created: false };
+  const { id } = await createProject({ ...data, name: name.trim() });
+  return { id, created: true };
+}
+
+/** Find a task by name within one project. Keeps re-imports idempotent. */
+export async function findProjectTaskByName(projectId: number, name: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const trimmed = name.trim();
+  if (!trimmed) return undefined;
+  const result = await db
+    .select()
+    .from(projectTasks)
+    .where(and(eq(projectTasks.projectId, projectId), eq(projectTasks.name, trimmed)))
+    .limit(1);
+  return result[0];
 }
 
 export async function updateProject(id: number, data: Partial<InsertProject>) {
@@ -15832,6 +16212,87 @@ export async function syncQuickBooksItems(companyIdOrItems: number | InsertQuick
     synced++;
   }
   return { count: synced, synced };
+}
+
+/**
+ * Accounts for one company, optionally filtered by the classification
+ * column (Asset/Liability/Equity/Revenue/Expense). Unlike
+ * getQuickBooksAccountsByType — whose numeric-first overload filters the
+ * accountType column — this matches the classification the sync paths
+ * normalize into `classification`.
+ */
+export async function getQuickBooksAccountsByClassification(companyId: number, classification?: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [eq(quickbooksAccounts.companyId, companyId)];
+  if (classification) conditions.push(eq(quickbooksAccounts.classification, classification));
+  return db.select().from(quickbooksAccounts).where(and(...conditions));
+}
+
+// Atomic company-scoped sync upserts. Rows are keyed on the composite
+// unique indexes uq_qb_accounts_company_account / uq_qb_items_company_item
+// (migration 0067), so INSERT ... ON DUPLICATE KEY UPDATE is race-free
+// across processes and replicas — no read-then-write pair, no app-side
+// locking. Batched to keep statements under packet limits. Nullable
+// informational columns update via COALESCE(VALUES(col), col) so a provider
+// that doesn't supply a field (e.g. Merge items have no SKU) can't wipe a
+// value another provider synced.
+const QB_SYNC_CHUNK = 500;
+
+/**
+ * Company-scoped account upsert. Unlike syncQuickBooksAccounts (which matches
+ * on quickbooksAccountId alone), rows are matched on (companyId,
+ * quickbooksAccountId) so provider-local IDs can't collide across entities.
+ */
+export async function syncQuickBooksAccountsForCompany(companyId: number, accounts: InsertQuickBooksAccount[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const rows = accounts.map((a) => ({ ...a, companyId }));
+  for (let i = 0; i < rows.length; i += QB_SYNC_CHUNK) {
+    await db.insert(quickbooksAccounts).values(rows.slice(i, i + QB_SYNC_CHUNK)).onDuplicateKeyUpdate({
+      set: {
+        name: sql`VALUES(\`name\`)`,
+        accountType: sql`COALESCE(VALUES(\`accountType\`), \`accountType\`)`,
+        accountSubType: sql`COALESCE(VALUES(\`accountSubType\`), \`accountSubType\`)`,
+        classification: sql`COALESCE(VALUES(\`classification\`), \`classification\`)`,
+        fullyQualifiedName: sql`COALESCE(VALUES(\`fullyQualifiedName\`), \`fullyQualifiedName\`)`,
+        active: sql`VALUES(\`active\`)`,
+        currentBalance: sql`COALESCE(VALUES(\`currentBalance\`), \`currentBalance\`)`,
+        currency: sql`COALESCE(VALUES(\`currency\`), \`currency\`)`,
+        lastSyncedAt: sql`VALUES(\`lastSyncedAt\`)`,
+      },
+    });
+  }
+  return { count: rows.length, synced: rows.length };
+}
+
+/**
+ * Company-scoped item upsert. Same (companyId, quickbooksItemId) matching
+ * rationale as syncQuickBooksAccountsForCompany.
+ */
+export async function syncQuickBooksItemsForCompany(companyId: number, items: InsertQuickBooksItem[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const rows = items.map((i) => ({ ...i, companyId }));
+  for (let i = 0; i < rows.length; i += QB_SYNC_CHUNK) {
+    await db.insert(quickbooksItems).values(rows.slice(i, i + QB_SYNC_CHUNK)).onDuplicateKeyUpdate({
+      set: {
+        name: sql`VALUES(\`name\`)`,
+        sku: sql`COALESCE(VALUES(\`sku\`), \`sku\`)`,
+        type: sql`COALESCE(VALUES(\`type\`), \`type\`)`,
+        description: sql`COALESCE(VALUES(\`description\`), \`description\`)`,
+        unitPrice: sql`COALESCE(VALUES(\`unitPrice\`), \`unitPrice\`)`,
+        purchaseCost: sql`COALESCE(VALUES(\`purchaseCost\`), \`purchaseCost\`)`,
+        quantityOnHand: sql`COALESCE(VALUES(\`quantityOnHand\`), \`quantityOnHand\`)`,
+        incomeAccountId: sql`COALESCE(VALUES(\`incomeAccountId\`), \`incomeAccountId\`)`,
+        expenseAccountId: sql`COALESCE(VALUES(\`expenseAccountId\`), \`expenseAccountId\`)`,
+        assetAccountId: sql`COALESCE(VALUES(\`assetAccountId\`), \`assetAccountId\`)`,
+        active: sql`VALUES(\`active\`)`,
+        lastSyncedAt: sql`VALUES(\`lastSyncedAt\`)`,
+      },
+    });
+  }
+  return { count: rows.length, synced: rows.length };
 }
 
 export async function getQuickBooksAccountMappings(companyId?: number) {

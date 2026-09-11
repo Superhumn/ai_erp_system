@@ -463,6 +463,20 @@
 			"when": 1787700000000,
 			"tag": "0065_inventory_planning_columns",
 			"breakpoints": true
+		},
+		{
+			"idx": 66,
+			"version": "5",
+			"when": 1787700100000,
+			"tag": "0066_purchase_order_number_vendor_index",
+			"breakpoints": true
+		},
+		{
+			"idx": 67,
+			"version": "5",
+			"when": 1787700200000,
+			"tag": "0067_qb_sync_unique_keys",
+			"breakpoints": true
 		}
 	]
 }

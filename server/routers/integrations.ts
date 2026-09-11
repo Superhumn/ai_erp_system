@@ -5,9 +5,12 @@ import { safeDecryptToken } from "../_core/crypto";
 import { protectedProcedure, router } from "../_core/trpc";
 import { sendEmail, isEmailConfigured, formatEmailHtml } from "../_core/email";
 import * as db from "../db";
+import { scopeAllows } from "../_core/scope";
 import { getServiceAccountEmail, isServiceAccountConfigured } from "../_core/googleServiceAccount";
 import { refreshQuickBooksToken } from "../_core/quickbooks";
-import { adminProcedure, createAuditLog, refreshGoogleToken, getValidGoogleToken } from "./_shared";
+import { checkMergeConnection } from "../_core/merge";
+import { ENV } from "../_core/env";
+import { adminProcedure, resolveRequestScope, mergeCompanyExists, createAuditLog, refreshGoogleToken, getValidGoogleToken } from "./_shared";
 
 // ============================================
 // INTEGRATIONS
@@ -86,10 +89,26 @@ export const integrationsRouter = router({
         } catch { /* best-effort email fetch */ }
       }
       
-      // Check QuickBooks OAuth connection and attempt refresh if expired
-      const quickbooksToken = await db.getQuickBooksOAuthToken(ctx.user.id);
-      let quickbooksConnected = !!(quickbooksToken && (!quickbooksToken.expiresAt || new Date(quickbooksToken.expiresAt) > new Date()));
-      let quickbooksRealmId = quickbooksToken?.realmId;
+      // Check QuickBooks OAuth connection and attempt refresh if expired.
+      // In Merge mode the connection is env-configured, not per-user OAuth.
+      const usingMerge = ENV.accountingSyncProvider === "merge";
+      const providerInvalid = ENV.accountingSyncProvider === "invalid";
+      // Merge connection details are only visible to users with access to
+      // the linked entity; others see it as not configured.
+      const mergeVisible = usingMerge
+        ? scopeAllows(await resolveRequestScope(ctx.user), ENV.mergeCompanyId) && (await mergeCompanyExists())
+        : false;
+      const mergeCheck = usingMerge && mergeVisible ? await checkMergeConnection() : null;
+      const quickbooksToken = usingMerge ? null : await db.getQuickBooksOAuthToken(ctx.user.id);
+      let quickbooksConnected = providerInvalid
+        ? false
+        : usingMerge
+          ? !!mergeCheck?.connected
+          : !!(quickbooksToken && (!quickbooksToken.expiresAt || new Date(quickbooksToken.expiresAt) > new Date()));
+      // realmId stays an Intuit identifier; Merge's linked company name is
+      // reported separately so the UI doesn't show a name as an ID.
+      let quickbooksRealmId = usingMerge ? null : quickbooksToken?.realmId;
+      const quickbooksCompanyName = usingMerge ? (mergeCheck?.companyName ?? null) : null;
       if (quickbooksToken && !quickbooksConnected && quickbooksToken.refreshToken) {
         try {
           const refreshResult = await refreshQuickBooksToken(quickbooksToken.refreshToken);
@@ -144,6 +163,8 @@ export const integrationsRouter = router({
           configured: quickbooksConnected,
           status: quickbooksConnected ? 'connected' : 'not_configured',
           realmId: quickbooksRealmId,
+          companyName: quickbooksCompanyName,
+          provider: ENV.accountingSyncProvider,
         },
         syncHistory,
         fireflies: await (async () => {

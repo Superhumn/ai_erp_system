@@ -4,7 +4,7 @@ import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { buildImportRecord } from "@shared/importFields";
 import * as db from "../db";
-import { createAuditLog, refreshGoogleToken, getValidGoogleToken, DRIVE_SUPPORTED_TYPES, detectSheetType, type DriveSyncResult, importDriveFiles, generateNumber } from "./_shared";
+import { createAuditLog, refreshGoogleToken, getValidGoogleToken, DRIVE_SUPPORTED_TYPES, detectSheetType, importProjectRecord, importProjectTaskRecord, type DriveSyncResult, findActiveDriveSyncJob, importDriveFiles, generateNumber } from "./_shared";
 
 // ============================================
 // GOOGLE SHEETS IMPORT (OAuth + Drive API)
@@ -305,13 +305,21 @@ export const sheetsImportRouter = router({
     // Import data into a specific module
     importData: protectedProcedure
       .input(z.object({
-        targetModule: z.enum(['customers', 'vendors', 'products', 'invoices', 'employees', 'contracts', 'projects']),
+        targetModule: z.enum(['customers', 'vendors', 'products', 'invoices', 'employees', 'contracts', 'projects', 'project_tasks']),
         data: z.array(z.record(z.string(), z.string())),
         columnMapping: z.record(z.string(), z.string()), // Maps sheet column to ERP field
       }))
       .mutation(async ({ input, ctx }) => {
         const { targetModule, data, columnMapping } = input;
         const results = { imported: 0, failed: 0, errors: [] as string[] };
+        // Projects/tasks are matched by name, so a row that already exists is
+        // skipped rather than duplicated — it counts as neither imported nor
+        // failed. `projectIds` caches task → project lookups across the rows.
+        const projectIds = new Map<string, number>();
+        const scope = {
+          createdBy: ctx.user.id,
+          companyId: (ctx.user as any).companyId as number | undefined,
+        };
         
         for (const row of data) {
           try {
@@ -371,12 +379,17 @@ export const sheetsImportRouter = router({
                 } as any);
                 break;
 
-              case 'projects':
-                await db.createProject({
-                  ...record,
-                  projectNumber: generateNumber('PROJ'),
-                } as any);
-                break;
+              case 'projects': {
+                const { created } = await importProjectRecord(record, scope);
+                if (created) results.imported++;
+                continue;
+              }
+
+              case 'project_tasks': {
+                const { created } = await importProjectTaskRecord(record, scope, projectIds);
+                if (created) results.imported++;
+                continue;
+              }
             }
 
             results.imported++;
@@ -478,7 +491,12 @@ export const sheetsImportRouter = router({
           : null;
 
         // 2. Read + import every (selected) spreadsheet
-        const { results, totalSheets } = await importDriveFiles({ userId: ctx.user.id, accessToken, forcedTypes });
+        const { results, totalSheets } = await importDriveFiles({
+          userId: ctx.user.id,
+          companyId: (ctx.user as any).companyId as number | undefined,
+          accessToken,
+          forcedTypes,
+        });
 
         // 3. Audit log
         const totalImported = results.reduce((sum, r) => sum + r.imported, 0);
@@ -523,6 +541,14 @@ export const sheetsImportRouter = router({
           ? new Map(input.selections.map((s) => [s.fileId, s.type as string]))
           : null;
         const userId = ctx.user.id;
+        const companyId = (ctx.user as any).companyId as number | undefined;
+
+        // One import at a time per user. A second run would read the same
+        // sheets concurrently and — because a project/task is matched by name
+        // before it is inserted — could duplicate rows the first run is still
+        // creating. Hand back the running job so the client just reconnects.
+        const running = await findActiveDriveSyncJob(userId);
+        if (running) return { jobId: running.id };
 
         // Create the job row up front so the client (and getActiveSync) can find it.
         const { id: jobId } = await db.createSyncLog({
@@ -542,6 +568,7 @@ export const sheetsImportRouter = router({
           try {
             const { results, totalSheets } = await importDriveFiles({
               userId,
+              companyId,
               accessToken,
               forcedTypes,
               onProgress: async ({ results, totalSheets, processedSheets, currentFile }) => {
@@ -607,16 +634,7 @@ export const sheetsImportRouter = router({
     // reconnect to it on mount (after navigation / reload / tab close). Ignores
     // jobs older than an hour, which are treated as stale/abandoned.
     getActiveSync: protectedProcedure.query(async ({ ctx }) => {
-      // Query pending google_drive jobs directly rather than scanning a global
-      // recency window — otherwise a burst of other sync logs could push the
-      // caller's running job out of view and break reconnection.
-      const pending = await db.getPendingSyncLogs('google_drive', 50);
-      const oneHourAgo = Date.now() - 60 * 60 * 1000;
-      const active = pending.find((log: any) => {
-        const meta = (log.metadata as any) || {};
-        if (meta.userId !== ctx.user.id) return false;
-        return new Date(log.createdAt).getTime() >= oneHourAgo;
-      });
+      const active = await findActiveDriveSyncJob(ctx.user.id);
       if (!active) return null;
       const meta = (active.metadata as any) || {};
       return {

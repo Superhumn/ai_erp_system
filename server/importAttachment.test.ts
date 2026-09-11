@@ -15,6 +15,7 @@ vi.mock("./db", () => ({
   createVendor: vi.fn(async () => ({ id: 10 })),
   getVendorById: vi.fn(async () => ({ id: 10, name: "Acme Supplies", email: "ap@acme.test" })),
   createPurchaseOrder: vi.fn(async () => ({ id: 20 })),
+  createPurchaseOrderIfAbsent: vi.fn(async () => ({ created: true as const, id: 20, existing: null })),
   createPurchaseOrderItem: vi.fn(async () => ({ id: 21 })),
   updatePurchaseOrder: vi.fn(async () => {}),
   findPurchaseOrderByNumber: vi.fn(async () => null),
@@ -84,12 +85,31 @@ describe("importEmailAttachmentToErp — document-type routing", () => {
     (db.getEmailAttachmentById as any).mockResolvedValue({ id: 1, emailId: 5, filename: "doc.csv", mimeType: "text/csv", metadata: {} });
   });
 
+  it("bails when a concurrent import won the race, before any line item or receipt", async () => {
+    // The step-2 guard reads and the insert writes; a competing import of the
+    // same document can slip between them. createPurchaseOrderIfAbsent catches
+    // it under a row lock and reports that it created nothing.
+    (db.createPurchaseOrderIfAbsent as any).mockResolvedValueOnce({
+      created: false, id: 77, existing: { id: 77, poNumber: "PO-1001", status: "received" },
+    });
+    mockParse("purchase_order", { purchaseOrder: PO });
+
+    const result = await importEmailAttachmentToErp(baseOpts);
+
+    expect(result.success).toBe(true);
+    const warnings = result.importResult?.warnings ?? [];
+    expect(warnings.some((w: string) => w.includes("concurrent") && w.includes("77"))).toBe(true);
+    // The two writes that would actually double-count must not happen.
+    expect(db.createPurchaseOrderItem).not.toHaveBeenCalled();
+    expect(db.updateRawMaterial).not.toHaveBeenCalled();
+  });
+
   it("routes a purchase order to a purchase_order parsed document", async () => {
     mockParse("purchase_order", { purchaseOrder: PO });
     const result = await importEmailAttachmentToErp(baseOpts);
 
     expect(result.documentType).toBe("purchase_order");
-    expect(db.createPurchaseOrder).toHaveBeenCalled();
+    expect(db.createPurchaseOrderIfAbsent).toHaveBeenCalled();
     expect(db.createParsedDocument).toHaveBeenCalledWith(
       expect.objectContaining({ documentType: "purchase_order", emailId: 5, attachmentId: 1, documentNumber: "PO-1001" })
     );
@@ -118,7 +138,7 @@ describe("importEmailAttachmentToErp — document-type routing", () => {
     const result = await importEmailAttachmentToErp(baseOpts);
 
     expect(result.documentType).toBe("vendor_invoice");
-    expect(db.createPurchaseOrder).not.toHaveBeenCalled();
+    expect(db.createPurchaseOrderIfAbsent).not.toHaveBeenCalled();
     // The document itself is still filed — only the duplicate PO is skipped.
     expect(db.createParsedDocument).toHaveBeenCalled();
   });
@@ -129,7 +149,7 @@ describe("importEmailAttachmentToErp — document-type routing", () => {
     const result = await importEmailAttachmentToErp(baseOpts);
 
     expect(result.documentType).toBe("purchase_order");
-    expect(db.createPurchaseOrder).not.toHaveBeenCalled();
+    expect(db.createPurchaseOrderIfAbsent).not.toHaveBeenCalled();
   });
 
   // A duplicate must not re-run the receiving side either: that double-counted
@@ -152,7 +172,7 @@ describe("importEmailAttachmentToErp — document-type routing", () => {
     await importEmailAttachmentToErp(baseOpts);
 
     expect(db.createRawMaterial).not.toHaveBeenCalled();
-    expect(db.createPurchaseOrder).not.toHaveBeenCalled();
+    expect(db.createPurchaseOrderIfAbsent).not.toHaveBeenCalled();
   });
 
   it("creates no raw materials when a duplicate vendor invoice import is skipped", async () => {
@@ -167,7 +187,7 @@ describe("importEmailAttachmentToErp — document-type routing", () => {
     await importEmailAttachmentToErp(baseOpts);
 
     expect(db.createRawMaterial).not.toHaveBeenCalled();
-    expect(db.createPurchaseOrder).not.toHaveBeenCalled();
+    expect(db.createPurchaseOrderIfAbsent).not.toHaveBeenCalled();
   });
 
   it("routes a freight invoice to an invoice parsed document", async () => {
@@ -255,7 +275,7 @@ describe("importWhatsappDocumentToErp — WhatsApp intake parity", () => {
     const result = await importWhatsappDocumentToErp(whatsappOpts);
 
     expect(result.documentType).toBe("purchase_order");
-    expect(db.createPurchaseOrder).toHaveBeenCalled();
+    expect(db.createPurchaseOrderIfAbsent).toHaveBeenCalled();
     expect(db.createParsedDocument).toHaveBeenCalledWith(
       expect.objectContaining({ documentType: "purchase_order", documentNumber: "PO-1001" })
     );
