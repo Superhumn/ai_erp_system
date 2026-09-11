@@ -80,8 +80,61 @@ describe("coerceImportValue", () => {
     expect(coerceImportValue("vip", def("enum", ["individual", "business"])).error).toBeTruthy();
   });
 
+  it("accepts real-world spellings declared as enum aliases", () => {
+    const status = {
+      key: "status",
+      label: "Status",
+      type: "enum" as const,
+      enumValues: ["todo", "in_progress", "completed"],
+      enumAliases: { completed: ["done", "shipped"], in_progress: ["wip"] },
+    };
+    expect(coerceImportValue("Done", status)).toEqual({ value: "completed" });
+    expect(coerceImportValue("WIP", status)).toEqual({ value: "in_progress" });
+    expect(coerceImportValue("maybe", status).error).toBeTruthy();
+  });
+
   it("treats blank as undefined (not an error)", () => {
     expect(coerceImportValue("  ", def("string"))).toEqual({ value: undefined });
+  });
+});
+
+describe("to-do list import", () => {
+  it("auto-maps a typical to-do sheet", () => {
+    const mapping = buildDefaultMapping(
+      ["Task", "Project", "Owner", "Due Date", "Status", "Priority"],
+      "project_tasks",
+    );
+    expect(mapping.Task).toBe("name");
+    expect(mapping.Project).toBe("projectName");
+    expect(mapping["Due Date"]).toBe("dueDate");
+    expect(mapping.Status).toBe("status");
+    expect(mapping.Priority).toBe("priority");
+  });
+
+  it("translates spreadsheet status and priority words", () => {
+    const { record, errors } = buildImportRecord(
+      { Task: "Ship v2", Status: "Not started", Priority: "Urgent" },
+      { Task: "name", Status: "status", Priority: "priority" },
+      "project_tasks",
+    );
+    expect(errors).toHaveLength(0);
+    expect(record).toEqual({ name: "Ship v2", status: "todo", priority: "critical" });
+  });
+
+  it("requires a task name", () => {
+    const { errors } = buildImportRecord({ Project: "Website" }, { Project: "projectName" }, "project_tasks");
+    expect(errors.some((e) => /Task/.test(e))).toBe(true);
+  });
+});
+
+describe("project import", () => {
+  it("translates spreadsheet project status words", () => {
+    const { record } = buildImportRecord(
+      { Project: "Website Redesign", Stage: "In Progress" },
+      { Project: "name", Stage: "status" },
+      "projects",
+    );
+    expect(record).toEqual({ name: "Website Redesign", status: "active" });
   });
 });
 

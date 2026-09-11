@@ -21,6 +21,10 @@ vi.mock("./db", () => ({
   createInvoice: vi.fn().mockResolvedValue({ id: 1 }),
   createContract: vi.fn().mockResolvedValue({ id: 1 }),
   createProject: vi.fn().mockResolvedValue({ id: 1 }),
+  createProjectTask: vi.fn().mockResolvedValue({ id: 1 }),
+  findProjectByName: vi.fn().mockResolvedValue(undefined),
+  findOrCreateProjectByName: vi.fn().mockResolvedValue({ id: 7, created: true }),
+  findProjectTaskByName: vi.fn().mockResolvedValue(undefined),
   createAuditLog: vi.fn().mockResolvedValue({ id: 1 }),
   // Google Drive background-sync helpers
   getGoogleOAuthToken: vi.fn().mockResolvedValue({
@@ -58,7 +62,9 @@ function createAdminContext(): TrpcContext {
     createdAt: new Date(),
     updatedAt: new Date(),
     lastSignedIn: new Date(),
-  };
+    // Imports must stay inside the caller's company.
+    companyId: 4,
+  } as AuthenticatedUser & { companyId: number };
 
   return {
     user,
@@ -82,6 +88,21 @@ describe("detectSheetType (Drive auto-sync detection)", () => {
     expect(detectSheetType(["ingredient", "unit cost"])).toBe("raw_materials");
     expect(detectSheetType(["contact name", "lead source"])).toBe("crm_contacts");
     expect(detectSheetType(["investor", "commitment"])).toBe("fundraising");
+  });
+
+  it("detects to-do lists and project trackers ahead of generic columns", () => {
+    expect(detectSheetType(["task", "owner", "due date"])).toBe("project_tasks");
+    expect(detectSheetType(["to do", "status"])).toBe("project_tasks");
+    // A to-do sheet that happens to name a client is still a to-do sheet.
+    expect(detectSheetType(["action item", "client", "due"])).toBe("project_tasks");
+    expect(detectSheetType(["project name", "status", "progress"])).toBe("projects");
+    expect(detectSheetType(["deliverable", "owner"])).toBe("projects");
+  });
+
+  it("leaves a sheet unclaimed when no header can name the project", () => {
+    // "milestone" alone has no home — claiming it would reject every row for a
+    // missing name. The user picks a destination in the confirmation step.
+    expect(detectSheetType(["milestone", "owner"])).toBe("unknown");
   });
 
   it("returns non-importable markers for ambiguous/unsupported sheets", () => {
@@ -234,6 +255,74 @@ describe("Google Sheets Import - Data Import", () => {
     expect(result.failed).toBe(0);
   });
 
+  it("should import a to-do list under the project each row names", async () => {
+    const caller = appRouter.createCaller(createAdminContext());
+
+    const result = await caller.sheetsImport.importData({
+      targetModule: "project_tasks",
+      data: [
+        { Task: "Pick a colour palette", Project: "Website Redesign", Status: "Done", Due: "2026-03-01" },
+      ],
+      columnMapping: { Task: "name", Project: "projectName", Status: "status", Due: "dueDate" },
+    });
+
+    expect(result.imported).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(db.findOrCreateProjectByName).toHaveBeenCalledWith(
+      "Website Redesign",
+      expect.objectContaining({ createdBy: 1, companyId: 4 }),
+    );
+    expect(db.createProjectTask).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Pick a colour palette", projectId: 7, status: "completed" }),
+    );
+    // The synthetic project column never reaches the tasks table.
+    expect(db.createProjectTask).not.toHaveBeenCalledWith(
+      expect.objectContaining({ projectName: expect.anything() }),
+    );
+  });
+
+  it("files to-dos with no project column under one catch-all project", async () => {
+    const caller = appRouter.createCaller(createAdminContext());
+
+    const result = await caller.sheetsImport.importData({
+      targetModule: "project_tasks",
+      data: [{ Task: "Call the accountant" }],
+      columnMapping: { Task: "name" },
+    });
+
+    expect(result.imported).toBe(1);
+    expect(db.findOrCreateProjectByName).toHaveBeenCalledWith("Imported to-dos", expect.anything());
+  });
+
+  it("skips a to-do that is already on the project (re-import is safe)", async () => {
+    vi.mocked(db.findProjectTaskByName).mockResolvedValueOnce({ id: 99 } as any);
+    const caller = appRouter.createCaller(createAdminContext());
+
+    const result = await caller.sheetsImport.importData({
+      targetModule: "project_tasks",
+      data: [{ Task: "Pick a colour palette", Project: "Website Redesign" }],
+      columnMapping: { Task: "name", Project: "projectName" },
+    });
+
+    expect(result.imported).toBe(0);
+    expect(result.failed).toBe(0);
+    expect(db.createProjectTask).not.toHaveBeenCalled();
+  });
+
+  it("skips a project that already exists instead of duplicating it", async () => {
+    vi.mocked(db.findOrCreateProjectByName).mockResolvedValueOnce({ id: 7, created: false });
+    const caller = appRouter.createCaller(createAdminContext());
+
+    const result = await caller.sheetsImport.importData({
+      targetModule: "projects",
+      data: [{ Project: "Website Redesign" }],
+      columnMapping: { Project: "name" },
+    });
+
+    expect(result.imported).toBe(0);
+    expect(result.failed).toBe(0);
+  });
+
   it("should import contract data successfully", async () => {
     const ctx = createAdminContext();
     const caller = appRouter.createCaller(ctx);
@@ -317,6 +406,60 @@ describe("Google Drive background import job", () => {
       ok: true,
       json: async () => ({ files: [] }),
     }) as any;
+  });
+
+  it("imports a Drive to-do sheet into project tasks end to end", async () => {
+    // Drive lists one spreadsheet; the Sheets API returns its rows.
+    global.fetch = vi.fn(async (url: any) => {
+      const u = String(url);
+      if (u.includes("drive/v3/files")) {
+        return { ok: true, json: async () => ({ files: [{ id: "f1", name: "Q3 To-dos", mimeType: "application/vnd.google-apps.spreadsheet" }] }) } as any;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          values: [
+            ["Task", "Project", "Status", "Due"],
+            ["Pick a colour palette", "Website Redesign", "Done", "2026-03-01"],
+            ["Write the copy", "Website Redesign", "In Progress", ""],
+          ],
+        }),
+      } as any;
+    }) as any;
+
+    const caller = appRouter.createCaller(createAdminContext());
+    const { results } = await caller.sheetsImport.syncGoogleDrive({});
+
+    expect(results).toEqual([
+      { sheet: "Q3 To-dos", type: "project_tasks", imported: 2, errors: [] },
+    ]);
+    // Both rows name the same project — it is resolved once and reused.
+    expect(db.findOrCreateProjectByName).toHaveBeenCalledTimes(1);
+    expect(db.createProjectTask).toHaveBeenCalledTimes(2);
+    expect(db.createProjectTask).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Write the copy", projectId: 7, status: "in_progress" }),
+    );
+  });
+
+  it("hands back the running job instead of starting a second import", async () => {
+    // A long import already in flight for user 1.
+    syncLogStore.push({
+      id: 55,
+      integration: "google_drive",
+      action: "full_sync",
+      status: "pending",
+      createdAt: new Date(),
+      metadata: { status: "running", userId: 1, results: [], totalSheets: 4, processedSheets: 1 },
+    });
+
+    const caller = appRouter.createCaller(createAdminContext());
+    const { jobId } = await caller.sheetsImport.startSyncGoogleDrive({});
+
+    // Reconnected to the running job — no second job, so no concurrent pass
+    // over the same sheets.
+    expect(jobId).toBe(55);
+    expect(syncLogStore.filter((r) => r.integration === "google_drive")).toHaveLength(1);
+    expect(db.createSyncLog).not.toHaveBeenCalled();
   });
 
   it("starts a job that runs to completion detached from the request", async () => {

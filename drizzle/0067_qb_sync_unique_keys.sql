@@ -1,4 +1,4 @@
--- 0066_qb_sync_unique_keys
+-- 0067_qb_sync_unique_keys
 --
 -- The QuickBooks sync upserts matched rows with a read-then-write pair, so
 -- concurrent syncs (or multiple replicas) could insert duplicate
@@ -8,9 +8,9 @@
 -- ADD INDEX IF NOT EXISTS); any pre-existing duplicates are collapsed to
 -- the newest row first so the index build cannot fail.
 
-DROP PROCEDURE IF EXISTS `_migrate_0066_qb_sync_unique_keys`;
+DROP PROCEDURE IF EXISTS `_migrate_0067_qb_sync_unique_keys`;
 --> statement-breakpoint
-CREATE PROCEDURE `_migrate_0066_qb_sync_unique_keys`()
+CREATE PROCEDURE `_migrate_0067_qb_sync_unique_keys`()
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'quickbooksAccounts' AND INDEX_NAME = 'uq_qb_accounts_company_account') THEN
     DELETE a FROM `quickbooksAccounts` a
@@ -41,6 +41,6 @@ BEGIN
   END IF;
 END;
 --> statement-breakpoint
-CALL `_migrate_0066_qb_sync_unique_keys`();
+CALL `_migrate_0067_qb_sync_unique_keys`();
 --> statement-breakpoint
-DROP PROCEDURE IF EXISTS `_migrate_0066_qb_sync_unique_keys`;
+DROP PROCEDURE IF EXISTS `_migrate_0067_qb_sync_unique_keys`;
