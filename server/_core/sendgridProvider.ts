@@ -6,6 +6,7 @@
  */
 
 import sgMail from "@sendgrid/mail";
+import { createVerify } from "crypto";
 import { ENV } from "./env";
 
 // Initialize SendGrid with API key if available
@@ -224,13 +225,11 @@ export function verifyWebhookSignature(
   }
 
   try {
-    const crypto = require('crypto');
-
     // Combine timestamp and payload
     const timestampPayload = timestamp + payload;
 
     // Verify ECDSA signature
-    const verifier = crypto.createVerify('sha256');
+    const verifier = createVerify('sha256');
     verifier.update(timestampPayload);
 
     // The signature is base64 encoded

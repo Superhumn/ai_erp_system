@@ -4,6 +4,7 @@ import { protectedProcedure, router } from "./_core/trpc";
 import { getOrchestrator, startOrchestrator, stopOrchestrator } from "./supplyChainOrchestrator";
 import { getWorkflowEngine } from "./autonomousWorkflowEngine";
 import { getDb } from "./db";
+import { definedFields } from "./_core/definedFields";
 import {
   supplyChainWorkflows,
   workflowRuns,
@@ -666,9 +667,11 @@ export const autonomousWorkflowRouter = router({
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
         const { id, ...updates } = input;
+        const patch = definedFields(updates);
+        if (!patch) return { success: true };
         await db
           .update(approvalThresholds)
-          .set(updates)
+          .set(patch)
           .where(eq(approvalThresholds.id, id));
 
         return { success: true };

@@ -9,6 +9,7 @@ This guide walks through configuring the CI/CD pipeline for the AI ERP System.
 | **CI** | `.github/workflows/ci.yml` | PRs to `main`, pushes to `main` | Type-check, test, and build |
 | **Deploy to Staging** | `.github/workflows/deploy-staging.yml` | Push to `main` | Run CI, migrate, deploy staging |
 | **Deploy to Production** | `.github/workflows/deploy-production.yml` | Manual dispatch (type `deploy` to confirm) | Migrate and deploy production |
+| **Deploy to Production (gated)** | `.github/workflows/deploy-production-auto.yml` | After each successful *Deploy to Staging* run on `main` | Promote the exact staging commit to production once a required reviewer approves; refuses to run until the staging tier exists (see `DEPLOYMENT.md` → "Staging tier") |
 | **Delete Branches** | `.github/workflows/delete-merged-branches.yml` | PR closed (merged) | Clean up merged branches |
 
 ## CI Pipeline
@@ -27,15 +28,21 @@ test ───────┘
 
 ## Deploy Pipeline
 
-Triggered on push to `main` or manual dispatch:
+On every push to `main`:
 
 ```
-CI ──→ Deploy Staging ──→ Deploy Production
+CI ──→ Deploy Staging ──→ Deploy Production (gated)
 ```
 
-- Calls the CI workflow first (reusable workflow)
-- **Staging** deploys automatically after CI passes
-- **Production** requires manual approval (configured in GitHub Environment settings)
+- **Deploy to Staging** calls the CI workflow first (reusable workflow), then migrates and deploys
+  the staging service automatically.
+- **Deploy to Production (gated)** starts after each successful staging deploy and pauses on the
+  `production` environment's **Required reviewers** approval. On approval it promotes the exact
+  commit staging deployed. Until the staging tier exists (second Railway service +
+  `STAGING_SERVICE_ID` repository variable — see `DEPLOYMENT.md` → "Staging tier"), its guard
+  refuses to deploy before any migrations run.
+- **Deploy to Production** (manual dispatch) remains available for ad-hoc production deploys; it
+  shares a concurrency group with the gated workflow so the two can never race.
 
 ## GitHub Environment Setup
 
@@ -77,12 +84,13 @@ For each Railway project/environment:
 
 ## Manual Deployment
 
-To trigger a deployment manually (e.g., for a hotfix):
+To trigger a production deployment manually (e.g., for a hotfix):
 
-1. Go to **Actions → Deploy** in your GitHub repository
+1. Go to **Actions → Deploy to Production** in your GitHub repository
 2. Click **Run workflow**
-3. Select the branch to deploy from
-4. The workflow will run CI, deploy to staging, then await production approval
+3. Type `deploy` in the confirmation input and run it
+4. The workflow type-checks, builds, migrates the production DB, and deploys the production service
+   (pausing first on any protection rules configured for the `production` environment)
 
 ## Local Development
 

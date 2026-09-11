@@ -1,4 +1,4 @@
--- Migration 0065: index purchase_orders (poNumber, vendorId).
+-- Migration 0066: index purchase_orders (poNumber, vendorId).
 --
 -- Deliberately NOT unique. The table still holds the duplicate rows that
 -- PR #396 shipped the tooling to clean up, so a unique key would fail to
@@ -24,15 +24,15 @@
 -- Idempotent: MySQL 8.0 has no CREATE INDEX IF NOT EXISTS, so the statement is
 -- guarded against INFORMATION_SCHEMA.
 
-DROP PROCEDURE IF EXISTS `_migrate_0065_po_number_vendor_index`;
+DROP PROCEDURE IF EXISTS `_migrate_0066_po_number_vendor_index`;
 --> statement-breakpoint
-CREATE PROCEDURE `_migrate_0065_po_number_vendor_index`()
+CREATE PROCEDURE `_migrate_0066_po_number_vendor_index`()
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'purchase_orders' AND INDEX_NAME = 'purchase_orders_poNumber_vendor_idx') THEN
     CREATE INDEX `purchase_orders_poNumber_vendor_idx` ON `purchase_orders` (`poNumber`, `vendorId`);
   END IF;
 END;
 --> statement-breakpoint
-CALL `_migrate_0065_po_number_vendor_index`();
+CALL `_migrate_0066_po_number_vendor_index`();
 --> statement-breakpoint
-DROP PROCEDURE IF EXISTS `_migrate_0065_po_number_vendor_index`;
+DROP PROCEDURE IF EXISTS `_migrate_0066_po_number_vendor_index`;
