@@ -138,7 +138,7 @@ export const IMPORT_FIELDS: Record<ImportModule, ImportFieldDef[]> = {
     { key: "terms", label: "Terms", aliases: ["payment terms"] },
   ],
   projects: [
-    { key: "name", label: "Name", required: true, aliases: ["project", "project name", "title"] },
+    { key: "name", label: "Name", required: true, aliases: ["project", "project name", "title", "workstream", "deliverable"] },
     { key: "description", label: "Description", aliases: ["desc", "details"] },
     { key: "type", label: "Type", type: "enum", enumValues: ["internal", "client", "product", "research", "other"] },
     {

@@ -62,7 +62,9 @@ function createAdminContext(): TrpcContext {
     createdAt: new Date(),
     updatedAt: new Date(),
     lastSignedIn: new Date(),
-  };
+    // Imports must stay inside the caller's company.
+    companyId: 4,
+  } as AuthenticatedUser & { companyId: number };
 
   return {
     user,
@@ -94,7 +96,13 @@ describe("detectSheetType (Drive auto-sync detection)", () => {
     // A to-do sheet that happens to name a client is still a to-do sheet.
     expect(detectSheetType(["action item", "client", "due"])).toBe("project_tasks");
     expect(detectSheetType(["project name", "status", "progress"])).toBe("projects");
-    expect(detectSheetType(["milestone", "deliverable"])).toBe("projects");
+    expect(detectSheetType(["deliverable", "owner"])).toBe("projects");
+  });
+
+  it("leaves a sheet unclaimed when no header can name the project", () => {
+    // "milestone" alone has no home — claiming it would reject every row for a
+    // missing name. The user picks a destination in the confirmation step.
+    expect(detectSheetType(["milestone", "owner"])).toBe("unknown");
   });
 
   it("returns non-importable markers for ambiguous/unsupported sheets", () => {
@@ -262,7 +270,7 @@ describe("Google Sheets Import - Data Import", () => {
     expect(result.failed).toBe(0);
     expect(db.findOrCreateProjectByName).toHaveBeenCalledWith(
       "Website Redesign",
-      expect.objectContaining({ createdBy: 1 }),
+      expect.objectContaining({ createdBy: 1, companyId: 4 }),
     );
     expect(db.createProjectTask).toHaveBeenCalledWith(
       expect.objectContaining({ name: "Pick a colour palette", projectId: 7, status: "completed" }),
@@ -431,6 +439,27 @@ describe("Google Drive background import job", () => {
     expect(db.createProjectTask).toHaveBeenCalledWith(
       expect.objectContaining({ name: "Write the copy", projectId: 7, status: "in_progress" }),
     );
+  });
+
+  it("hands back the running job instead of starting a second import", async () => {
+    // A long import already in flight for user 1.
+    syncLogStore.push({
+      id: 55,
+      integration: "google_drive",
+      action: "full_sync",
+      status: "pending",
+      createdAt: new Date(),
+      metadata: { status: "running", userId: 1, results: [], totalSheets: 4, processedSheets: 1 },
+    });
+
+    const caller = appRouter.createCaller(createAdminContext());
+    const { jobId } = await caller.sheetsImport.startSyncGoogleDrive({});
+
+    // Reconnected to the running job — no second job, so no concurrent pass
+    // over the same sheets.
+    expect(jobId).toBe(55);
+    expect(syncLogStore.filter((r) => r.integration === "google_drive")).toHaveLength(1);
+    expect(db.createSyncLog).not.toHaveBeenCalled();
   });
 
   it("starts a job that runs to completion detached from the request", async () => {
