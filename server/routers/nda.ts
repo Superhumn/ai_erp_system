@@ -2,7 +2,6 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { publicProcedure, protectedProcedure, router } from "../_core/trpc";
-import { sendEmail } from "../_core/email";
 import * as db from "../db";
 import { storagePut } from "../storage";
 

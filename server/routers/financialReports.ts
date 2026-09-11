@@ -52,8 +52,8 @@ export const financialReportsRouter = router({
           cumulative?: number;
         };
 
-        let title = 'Financial Report';
-        let headers: string[] = ['Item', 'Amount'];
+        let title: string;
+        let headers: string[];
         let rows: ReportRow[] = [];
         let summary = '';
 

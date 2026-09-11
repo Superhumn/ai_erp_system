@@ -2,7 +2,6 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router } from "../_core/trpc";
-import { sendEmail } from "../_core/email";
 import * as emailService from "../_core/emailService";
 import { parseInvoiceText } from "../_core/invoiceTextParser";
 import * as db from "../db";

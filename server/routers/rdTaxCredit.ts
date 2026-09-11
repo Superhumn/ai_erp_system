@@ -3,7 +3,6 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router } from "../_core/trpc";
 import * as db from "../db";
-import { refreshQuickBooksToken } from "../_core/quickbooks";
 import { financeProcedure, createAuditLog } from "./_shared";
 
 // ============================================

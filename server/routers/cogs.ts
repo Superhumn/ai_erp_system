@@ -1,7 +1,6 @@
 // appRouter.cogs — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
 import { z } from "zod";
 import { router } from "../_core/trpc";
-import { addCostLayer } from "../inventoryCostingService";
 import * as db from "../db";
 import { opsProcedure, createAuditLog } from "./_shared";
 

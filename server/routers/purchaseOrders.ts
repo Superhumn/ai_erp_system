@@ -4,7 +4,6 @@ import { z } from "zod";
 import { router } from "../_core/trpc";
 import { sendEmail, isEmailConfigured, formatEmailHtml } from "../_core/email";
 import * as emailService from "../_core/emailService";
-import { sendVendorEmail } from "../vendorEmailAutomation";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "../textToPOService";
 import * as db from "../db";
 import { nanoid } from "nanoid";

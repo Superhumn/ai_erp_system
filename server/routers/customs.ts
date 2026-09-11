@@ -64,9 +64,6 @@ export const customsRouter = router({
             const clearance = await db.getCustomsClearanceById(id);
             // Only run inventory receipt if transitioning TO 'cleared' from a non-cleared status
             if (clearance?.status !== 'cleared' && clearance?.shipmentId) {
-              if (!warehouseId) {
-                throw new TRPCError({ code: 'BAD_REQUEST', message: 'warehouseId is required when clearing customs with inventory update' });
-              }
               const shipment = await db.getShipmentById(clearance.shipmentId);
               if (shipment?.purchaseOrderId) {
                 const poItems = await db.getPurchaseOrderItems(shipment.purchaseOrderId);

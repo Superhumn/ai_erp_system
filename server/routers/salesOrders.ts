@@ -1,7 +1,6 @@
 // appRouter.salesOrders — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
-import { recordCogs } from "../inventoryCostingService";
 import * as db from "../db";
 
 // ============================================

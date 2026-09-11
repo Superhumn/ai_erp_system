@@ -210,6 +210,7 @@ const stale = readdirSync(OUT).filter((f) => f.endsWith(".ts") && !KEEP.has(f) &
 // ─── One file per top-level key ─────────────────────────────────────────────
 
 const entries = []; // { key, varName, from, comment }
+const generatedFiles = [join(OUT, `${SHARED}.ts`)];
 const headerLocals = new Set(imports.flatMap(importBindings).map((b) => b.local));
 
 for (const prop of appObj.properties) {
@@ -247,6 +248,7 @@ for (const prop of appObj.properties) {
     "",
   ].join("\n");
   writeFileSync(join(OUT, `${key}.ts`), text);
+  generatedFiles.push(join(OUT, `${key}.ts`));
   entries.push({ key, varName, from: `./${key}`, comment });
 }
 
@@ -284,6 +286,51 @@ for (const prop of appObj.properties) {
     "",
   ].join("\n");
   writeFileSync(join(OUT, "index.ts"), text);
+}
+
+// ─── Prune imports the identifier scan kept but the binder says are unused ──
+// The scan above is deliberately generous; its one systematic false positive is
+// a body that re-declares a header name locally, e.g.
+//   const { parseUploadedDocument } = await import("../documentImportService");
+// which shadows the static import and leaves it unused. Ask the TypeScript
+// language service, which resolves scopes properly, to remove exactly those.
+// RemoveUnused mode neither sorts nor merges, so the diff stays minimal.
+{
+  const configPath = ts.findConfigFile(ROOT, ts.sys.fileExists, "tsconfig.json");
+  const parsedCfg = ts.parseJsonConfigFileContent(ts.readConfigFile(configPath, ts.sys.readFile).config, ts.sys, ROOT);
+  const host = {
+    getScriptFileNames: () => generatedFiles,
+    getScriptVersion: () => "0",
+    getScriptSnapshot: (f) => (ts.sys.fileExists(f) ? ts.ScriptSnapshot.fromString(ts.sys.readFile(f)) : undefined),
+    getCurrentDirectory: () => ROOT,
+    getCompilationSettings: () => parsedCfg.options,
+    getDefaultLibFileName: (o) => ts.getDefaultLibFilePath(o),
+    fileExists: ts.sys.fileExists,
+    readFile: ts.sys.readFile,
+    readDirectory: ts.sys.readDirectory,
+    directoryExists: ts.sys.directoryExists,
+    getDirectories: ts.sys.getDirectories,
+  };
+  const ls = ts.createLanguageService(host, ts.createDocumentRegistry());
+  const format = { ...ts.getDefaultFormatCodeSettings("\n"), insertSpaceAfterCommaDelimiter: true, insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces: true };
+  const pending = [];
+  for (const f of generatedFiles) {
+    const changes = ls.organizeImports(
+      { type: "file", fileName: f, skipDestructiveCodeActions: false, mode: ts.OrganizeImportsMode.RemoveUnused },
+      format, {},
+    );
+    for (const c of changes) if (c.fileName === f && c.textChanges.length) pending.push(c);
+  }
+  let pruned = 0;
+  for (const c of pending) {
+    let text = ts.sys.readFile(c.fileName);
+    for (const tc of [...c.textChanges].sort((a, b) => b.span.start - a.span.start)) {
+      text = text.slice(0, tc.span.start) + tc.newText + text.slice(tc.span.start + tc.span.length);
+      pruned++;
+    }
+    writeFileSync(c.fileName, text);
+  }
+  console.log(`pruned ${pruned} unused import(s) across ${pending.length} file(s)`);
 }
 
 const written = new Set(entries.filter((e) => e.from.startsWith("./")).map((e) => e.from.slice(2) + ".ts"));

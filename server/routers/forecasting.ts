@@ -1,9 +1,7 @@
 // appRouter.forecasting — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
-import { invokeLLM } from "../_core/llm";
 import * as db from "../db";
-import { latestOrderDate } from "../productionPlanning";
 import { DEFAULT_REQUIRED_BY_DAYS, planRequirementsFromBom, persistPlanRequirements, manualProductionPlanInput, buildManualProductionPlan } from "./_shared";
 
 // ============================================
