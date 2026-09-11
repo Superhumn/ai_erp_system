@@ -9,6 +9,9 @@ import { createLogger } from "./logger";
 const logger = createLogger("ErrorTracking");
 
 let sentryInitialized = false;
+// Cached module from initErrorTracking(). This file is ESM, so a CommonJS-style
+// dynamic require would throw and the catch blocks below would swallow every capture.
+let Sentry: any = null;
 
 export async function initErrorTracking() {
   const dsn = process.env.SENTRY_DSN;
@@ -19,7 +22,7 @@ export async function initErrorTracking() {
 
   try {
     // @ts-ignore — @sentry/node is an optional peer dependency
-    const Sentry = await import("@sentry/node");
+    Sentry = await import("@sentry/node");
     Sentry.init({
       dsn,
       environment: process.env.NODE_ENV || "development",
@@ -41,7 +44,6 @@ export function captureException(error: unknown, context?: Record<string, unknow
 
   if (sentryInitialized) {
     try {
-      const Sentry = require("@sentry/node");
       if (context) Sentry.setContext("additional", context);
       Sentry.captureException(error);
     } catch {
@@ -55,7 +57,6 @@ export function captureMessage(message: string, level: "info" | "warning" | "err
 
   if (sentryInitialized) {
     try {
-      const Sentry = require("@sentry/node");
       Sentry.captureMessage(message, level);
     } catch {
       // Sentry capture failed silently
