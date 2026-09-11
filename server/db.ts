@@ -124,6 +124,7 @@ import {
   // CRM types
   crmContacts, crmTags, crmContactTags, whatsappMessages, crmInteractions,
   crmPipelines, crmDeals, contactCaptures, crmEmailCampaigns, crmCampaignRecipients,
+  marketingEngagements, influencers, subsidiaryFundraisingInvestors, brandAmbassadors,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
   InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
   // Copacker portal
@@ -9015,10 +9016,13 @@ export async function updateNotificationPreference(
     email: settings.email ?? false,
     push: settings.push ?? false,
   }).onDuplicateKeyUpdate({
+    // Drizzle throws "No values to set" on an empty set; when the caller sent
+    // no channel flags, re-assign the key column so the statement is a no-op.
     set: {
       ...(settings.inApp !== undefined && { inApp: settings.inApp }),
       ...(settings.email !== undefined && { email: settings.email }),
       ...(settings.push !== undefined && { push: settings.push }),
+      ...(settings.inApp === undefined && settings.email === undefined && settings.push === undefined && { notificationType }),
     },
   });
 
@@ -12397,10 +12401,37 @@ export async function updateCrmContact(id: number, data: Partial<InsertCrmContac
   await db.update(crmContacts).set(data).where(eq(crmContacts.id, id));
 }
 
+/**
+ * Detach or remove every row that points at the given contacts, then delete
+ * the contacts. crm_interactions and crm_deals carry NOT NULL FKs with
+ * ON DELETE NO ACTION, so a plain delete fails with ER_ROW_IS_REFERENCED_2 as
+ * soon as a contact has been touched.
+ */
+async function deleteCrmContactsCascading(tx: any, ids: number[]) {
+  if (ids.length === 0) return 0;
+  await tx.delete(crmContactTags).where(inArray(crmContactTags.contactId, ids));
+  await tx.delete(crmInteractions).where(inArray(crmInteractions.contactId, ids));
+  await tx.delete(crmDeals).where(inArray(crmDeals.contactId, ids));
+  await tx.update(marketingEngagements).set({ contactId: null }).where(inArray(marketingEngagements.contactId, ids));
+  await tx.update(influencers).set({ crmContactId: null }).where(inArray(influencers.crmContactId, ids));
+  await tx.update(subsidiaryFundraisingInvestors).set({ contactId: null }).where(inArray(subsidiaryFundraisingInvestors.contactId, ids));
+  await tx.update(brandAmbassadors).set({ contactId: null }).where(inArray(brandAmbassadors.contactId, ids));
+  const result = await tx.delete(crmContacts).where(inArray(crmContacts.id, ids));
+  return (result as any)[0]?.affectedRows ?? ids.length;
+}
+
 export async function deleteCrmContact(id: number) {
   const db = await getDb();
   if (!db) return;
-  await db.delete(crmContacts).where(eq(crmContacts.id, id));
+  await db.transaction((tx) => deleteCrmContactsCascading(tx, [id]));
+}
+
+export async function deleteAllCrmContacts(): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const rows = await db.select({ id: crmContacts.id }).from(crmContacts);
+  const ids = rows.map((r) => r.id);
+  return db.transaction((tx) => deleteCrmContactsCascading(tx, ids));
 }
 
 export async function getCrmContactStats() {
@@ -14505,6 +14536,10 @@ export async function getInventoryManagementList() {
       reorderLevel: inventory.reorderLevel,
       averageCost: inventory.averageCost,
       warehouseId: inventory.warehouseId,
+      forecastedQuantity: inventory.forecastedQuantity,
+      poStatus: inventory.poStatus,
+      freightStatus: inventory.freightStatus,
+      freightTrackingNumber: inventory.freightTrackingNumber,
     })
     .from(inventory)
     .leftJoin(products, eq(inventory.productId, products.id))

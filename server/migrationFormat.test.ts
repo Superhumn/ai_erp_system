@@ -30,6 +30,18 @@ describe("drizzle migrations are runnable by the Drizzle migrator", () => {
   it.each(files)("%s", (file) => {
     const sql = fs.readFileSync(path.join(dir, file), "utf8");
     expect(sql, "DELIMITER is a mysql-CLI directive; the server rejects it").not.toMatch(/^\s*DELIMITER\b/im);
+    // The migrator splits on the marker text wherever it occurs, comments
+    // included. drizzle-kit writes it either on its own line or right after
+    // the statement's `;`; anything else (e.g. quoting it in a comment) leaves
+    // half a comment at the top of the next chunk, which MySQL rejects.
+    for (const line of sql.split("\n")) {
+      if (!line.includes("statement-breakpoint")) continue;
+      const t = line.trim();
+      expect(
+        t === "--> statement-breakpoint" || t.endsWith(";--> statement-breakpoint"),
+        `breakpoint marker may only end a line: ${t.slice(0, 80)}`,
+      ).toBe(true);
+    }
     for (const chunk of sql.split("--> statement-breakpoint")) {
       expect(
         topLevelStatements(chunk),
