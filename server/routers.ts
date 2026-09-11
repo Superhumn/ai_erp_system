@@ -79,7 +79,7 @@ import { parseFormulationSheet, suggestColumnMapping, type ColumnKey } from "./r
 import { getGoogleFullAccessAuthUrl, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType, searchDriveFoldersByName } from "./_core/googleDrive";
 import { getServiceAccountEmail, isServiceAccountConfigured } from "./_core/googleServiceAccount";
 import { getQuickBooksAuthUrl, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems, getProfitAndLoss, parseProfitAndLossReport } from "./_core/quickbooks";
-import { isMergeConfigured, getMergeCompanyInfo, getMergeAccounts, getMergeItems, getMergeProfitAndLoss } from "./_core/merge";
+import { isMergeConfigured, checkMergeConnection, getMergeCompanyInfo, getMergeAccounts, getMergeItems, getMergeProfitAndLoss } from "./_core/merge";
 import { listAllTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { queueFirefliesActionItemsForApproval } from "./firefliesSyncService";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
@@ -6328,11 +6328,12 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
       // Check QuickBooks OAuth connection and attempt refresh if expired.
       // In Merge mode the connection is env-configured, not per-user OAuth.
       const usingMerge = ENV.accountingSyncProvider === "merge";
+      const mergeCheck = usingMerge ? await checkMergeConnection() : null;
       const quickbooksToken = usingMerge ? null : await db.getQuickBooksOAuthToken(ctx.user.id);
       let quickbooksConnected = usingMerge
-        ? isMergeConfigured()
+        ? !!mergeCheck?.connected
         : !!(quickbooksToken && (!quickbooksToken.expiresAt || new Date(quickbooksToken.expiresAt) > new Date()));
-      let quickbooksRealmId = usingMerge ? "Merge.dev" : quickbooksToken?.realmId;
+      let quickbooksRealmId = usingMerge ? (mergeCheck?.companyName ?? "Merge.dev") : quickbooksToken?.realmId;
       if (quickbooksToken && !quickbooksConnected && quickbooksToken.refreshToken) {
         try {
           const refreshResult = await refreshQuickBooksToken(quickbooksToken.refreshToken);
@@ -8105,7 +8106,10 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
     // Get connection status
     getConnectionStatus: protectedProcedure.query(async ({ ctx }) => {
       if (ENV.accountingSyncProvider === "merge") {
-        return { connected: isMergeConfigured(), realmId: "Merge.dev", provider: "merge" };
+        // Reachability, not just env presence: an invalid token or unlinked
+        // account should not report as connected. Cached ~60s in merge.ts.
+        const check = await checkMergeConnection();
+        return { connected: check.connected, realmId: check.companyName ?? "Merge.dev", provider: "merge" };
       }
       const token = await db.getQuickBooksOAuthToken(ctx.user.id);
       if (!token) {
@@ -8223,6 +8227,11 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         }
 
         if (ENV.accountingSyncProvider === "merge") {
+          // The process-wide Merge account is bound to one ERP entity —
+          // refuse to copy the linked company's chart into any other.
+          if (companyId !== ENV.mergeCompanyId) {
+            throw new TRPCError({ code: 'PRECONDITION_FAILED', message: `The linked Merge account belongs to company ${ENV.mergeCompanyId}; cannot sync into company ${companyId}.` });
+          }
           const res = await getMergeAccounts(companyId);
           if (res.error) {
             throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: res.error });
@@ -8274,6 +8283,10 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         }
 
         if (ENV.accountingSyncProvider === "merge") {
+          // Same binding rule as syncAccounts.
+          if (companyId !== ENV.mergeCompanyId) {
+            throw new TRPCError({ code: 'PRECONDITION_FAILED', message: `The linked Merge account belongs to company ${ENV.mergeCompanyId}; cannot sync into company ${companyId}.` });
+          }
           const res = await getMergeItems(companyId, { type: input.type });
           if (res.error) {
             throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: res.error });
@@ -8378,6 +8391,12 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
       .query(async ({ input, ctx }) => {
         if (ENV.accountingSyncProvider === "merge") {
           if (!isMergeConfigured()) return { connected: false, months: [] };
+          // The linked Merge account's P&L belongs to one ERP entity; users
+          // scoped away from it must not see those actuals.
+          const scope = await resolveRequestScope(ctx.user);
+          if (!scopeAllows(scope, ENV.mergeCompanyId)) {
+            return { connected: false, months: [] };
+          }
           const res = await getMergeProfitAndLoss({
             startDate: input?.startDate,
             endDate: input?.endDate,

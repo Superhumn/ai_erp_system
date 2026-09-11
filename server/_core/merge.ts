@@ -31,14 +31,14 @@ export function isMergeConfigured(): boolean {
  * Endpoints that return a single object (no `results` field) are wrapped
  * into a one-element array.
  */
-async function mergeGetAll(endpoint: string, params?: Record<string, string>): Promise<{ results?: any[]; error?: string }> {
+async function mergeGetAll(endpoint: string, params?: Record<string, string>, maxPages = MAX_PAGES): Promise<{ results?: any[]; error?: string }> {
   if (!isMergeConfigured()) {
     return { error: "Merge is not configured. Set MERGE_API_KEY and MERGE_ACCOUNT_TOKEN." };
   }
   const results: any[] = [];
   let cursor: string | undefined;
   try {
-    for (let page = 0; page < MAX_PAGES; page++) {
+    for (let page = 0; page < maxPages; page++) {
       const qs = new URLSearchParams({ page_size: "100", ...params });
       if (cursor) qs.set("cursor", cursor);
       const response = await fetch(`${MERGE_API_BASE}/${endpoint}?${qs}`, {
@@ -64,9 +64,9 @@ async function mergeGetAll(endpoint: string, params?: Record<string, string>): P
       if (!data?.next) return { results };
       cursor = data.next;
     }
-    // Cursor still present after MAX_PAGES — refuse to report a partial
+    // Cursor still present after maxPages — refuse to report a partial
     // sync as complete.
-    return { error: `Merge ${endpoint} returned more than ${MAX_PAGES * 100} rows; aborting to avoid a partial sync` };
+    return { error: `Merge ${endpoint} returned more than ${maxPages * 100} rows; aborting to avoid a partial sync` };
   } catch (error: any) {
     console.error(`[Merge] ${endpoint} error:`, error);
     return { error: error?.message || "Merge API request failed" };
@@ -80,6 +80,37 @@ export async function getMergeCompanyInfo(): Promise<{ name?: string; error?: st
   const company = res.results?.[0];
   if (!company) return { error: "No company found on the linked Merge account" };
   return { name: company.name || company.legal_name || "Unknown company" };
+}
+
+// Reachability cache so connection-status queries don't hit Merge on every
+// dashboard render. "Configured" (env strings present) is not "connected"
+// (token valid, account linked) — status endpoints report the latter.
+const CONNECTION_CACHE_MS = 60_000;
+let connectionCache: { at: number; result: { connected: boolean; companyName?: string; error?: string } } | null = null;
+
+/** For tests. */
+export function _resetMergeConnectionCache(): void {
+  connectionCache = null;
+}
+
+/**
+ * Cached check that the Merge credentials actually work and a company is
+ * linked — not just that the env vars are non-empty.
+ */
+export async function checkMergeConnection(): Promise<{ connected: boolean; companyName?: string; error?: string }> {
+  if (!isMergeConfigured()) {
+    return { connected: false, error: "Merge is not configured. Set MERGE_API_KEY and MERGE_ACCOUNT_TOKEN." };
+  }
+  const now = Date.now();
+  if (connectionCache && now - connectionCache.at < CONNECTION_CACHE_MS) {
+    return connectionCache.result;
+  }
+  const info = await getMergeCompanyInfo();
+  const result = info.error
+    ? { connected: false, error: info.error }
+    : { connected: true, companyName: info.name };
+  connectionCache = { at: now, result };
+  return result;
 }
 
 /** Map Merge classification (ASSET) to QB-style (Asset) used by our tables/filters. */
@@ -114,7 +145,11 @@ function mapItemType(t?: string | null): string | null {
 export async function getMergeAccounts(companyId: number): Promise<{ accounts?: any[]; error?: string }> {
   const res = await mergeGetAll("accounts");
   if (res.error) return { error: res.error };
-  return { accounts: (res.results ?? []).map((a: any) => mapMergeAccount(a, companyId)) };
+  // Parity with the direct QuickBooks path, which requests Active = true.
+  const accounts = (res.results ?? [])
+    .map((a: any) => mapMergeAccount(a, companyId))
+    .filter((a: any) => a.active);
+  return { accounts };
 }
 
 /** Pure mapper — exported for tests. */
@@ -146,7 +181,10 @@ export async function getMergeItems(
 ): Promise<{ items?: any[]; error?: string }> {
   const res = await mergeGetAll("items");
   if (res.error) return { error: res.error };
-  let items = (res.results ?? []).map((i: any) => mapMergeItem(i, companyId));
+  // Parity with the direct QuickBooks path, which passes activeOnly: true.
+  let items = (res.results ?? [])
+    .map((i: any) => mapMergeItem(i, companyId))
+    .filter((i: any) => i.active);
   if (options?.type) {
     items = items.filter((i: any) => i.type === options.type);
   }
@@ -278,13 +316,18 @@ export function parseMergeIncomeStatements(
   return { months, expenseAccounts };
 }
 
-/** Fetch + parse the P&L for a date window from Merge income statements. */
+/**
+ * Fetch + parse the P&L for a date window from Merge income statements.
+ * Merge's list endpoint has no server-side period filter, so the fetch is
+ * bounded to 10 pages (1,000 statements — decades of monthly reports for
+ * one company) and filtered locally.
+ */
 export async function getMergeProfitAndLoss(options?: {
   startDate?: string;
   endDate?: string;
   summarizeBy?: SummarizeBy;
 }): Promise<{ report?: ParsedProfitAndLoss; error?: string }> {
-  const res = await mergeGetAll("income-statements");
+  const res = await mergeGetAll("income-statements", undefined, 10);
   if (res.error) return { error: res.error };
   return { report: parseMergeIncomeStatements(res.results ?? [], options) };
 }

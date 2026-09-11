@@ -11,6 +11,8 @@ import {
   getMergeCompanyInfo,
   getMergeAccounts,
   getMergeItems,
+  checkMergeConnection,
+  _resetMergeConnectionCache,
   type MergeIncomeStatement,
 } from "./merge";
 
@@ -211,6 +213,7 @@ describe("request layer (mocked fetch)", () => {
   beforeEach(() => {
     fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
+    _resetMergeConnectionCache();
   });
 
   afterEach(() => {
@@ -273,5 +276,51 @@ describe("request layer (mocked fetch)", () => {
     const res = await getMergeItems(1, { type: "Service" });
     expect(res.items).toHaveLength(1);
     expect(res.items![0].name).toBe("Consulting");
+  });
+
+  it("excludes inactive accounts and items, matching the Intuit active-only behavior", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        next: null,
+        results: [
+          { id: "a1", name: "Active account", status: "ACTIVE" },
+          { id: "a2", name: "Archived account", status: "ARCHIVED" },
+        ],
+      }),
+    );
+    const accounts = await getMergeAccounts(1);
+    expect(accounts.accounts!.map((a: any) => a.name)).toEqual(["Active account"]);
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        next: null,
+        results: [
+          { id: "i1", name: "Active item", status: "ACTIVE" },
+          { id: "i2", name: "Archived item", status: "ARCHIVED" },
+        ],
+      }),
+    );
+    const items = await getMergeItems(1);
+    expect(items.items!.map((i: any) => i.name)).toEqual(["Active item"]);
+  });
+
+  it("checkMergeConnection reports reachability and caches the result", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ next: null, results: [{ name: "Superhumn Inc" }] }));
+
+    const first = await checkMergeConnection();
+    expect(first).toEqual({ connected: true, companyName: "Superhumn Inc" });
+
+    // Second call within the cache window must not hit the network.
+    const second = await checkMergeConnection();
+    expect(second.connected).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("checkMergeConnection reports not connected when the token is rejected", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ detail: "Invalid token" }, 401));
+
+    const res = await checkMergeConnection();
+    expect(res.connected).toBe(false);
+    expect(res.error).toContain("401");
   });
 });

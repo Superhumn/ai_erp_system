@@ -15799,6 +15799,25 @@ export async function syncQuickBooksItems(companyIdOrItems: number | InsertQuick
   return { count: synced, synced };
 }
 
+// The quickbooksAccounts/quickbooksItems tables carry no composite unique
+// index on (companyId, providerId), so a read-then-insert upsert races under
+// concurrency. Until a unique index + ON DUPLICATE KEY upsert lands as its
+// own migration, serialize whole-dataset syncs per (table, company) in
+// process — sufficient for the single-instance, user-triggered sync flows
+// that call these helpers.
+const qbSyncLocks = new Map<string, Promise<unknown>>();
+async function withQbSyncLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const previous = qbSyncLocks.get(key) ?? Promise.resolve();
+  const run = previous.then(fn, fn);
+  const settled = run.catch(() => undefined);
+  qbSyncLocks.set(key, settled);
+  try {
+    return await run;
+  } finally {
+    if (qbSyncLocks.get(key) === settled) qbSyncLocks.delete(key);
+  }
+}
+
 /**
  * Company-scoped account upsert. Unlike syncQuickBooksAccounts (which matches
  * on quickbooksAccountId alone), rows are matched on (companyId,
@@ -15806,24 +15825,26 @@ export async function syncQuickBooksItems(companyIdOrItems: number | InsertQuick
  * Used by the Merge sync path.
  */
 export async function syncQuickBooksAccountsForCompany(companyId: number, accounts: InsertQuickBooksAccount[]) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  let synced = 0;
-  for (const account of accounts) {
-    const row = { ...account, companyId };
-    const existing = await db.select().from(quickbooksAccounts)
-      .where(and(
-        eq(quickbooksAccounts.companyId, companyId),
-        eq(quickbooksAccounts.quickbooksAccountId, row.quickbooksAccountId),
-      )).limit(1);
-    if (existing[0]) {
-      await db.update(quickbooksAccounts).set(row).where(eq(quickbooksAccounts.id, existing[0].id));
-    } else {
-      await db.insert(quickbooksAccounts).values(row);
+  return withQbSyncLock(`accounts:${companyId}`, async () => {
+    const db = await getDb();
+    if (!db) throw new Error("Database not available");
+    let synced = 0;
+    for (const account of accounts) {
+      const row = { ...account, companyId };
+      const existing = await db.select().from(quickbooksAccounts)
+        .where(and(
+          eq(quickbooksAccounts.companyId, companyId),
+          eq(quickbooksAccounts.quickbooksAccountId, row.quickbooksAccountId),
+        )).limit(1);
+      if (existing[0]) {
+        await db.update(quickbooksAccounts).set(row).where(eq(quickbooksAccounts.id, existing[0].id));
+      } else {
+        await db.insert(quickbooksAccounts).values(row);
+      }
+      synced++;
     }
-    synced++;
-  }
-  return { count: synced, synced };
+    return { count: synced, synced };
+  });
 }
 
 /**
@@ -15831,24 +15852,26 @@ export async function syncQuickBooksAccountsForCompany(companyId: number, accoun
  * rationale as syncQuickBooksAccountsForCompany.
  */
 export async function syncQuickBooksItemsForCompany(companyId: number, items: InsertQuickBooksItem[]) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  let synced = 0;
-  for (const item of items) {
-    const row = { ...item, companyId };
-    const existing = await db.select().from(quickbooksItems)
-      .where(and(
-        eq(quickbooksItems.companyId, companyId),
-        eq(quickbooksItems.quickbooksItemId, row.quickbooksItemId),
-      )).limit(1);
-    if (existing[0]) {
-      await db.update(quickbooksItems).set(row).where(eq(quickbooksItems.id, existing[0].id));
-    } else {
-      await db.insert(quickbooksItems).values(row);
+  return withQbSyncLock(`items:${companyId}`, async () => {
+    const db = await getDb();
+    if (!db) throw new Error("Database not available");
+    let synced = 0;
+    for (const item of items) {
+      const row = { ...item, companyId };
+      const existing = await db.select().from(quickbooksItems)
+        .where(and(
+          eq(quickbooksItems.companyId, companyId),
+          eq(quickbooksItems.quickbooksItemId, row.quickbooksItemId),
+        )).limit(1);
+      if (existing[0]) {
+        await db.update(quickbooksItems).set(row).where(eq(quickbooksItems.id, existing[0].id));
+      } else {
+        await db.insert(quickbooksItems).values(row);
+      }
+      synced++;
     }
-    synced++;
-  }
-  return { count: synced, synced };
+    return { count: synced, synced };
+  });
 }
 
 export async function getQuickBooksAccountMappings(companyId?: number) {
