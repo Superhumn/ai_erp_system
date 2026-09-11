@@ -22,7 +22,8 @@
     "db:baseline": "drizzle-kit pull",
     "index:legacy": "node scripts/generate-legacy-indexes.mjs",
     "index:legacy:check": "node scripts/generate-legacy-indexes.mjs && git diff --exit-code ROUTERS_INDEX.md DB_INDEX.md",
-    "audit:coverage": "tsx scripts/dump-trpc-paths.ts > /tmp/server-procs.txt && node scripts/feature-coverage.mjs"
+    "audit:coverage": "tsx scripts/dump-trpc-paths.ts > /tmp/server-procs.txt && node scripts/feature-coverage.mjs",
+    "audit:sweep": "tsx scripts/sweep-procedures.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
