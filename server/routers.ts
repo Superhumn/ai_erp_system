@@ -4697,7 +4697,13 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
 
     // Read-only. Deleting the duplicate POs destroys the line items this
     // report is derived from, so run it before any bulk cleanup.
-    receiptInflation: scopedOpsProcedure.query(({ ctx }) => db.getReceiptInflationReport(ctx.scope)),
+    receiptInflation: scopedOpsProcedure
+      // Optional id list so the delete dialog can report on the rows it is
+      // actually about to remove rather than every duplicate in the table.
+      .input(z.object({ purchaseOrderIds: z.array(z.number()).max(500).optional() }).optional())
+      .query(({ input, ctx }) =>
+        db.getReceiptInflationReport(ctx.scope, { purchaseOrderIds: input?.purchaseOrderIds }),
+      ),
     // Filtered / sorted / paged list for the PO page. `list` stays as-is for
     // its many other callers.
     listPaged: scopedOpsProcedure

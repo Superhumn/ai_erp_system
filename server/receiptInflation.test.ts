@@ -3,6 +3,8 @@ import {
   findMaterialCandidates,
   attributeLines,
   summarizeInflation,
+  collapseLinkedLines,
+  type LinkedLineRow,
   type MaterialRef,
   type RedundantLine,
   type LineAttribution,
@@ -172,5 +174,68 @@ describe("summarizeInflation", () => {
     expect(report.perMaterial).toEqual([]);
     expect(report.unattributed).toEqual([]);
     expect(report.totals.materialsAffected).toBe(0);
+  });
+});
+
+
+describe("collapseLinkedLines", () => {
+  const row = (over: Partial<LinkedLineRow> = {}): LinkedLineRow => ({
+    itemId: 1,
+    purchaseOrderId: 10,
+    poNumber: "INV-1",
+    description: "Sodium Citrate",
+    quantity: 100,
+    linkedMaterialId: null,
+    ...over,
+  });
+
+  it("counts a line once even when the junction carries several links for it", () => {
+    // The left join emits one row per link. Counting them all would add the
+    // quantity twice — inflating the report that measures inflation.
+    const lines = collapseLinkedLines([
+      row({ linkedMaterialId: 2 }),
+      row({ linkedMaterialId: 2 }),
+    ]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].quantity).toBe(100);
+    expect(lines[0].linkedMaterialId).toBe(2);
+  });
+
+  it("treats conflicting links as no link rather than picking a winner", () => {
+    const lines = collapseLinkedLines([
+      row({ linkedMaterialId: 2 }),
+      row({ linkedMaterialId: 3 }),
+    ]);
+    expect(lines).toHaveLength(1);
+    // Falls through to description matching instead of trusting either link.
+    expect(lines[0].linkedMaterialId).toBeNull();
+  });
+
+  it("keeps separate line items separate", () => {
+    const lines = collapseLinkedLines([
+      row({ itemId: 1, quantity: 10 }),
+      row({ itemId: 2, quantity: 25 }),
+    ]);
+    expect(lines.map((l) => l.quantity)).toEqual([10, 25]);
+  });
+
+  it("keeps a line that has no link at all", () => {
+    const lines = collapseLinkedLines([row()]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].linkedMaterialId).toBeNull();
+  });
+
+  it("drops zero and non-numeric quantities", () => {
+    expect(collapseLinkedLines([row({ itemId: 1, quantity: 0 })])).toEqual([]);
+    expect(collapseLinkedLines([row({ itemId: 2, quantity: NaN })])).toEqual([]);
+  });
+
+  it("a conflicting link no longer resolves silently once attributed", () => {
+    const [line] = collapseLinkedLines([
+      row({ description: "Citric Acid", linkedMaterialId: 1 }),
+      row({ description: "Citric Acid", linkedMaterialId: 3 }),
+    ]);
+    const [attributed] = attributeLines([line], materials);
+    expect(attributed.confidence).toBe("ambiguous");
   });
 });

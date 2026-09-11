@@ -183,11 +183,30 @@ export default function PurchaseOrders() {
   }, [duplicateGroups]);
 
   // How much of each raw material's received total came from the duplicate POs
-  // rather than real deliveries. Only worth asking for once duplicates exist.
-  const { data: inflation } = trpc.purchaseOrders.receiptInflation.useQuery(undefined, {
-    enabled: redundantIds.size > 0,
-  });
+  // rather than real deliveries.
+  //
+  // Restricted to the redundant POs actually selected, so the figures describe
+  // what this delete is about to destroy rather than every duplicate in the
+  // table. Only asked for while the dialog is open — this is a warning about a
+  // specific destructive action, not a page-load cost.
+  const selectedRedundantIds = useMemo(
+    () => Array.from(selectedIds).filter((id) => redundantIds.has(id)),
+    [selectedIds, redundantIds],
+  );
+  const {
+    data: inflation,
+    isPending: inflationPending,
+    isError: inflationFailed,
+  } = trpc.purchaseOrders.receiptInflation.useQuery(
+    { purchaseOrderIds: selectedRedundantIds },
+    { enabled: bulkDeleteOpen && selectedRedundantIds.length > 0 },
+  );
+  const inflationUnresolved = bulkDeleteOpen && selectedRedundantIds.length > 0 && (inflationPending || inflationFailed);
+  // Unattributed receipts are evidence too: if every line fails to match a
+  // material, materialsAffected is 0 while the quantities are still real and
+  // still about to become untraceable.
   const inflatedMaterials = inflation?.totals.materialsAffected ?? 0;
+  const inflationFindings = inflatedMaterials + (inflation?.unattributed.length ?? 0);
 
   const resetForm = () => {
     setFormData({ vendorId: 0, expectedDeliveryDate: "", notes: "" });
@@ -339,6 +358,10 @@ export default function PurchaseOrders() {
     utils.purchaseOrders.summary.invalidate();
     utils.purchaseOrders.duplicates.invalidate();
     utils.purchaseOrders.receiptProgress.invalidate();
+    // Without this the report stays cached after a cleanup: once the last
+    // duplicate is gone the query disables, keeps its stale data, and a later
+    // delete dialog for an unrelated PO shows the old warning and figures.
+    utils.purchaseOrders.receiptInflation.invalidate();
   };
 
   const bulkStatusMutation = trpc.purchaseOrders.bulkUpdateStatus.useMutation();
@@ -1485,7 +1508,23 @@ export default function PurchaseOrders() {
             </DialogDescription>
           </DialogHeader>
 
-          {inflatedMaterials > 0 && (
+          {inflationUnresolved && (
+            <div className="rounded-md border p-3 text-sm" role="status">
+              {inflationFailed ? (
+                <span className="text-destructive">
+                  The receipt-inflation report failed to load. Deleting is held back rather than
+                  destroying evidence that couldn't be checked — close and retry.
+                </span>
+              ) : (
+                <span className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Checking whether these duplicates inflated any received totals…
+                </span>
+              )}
+            </div>
+          )}
+
+          {!inflationUnresolved && inflationFindings > 0 && (
             <div
               className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950"
               role="alert"
@@ -1495,8 +1534,9 @@ export default function PurchaseOrders() {
                 <div className="space-y-2">
                   <p>
                     <span className="font-medium">
-                      {inflatedMaterials} raw material{inflatedMaterials === 1 ? " has" : "s have"} a
-                      received total inflated by these duplicates.
+                      {inflatedMaterials > 0
+                        ? `${inflatedMaterials} raw material${inflatedMaterials === 1 ? " has" : "s have"} a received total inflated by these duplicates.`
+                        : `${inflation?.unattributed.length ?? 0} duplicate receipt${(inflation?.unattributed.length ?? 0) === 1 ? "" : "s"} moved stock that couldn't be traced to a material.`}
                     </span>{" "}
                     Nothing records which receipt added what, so the only evidence is these POs' line
                     items — deleting them destroys it. Review the figures first.
@@ -1513,7 +1553,7 @@ export default function PurchaseOrders() {
             <Button variant="outline" onClick={() => setBulkDeleteOpen(false)}>Cancel</Button>
             <Button
               variant="destructive"
-              disabled={isBulkDeleting || selectedCount === 0}
+              disabled={isBulkDeleting || selectedCount === 0 || inflationUnresolved}
               onClick={runBulkDelete}
             >
               {isBulkDeleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

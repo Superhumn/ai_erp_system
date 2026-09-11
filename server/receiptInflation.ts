@@ -221,3 +221,58 @@ export function summarizeInflation(
     },
   };
 }
+
+/** A joined row: one purchase-order line, once per junction link it carries. */
+export interface LinkedLineRow {
+  itemId: number;
+  purchaseOrderId: number;
+  poNumber: string;
+  description: string;
+  quantity: number;
+  linkedMaterialId: number | null;
+}
+
+/**
+ * Collapses the left-joined rows for a purchase order's line items down to one
+ * entry per line.
+ *
+ * `purchaseOrderRawMaterials` permits more than one row per item, and a left
+ * join emits one row per link. Without collapsing, a line's quantity is counted
+ * once per link and can be attributed to several materials at once — both of
+ * which inflate the very report meant to measure inflation.
+ *
+ * Conflicting links (two different materials claiming one line) resolve to no
+ * link rather than a winner. Two materials claiming a line isn't evidence, so
+ * it falls through to description matching, where it surfaces as ambiguous or
+ * unmatched instead of being quietly resolved in favour of whichever row the
+ * database happened to return first.
+ */
+export function collapseLinkedLines(rows: LinkedLineRow[]): RedundantLine[] {
+  const byItem = new Map<number, { line: RedundantLine; links: Set<number> }>();
+
+  for (const row of rows) {
+    if (!Number.isFinite(row.quantity) || row.quantity === 0) continue;
+
+    const existing = byItem.get(row.itemId);
+    if (existing) {
+      if (row.linkedMaterialId != null) existing.links.add(row.linkedMaterialId);
+      continue;
+    }
+
+    byItem.set(row.itemId, {
+      line: {
+        purchaseOrderId: row.purchaseOrderId,
+        poNumber: row.poNumber,
+        description: row.description,
+        quantity: row.quantity,
+        linkedMaterialId: null,
+      },
+      links: row.linkedMaterialId != null ? new Set([row.linkedMaterialId]) : new Set(),
+    });
+  }
+
+  return Array.from(byItem.values()).map(({ line, links }) => ({
+    ...line,
+    linkedMaterialId: links.size === 1 ? [...links][0] : null,
+  }));
+}

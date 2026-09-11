@@ -1,4 +1,4 @@
-import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray, ne, sum, max, min } from "drizzle-orm";
+import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray, ne, sum, max, min, notExists } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2";
 import { scopeAllows, scopeCompanyIds, partitionIdsByVisibility, type Scope } from "./_core/scope";
@@ -9,7 +9,7 @@ import {
   MATCH_EPSILON,
 } from "./purchaseOrderMatching";
 import { classifyDuplicateGroup, resolveMergedQuantities } from "./inventoryDeduplication";
-import { attributeLines, summarizeInflation, type RedundantLine } from "./receiptInflation";
+import { attributeLines, collapseLinkedLines, summarizeInflation, type RedundantLine } from "./receiptInflation";
 import {
   assertTransition, computeVariance, computeVarianceValue, resolveAdjustment,
   summarizeVariance, uncountedLines,
@@ -2316,7 +2316,10 @@ const RECEIPT_SCAN_CHUNK = 500;
  * the importer sets when `markAsReceived` ran, which is the branch that
  * incremented the running total in the first place.
  */
-export async function getReceiptInflationReport(scope?: Scope) {
+export async function getReceiptInflationReport(
+  scope?: Scope,
+  opts?: { purchaseOrderIds?: number[] },
+) {
   const empty = {
     perMaterial: [] as ReturnType<typeof summarizeInflation>["perMaterial"],
     unattributed: [] as ReturnType<typeof summarizeInflation>["unattributed"],
@@ -2328,17 +2331,45 @@ export async function getReceiptInflationReport(scope?: Scope) {
   if (!db) return empty;
 
   const groups = await getDuplicatePurchaseOrderGroups(scope);
-  const redundantIds = groups.flatMap((g) => g.duplicateIds);
+  let redundantIds = groups.flatMap((g) => g.duplicateIds);
+
+  // When the caller names a subset — the rows a delete dialog is actually about
+  // to remove — report on those only. Reporting the whole table there would
+  // attribute quantities to a destructive action that isn't going to touch them.
+  if (opts?.purchaseOrderIds) {
+    const wanted = new Set(opts.purchaseOrderIds);
+    redundantIds = redundantIds.filter((id) => wanted.has(id));
+  }
   if (redundantIds.length === 0) return empty;
 
-  // Only the copies that actually ran the receiving branch moved stock.
+  // status='received' alone is not evidence that this PO ran the importer's
+  // quantityReceived increment: the normal receiving flow sets the same status
+  // while posting to rawMaterialInventory and the transaction ledger instead,
+  // and counting those would invent inflation that never happened. A receiving
+  // record is the marker for that flow — the importer writes none — so POs that
+  // have one are excluded.
+  //
+  // Residual imprecision worth knowing about: a PO marked received by hand,
+  // with neither receiving records nor an importer run behind it, still looks
+  // like an import here. That is why the report stays read-only.
   const receivedPos: { id: number; poNumber: string }[] = [];
   for (let i = 0; i < redundantIds.length; i += RECEIPT_SCAN_CHUNK) {
     const chunk = redundantIds.slice(i, i + RECEIPT_SCAN_CHUNK);
     const rows = await db
       .select({ id: purchaseOrders.id, poNumber: purchaseOrders.poNumber })
       .from(purchaseOrders)
-      .where(and(inArray(purchaseOrders.id, chunk), eq(purchaseOrders.status, "received" as any)));
+      .where(
+        and(
+          inArray(purchaseOrders.id, chunk),
+          eq(purchaseOrders.status, "received" as any),
+          notExists(
+            db
+              .select({ one: sql`1` })
+              .from(poReceivingRecords)
+              .where(eq(poReceivingRecords.purchaseOrderId, purchaseOrders.id)),
+          ),
+        ),
+      );
     receivedPos.push(...rows);
   }
   if (receivedPos.length === 0) return { ...empty, scannedDuplicatePos: 0 };
@@ -2353,6 +2384,7 @@ export async function getReceiptInflationReport(scope?: Scope) {
     const chunk = receivedIds.slice(i, i + RECEIPT_SCAN_CHUNK);
     const rows = await db
       .select({
+        itemId: purchaseOrderItems.id,
         purchaseOrderId: purchaseOrderItems.purchaseOrderId,
         description: purchaseOrderItems.description,
         quantity: purchaseOrderItems.quantity,
@@ -2365,17 +2397,17 @@ export async function getReceiptInflationReport(scope?: Scope) {
       )
       .where(inArray(purchaseOrderItems.purchaseOrderId, chunk));
 
-    for (const r of rows) {
-      const quantity = parseFloat((r.quantity as string) ?? "0");
-      if (!Number.isFinite(quantity) || quantity === 0) continue;
-      lines.push({
-        purchaseOrderId: r.purchaseOrderId,
-        poNumber: poNumberById.get(r.purchaseOrderId) ?? String(r.purchaseOrderId),
-        description: (r.description as string) ?? "",
-        quantity,
-        linkedMaterialId: r.linkedMaterialId ?? null,
-      });
-    }
+    // Collapsed to one entry per line item: the junction allows several links
+    // per item and the join emits a row for each. See collapseLinkedLines for
+    // how conflicting links are handled.
+    lines.push(...collapseLinkedLines(rows.map((r) => ({
+      itemId: r.itemId,
+      purchaseOrderId: r.purchaseOrderId,
+      poNumber: poNumberById.get(r.purchaseOrderId) ?? String(r.purchaseOrderId),
+      description: (r.description as string) ?? "",
+      quantity: parseFloat((r.quantity as string) ?? "0"),
+      linkedMaterialId: r.linkedMaterialId ?? null,
+    }))));
   }
 
   const materialRows = await db
