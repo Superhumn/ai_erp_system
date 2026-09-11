@@ -27,25 +27,32 @@ UPDATE `crm_contacts`
 SET `email` = NULL
 WHERE `email` = '';
 
+--> statement-breakpoint
 UPDATE `crm_contacts`
 SET `phone` = NULL
 WHERE `phone` = '';
 
+--> statement-breakpoint
 UPDATE `crm_contacts`
 SET `whatsappNumber` = NULL
 WHERE `whatsappNumber` = '';
 
+--> statement-breakpoint
 UPDATE `crm_contacts`
 SET `linkedinUrl` = NULL
 WHERE `linkedinUrl` = '';
+--> statement-breakpoint
 CREATE UNIQUE INDEX `crm_contacts_email_uniq`
   ON `crm_contacts` (`email`);
 
+--> statement-breakpoint
 CREATE UNIQUE INDEX `crm_contacts_phone_uniq`
   ON `crm_contacts` (`phone`);
 
+--> statement-breakpoint
 CREATE UNIQUE INDEX `crm_contacts_whatsapp_uniq`
   ON `crm_contacts` (`whatsappNumber`);
 
+--> statement-breakpoint
 CREATE UNIQUE INDEX `crm_contacts_linkedin_uniq`
   ON `crm_contacts` (`linkedinUrl`);
