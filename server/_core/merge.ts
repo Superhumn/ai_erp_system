@@ -185,8 +185,10 @@ export async function getMergeItems(
 ): Promise<{ items?: any[]; error?: string }> {
   // Expand the account relations so refId can read each account's
   // QuickBooks remote_id — unexpanded, these fields are Merge-side UUIDs
-  // that would never match the synced quickbooksAccounts rows.
-  const res = await mergeGetAll("items", { expand: "sales_account,purchase_account,inventory_account" });
+  // that would never match the synced quickbooksAccounts rows. Only
+  // sales_account and purchase_account are expandable Item relations;
+  // Merge's Item model has no inventory/asset account.
+  const res = await mergeGetAll("items", { expand: "sales_account,purchase_account" });
   if (res.error) return { error: res.error };
   // Parity with the direct QuickBooks path, which passes activeOnly: true.
   let items = (res.results ?? [])
@@ -207,9 +209,9 @@ function refId(v: any): string | null {
 
 /**
  * Pure mapper — exported for tests. Merge's Item model carries no SKU,
- * description, or quantity-on-hand, so those quickbooksItems columns stay
- * unpopulated on this path; sales/purchase account references map onto the
- * income/expense account columns.
+ * description, quantity-on-hand, or inventory/asset account, so those
+ * quickbooksItems columns stay unpopulated on this path; sales/purchase
+ * account references map onto the income/expense account columns.
  */
 export function mapMergeItem(i: any, companyId: number) {
   const unitPrice = i.unit_price ?? i.sales_price;
@@ -222,7 +224,6 @@ export function mapMergeItem(i: any, companyId: number) {
     purchaseCost: i.purchase_price != null ? String(i.purchase_price) : null,
     incomeAccountId: refId(i.sales_account),
     expenseAccountId: refId(i.purchase_account),
-    assetAccountId: refId(i.inventory_account),
     active: i.status ? i.status === "ACTIVE" : true,
     lastSyncedAt: new Date(),
   };
