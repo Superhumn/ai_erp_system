@@ -158,6 +158,9 @@ importers:
       jose:
         specifier: 6.1.0
         version: 6.1.0
+      jsdom:
+        specifier: ^29.0.2
+        version: 29.0.2
       leaflet:
         specifier: ^1.9.4
         version: 1.9.4
@@ -306,9 +309,6 @@ importers:
       fake-indexeddb:
         specifier: ^6.2.5
         version: 6.2.5
-      jsdom:
-        specifier: ^29.0.2
-        version: 29.0.2
       pnpm:
         specifier: ^10.27.0
         version: 10.32.1
