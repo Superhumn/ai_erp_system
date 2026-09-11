@@ -184,6 +184,14 @@ export async function resolveRequestScope(user: { id: number; companyId: number 
   );
 }
 
+// The Merge provider binds all synced data to ENV.mergeCompanyId. A typo'd
+// ID (e.g. 999) would otherwise pass scope checks for global users and file
+// financials under an orphan entity — verify the row actually exists.
+async function mergeCompanyExists(): Promise<boolean> {
+  if (!Number.isInteger(ENV.mergeCompanyId) || ENV.mergeCompanyId <= 0) return false;
+  return !!(await db.getCompanyById(ENV.mergeCompanyId));
+}
+
 export const scopedProcedure = protectedProcedure.use(async ({ ctx, next }) => {
   const scope = await resolveRequestScope(ctx.user);
   if (scope.companyIds !== 'all' && scope.companyIds.length === 0) {
@@ -6332,7 +6340,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
       // Merge connection details are only visible to users with access to
       // the linked entity; others see it as not configured.
       const mergeVisible = usingMerge
-        ? scopeAllows(await resolveRequestScope(ctx.user), ENV.mergeCompanyId)
+        ? scopeAllows(await resolveRequestScope(ctx.user), ENV.mergeCompanyId) && (await mergeCompanyExists())
         : false;
       const mergeCheck = usingMerge && mergeVisible ? await checkMergeConnection() : null;
       const quickbooksToken = usingMerge ? null : await db.getQuickBooksOAuthToken(ctx.user.id);
@@ -8122,7 +8130,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         // The linked Merge account belongs to one ERP entity; users scoped
         // away from it must not see its connection details.
         const scope = await resolveRequestScope(ctx.user);
-        if (!scopeAllows(scope, ENV.mergeCompanyId)) {
+        if (!scopeAllows(scope, ENV.mergeCompanyId) || !(await mergeCompanyExists())) {
           return { connected: false, realmId: null, companyName: null, provider: "merge" };
         }
         // Reachability, not just env presence: an invalid token or unlinked
@@ -8263,6 +8271,9 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           if (companyId !== ENV.mergeCompanyId) {
             throw new TRPCError({ code: 'PRECONDITION_FAILED', message: `The linked Merge account belongs to company ${ENV.mergeCompanyId}; cannot sync into company ${companyId}.` });
           }
+          if (!(await mergeCompanyExists())) {
+            throw new TRPCError({ code: 'PRECONDITION_FAILED', message: `MERGE_COMPANY_ID ${ENV.mergeCompanyId} does not match an existing company.` });
+          }
           const res = await getMergeAccounts(companyId);
           if (res.error) {
             throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: res.error });
@@ -8333,6 +8344,9 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           // Same binding rule as syncAccounts.
           if (companyId !== ENV.mergeCompanyId) {
             throw new TRPCError({ code: 'PRECONDITION_FAILED', message: `The linked Merge account belongs to company ${ENV.mergeCompanyId}; cannot sync into company ${companyId}.` });
+          }
+          if (!(await mergeCompanyExists())) {
+            throw new TRPCError({ code: 'PRECONDITION_FAILED', message: `MERGE_COMPANY_ID ${ENV.mergeCompanyId} does not match an existing company.` });
           }
           const res = await getMergeItems(companyId, { type: input.type });
           if (res.error) {
@@ -8471,7 +8485,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           // The linked Merge account's P&L belongs to one ERP entity; users
           // scoped away from it must not see those actuals.
           const scope = await resolveRequestScope(ctx.user);
-          if (!scopeAllows(scope, ENV.mergeCompanyId)) {
+          if (!scopeAllows(scope, ENV.mergeCompanyId) || !(await mergeCompanyExists())) {
             return { connected: false, months: [] };
           }
           // Same reachability semantics as getConnectionStatus: an invalid

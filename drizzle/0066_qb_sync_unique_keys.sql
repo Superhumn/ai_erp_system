@@ -21,6 +21,17 @@ BEGIN
     ALTER TABLE `quickbooksAccounts` ADD UNIQUE INDEX `uq_qb_accounts_company_account` (`companyId`, `quickbooksAccountId`);
   END IF;
   IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'quickbooksItems' AND INDEX_NAME = 'uq_qb_items_company_item') THEN
+    -- Items carry a local ERP link (productId) that syncs never overwrite.
+    -- Before collapsing duplicates to the newest row, propagate any
+    -- non-null productId upward so the surviving (max-id) row keeps the
+    -- link even when it lived on an older duplicate.
+    UPDATE `quickbooksItems` s
+      JOIN `quickbooksItems` d
+        ON s.`companyId` <=> d.`companyId`
+       AND s.`quickbooksItemId` = d.`quickbooksItemId`
+       AND d.`id` < s.`id`
+       AND d.`productId` IS NOT NULL
+    SET s.`productId` = COALESCE(s.`productId`, d.`productId`);
     DELETE a FROM `quickbooksItems` a
       JOIN `quickbooksItems` b
         ON a.`companyId` <=> b.`companyId`

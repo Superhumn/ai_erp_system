@@ -21,7 +21,8 @@ vi.mock("./db", () => ({
   // Entity scoping
   getUserEntityAccessCompanyIds: vi.fn().mockResolvedValue([]),
   getEntityAndDescendantCompanyIds: vi.fn().mockResolvedValue([]),
-  getCompanyById: vi.fn().mockResolvedValue(undefined),
+  // MERGE_COMPANY_ID (2) must resolve to a real company for merge branches.
+  getCompanyById: vi.fn().mockResolvedValue({ id: 2, name: "Test Co" }),
   getCompanyIdsInRegion: vi.fn().mockResolvedValue([]),
   // QuickBooks sync
   syncQuickBooksAccountsForCompany: vi.fn().mockResolvedValue({ count: 1, synced: 1 }),
@@ -145,6 +146,19 @@ describe("quickbooks router — Merge provider branches", () => {
     const status = await caller.quickbooks.getConnectionStatus();
 
     expect(status).toMatchObject({ connected: true, realmId: null, companyName: "Superhumn Inc", provider: "merge" });
+  });
+
+  it("fails closed when MERGE_COMPANY_ID names no existing company", async () => {
+    vi.mocked(db.getCompanyById).mockResolvedValue(undefined as any);
+    const caller = makeCaller({ companyId: null, regionScope: "global" });
+
+    await expect(caller.quickbooks.syncAccounts({})).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+    expect(db.syncQuickBooksAccountsForCompany).not.toHaveBeenCalled();
+
+    const status = await caller.quickbooks.getConnectionStatus();
+    expect(status.connected).toBe(false);
+
+    vi.mocked(db.getCompanyById).mockResolvedValue({ id: 2, name: "Test Co" } as any);
   });
 
   it("disconnect refuses in Merge mode", async () => {

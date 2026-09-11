@@ -103,7 +103,7 @@ export function _resetMergeConnectionCache(): void {
  */
 export async function checkMergeConnection(): Promise<{ connected: boolean; companyName?: string; error?: string }> {
   if (!isMergeConfigured()) {
-    return { connected: false, error: "Merge is not configured. Set MERGE_API_KEY and MERGE_ACCOUNT_TOKEN." };
+    return { connected: false, error: "Merge is not configured. Set MERGE_API_KEY, MERGE_ACCOUNT_TOKEN and MERGE_COMPANY_ID." };
   }
   const now = Date.now();
   if (connectionCache && now - connectionCache.at < CONNECTION_CACHE_MS) {
@@ -183,7 +183,10 @@ export async function getMergeItems(
   companyId: number,
   options?: { type?: "Inventory" | "NonInventory" | "Service" },
 ): Promise<{ items?: any[]; error?: string }> {
-  const res = await mergeGetAll("items");
+  // Expand the account relations so refId can read each account's
+  // QuickBooks remote_id — unexpanded, these fields are Merge-side UUIDs
+  // that would never match the synced quickbooksAccounts rows.
+  const res = await mergeGetAll("items", { expand: "sales_account,purchase_account,inventory_account" });
   if (res.error) return { error: res.error };
   // Parity with the direct QuickBooks path, which passes activeOnly: true.
   let items = (res.results ?? [])
