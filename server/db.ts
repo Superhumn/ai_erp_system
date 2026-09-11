@@ -1,7 +1,7 @@
 import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray, ne, sum, max, min } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2";
-import { scopeAllows, scopeCompanyIds, type Scope } from "./_core/scope";
+import { scopeAllows, scopeCompanyIds, partitionIdsByVisibility, type Scope } from "./_core/scope";
 import {
   reconcileThreeWayMatch,
   resolveApprovalPolicy,
@@ -1516,8 +1516,20 @@ export type PurchaseOrderListFilters = {
  * Returns null when the filters can't match anything (duplicatesOnly with no
  * duplicates), which callers short-circuit on rather than issuing the query.
  */
-async function buildPurchaseOrderConditions(filters: PurchaseOrderListFilters) {
+async function buildPurchaseOrderConditions(filters: PurchaseOrderListFilters, scope?: Scope) {
   const conditions = [];
+
+  // Entity scope is derived from the caller's identity, never from input, and
+  // is applied first so a crafted `companyId` filter can only ever narrow the
+  // visible set rather than widen it.
+  if (scope) {
+    const scopeIds = scopeCompanyIds(scope);
+    if (scopeIds) {
+      if (scopeIds.length === 0) return null; // scoped user with no visible entities
+      conditions.push(inArray(purchaseOrders.companyId, scopeIds));
+    }
+  }
+
   if (filters.companyId) conditions.push(eq(purchaseOrders.companyId, filters.companyId));
   if (filters.status) conditions.push(eq(purchaseOrders.status, filters.status as any));
   if (filters.vendorId) conditions.push(eq(purchaseOrders.vendorId, filters.vendorId));
@@ -1535,7 +1547,7 @@ async function buildPurchaseOrderConditions(filters: PurchaseOrderListFilters) {
   }
 
   if (filters.duplicatesOnly) {
-    const groups = await getDuplicatePurchaseOrderGroups();
+    const groups = await getDuplicatePurchaseOrderGroups(scope);
     const ids = groups.flatMap((g) => [g.keepId, ...g.duplicateIds]);
     if (ids.length === 0) return null;
     conditions.push(inArray(purchaseOrders.id, ids));
@@ -1562,11 +1574,11 @@ function purchaseOrderSortColumn(sortBy: PurchaseOrderListFilters["sortBy"]) {
  * Kept separate from getPurchaseOrders (which returns everything) so the many
  * existing callers of that helper keep their current shape and behaviour.
  */
-export async function getPurchaseOrdersPaged(filters: PurchaseOrderListFilters = {}) {
+export async function getPurchaseOrdersPaged(filters: PurchaseOrderListFilters = {}, scope?: Scope) {
   const db = await getDb();
   if (!db) return { rows: [], total: 0 };
 
-  const conditions = await buildPurchaseOrderConditions(filters);
+  const conditions = await buildPurchaseOrderConditions(filters, scope);
   if (conditions === null) return { rows: [], total: 0 };
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -1608,12 +1620,12 @@ export async function getPurchaseOrdersPaged(filters: PurchaseOrderListFilters =
  * the list header. Deliberately ignores limit/offset: the totals describe the
  * whole filtered set, not the visible page.
  */
-export async function getPurchaseOrderSummary(filters: PurchaseOrderListFilters = {}) {
+export async function getPurchaseOrderSummary(filters: PurchaseOrderListFilters = {}, scope?: Scope) {
   const db = await getDb();
   const empty = { total: 0, totalValue: "0", byStatus: [] as { status: string; count: number; value: string }[] };
   if (!db) return empty;
 
-  const conditions = await buildPurchaseOrderConditions(filters);
+  const conditions = await buildPurchaseOrderConditions(filters, scope);
   if (conditions === null) return empty;
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -1641,12 +1653,47 @@ export async function getPurchaseOrderSummary(filters: PurchaseOrderListFilters 
  * one bulk UPDATE so each row's status transition is validated and reported
  * individually.
  */
-export async function bulkUpdatePurchaseOrderStatus(ids: number[], status: string) {
+/**
+ * Splits a caller-supplied id list into the ones their entity scope actually
+ * covers and the ones it doesn't.
+ *
+ * Bulk mutations take ids straight from the client, so without this a user can
+ * name another entity's purchase order and have it changed or deleted. Rejected
+ * ids come back as ordinary per-id failures rather than being dropped silently,
+ * so a partial run is still reported honestly. The message deliberately says
+ * "not found" — confirming that an id exists but belongs elsewhere would leak
+ * the existence of another entity's records.
+ */
+const NOT_IN_SCOPE = "Purchase order not found";
+
+async function partitionPurchaseOrderIdsByScope(ids: number[], scope?: Scope) {
+  if (!scope) return { allowed: ids, rejected: [] as { id: number; reason: string }[] };
+
+  const scopeIds = scopeCompanyIds(scope);
+  if (!scopeIds) return { allowed: ids, rejected: [] as { id: number; reason: string }[] };
+
+  if (scopeIds.length === 0 || ids.length === 0) {
+    return partitionIdsByVisibility(ids, [], NOT_IN_SCOPE);
+  }
+
+  const db = await getDb();
+  if (!db) return partitionIdsByVisibility(ids, [], NOT_IN_SCOPE);
+
+  const visible = await db
+    .select({ id: purchaseOrders.id })
+    .from(purchaseOrders)
+    .where(and(inArray(purchaseOrders.id, ids), inArray(purchaseOrders.companyId, scopeIds)));
+
+  return partitionIdsByVisibility(ids, visible.map((r) => r.id), NOT_IN_SCOPE);
+}
+
+export async function bulkUpdatePurchaseOrderStatus(ids: number[], status: string, scope?: Scope) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const updated: number[] = [];
-  const failed: { id: number; reason: string }[] = [];
-  for (const id of ids) {
+  const { allowed, rejected } = await partitionPurchaseOrderIdsByScope(ids, scope);
+  const failed: { id: number; reason: string }[] = [...rejected];
+  for (const id of allowed) {
     try {
       await db
         .update(purchaseOrders)
@@ -2152,10 +2199,11 @@ export async function deletePurchaseOrder(id: number): Promise<boolean> {
  * abort the whole batch. Callers get the per-id outcome and surface the
  * failures rather than reporting a partial run as a clean success.
  */
-export async function bulkDeletePurchaseOrders(ids: number[]) {
+export async function bulkDeletePurchaseOrders(ids: number[], scope?: Scope) {
   const deleted: number[] = [];
-  const failed: { id: number; reason: string }[] = [];
-  for (const id of ids) {
+  const { allowed, rejected } = await partitionPurchaseOrderIdsByScope(ids, scope);
+  const failed: { id: number; reason: string }[] = [...rejected];
+  for (const id of allowed) {
     try {
       if (await deletePurchaseOrder(id)) deleted.push(id);
       else failed.push({ id, reason: "Purchase order no longer exists" });
@@ -2179,9 +2227,16 @@ export async function bulkDeletePurchaseOrders(ids: number[]) {
  * rather than with GROUP_CONCAT, whose 1024-byte default would silently
  * truncate large groups.
  */
-export async function getDuplicatePurchaseOrderGroups() {
+export async function getDuplicatePurchaseOrderGroups(scope?: Scope) {
   const db = await getDb();
   if (!db) return [];
+
+  // Scope narrows the grouping itself, not just the returned rows: two entities
+  // legitimately using the same PO number must not be grouped together and
+  // offered up as each other's duplicates.
+  const scopeIds = scope ? scopeCompanyIds(scope) : null;
+  if (scopeIds && scopeIds.length === 0) return [];
+  const scopeFilter = scopeIds ? inArray(purchaseOrders.companyId, scopeIds) : undefined;
 
   // Two steps so the whole table never lands in application memory: MySQL
   // reports which (poNumber, vendorId, totalAmount) keys occur more than once,
@@ -2194,6 +2249,7 @@ export async function getDuplicatePurchaseOrderGroups() {
       totalAmount: purchaseOrders.totalAmount,
     })
     .from(purchaseOrders)
+    .where(scopeFilter)
     .groupBy(purchaseOrders.poNumber, purchaseOrders.vendorId, purchaseOrders.totalAmount)
     .having(sql`COUNT(*) > 1`);
 
@@ -2216,7 +2272,11 @@ export async function getDuplicatePurchaseOrderGroups() {
       totalAmount: purchaseOrders.totalAmount,
     })
     .from(purchaseOrders)
-    .where(inArray(purchaseOrders.poNumber, dupKeys.map((k) => k.poNumber)))
+    .where(
+      scopeFilter
+        ? and(inArray(purchaseOrders.poNumber, dupKeys.map((k) => k.poNumber)), scopeFilter)
+        : inArray(purchaseOrders.poNumber, dupKeys.map((k) => k.poNumber)),
+    )
     .orderBy(asc(purchaseOrders.id));
 
   const groups = new Map<string, { poNumber: string; vendorId: number; totalAmount: string; ids: number[] }>();
@@ -2256,7 +2316,7 @@ const RECEIPT_SCAN_CHUNK = 500;
  * the importer sets when `markAsReceived` ran, which is the branch that
  * incremented the running total in the first place.
  */
-export async function getReceiptInflationReport() {
+export async function getReceiptInflationReport(scope?: Scope) {
   const empty = {
     perMaterial: [] as ReturnType<typeof summarizeInflation>["perMaterial"],
     unattributed: [] as ReturnType<typeof summarizeInflation>["unattributed"],
@@ -2267,7 +2327,7 @@ export async function getReceiptInflationReport() {
   const db = await getDb();
   if (!db) return empty;
 
-  const groups = await getDuplicatePurchaseOrderGroups();
+  const groups = await getDuplicatePurchaseOrderGroups(scope);
   const redundantIds = groups.flatMap((g) => g.duplicateIds);
   if (redundantIds.length === 0) return empty;
 
