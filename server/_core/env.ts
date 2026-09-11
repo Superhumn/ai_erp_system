@@ -71,6 +71,13 @@ export const ENV = {
     quickbooksRedirectUri: process.env.QUICKBOOKS_REDIRECT_URI ?? "",
     quickbooksEnvironment: process.env.QUICKBOOKS_ENVIRONMENT ?? "production", // sandbox or production
 
+    // Accounting sync provider: "intuit" (direct QuickBooks OAuth, default) or
+    // "merge" (Merge.dev unified accounting API — hosts the Intuit OAuth with
+    // their approved app). The quickbooks tRPC routes branch on this.
+    accountingSyncProvider: process.env.ACCOUNTING_SYNC_PROVIDER ?? "intuit",
+    mergeApiKey: process.env.MERGE_API_KEY ?? "",
+    mergeAccountToken: process.env.MERGE_ACCOUNT_TOKEN ?? "",
+
     // Shopify OAuth configuration
     shopifyClientId: process.env.SHOPIFY_CLIENT_ID ?? "",
     shopifyClientSecret: process.env.SHOPIFY_CLIENT_SECRET ?? "",

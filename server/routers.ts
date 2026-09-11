@@ -79,6 +79,7 @@ import { parseFormulationSheet, suggestColumnMapping, type ColumnKey } from "./r
 import { getGoogleFullAccessAuthUrl, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType, searchDriveFoldersByName } from "./_core/googleDrive";
 import { getServiceAccountEmail, isServiceAccountConfigured } from "./_core/googleServiceAccount";
 import { getQuickBooksAuthUrl, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems, getProfitAndLoss, parseProfitAndLossReport } from "./_core/quickbooks";
+import { isMergeConfigured, getMergeCompanyInfo, getMergeAccounts, getMergeItems, getMergeProfitAndLoss } from "./_core/merge";
 import { listAllTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { queueFirefliesActionItemsForApproval } from "./firefliesSyncService";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
@@ -6324,10 +6325,14 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         } catch { /* best-effort email fetch */ }
       }
       
-      // Check QuickBooks OAuth connection and attempt refresh if expired
-      const quickbooksToken = await db.getQuickBooksOAuthToken(ctx.user.id);
-      let quickbooksConnected = !!(quickbooksToken && (!quickbooksToken.expiresAt || new Date(quickbooksToken.expiresAt) > new Date()));
-      let quickbooksRealmId = quickbooksToken?.realmId;
+      // Check QuickBooks OAuth connection and attempt refresh if expired.
+      // In Merge mode the connection is env-configured, not per-user OAuth.
+      const usingMerge = ENV.accountingSyncProvider === "merge";
+      const quickbooksToken = usingMerge ? null : await db.getQuickBooksOAuthToken(ctx.user.id);
+      let quickbooksConnected = usingMerge
+        ? isMergeConfigured()
+        : !!(quickbooksToken && (!quickbooksToken.expiresAt || new Date(quickbooksToken.expiresAt) > new Date()));
+      let quickbooksRealmId = usingMerge ? "Merge.dev" : quickbooksToken?.realmId;
       if (quickbooksToken && !quickbooksConnected && quickbooksToken.refreshToken) {
         try {
           const refreshResult = await refreshQuickBooksToken(quickbooksToken.refreshToken);
@@ -6382,6 +6387,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           configured: quickbooksConnected,
           status: quickbooksConnected ? 'connected' : 'not_configured',
           realmId: quickbooksRealmId,
+          provider: ENV.accountingSyncProvider,
         },
         syncHistory,
         fireflies: await (async () => {
@@ -8063,6 +8069,13 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
   quickbooks: router({
     // Get QuickBooks OAuth URL
     getAuthUrl: protectedProcedure.query(({ ctx }) => {
+      if (ENV.accountingSyncProvider === "merge") {
+        return {
+          error: isMergeConfigured()
+            ? "Merge.dev sync is active — no in-app OAuth needed. Manage the linked account from the Merge dashboard."
+            : "Merge.dev sync is selected but not configured. Set MERGE_API_KEY and MERGE_ACCOUNT_TOKEN (link the QuickBooks account from the Merge dashboard first).",
+        };
+      }
       return getQuickBooksAuthUrl(ctx.user.id);
     }),
 
@@ -8075,6 +8088,9 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
       const mask = (s: string) =>
         s.length <= 8 ? "*".repeat(s.length) : `${s.slice(0, 8)}…${s.slice(-4)}`;
       return {
+        provider: ENV.accountingSyncProvider,
+        mergeApiKeySet: !!ENV.mergeApiKey,
+        mergeAccountTokenSet: !!ENV.mergeAccountToken,
         clientIdPrefix: clientId ? clientId.slice(0, 8) : null,
         clientIdSuffix: clientId ? clientId.slice(-4) : null,
         clientIdMasked: clientId ? mask(clientId) : null,
@@ -8088,6 +8104,9 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
 
     // Get connection status
     getConnectionStatus: protectedProcedure.query(async ({ ctx }) => {
+      if (ENV.accountingSyncProvider === "merge") {
+        return { connected: isMergeConfigured(), realmId: "Merge.dev", provider: "merge" };
+      }
       const token = await db.getQuickBooksOAuthToken(ctx.user.id);
       if (!token) {
         return { connected: false, realmId: null };
@@ -8132,6 +8151,13 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
 
     // Test connection
     testConnection: protectedProcedure.mutation(async ({ ctx }) => {
+      if (ENV.accountingSyncProvider === "merge") {
+        const info = await getMergeCompanyInfo();
+        if (info.error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: info.error });
+        }
+        return { success: true, message: 'Merge.dev connection is working', companyName: info.name };
+      }
       const token = await db.getQuickBooksOAuthToken(ctx.user.id);
       if (!token || !token.realmId) {
         throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'QuickBooks not connected' });
@@ -8179,6 +8205,22 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
     syncAccounts: protectedProcedure
       .input(z.object({ companyId: z.number().optional() }))
       .mutation(async ({ input, ctx }) => {
+        const companyId = input.companyId || 1; // Default to company 1
+
+        if (ENV.accountingSyncProvider === "merge") {
+          const res = await getMergeAccounts(companyId);
+          if (res.error) {
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: res.error });
+          }
+          const synced = await db.syncQuickBooksAccounts(companyId, res.accounts ?? []);
+          await createAuditLog(ctx.user.id, 'create', 'quickbooks_sync', 0, `Synced ${synced.synced} accounts from Merge`);
+          return {
+            success: true,
+            synced: synced.synced,
+            message: `Successfully synced ${synced.synced} accounts from Merge`,
+          };
+        }
+
         const token = await db.getQuickBooksOAuthToken(ctx.user.id);
         if (!token || !token.realmId) {
           throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'QuickBooks not connected' });
@@ -8190,7 +8232,6 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         }
 
         const accounts = result.data?.QueryResponse?.Account || [];
-        const companyId = input.companyId || 1; // Default to company 1
         const synced = await db.syncQuickBooksAccounts(companyId, accounts);
 
         await createAuditLog(ctx.user.id, 'create', 'quickbooks_sync', 0, `Synced ${synced.synced} accounts from QuickBooks`);
@@ -8209,6 +8250,22 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         type: z.enum(['Inventory', 'NonInventory', 'Service']).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        const companyId = input.companyId || 1;
+
+        if (ENV.accountingSyncProvider === "merge") {
+          const res = await getMergeItems(companyId);
+          if (res.error) {
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: res.error });
+          }
+          const synced = await db.syncQuickBooksItems(companyId, res.items ?? []);
+          await createAuditLog(ctx.user.id, 'create', 'quickbooks_sync', 0, `Synced ${synced.synced} items from Merge`);
+          return {
+            success: true,
+            synced: synced.synced,
+            message: `Successfully synced ${synced.synced} items from Merge`,
+          };
+        }
+
         const token = await db.getQuickBooksOAuthToken(ctx.user.id);
         if (!token || !token.realmId) {
           throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'QuickBooks not connected' });
@@ -8218,13 +8275,12 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           type: input.type,
           activeOnly: true,
         });
-        
+
         if (result.error) {
           throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
         }
 
         const items = result.data?.QueryResponse?.Item || [];
-        const companyId = input.companyId || 1;
         const synced = await db.syncQuickBooksItems(companyId, items);
 
         await createAuditLog(ctx.user.id, 'create', 'quickbooks_sync', 0, `Synced ${synced.synced} items from QuickBooks`);
@@ -8299,6 +8355,16 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         summarizeBy: z.enum(["Month", "Quarter", "Year"]).optional(),
       }).optional())
       .query(async ({ input, ctx }) => {
+        if (ENV.accountingSyncProvider === "merge") {
+          if (!isMergeConfigured()) return { connected: false, months: [] };
+          const res = await getMergeProfitAndLoss({
+            startDate: input?.startDate,
+            endDate: input?.endDate,
+          });
+          if (res.error) return { connected: true, error: res.error, months: [] };
+          return { connected: true, months: res.report!.months, expenseAccounts: res.report!.expenseAccounts };
+        }
+
         const token = await db.getQuickBooksOAuthToken(ctx.user.id);
         if (!token || !token.realmId) return { connected: false, months: [] };
 

@@ -1576,6 +1576,33 @@ export default function IntegrationsPage() {
 
                 {!status?.quickbooks?.configured ? (
                   <div className="space-y-4">
+                    {status?.quickbooks?.provider === "merge" ? (
+                    <div className="p-4 border rounded-lg">
+                      <h4 className="font-medium mb-2">Connect via Merge.dev</h4>
+                      <p className="text-sm text-muted-foreground mb-4">
+                        Accounting sync is set to Merge.dev (<code className="bg-muted px-2 py-1 rounded">ACCOUNTING_SYNC_PROVIDER=merge</code>).
+                        Merge hosts the QuickBooks connection with their approved Intuit app — no in-app OAuth needed.
+                      </p>
+                      <ol className="text-sm text-muted-foreground space-y-2 mb-4 list-decimal list-inside">
+                        <li>In the <a href="https://app.merge.dev" target="_blank" rel="noreferrer" className="underline">Merge dashboard</a>, open <strong>Linked Accounts</strong> and link your QuickBooks Online company (sign in with the Intuit account that owns the company).</li>
+                        <li>Copy your Merge <strong>API key</strong> (Settings → API keys) and the linked account's <strong>account token</strong>.</li>
+                        <li>Set <code className="bg-muted px-2 py-1 rounded">MERGE_API_KEY</code> and <code className="bg-muted px-2 py-1 rounded">MERGE_ACCOUNT_TOKEN</code> in the server environment, then redeploy.</li>
+                      </ol>
+                      {quickbooksDebug && (
+                        <div className="p-3 bg-slate-500/5 border border-slate-500/20 rounded-md text-xs space-y-1.5">
+                          <p className="font-medium text-sm">Live server config (admin diagnostic)</p>
+                          <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 font-mono pt-1">
+                            <span className="text-muted-foreground">provider:</span>
+                            <span>{quickbooksDebug.provider}</span>
+                            <span className="text-muted-foreground">MERGE_API_KEY:</span>
+                            <span>{quickbooksDebug.mergeApiKeySet ? "set" : <em className="text-foreground font-semibold">not set</em>}</span>
+                            <span className="text-muted-foreground">MERGE_ACCOUNT_TOKEN:</span>
+                            <span>{quickbooksDebug.mergeAccountTokenSet ? "set" : <em className="text-foreground font-semibold">not set</em>}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    ) : (
                     <div className="p-4 border rounded-lg">
                       <h4 className="font-medium mb-2">Connect QuickBooks</h4>
                       <p className="text-sm text-muted-foreground mb-4">
@@ -1657,6 +1684,7 @@ export default function IntegrationsPage() {
                         Connect QuickBooks
                       </Button>
                     </div>
+                    )}
 
                     <div className="p-4 bg-muted/50 border rounded-lg">
                       <h4 className="font-medium text-foreground mb-2">
