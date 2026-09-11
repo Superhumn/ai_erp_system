@@ -191,6 +191,16 @@ export const scopedProcedure = protectedProcedure.use(async ({ ctx, next }) => {
   return next({ ctx: { ...ctx, scope } });
 });
 
+// Ops role *and* entity scope. The purchaseOrders router needs both: the role
+// gate says who may touch purchase orders at all, the scope says whose.
+export const scopedOpsProcedure = opsProcedure.use(async ({ ctx, next }) => {
+  const scope = await resolveRequestScope(ctx.user);
+  if (scope.companyIds !== 'all' && scope.companyIds.length === 0) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'No entity scope assigned' });
+  }
+  return next({ ctx: { ...ctx, scope } });
+});
+
 const legalProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (!['admin', 'legal', 'exec'].includes(ctx.user.role)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Legal access required' });
@@ -4684,10 +4694,20 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
       }),
     // POs that duplicate another PO on (poNumber, vendor, total). Lets the list
     // filter down to the copies left behind by repeated document imports.
-    duplicates: opsProcedure.query(() => db.getDuplicatePurchaseOrderGroups()),
+    duplicates: scopedOpsProcedure.query(({ ctx }) => db.getDuplicatePurchaseOrderGroups(ctx.scope)),
+
+    // Read-only. Deleting the duplicate POs destroys the line items this
+    // report is derived from, so run it before any bulk cleanup.
+    receiptInflation: scopedOpsProcedure
+      // Optional id list so the delete dialog can report on the rows it is
+      // actually about to remove rather than every duplicate in the table.
+      .input(z.object({ purchaseOrderIds: z.array(z.number()).max(500).optional() }).optional())
+      .query(({ input, ctx }) =>
+        db.getReceiptInflationReport(ctx.scope, { purchaseOrderIds: input?.purchaseOrderIds }),
+      ),
     // Filtered / sorted / paged list for the PO page. `list` stays as-is for
     // its many other callers.
-    listPaged: opsProcedure
+    listPaged: scopedOpsProcedure
       .input(z.object({
         companyId: z.number().optional(),
         status: z.string().optional(),
@@ -4701,10 +4721,10 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         limit: z.number().min(1).max(200).optional(),
         offset: z.number().min(0).optional(),
       }).optional())
-      .query(({ input }) => db.getPurchaseOrdersPaged(input ?? {})),
+      .query(({ input, ctx }) => db.getPurchaseOrdersPaged(input ?? {}, ctx.scope)),
     // Count + value for the current filters, across the whole filtered set
     // rather than the visible page.
-    summary: opsProcedure
+    summary: scopedOpsProcedure
       .input(z.object({
         companyId: z.number().optional(),
         status: z.string().optional(),
@@ -4714,10 +4734,10 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         orderDateTo: z.date().optional(),
         duplicatesOnly: z.boolean().optional(),
       }).optional())
-      .query(({ input }) => db.getPurchaseOrderSummary(input ?? {})),
+      .query(({ input, ctx }) => db.getPurchaseOrderSummary(input ?? {}, ctx.scope)),
     // Flat rows for CSV export: same filters, no pagination, hard-capped so a
     // stray export can't try to stream the entire table.
-    exportRows: opsProcedure
+    exportRows: scopedOpsProcedure
       .input(z.object({
         status: z.string().optional(),
         vendorId: z.number().optional(),
@@ -4728,8 +4748,8 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         sortBy: z.enum(['poNumber', 'vendor', 'totalAmount', 'status', 'orderDate', 'expectedDate', 'createdAt']).optional(),
         sortDir: z.enum(['asc', 'desc']).optional(),
       }).optional())
-      .query(async ({ input }) => {
-        const { rows } = await db.getPurchaseOrdersPaged({ ...(input ?? {}), limit: 5000 });
+      .query(async ({ input, ctx }) => {
+        const { rows } = await db.getPurchaseOrdersPaged({ ...(input ?? {}), limit: 5000 }, ctx.scope);
         return rows;
       }),
     // How much of each PO has actually arrived — drives the receipt progress
@@ -4753,7 +4773,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         if (!state) throw new TRPCError({ code: 'NOT_FOUND', message: 'Purchase order not found' });
         return state;
       }),
-    bulkUpdateStatus: opsProcedure
+    bulkUpdateStatus: scopedOpsProcedure
       .input(z.object({
         ids: z.array(z.number()).min(1).max(500),
         status: z.enum(['draft', 'sent', 'confirmed', 'partial', 'received', 'cancelled']),
@@ -4765,7 +4785,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           if (po) poNumbers.set(id, po.poNumber);
         }
 
-        const { updated, failed } = await db.bulkUpdatePurchaseOrderStatus(input.ids, input.status);
+        const { updated, failed } = await db.bulkUpdatePurchaseOrderStatus(input.ids, input.status, ctx.scope);
         for (const id of updated) {
           await createAuditLog(ctx.user.id, 'update', 'purchaseOrder', id, poNumbers.get(id), undefined, { status: input.status });
         }
@@ -4775,7 +4795,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           failed: failed.map((f) => ({ ...f, poNumber: poNumbers.get(f.id) ?? `#${f.id}` })),
         };
       }),
-    bulkDelete: opsProcedure
+    bulkDelete: scopedOpsProcedure
       .input(z.object({ ids: z.array(z.number()).min(1).max(500) }))
       .mutation(async ({ input, ctx }) => {
         // Resolve po numbers up front so the audit log still names what was
@@ -4786,7 +4806,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           if (po) poNumbers.set(id, po.poNumber);
         }
 
-        const { deleted, failed } = await db.bulkDeletePurchaseOrders(input.ids);
+        const { deleted, failed } = await db.bulkDeletePurchaseOrders(input.ids, ctx.scope);
 
         for (const id of deleted) {
           await createAuditLog(ctx.user.id, 'delete', 'purchaseOrder', id, poNumbers.get(id));

@@ -1024,7 +1024,11 @@ export async function importPurchaseOrder(
     }
 
     // 4. Create the purchase order.
-    const poResult = await db.createPurchaseOrder({
+    //
+    // Atomic rather than a bare insert: the step-2 guard reads and this writes,
+    // so two concurrent imports of the same document could both pass the guard
+    // and both insert. createPurchaseOrderIfAbsent re-checks under a row lock.
+    const poOutcome = await db.createPurchaseOrderIfAbsent({
       poNumber: po.poNumber,
       vendorId: vendor!.id,
       status: markAsReceived ? "received" : "confirmed",
@@ -1035,6 +1039,16 @@ export async function importPurchaseOrder(
       notes: po.notes,
       createdBy: userId
     });
+    if (!poOutcome.created) {
+      // Lost the race with a concurrent import of the same document. Stop
+      // before the line items and the step-6 receiving update, which are what
+      // would actually double-count stock.
+      warnings.push(
+        `PO ${po.poNumber} was created by a concurrent import (#${poOutcome.id}) — skipped to avoid a duplicate.`
+      );
+      return { success: true, documentType: "purchase_order", createdRecords, updatedRecords, warnings };
+    }
+    const poResult = { id: poOutcome.id };
     createdRecords.push({ type: "purchase_order", id: poResult.id, name: po.poNumber });
 
     // 5. Create PO line items
@@ -1313,7 +1327,7 @@ export async function importVendorInvoice(
     }
 
     // 6. Create a purchase order from the invoice (as a received order).
-    const poResult = await db.createPurchaseOrder({
+    const poOutcome = await db.createPurchaseOrderIfAbsent({
       poNumber: poNumberForInvoice,
       vendorId: vendor!.id,
       status: markAsReceived ? "received" : "confirmed",
@@ -1324,6 +1338,16 @@ export async function importVendorInvoice(
       notes: `Imported from vendor invoice ${invoice.invoiceNumber}. ${invoice.paymentTerms ? `Payment terms: ${invoice.paymentTerms}. ` : ''}${invoice.notes || ''}`,
       createdBy: userId
     });
+    if (!poOutcome.created) {
+      // Same race as the PO path: the step-2 guard and this insert are not one
+      // statement, so a concurrent import of the same invoice can slip between
+      // them. Bail before the line items and the step-8 receiving update.
+      warnings.push(
+        `Invoice ${invoice.invoiceNumber} was imported concurrently as PO #${poOutcome.id} — skipped to avoid a duplicate.`
+      );
+      return { success: true, documentType: "vendor_invoice", createdRecords, updatedRecords, warnings };
+    }
+    const poResult = { id: poOutcome.id };
     createdRecords.push({ type: "purchase_order", id: poResult.id, name: invoice.invoiceNumber });
 
     // 7. Create PO line items
