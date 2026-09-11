@@ -11,27 +11,62 @@ const dir = path.resolve(import.meta.dirname, "../drizzle");
 const journal = JSON.parse(fs.readFileSync(path.join(dir, "meta/_journal.json"), "utf8"));
 const files: string[] = journal.entries.map((e: { tag: string }) => `${e.tag}.sql`);
 
-// Count top-level statements in a chunk by their `;` terminators, ignoring
-// comments, string literals, backtick identifiers, and everything inside a
-// BEGIN … END block (procedure bodies). Same-line statements such as
-// `SET x=1; CREATE TABLE …` therefore count as two.
+// Count top-level statements in a chunk by their `;` terminators. A single
+// left-to-right lexer skips every MySQL comment form (`--`, `#`, `/* */`) and
+// every quoted region ('…', "…", `…`, with backslash and doubled-quote
+// escapes) so nothing inside them counts, and tracks BEGIN/CASE … END nesting
+// so a procedure body counts as one statement. A top-level `BEGIN;` /
+// `BEGIN WORK;` is a transaction statement, not a block opener.
+function lex(chunk: string): string[] {
+  const tokens: string[] = [];
+  let i = 0;
+  const n = chunk.length;
+  while (i < n) {
+    const c = chunk[i];
+    const next = chunk[i + 1];
+    if (c === "-" && next === "-") { const nl = chunk.indexOf("\n", i); i = nl === -1 ? n : nl + 1; continue; }
+    if (c === "#") { const nl = chunk.indexOf("\n", i); i = nl === -1 ? n : nl + 1; continue; }
+    if (c === "/" && next === "*") { const close = chunk.indexOf("*/", i + 2); i = close === -1 ? n : close + 2; continue; }
+    if (c === "'" || c === '"' || c === "`") {
+      i++;
+      while (i < n) {
+        if (chunk[i] === "\\" && c !== "`") { i += 2; continue; }
+        if (chunk[i] === c) { if (chunk[i + 1] === c) { i += 2; continue; } i++; break; }
+        i++;
+      }
+      tokens.push("x"); // a quoted literal / identifier is text, never a keyword
+      continue;
+    }
+    if (/[A-Za-z_]/.test(c)) {
+      let j = i + 1;
+      while (j < n && /[A-Za-z0-9_$]/.test(chunk[j])) j++;
+      tokens.push(chunk.slice(i, j));
+      i = j;
+      continue;
+    }
+    if (c === ";") { tokens.push(";"); i++; continue; }
+    if (/\s/.test(c)) { i++; continue; }
+    tokens.push(c);
+    i++;
+  }
+  return tokens;
+}
+
 function topLevelStatements(chunk: string): number {
-  // Strip line comments and quoted strings / identifiers so their contents
-  // cannot be mistaken for keywords or terminators.
-  const stripped = chunk
-    .replace(/--[^\n]*/g, " ")
-    .replace(/'(?:\\.|''|[^'\\])*'|"(?:\\.|""|[^"\\])*"|`[^`]*`/g, " x ");
-  const tokens = stripped.match(/[A-Za-z_][A-Za-z0-9_]*|;|[^\sA-Za-z_;]+/g) ?? [];
+  const tokens = lex(chunk);
   let count = 0;
   let depth = 0;
   let sawText = false;
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
     const up = t.toUpperCase();
-    if (up === "BEGIN" || up === "CASE") {
+    const next = (tokens[i + 1] ?? "").toUpperCase();
+    if (up === "BEGIN") {
+      // `BEGIN;` / `BEGIN WORK;` = START TRANSACTION, a plain statement.
+      if (next !== ";" && next !== "WORK") depth++;
+    } else if (up === "CASE") {
       depth++;
     } else if (up === "END") {
-      const next = (tokens[i + 1] ?? "").toUpperCase();
       if (next === "CASE") { depth--; i++; }
       else if (next === "IF" || next === "WHILE" || next === "LOOP" || next === "REPEAT") { i++; }
       else depth--;
@@ -91,6 +126,15 @@ END;`;
 
   it("ignores comments and string contents", () => {
     expect(topLevelStatements("-- one; two; three\n")).toBe(0);
+    expect(topLevelStatements("# one; two;\n/* three; BEGIN */ CREATE TABLE t (id int);")).toBe(1);
     expect(topLevelStatements("INSERT INTO t (v) VALUES ('a; b', \"c; d\");")).toBe(1);
+    expect(topLevelStatements("INSERT INTO t VALUES ('-- not a comment'); CREATE TABLE b (id int);")).toBe(2);
+    expect(topLevelStatements("INSERT INTO t VALUES ('it''s; here', 'back\\\\slash\\'; x');")).toBe(1);
+    expect(topLevelStatements("CREATE TABLE `a``;b` (id int);")).toBe(1);
+  });
+
+  it("treats a top-level BEGIN as a transaction statement", () => {
+    expect(topLevelStatements("BEGIN; CREATE TABLE t (id int);")).toBe(2);
+    expect(topLevelStatements("BEGIN WORK; CREATE TABLE t (id int); COMMIT;")).toBe(3);
   });
 });
