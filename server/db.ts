@@ -16214,6 +16214,87 @@ export async function syncQuickBooksItems(companyIdOrItems: number | InsertQuick
   return { count: synced, synced };
 }
 
+/**
+ * Accounts for one company, optionally filtered by the classification
+ * column (Asset/Liability/Equity/Revenue/Expense). Unlike
+ * getQuickBooksAccountsByType — whose numeric-first overload filters the
+ * accountType column — this matches the classification the sync paths
+ * normalize into `classification`.
+ */
+export async function getQuickBooksAccountsByClassification(companyId: number, classification?: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [eq(quickbooksAccounts.companyId, companyId)];
+  if (classification) conditions.push(eq(quickbooksAccounts.classification, classification));
+  return db.select().from(quickbooksAccounts).where(and(...conditions));
+}
+
+// Atomic company-scoped sync upserts. Rows are keyed on the composite
+// unique indexes uq_qb_accounts_company_account / uq_qb_items_company_item
+// (migration 0067), so INSERT ... ON DUPLICATE KEY UPDATE is race-free
+// across processes and replicas — no read-then-write pair, no app-side
+// locking. Batched to keep statements under packet limits. Nullable
+// informational columns update via COALESCE(VALUES(col), col) so a provider
+// that doesn't supply a field (e.g. Merge items have no SKU) can't wipe a
+// value another provider synced.
+const QB_SYNC_CHUNK = 500;
+
+/**
+ * Company-scoped account upsert. Unlike syncQuickBooksAccounts (which matches
+ * on quickbooksAccountId alone), rows are matched on (companyId,
+ * quickbooksAccountId) so provider-local IDs can't collide across entities.
+ */
+export async function syncQuickBooksAccountsForCompany(companyId: number, accounts: InsertQuickBooksAccount[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const rows = accounts.map((a) => ({ ...a, companyId }));
+  for (let i = 0; i < rows.length; i += QB_SYNC_CHUNK) {
+    await db.insert(quickbooksAccounts).values(rows.slice(i, i + QB_SYNC_CHUNK)).onDuplicateKeyUpdate({
+      set: {
+        name: sql`VALUES(\`name\`)`,
+        accountType: sql`COALESCE(VALUES(\`accountType\`), \`accountType\`)`,
+        accountSubType: sql`COALESCE(VALUES(\`accountSubType\`), \`accountSubType\`)`,
+        classification: sql`COALESCE(VALUES(\`classification\`), \`classification\`)`,
+        fullyQualifiedName: sql`COALESCE(VALUES(\`fullyQualifiedName\`), \`fullyQualifiedName\`)`,
+        active: sql`VALUES(\`active\`)`,
+        currentBalance: sql`COALESCE(VALUES(\`currentBalance\`), \`currentBalance\`)`,
+        currency: sql`COALESCE(VALUES(\`currency\`), \`currency\`)`,
+        lastSyncedAt: sql`VALUES(\`lastSyncedAt\`)`,
+      },
+    });
+  }
+  return { count: rows.length, synced: rows.length };
+}
+
+/**
+ * Company-scoped item upsert. Same (companyId, quickbooksItemId) matching
+ * rationale as syncQuickBooksAccountsForCompany.
+ */
+export async function syncQuickBooksItemsForCompany(companyId: number, items: InsertQuickBooksItem[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const rows = items.map((i) => ({ ...i, companyId }));
+  for (let i = 0; i < rows.length; i += QB_SYNC_CHUNK) {
+    await db.insert(quickbooksItems).values(rows.slice(i, i + QB_SYNC_CHUNK)).onDuplicateKeyUpdate({
+      set: {
+        name: sql`VALUES(\`name\`)`,
+        sku: sql`COALESCE(VALUES(\`sku\`), \`sku\`)`,
+        type: sql`COALESCE(VALUES(\`type\`), \`type\`)`,
+        description: sql`COALESCE(VALUES(\`description\`), \`description\`)`,
+        unitPrice: sql`COALESCE(VALUES(\`unitPrice\`), \`unitPrice\`)`,
+        purchaseCost: sql`COALESCE(VALUES(\`purchaseCost\`), \`purchaseCost\`)`,
+        quantityOnHand: sql`COALESCE(VALUES(\`quantityOnHand\`), \`quantityOnHand\`)`,
+        incomeAccountId: sql`COALESCE(VALUES(\`incomeAccountId\`), \`incomeAccountId\`)`,
+        expenseAccountId: sql`COALESCE(VALUES(\`expenseAccountId\`), \`expenseAccountId\`)`,
+        assetAccountId: sql`COALESCE(VALUES(\`assetAccountId\`), \`assetAccountId\`)`,
+        active: sql`VALUES(\`active\`)`,
+        lastSyncedAt: sql`VALUES(\`lastSyncedAt\`)`,
+      },
+    });
+  }
+  return { count: rows.length, synced: rows.length };
+}
+
 export async function getQuickBooksAccountMappings(companyId?: number) {
   const db = await getDb();
   if (!db) return [];
