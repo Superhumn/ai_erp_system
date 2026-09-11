@@ -11,9 +11,10 @@
 -- MySQL 8 has no ADD COLUMN IF NOT EXISTS / CREATE INDEX IF NOT EXISTS, so the
 -- index work goes through a guarded procedure — the same pattern as
 -- 0062_cycle_counting_and_ledger_reason_codes.sql — to keep this migration
--- re-runnable. Statements are split with `--> statement-breakpoint` because the
--- Drizzle runner sends each chunk as one query; `DELIMITER` is a mysql-CLI
--- directive the server does not understand.
+-- re-runnable. One statement per breakpoint chunk: the Drizzle runner sends
+-- each chunk as a single query, and it splits on the breakpoint marker
+-- wherever the text appears (comments included), so never quote the marker.
+-- `DELIMITER` is a mysql-CLI directive the server does not understand.
 
 CREATE TABLE IF NOT EXISTS `warehouseZones` (
   `id` int AUTO_INCREMENT NOT NULL,
