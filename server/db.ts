@@ -1,7 +1,7 @@
-import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray, ne, sum, max, min } from "drizzle-orm";
+import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray, ne, sum, notExists } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2";
-import { scopeAllows, scopeCompanyIds, type Scope } from "./_core/scope";
+import { scopeAllows, scopeCompanyIds, partitionIdsByVisibility, type Scope } from "./_core/scope";
 import {
   reconcileThreeWayMatch,
   resolveApprovalPolicy,
@@ -9,6 +9,7 @@ import {
   MATCH_EPSILON,
 } from "./purchaseOrderMatching";
 import { classifyDuplicateGroup, resolveMergedQuantities } from "./inventoryDeduplication";
+import { attributeLines, collapseLinkedLines, summarizeInflation, type RedundantLine } from "./receiptInflation";
 import {
   assertTransition, computeVariance, computeVarianceValue, resolveAdjustment,
   summarizeVariance, uncountedLines,
@@ -124,6 +125,7 @@ import {
   // CRM types
   crmContacts, crmTags, crmContactTags, whatsappMessages, crmInteractions,
   crmPipelines, crmDeals, contactCaptures, crmEmailCampaigns, crmCampaignRecipients,
+  marketingEngagements, influencers, subsidiaryFundraisingInvestors, brandAmbassadors,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
   InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
   // Copacker portal
@@ -1588,8 +1590,20 @@ export type PurchaseOrderListFilters = {
  * Returns null when the filters can't match anything (duplicatesOnly with no
  * duplicates), which callers short-circuit on rather than issuing the query.
  */
-async function buildPurchaseOrderConditions(filters: PurchaseOrderListFilters) {
+async function buildPurchaseOrderConditions(filters: PurchaseOrderListFilters, scope?: Scope) {
   const conditions = [];
+
+  // Entity scope is derived from the caller's identity, never from input, and
+  // is applied first so a crafted `companyId` filter can only ever narrow the
+  // visible set rather than widen it.
+  if (scope) {
+    const scopeIds = scopeCompanyIds(scope);
+    if (scopeIds) {
+      if (scopeIds.length === 0) return null; // scoped user with no visible entities
+      conditions.push(inArray(purchaseOrders.companyId, scopeIds));
+    }
+  }
+
   if (filters.companyId) conditions.push(eq(purchaseOrders.companyId, filters.companyId));
   if (filters.status) conditions.push(eq(purchaseOrders.status, filters.status as any));
   if (filters.vendorId) conditions.push(eq(purchaseOrders.vendorId, filters.vendorId));
@@ -1607,7 +1621,7 @@ async function buildPurchaseOrderConditions(filters: PurchaseOrderListFilters) {
   }
 
   if (filters.duplicatesOnly) {
-    const groups = await getDuplicatePurchaseOrderGroups();
+    const groups = await getDuplicatePurchaseOrderGroups(scope);
     const ids = groups.flatMap((g) => [g.keepId, ...g.duplicateIds]);
     if (ids.length === 0) return null;
     conditions.push(inArray(purchaseOrders.id, ids));
@@ -1634,11 +1648,11 @@ function purchaseOrderSortColumn(sortBy: PurchaseOrderListFilters["sortBy"]) {
  * Kept separate from getPurchaseOrders (which returns everything) so the many
  * existing callers of that helper keep their current shape and behaviour.
  */
-export async function getPurchaseOrdersPaged(filters: PurchaseOrderListFilters = {}) {
+export async function getPurchaseOrdersPaged(filters: PurchaseOrderListFilters = {}, scope?: Scope) {
   const db = await getDb();
   if (!db) return { rows: [], total: 0 };
 
-  const conditions = await buildPurchaseOrderConditions(filters);
+  const conditions = await buildPurchaseOrderConditions(filters, scope);
   if (conditions === null) return { rows: [], total: 0 };
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -1680,12 +1694,12 @@ export async function getPurchaseOrdersPaged(filters: PurchaseOrderListFilters =
  * the list header. Deliberately ignores limit/offset: the totals describe the
  * whole filtered set, not the visible page.
  */
-export async function getPurchaseOrderSummary(filters: PurchaseOrderListFilters = {}) {
+export async function getPurchaseOrderSummary(filters: PurchaseOrderListFilters = {}, scope?: Scope) {
   const db = await getDb();
   const empty = { total: 0, totalValue: "0", byStatus: [] as { status: string; count: number; value: string }[] };
   if (!db) return empty;
 
-  const conditions = await buildPurchaseOrderConditions(filters);
+  const conditions = await buildPurchaseOrderConditions(filters, scope);
   if (conditions === null) return empty;
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -1713,12 +1727,47 @@ export async function getPurchaseOrderSummary(filters: PurchaseOrderListFilters 
  * one bulk UPDATE so each row's status transition is validated and reported
  * individually.
  */
-export async function bulkUpdatePurchaseOrderStatus(ids: number[], status: string) {
+/**
+ * Splits a caller-supplied id list into the ones their entity scope actually
+ * covers and the ones it doesn't.
+ *
+ * Bulk mutations take ids straight from the client, so without this a user can
+ * name another entity's purchase order and have it changed or deleted. Rejected
+ * ids come back as ordinary per-id failures rather than being dropped silently,
+ * so a partial run is still reported honestly. The message deliberately says
+ * "not found" — confirming that an id exists but belongs elsewhere would leak
+ * the existence of another entity's records.
+ */
+const NOT_IN_SCOPE = "Purchase order not found";
+
+async function partitionPurchaseOrderIdsByScope(ids: number[], scope?: Scope) {
+  if (!scope) return { allowed: ids, rejected: [] as { id: number; reason: string }[] };
+
+  const scopeIds = scopeCompanyIds(scope);
+  if (!scopeIds) return { allowed: ids, rejected: [] as { id: number; reason: string }[] };
+
+  if (scopeIds.length === 0 || ids.length === 0) {
+    return partitionIdsByVisibility(ids, [], NOT_IN_SCOPE);
+  }
+
+  const db = await getDb();
+  if (!db) return partitionIdsByVisibility(ids, [], NOT_IN_SCOPE);
+
+  const visible = await db
+    .select({ id: purchaseOrders.id })
+    .from(purchaseOrders)
+    .where(and(inArray(purchaseOrders.id, ids), inArray(purchaseOrders.companyId, scopeIds)));
+
+  return partitionIdsByVisibility(ids, visible.map((r) => r.id), NOT_IN_SCOPE);
+}
+
+export async function bulkUpdatePurchaseOrderStatus(ids: number[], status: string, scope?: Scope) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const updated: number[] = [];
-  const failed: { id: number; reason: string }[] = [];
-  for (const id of ids) {
+  const { allowed, rejected } = await partitionPurchaseOrderIdsByScope(ids, scope);
+  const failed: { id: number; reason: string }[] = [...rejected];
+  for (const id of allowed) {
     try {
       await db
         .update(purchaseOrders)
@@ -2111,6 +2160,47 @@ export async function createPurchaseOrder(data: InsertPurchaseOrder) {
   return { id: result[0].insertId };
 }
 
+/**
+ * Creates a purchase order only if (poNumber, vendorId) isn't already taken,
+ * atomically.
+ *
+ * The importers previously checked with findPurchaseOrderByNumberExact and then
+ * inserted as two separate statements. Two documents for the same invoice
+ * processed concurrently — a re-processed mailbox, a double-clicked upload —
+ * both saw nothing and both inserted, which is the duplicate-PO bug the guard
+ * was meant to close.
+ *
+ * `poNumber` has no unique constraint and can't get one until the duplicates
+ * already in the table are cleared, so this serializes with a pessimistic lock
+ * instead. Under InnoDB's REPEATABLE READ the `FOR UPDATE` takes a gap lock on
+ * the empty range, which blocks a concurrent insert of the same key until this
+ * transaction commits. That requires the index added alongside this helper —
+ * without it the lock degrades towards locking far more than it should.
+ *
+ * Returns the existing row untouched when there is one, so callers can tell a
+ * skip from a create.
+ */
+export async function createPurchaseOrderIfAbsent(data: InsertPurchaseOrder) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  return db.transaction(async (tx) => {
+    const existing = await tx
+      .select({ id: purchaseOrders.id, poNumber: purchaseOrders.poNumber, status: purchaseOrders.status })
+      .from(purchaseOrders)
+      .where(and(eq(purchaseOrders.poNumber, data.poNumber), eq(purchaseOrders.vendorId, data.vendorId)))
+      .limit(1)
+      .for("update");
+
+    if (existing.length > 0) {
+      return { created: false as const, id: existing[0].id, existing: existing[0] };
+    }
+
+    const result = await tx.insert(purchaseOrders).values(data);
+    return { created: true as const, id: result[0].insertId, existing: null };
+  });
+}
+
 export async function updatePurchaseOrder(id: number, data: Partial<InsertPurchaseOrder>) {
   const db = await getDb();
   if (!db) return;
@@ -2183,10 +2273,11 @@ export async function deletePurchaseOrder(id: number): Promise<boolean> {
  * abort the whole batch. Callers get the per-id outcome and surface the
  * failures rather than reporting a partial run as a clean success.
  */
-export async function bulkDeletePurchaseOrders(ids: number[]) {
+export async function bulkDeletePurchaseOrders(ids: number[], scope?: Scope) {
   const deleted: number[] = [];
-  const failed: { id: number; reason: string }[] = [];
-  for (const id of ids) {
+  const { allowed, rejected } = await partitionPurchaseOrderIdsByScope(ids, scope);
+  const failed: { id: number; reason: string }[] = [...rejected];
+  for (const id of allowed) {
     try {
       if (await deletePurchaseOrder(id)) deleted.push(id);
       else failed.push({ id, reason: "Purchase order no longer exists" });
@@ -2210,9 +2301,16 @@ export async function bulkDeletePurchaseOrders(ids: number[]) {
  * rather than with GROUP_CONCAT, whose 1024-byte default would silently
  * truncate large groups.
  */
-export async function getDuplicatePurchaseOrderGroups() {
+export async function getDuplicatePurchaseOrderGroups(scope?: Scope) {
   const db = await getDb();
   if (!db) return [];
+
+  // Scope narrows the grouping itself, not just the returned rows: two entities
+  // legitimately using the same PO number must not be grouped together and
+  // offered up as each other's duplicates.
+  const scopeIds = scope ? scopeCompanyIds(scope) : null;
+  if (scopeIds && scopeIds.length === 0) return [];
+  const scopeFilter = scopeIds ? inArray(purchaseOrders.companyId, scopeIds) : undefined;
 
   // Two steps so the whole table never lands in application memory: MySQL
   // reports which (poNumber, vendorId, totalAmount) keys occur more than once,
@@ -2225,6 +2323,7 @@ export async function getDuplicatePurchaseOrderGroups() {
       totalAmount: purchaseOrders.totalAmount,
     })
     .from(purchaseOrders)
+    .where(scopeFilter)
     .groupBy(purchaseOrders.poNumber, purchaseOrders.vendorId, purchaseOrders.totalAmount)
     .having(sql`COUNT(*) > 1`);
 
@@ -2247,7 +2346,11 @@ export async function getDuplicatePurchaseOrderGroups() {
       totalAmount: purchaseOrders.totalAmount,
     })
     .from(purchaseOrders)
-    .where(inArray(purchaseOrders.poNumber, dupKeys.map((k) => k.poNumber)))
+    .where(
+      scopeFilter
+        ? and(inArray(purchaseOrders.poNumber, dupKeys.map((k) => k.poNumber)), scopeFilter)
+        : inArray(purchaseOrders.poNumber, dupKeys.map((k) => k.poNumber)),
+    )
     .orderBy(asc(purchaseOrders.id));
 
   const groups = new Map<string, { poNumber: string; vendorId: number; totalAmount: string; ids: number[] }>();
@@ -2269,6 +2372,133 @@ export async function getDuplicatePurchaseOrderGroups() {
       keepId: g.ids[0],
       duplicateIds: g.ids.slice(1),
     }));
+}
+
+/** Keeps `inArray` placeholder counts inside what mysql2 will accept. */
+const RECEIPT_SCAN_CHUNK = 500;
+
+/**
+ * Reports how much of each raw material's `quantityReceived` came from
+ * duplicate purchase orders rather than real deliveries.
+ *
+ * Read-only by design. The attribution is partly re-derived (see
+ * receiptInflation.ts for why the database holds no ledger for these
+ * increments), so this produces a reviewable report and leaves the decision
+ * to correct — and by how much — to a human.
+ *
+ * Only redundant POs with status 'received' are counted: that is the status
+ * the importer sets when `markAsReceived` ran, which is the branch that
+ * incremented the running total in the first place.
+ */
+export async function getReceiptInflationReport(
+  scope?: Scope,
+  opts?: { purchaseOrderIds?: number[] },
+) {
+  const empty = {
+    perMaterial: [] as ReturnType<typeof summarizeInflation>["perMaterial"],
+    unattributed: [] as ReturnType<typeof summarizeInflation>["unattributed"],
+    totals: { redundantLines: 0, attributedLines: 0, materialsAffected: 0, materialsNeedingReview: 0 },
+    scannedDuplicatePos: 0,
+  };
+
+  const db = await getDb();
+  if (!db) return empty;
+
+  const groups = await getDuplicatePurchaseOrderGroups(scope);
+  let redundantIds = groups.flatMap((g) => g.duplicateIds);
+
+  // When the caller names a subset — the rows a delete dialog is actually about
+  // to remove — report on those only. Reporting the whole table there would
+  // attribute quantities to a destructive action that isn't going to touch them.
+  if (opts?.purchaseOrderIds) {
+    const wanted = new Set(opts.purchaseOrderIds);
+    redundantIds = redundantIds.filter((id) => wanted.has(id));
+  }
+  if (redundantIds.length === 0) return empty;
+
+  // status='received' alone is not evidence that this PO ran the importer's
+  // quantityReceived increment: the normal receiving flow sets the same status
+  // while posting to rawMaterialInventory and the transaction ledger instead,
+  // and counting those would invent inflation that never happened. A receiving
+  // record is the marker for that flow — the importer writes none — so POs that
+  // have one are excluded.
+  //
+  // Residual imprecision worth knowing about: a PO marked received by hand,
+  // with neither receiving records nor an importer run behind it, still looks
+  // like an import here. That is why the report stays read-only.
+  const receivedPos: { id: number; poNumber: string }[] = [];
+  for (let i = 0; i < redundantIds.length; i += RECEIPT_SCAN_CHUNK) {
+    const chunk = redundantIds.slice(i, i + RECEIPT_SCAN_CHUNK);
+    const rows = await db
+      .select({ id: purchaseOrders.id, poNumber: purchaseOrders.poNumber })
+      .from(purchaseOrders)
+      .where(
+        and(
+          inArray(purchaseOrders.id, chunk),
+          eq(purchaseOrders.status, "received" as any),
+          notExists(
+            db
+              .select({ one: sql`1` })
+              .from(poReceivingRecords)
+              .where(eq(poReceivingRecords.purchaseOrderId, purchaseOrders.id)),
+          ),
+        ),
+      );
+    receivedPos.push(...rows);
+  }
+  if (receivedPos.length === 0) return { ...empty, scannedDuplicatePos: 0 };
+
+  const poNumberById = new Map(receivedPos.map((p) => [p.id, p.poNumber]));
+  const receivedIds = receivedPos.map((p) => p.id);
+
+  // One query per chunk rather than per PO. The junction is joined in so a
+  // persisted material link is preferred over re-matching the description.
+  const lines: RedundantLine[] = [];
+  for (let i = 0; i < receivedIds.length; i += RECEIPT_SCAN_CHUNK) {
+    const chunk = receivedIds.slice(i, i + RECEIPT_SCAN_CHUNK);
+    const rows = await db
+      .select({
+        itemId: purchaseOrderItems.id,
+        purchaseOrderId: purchaseOrderItems.purchaseOrderId,
+        description: purchaseOrderItems.description,
+        quantity: purchaseOrderItems.quantity,
+        linkedMaterialId: purchaseOrderRawMaterials.rawMaterialId,
+      })
+      .from(purchaseOrderItems)
+      .leftJoin(
+        purchaseOrderRawMaterials,
+        eq(purchaseOrderRawMaterials.purchaseOrderItemId, purchaseOrderItems.id),
+      )
+      .where(inArray(purchaseOrderItems.purchaseOrderId, chunk));
+
+    // Collapsed to one entry per line item: the junction allows several links
+    // per item and the join emits a row for each. See collapseLinkedLines for
+    // how conflicting links are handled.
+    lines.push(...collapseLinkedLines(rows.map((r) => ({
+      itemId: r.itemId,
+      purchaseOrderId: r.purchaseOrderId,
+      poNumber: poNumberById.get(r.purchaseOrderId) ?? String(r.purchaseOrderId),
+      description: (r.description as string) ?? "",
+      quantity: parseFloat((r.quantity as string) ?? "0"),
+      linkedMaterialId: r.linkedMaterialId ?? null,
+    }))));
+  }
+
+  const materialRows = await db
+    .select({
+      id: rawMaterials.id,
+      name: rawMaterials.name,
+      sku: rawMaterials.sku,
+      quantityReceived: rawMaterials.quantityReceived,
+    })
+    .from(rawMaterials);
+
+  const currentReceivedById = new Map(
+    materialRows.map((m) => [m.id, parseFloat((m.quantityReceived as string) ?? "0") || 0]),
+  );
+
+  const report = summarizeInflation(attributeLines(lines, materialRows), currentReceivedById);
+  return { ...report, scannedDuplicatePos: receivedPos.length };
 }
 
 /**
@@ -3021,6 +3251,60 @@ export async function createProject(data: InsertProject) {
   if (!db) throw new Error("Database not available");
   const result = await db.insert(projects).values(data);
   return { id: result[0].insertId };
+}
+
+/**
+ * Look up a project by its exact name within one company. The column collation
+ * is case-insensitive, so "Website Redesign" and "website redesign" are the
+ * same project — which is what an imported spreadsheet expects.
+ *
+ * The company boundary is always applied: a null/omitted `companyId` matches
+ * only projects that have no company, never every company's projects. Without
+ * that, a lookup by name alone could hand back another tenant's project.
+ */
+export async function findProjectByName(name: string, companyId?: number | null) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const trimmed = name.trim();
+  if (!trimmed) return undefined;
+  const result = await db
+    .select()
+    .from(projects)
+    .where(and(
+      eq(projects.name, trimmed),
+      companyId ? eq(projects.companyId, companyId) : isNull(projects.companyId),
+    ))
+    .limit(1);
+  return result[0];
+}
+
+/**
+ * Attach to the project with this name inside `data.companyId`, or open it.
+ * Used by the spreadsheet importers so re-running the same sheet updates
+ * nothing and duplicates nothing — the existing project is reused as-is.
+ */
+export async function findOrCreateProjectByName(
+  name: string,
+  data: Omit<InsertProject, "name">,
+): Promise<{ id: number; created: boolean }> {
+  const existing = await findProjectByName(name.trim(), data.companyId ?? null);
+  if (existing) return { id: existing.id, created: false };
+  const { id } = await createProject({ ...data, name: name.trim() });
+  return { id, created: true };
+}
+
+/** Find a task by name within one project. Keeps re-imports idempotent. */
+export async function findProjectTaskByName(projectId: number, name: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const trimmed = name.trim();
+  if (!trimmed) return undefined;
+  const result = await db
+    .select()
+    .from(projectTasks)
+    .where(and(eq(projectTasks.projectId, projectId), eq(projectTasks.name, trimmed)))
+    .limit(1);
+  return result[0];
 }
 
 export async function updateProject(id: number, data: Partial<InsertProject>) {
@@ -9034,10 +9318,13 @@ export async function updateNotificationPreference(
     email: settings.email ?? false,
     push: settings.push ?? false,
   }).onDuplicateKeyUpdate({
+    // Drizzle throws "No values to set" on an empty set; when the caller sent
+    // no channel flags, re-assign the key column so the statement is a no-op.
     set: {
       ...(settings.inApp !== undefined && { inApp: settings.inApp }),
       ...(settings.email !== undefined && { email: settings.email }),
       ...(settings.push !== undefined && { push: settings.push }),
+      ...(settings.inApp === undefined && settings.email === undefined && settings.push === undefined && { notificationType }),
     },
   });
 
@@ -12416,10 +12703,37 @@ export async function updateCrmContact(id: number, data: Partial<InsertCrmContac
   await db.update(crmContacts).set(data).where(eq(crmContacts.id, id));
 }
 
+/**
+ * Detach or remove every row that points at the given contacts, then delete
+ * the contacts. crm_interactions and crm_deals carry NOT NULL FKs with
+ * ON DELETE NO ACTION, so a plain delete fails with ER_ROW_IS_REFERENCED_2 as
+ * soon as a contact has been touched.
+ */
+async function deleteCrmContactsCascading(tx: any, ids: number[]) {
+  if (ids.length === 0) return 0;
+  await tx.delete(crmContactTags).where(inArray(crmContactTags.contactId, ids));
+  await tx.delete(crmInteractions).where(inArray(crmInteractions.contactId, ids));
+  await tx.delete(crmDeals).where(inArray(crmDeals.contactId, ids));
+  await tx.update(marketingEngagements).set({ contactId: null }).where(inArray(marketingEngagements.contactId, ids));
+  await tx.update(influencers).set({ crmContactId: null }).where(inArray(influencers.crmContactId, ids));
+  await tx.update(subsidiaryFundraisingInvestors).set({ contactId: null }).where(inArray(subsidiaryFundraisingInvestors.contactId, ids));
+  await tx.update(brandAmbassadors).set({ contactId: null }).where(inArray(brandAmbassadors.contactId, ids));
+  const result = await tx.delete(crmContacts).where(inArray(crmContacts.id, ids));
+  return (result as any)[0]?.affectedRows ?? ids.length;
+}
+
 export async function deleteCrmContact(id: number) {
   const db = await getDb();
   if (!db) return;
-  await db.delete(crmContacts).where(eq(crmContacts.id, id));
+  await db.transaction((tx) => deleteCrmContactsCascading(tx, [id]));
+}
+
+export async function deleteAllCrmContacts(): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const rows = await db.select({ id: crmContacts.id }).from(crmContacts);
+  const ids = rows.map((r) => r.id);
+  return db.transaction((tx) => deleteCrmContactsCascading(tx, ids));
 }
 
 export async function getCrmContactStats() {
@@ -14524,6 +14838,10 @@ export async function getInventoryManagementList() {
       reorderLevel: inventory.reorderLevel,
       averageCost: inventory.averageCost,
       warehouseId: inventory.warehouseId,
+      forecastedQuantity: inventory.forecastedQuantity,
+      poStatus: inventory.poStatus,
+      freightStatus: inventory.freightStatus,
+      freightTrackingNumber: inventory.freightTrackingNumber,
     })
     .from(inventory)
     .leftJoin(products, eq(inventory.productId, products.id))
