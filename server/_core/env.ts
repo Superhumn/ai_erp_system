@@ -83,7 +83,11 @@ export const ENV = {
     // mode: no default — an unset or invalid value parses to NaN and
     // isMergeConfigured() fails closed rather than silently binding the
     // linked company's financials to company 1.
-    mergeCompanyId: Number.parseInt(process.env.MERGE_COMPANY_ID ?? "", 10),
+    // Strict whole-string parse: parseInt would accept "12oops" as 12 and
+    // silently bind Merge data to the wrong entity.
+    mergeCompanyId: /^[1-9]\d*$/.test(process.env.MERGE_COMPANY_ID ?? "")
+      ? Number(process.env.MERGE_COMPANY_ID)
+      : Number.NaN,
 
     // Shopify OAuth configuration
     shopifyClientId: process.env.SHOPIFY_CLIENT_ID ?? "",

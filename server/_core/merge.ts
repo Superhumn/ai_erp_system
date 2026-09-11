@@ -219,6 +219,7 @@ export function mapMergeItem(i: any, companyId: number) {
     purchaseCost: i.purchase_price != null ? String(i.purchase_price) : null,
     incomeAccountId: refId(i.sales_account),
     expenseAccountId: refId(i.purchase_account),
+    assetAccountId: refId(i.inventory_account),
     active: i.status ? i.status === "ACTIVE" : true,
     lastSyncedAt: new Date(),
   };

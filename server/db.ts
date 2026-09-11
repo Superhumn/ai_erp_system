@@ -15849,53 +15849,41 @@ export async function getQuickBooksAccountsByClassification(companyId: number, c
   return db.select().from(quickbooksAccounts).where(and(...conditions));
 }
 
-// The quickbooksAccounts table has no composite unique index on
-// (companyId, quickbooksAccountId), and quickbooksItems none on
-// (companyId, quickbooksItemId), so a read-then-insert upsert races under
-// concurrency. Until those two unique indexes + ON DUPLICATE KEY upserts
-// land as their own migration, serialize whole-dataset syncs per
-// (table, company) in process — sufficient for the single-instance,
-// user-triggered sync flows that call these helpers.
-const qbSyncLocks = new Map<string, Promise<unknown>>();
-async function withQbSyncLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
-  const previous = qbSyncLocks.get(key) ?? Promise.resolve();
-  const run = previous.then(fn, fn);
-  const settled = run.catch(() => undefined);
-  qbSyncLocks.set(key, settled);
-  try {
-    return await run;
-  } finally {
-    if (qbSyncLocks.get(key) === settled) qbSyncLocks.delete(key);
-  }
-}
+// Atomic company-scoped sync upserts. Rows are keyed on the composite
+// unique indexes uq_qb_accounts_company_account / uq_qb_items_company_item
+// (migration 0066), so INSERT ... ON DUPLICATE KEY UPDATE is race-free
+// across processes and replicas — no read-then-write pair, no app-side
+// locking. Batched to keep statements under packet limits. Nullable
+// informational columns update via COALESCE(VALUES(col), col) so a provider
+// that doesn't supply a field (e.g. Merge items have no SKU) can't wipe a
+// value another provider synced.
+const QB_SYNC_CHUNK = 500;
 
 /**
  * Company-scoped account upsert. Unlike syncQuickBooksAccounts (which matches
  * on quickbooksAccountId alone), rows are matched on (companyId,
  * quickbooksAccountId) so provider-local IDs can't collide across entities.
- * Used by the Merge sync path.
  */
 export async function syncQuickBooksAccountsForCompany(companyId: number, accounts: InsertQuickBooksAccount[]) {
-  return withQbSyncLock(`accounts:${companyId}`, async () => {
-    const db = await getDb();
-    if (!db) throw new Error("Database not available");
-    let synced = 0;
-    for (const account of accounts) {
-      const row = { ...account, companyId };
-      const existing = await db.select().from(quickbooksAccounts)
-        .where(and(
-          eq(quickbooksAccounts.companyId, companyId),
-          eq(quickbooksAccounts.quickbooksAccountId, row.quickbooksAccountId),
-        )).limit(1);
-      if (existing[0]) {
-        await db.update(quickbooksAccounts).set(row).where(eq(quickbooksAccounts.id, existing[0].id));
-      } else {
-        await db.insert(quickbooksAccounts).values(row);
-      }
-      synced++;
-    }
-    return { count: synced, synced };
-  });
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const rows = accounts.map((a) => ({ ...a, companyId }));
+  for (let i = 0; i < rows.length; i += QB_SYNC_CHUNK) {
+    await db.insert(quickbooksAccounts).values(rows.slice(i, i + QB_SYNC_CHUNK)).onDuplicateKeyUpdate({
+      set: {
+        name: sql`VALUES(\`name\`)`,
+        accountType: sql`COALESCE(VALUES(\`accountType\`), \`accountType\`)`,
+        accountSubType: sql`COALESCE(VALUES(\`accountSubType\`), \`accountSubType\`)`,
+        classification: sql`COALESCE(VALUES(\`classification\`), \`classification\`)`,
+        fullyQualifiedName: sql`COALESCE(VALUES(\`fullyQualifiedName\`), \`fullyQualifiedName\`)`,
+        active: sql`VALUES(\`active\`)`,
+        currentBalance: sql`COALESCE(VALUES(\`currentBalance\`), \`currentBalance\`)`,
+        currency: sql`COALESCE(VALUES(\`currency\`), \`currency\`)`,
+        lastSyncedAt: sql`VALUES(\`lastSyncedAt\`)`,
+      },
+    });
+  }
+  return { count: rows.length, synced: rows.length };
 }
 
 /**
@@ -15903,26 +15891,28 @@ export async function syncQuickBooksAccountsForCompany(companyId: number, accoun
  * rationale as syncQuickBooksAccountsForCompany.
  */
 export async function syncQuickBooksItemsForCompany(companyId: number, items: InsertQuickBooksItem[]) {
-  return withQbSyncLock(`items:${companyId}`, async () => {
-    const db = await getDb();
-    if (!db) throw new Error("Database not available");
-    let synced = 0;
-    for (const item of items) {
-      const row = { ...item, companyId };
-      const existing = await db.select().from(quickbooksItems)
-        .where(and(
-          eq(quickbooksItems.companyId, companyId),
-          eq(quickbooksItems.quickbooksItemId, row.quickbooksItemId),
-        )).limit(1);
-      if (existing[0]) {
-        await db.update(quickbooksItems).set(row).where(eq(quickbooksItems.id, existing[0].id));
-      } else {
-        await db.insert(quickbooksItems).values(row);
-      }
-      synced++;
-    }
-    return { count: synced, synced };
-  });
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const rows = items.map((i) => ({ ...i, companyId }));
+  for (let i = 0; i < rows.length; i += QB_SYNC_CHUNK) {
+    await db.insert(quickbooksItems).values(rows.slice(i, i + QB_SYNC_CHUNK)).onDuplicateKeyUpdate({
+      set: {
+        name: sql`VALUES(\`name\`)`,
+        sku: sql`COALESCE(VALUES(\`sku\`), \`sku\`)`,
+        type: sql`COALESCE(VALUES(\`type\`), \`type\`)`,
+        description: sql`COALESCE(VALUES(\`description\`), \`description\`)`,
+        unitPrice: sql`COALESCE(VALUES(\`unitPrice\`), \`unitPrice\`)`,
+        purchaseCost: sql`COALESCE(VALUES(\`purchaseCost\`), \`purchaseCost\`)`,
+        quantityOnHand: sql`COALESCE(VALUES(\`quantityOnHand\`), \`quantityOnHand\`)`,
+        incomeAccountId: sql`COALESCE(VALUES(\`incomeAccountId\`), \`incomeAccountId\`)`,
+        expenseAccountId: sql`COALESCE(VALUES(\`expenseAccountId\`), \`expenseAccountId\`)`,
+        assetAccountId: sql`COALESCE(VALUES(\`assetAccountId\`), \`assetAccountId\`)`,
+        active: sql`VALUES(\`active\`)`,
+        lastSyncedAt: sql`VALUES(\`lastSyncedAt\`)`,
+      },
+    });
+  }
+  return { count: rows.length, synced: rows.length };
 }
 
 export async function getQuickBooksAccountMappings(companyId?: number) {

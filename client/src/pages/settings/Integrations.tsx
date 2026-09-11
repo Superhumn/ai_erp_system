@@ -502,7 +502,9 @@ export default function IntegrationsPage() {
                     icon: <Calculator className="w-4 h-4 text-muted-foreground" />,
                     bg: "bg-muted",
                     name: "QuickBooks",
-                    desc: status?.quickbooks?.configured ? `Company ${status.quickbooks.realmId}` : "Accounting software",
+                    desc: status?.quickbooks?.configured
+                      ? (status.quickbooks.companyName ?? `Company ${status.quickbooks.realmId}`)
+                      : "Accounting software",
                     status: status?.quickbooks?.status || "not_configured",
                     action: () => setActiveTab("quickbooks"),
                     actionLabel: "Configure",
@@ -1601,6 +1603,8 @@ export default function IntegrationsPage() {
                             <span>{quickbooksDebug.mergeApiKeySet ? "set" : <em className="text-foreground font-semibold">not set</em>}</span>
                             <span className="text-muted-foreground">MERGE_ACCOUNT_TOKEN:</span>
                             <span>{quickbooksDebug.mergeAccountTokenSet ? "set" : <em className="text-foreground font-semibold">not set</em>}</span>
+                            <span className="text-muted-foreground">MERGE_COMPANY_ID:</span>
+                            <span>{quickbooksDebug.mergeCompanyIdValid ? String(quickbooksDebug.mergeCompanyId) : <em className="text-foreground font-semibold">not set / invalid — required</em>}</span>
                           </div>
                         </div>
                       )}

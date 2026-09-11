@@ -8084,7 +8084,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         return {
           error: isMergeConfigured()
             ? "Merge.dev sync is active — no in-app OAuth needed. Manage the linked account from the Merge dashboard."
-            : "Merge.dev sync is selected but not configured. Set MERGE_API_KEY and MERGE_ACCOUNT_TOKEN (link the QuickBooks account from the Merge dashboard first).",
+            : "Merge.dev sync is selected but not configured. Set MERGE_API_KEY, MERGE_ACCOUNT_TOKEN and MERGE_COMPANY_ID (link the QuickBooks account from the Merge dashboard first).",
         };
       }
       return getQuickBooksAuthUrl(ctx.user.id);
@@ -8102,6 +8102,9 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         provider: ENV.accountingSyncProvider,
         mergeApiKeySet: !!ENV.mergeApiKey,
         mergeAccountTokenSet: !!ENV.mergeAccountToken,
+        // Sanitized: validity + value, never the API credentials.
+        mergeCompanyIdValid: Number.isInteger(ENV.mergeCompanyId) && ENV.mergeCompanyId > 0,
+        mergeCompanyId: Number.isInteger(ENV.mergeCompanyId) ? ENV.mergeCompanyId : null,
         clientIdPrefix: clientId ? clientId.slice(0, 8) : null,
         clientIdSuffix: clientId ? clientId.slice(-4) : null,
         clientIdMasked: clientId ? mask(clientId) : null,
