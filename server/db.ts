@@ -15799,6 +15799,58 @@ export async function syncQuickBooksItems(companyIdOrItems: number | InsertQuick
   return { count: synced, synced };
 }
 
+/**
+ * Company-scoped account upsert. Unlike syncQuickBooksAccounts (which matches
+ * on quickbooksAccountId alone), rows are matched on (companyId,
+ * quickbooksAccountId) so provider-local IDs can't collide across entities.
+ * Used by the Merge sync path.
+ */
+export async function syncQuickBooksAccountsForCompany(companyId: number, accounts: InsertQuickBooksAccount[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  let synced = 0;
+  for (const account of accounts) {
+    const row = { ...account, companyId };
+    const existing = await db.select().from(quickbooksAccounts)
+      .where(and(
+        eq(quickbooksAccounts.companyId, companyId),
+        eq(quickbooksAccounts.quickbooksAccountId, row.quickbooksAccountId),
+      )).limit(1);
+    if (existing[0]) {
+      await db.update(quickbooksAccounts).set(row).where(eq(quickbooksAccounts.id, existing[0].id));
+    } else {
+      await db.insert(quickbooksAccounts).values(row);
+    }
+    synced++;
+  }
+  return { count: synced, synced };
+}
+
+/**
+ * Company-scoped item upsert. Same (companyId, quickbooksItemId) matching
+ * rationale as syncQuickBooksAccountsForCompany.
+ */
+export async function syncQuickBooksItemsForCompany(companyId: number, items: InsertQuickBooksItem[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  let synced = 0;
+  for (const item of items) {
+    const row = { ...item, companyId };
+    const existing = await db.select().from(quickbooksItems)
+      .where(and(
+        eq(quickbooksItems.companyId, companyId),
+        eq(quickbooksItems.quickbooksItemId, row.quickbooksItemId),
+      )).limit(1);
+    if (existing[0]) {
+      await db.update(quickbooksItems).set(row).where(eq(quickbooksItems.id, existing[0].id));
+    } else {
+      await db.insert(quickbooksItems).values(row);
+    }
+    synced++;
+  }
+  return { count: synced, synced };
+}
+
 export async function getQuickBooksAccountMappings(companyId?: number) {
   const db = await getDb();
   if (!db) return [];

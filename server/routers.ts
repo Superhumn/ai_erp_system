@@ -8139,6 +8139,14 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
 
     // Disconnect QuickBooks
     disconnect: protectedProcedure.mutation(async ({ ctx }) => {
+      if (ENV.accountingSyncProvider === "merge") {
+        // The Merge connection is env-managed; deleting the per-user Intuit
+        // token would report success while changing nothing.
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'Accounting sync is managed via Merge.dev env config. Remove MERGE_API_KEY / MERGE_ACCOUNT_TOKEN (or unlink the account in the Merge dashboard) to disconnect.',
+        });
+      }
       await db.deleteQuickBooksOAuthToken(ctx.user.id);
       await db.createSyncLog({
         integration: 'quickbooks',
@@ -8207,12 +8215,19 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
       .mutation(async ({ input, ctx }) => {
         const companyId = input.companyId || 1; // Default to company 1
 
+        // The synced rows are persisted under companyId — refuse a target
+        // entity outside the caller's scope.
+        const scope = await resolveRequestScope(ctx.user);
+        if (!scopeAllows(scope, companyId)) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Cannot sync accounts into an entity outside your access.' });
+        }
+
         if (ENV.accountingSyncProvider === "merge") {
           const res = await getMergeAccounts(companyId);
           if (res.error) {
             throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: res.error });
           }
-          const synced = await db.syncQuickBooksAccounts(companyId, res.accounts ?? []);
+          const synced = await db.syncQuickBooksAccountsForCompany(companyId, res.accounts ?? []);
           await createAuditLog(ctx.user.id, 'create', 'quickbooks_sync', 0, `Synced ${synced.synced} accounts from Merge`);
           return {
             success: true,
@@ -8252,12 +8267,18 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
       .mutation(async ({ input, ctx }) => {
         const companyId = input.companyId || 1;
 
+        // Same scope rule as syncAccounts: rows land under companyId.
+        const scope = await resolveRequestScope(ctx.user);
+        if (!scopeAllows(scope, companyId)) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Cannot sync items into an entity outside your access.' });
+        }
+
         if (ENV.accountingSyncProvider === "merge") {
-          const res = await getMergeItems(companyId);
+          const res = await getMergeItems(companyId, { type: input.type });
           if (res.error) {
             throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: res.error });
           }
-          const synced = await db.syncQuickBooksItems(companyId, res.items ?? []);
+          const synced = await db.syncQuickBooksItemsForCompany(companyId, res.items ?? []);
           await createAuditLog(ctx.user.id, 'create', 'quickbooks_sync', 0, `Synced ${synced.synced} items from Merge`);
           return {
             success: true,
@@ -8360,6 +8381,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           const res = await getMergeProfitAndLoss({
             startDate: input?.startDate,
             endDate: input?.endDate,
+            summarizeBy: input?.summarizeBy ?? "Month",
           });
           if (res.error) return { connected: true, error: res.error, months: [] };
           return { connected: true, months: res.report!.months, expenseAccounts: res.report!.expenseAccounts };

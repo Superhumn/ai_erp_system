@@ -1735,6 +1735,16 @@ export default function IntegrationsPage() {
                       </div>
                     </div>
 
+                    {status?.quickbooks?.provider === "merge" ? (
+                      <div className="p-4 bg-muted/50 rounded-lg">
+                        <h4 className="font-medium">Managed via Merge.dev</h4>
+                        <p className="text-sm text-muted-foreground">
+                          This connection is configured through server environment variables. To disconnect,
+                          remove <code className="bg-muted px-1.5 py-0.5 rounded">MERGE_API_KEY</code> / <code className="bg-muted px-1.5 py-0.5 rounded">MERGE_ACCOUNT_TOKEN</code> or
+                          unlink the account in the Merge dashboard.
+                        </p>
+                      </div>
+                    ) : (
                     <div className="p-4 bg-muted/50 rounded-lg">
                       <div className="flex items-center justify-between">
                         <div>
@@ -1743,8 +1753,8 @@ export default function IntegrationsPage() {
                             Remove QuickBooks integration from your account
                           </p>
                         </div>
-                        <Button 
-                          variant="outline" 
+                        <Button
+                          variant="outline"
                           size="sm"
                           onClick={() => quickbooksDisconnectMutation.mutate()}
                         >
@@ -1752,6 +1762,7 @@ export default function IntegrationsPage() {
                         </Button>
                       </div>
                     </div>
+                    )}
                   </div>
                 )}
               </CardContent>
