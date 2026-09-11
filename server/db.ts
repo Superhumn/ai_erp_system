@@ -2039,6 +2039,47 @@ export async function createPurchaseOrder(data: InsertPurchaseOrder) {
   return { id: result[0].insertId };
 }
 
+/**
+ * Creates a purchase order only if (poNumber, vendorId) isn't already taken,
+ * atomically.
+ *
+ * The importers previously checked with findPurchaseOrderByNumberExact and then
+ * inserted as two separate statements. Two documents for the same invoice
+ * processed concurrently — a re-processed mailbox, a double-clicked upload —
+ * both saw nothing and both inserted, which is the duplicate-PO bug the guard
+ * was meant to close.
+ *
+ * `poNumber` has no unique constraint and can't get one until the duplicates
+ * already in the table are cleared, so this serializes with a pessimistic lock
+ * instead. Under InnoDB's REPEATABLE READ the `FOR UPDATE` takes a gap lock on
+ * the empty range, which blocks a concurrent insert of the same key until this
+ * transaction commits. That requires the index added alongside this helper —
+ * without it the lock degrades towards locking far more than it should.
+ *
+ * Returns the existing row untouched when there is one, so callers can tell a
+ * skip from a create.
+ */
+export async function createPurchaseOrderIfAbsent(data: InsertPurchaseOrder) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  return db.transaction(async (tx) => {
+    const existing = await tx
+      .select({ id: purchaseOrders.id, poNumber: purchaseOrders.poNumber, status: purchaseOrders.status })
+      .from(purchaseOrders)
+      .where(and(eq(purchaseOrders.poNumber, data.poNumber), eq(purchaseOrders.vendorId, data.vendorId)))
+      .limit(1)
+      .for("update");
+
+    if (existing.length > 0) {
+      return { created: false as const, id: existing[0].id, existing: existing[0] };
+    }
+
+    const result = await tx.insert(purchaseOrders).values(data);
+    return { created: true as const, id: result[0].insertId, existing: null };
+  });
+}
+
 export async function updatePurchaseOrder(id: number, data: Partial<InsertPurchaseOrder>) {
   const db = await getDb();
   if (!db) return;
