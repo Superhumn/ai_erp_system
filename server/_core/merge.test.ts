@@ -160,6 +160,15 @@ describe("parseMergeIncomeStatements", () => {
     expect(result.months[0].income).toBe(1000);
   });
 
+  it("fails closed on an unparseable date boundary instead of returning everything", () => {
+    const result = parseMergeIncomeStatements(
+      [statement("2026-01-01", "2026-01-31", 1000, 0, [])],
+      { endDate: "not-a-date" },
+    );
+
+    expect(result.months).toHaveLength(0);
+  });
+
   it("skips statements with missing or invalid end_period", () => {
     const result = parseMergeIncomeStatements([
       { start_period: "2026-01-01", end_period: null, income: { value: 1 } },

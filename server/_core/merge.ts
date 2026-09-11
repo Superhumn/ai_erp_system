@@ -303,11 +303,14 @@ export function parseMergeIncomeStatements(
 ): ParsedProfitAndLoss {
   // Date-only boundaries span the whole day: Merge periods are timestamped,
   // so a bare endDate must not exclude a statement ending later that day.
+  // An unparseable boundary fails closed (matches nothing) — the caller
+  // asked for a window we can't honor, so returning everything would leak
+  // out-of-window data.
   const boundary = (s: string | undefined, endOfDay: boolean): number => {
     if (!s) return endOfDay ? Infinity : -Infinity;
     const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(s);
     const d = new Date(dateOnly && endOfDay ? `${s}T23:59:59.999Z` : s);
-    return isNaN(d.getTime()) ? (endOfDay ? Infinity : -Infinity) : d.getTime();
+    return isNaN(d.getTime()) ? (endOfDay ? -Infinity : Infinity) : d.getTime();
   };
   const start = boundary(options?.startDate, false);
   const end = boundary(options?.endDate, true);

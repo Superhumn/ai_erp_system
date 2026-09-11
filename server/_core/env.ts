@@ -73,8 +73,15 @@ export const ENV = {
 
     // Accounting sync provider: "intuit" (direct QuickBooks OAuth, default) or
     // "merge" (Merge.dev unified accounting API — hosts the Intuit OAuth with
-    // their approved app). The quickbooks tRPC routes branch on this.
-    accountingSyncProvider: process.env.ACCOUNTING_SYNC_PROVIDER ?? "intuit",
+    // their approved app). The quickbooks tRPC routes branch on this. Any
+    // other value becomes "invalid" and the accounting routes fail closed —
+    // a typo like "merg" must not silently activate the wrong provider.
+    accountingSyncProvider: ((): string => {
+      const raw = (process.env.ACCOUNTING_SYNC_PROVIDER ?? "intuit").toLowerCase();
+      if (raw === "intuit" || raw === "merge") return raw;
+      console.error(`[env] Invalid ACCOUNTING_SYNC_PROVIDER "${raw}" — expected "intuit" or "merge"; accounting sync disabled.`);
+      return "invalid";
+    })(),
     mergeApiKey: process.env.MERGE_API_KEY ?? "",
     mergeAccountToken: process.env.MERGE_ACCOUNT_TOKEN ?? "",
     // ERP company (companies.id) the linked Merge account belongs to. The
