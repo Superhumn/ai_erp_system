@@ -10,7 +10,10 @@
 --
 -- MySQL 8 has no ADD COLUMN IF NOT EXISTS / CREATE INDEX IF NOT EXISTS, so the
 -- index work goes through a guarded procedure — the same pattern as
--- 0029_fix_fireflies_meetings_schema.sql — to keep this migration re-runnable.
+-- 0062_cycle_counting_and_ledger_reason_codes.sql — to keep this migration
+-- re-runnable. Statements are split with `--> statement-breakpoint` because the
+-- Drizzle runner sends each chunk as one query; `DELIMITER` is a mysql-CLI
+-- directive the server does not understand.
 
 CREATE TABLE IF NOT EXISTS `warehouseZones` (
   `id` int AUTO_INCREMENT NOT NULL,
@@ -26,7 +29,7 @@ CREATE TABLE IF NOT EXISTS `warehouseZones` (
   `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT `warehouseZones_id` PRIMARY KEY(`id`)
 );
-
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS `warehouseBins` (
   `id` int AUTO_INCREMENT NOT NULL,
   `companyId` int,
@@ -42,7 +45,7 @@ CREATE TABLE IF NOT EXISTS `warehouseBins` (
   `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT `warehouseBins_id` PRIMARY KEY(`id`)
 );
-
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS `serialNumbers` (
   `id` int AUTO_INCREMENT NOT NULL,
   `companyId` int,
@@ -64,7 +67,7 @@ CREATE TABLE IF NOT EXISTS `serialNumbers` (
   `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT `serialNumbers_id` PRIMARY KEY(`id`)
 );
-
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS `serialNumberEvents` (
   `id` int AUTO_INCREMENT NOT NULL,
   `serialId` int NOT NULL,
@@ -78,9 +81,9 @@ CREATE TABLE IF NOT EXISTS `serialNumberEvents` (
   `performedAt` timestamp NOT NULL DEFAULT (now()),
   CONSTRAINT `serialNumberEvents_id` PRIMARY KEY(`id`)
 );
-
+--> statement-breakpoint
 DROP PROCEDURE IF EXISTS `_migrate_0063_bins_and_serials`;
-DELIMITER //
+--> statement-breakpoint
 CREATE PROCEDURE `_migrate_0063_bins_and_serials`()
 BEGIN
   -- A zone code is unique within its warehouse; a bin code within its
@@ -160,8 +163,8 @@ BEGIN
     CREATE INDEX `inventoryBalances_lot_wh_status_bin_idx`
       ON `inventoryBalances` (`lotId`, `warehouseId`, `status`, `binId`);
   END IF;
-END //
-DELIMITER ;
-
+END;
+--> statement-breakpoint
 CALL `_migrate_0063_bins_and_serials`();
+--> statement-breakpoint
 DROP PROCEDURE IF EXISTS `_migrate_0063_bins_and_serials`;
