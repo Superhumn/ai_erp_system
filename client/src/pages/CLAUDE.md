@@ -22,7 +22,7 @@ A page = one route. Reusable UI across pages → `client/src/components/`. Pure 
 
 ## Data
 
-- `import { trpc } from "@/lib/trpc"` — typed against `server/routers.ts` `AppRouter`.
+- `import { trpc } from "@/lib/trpc"` — typed against `AppRouter` from `server/routers/index.ts`.
 - Reads: `trpc.<router>.<proc>.useQuery(input)`.
 - Writes: `trpc.<router>.<proc>.useMutation({ onSuccess: () => utils.<router>.list.invalidate() })` with `const utils = trpc.useUtils()`.
 - Offline-tolerant writes (orders, inventory): `useOfflineMutation` from `@/hooks/useOfflineMutation` with a dotted `path` like `"orders.update"`.

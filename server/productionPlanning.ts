@@ -2,7 +2,7 @@
  * Pure production-planning math.
  *
  * Everything in here is deliberately free of DB access so it can be unit tested
- * directly (see productionPlanning.test.ts). The tRPC layer in server/routers.ts
+ * directly (see productionPlanning.test.ts). The tRPC layer in server/routers/forecasting.ts
  * does the reads/writes and delegates the arithmetic here so the forecast-driven
  * and manual planning flows stay consistent.
  */

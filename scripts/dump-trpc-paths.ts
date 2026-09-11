@@ -1,5 +1,5 @@
 // Dumps every wired tRPC procedure path from the live appRouter.
-import { appRouter } from "../server/routers";
+import { appRouter } from "../server/routers/index";
 
 function walk(router, prefix = "") {
   const out = [];

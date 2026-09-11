@@ -60,7 +60,7 @@ Any change to `getMenuGroups()` will fail CI.
 | `pnpm strict:check`  | CI gate: no file's strict-error count may grow (`.strict-baseline.json`) |
 | `pnpm strict:audit`  | Show current strict-error counts per file                     |
 | `pnpm strict:update` | Lower the baseline after fixing strict errors                 |
-| `pnpm index:legacy`  | Regenerate `ROUTERS_INDEX.md` + `DB_INDEX.md` (CI checks freshness) |
+| `pnpm index:legacy`  | Regenerate `DB_INDEX.md` (CI checks freshness)                |
 | `pnpm audit:coverage`| List tRPC procedures with no client caller → `docs/FEATURE_COVERAGE.md` |
 
 CI (`.github/workflows/ci.yml`) runs: `check`, `check:strict`, `strict:check`, `test`, `index:legacy:check`. Run the same five before pushing.
@@ -72,11 +72,12 @@ CI (`.github/workflows/ci.yml`) runs: `check`, `check:strict`, `strict:check`, `
 - New pure helper in `client/src/lib/` → sibling `.test.ts`.
 - Bug fix → a test that fails before the fix.
 - New table in `drizzle/schema.ts` → `pnpm test server/entity-scope.test.ts` must pass (companyId rule).
+- Any change to `server/routers/index.ts` → `pnpm exec tsx scripts/dump-trpc-paths.ts` before and after; the diff is the review.
 - Run one file: `pnpm test <path>`.
 
 ## Hooks (`.claude/settings.json`)
 
-- `PostToolUse` on Edit/Write → `.claude/hooks/regen-legacy-index.sh` regenerates the indexes when `server/routers.ts`, `server/db.ts`, `server/routers/*`, or `server/db/*` change.
+- `PostToolUse` on Edit/Write → `.claude/hooks/regen-legacy-index.sh` regenerates `DB_INDEX.md` when `server/db.ts` or `server/db/*` change.
 - `Stop` → `.claude/hooks/typecheck-on-stop.sh` runs `pnpm check` once per turn when `.ts`/`.tsx` files are dirty. A failure is fed back so the turn ends with a fix.
 - Both no-op when `node_modules` is absent.
 
@@ -96,11 +97,10 @@ client/src/          React app
 server/              Express + tRPC backend
   _core/             Entry point, tRPC setup, infra (llm, email,
                      oauth, gmail, googleDrive, quickbooks, shopify, ...)
-  routers/           Extracted per-feature routers — UNWIRED (see warning below)
-  routers/index.ts   Router aggregation — nothing imports it
-  routers.ts         LIVE monolith (28k lines) — see warning below
+  routers/           LIVE tRPC router — index.ts mounts one file per
+                     top-level key; _shared.ts holds leftover helpers
   db/                Extracted DB helpers — mostly unwired
-  db.ts              LIVE monolith (16k lines) — see warning below
+  db.ts              LIVE monolith (18k lines) — see warning below
   agent/             Autonomous agent loop (tools, memory, prompts)
 shared/              Types + constants used by both client and server
 drizzle/             SQL migrations + schema.ts (8k lines)
@@ -113,22 +113,21 @@ docs/                Feature + integration docs
 
 Do **not** read these in full. Use one of: the generated index, `rg`/`grep`, or `Read` with `offset`/`limit`.
 
-- `server/routers.ts` — **~27.7k lines, 128 top-level routers** (exact counts in the index header). See [`ROUTERS_INDEX.md`](./ROUTERS_INDEX.md) for feature → line range. **This is the live tRPC router** — `server/_core/index.ts` imports `appRouter` from `"../routers"`, which resolves to this file.
-- `server/db.ts` — **~15.6k lines, ~1,100 exports, 114 banner sections**. See [`DB_INDEX.md`](./DB_INDEX.md) for section map and per-export coverage. Still the default import target for most of the codebase.
+- `server/db.ts` — **~17.7k lines, ~1,100 exports, 114 banner sections**. See [`DB_INDEX.md`](./DB_INDEX.md) for section map and per-export coverage. Still the default import target for most of the codebase.
 - `drizzle/schema.ts` — **~8k lines, ~295 tables**. Drizzle table definitions.
+- `server/routers/` — no single large file any more, but `dataRoom.ts`, `procurement.ts`, `emailScanning.ts` and `_shared.ts` are each 1.4–2.4k lines. `rg` for the procedure name; don't read whole files.
 
-**Rule: for any investigation that requires scanning `server/routers.ts` or `server/db.ts` beyond a single feature's line range, delegate to an `Explore` subagent.** Keeps the main context lean and avoids accidentally pulling tens of thousands of lines into the transcript.
+**Rule: for any investigation that requires scanning `server/db.ts` beyond a single feature's line range, delegate to an `Explore` subagent.** Keeps the main context lean and avoids accidentally pulling tens of thousands of lines into the transcript.
 
-Regenerate both indexes with `pnpm index:legacy` after any change to either legacy file or to `server/routers/*.ts` / `server/db/*.ts`. The output is deterministic — no manual edits.
+Regenerate the index with `pnpm index:legacy` after any change to `server/db.ts` or `server/db/*.ts`. The output is deterministic — no manual edits.
 
-Because both files are generated *and* tracked, any two PRs that touch `server/routers.ts` or
-`server/db.ts` will conflict in them on merge. Never hand-resolve those conflicts — take either
-side and regenerate:
+Because the index is generated *and* tracked, any two PRs that touch `server/db.ts` will conflict in
+`DB_INDEX.md` on merge. Never hand-resolve that conflict — take either side and regenerate:
 
 ```sh
-git checkout --theirs ROUTERS_INDEX.md DB_INDEX.md   # or --ours; the content is discarded either way
+git checkout --theirs DB_INDEX.md   # or --ours; the content is discarded either way
 pnpm index:legacy
-git add ROUTERS_INDEX.md DB_INDEX.md
+git add DB_INDEX.md
 ```
 
 The same applies to `drizzle/meta/_journal.json`: parallel branches all claim the next free
@@ -136,21 +135,20 @@ migration number, so the last one merged must renumber its `.sql` file and its j
 sit after everything already on `main`. Migration `idx` values need not be contiguous, but `when`
 must increase monotonically.
 
-### ⚠️ The extracted trees are partial and unwired
+### ⚠️ `server/db/` is partial and unwired
 
-`server/routers/` and `server/db/` look like finished refactors but aren't. Someone extracted ~70% of the routers + db helpers into per-feature files, built `server/routers/index.ts` with `mergeRouters(...)`, and stopped before flipping the import. **Nothing consumes `server/routers/index.ts`** — the live tree is still the monolith. Same shape for `server/db/index.ts`: it re-exports from `./auth`, `./finance`, etc., but most callers still `import * as db from "./db"` (the file).
+`server/db/` looks like a finished refactor but isn't. Someone extracted ~70% of the db helpers into per-feature files and built `server/db/index.ts` to re-export them, but most callers still `import * as db from "./db"` (the file). Only the `db/*` files that `DB_INDEX.md` marks as imported directly are live.
 
 Implications:
 
-- **Adding a new route to `server/routers/<feature>.ts` alone produces dead code.** Typecheck passes, tRPC never sees it. Default: add new routes to `server/routers.ts` in the relevant section (use the index to find it).
 - **Adding a helper to `server/db/<feature>.ts` only works if the caller imports from `server/db/<feature>` directly.** If the caller uses `import * as db from "./db"`, the helper is invisible. Default: add helpers to `server/db.ts` in the matching banner section.
-- The 33 legacy-only top-level routers and 175 legacy-only db exports (see both indexes) quantify the gap.
+- The legacy-only exports listed in the index quantify the gap.
 
-If you need to wire up the extracted tree as part of a feature, do it deliberately: change `server/_core/index.ts:10` to import from `"../routers/index"`, verify every legacy-only route has a home in the extracted tree (or accept the loss), and update the 5 test files that import from `"./routers"`.
+`server/routers.ts` had the same shape and was retired by splitting the live monolith one-file-per-key into `server/routers/` (`scripts/split-legacy-router.mjs`, verified by `scripts/dump-trpc-paths.ts` parity). `server/db.ts` is next.
 
 ## Conventions
 
-- **New API routes:** add to `server/routers.ts` in the relevant section (see [`ROUTERS_INDEX.md`](./ROUTERS_INDEX.md)). The `server/routers/<feature>.ts` tree is orphaned — don't use it for new routes until it's wired up.
+- **New API routes:** add the procedure to the matching `server/routers/<key>.ts`. New top-level key → new `server/routers/<key>.ts` exporting `<key>Router` + one line in `server/routers/index.ts`. Never add to `server/routers/_shared.ts`.
 - **New DB helpers:** add to `server/db.ts` in the matching banner section (see [`DB_INDEX.md`](./DB_INDEX.md)). Same caveat for `server/db/<feature>.ts`.
 - **New pages:** add under `client/src/pages/<feature>/`, route in `client/src/App.tsx` (wouter).
 - **Cross-boundary types:** live in `shared/types.ts`.

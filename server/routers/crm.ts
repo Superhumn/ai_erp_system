@@ -1,13 +1,57 @@
+// appRouter.crm — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+import { eq } from "drizzle-orm";
+import { protectedProcedure, router } from "../_core/trpc";
+import { invokeLLM } from "../_core/llm";
 import * as db from "../db";
-import { router, protectedProcedure, createAuditLog } from "./middleware";
+import { ENV } from "../_core/env";
+import { createAuditLog } from "./_shared";
 
+// ============================================
+// CRM MODULE - Contacts, Messaging & Tracking
+// ============================================
 export const crmRouter = router({
-  // ============================================
-  // CRM MODULE - Contacts, Messaging & Tracking
-  // ============================================
-  crm: router({
+    // --- B2B ROCKET LEADS ---
+    // Leads pulled in from B2B Rocket via the Zapier webhook
+    // (/webhooks/b2brocket/leads), AI-scored on intake. These are just
+    // crmContacts with source = "b2brocket"; this sub-router exposes a
+    // score-sorted view + a summary for the outreach UI.
+    b2brocketLeads: router({
+      list: protectedProcedure
+        .input(z.object({
+          pipelineStage: z.string().optional(),
+          minScore: z.number().optional(),
+          search: z.string().optional(),
+          limit: z.number().optional(),
+          offset: z.number().optional(),
+        }).optional())
+        .query(async ({ input }) => {
+          const rows = await db.getCrmContacts({
+            source: "b2brocket",
+            pipelineStage: input?.pipelineStage,
+            search: input?.search,
+            limit: input?.limit,
+            offset: input?.offset,
+          });
+          const filtered = typeof input?.minScore === "number"
+            ? rows.filter((r: any) => (r.leadScore ?? 0) >= input.minScore!)
+            : rows;
+          // Highest-intent leads first.
+          return filtered.sort((a: any, b: any) => (b.leadScore ?? 0) - (a.leadScore ?? 0));
+        }),
+
+      stats: protectedProcedure.query(async () => {
+        const rows = await db.getCrmContacts({ source: "b2brocket" });
+        const total = rows.length;
+        const hot = rows.filter((r: any) => (r.leadScore ?? 0) >= 70).length;
+        const avgScore = total
+          ? Math.round(rows.reduce((s: number, r: any) => s + (r.leadScore ?? 0), 0) / total)
+          : 0;
+        return { total, hot, avgScore };
+      }),
+    }),
+
     // --- CONTACTS ---
     contacts: router({
       list: protectedProcedure
@@ -127,6 +171,30 @@ export const crmRouter = router({
           return { success: true };
         }),
 
+      deleteAll: protectedProcedure
+        .mutation(async ({ ctx }) => {
+          const count = await db.deleteAllCrmContacts();
+          await createAuditLog(ctx.user.id, 'delete', 'crm_contact', 0, `Bulk deleted all ${count} contacts`);
+          return { deleted: count };
+        }),
+
+      deletePlaceholders: protectedProcedure
+        .mutation(async ({ ctx }) => {
+          const database = await db.getDb();
+          if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+          const { crmContacts } = await import("../../drizzle/schema");
+          const all = await database.select().from(crmContacts);
+          const placeholders = all.filter((c: any) => {
+            const name = (c.fullName || c.firstName || "").trim();
+            return /^(Contact|Test|Placeholder|Sample)\s*\d*$/i.test(name) || name === "" || name === "-";
+          });
+          for (const p of placeholders) {
+            await database.delete(crmContacts).where(eq(crmContacts.id, p.id));
+          }
+          await createAuditLog(ctx.user.id, 'delete', 'crm_contact', 0, `Deleted ${placeholders.length} placeholder contacts`);
+          return { deleted: placeholders.length };
+        }),
+
       getStats: protectedProcedure.query(() => db.getCrmContactStats()),
 
       findDuplicates: protectedProcedure.query(async () => {
@@ -142,8 +210,8 @@ export const crmRouter = router({
           return result;
         }),
 
-      // Auto-merge every duplicate group, keeping the oldest contact (lowest id)
-      // as the primary. Useful for a one-click cleanup of a bloated CRM.
+      // One-click cleanup: auto-merge every duplicate group, keeping the
+      // oldest contact (lowest id) as the primary.
       autoMergeDuplicates: protectedProcedure.mutation(async ({ ctx }) => {
         const groups = await db.findDuplicateCrmContactGroups();
         let merged = 0;
@@ -170,6 +238,43 @@ export const crmRouter = router({
       getMessagingHistory: protectedProcedure
         .input(z.object({ contactId: z.number(), limit: z.number().optional() }))
         .query(({ input }) => db.getUnifiedMessagingHistory(input.contactId, input.limit)),
+
+      // Export unified messaging history (WhatsApp + email + other channels)
+      // for a single contact. Returns base64 (xlsx/pdf) or utf-8 (csv).
+      exportMessagingHistory: protectedProcedure
+        .input(z.object({
+          contactId: z.number(),
+          format: z.enum(["csv", "xlsx", "pdf"]),
+          limit: z.number().max(5000).optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { exportMessages } = await import("../_core/messageExport");
+          const contact = await db.getCrmContactById(input.contactId);
+          const history = await db.getUnifiedMessagingHistory(input.contactId, input.limit ?? 1000);
+          // Flatten the {type, data, ...} envelope into the row shape exportMessages expects.
+          const rows = (history as any[]).map((h: any) => {
+            const d = h.data || {};
+            return {
+              id: h.id,
+              channel: h.type, // "whatsapp" | "email" | ...
+              direction: h.direction,
+              content: h.content || d.bodyText || d.subject || "",
+              subject: d.subject,
+              status: h.status,
+              whatsappNumber: d.whatsappNumber,
+              fromName: d.fromName,
+              toName: d.toEmail || d.contactName,
+              messageType: d.messageType,
+              sentAt: d.sentAt,
+              receivedAt: d.receivedAt,
+              createdAt: d.createdAt || h.timestamp,
+              conversationId: d.conversationId,
+            };
+          });
+          const name = contact?.fullName || contact?.firstName || `contact_${input.contactId}`;
+          const label = `messages_${name.replace(/\s+/g, "_")}`;
+          return exportMessages(rows, input.format, label, name);
+        }),
     }),
 
     // --- TAGS ---
@@ -241,16 +346,50 @@ export const crmRouter = router({
           messageType: z.enum(["text", "image", "video", "audio", "document", "location", "contact", "template"]).optional(),
           templateName: z.string().optional(),
           templateParams: z.string().optional(),
+          conversationId: z.string().optional(),
+          // Optional linkage to another record (e.g. a shipment) so supplier
+          // chatter can be tied to the thing it's about.
+          relatedEntityType: z.string().optional(),
+          relatedEntityId: z.number().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          // Create message record (actual sending would be via WhatsApp Business API webhook)
+          const conversationId = input.conversationId || `wa_${input.whatsappNumber}_${Date.now()}`;
+
+          // Record the outbound message immediately (status pending).
           const id = await db.createWhatsappMessage({
             ...input,
             direction: "outbound",
             status: "pending",
             sentBy: ctx.user.id,
-            conversationId: `wa_${input.whatsappNumber}_${Date.now()}`,
+            conversationId,
           });
+
+          // Send for real via the Twilio WhatsApp Business API when configured.
+          // If not configured, the message stays a local "pending" log.
+          let status: "pending" | "sent" | "failed" = "pending";
+          let failedReason: string | undefined;
+          if (ENV.twilioAccountSid && ENV.twilioAuthToken && ENV.twilioWhatsappNumber) {
+            const withChannel = (n: string) =>
+              n.startsWith("whatsapp:") ? n : `whatsapp:${n.startsWith("+") ? n : `+${n.replace(/[^\d]/g, "")}`}`;
+            try {
+              const twilioMod = await import("twilio");
+              const client = twilioMod.default(ENV.twilioAccountSid, ENV.twilioAuthToken);
+              const msg = await client.messages.create({
+                to: withChannel(input.whatsappNumber),
+                from: withChannel(ENV.twilioWhatsappNumber),
+                body: input.content,
+                ...(ENV.publicAppUrl && ENV.publicAppUrl !== "http://localhost:3000"
+                  ? { statusCallback: `${ENV.publicAppUrl.replace(/\/$/, "")}/api/twilio/whatsapp/status` }
+                  : {}),
+              });
+              status = "sent";
+              await db.updateWhatsappMessage(id, { status: "sent", messageId: msg.sid, sentAt: new Date() });
+            } catch (err) {
+              status = "failed";
+              failedReason = (err as Error).message;
+              await db.updateWhatsappMessage(id, { status: "failed", failedReason });
+            }
+          }
 
           // Also create an interaction record
           if (input.contactId) {
@@ -264,7 +403,7 @@ export const crmRouter = router({
             });
           }
 
-          return { id, status: "pending" };
+          return { id, status, failedReason };
         }),
 
       logInbound: protectedProcedure
@@ -316,6 +455,42 @@ export const crmRouter = router({
         .mutation(async ({ input }) => {
           await db.updateWhatsappMessageStatus(input.id, input.status, new Date());
           return { success: true };
+        }),
+
+      // Export WhatsApp messages to CSV, XLSX, or PDF. Filter by contact,
+      // conversation, or number. Returns base64 (xlsx/pdf) or utf-8 (csv).
+      exportMessages: protectedProcedure
+        .input(z.object({
+          format: z.enum(["csv", "xlsx", "pdf"]),
+          contactId: z.number().optional(),
+          whatsappNumber: z.string().optional(),
+          conversationId: z.string().optional(),
+          limit: z.number().max(5000).optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { exportMessages } = await import("../_core/messageExport");
+          const msgs = await db.getWhatsappMessages({
+            contactId: input.contactId,
+            whatsappNumber: input.whatsappNumber,
+            conversationId: input.conversationId,
+            limit: input.limit ?? 1000,
+          });
+          const tagged = msgs.map((m: any) => ({ ...m, channel: "whatsapp" }));
+
+          let label = "whatsapp_messages";
+          let subtitle: string | undefined;
+          if (input.contactId) {
+            const c = await db.getCrmContactById(input.contactId);
+            if (c) {
+              label = `whatsapp_${(c.fullName || c.firstName || `contact_${input.contactId}`).replace(/\s+/g, "_")}`;
+              subtitle = c.fullName || c.firstName || undefined;
+            }
+          } else if (input.whatsappNumber) {
+            label = `whatsapp_${input.whatsappNumber.replace(/[^0-9]/g, "")}`;
+            subtitle = input.whatsappNumber;
+          }
+
+          return exportMessages(tagged, input.format, label, subtitle);
         }),
     }),
 
@@ -480,7 +655,7 @@ export const crmRouter = router({
         .input(z.object({
           pipelineId: z.number(),
           contactId: z.number(),
-          name: z.string().min(1),
+          name: z.string().min(1).optional(), // Ignored — deal title is always the contact's company.
           description: z.string().optional(),
           stage: z.string(),
           amount: z.string().optional(),
@@ -493,12 +668,63 @@ export const crmRouter = router({
           assignedTo: z.number().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const id = await db.createCrmDeal({
-            ...input,
+          // Deal title must be the contact's client company name.
+          const contact = await db.getCrmContactById(input.contactId);
+          if (!contact) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Contact not found' });
+          }
+          const company = (contact.organization || '').trim();
+          if (!company) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: `Cannot create deal: contact "${contact.fullName}" has no company. Add a company to the contact first.`,
+            });
+          }
+
+          // Reject duplicates up front — same company can't have two deals.
+          const existing = await db.findCrmDealByCompany(company);
+          if (existing) {
+            throw new TRPCError({
+              code: 'CONFLICT',
+              message: `A deal already exists for "${company}" (deal #${existing.id}).`,
+            });
+          }
+
+          // Block if another approval task is already queued for this company.
+          if (await db.hasPendingDealApprovalForCompany(company)) {
+            throw new TRPCError({
+              code: 'CONFLICT',
+              message: `An approval is already pending for "${company}".`,
+            });
+          }
+
+          const taskData = {
+            pipelineId: input.pipelineId,
+            contactId: input.contactId,
+            company,
+            stage: input.stage,
+            amount: input.amount,
+            source: input.source,
+            notes: input.notes,
             assignedTo: input.assignedTo || ctx.user.id,
+          };
+          const task = await db.createAiAgentTask({
+            taskType: 'create_crm_deal',
+            priority: 'medium',
+            status: 'pending_approval',
+            taskData: JSON.stringify(taskData),
+            aiReasoning: `New CRM deal for "${company}" submitted by ${ctx.user.name} for approval.`,
+            aiConfidence: '100.00',
           });
-          await createAuditLog(ctx.user.id, 'create', 'crm_deal', id, input.name);
-          return { id };
+          await db.createAiAgentLog({
+            taskId: task.id,
+            action: 'task_created',
+            status: 'info',
+            message: `CRM deal approval requested by ${ctx.user.name}`,
+            details: JSON.stringify(taskData),
+          });
+          await createAuditLog(ctx.user.id, 'create', 'crm_deal_request', task.id, company);
+          return { taskId: task.id, pendingApproval: true, company };
         }),
 
       update: protectedProcedure
@@ -536,6 +762,62 @@ export const crmRouter = router({
         .input(z.object({ pipelineId: z.number().optional() }).optional())
         .query(({ input }) => db.getCrmDealStats(input?.pipelineId)),
 
+      findDuplicates: protectedProcedure.query(async () => {
+        const groups = await db.findDuplicateCrmDealGroups();
+        return { groups, totalDuplicates: groups.reduce((n: number, g: any) => n + g.deals.length - 1, 0) };
+      }),
+
+      merge: protectedProcedure
+        .input(z.object({ primaryId: z.number(), duplicateIds: z.array(z.number()).min(1) }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.mergeCrmDeals(input.primaryId, input.duplicateIds);
+          await createAuditLog(ctx.user.id, 'update', 'crm_deal', input.primaryId, `merged ${result.merged} duplicates`);
+          return result;
+        }),
+
+      autoMergeDuplicates: protectedProcedure.mutation(async ({ ctx }) => {
+        const groups = await db.findDuplicateCrmDealGroups();
+        let merged = 0;
+        let groupsMerged = 0;
+        const score = (d: any) =>
+          (d.contactId ? 10 : 0) +
+          (d.amount && Number(d.amount) > 0 ? 5 : 0) +
+          (d.notes ? Math.min(3, d.notes.length / 50) : 0) +
+          (d.status === 'open' ? 1 : 0);
+        const seen = new Set<number>();
+        for (const g of groups as any[]) {
+          const candidates = g.deals.filter((d: any) => !seen.has(d.id));
+          if (candidates.length < 2) continue;
+          const sorted = [...candidates].sort((a, b) => score(b) - score(a) || a.id - b.id);
+          const primary = sorted[0];
+          const dupeIds = sorted.slice(1).map((d: any) => d.id);
+          if (dupeIds.length === 0) continue;
+          const result = await db.mergeCrmDeals(primary.id, dupeIds);
+          merged += result.merged;
+          groupsMerged++;
+          seen.add(primary.id);
+          dupeIds.forEach((id: number) => seen.add(id));
+        }
+        if (merged > 0) {
+          await createAuditLog(ctx.user.id, 'update', 'crm_deal', 0, `auto-merged ${merged} duplicates across ${groupsMerged} groups`);
+        }
+        return { merged, groupsMerged };
+      }),
+
+      cleanupLegacyMeetingDeals: protectedProcedure.mutation(async ({ ctx }) => {
+        const result = await db.cleanupLegacyMeetingDeals();
+        if (result.renamed > 0 || result.merged > 0) {
+          await createAuditLog(
+            ctx.user.id,
+            'update',
+            'crm_deal',
+            0,
+            `legacy cleanup: renamed ${result.renamed}, merged ${result.merged} across ${result.groupsMerged} groups`,
+          );
+        }
+        return result;
+      }),
+
       moveStage: protectedProcedure
         .input(z.object({
           id: z.number(),
@@ -550,6 +832,49 @@ export const crmRouter = router({
           });
           await createAuditLog(ctx.user.id, 'update', 'crm_deal', input.id, existing?.name, { stage: existing?.stage }, { stage: input.stage });
           return { success: true };
+        }),
+
+      getNextSteps: protectedProcedure
+        .input(z.object({ dealId: z.number() }))
+        .query(async ({ input }) => {
+          const deal = await db.getCrmDealById(input.dealId);
+          if (!deal) return { steps: [] };
+
+          // Get the contact for this deal
+          const contact = deal.contactId ? await db.getCrmContactById(deal.contactId) : null;
+
+          // Get recent interactions
+          const interactions = deal.contactId ? await db.getCrmInteractions({ contactId: deal.contactId }) : [];
+
+          const response = await invokeLLM({
+            messages: [
+              {
+                role: "system",
+                content: `You are a sales coach. Based on the deal details and interaction history, suggest 3-5 concrete next steps to advance this deal. Be specific and actionable.
+
+Return JSON: { "steps": [{ "action": "what to do", "priority": "high|medium|low", "reasoning": "why this matters", "suggestedDate": "when to do it (relative like 'tomorrow', 'this week', 'next Monday')" }] }`
+              },
+              {
+                role: "user",
+                content: `Deal: ${deal.name}
+Stage: ${deal.stage}
+Amount: $${deal.amount || 'not set'}
+Contact: ${contact?.fullName || contact?.firstName || 'Unknown'} at ${contact?.organization || 'Unknown'}
+Title: ${contact?.jobTitle || 'Unknown'}
+Source: ${deal.source || 'Unknown'}
+Notes: ${deal.notes || 'None'}
+Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.type || i.channel}: ${i.subject || i.notes || ''}`).join('; ') || 'None'}`
+              },
+            ],
+          });
+
+          try {
+            const content = response.choices?.[0]?.message?.content;
+            const cleaned = (typeof content === 'string' ? content : '').replace(/```json\n?|\n?```/g, '').trim();
+            return JSON.parse(cleaned);
+          } catch {
+            return { steps: [{ action: "Follow up with contact", priority: "high", reasoning: "Keep the conversation going", suggestedDate: "this week" }] };
+          }
         }),
     }),
 
@@ -655,21 +980,20 @@ export const crmRouter = router({
           notes: z.string().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          // Check for existing contact by whatsapp/phone (normalized).
+          // Check for existing contact by normalized phone/whatsapp.
           const existing = await db.findCrmContactMatch({
             whatsappNumber: input.whatsappNumber,
             phone: input.whatsappNumber,
           });
 
           if (existing) {
-            // Update WhatsApp number if needed
             if (!existing.whatsappNumber) {
               await db.updateCrmContact(existing.id, { whatsappNumber: input.whatsappNumber });
             }
             return { contactId: existing.id, isNew: false };
           }
 
-          // Create new contact (use findOrCreate for race-safety)
+          // Create new contact (findOrCreate for race-safety)
           const firstName = input.name?.split(" ")[0] || "WhatsApp";
           const lastName = input.name?.split(" ").slice(1).join(" ") || "Contact";
           const fullName = input.name || `WhatsApp ${input.whatsappNumber}`;
@@ -817,6 +1141,7 @@ export const crmRouter = router({
           bodyHtml: z.string(),
           bodyText: z.string().optional(),
           type: z.enum(["newsletter", "drip", "announcement", "follow_up", "custom"]).optional(),
+          status: z.enum(["draft", "scheduled", "sending", "sent", "paused", "cancelled"]).optional(),
           targetTags: z.string().optional(),
           targetContactTypes: z.string().optional(),
           targetPipelineStages: z.string().optional(),
@@ -838,6 +1163,7 @@ export const crmRouter = router({
           subject: z.string().optional(),
           bodyHtml: z.string().optional(),
           bodyText: z.string().optional(),
+          type: z.enum(["newsletter", "drip", "announcement", "follow_up", "custom"]).optional(),
           status: z.enum(["draft", "scheduled", "sending", "sent", "paused", "cancelled"]).optional(),
           scheduledAt: z.date().optional(),
         }))
@@ -848,5 +1174,142 @@ export const crmRouter = router({
           return { success: true };
         }),
     }),
-  }),
-});
+    // --- INVESTORS & FUNDRAISING ---
+    listInvestors: protectedProcedure
+      .input(z.object({ companyId: z.number().optional() }).optional())
+      .query(({ input }) => db.getInvestors(input?.companyId)),
+    createInvestor: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        email: z.string().email().optional(),
+        phone: z.string().optional(),
+        company: z.string().optional(),
+        title: z.string().optional(),
+        type: z.enum(["angel", "vc", "family_office", "strategic", "accelerator", "other"]).default("angel"),
+        status: z.enum(["lead", "contacted", "interested", "committed", "invested", "passed"]).default("lead"),
+        priority: z.enum(["low", "medium", "high", "critical"]).default("medium"),
+        linkedinUrl: z.string().optional(),
+        website: z.string().optional(),
+        source: z.string().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(({ input }) => db.createInvestor(input as any)),
+    listCampaigns: protectedProcedure
+      .input(z.object({ companyId: z.number().optional() }).optional())
+      .query(({ input }) => db.getFundraisingCampaigns(input?.companyId)),
+    createCampaign: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        description: z.string().optional(),
+        targetAmount: z.string().optional(),
+        minimumInvestment: z.string().optional(),
+        valuation: z.string().optional(),
+        roundType: z.enum(["pre_seed", "seed", "series_a", "series_b", "series_c", "bridge", "other"]).default("seed"),
+        equityOffered: z.string().optional(),
+        status: z.enum(["planning", "active", "paused", "closed", "cancelled"]).default("planning"),
+        notes: z.string().optional(),
+        companyId: z.number().optional(),
+      }))
+      .mutation(({ input, ctx }) => {
+        const cleaned: Record<string, any> = {
+          name: input.name,
+          roundType: input.roundType,
+          status: input.status,
+          createdBy: ctx.user.id,
+          companyId: input.companyId ?? (ctx.user as any).companyId ?? null,
+        };
+        if (input.description) cleaned.description = input.description;
+        if (input.targetAmount) cleaned.targetAmount = input.targetAmount;
+        if (input.minimumInvestment) cleaned.minimumInvestment = input.minimumInvestment;
+        if (input.valuation) cleaned.valuation = input.valuation;
+        if (input.equityOffered) cleaned.equityOffered = input.equityOffered;
+        if (input.notes) cleaned.notes = input.notes;
+        return db.createFundraisingCampaign(cleaned as any);
+      }),
+    updateCampaign: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().min(1),
+        description: z.string().optional(),
+        targetAmount: z.string().optional(),
+        minimumInvestment: z.string().optional(),
+        valuation: z.string().optional(),
+        roundType: z.enum(["pre_seed", "seed", "series_a", "series_b", "series_c", "bridge", "other"]).default("seed"),
+        equityOffered: z.string().optional(),
+        status: z.enum(["planning", "active", "paused", "closed", "cancelled"]).default("planning"),
+        notes: z.string().optional(),
+        companyId: z.number().optional(),
+      }))
+      .mutation(({ input }) => {
+        const { id, ...values } = input;
+        const cleaned: Record<string, any> = {
+          name: values.name,
+          roundType: values.roundType,
+          status: values.status,
+        };
+        cleaned.description = values.description || null;
+        cleaned.targetAmount = values.targetAmount || null;
+        cleaned.minimumInvestment = values.minimumInvestment || null;
+        cleaned.valuation = values.valuation || null;
+        cleaned.equityOffered = values.equityOffered || null;
+        cleaned.notes = values.notes || null;
+        if (values.companyId !== undefined) cleaned.companyId = values.companyId;
+        return db.updateFundraisingCampaign(id, cleaned);
+      }),
+    listInvestments: protectedProcedure
+      .input(z.object({ investorId: z.number().optional() }).optional())
+      .query(({ input }) => db.getInvestorInvestments(input?.investorId)),
+    // Investors linked to a specific fundraising round (campaign).
+    listCampaignInvestors: protectedProcedure
+      .input(z.object({ campaignId: z.number() }))
+      .query(({ input }) => db.getCampaignInvestments(input.campaignId)),
+    addCampaignInvestment: protectedProcedure
+      .input(z.object({
+        campaignId: z.number(),
+        investorId: z.number(),
+        amount: z.string().regex(/^\d+(\.\d{1,2})?$/, "Amount must be a positive number (up to 2 decimals)"),
+        currency: z.string().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(({ input }) => db.createInvestment({
+        campaignId: input.campaignId,
+        investorId: input.investorId,
+        amount: input.amount,
+        currency: input.currency || "USD",
+        notes: input.notes,
+      })),
+    removeCampaignInvestment: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(({ input }) => db.deleteInvestment(input.id)),
+    listReminders: protectedProcedure
+      .input(z.object({ status: z.string().optional(), dueBefore: z.date().optional() }).optional())
+      .query(({ input }) => db.getFundraisingReminders(input ? { status: input.status } : undefined)),
+
+    // Admin view of pro-rata interest signaled by existing investors on
+    // an open round. Joined with the stakeholder name so IR can follow
+    // up offline. Counterpart to `investorPortal.indicateInterest`.
+    listProRataIndications: protectedProcedure
+      .input(z.object({ campaignId: z.number() }))
+      .query(async ({ input }) => {
+        const indications = await db.getProRataIndicationsForCampaign(input.campaignId);
+        const stakeholderById = new Map(
+          (await db.getStakeholders()).map((s: { id: number; name: string; email?: string | null }) => [s.id, s]),
+        );
+        return (indications as Array<{
+          id: number; stakeholderId: number; indicatedAmount: string | null;
+          notes: string | null; status: string; createdAt: Date;
+        }>).map((i) => {
+          const s = stakeholderById.get(i.stakeholderId);
+          return {
+            id: i.id,
+            stakeholderId: i.stakeholderId,
+            stakeholderName: s?.name ?? "Unknown",
+            stakeholderEmail: s?.email ?? null,
+            indicatedAmount: i.indicatedAmount,
+            notes: i.notes,
+            status: i.status,
+            createdAt: i.createdAt,
+          };
+        });
+      }),
+  });

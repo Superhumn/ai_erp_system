@@ -211,7 +211,7 @@ export const IMPORT_SKIP = "";
 
 /**
  * Destination types the Google Drive auto-sync importer can write to. MUST stay
- * in sync with `DRIVE_SUPPORTED_TYPES` in server/routers.ts — these are the
+ * in sync with `DRIVE_SUPPORTED_TYPES` in server/routers/_shared.ts — these are the
  * options offered when a user confirms/overrides a detected sheet type.
  */
 export const DRIVE_IMPORT_TYPES = [
