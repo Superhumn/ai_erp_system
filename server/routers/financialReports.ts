@@ -21,8 +21,6 @@ export const financialReportsRouter = router({
         };
 
         const now = new Date();
-        const startDate = input.startDate ? new Date(input.startDate) : new Date(now.getFullYear(), now.getMonth(), 1);
-        const endDate = input.endDate ? new Date(input.endDate) : now;
 
         const [invoices, bills, accounts, orders, customers, vendors, inventory] = await Promise.all([
           safeQuery(() => db.getInvoices(), []),

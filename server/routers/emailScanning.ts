@@ -20,7 +20,6 @@ export const emailScanningRouter = router({
       }).optional())
       .mutation(async ({ input }) => {
         const { scanAndCategorizeInbox, getImapConfig } = await import("../_core/emailInboxScanner");
-        const { parseUploadedDocument } = await import("../documentImportService");
         const config = getImapConfig();
         if (!config) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "IMAP not configured. Set IMAP_HOST, IMAP_USER, IMAP_PASSWORD in env." });
 
@@ -36,7 +35,7 @@ export const emailScanningRouter = router({
 
         for (const folder of folders) {
           try {
-            const { scanResult, parsedResults } = await scanAndCategorizeInbox(config, {
+            const { parsedResults } = await scanAndCategorizeInbox(config, {
               folder,
               unseenOnly,
               limit,
@@ -274,9 +273,9 @@ export const emailScanningRouter = router({
         const { parseEmailContent } = await import("../_core/emailParser");
         
         // First, quick categorize for immediate feedback
-        const { quickCategorize, categorizeEmail } = await import("../_core/emailParser");
+        const { quickCategorize } = await import("../_core/emailParser");
         const quickCategory = quickCategorize(input.subject, input.fromEmail);
-        
+
         // Create inbound email record with initial category
         const { id: emailId } = await db.createInboundEmail({
           messageId: `manual-${Date.now()}-${require('crypto').randomBytes(8).toString('hex')}`,
@@ -950,7 +949,7 @@ export const emailScanningRouter = router({
     // Check if IMAP inbox is configured
     isInboxConfigured: protectedProcedure
       .query(async () => {
-        const { isImapConfigured, getImapConfig, IMAP_PRESETS } = await import("../_core/emailInboxScanner");
+        const { isImapConfigured, IMAP_PRESETS } = await import("../_core/emailInboxScanner");
         return {
           configured: isImapConfigured(),
           presets: Object.keys(IMAP_PRESETS),

@@ -155,16 +155,6 @@ export const rawMaterialsRouter = router({
           suggestedVendor = await db.getVendorById(suggestedVendorId);
         }
         
-        // Get recent POs for context
-        const recentPOs = allPOs
-          .filter(po => materialPOItems.some(item => item.purchaseOrderId === po.id))
-          .sort((a, b) => {
-            const dateA = a.orderDate ? new Date(a.orderDate).getTime() : 0;
-            const dateB = b.orderDate ? new Date(b.orderDate).getTime() : 0;
-            return dateB - dateA;
-          })
-          .slice(0, 5);
-        
         // Get last purchase price
         const lastPOItem = materialPOItems
           .sort((a, b) => {
