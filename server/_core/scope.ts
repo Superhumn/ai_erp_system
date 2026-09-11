@@ -110,3 +110,33 @@ export function scopeAllows(scope: Scope, companyId: number | null | undefined):
   if (scope.companyIds === "all") return true;
   return companyId != null && scope.companyIds.includes(companyId);
 }
+
+/**
+ * Splits caller-supplied ids into the ones a prior scoped lookup returned as
+ * visible and the ones it didn't.
+ *
+ * Bulk mutations take their id list straight from the client, so every one of
+ * them needs this: without it a user can name another entity's record and have
+ * it changed or deleted. Rejected ids are returned rather than dropped so a
+ * partial run can still be reported honestly.
+ *
+ * The caller supplies `reason`, and it should say "not found" rather than
+ * "forbidden" — confirming that an id exists but belongs to someone else leaks
+ * the existence of another entity's records.
+ */
+export function partitionIdsByVisibility(
+  ids: number[],
+  visibleIds: Iterable<number>,
+  reason: string,
+): { allowed: number[]; rejected: { id: number; reason: string }[] } {
+  const visible = visibleIds instanceof Set ? visibleIds : new Set(visibleIds);
+  const allowed: number[] = [];
+  const rejected: { id: number; reason: string }[] = [];
+
+  for (const id of ids) {
+    if (visible.has(id)) allowed.push(id);
+    else rejected.push({ id, reason });
+  }
+
+  return { allowed, rejected };
+}
