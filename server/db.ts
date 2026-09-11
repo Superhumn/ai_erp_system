@@ -1,4 +1,4 @@
-import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray, ne, sum, max, min, notExists } from "drizzle-orm";
+import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray, ne, sum, notExists } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2";
 import { scopeAllows, scopeCompanyIds, partitionIdsByVisibility, type Scope } from "./_core/scope";
