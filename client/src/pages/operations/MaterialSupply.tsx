@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { buildMaterialSupplyView } from "@/lib/materialSupply";
 
@@ -18,6 +18,46 @@ const STYLE = `
 `;
 
 const card = "0 6px 20px rgba(17,24,39,.06),0 1px 2px rgba(17,24,39,.04)";
+
+// Never scale below this — past it the page scrolls instead of shrinking further.
+const MIN_ZOOM = 0.6;
+
+/**
+ * Scale the page down (CSS `zoom`) so it fits the height left in the
+ * scrolling shell, so the whole board is visible without scrolling.
+ * Measures the natural height once per layout pass and re-fits on resize.
+ */
+function useFitToViewport(ref: React.RefObject<HTMLDivElement | null>, ready: boolean) {
+  const [zoom, setZoom] = useState(1);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !ready) return;
+    const fit = () => {
+      const scroller = (el.closest("main") as HTMLElement | null) ?? document.documentElement;
+      const scrollerRect = scroller.getBoundingClientRect();
+      const bottomPad = parseFloat(getComputedStyle(scroller).paddingBottom) || 0;
+      const top = el.getBoundingClientRect().top - scrollerRect.top + scroller.scrollTop;
+      const available = scroller.clientHeight - top - bottomPad;
+      // Height at zoom 1 (rect height already includes the current zoom).
+      const currentZoom = parseFloat(el.style.zoom) || 1;
+      const natural = el.getBoundingClientRect().height / currentZoom;
+      if (natural <= 0 || available <= 0) return;
+      const next = Math.min(1, Math.max(MIN_ZOOM, available / natural));
+      setZoom((z) => (Math.abs(z - next) < 0.005 ? z : next));
+    };
+    fit();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(fit) : null;
+    ro?.observe(el);
+    const scroller = el.closest("main");
+    if (scroller && ro) ro.observe(scroller);
+    window.addEventListener("resize", fit);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("resize", fit);
+    };
+  }, [ref, ready]);
+  return zoom;
+}
 
 function Kpi({ value, label, color }: { value: number; label: string; color?: string }) {
   return (
@@ -66,6 +106,8 @@ export default function MaterialSupply() {
   }, []);
 
   const view = useMemo(() => (data ? buildMaterialSupplyView(data) : null), [data]);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const zoom = useFitToViewport(rootRef, view !== null);
 
   if (isLoading) {
     return (
@@ -86,8 +128,10 @@ export default function MaterialSupply() {
 
   return (
     <div
+      ref={rootRef}
       className="msr-scope"
       style={{
+        zoom,
         fontFamily: FONT,
         background: "#EDEFF2",
         color: "#111827",
@@ -96,7 +140,7 @@ export default function MaterialSupply() {
         padding: "10px 14px 12px",
       }}
     >
-      <div style={{ maxWidth: 1320, margin: "0 auto" }}>
+      <div>
         {/* TOPBAR + KPIs */}
         <div
           style={{
