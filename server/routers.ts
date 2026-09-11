@@ -6328,7 +6328,12 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
       // Check QuickBooks OAuth connection and attempt refresh if expired.
       // In Merge mode the connection is env-configured, not per-user OAuth.
       const usingMerge = ENV.accountingSyncProvider === "merge";
-      const mergeCheck = usingMerge ? await checkMergeConnection() : null;
+      // Merge connection details are only visible to users with access to
+      // the linked entity; others see it as not configured.
+      const mergeVisible = usingMerge
+        ? scopeAllows(await resolveRequestScope(ctx.user), ENV.mergeCompanyId)
+        : false;
+      const mergeCheck = usingMerge && mergeVisible ? await checkMergeConnection() : null;
       const quickbooksToken = usingMerge ? null : await db.getQuickBooksOAuthToken(ctx.user.id);
       let quickbooksConnected = usingMerge
         ? !!mergeCheck?.connected
@@ -8106,6 +8111,12 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
     // Get connection status
     getConnectionStatus: protectedProcedure.query(async ({ ctx }) => {
       if (ENV.accountingSyncProvider === "merge") {
+        // The linked Merge account belongs to one ERP entity; users scoped
+        // away from it must not see its connection details.
+        const scope = await resolveRequestScope(ctx.user);
+        if (!scopeAllows(scope, ENV.mergeCompanyId)) {
+          return { connected: false, realmId: null, provider: "merge" };
+        }
         // Reachability, not just env presence: an invalid token or unlinked
         // account should not report as connected. Cached ~60s in merge.ts.
         const check = await checkMergeConnection();
@@ -8217,7 +8228,9 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
     syncAccounts: protectedProcedure
       .input(z.object({ companyId: z.number().optional() }))
       .mutation(async ({ input, ctx }) => {
-        const companyId = input.companyId || 1; // Default to company 1
+        // Default target: in Merge mode the linked entity (the UI calls this
+        // with {}), otherwise legacy company 1.
+        const companyId = input.companyId || (ENV.accountingSyncProvider === "merge" ? ENV.mergeCompanyId : 1);
 
         // The synced rows are persisted under companyId — refuse a target
         // entity outside the caller's scope.
@@ -8274,7 +8287,8 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         type: z.enum(['Inventory', 'NonInventory', 'Service']).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const companyId = input.companyId || 1;
+        // Same defaulting rule as syncAccounts.
+        const companyId = input.companyId || (ENV.accountingSyncProvider === "merge" ? ENV.mergeCompanyId : 1);
 
         // Same scope rule as syncAccounts: rows land under companyId.
         const scope = await resolveRequestScope(ctx.user);
@@ -8332,16 +8346,21 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         companyId: z.number().optional(),
         classification: z.enum(['Asset', 'Liability', 'Equity', 'Revenue', 'Expense']).optional(),
       }).optional())
-      .query(async ({ input }) => {
-        const companyId = input?.companyId || 1;
+      .query(async ({ input, ctx }) => {
+        const companyId = input?.companyId || (ENV.accountingSyncProvider === "merge" ? ENV.mergeCompanyId : 1);
+        // Synced accounts are entity data — hide them from users scoped away.
+        const scope = await resolveRequestScope(ctx.user);
+        if (!scopeAllows(scope, companyId)) return [];
         return db.getQuickBooksAccountsByType(input?.classification as any, companyId);
       }),
 
     // Get account mappings
     getAccountMappings: protectedProcedure
       .input(z.object({ companyId: z.number().optional() }))
-      .query(async ({ input }) => {
-        const companyId = input.companyId || 1;
+      .query(async ({ input, ctx }) => {
+        const companyId = input.companyId || (ENV.accountingSyncProvider === "merge" ? ENV.mergeCompanyId : 1);
+        const scope = await resolveRequestScope(ctx.user);
+        if (!scopeAllows(scope, companyId)) return [];
         return db.getQuickBooksAccountMappings(companyId);
       }),
 
@@ -8364,7 +8383,12 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const companyId = input.companyId || 1;
+        const companyId = input.companyId || (ENV.accountingSyncProvider === "merge" ? ENV.mergeCompanyId : 1);
+        // Mapping writes land under companyId — same scope rule as syncs.
+        const scope = await resolveRequestScope(ctx.user);
+        if (!scopeAllows(scope, companyId)) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Cannot modify account mappings for an entity outside your access.' });
+        }
         const result = await db.upsertQuickBooksAccountMapping({
           companyId,
           mappingType: input.mappingType,

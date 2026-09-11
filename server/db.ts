@@ -15799,12 +15799,13 @@ export async function syncQuickBooksItems(companyIdOrItems: number | InsertQuick
   return { count: synced, synced };
 }
 
-// The quickbooksAccounts/quickbooksItems tables carry no composite unique
-// index on (companyId, providerId), so a read-then-insert upsert races under
-// concurrency. Until a unique index + ON DUPLICATE KEY upsert lands as its
-// own migration, serialize whole-dataset syncs per (table, company) in
-// process — sufficient for the single-instance, user-triggered sync flows
-// that call these helpers.
+// The quickbooksAccounts table has no composite unique index on
+// (companyId, quickbooksAccountId), and quickbooksItems none on
+// (companyId, quickbooksItemId), so a read-then-insert upsert races under
+// concurrency. Until those two unique indexes + ON DUPLICATE KEY upserts
+// land as their own migration, serialize whole-dataset syncs per
+// (table, company) in process — sufficient for the single-instance,
+// user-triggered sync flows that call these helpers.
 const qbSyncLocks = new Map<string, Promise<unknown>>();
 async function withQbSyncLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const previous = qbSyncLocks.get(key) ?? Promise.resolve();
