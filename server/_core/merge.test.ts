@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("./env", () => ({
-  ENV: { mergeApiKey: "test-key", mergeAccountToken: "test-token" },
+  ENV: { mergeApiKey: "test-key", mergeAccountToken: "test-token", mergeCompanyId: 1 },
 }));
 
 import {
@@ -144,6 +144,22 @@ describe("parseMergeIncomeStatements", () => {
     expect(result.expenseAccounts).toContainEqual({ name: "Interest", total: 50 });
   });
 
+  it("includes a statement ending later on a date-only endDate boundary", () => {
+    const result = parseMergeIncomeStatements(
+      [
+        {
+          start_period: "2026-01-01T00:00:00Z",
+          end_period: "2026-01-31T23:59:59Z",
+          income: { name: "Income", value: 1000 },
+        },
+      ],
+      { startDate: "2026-01-01", endDate: "2026-01-31" },
+    );
+
+    expect(result.months).toHaveLength(1);
+    expect(result.months[0].income).toBe(1000);
+  });
+
   it("skips statements with missing or invalid end_period", () => {
     const result = parseMergeIncomeStatements([
       { start_period: "2026-01-01", end_period: null, income: { value: 1 } },
@@ -195,6 +211,17 @@ describe("mapMergeAccount / mapMergeItem", () => {
       1,
     );
     expect(alternate).toMatchObject({ quickbooksItemId: "u2", type: "Service", unitPrice: "25" });
+  });
+
+  it("maps sales/purchase account references from both bare-id and expanded shapes", () => {
+    const bare = mapMergeItem({ id: "i1", name: "A", sales_account: "acc-9", purchase_account: "acc-3" }, 1);
+    expect(bare).toMatchObject({ incomeAccountId: "acc-9", expenseAccountId: "acc-3" });
+
+    const expanded = mapMergeItem(
+      { id: "i2", name: "B", sales_account: { id: "u-1", remote_id: "45" }, purchase_account: null },
+      1,
+    );
+    expect(expanded).toMatchObject({ incomeAccountId: "45", expenseAccountId: null });
   });
 });
 
@@ -314,6 +341,17 @@ describe("request layer (mocked fetch)", () => {
     const second = await checkMergeConnection();
     expect(second.connected).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards the P&L date window as start_period/end_period query params", async () => {
+    const { getMergeProfitAndLoss } = await import("./merge");
+    fetchMock.mockResolvedValueOnce(jsonResponse({ next: null, results: [] }));
+
+    await getMergeProfitAndLoss({ startDate: "2026-01-01", endDate: "2026-03-31" });
+
+    const [url] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain("start_period=2026-01-01");
+    expect(String(url)).toContain("end_period=2026-03-31");
   });
 
   it("checkMergeConnection reports not connected when the token is rejected", async () => {

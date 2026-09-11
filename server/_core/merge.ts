@@ -23,7 +23,11 @@ const MERGE_API_BASE = "https://api.merge.dev/api/accounting/v1";
 const MAX_PAGES = 100; // 100 × 100 rows
 
 export function isMergeConfigured(): boolean {
-  return !!(ENV.mergeApiKey && ENV.mergeAccountToken);
+  // MERGE_COMPANY_ID must be an explicit positive integer — fail closed
+  // rather than defaulting the linked company's financials to company 1.
+  return !!(ENV.mergeApiKey && ENV.mergeAccountToken)
+    && Number.isInteger(ENV.mergeCompanyId)
+    && ENV.mergeCompanyId > 0;
 }
 
 /**
@@ -33,7 +37,7 @@ export function isMergeConfigured(): boolean {
  */
 async function mergeGetAll(endpoint: string, params?: Record<string, string>, maxPages = MAX_PAGES): Promise<{ results?: any[]; error?: string }> {
   if (!isMergeConfigured()) {
-    return { error: "Merge is not configured. Set MERGE_API_KEY and MERGE_ACCOUNT_TOKEN." };
+    return { error: "Merge is not configured. Set MERGE_API_KEY, MERGE_ACCOUNT_TOKEN and MERGE_COMPANY_ID." };
   }
   const results: any[] = [];
   let cursor: string | undefined;
@@ -191,7 +195,19 @@ export async function getMergeItems(
   return { items };
 }
 
-/** Pure mapper — exported for tests. */
+/** An account reference from Merge — either a bare id or an expanded object. */
+function refId(v: any): string | null {
+  if (v == null) return null;
+  if (typeof v === "string") return v;
+  return v.remote_id != null ? String(v.remote_id) : v.id != null ? String(v.id) : null;
+}
+
+/**
+ * Pure mapper — exported for tests. Merge's Item model carries no SKU,
+ * description, or quantity-on-hand, so those quickbooksItems columns stay
+ * unpopulated on this path; sales/purchase account references map onto the
+ * income/expense account columns.
+ */
 export function mapMergeItem(i: any, companyId: number) {
   const unitPrice = i.unit_price ?? i.sales_price;
   return {
@@ -201,6 +217,8 @@ export function mapMergeItem(i: any, companyId: number) {
     type: mapItemType(i.type ?? i.item_type),
     unitPrice: unitPrice != null ? String(unitPrice) : null,
     purchaseCost: i.purchase_price != null ? String(i.purchase_price) : null,
+    incomeAccountId: refId(i.sales_account),
+    expenseAccountId: refId(i.purchase_account),
     active: i.status ? i.status === "ACTIVE" : true,
     lastSyncedAt: new Date(),
   };
@@ -279,8 +297,16 @@ export function parseMergeIncomeStatements(
   statements: MergeIncomeStatement[],
   options?: { startDate?: string; endDate?: string; summarizeBy?: SummarizeBy },
 ): ParsedProfitAndLoss {
-  const start = options?.startDate ? new Date(options.startDate).getTime() : -Infinity;
-  const end = options?.endDate ? new Date(options.endDate).getTime() : Infinity;
+  // Date-only boundaries span the whole day: Merge periods are timestamped,
+  // so a bare endDate must not exclude a statement ending later that day.
+  const boundary = (s: string | undefined, endOfDay: boolean): number => {
+    if (!s) return endOfDay ? Infinity : -Infinity;
+    const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(s);
+    const d = new Date(dateOnly && endOfDay ? `${s}T23:59:59.999Z` : s);
+    return isNaN(d.getTime()) ? (endOfDay ? Infinity : -Infinity) : d.getTime();
+  };
+  const start = boundary(options?.startDate, false);
+  const end = boundary(options?.endDate, true);
   const summarizeBy = options?.summarizeBy ?? "Month";
 
   const inRange = statements
@@ -318,16 +344,21 @@ export function parseMergeIncomeStatements(
 
 /**
  * Fetch + parse the P&L for a date window from Merge income statements.
- * Merge's list endpoint has no server-side period filter, so the fetch is
- * bounded to 10 pages (1,000 statements — decades of monthly reports for
- * one company) and filtered locally.
+ * The date bounds are forwarded as start_period/end_period query params
+ * (Merge ignores unrecognized filters, so this is a no-op on API versions
+ * without them); local filtering is retained as the correctness guarantee.
+ * The fetch is bounded to 10 pages (1,000 statements — decades of monthly
+ * reports for one company).
  */
 export async function getMergeProfitAndLoss(options?: {
   startDate?: string;
   endDate?: string;
   summarizeBy?: SummarizeBy;
 }): Promise<{ report?: ParsedProfitAndLoss; error?: string }> {
-  const res = await mergeGetAll("income-statements", undefined, 10);
+  const params: Record<string, string> = {};
+  if (options?.startDate) params.start_period = options.startDate;
+  if (options?.endDate) params.end_period = options.endDate;
+  const res = await mergeGetAll("income-statements", Object.keys(params).length ? params : undefined, 10);
   if (res.error) return { error: res.error };
   return { report: parseMergeIncomeStatements(res.results ?? [], options) };
 }

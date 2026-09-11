@@ -79,8 +79,11 @@ export const ENV = {
     mergeAccountToken: process.env.MERGE_ACCOUNT_TOKEN ?? "",
     // ERP company (companies.id) the linked Merge account belongs to. The
     // Merge account token is process-wide, so sync/reads are bound to this
-    // one entity to preserve multi-entity data isolation.
-    mergeCompanyId: Number.parseInt(process.env.MERGE_COMPANY_ID ?? "1", 10) || 1,
+    // one entity to preserve multi-entity data isolation. Required in merge
+    // mode: no default — an unset or invalid value parses to NaN and
+    // isMergeConfigured() fails closed rather than silently binding the
+    // linked company's financials to company 1.
+    mergeCompanyId: Number.parseInt(process.env.MERGE_COMPANY_ID ?? "", 10),
 
     // Shopify OAuth configuration
     shopifyClientId: process.env.SHOPIFY_CLIENT_ID ?? "",

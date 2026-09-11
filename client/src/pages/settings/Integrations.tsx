@@ -1567,8 +1567,10 @@ export default function IntegrationsPage() {
                       {status?.quickbooks?.configured ? 'QuickBooks Connected' : 'QuickBooks Not Connected'}
                     </h4>
                     <p className="text-sm text-muted-foreground">
-                      {status?.quickbooks?.configured 
-                        ? `Connected to company ${status.quickbooks.realmId}`
+                      {status?.quickbooks?.configured
+                        ? (status.quickbooks.companyName
+                            ? `Connected to ${status.quickbooks.companyName}`
+                            : `Connected to company ${status.quickbooks.realmId}`)
                         : 'Connect your QuickBooks account to sync financial data'}
                     </p>
                   </div>
@@ -1586,7 +1588,8 @@ export default function IntegrationsPage() {
                       <ol className="text-sm text-muted-foreground space-y-2 mb-4 list-decimal list-inside">
                         <li>In the <a href="https://app.merge.dev" target="_blank" rel="noreferrer" className="underline">Merge dashboard</a>, open <strong>Linked Accounts</strong> and link your QuickBooks Online company (sign in with the Intuit account that owns the company).</li>
                         <li>Copy your Merge <strong>API key</strong> (Settings → API keys) and the linked account's <strong>account token</strong>.</li>
-                        <li>Set <code className="bg-muted px-2 py-1 rounded">MERGE_API_KEY</code> and <code className="bg-muted px-2 py-1 rounded">MERGE_ACCOUNT_TOKEN</code> in the server environment, then redeploy.</li>
+                        <li>Set <code className="bg-muted px-2 py-1 rounded">MERGE_API_KEY</code> and <code className="bg-muted px-2 py-1 rounded">MERGE_ACCOUNT_TOKEN</code> in the server environment.</li>
+                        <li>Set <code className="bg-muted px-2 py-1 rounded">MERGE_COMPANY_ID</code> to the ERP company (companies.id) the linked QuickBooks company belongs to — required; for a single-company deployment this is usually <code className="bg-muted px-2 py-1 rounded">1</code>. Then redeploy.</li>
                       </ol>
                       {quickbooksDebug && (
                         <div className="p-3 bg-slate-500/5 border border-slate-500/20 rounded-md text-xs space-y-1.5">
@@ -1707,8 +1710,8 @@ export default function IntegrationsPage() {
                         <h4 className="font-medium mb-2">Connection Info</h4>
                         <div className="space-y-2 text-sm">
                           <div className="flex justify-between">
-                            <span className="text-muted-foreground">Company ID:</span>
-                            <span className="font-medium">{status.quickbooks.realmId}</span>
+                            <span className="text-muted-foreground">{status.quickbooks.companyName ? "Company:" : "Company ID:"}</span>
+                            <span className="font-medium">{status.quickbooks.companyName ?? status.quickbooks.realmId}</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Status:</span>

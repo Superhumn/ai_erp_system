@@ -6339,7 +6339,10 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
       let quickbooksConnected = usingMerge
         ? !!mergeCheck?.connected
         : !!(quickbooksToken && (!quickbooksToken.expiresAt || new Date(quickbooksToken.expiresAt) > new Date()));
-      let quickbooksRealmId = usingMerge ? (mergeCheck?.companyName ?? "Merge.dev") : quickbooksToken?.realmId;
+      // realmId stays an Intuit identifier; Merge's linked company name is
+      // reported separately so the UI doesn't show a name as an ID.
+      let quickbooksRealmId = usingMerge ? null : quickbooksToken?.realmId;
+      const quickbooksCompanyName = usingMerge ? (mergeCheck?.companyName ?? null) : null;
       if (quickbooksToken && !quickbooksConnected && quickbooksToken.refreshToken) {
         try {
           const refreshResult = await refreshQuickBooksToken(quickbooksToken.refreshToken);
@@ -6394,6 +6397,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           configured: quickbooksConnected,
           status: quickbooksConnected ? 'connected' : 'not_configured',
           realmId: quickbooksRealmId,
+          companyName: quickbooksCompanyName,
           provider: ENV.accountingSyncProvider,
         },
         syncHistory,
@@ -8116,12 +8120,14 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         // away from it must not see its connection details.
         const scope = await resolveRequestScope(ctx.user);
         if (!scopeAllows(scope, ENV.mergeCompanyId)) {
-          return { connected: false, realmId: null, provider: "merge" };
+          return { connected: false, realmId: null, companyName: null, provider: "merge" };
         }
         // Reachability, not just env presence: an invalid token or unlinked
         // account should not report as connected. Cached ~60s in merge.ts.
+        // realmId stays an Intuit-only identifier; the linked company's name
+        // travels in its own field.
         const check = await checkMergeConnection();
-        return { connected: check.connected, realmId: check.companyName ?? "Merge.dev", provider: "merge" };
+        return { connected: check.connected, realmId: null, companyName: check.companyName ?? null, provider: "merge" };
       }
       const token = await db.getQuickBooksOAuthToken(ctx.user.id);
       if (!token) {
@@ -8392,9 +8398,9 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         // Synced accounts are entity data — hide them from users scoped away.
         const scope = await resolveRequestScope(ctx.user);
         if (!scopeAllows(scope, companyId)) return [];
-        // companyId first: the helper reads a numeric first argument as the
-        // company filter; (undefined, companyId) builds a bogus filter.
-        return db.getQuickBooksAccountsByType(companyId, input?.classification);
+        // Filter on the classification column the sync paths populate — the
+        // ...ByType helper filters accountType, which holds provider types.
+        return db.getQuickBooksAccountsByClassification(companyId, input?.classification);
       }),
 
     // Get account mappings
@@ -8475,7 +8481,10 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
             endDate: input?.endDate,
             summarizeBy: input?.summarizeBy ?? "Month",
           });
-          if (res.error) return { connected: false, error: res.error, months: [] };
+          // A transient report failure after reachability succeeded keeps
+          // connected: true (matching the Intuit branch) so the dashboard
+          // doesn't silently fall back to proxy data.
+          if (res.error) return { connected: true, error: res.error, months: [] };
           return { connected: true, months: res.report!.months, expenseAccounts: res.report!.expenseAccounts };
         }
 

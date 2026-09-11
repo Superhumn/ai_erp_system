@@ -15834,6 +15834,21 @@ export async function syncQuickBooksItems(companyIdOrItems: number | InsertQuick
   return { count: synced, synced };
 }
 
+/**
+ * Accounts for one company, optionally filtered by the classification
+ * column (Asset/Liability/Equity/Revenue/Expense). Unlike
+ * getQuickBooksAccountsByType — whose numeric-first overload filters the
+ * accountType column — this matches the classification the sync paths
+ * normalize into `classification`.
+ */
+export async function getQuickBooksAccountsByClassification(companyId: number, classification?: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [eq(quickbooksAccounts.companyId, companyId)];
+  if (classification) conditions.push(eq(quickbooksAccounts.classification, classification));
+  return db.select().from(quickbooksAccounts).where(and(...conditions));
+}
+
 // The quickbooksAccounts table has no composite unique index on
 // (companyId, quickbooksAccountId), and quickbooksItems none on
 // (companyId, quickbooksItemId), so a read-then-insert upsert races under
