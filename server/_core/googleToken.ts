@@ -1,7 +1,7 @@
 /**
  * Reusable Google OAuth access-token retrieval (refreshes if expired).
  *
- * Mirrors the logic used inline in server/routers.ts (getValidGoogleToken /
+ * Mirrors the logic used in server/routers/_shared.ts (getValidGoogleToken /
  * refreshGoogleToken) but lives in a small importable module so background jobs
  * — e.g. the Thread Follow-Up workflow's Gmail in-thread reply — can obtain a
  * valid token for a given user without pulling in the router monolith.

@@ -1,15 +1,16 @@
+// appRouter.edi — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi } from "../ediService";
-import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners } from "../ediTransportService";
-import { router, protectedProcedure, adminProcedure, opsProcedure, createAuditLog } from "./middleware";
+import { testConnection, generateAndDeliver, pollSftpForInbound, pollAllPartners } from "../ediTransportService";
+import { adminProcedure, opsProcedure, createAuditLog } from "./_shared";
 
+// ============================================
+// EDI MODULE - Retail Customer Connections
+// ============================================
 export const ediRouter = router({
-  // ============================================
-  // EDI MODULE - Retail Customer Connections
-  // ============================================
-  edi: router({
     // Dashboard stats
     dashboardStats: protectedProcedure.query(() => db.getEdiDashboardStats()),
 
@@ -17,7 +18,7 @@ export const ediRouter = router({
     partners: router({
       list: protectedProcedure
         .input(z.object({ status: z.string().optional(), partnerType: z.string().optional() }).optional())
-        .query(({ input }) => db.getEdiTradingPartners(input)),
+        .query(({ input }) => db.getEdiTradingPartners((input as any)?.companyId)),
       get: protectedProcedure
         .input(z.object({ id: z.number() }))
         .query(({ input }) => db.getEdiTradingPartnerById(input.id)),
@@ -189,9 +190,9 @@ export const ediRouter = router({
         .mutation(async ({ input, ctx }) => {
           const txn = await db.getEdiTransactionById(input.id);
           if (!txn) throw new TRPCError({ code: 'NOT_FOUND', message: 'Transaction not found' });
-          if (!txn.rawContent) throw new TRPCError({ code: 'BAD_REQUEST', message: 'No raw content to reprocess' });
+          if (!(txn as any).rawContent) throw new TRPCError({ code: 'BAD_REQUEST', message: 'No raw content to reprocess' });
 
-          const result = await processInboundEdi(txn.rawContent, txn.tradingPartnerId);
+          const result = await processInboundEdi((txn as any).rawContent, txn.tradingPartnerId);
           await createAuditLog(ctx.user.id, 'update', 'edi_transaction', result.transactionId, 'Reprocessed');
           return result;
         }),
@@ -343,7 +344,7 @@ export const ediRouter = router({
 
     // EDI Settings (company-wide config)
     settings: router({
-      get: protectedProcedure.query(() => db.getEdiSettings()),
+      get: protectedProcedure.query(() => db.getEdiSettings(1)),
       upsert: adminProcedure
         .input(z.object({
           companyId: z.number().optional(),
@@ -388,7 +389,7 @@ export const ediRouter = router({
           totalTransactions: z.number().optional(),
           successfulTransactions: z.number().optional(),
           failedTransactions: z.number().optional(),
-          avgProcessingTimeSeconds: z.number().optional(),
+          avgProcessingTimeSeconds: z.string().optional(),
           onTimeAckPercentage: z.string().optional(),
           onTimeShipPercentage: z.string().optional(),
           fillRatePercentage: z.string().optional(),
@@ -399,10 +400,9 @@ export const ediRouter = router({
           notes: z.string().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const result = await db.createEdiComplianceScorecard(input);
+          const result = await db.createEdiComplianceScorecard(input as any);
           await createAuditLog(ctx.user.id, 'create', 'edi_compliance_scorecard', result.id);
           return result;
         }),
     }),
-  }),
-});
+  });

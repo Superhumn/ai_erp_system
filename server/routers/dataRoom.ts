@@ -1,52 +1,18 @@
+// appRouter.dataRoom — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { randomBytes, scryptSync, timingSafeEqual, createHash } from "crypto";
+import { publicProcedure, protectedProcedure, router } from "../_core/trpc";
 import { sendEmail, isEmailConfigured, formatEmailHtml } from "../_core/email";
 import * as db from "../db";
-import { storagePut } from "../storage";
+import { storagePut, storageDelete } from "../storage";
 import { nanoid } from "nanoid";
-import { syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType } from "../_core/googleDrive";
-import { router, publicProcedure, protectedProcedure, getValidGoogleToken } from "./middleware";
-import type { InsertDataRoomDriveSyncConfig } from "../../drizzle/schema";
+import { listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType, searchDriveFoldersByName } from "../_core/googleDrive";
+import { adminProcedure, contractorProcedure, createAuditLog, getValidGoogleToken, hashPassword, verifyPassword, assertEmailAccessRuleOwnership } from "./_shared";
 
-// Hash a data-room/link password using scrypt (salted KDF).
-function hashDataRoomPassword(password: string): string {
-  const salt = randomBytes(16).toString('hex');
-  const hash = scryptSync(password, salt, 64).toString('hex');
-  return `${salt}:${hash}`;
-}
-
-// Verify a data-room/link password against a stored hash.
-// Supports legacy unsalted SHA-256 hashes (stored as plain 64-char hex) for backward compatibility.
-function verifyDataRoomPassword(password: string, stored: string): { valid: boolean; needsUpgrade: boolean } {
-  if (stored.includes(':')) {
-    // Current format: scrypt salt:hash
-    const [salt, hash] = stored.split(':');
-    if (!salt || !hash) return { valid: false, needsUpgrade: false };
-    const computed = scryptSync(password, salt, 64);
-    const storedBuf = Buffer.from(hash, 'hex');
-    const valid = computed.length === storedBuf.length && timingSafeEqual(computed, storedBuf);
-    return {
-      valid,
-      needsUpgrade: false,
-    };
-  }
-
-  // Legacy format: plain SHA-256 hex (no salt) — read-only backward-compat verification path.
-  // New passwords are always stored as scrypt above. SHA-256 is only used here to verify
-  // passwords that were hashed before the scrypt migration; no new SHA-256 hashes are created.
-  // lgtm[js/insufficient-password-hash]
-  const computed = createHash('sha256').update(password).digest();
-  const storedBuf = Buffer.from(stored, 'hex');
-  const valid = computed.length === storedBuf.length && timingSafeEqual(computed, storedBuf);
-  return { valid, needsUpgrade: valid };
-}
-
+// ============================================
+// DATA ROOM
+// ============================================
 export const dataRoomRouter = router({
-  // ============================================
-  // DATA ROOM
-  // ============================================
-  dataRoom: router({
     // List all data rooms for the current user
     list: protectedProcedure.query(async ({ ctx }) => {
       return db.getDataRooms(ctx.user.id);
@@ -93,7 +59,7 @@ export const dataRoomRouter = router({
         // Hash password if provided
         let hashedPassword = null;
         if (input.password) {
-          hashedPassword = hashDataRoomPassword(input.password);
+          hashedPassword = await hashPassword(input.password);
         }
 
         const { enableWatermark, ...rest } = input;
@@ -143,7 +109,7 @@ export const dataRoomRouter = router({
           if (password === null) {
             hashedPassword = null;
           } else {
-            hashedPassword = hashDataRoomPassword(password);
+            hashedPassword = await hashPassword(password);
           }
         }
 
@@ -170,6 +136,82 @@ export const dataRoomRouter = router({
       }),
 
     // Folder operations
+    // Contractor-facing read-only documents. Reuses the data-room folder/doc
+    // tables (and therefore the Google Drive sync), but scopes by the logged-in
+    // user's role + individual grants instead of an email invite / link code.
+    contractor: router({
+      // Folders + documents this contractor may see, across all data rooms.
+      getContent: contractorProcedure.query(async ({ ctx }) => {
+        const folders = await db.getAccessibleDataRoomFoldersForUser(ctx.user.id, ctx.user.role);
+        const folderIds = folders.map((f) => f.id);
+        const documents = (await db.getDataRoomDocumentsInFolders(folderIds)).filter(
+          (d) => !d.isHidden,
+        );
+        return { folders, documents };
+      }),
+
+      // Open one document — verifies it lives in a folder the user may access.
+      getDocument: contractorProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input, ctx }) => {
+          const doc = await db.getDataRoomDocumentById(input.id);
+          if (!doc) throw new TRPCError({ code: 'NOT_FOUND' });
+          const folders = await db.getAccessibleDataRoomFoldersForUser(ctx.user.id, ctx.user.role);
+          const allowed = new Set(folders.map((f) => f.id));
+          if (doc.folderId == null || !allowed.has(doc.folderId)) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this document' });
+          }
+          return doc;
+        }),
+
+      // Admin: list a contractor user's per-folder grants.
+      listGrants: adminProcedure
+        .input(z.object({ userId: z.number() }))
+        .query(async ({ input }) => db.getContractorFolderGrants(input.userId)),
+
+      // Admin: every folder (with its data room) for the access picker.
+      listAllFolders: adminProcedure.query(async () => db.getAllDataRoomFoldersWithRoom()),
+
+      // Admin: grant or restrict a specific folder for a contractor user.
+      setGrant: adminProcedure
+        .input(z.object({
+          userId: z.number(),
+          folderId: z.number(),
+          mode: z.enum(['allow', 'restrict']),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createContractorFolderGrant({
+            userId: input.userId,
+            folderId: input.folderId,
+            mode: input.mode,
+            grantedBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'contractor_folder_grant', result.id);
+          return result;
+        }),
+
+      // Admin: remove a grant/restriction for a contractor user.
+      removeGrant: adminProcedure
+        .input(z.object({ userId: z.number(), folderId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteContractorFolderGrant(input.userId, input.folderId);
+          await createAuditLog(ctx.user.id, 'delete', 'contractor_folder_grant', input.folderId);
+          return { success: true };
+        }),
+
+      // Admin: set which app roles can see a folder (role-wide visibility).
+      setFolderVisibility: adminProcedure
+        .input(z.object({
+          folderId: z.number(),
+          visibleToRoles: z.array(z.string()),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          await db.updateDataRoomFolder(input.folderId, { visibleToRoles: input.visibleToRoles });
+          await createAuditLog(ctx.user.id, 'update', 'data_room_folder', input.folderId, undefined, undefined, { visibleToRoles: input.visibleToRoles });
+          return { success: true };
+        }),
+    }),
+
     folders: router({
       list: protectedProcedure
         .input(z.object({ dataRoomId: z.number(), parentId: z.number().nullable().optional() }))
@@ -263,7 +305,7 @@ export const dataRoomRouter = router({
         .mutation(async ({ input, ctx }) => {
           // Upload to S3
           const buffer = Buffer.from(input.base64Content, 'base64');
-          const key = `dataroom/${input.dataRoomId}/${nanoid()}-${input.name}`;
+          const key = `dataroom/${input.dataRoomId}/${nanoid()}-${input.name.replace(/[/\\]/g, '_')}`;
           const { url } = await storagePut(key, buffer, input.mimeType);
 
           // Create document record
@@ -303,6 +345,112 @@ export const dataRoomRouter = router({
           await db.deleteDataRoomDocument(input.id);
           return { success: true };
         }),
+
+      // Refresh a single Drive-backed document from Google Drive — pulls the
+      // latest metadata (name, size, mime type, web view link, thumbnail) and
+      // bumps the document's version. The bytes themselves still stream
+      // through /api/drive/proxy so no download is needed.
+      refreshFromDrive: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const doc = await db.getDataRoomDocumentById(input.id);
+          if (!doc) throw new TRPCError({ code: 'NOT_FOUND', message: 'Document not found' });
+          if (doc.storageType !== 'google_drive' || !doc.googleDriveFileId) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'This file is not linked to Google Drive. Use "Upload new version" instead.',
+            });
+          }
+
+          const room = await db.getDataRoomById(doc.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
+
+          // Drive bytes are fetched with the data room owner's OAuth token
+          // (matching /api/drive/proxy), so admins can refresh without
+          // having connected their own Google account.
+          const { accessToken, error } = await getValidGoogleToken(room.ownerId);
+          if (error) throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+
+          const { file: driveFile, error: metaError } = await getFileMetadata(accessToken, doc.googleDriveFileId);
+          if (metaError || !driveFile) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: metaError || 'File not found in Google Drive' });
+          }
+
+          const fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
+            ? parseInt(driveFile.size)
+            : undefined;
+
+          const newVersion = await db.updateDataRoomDocumentBumpVersion(doc.id, {
+            name: driveFile.name,
+            fileType: getSimpleFileType(driveFile.mimeType),
+            mimeType: driveFile.mimeType,
+            fileSize,
+            storageUrl: driveFile.webViewLink || undefined,
+            googleDriveWebViewLink: driveFile.webViewLink,
+            thumbnailUrl: driveFile.thumbnailLink,
+          });
+
+          return { success: true, name: driveFile.name, version: newVersion };
+        }),
+
+      // Replace a document's contents with a new uploaded file. Bumps version
+      // and stores the new bytes in S3. If the document was previously linked
+      // to Google Drive, the Drive link is detached because the uploaded file
+      // is now the source of truth.
+      uploadNewVersion: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          fileType: z.string(),
+          mimeType: z.string(),
+          fileSize: z.number(),
+          base64Content: z.string(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const doc = await db.getDataRoomDocumentById(input.id);
+          if (!doc) throw new TRPCError({ code: 'NOT_FOUND', message: 'Document not found' });
+
+          const room = await db.getDataRoomById(doc.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
+
+          const newName = input.name || doc.name;
+          const buffer = Buffer.from(input.base64Content, 'base64');
+          const key = `dataroom/${doc.dataRoomId}/${nanoid()}-${newName.replace(/[/\\]/g, '_')}`;
+          const { url } = await storagePut(key, buffer, input.mimeType);
+
+          const previousStorageKey = doc.storageType === 's3' ? doc.storageKey : null;
+
+          const newVersion = await db.updateDataRoomDocumentBumpVersion(doc.id, {
+            name: newName,
+            fileType: input.fileType,
+            mimeType: input.mimeType,
+            fileSize: input.fileSize,
+            storageType: 's3',
+            storageUrl: url,
+            storageKey: key,
+            googleDriveFileId: null,
+            googleDriveWebViewLink: null,
+            thumbnailUrl: null,
+          });
+
+          // Best-effort cleanup of the previous S3 object so replacing a
+          // file's bytes doesn't leave an orphaned blob behind. We swallow
+          // failures so a transient delete error doesn't fail the upload —
+          // the new version is already persisted at this point.
+          if (previousStorageKey) {
+            storageDelete(previousStorageKey).catch((err) => {
+              console.warn(`[dataRoom] failed to delete prior storage key ${previousStorageKey}:`, err);
+            });
+          }
+
+          return { id: doc.id, url, version: newVersion };
+        }),
     }),
 
     // Shareable links
@@ -317,6 +465,7 @@ export const dataRoomRouter = router({
         .input(z.object({
           dataRoomId: z.number(),
           name: z.string().optional(),
+          customSlug: z.string().optional(), // Custom URL slug (e.g., "sequoia" → /dataroom/sequoia)
           password: z.string().optional(),
           expiresAt: z.date().optional(),
           maxViews: z.number().optional(),
@@ -329,10 +478,15 @@ export const dataRoomRouter = router({
           restrictedDocumentIds: z.array(z.number()).optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const linkCode = nanoid(12);
+          // Use custom slug, or generate from name, or random
+          const linkCode = input.customSlug
+            ? input.customSlug.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+            : input.name
+              ? input.name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+              : nanoid(12);
           let hashedPassword = null;
           if (input.password) {
-            hashedPassword = hashDataRoomPassword(input.password);
+            hashedPassword = await hashPassword(input.password);
           }
 
           const { id } = await db.createDataRoomLink({
@@ -364,6 +518,43 @@ export const dataRoomRouter = router({
         .mutation(async ({ input }) => {
           await db.deleteDataRoomLink(input.id);
           return { success: true };
+        }),
+
+      // Owner preview: get or create a permanent no-gate link so the owner
+      // can see the exact investor view without needing a share link.
+      getOrCreateOwnerPreviewLink: protectedProcedure
+        .input(z.object({ dataRoomId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const room = await db.getDataRoomById(input.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
+
+          // Look for an existing owner-preview link
+          const allLinks = await db.getDataRoomLinks(input.dataRoomId);
+          const existing = allLinks.find((l) => l.name === '__owner_preview__');
+          if (existing) return { linkCode: existing.linkCode };
+
+          // Create a permanent, no-gate link
+          const linkCode = `owner-preview-${nanoid(12)}`;
+          await db.createDataRoomLink({
+            dataRoomId: input.dataRoomId,
+            linkCode,
+            name: '__owner_preview__',
+            password: null,
+            expiresAt: null,
+            maxViews: null,
+            allowDownload: true,
+            allowPrint: true,
+            requireEmail: false,
+            requireName: false,
+            requireCompany: false,
+            requirePhone: false,
+            isActive: true,
+            createdBy: ctx.user.id,
+          });
+          return { linkCode };
         }),
     }),
 
@@ -545,12 +736,265 @@ export const dataRoomRouter = router({
         }),
     }),
 
+    // Sync from Google Drive — one-click sync of an entire Drive folder (and subfolders) into the data room
+    syncFromDrive: protectedProcedure
+      .input(z.object({
+        dataRoomId: z.number(),
+        driveFolderId: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // Verify data room ownership
+        const room = await db.getDataRoomById(input.dataRoomId);
+        if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+        if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+        }
+
+        // Prefer the room owner's Google token (the folder is usually linked to
+        // their Drive). Fall back to the acting user so an admin who has access
+        // can still sync when the owner hasn't connected Google.
+        let tokenUserId = room.ownerId;
+        let { accessToken, error } = await getValidGoogleToken(tokenUserId);
+        if (error && ctx.user.id !== room.ownerId) {
+          tokenUserId = ctx.user.id;
+          ({ accessToken, error } = await getValidGoogleToken(tokenUserId));
+        }
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+        }
+
+        let folderId = input.driveFolderId || room.googleDriveFolderId;
+
+        // If no folder ID provided and none linked, search for a "Data Room" folder in Drive
+        if (!folderId) {
+          const { folders: found, error: searchErr } = await searchDriveFoldersByName(accessToken, 'Data Room');
+          if (searchErr) {
+            console.warn('[DataRoom] Drive folder search failed:', searchErr);
+          }
+          if (found.length > 0) {
+            folderId = found[0].id;
+          }
+          if (!folderId) {
+            throw new TRPCError({
+              code: 'NOT_FOUND',
+              message: 'No Google Drive folder specified and no "Data Room" folder found in Google Drive. Please provide a folder ID or create a folder named "Data Room" in your Google Drive.',
+            });
+          }
+        }
+
+        // Verify folder exists and get info
+        const folderInfo = await getFolderInfo(accessToken, folderId);
+        if (folderInfo.error || !folderInfo.folder) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: folderInfo.error || 'Folder not found in Google Drive' });
+        }
+
+        // Reconcile the data room against the Drive tree — create new folders
+        // and files, and (for this user-initiated re-sync) remove Drive-backed
+        // items that were deleted in Drive. Shared with the background auto-sync
+        // scheduler so both behave identically.
+        const {
+          reconcileDataRoomFromDrive,
+          isTotalDriveImportFailure,
+          totalDriveImportFailureMessage,
+        } = await import('../googleDriveSyncService');
+        let recon;
+        try {
+          recon = await reconcileDataRoomFromDrive({
+            dataRoomId: input.dataRoomId,
+            rootFolderId: folderId,
+            accessToken: async () => {
+              const t = await getValidGoogleToken(tokenUserId);
+              if (t.error || !t.accessToken) throw new Error(t.error || 'Google token unavailable');
+              return t.accessToken;
+            },
+            uploadedBy: ctx.user.id,
+            allowDelete: true,
+          });
+        } catch (err: unknown) {
+          // reconcileDataRoomFromDrive only throws curated, user-safe messages
+          // (the Drive-listing hint, or a generic fallback); the full error is
+          // already logged there. Log again with room context and pass it on.
+          console.error(`[DataRoom] syncFromDrive failed for room ${input.dataRoomId}:`, err);
+          const msg = err instanceof Error ? err.message : 'Sync failed';
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: msg });
+        }
+
+        if (isTotalDriveImportFailure(recon)) {
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: totalDriveImportFailureMessage(recon),
+          });
+        }
+
+        // Always link the folder; only stamp lastSyncedAt on a complete listing
+        // (a partial sync skipped some sub-tree, so the room isn't fully synced).
+        await db.updateDataRoom(input.dataRoomId, {
+          googleDriveFolderId: folderId,
+          ...(recon.partial ? {} : { lastSyncedAt: new Date() }),
+        });
+
+        console.log(
+          `[DataRoom] Drive sync for room ${input.dataRoomId}: found ${recon.foldersFound} folders / ${recon.filesFound} files; ` +
+          `created ${recon.foldersCreated} folders / ${recon.filesCreated} files; ` +
+          `updated ${recon.foldersUpdated} folders / ${recon.filesUpdated} files; ` +
+          `removed ${recon.foldersRemoved} folders / ${recon.filesRemoved} files; ${recon.filesFailed} file errors.`
+        );
+
+        return {
+          totalSynced: recon.filesCreated,
+          foldersCreated: recon.foldersCreated,
+          foldersUpdated: recon.foldersUpdated,
+          filesCreated: recon.filesCreated,
+          filesUpdated: recon.filesUpdated,
+          filesRemoved: recon.filesRemoved,
+          foldersRemoved: recon.foldersRemoved,
+          filesFound: recon.filesFound,
+          foldersFound: recon.foldersFound,
+          filesFailed: recon.filesFailed,
+          errors: recon.errors,
+          folderName: folderInfo.folder.name,
+        };
+      }),
+
+    // Kick off a Drive → Data Room sync as a background task and return
+    // immediately with a taskId. The heavy reconcile runs detached from this
+    // request so it keeps going — and stays visible in the global task tray —
+    // after the user navigates away. Pre-flight validation (ownership, OAuth,
+    // folder resolution) still happens synchronously so obvious errors surface
+    // to the caller right away.
+    startDriveSync: protectedProcedure
+      .input(z.object({
+        dataRoomId: z.number(),
+        driveFolderId: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const room = await db.getDataRoomById(input.dataRoomId);
+        if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+        if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+        }
+
+        // Prefer the room owner's Google token; fall back to the acting user.
+        let tokenUserId = room.ownerId;
+        let { accessToken, error } = await getValidGoogleToken(tokenUserId);
+        if (error && ctx.user.id !== room.ownerId) {
+          tokenUserId = ctx.user.id;
+          ({ accessToken, error } = await getValidGoogleToken(tokenUserId));
+        }
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+        }
+
+        let folderId = input.driveFolderId || room.googleDriveFolderId;
+        if (!folderId) {
+          const { folders: found, error: searchErr } = await searchDriveFoldersByName(accessToken, 'Data Room');
+          if (searchErr) {
+            console.warn('[DataRoom] Drive folder search failed:', searchErr);
+          }
+          if (found.length > 0) {
+            folderId = found[0].id;
+          }
+          if (!folderId) {
+            throw new TRPCError({
+              code: 'NOT_FOUND',
+              message: 'No Google Drive folder specified and no "Data Room" folder found in Google Drive. Please provide a folder ID or create a folder named "Data Room" in your Google Drive.',
+            });
+          }
+        }
+
+        const folderInfo = await getFolderInfo(accessToken, folderId);
+        if (folderInfo.error || !folderInfo.folder) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: folderInfo.error || 'Folder not found in Google Drive' });
+        }
+
+        // Capture non-null values for the detached closure.
+        const resolvedFolderId = folderId;
+        const userId = ctx.user.id;
+        const googleTokenUserId = tokenUserId;
+        const { dataRoomId } = input;
+
+        const { runBackgroundTask } = await import('../_core/backgroundTasks');
+        const {
+          reconcileDataRoomFromDrive,
+          isTotalDriveImportFailure,
+          totalDriveImportFailureMessage,
+        } = await import('../googleDriveSyncService');
+
+        const { taskId } = await runBackgroundTask(
+          {
+            userId,
+            type: 'data_room_drive_sync',
+            title: `Syncing "${room.name}" from Google Drive`,
+            description: folderInfo.folder.name ? `Drive folder: ${folderInfo.folder.name}` : undefined,
+            message: 'Starting…',
+            entityType: 'data_room',
+            entityId: dataRoomId,
+            link: `/dataroom/${dataRoomId}`,
+          },
+          async (handle) => {
+            const recon = await reconcileDataRoomFromDrive({
+              dataRoomId,
+              rootFolderId: resolvedFolderId,
+              accessToken: async () => {
+                const t = await getValidGoogleToken(googleTokenUserId);
+                if (t.error || !t.accessToken) throw new Error(t.error || 'Google token unavailable');
+                return t.accessToken;
+              },
+              uploadedBy: userId,
+              allowDelete: true,
+              onProgress: (u) => handle.report(u),
+            });
+
+            if (isTotalDriveImportFailure(recon)) {
+              throw new Error(totalDriveImportFailureMessage(recon));
+            }
+
+            await db.updateDataRoom(dataRoomId, {
+              googleDriveFolderId: resolvedFolderId,
+              ...(recon.partial ? {} : { lastSyncedAt: new Date() }),
+            });
+
+            const summaryParts: string[] = [];
+            if (recon.filesCreated) summaryParts.push(`${recon.filesCreated} added`);
+            if (recon.filesUpdated) summaryParts.push(`${recon.filesUpdated} updated`);
+            if (recon.filesRemoved) summaryParts.push(`${recon.filesRemoved} removed`);
+            if (recon.filesFailed) summaryParts.push(`${recon.filesFailed} failed`);
+            const summaryMsg = summaryParts.length
+              ? `Synced ${folderInfo.folder!.name}: ${summaryParts.join(', ')}`
+              : recon.filesFound === 0 && recon.foldersFound === 0
+                ? `No files found in "${folderInfo.folder!.name}"`
+                : `${folderInfo.folder!.name} is already up to date`;
+
+            return {
+              message: recon.partial ? `${summaryMsg} (partial)` : summaryMsg,
+              result: {
+                totalSynced: recon.filesCreated,
+                foldersCreated: recon.foldersCreated,
+                foldersUpdated: recon.foldersUpdated,
+                filesCreated: recon.filesCreated,
+                filesUpdated: recon.filesUpdated,
+                filesRemoved: recon.filesRemoved,
+                foldersRemoved: recon.foldersRemoved,
+                filesFound: recon.filesFound,
+                foldersFound: recon.foldersFound,
+                filesFailed: recon.filesFailed,
+                partial: recon.partial,
+                errors: recon.errors,
+                folderName: folderInfo.folder!.name,
+              },
+            };
+          },
+        );
+
+        return { taskId, folderName: folderInfo.folder.name };
+      }),
+
     // Google Drive sync
     googleDrive: router({
-      // List available Google Drive folders
-      listFolders: protectedProcedure
-        .input(z.object({ 
-          parentFolderId: z.string().optional() 
+      // List files (non-folders) inside a Google Drive folder
+      listFiles: protectedProcedure
+        .input(z.object({
+          folderId: z.string(),
         }))
         .query(async ({ ctx, input }) => {
           const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
@@ -558,159 +1002,69 @@ export const dataRoomRouter = router({
             throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
           }
 
-          const result = await listDriveFolders(accessToken, input.parentFolderId);
+          const result = await listDriveFiles(accessToken, input.folderId);
           if (result.error) {
             throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
           }
 
-          return { folders: result.folders };
+          return { files: result.files };
         }),
 
-      // Sync a Google Drive folder to a data room
-      syncFolder: protectedProcedure
+      // Sync a single Google Drive file to a data room
+      syncFile: protectedProcedure
         .input(z.object({
           dataRoomId: z.number(),
-          googleDriveFolderId: z.string(),
+          googleDriveFileId: z.string(),
+          folderId: z.number().nullable().optional(),
         }))
         .mutation(async ({ ctx, input }) => {
-          // Verify data room ownership
           const room = await db.getDataRoomById(input.dataRoomId);
           if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
           if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
             throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
           }
 
-          // Get valid Google OAuth token
           const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
           if (error) {
             throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
           }
 
-          // Verify folder exists and get info
-          const folderInfo = await getFolderInfo(accessToken, input.googleDriveFolderId);
-          if (folderInfo.error || !folderInfo.folder) {
-            throw new TRPCError({ code: 'BAD_REQUEST', message: folderInfo.error || 'Folder not found' });
+          // Fetch file metadata
+          const { file: driveFile, error: metaError } = await getFileMetadata(accessToken, input.googleDriveFileId);
+          if (metaError || !driveFile) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: metaError || 'File not found in Google Drive' });
           }
 
-          // Sync folder structure and files
-          const syncResult = await syncDriveFolder(accessToken, input.googleDriveFolderId);
-          if (!syncResult.success) {
-            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: syncResult.error || 'Sync failed' });
-          }
-
-          // Get existing folders and documents to avoid duplicates
-          const existingFolders = await db.getDataRoomFolders(input.dataRoomId);
+          // Check if already synced
           const existingDocs = await db.getDataRoomDocuments(input.dataRoomId);
-          const existingFoldersByDriveId = new Map(
-            existingFolders
-              .filter(f => f.googleDriveFolderId)
-              .map(f => [f.googleDriveFolderId!, f.id])
-          );
-          const existingDocsByDriveId = new Map(
-            existingDocs
-              .filter(d => d.googleDriveFileId)
-              .map(d => [d.googleDriveFileId!, d.id])
-          );
-
-          // Create folder hierarchy in data room
-          const folderMap = new Map<string, number>(); // Google Drive folder ID -> data room folder ID
-          
-          // Sort folders by depth to ensure parents are created before children
-          const sortedFolders = [...syncResult.folders].sort((a, b) => {
-            const aDepth = a.parents?.length || 0;
-            const bDepth = b.parents?.length || 0;
-            return aDepth - bDepth;
-          });
-          
-          // Process folders
-          let foldersCreated = 0;
-          for (const driveFolder of sortedFolders) {
-            // Check if folder already exists
-            if (existingFoldersByDriveId.has(driveFolder.id)) {
-              folderMap.set(driveFolder.id, existingFoldersByDriveId.get(driveFolder.id)!);
-              continue;
-            }
-
-            const parentDriveId = driveFolder.parents?.[0];
-            const parentDataRoomId = parentDriveId && parentDriveId !== input.googleDriveFolderId 
-              ? folderMap.get(parentDriveId) 
-              : null;
-
-            // Log warning if parent folder is missing
-            if (parentDriveId && parentDriveId !== input.googleDriveFolderId && !parentDataRoomId) {
-              console.warn(`[GoogleDrive Sync] Parent folder ${parentDriveId} not found for folder ${driveFolder.name}`);
-            }
-
-            const { id } = await db.createDataRoomFolder({
-              dataRoomId: input.dataRoomId,
-              parentId: parentDataRoomId,
-              name: driveFolder.name,
-              googleDriveFolderId: driveFolder.id,
-            });
-
-            folderMap.set(driveFolder.id, id);
-            foldersCreated++;
+          if (existingDocs.some(d => d.googleDriveFileId === driveFile.id)) {
+            throw new TRPCError({ code: 'CONFLICT', message: 'This file has already been synced to this data room' });
           }
 
-          // Process files
-          let filesCreated = 0;
-          for (const driveFile of syncResult.files) {
-            // Check if file already exists
-            if (existingDocsByDriveId.has(driveFile.id)) {
-              continue;
-            }
+          // Store by reference in Google Drive (no download)
+          const displayName = driveFile.name;
+          const fileType = getSimpleFileType(driveFile.mimeType);
+          const fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
+            ? parseInt(driveFile.size)
+            : undefined;
 
-            const parentDriveId = driveFile.parents?.[0];
-            let folderId: number | null = null;
-
-            // Determine which folder this file belongs to
-            if (parentDriveId === input.googleDriveFolderId) {
-              // Root level file
-              folderId = null;
-            } else if (parentDriveId) {
-              folderId = folderMap.get(parentDriveId) || existingFoldersByDriveId.get(parentDriveId) || null;
-              
-              // Log warning if parent folder is missing
-              if (!folderId) {
-                console.warn(`[GoogleDrive Sync] Parent folder ${parentDriveId} not found for file ${driveFile.name}`);
-              }
-            }
-
-            const fileType = getSimpleFileType(driveFile.mimeType);
-            const fileSize = driveFile.size && !isNaN(parseInt(driveFile.size)) 
-              ? parseInt(driveFile.size) 
-              : undefined;
-
-            await db.createDataRoomDocument({
-              dataRoomId: input.dataRoomId,
-              folderId,
-              name: driveFile.name,
-              fileType,
-              mimeType: driveFile.mimeType,
-              fileSize,
-              storageType: 'google_drive',
-              googleDriveFileId: driveFile.id,
-              googleDriveWebViewLink: driveFile.webViewLink,
-              thumbnailUrl: driveFile.thumbnailLink,
-              uploadedBy: ctx.user.id,
-            });
-
-            filesCreated++;
-          }
-
-          // Update data room with Google Drive folder ID and last sync time
-          await db.updateDataRoom(input.dataRoomId, {
-            googleDriveFolderId: input.googleDriveFolderId,
-            lastSyncedAt: new Date(),
+          await db.createDataRoomDocument({
+            dataRoomId: input.dataRoomId,
+            folderId: input.folderId ?? null,
+            name: displayName,
+            fileType,
+            mimeType: driveFile.mimeType,
+            fileSize,
+            storageType: 'google_drive',
+            storageUrl: driveFile.webViewLink || undefined,
+            storageKey: undefined,
+            googleDriveFileId: driveFile.id,
+            googleDriveWebViewLink: driveFile.webViewLink,
+            thumbnailUrl: driveFile.thumbnailLink,
+            uploadedBy: ctx.user.id,
           });
 
-          return {
-            success: true,
-            foldersCreated,
-            filesCreated,
-            totalFolders: syncResult.folders.length,
-            totalFiles: syncResult.files.length,
-          };
+          return { success: true, fileName: displayName };
         }),
     }),
 
@@ -751,20 +1105,21 @@ export const dataRoomRouter = router({
             return { requiresInfo: true, requiredFields: ['email'], dataRoomId: null, visitorId: null };
           }
 
-          // Check password
           if (link.password) {
             if (!input.password) {
               return { requiresPassword: true, dataRoomId: null, visitorId: null };
             }
-            const passwordCheck = verifyDataRoomPassword(input.password, link.password);
-            if (!passwordCheck.valid) {
+
+            const { valid, needsUpgrade } = await verifyPassword(input.password, link.password);
+
+            if (!valid) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid password' });
             }
 
-            // Seamlessly upgrade legacy SHA-256 hashes to salted scrypt after successful verification.
-            if (passwordCheck.needsUpgrade) {
-              const upgradedHash = hashDataRoomPassword(input.password);
-              await db.updateDataRoomLink(link.id, { password: upgradedHash });            }
+            if (needsUpgrade) {
+              const upgradedHash = await hashPassword(input.password);
+              await db.updateDataRoomLink(link.id, { password: upgradedHash });
+            }
           }
 
           // Check required info
@@ -805,6 +1160,29 @@ export const dataRoomRouter = router({
               lastViewedAt: new Date(),
               totalViews: (visitor.totalViews || 0) + 1,
             });
+          }
+
+          // Issue a signed visitor session cookie on every successful access,
+          // including anonymous (no-email) flows — without it the public file
+          // list is reachable but the proxy 401s on the actual bytes. visitorId
+          // is omitted when no visitor row exists; the proxy falls back to
+          // link/room-level checks in that case.
+          {
+            const { setVisitorSessionCookie } = await import('../_core/dataRoomVisitorSession');
+            const ttlMs = link.expiresAt
+              ? Math.max(60_000, new Date(link.expiresAt).getTime() - Date.now())
+              : 24 * 60 * 60 * 1000;
+            await setVisitorSessionCookie(
+              ctx.req,
+              ctx.res,
+              {
+                visitorId: visitor?.id,
+                linkId: link.id,
+                linkCode: input.linkCode,
+                dataRoomId: link.dataRoomId,
+              },
+              ttlMs,
+            );
           }
 
           return {
@@ -964,7 +1342,6 @@ export const dataRoomRouter = router({
             if (visitor) {
               const durationMinutes = Math.floor((input.duration || 0) / 60);
               const newPagesViewed = (input.pagesViewed?.length || 0);
-              // +1 per document viewed, +1 per minute spent
               const scoreIncrement = 1 + durationMinutes;
               await db.updateDataRoomVisitor(visitor.id, {
                 engagementScore: (visitor.engagementScore || 0) + scoreIncrement,
@@ -981,20 +1358,19 @@ export const dataRoomRouter = router({
           try {
             const document = await db.getDataRoomDocumentById(input.documentId);
             if (document) {
-              const dataRoom = await db.getDataRoomById(document.dataRoomId);
-              if (dataRoom) {
+              const drRoom = await db.getDataRoomById(document.dataRoomId);
+              if (drRoom) {
                 const visitor = await db.getDataRoomVisitorById(input.visitorId);
                 const visitorName = visitor?.name || visitor?.email || 'Anonymous visitor';
-                const link = input.linkId ? await db.getDataRoomLinkByCode('') : null; // We have linkId not code
                 await db.createNotification({
-                  userId: dataRoom.ownerId,
+                  userId: drRoom.ownerId,
                   type: 'data_room_view',
-                  title: `${visitorName} is viewing "${dataRoom.name}"`,
+                  title: `${visitorName} is viewing "${drRoom.name}"`,
                   message: `Viewing document: ${document.name}`,
                   entityType: 'data_room',
-                  entityId: dataRoom.id,
+                  entityId: drRoom.id,
                   severity: 'info',
-                  link: `/data-rooms/${dataRoom.id}`,
+                  link: `/data-rooms/${drRoom.id}`,
                 });
               }
             }
@@ -1008,7 +1384,7 @@ export const dataRoomRouter = router({
       // Live current-financials feed for the data room's public page.
       // This is the investor-facing counterpart to the frozen projections
       // snapshot: metrics are recomputed at request time, gated by a valid
-      // link + any NDA/email/password gates that applied to `accessByLink`.
+      // link + any NDA requirement that applied to `accessByLink`.
       //
       // Intentionally narrow: cash, last-3-mo revenue, last-3-mo burn,
       // avg burn, runway, and optionally an AR total when the room owner
@@ -1044,7 +1420,7 @@ export const dataRoomRouter = router({
           // any gate the room relies on (password, required visitor info,
           // NDA) has to be checked here too — otherwise a caller who knows
           // the link could skip the password/info prompt and fetch
-          // financials directly. We implement this via "visitor must
+          // financials directly. The gates we implement via "visitor must
           // exist" because `accessByLink` only issues a visitor row once
           // its own checks pass.
           const requiresVisitor =
@@ -1102,251 +1478,6 @@ export const dataRoomRouter = router({
           };
         }),
     }),
-  }),
-  // ============================================
-  // NDA E-SIGNATURES
-  // ============================================
-  nda: router({
-    // Get NDA documents for a data room
-    documents: router({
-      list: protectedProcedure
-        .input(z.object({ dataRoomId: z.number() }))
-        .query(async ({ input }) => {
-          return db.getNdaDocuments(input.dataRoomId);
-        }),
-
-      getActive: publicProcedure
-        .input(z.object({ dataRoomId: z.number() }))
-        .query(async ({ input }) => {
-          return db.getActiveNdaDocument(input.dataRoomId);
-        }),
-
-      upload: protectedProcedure
-        .input(z.object({
-          dataRoomId: z.number(),
-          name: z.string(),
-          version: z.string().optional(),
-          fileContent: z.string(),
-          mimeType: z.string().optional(),
-          fileSize: z.number().optional(),
-          pageCount: z.number().optional(),
-          requiresSignature: z.boolean().optional(),
-          allowTypedSignature: z.boolean().optional(),
-          allowDrawnSignature: z.boolean().optional(),
-        }))
-        .mutation(async ({ input, ctx }) => {
-          const { fileContent, ...rest } = input;
-          const buffer = Buffer.from(fileContent, 'base64');
-          const key = `nda/${input.dataRoomId}/${Date.now()}-${input.name.replace(/[/\\]/g, '_')}`;
-          const mimeType = input.mimeType || 'application/pdf';
-          const { url } = await storagePut(key, buffer, mimeType);
-          const { id } = await db.createNdaDocument({
-            ...rest,
-            storageKey: key,
-            storageUrl: url,
-            uploadedBy: ctx.user.id,
-          });
-          return { id, url };
-        }),
-
-      update: protectedProcedure
-        .input(z.object({
-          id: z.number(),
-          name: z.string().optional(),
-          version: z.string().optional(),
-          isActive: z.boolean().optional(),
-          requiresSignature: z.boolean().optional(),
-          allowTypedSignature: z.boolean().optional(),
-          allowDrawnSignature: z.boolean().optional(),
-        }))
-        .mutation(async ({ input }) => {
-          const { id, ...data } = input;
-          await db.updateNdaDocument(id, data);
-          return { success: true };
-        }),
-
-      delete: protectedProcedure
-        .input(z.object({ id: z.number() }))
-        .mutation(async ({ input }) => {
-          await db.deleteNdaDocument(input.id);
-          return { success: true };
-        }),
-    }),
-
-    // Signatures
-    signatures: router({
-      list: protectedProcedure
-        .input(z.object({
-          dataRoomId: z.number(),
-          status: z.string().optional(),
-        }))
-        .query(async ({ input }) => {
-          return db.getNdaSignatures(input.dataRoomId, { status: input.status });
-        }),
-
-      getById: protectedProcedure
-        .input(z.object({ id: z.number() }))
-        .query(async ({ input }) => {
-          return db.getNdaSignatureById(input.id);
-        }),
-
-      // Check if visitor has signed NDA (public)
-      checkSigned: publicProcedure
-        .input(z.object({
-          dataRoomId: z.number(),
-          email: z.string().email(),
-        }))
-        .query(async ({ input }) => {
-          const signature = await db.getVisitorNdaSignature(input.dataRoomId, input.email);
-          return {
-            signed: !!signature,
-            signedAt: signature?.signedAt,
-            signatureId: signature?.id,
-          };
-        }),
-
-      // Sign NDA (public - for visitors)
-      sign: publicProcedure
-        .input(z.object({
-          ndaDocumentId: z.number(),
-          dataRoomId: z.number(),
-          visitorId: z.number().optional(),
-          linkId: z.number().optional(),
-          signerName: z.string().min(1),
-          signerEmail: z.string().email(),
-          signerTitle: z.string().optional(),
-          signerCompany: z.string().optional(),
-          signatureType: z.enum(['typed', 'drawn']),
-          signatureData: z.string(), // Base64 for drawn, typed name for typed
-          consentCheckbox: z.literal(true),
-        }))
-        .mutation(async ({ input, ctx }) => {
-          // Get the NDA document
-          const ndaDoc = await db.getNdaDocumentById(input.ndaDocumentId);
-          if (!ndaDoc) throw new TRPCError({ code: 'NOT_FOUND', message: 'NDA document not found' });
-          if (ndaDoc.dataRoomId !== input.dataRoomId) throw new TRPCError({ code: 'BAD_REQUEST', message: 'NDA document does not belong to this data room' });
-
-          // Get IP address from request
-          const ipAddress = ctx.req.headers['x-forwarded-for'] as string || ctx.req.socket.remoteAddress || 'unknown';
-          const userAgent = ctx.req.headers['user-agent'] || '';
-
-          // Store signature image if drawn
-          let signatureImageUrl: string | undefined;
-          if (input.signatureType === 'drawn' && input.signatureData.startsWith('data:image')) {
-            const { storagePut } = await import('../storage');
-            const base64Data = input.signatureData.replace(/^data:image\/\w+;base64,/, '');
-            const buffer = Buffer.from(base64Data, 'base64');
-            const key = `signatures/${input.dataRoomId}/${Date.now()}-${input.signerEmail.replace('@', '_')}.png`;
-            const { url } = await storagePut(key, buffer, 'image/png');
-            signatureImageUrl = url;
-          }
-
-          // Create the signature record
-          const { id } = await db.createNdaSignature({
-            ndaDocumentId: input.ndaDocumentId,
-            dataRoomId: input.dataRoomId,
-            visitorId: input.visitorId,
-            linkId: input.linkId,
-            signerName: input.signerName,
-            signerEmail: input.signerEmail,
-            signerTitle: input.signerTitle,
-            signerCompany: input.signerCompany,
-            signatureType: input.signatureType,
-            signatureData: input.signatureType === 'typed' ? input.signerName : input.signatureData,
-            signatureImageUrl,
-            ipAddress,
-            userAgent,
-            consentCheckbox: input.consentCheckbox,
-          });
-
-          // Create audit log
-          await db.createNdaAuditLog({
-            signatureId: id,
-            action: 'completed_signature',
-            ipAddress,
-            userAgent,
-            details: { signatureType: input.signatureType },
-          });
-
-          // Update visitor NDA status and link signature
-          if (input.visitorId) {
-            await db.updateDataRoomVisitor(input.visitorId, {
-              ndaAcceptedAt: new Date(),
-              ndaIpAddress: ipAddress,
-            });
-            // Link visitor to their NDA signature
-            await db.linkVisitorToNdaSignature(input.visitorId, id);
-          }
-
-          // Send signed NDA copy to visitor via email
-          try {
-            const { sendEmail } = await import('../_core/email');
-            const room = await db.getDataRoomById(input.dataRoomId);
-            const roomName = room?.name || 'Data Room';
-            
-            await sendEmail({
-              to: input.signerEmail,
-              subject: `Your Signed NDA for ${roomName}`,
-              html: `
-                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                  <h2>NDA Signed Successfully</h2>
-                  <p>Dear ${input.signerName},</p>
-                  <p>Thank you for signing the Non-Disclosure Agreement for <strong>${roomName}</strong>.</p>
-                  <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
-                    <h3 style="margin-top: 0;">Signature Details</h3>
-                    <p><strong>Document:</strong> ${ndaDoc.name}</p>
-                    <p><strong>Signed By:</strong> ${input.signerName}</p>
-                    ${input.signerTitle ? `<p><strong>Title:</strong> ${input.signerTitle}</p>` : ''}
-                    ${input.signerCompany ? `<p><strong>Company:</strong> ${input.signerCompany}</p>` : ''}
-                    <p><strong>Email:</strong> ${input.signerEmail}</p>
-                    <p><strong>Date:</strong> ${new Date().toLocaleString()}</p>
-                    <p><strong>IP Address:</strong> ${ipAddress}</p>
-                    <p><strong>Signature ID:</strong> ${id}</p>
-                  </div>
-                  ${signatureImageUrl ? `<p><strong>Your Signature:</strong></p><img src="${signatureImageUrl}" alt="Signature" style="max-width: 300px; border: 1px solid #ddd; padding: 10px;" />` : ''}
-                  <p style="color: #666; font-size: 12px;">This email serves as your confirmation of signing. Please keep it for your records.</p>
-                  <p style="color: #666; font-size: 12px;">If you have any questions, please contact the data room administrator.</p>
-                </div>
-              `,
-            });
-          } catch (emailError) {
-            console.error('Failed to send NDA confirmation email:', emailError);
-            // Don't fail the signature if email fails
-          }
-
-          return { id, success: true };
-        }),
-
-      // Revoke signature (admin only)
-      revoke: protectedProcedure
-        .input(z.object({
-          id: z.number(),
-          reason: z.string().optional(),
-        }))
-        .mutation(async ({ input, ctx }) => {
-          await db.updateNdaSignature(input.id, {
-            status: 'revoked',
-            revokedAt: new Date(),
-            revokedReason: input.reason,
-          });
-
-          // Create audit log
-          await db.createNdaAuditLog({
-            signatureId: input.id,
-            action: 'signature_revoked',
-            details: { reason: input.reason, revokedBy: ctx.user.id },
-          });
-
-          return { success: true };
-        }),
-
-      // Get audit log for a signature
-      auditLog: protectedProcedure
-        .input(z.object({ signatureId: z.number() }))
-        .query(async ({ input }) => {
-          return db.getNdaAuditLogs(input.signatureId);
-        }),
-    }),
 
     // ============================================
     // GOOGLE DRIVE SYNC
@@ -1390,7 +1521,7 @@ export const dataRoomRouter = router({
 
           const existingConfig = await db.getDriveSyncConfig(input.dataRoomId);
 
-          const configData: Omit<InsertDataRoomDriveSyncConfig, 'id'> = {
+          const configData: any = {
             dataRoomId: input.dataRoomId,
             googleDriveFolderId: input.googleDriveFolderId,
             googleDriveFolderName: input.googleDriveFolderName,
@@ -1407,9 +1538,15 @@ export const dataRoomRouter = router({
 
           if (existingConfig) {
             await db.updateDriveSyncConfig(existingConfig.id, configData);
+            await db.updateDataRoom(input.dataRoomId, {
+              googleDriveFolderId: input.googleDriveFolderId,
+            });
             return { id: existingConfig.id, updated: true };
           } else {
-            const id = await db.createDriveSyncConfig(configData as any);
+            const id = await db.createDriveSyncConfig(configData);
+            await db.updateDataRoom(input.dataRoomId, {
+              googleDriveFolderId: input.googleDriveFolderId,
+            });
             return { id, updated: false };
           }
         }),
@@ -1467,48 +1604,86 @@ export const dataRoomRouter = router({
           });
 
           try {
-            // Get Google OAuth token for the user configured for sync (or current user as fallback)
-            const syncUserId = config.syncUserId || ctx.user.id;
-            const { accessToken: syncAccessToken, error: tokenError } = await getValidGoogleToken(syncUserId);
-            if (tokenError || !syncAccessToken) {
-              throw new TRPCError({ code: 'UNAUTHORIZED', message: tokenError || 'Google Drive not connected. Please connect your Google account first.' });
+            // Get Google OAuth token for the user configured for sync (or room
+            // owner / current user as fallback)
+            const syncUserId = config.syncUserId || room.ownerId || ctx.user.id;
+            const { accessToken: _preflightToken, error: syncTokenErr } = await getValidGoogleToken(syncUserId);
+            if (syncTokenErr || !_preflightToken) {
+              throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected. Please connect your Google account first.' });
             }
 
-            // Import Google Drive sync service
-            const { syncGoogleDriveFolder } = await import('../googleDriveSyncService');
+            // Use the same reconcile engine as one-click / auto-sync so renames,
+            // moves, metadata refresh, and delete-propagation stay consistent.
+            const {
+              reconcileDataRoomFromDrive,
+              isTotalDriveImportFailure,
+              totalDriveImportFailureMessage,
+            } = await import('../googleDriveSyncService');
 
-            const result = await syncGoogleDriveFolder({
+            const syncStartMs = Date.now();
+            const recon = await reconcileDataRoomFromDrive({
               dataRoomId: input.dataRoomId,
-              folderId: config.googleDriveFolderId,
-              accessToken: syncAccessToken,
+              rootFolderId: config.googleDriveFolderId,
+              accessToken: async () => {
+                const t = await getValidGoogleToken(syncUserId);
+                if (t.error || !t.accessToken) throw new Error(t.error || 'Google token unavailable');
+                return t.accessToken;
+              },
+              uploadedBy: ctx.user.id,
+              allowDelete: true,
               syncSubfolders: config.syncSubfolders,
               includeFileTypes: config.includeFileTypes ? JSON.parse(config.includeFileTypes) : undefined,
               excludeFileTypes: config.excludeFileTypes ? JSON.parse(config.excludeFileTypes) : undefined,
-              maxFileSizeMb: config.maxFileSizeMb || 100,
+              maxFileSizeMb: config.maxFileSizeMb ?? undefined,
             });
+            const syncDurationMs = Date.now() - syncStartMs;
+
+            if (isTotalDriveImportFailure(recon)) {
+              throw new Error(totalDriveImportFailureMessage(recon));
+            }
+
+            // Keep the data room's linked folder ID in sync with the config so
+            // the daily auto-sync scheduler also picks this room up.
+            await db.updateDataRoom(input.dataRoomId, {
+              googleDriveFolderId: config.googleDriveFolderId,
+              ...(recon.partial ? {} : { lastSyncedAt: new Date() }),
+            });
+
+            const result = {
+              filesScanned: recon.filesFound,
+              filesAdded: recon.filesCreated,
+              filesUpdated: recon.filesUpdated,
+              filesSkipped: 0,
+              foldersCreated: recon.foldersCreated,
+              durationMs: syncDurationMs,
+              warnings: recon.errors,
+            };
 
             // Update sync log with results
             await db.updateDriveSyncLog(logId, {
               status: 'completed',
               completedAt: new Date(),
-              filesScanned: result.filesScanned,
-              filesAdded: result.filesAdded,
-              filesUpdated: result.filesUpdated,
-              filesSkipped: result.filesSkipped,
-              foldersCreated: result.foldersCreated,
-              durationMs: result.durationMs,
-              warnings: result.warnings?.length ? JSON.stringify(result.warnings) : null,
+              filesScanned: recon.filesFound,
+              filesAdded: recon.filesCreated,
+              filesUpdated: recon.filesUpdated,
+              filesRemoved: recon.filesRemoved,
+              filesSkipped: 0,
+              foldersCreated: recon.foldersCreated,
+              durationMs: syncDurationMs,
+              warnings: recon.errors?.length ? JSON.stringify(recon.errors) : null,
             });
 
             // Update config last sync status
             await db.updateDriveSyncConfig(config.id, {
               lastSyncAt: new Date(),
-              lastSyncStatus: 'success',
-              lastSyncFilesAdded: result.filesAdded,
-              lastSyncFilesUpdated: result.filesUpdated,
+              lastSyncStatus: recon.filesFailed || recon.partial ? 'partial' : 'success',
+              lastSyncFilesAdded: recon.filesCreated,
+              lastSyncFilesUpdated: recon.filesUpdated,
+              lastSyncFilesRemoved: recon.filesRemoved,
+              lastSyncError: recon.errors[0] || null,
             });
 
-            return { success: true, ...result };
+            return { success: true, ...result, filesRemoved: recon.filesRemoved, foldersUpdated: recon.foldersUpdated, filesFailed: recon.filesFailed, partial: recon.partial, errors: recon.errors };
           } catch (error: any) {
             await db.updateDriveSyncLog(logId, {
               status: 'failed',
@@ -1529,13 +1704,13 @@ export const dataRoomRouter = router({
       listDriveFolders: protectedProcedure
         .input(z.object({ parentId: z.string().optional() }))
         .query(async ({ input, ctx }) => {
-          const { accessToken, error: tokenError } = await getValidGoogleToken(ctx.user.id);
-          if (tokenError || !accessToken) {
-            throw new TRPCError({ code: 'UNAUTHORIZED', message: tokenError || 'Google Drive not connected' });
+          const { accessToken: listAccessToken, error: listTokenErr } = await getValidGoogleToken(ctx.user.id);
+          if (listTokenErr || !listAccessToken) {
+            throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected' });
           }
 
           const { listGoogleDriveFolders } = await import('../googleDriveSyncService');
-          return listGoogleDriveFolders(accessToken, input.parentId);
+          return listGoogleDriveFolders(listAccessToken, input.parentId);
         }),
     }),
 
@@ -1800,7 +1975,8 @@ export const dataRoomRouter = router({
           priority: z.number().optional(),
           isActive: z.boolean().optional(),
         }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertEmailAccessRuleOwnership(input.id, ctx.user.id, ctx.user.role);
           const { id, ...data } = input;
           await db.updateEmailAccessRule(id, data);
           return { success: true };
@@ -1809,7 +1985,8 @@ export const dataRoomRouter = router({
       // Delete a rule
       delete: protectedProcedure
         .input(z.object({ id: z.number() }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertEmailAccessRuleOwnership(input.id, ctx.user.id, ctx.user.role);
           await db.deleteEmailAccessRule(input.id);
           return { success: true };
         }),
@@ -1924,21 +2101,21 @@ export const dataRoomRouter = router({
       getSummary: protectedProcedure
         .input(z.object({ dataRoomId: z.number() }))
         .query(async ({ input }) => {
-          return db.getChecklistSummary(input.dataRoomId);
+          return (db as any).getChecklistSummary(input.dataRoomId);
         }),
 
       // List all checklists for a data room
       list: protectedProcedure
         .input(z.object({ dataRoomId: z.number() }))
         .query(async ({ input }) => {
-          return db.getDataRoomChecklists(input.dataRoomId);
+          return (db as any).getDataRoomChecklists(input.dataRoomId);
         }),
 
       // Get a checklist with all its items
       getById: protectedProcedure
         .input(z.object({ id: z.number() }))
         .query(async ({ input }) => {
-          return db.getChecklistWithItems(input.id);
+          return (db as any).getChecklistWithItems(input.id);
         }),
 
       // Create a standard due diligence checklist
@@ -1949,7 +2126,7 @@ export const dataRoomRouter = router({
           customName: z.string().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const checklist = await db.createStandardChecklist(
+          const checklist = await (db as any).createStandardChecklist(
             input.dataRoomId,
             ctx.user.id,
             input.checklistType,
@@ -1966,7 +2143,7 @@ export const dataRoomRouter = router({
           customName: z.string().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          return db.createChecklistFromTemplate(
+          return (db as any).createChecklistFromTemplate(
             input.dataRoomId,
             input.templateId,
             ctx.user.id,
@@ -1978,7 +2155,7 @@ export const dataRoomRouter = router({
       autoMatch: protectedProcedure
         .input(z.object({ checklistId: z.number() }))
         .mutation(async ({ input }) => {
-          return db.autoMatchChecklistDocuments(input.checklistId);
+          return (db as any).autoMatchChecklistDocuments(input.checklistId);
         }),
 
       // Update checklist item status
@@ -2002,12 +2179,12 @@ export const dataRoomRouter = router({
             updateData.waiverReason = waiverReason;
           }
 
-          await db.updateChecklistItem(id, updateData);
+          await (db as any).updateChecklistItem(id, updateData);
 
           // Get the item to recalculate parent checklist
-          const item = await db.getChecklistItemById(id);
+          const item = await (db as any).getChecklistItemById(id);
           if (item) {
-            await db.recalculateChecklistProgress(item.checklistId);
+            await (db as any).recalculateChecklistProgress(item.checklistId);
           }
 
           return { success: true };
@@ -2020,7 +2197,7 @@ export const dataRoomRouter = router({
           documentId: z.number(),
         }))
         .mutation(async ({ input }) => {
-          const item = await db.getChecklistItemById(input.itemId);
+          const item = await (db as any).getChecklistItemById(input.itemId);
           if (!item) {
             throw new TRPCError({ code: 'NOT_FOUND', message: 'Checklist item not found' });
           }
@@ -2036,13 +2213,13 @@ export const dataRoomRouter = router({
             linkedIds.push(input.documentId);
           }
 
-          await db.updateChecklistItem(input.itemId, {
+          await (db as any).updateChecklistItem(input.itemId, {
             linkedDocumentIds: JSON.stringify(linkedIds),
             linkedDocumentCount: linkedIds.length,
             status: linkedIds.length > 0 ? 'complete' : 'missing',
           });
 
-          await db.recalculateChecklistProgress(item.checklistId);
+          await (db as any).recalculateChecklistProgress(item.checklistId);
 
           return { success: true };
         }),
@@ -2054,7 +2231,7 @@ export const dataRoomRouter = router({
           documentId: z.number(),
         }))
         .mutation(async ({ input }) => {
-          const item = await db.getChecklistItemById(input.itemId);
+          const item = await (db as any).getChecklistItemById(input.itemId);
           if (!item) {
             throw new TRPCError({ code: 'NOT_FOUND', message: 'Checklist item not found' });
           }
@@ -2068,13 +2245,13 @@ export const dataRoomRouter = router({
 
           linkedIds = linkedIds.filter(id => id !== input.documentId);
 
-          await db.updateChecklistItem(input.itemId, {
+          await (db as any).updateChecklistItem(input.itemId, {
             linkedDocumentIds: JSON.stringify(linkedIds),
             linkedDocumentCount: linkedIds.length,
             status: linkedIds.length > 0 ? 'complete' : 'missing',
           });
 
-          await db.recalculateChecklistProgress(item.checklistId);
+          await (db as any).recalculateChecklistProgress(item.checklistId);
 
           return { success: true };
         }),
@@ -2086,16 +2263,16 @@ export const dataRoomRouter = router({
           categoryName: z.string(),
           itemName: z.string(),
           itemDescription: z.string().optional(),
-          requirement: z.enum(['required', 'conditional', 'optional']).default('required'),
+          requirement: z.enum(['required', 'recommended', 'optional']).default('required'),
           matchKeywords: z.array(z.string()).optional(),
         }))
         .mutation(async ({ input }) => {
-          const checklist = await db.getDataRoomChecklistById(input.checklistId);
+          const checklist = await (db as any).getDataRoomChecklistById(input.checklistId);
           if (!checklist) {
             throw new TRPCError({ code: 'NOT_FOUND', message: 'Checklist not found' });
           }
 
-          const result = await db.createDataRoomChecklistItem({
+          const result = await (db as any).createDataRoomChecklistItem({
             checklistId: input.checklistId,
             dataRoomId: checklist.dataRoomId,
             categoryName: input.categoryName,
@@ -2106,7 +2283,7 @@ export const dataRoomRouter = router({
             status: 'missing',
           });
 
-          await db.recalculateChecklistProgress(input.checklistId);
+          await (db as any).recalculateChecklistProgress(input.checklistId);
 
           return result;
         }),
@@ -2115,10 +2292,10 @@ export const dataRoomRouter = router({
       deleteItem: protectedProcedure
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input }) => {
-          const item = await db.getChecklistItemById(input.id);
+          const item = await (db as any).getChecklistItemById(input.id);
           if (item) {
-            await db.deleteChecklistItem(input.id);
-            await db.recalculateChecklistProgress(item.checklistId);
+            await (db as any).deleteChecklistItem(input.id);
+            await (db as any).recalculateChecklistProgress(item.checklistId);
           }
           return { success: true };
         }),
@@ -2127,7 +2304,7 @@ export const dataRoomRouter = router({
       delete: protectedProcedure
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input }) => {
-          await db.deleteDataRoomChecklist(input.id);
+          await (db as any).deleteDataRoomChecklist(input.id);
           return { success: true };
         }),
 
@@ -2139,14 +2316,122 @@ export const dataRoomRouter = router({
           reviewNotes: z.string().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          await db.updateChecklistItem(input.id, {
+          await (db as any).updateChecklistItem(input.id, {
             reviewStatus: input.reviewStatus,
             reviewNotes: input.reviewNotes,
             reviewedBy: ctx.user.id,
             reviewedAt: new Date(),
-          } as any);
+          });
           return { success: true };
         }),
     }),
-  }),
-});
+
+    // ============================================
+    // INVESTMENT COMMITMENTS (Investor Onboarding)
+    // ============================================
+
+    // Public endpoint — investor submits interest/commitment (no auth required)
+    submitInvestment: publicProcedure
+      .input(z.object({
+        dataRoomId: z.number(),
+        investorName: z.string().min(1),
+        investorEmail: z.string().email(),
+        investorCompany: z.string().optional(),
+        investorTitle: z.string().optional(),
+        investmentAmount: z.string(),
+        instrumentType: z.enum(["equity", "safe", "convertible_note", "warrant"]).optional(),
+        valuationCap: z.string().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const result = await db.createInvestmentCommitment({
+          ...input,
+          status: "interested",
+        });
+
+        // Notify admin
+        await db.createNotification({
+          userId: 1,
+          type: "system" as any,
+          title: `New investment interest: ${input.investorName}`,
+          message: `${input.investorName} (${input.investorCompany || ''}) expressed interest in investing $${input.investmentAmount}`,
+        });
+
+        // Send confirmation email to investor
+        try {
+          const { sendEmail: sendEmailFn } = await import("../_core/email");
+          await sendEmailFn({
+            to: input.investorEmail,
+            subject: "Investment Interest Received — Superhumn Inc",
+            html: `<p>Thank you for your interest in investing in Superhumn Inc.</p><p>We've received your indication of interest for $${Number(input.investmentAmount).toLocaleString()}. Our team will be in touch shortly with next steps.</p><p>Best regards,<br>The Superhumn Team</p>`,
+          });
+        } catch {}
+
+        return { id: result.id, message: "Thank you! We'll be in touch." };
+      }),
+
+    // Admin: list all commitments
+    listCommitments: protectedProcedure
+      .input(z.object({ dataRoomId: z.number().optional() }).optional())
+      .query(({ input }) => db.getInvestmentCommitments(input ?? undefined)),
+
+    // Admin: update commitment status
+    updateCommitmentStatus: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        status: z.enum(["interested", "committed", "docs_sent", "signed", "funded", "completed", "declined"]),
+      }))
+      .mutation(async ({ input }) => {
+        await db.updateInvestmentCommitment(input.id, { status: input.status });
+        return { success: true };
+      }),
+
+    // Admin: finalize investment -> add to cap table
+    finalizeInvestment: protectedProcedure
+      .input(z.object({
+        commitmentId: z.number(),
+        shareClassId: z.number(),
+        shares: z.string(),
+        pricePerShare: z.string(),
+      }))
+      .mutation(async ({ input }) => {
+        const commitment = await db.getInvestmentCommitmentById(input.commitmentId);
+        if (!commitment) throw new TRPCError({ code: "NOT_FOUND" });
+
+        // Create stakeholder
+        const stakeholder = await db.createStakeholder({
+          name: commitment.investorName,
+          email: commitment.investorEmail,
+          type: "investor",
+          relationship: commitment.investorCompany || undefined,
+          accreditedInvestor: true,
+        });
+
+        const stakeholderId = stakeholder.id || (stakeholder as any).insertId;
+
+        // Create equity grant
+        await db.createEquityGrant({
+          stakeholderId,
+          shareClassId: input.shareClassId,
+          grantType: commitment.instrumentType === "safe" ? "safe" : commitment.instrumentType === "convertible_note" ? "convertible_note" : "purchase",
+          grantDate: new Date(),
+          shares: input.shares,
+          pricePerShare: input.pricePerShare,
+          totalValue: commitment.investmentAmount?.toString(),
+          principalAmount: commitment.instrumentType !== "equity" ? commitment.investmentAmount?.toString() : undefined,
+          valuationCap: commitment.valuationCap?.toString(),
+          discountRate: commitment.discountRate?.toString(),
+          status: "active",
+        });
+
+        // Update commitment
+        await db.updateInvestmentCommitment(input.commitmentId, {
+          status: "completed",
+          addedToCapTable: true,
+          stakeholderId,
+          fundedAt: new Date(),
+        });
+
+        return { success: true, stakeholderId };
+      }),
+  });

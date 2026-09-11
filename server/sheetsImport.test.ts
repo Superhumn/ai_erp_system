@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { appRouter, detectSheetType } from "./routers";
+import { appRouter, detectSheetType } from "./routers/index";
 import * as db from "./db";
 import type { TrpcContext } from "./_core/context";
 

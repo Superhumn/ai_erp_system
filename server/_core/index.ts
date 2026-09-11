@@ -11,7 +11,7 @@ import rateLimit from "express-rate-limit";
 import { registerOAuthRoutes } from "./oauth";
 import { registerLocalAuthRoutes } from "./localAuth";
 import { registerAttachmentRoutes } from "./attachmentRoutes";
-import { appRouter } from "../routers";
+import { appRouter } from "../routers/index";
 import { createContext } from "./context";
 // serveStatic is inlined here to avoid importing vite.ts (which pulls in vite devDependencies)
 import path from "path";

@@ -38,7 +38,7 @@ drizzle/         # Drizzle schema (schema.ts) and SQL migration files
 - Run `pnpm run check` (tsc --noEmit) to verify types before committing.
 
 ### API Layer (tRPC)
-- All API endpoints are defined in `server/routers.ts` using tRPC v11 procedures.
+- All API endpoints are tRPC v11 procedures under `server/routers/` — one file per top-level router key (`server/routers/<key>.ts` exports `<key>Router`), mounted in `server/routers/index.ts`.
 - Use `protectedProcedure` for authenticated routes, `publicProcedure` for unauthenticated.
 - Input validation uses Zod schemas inline in each procedure.
 - The tRPC context (user, companyId, db connection) is created in `server/_core/context.ts`.
@@ -91,10 +91,10 @@ pnpm run db:push      # Generate and apply DB migrations
 ## Adding New Features
 
 1. **Database changes**: Update `drizzle/schema.ts`, then run `pnpm run db:push`.
-2. **New API endpoint**: Add a tRPC procedure in `server/routers.ts` using the appropriate procedure type and Zod validation.
+2. **New API endpoint**: Add a tRPC procedure to the matching `server/routers/<key>.ts` (new key → new file + one line in `server/routers/index.ts`) using the appropriate procedure type and Zod validation.
 3. **New DB query helper**: Add to `server/db.ts` following existing patterns.
 4. **New page**: Create under the relevant `client/src/pages/<module>/` directory and register the route.
-5. **New integration**: Create a new file in `server/_core/` and expose it via `routers.ts`.
+5. **New integration**: Create a new file in `server/_core/` and expose it via a router in `server/routers/`.
 
 ## User Roles
 
@@ -104,7 +104,7 @@ There are 9 roles in the system: `user`, `admin`, `finance`, `ops`, `legal`, `ex
 
 | File | Purpose |
 |---|---|
-| `server/routers.ts` | All tRPC API endpoints (~14k lines) |
+| `server/routers/` | All tRPC API endpoints — one file per top-level key, `index.ts` mounts them |
 | `server/db.ts` | All database query functions (~9k lines) |
 | `drizzle/schema.ts` | Drizzle ORM schema for all 158 tables |
 | `server/_core/llm.ts` | Centralized LLM invocation |

@@ -6,7 +6,7 @@
 
 | Script | Wired as | Purpose |
 |---|---|---|
-| `generate-legacy-indexes.mjs` | `pnpm index:legacy`, CI "Legacy Index Freshness" | Regenerates `ROUTERS_INDEX.md` + `DB_INDEX.md`. Deterministic. |
+| `generate-legacy-indexes.mjs` | `pnpm index:legacy`, CI "Legacy Index Freshness" | Regenerates `DB_INDEX.md` from `server/db.ts`. Deterministic. |
 | `strict-ratchet.mjs` | `pnpm strict:audit` / `strict:check` / `strict:update`, CI "Strict Ratchet" | Per-file strict-error baseline in `.strict-baseline.json`. |
 | `dump-trpc-paths.ts` + `feature-coverage.mjs` | `pnpm audit:coverage` | Lists tRPC procedures with no client caller → `docs/FEATURE_COVERAGE.md`. |
 | `entity-scope-lib.mjs` + `gen-entity-scope-exempt.mjs` | used by `server/entity-scope.test.ts` | Baseline for tables allowed to lack `companyId`. Re-run only to re-baseline deliberately. |
@@ -25,6 +25,7 @@ Imports: `import-sheets-data.{ts,mjs}`, `import-bom-data.ts`, `import-copackers.
 Seeds: `seed-entities.ts`, `seedJvEntities.ts`, `seed-pm-examples.ts`, `backfill-regions.ts`, `backfill-vendor-contacts.ts`.
 Cleanups: `cleanup-junk-contacts.ts`, `cleanup-non-material-items.ts`, `cleanup-malformed-meeting-notifications.ts`, `delete-all-products.ts`, `delete-fireflies-meetings.ts`.
 Reports: `thread-followup-report.ts`.
+Migrations: `split-legacy-router.mjs` — split the 29k-line `server/routers.ts` into `server/routers/<key>.ts` (one-shot; refuses to run now that the monolith is gone; kept so the move is reproducible on its parent commit).
 
 ## Rules
 
