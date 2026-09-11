@@ -14,7 +14,8 @@ export type ImportModule =
   | "invoices"
   | "employees"
   | "contracts"
-  | "projects";
+  | "projects"
+  | "project_tasks";
 
 export type ImportFieldType = "string" | "int" | "decimal" | "date" | "boolean" | "enum";
 
@@ -30,6 +31,10 @@ export type ImportFieldDef = {
   type?: ImportFieldType;
   /** Allowed values for `type: "enum"` (case-insensitive match). */
   enumValues?: readonly string[];
+  /** Extra spellings accepted for an enum value, keyed by the canonical value.
+   *  Spreadsheets say "Done" or "Not started" where the column says
+   *  "completed"/"planning", so map those in rather than rejecting the row. */
+  enumAliases?: Record<string, readonly string[]>;
   /** Lowercased header fragments used to auto-suggest a mapping. */
   aliases?: string[];
 };
@@ -136,8 +141,27 @@ export const IMPORT_FIELDS: Record<ImportModule, ImportFieldDef[]> = {
     { key: "name", label: "Name", required: true, aliases: ["project", "project name", "title"] },
     { key: "description", label: "Description", aliases: ["desc", "details"] },
     { key: "type", label: "Type", type: "enum", enumValues: ["internal", "client", "product", "research", "other"] },
-    { key: "status", label: "Status", type: "enum", enumValues: ["planning", "active", "on_hold", "completed", "cancelled"] },
-    { key: "priority", label: "Priority", type: "enum", enumValues: ["low", "medium", "high", "critical"] },
+    {
+      key: "status", label: "Status", type: "enum",
+      enumValues: ["planning", "active", "on_hold", "completed", "cancelled"],
+      enumAliases: {
+        planning: ["not started", "planned", "backlog", "upcoming", "new"],
+        active: ["in progress", "doing", "wip", "started", "ongoing", "open"],
+        on_hold: ["on hold", "paused", "blocked", "waiting", "parked"],
+        completed: ["done", "complete", "finished", "closed", "shipped"],
+        cancelled: ["canceled", "dropped", "abandoned"],
+      },
+    },
+    {
+      key: "priority", label: "Priority", type: "enum",
+      enumValues: ["low", "medium", "high", "critical"],
+      enumAliases: {
+        low: ["p4", "p3", "minor", "nice to have"],
+        medium: ["p2", "normal", "standard", "moderate"],
+        high: ["p1", "important", "major"],
+        critical: ["p0", "urgent", "blocker", "asap"],
+      },
+    },
     { key: "startDate", label: "Start date", type: "date", aliases: ["start", "start date", "kickoff"] },
     { key: "targetEndDate", label: "Target end date", type: "date", aliases: ["end date", "target date", "deadline", "due"] },
     { key: "budget", label: "Budget", type: "decimal", aliases: ["budgeted"] },
@@ -145,6 +169,40 @@ export const IMPORT_FIELDS: Record<ImportModule, ImportFieldDef[]> = {
     { key: "currency", label: "Currency", aliases: ["ccy"] },
     { key: "progress", label: "Progress (%)", type: "int", aliases: ["percent complete", "completion"] },
     { key: "notes", label: "Notes", aliases: ["note", "comment", "comments"] },
+  ],
+  // A to-do list row. `projectName` is synthetic: tasks hang off a project, so
+  // the row names its project and the server attaches the task to the project
+  // with that name (opening one when it doesn't exist yet).
+  project_tasks: [
+    { key: "name", label: "Task", required: true, aliases: ["task", "task name", "to do", "todo", "to-do", "action item", "item", "title", "summary"] },
+    { key: "projectName", label: "Project", aliases: ["project", "project name", "workstream", "list", "category", "group"] },
+    { key: "description", label: "Description", aliases: ["desc", "details", "notes", "note", "comment", "comments"] },
+    {
+      key: "status", label: "Status", type: "enum",
+      enumValues: ["todo", "in_progress", "review", "completed", "cancelled"],
+      aliases: ["state", "stage", "done", "progress"],
+      enumAliases: {
+        todo: ["to do", "to-do", "not started", "open", "new", "backlog", "pending", "no", "false"],
+        in_progress: ["in progress", "doing", "wip", "started", "active", "ongoing"],
+        review: ["in review", "reviewing", "qa", "awaiting review", "blocked"],
+        completed: ["done", "complete", "finished", "closed", "shipped", "yes", "true", "x"],
+        cancelled: ["canceled", "dropped", "won't do", "wont do", "abandoned", "n/a"],
+      },
+    },
+    {
+      key: "priority", label: "Priority", type: "enum",
+      enumValues: ["low", "medium", "high", "critical"],
+      aliases: ["urgency", "importance"],
+      enumAliases: {
+        low: ["p4", "p3", "minor", "nice to have", "someday"],
+        medium: ["p2", "normal", "standard", "moderate"],
+        high: ["p1", "important", "major"],
+        critical: ["p0", "urgent", "blocker", "asap", "highest"],
+      },
+    },
+    { key: "dueDate", label: "Due date", type: "date", aliases: ["due", "due date", "deadline", "target date", "when"] },
+    { key: "estimatedHours", label: "Estimated hours", type: "decimal", aliases: ["estimate", "est hours", "hours"] },
+    { key: "actualHours", label: "Actual hours", type: "decimal", aliases: ["actual", "time spent", "logged hours"] },
   ],
 };
 
@@ -165,6 +223,8 @@ export const DRIVE_IMPORT_TYPES = [
   { value: "crm_contacts", label: "CRM contacts" },
   { value: "crm_deals", label: "CRM deals" },
   { value: "fundraising", label: "Fundraising / investors" },
+  { value: "projects", label: "Projects" },
+  { value: "project_tasks", label: "Project tasks / to-dos" },
 ] as const;
 
 function normalize(s: string): string {
@@ -242,7 +302,12 @@ export function coerceImportValue(raw: string, def: ImportFieldDef): { value?: a
     case "boolean":
       return { value: /^(1|true|yes|y|t)$/i.test(v) };
     case "enum": {
-      const match = def.enumValues?.find((e) => normalize(e) === normalize(v));
+      const n = normalize(v);
+      const match =
+        def.enumValues?.find((e) => normalize(e) === n) ??
+        Object.entries(def.enumAliases ?? {}).find(([, spellings]) =>
+          spellings.some((a) => normalize(a) === n),
+        )?.[0];
       return match ? { value: match } : { error: `"${def.label}" must be one of: ${def.enumValues?.join(", ")} (got "${raw}")` };
     }
     default:

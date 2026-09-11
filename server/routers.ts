@@ -29,7 +29,7 @@ import { DEFAULT_PLANNER_TIMEZONE, type QuickAddIntent, type QuickAddResult } fr
 import { agentRouter } from "./agent";
 import { parseNoteWithLLM } from "./notesParser";
 import type { NoteAppliedItem, NoteParseResult, NoteParsedItem } from "@shared/notes";
-import { buildImportRecord } from "@shared/importFields";
+import { buildImportRecord, buildDefaultMapping } from "@shared/importFields";
 import { estimateOceanFreight } from "@shared/oceanFreightRates";
 import { employeePortalRouter } from "./routers/employeePortal";
 import { codeRouter } from "./routers/code";
@@ -440,12 +440,18 @@ async function getValidGoogleToken(userId: number): Promise<{ accessToken: strin
 const DRIVE_SUPPORTED_TYPES = [
   'vendors', 'customers', 'products', 'employees',
   'raw_materials', 'crm_contacts', 'crm_deals', 'fundraising',
+  'projects', 'project_tasks',
 ] as const;
 
 // Detect the destination type for a sheet from its (lowercased) header row.
 // Shared by previewGoogleDrive (detect-only) and syncGoogleDrive (detect+import)
 // so the suggestion the user confirms is exactly what gets imported.
 export function detectSheetType(headers: string[]): string {
+  // To-do lists and project trackers are checked first: an explicit task or
+  // project column is a stronger signal than the generic columns below (a
+  // to-do sheet with a "client" column is still a to-do sheet).
+  if (headers.some((h) => h.includes('task') || h.includes('to do') || h.includes('to-do') || h.includes('todo') || h.includes('action item'))) return 'project_tasks';
+  if (headers.some((h) => h.includes('project') || h.includes('milestone') || h.includes('deliverable') || h.includes('workstream'))) return 'projects';
   if (headers.some((h) => h.includes('vendor') || h.includes('supplier'))) return 'vendors';
   if (headers.some((h) => h.includes('customer') || h.includes('client') || h.includes('buyer'))) return 'customers';
   if (headers.some((h) => h.includes('sku') || h.includes('product') || h.includes('item'))) return 'products';
@@ -458,6 +464,69 @@ export function detectSheetType(headers: string[]): string {
   if (headers.some((h) => h.includes('investor') || h.includes('fund') || h.includes('commitment') || h.includes('round') || h.includes('series'))) return 'fundraising';
   if (headers.some((h) => h.includes('deal') || h.includes('opportunity') || h.includes('stage'))) return 'crm_deals';
   return 'unknown';
+}
+
+/**
+ * Write one project row. Shared by both import paths (Drive auto-sync and the
+ * CSV/XLSX upload) so they behave identically.
+ *
+ * Re-importing the same sheet is a no-op: a project is matched by name and an
+ * existing one is left exactly as it is. That keeps the nightly Drive sync
+ * add-only — it never overwrites edits made inside the ERP.
+ */
+async function importProjectRecord(
+  record: Record<string, any>,
+  createdBy: number,
+): Promise<{ created: boolean }> {
+  const name = String(record.name ?? '').trim();
+  if (!name) throw new Error('Missing project name');
+  const { name: _name, projectName: _projectName, ...fields } = record;
+  const { created } = await db.findOrCreateProjectByName(name, {
+    ...fields,
+    projectNumber: generateNumber('PRJ'),
+    createdBy,
+  });
+  return { created };
+}
+
+/** Catch-all project for to-dos whose sheet names no project. */
+const IMPORTED_TASKS_PROJECT = 'Imported to-dos';
+
+/**
+ * Write one to-do row. Tasks hang off a project, so the row's `projectName`
+ * column decides where it lands; a project with that name is opened when it
+ * doesn't exist yet, and rows with no project column go to a single
+ * "Imported to-dos" project. `projectIds` caches the lookups across rows of
+ * the same sheet.
+ *
+ * Idempotent like projects: a task already present under that project by name
+ * is skipped, so a re-sync adds only what is new.
+ */
+async function importProjectTaskRecord(
+  record: Record<string, any>,
+  createdBy: number,
+  projectIds: Map<string, number>,
+): Promise<{ created: boolean }> {
+  const name = String(record.name ?? '').trim();
+  if (!name) throw new Error('Missing task name');
+
+  const projectName = String(record.projectName ?? '').trim() || IMPORTED_TASKS_PROJECT;
+  const cacheKey = projectName.toLowerCase();
+  let projectId = projectIds.get(cacheKey);
+  if (!projectId) {
+    const { id } = await db.findOrCreateProjectByName(projectName, {
+      projectNumber: generateNumber('PRJ'),
+      createdBy,
+    });
+    projectId = id;
+    projectIds.set(cacheKey, projectId);
+  }
+
+  if (await db.findProjectTaskByName(projectId, name)) return { created: false };
+
+  const { projectName: _projectName, name: _name, ...fields } = record;
+  await db.createProjectTask({ ...fields, name, projectId, createdBy });
+  return { created: true };
 }
 
 export type DriveSyncResult = { sheet: string; type: string; imported: number; errors: string[] };
@@ -537,6 +606,11 @@ async function importDriveFiles(opts: {
 
       let imported = 0;
       const errors: string[] = [];
+      // Resolved once per sheet, reused across its rows.
+      const projectIds = new Map<string, number>();
+      const fieldMapping = (type === 'projects' || type === 'project_tasks')
+        ? buildDefaultMapping(headers, type)
+        : null;
 
       for (const row of dataRows) {
         try {
@@ -720,6 +794,18 @@ async function importDriveFiles(opts: {
                 } catch {}
               }
               imported++;
+              break;
+            }
+            case 'projects':
+            case 'project_tasks': {
+              // Reuse the shared field catalogue so a Drive sheet and an
+              // uploaded CSV map their columns the same way.
+              const { record: mapped, errors: rowErrors } = buildImportRecord(record, fieldMapping!, type);
+              if (rowErrors.length > 0) { errors.push(`Row ${imported + 1}: ${rowErrors[0]}`); continue; }
+              const { created } = type === 'projects'
+                ? await importProjectRecord(mapped, opts.userId)
+                : await importProjectTaskRecord(mapped, opts.userId, projectIds);
+              if (created) imported++;
               break;
             }
             default:
@@ -7107,13 +7193,17 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
     // Import data into a specific module
     importData: protectedProcedure
       .input(z.object({
-        targetModule: z.enum(['customers', 'vendors', 'products', 'invoices', 'employees', 'contracts', 'projects']),
+        targetModule: z.enum(['customers', 'vendors', 'products', 'invoices', 'employees', 'contracts', 'projects', 'project_tasks']),
         data: z.array(z.record(z.string(), z.string())),
         columnMapping: z.record(z.string(), z.string()), // Maps sheet column to ERP field
       }))
       .mutation(async ({ input, ctx }) => {
         const { targetModule, data, columnMapping } = input;
         const results = { imported: 0, failed: 0, errors: [] as string[] };
+        // Projects/tasks are matched by name, so a row that already exists is
+        // skipped rather than duplicated — it counts as neither imported nor
+        // failed. `projectIds` caches task → project lookups across the rows.
+        const projectIds = new Map<string, number>();
         
         for (const row of data) {
           try {
@@ -7173,12 +7263,17 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
                 } as any);
                 break;
 
-              case 'projects':
-                await db.createProject({
-                  ...record,
-                  projectNumber: generateNumber('PROJ'),
-                } as any);
-                break;
+              case 'projects': {
+                const { created } = await importProjectRecord(record, ctx.user.id);
+                if (created) results.imported++;
+                continue;
+              }
+
+              case 'project_tasks': {
+                const { created } = await importProjectTaskRecord(record, ctx.user.id, projectIds);
+                if (created) results.imported++;
+                continue;
+              }
             }
 
             results.imported++;

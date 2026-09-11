@@ -2950,6 +2950,51 @@ export async function createProject(data: InsertProject) {
   return { id: result[0].insertId };
 }
 
+/**
+ * Look up a project by its exact name. The column collation is
+ * case-insensitive, so "Website Redesign" and "website redesign" are the same
+ * project — which is what an imported spreadsheet expects.
+ */
+export async function findProjectByName(name: string, companyId?: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const trimmed = name.trim();
+  if (!trimmed) return undefined;
+  const conditions = [eq(projects.name, trimmed)];
+  if (companyId) conditions.push(eq(projects.companyId, companyId));
+  const result = await db.select().from(projects).where(and(...conditions)).limit(1);
+  return result[0];
+}
+
+/**
+ * Attach to the project with this name, or open it. Used by the spreadsheet
+ * importers so re-running the same sheet updates nothing and duplicates
+ * nothing — the existing project is reused as-is.
+ */
+export async function findOrCreateProjectByName(
+  name: string,
+  data: Omit<InsertProject, "name">,
+): Promise<{ id: number; created: boolean }> {
+  const existing = await findProjectByName(name.trim(), data.companyId ?? undefined);
+  if (existing) return { id: existing.id, created: false };
+  const { id } = await createProject({ ...data, name: name.trim() });
+  return { id, created: true };
+}
+
+/** Find a task by name within one project. Keeps re-imports idempotent. */
+export async function findProjectTaskByName(projectId: number, name: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const trimmed = name.trim();
+  if (!trimmed) return undefined;
+  const result = await db
+    .select()
+    .from(projectTasks)
+    .where(and(eq(projectTasks.projectId, projectId), eq(projectTasks.name, trimmed)))
+    .limit(1);
+  return result[0];
+}
+
 export async function updateProject(id: number, data: Partial<InsertProject>) {
   const db = await getDb();
   if (!db) return;
