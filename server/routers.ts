@@ -8175,6 +8175,12 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
     // Test connection
     testConnection: protectedProcedure.mutation(async ({ ctx }) => {
       if (ENV.accountingSyncProvider === "merge") {
+        // Same visibility rule as getConnectionStatus: don't reveal the
+        // linked company's name to users scoped away from its entity.
+        const scope = await resolveRequestScope(ctx.user);
+        if (!scopeAllows(scope, ENV.mergeCompanyId)) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'The accounting connection belongs to an entity outside your access.' });
+        }
         const info = await getMergeCompanyInfo();
         if (info.error) {
           throw new TRPCError({ code: 'PRECONDITION_FAILED', message: info.error });
@@ -8228,9 +8234,11 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
     syncAccounts: protectedProcedure
       .input(z.object({ companyId: z.number().optional() }))
       .mutation(async ({ input, ctx }) => {
-        // Default target: in Merge mode the linked entity (the UI calls this
-        // with {}), otherwise legacy company 1.
-        const companyId = input.companyId || (ENV.accountingSyncProvider === "merge" ? ENV.mergeCompanyId : 1);
+        // Default target: in Merge mode the linked entity, otherwise the
+        // caller's own entity (the UI calls this with {}). Company 1 only as
+        // the legacy fallback for users with no home entity.
+        const companyId = input.companyId
+          || (ENV.accountingSyncProvider === "merge" ? ENV.mergeCompanyId : (ctx.user.companyId ?? 1));
 
         // The synced rows are persisted under companyId — refuse a target
         // entity outside the caller's scope.
@@ -8268,8 +8276,22 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
         }
 
-        const accounts = result.data?.QueryResponse?.Account || [];
-        const synced = await db.syncQuickBooksAccounts(companyId, accounts);
+        // Map raw QuickBooks objects onto our column names and use the
+        // company-scoped upsert so direct-mode rows are entity-scoped too.
+        const accounts = (result.data?.QueryResponse?.Account || []).map((a: any) => ({
+          companyId,
+          quickbooksAccountId: String(a.Id),
+          name: a.Name ?? "Unnamed account",
+          accountType: a.AccountType ?? null,
+          accountSubType: a.AccountSubType ?? null,
+          classification: a.Classification ?? null,
+          fullyQualifiedName: a.FullyQualifiedName ?? null,
+          active: a.Active !== false,
+          currentBalance: a.CurrentBalance != null ? String(a.CurrentBalance) : null,
+          currency: a.CurrencyRef?.value ?? "USD",
+          lastSyncedAt: new Date(),
+        }));
+        const synced = await db.syncQuickBooksAccountsForCompany(companyId, accounts);
 
         await createAuditLog(ctx.user.id, 'create', 'quickbooks_sync', 0, `Synced ${synced.synced} accounts from QuickBooks`);
         
@@ -8288,7 +8310,8 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
       }))
       .mutation(async ({ input, ctx }) => {
         // Same defaulting rule as syncAccounts.
-        const companyId = input.companyId || (ENV.accountingSyncProvider === "merge" ? ENV.mergeCompanyId : 1);
+        const companyId = input.companyId
+          || (ENV.accountingSyncProvider === "merge" ? ENV.mergeCompanyId : (ctx.user.companyId ?? 1));
 
         // Same scope rule as syncAccounts: rows land under companyId.
         const scope = await resolveRequestScope(ctx.user);
@@ -8328,8 +8351,24 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
         }
 
-        const items = result.data?.QueryResponse?.Item || [];
-        const synced = await db.syncQuickBooksItems(companyId, items);
+        // Same column mapping + company-scoped upsert as syncAccounts.
+        const items = (result.data?.QueryResponse?.Item || []).map((i: any) => ({
+          companyId,
+          quickbooksItemId: String(i.Id),
+          name: i.Name ?? "Unnamed item",
+          sku: i.Sku ?? null,
+          type: i.Type ?? null,
+          description: i.Description ?? null,
+          unitPrice: i.UnitPrice != null ? String(i.UnitPrice) : null,
+          purchaseCost: i.PurchaseCost != null ? String(i.PurchaseCost) : null,
+          quantityOnHand: i.QtyOnHand != null ? String(i.QtyOnHand) : null,
+          incomeAccountId: i.IncomeAccountRef?.value ?? null,
+          expenseAccountId: i.ExpenseAccountRef?.value ?? null,
+          assetAccountId: i.AssetAccountRef?.value ?? null,
+          active: i.Active !== false,
+          lastSyncedAt: new Date(),
+        }));
+        const synced = await db.syncQuickBooksItemsForCompany(companyId, items);
 
         await createAuditLog(ctx.user.id, 'create', 'quickbooks_sync', 0, `Synced ${synced.synced} items from QuickBooks`);
         
@@ -8347,18 +8386,22 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         classification: z.enum(['Asset', 'Liability', 'Equity', 'Revenue', 'Expense']).optional(),
       }).optional())
       .query(async ({ input, ctx }) => {
-        const companyId = input?.companyId || (ENV.accountingSyncProvider === "merge" ? ENV.mergeCompanyId : 1);
+        const companyId = input?.companyId
+          || (ENV.accountingSyncProvider === "merge" ? ENV.mergeCompanyId : (ctx.user.companyId ?? 1));
         // Synced accounts are entity data — hide them from users scoped away.
         const scope = await resolveRequestScope(ctx.user);
         if (!scopeAllows(scope, companyId)) return [];
-        return db.getQuickBooksAccountsByType(input?.classification as any, companyId);
+        // companyId first: the helper reads a numeric first argument as the
+        // company filter; (undefined, companyId) builds a bogus filter.
+        return db.getQuickBooksAccountsByType(companyId, input?.classification);
       }),
 
     // Get account mappings
     getAccountMappings: protectedProcedure
       .input(z.object({ companyId: z.number().optional() }))
       .query(async ({ input, ctx }) => {
-        const companyId = input.companyId || (ENV.accountingSyncProvider === "merge" ? ENV.mergeCompanyId : 1);
+        const companyId = input.companyId
+          || (ENV.accountingSyncProvider === "merge" ? ENV.mergeCompanyId : (ctx.user.companyId ?? 1));
         const scope = await resolveRequestScope(ctx.user);
         if (!scopeAllows(scope, companyId)) return [];
         return db.getQuickBooksAccountMappings(companyId);
@@ -8383,7 +8426,8 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const companyId = input.companyId || (ENV.accountingSyncProvider === "merge" ? ENV.mergeCompanyId : 1);
+        const companyId = input.companyId
+          || (ENV.accountingSyncProvider === "merge" ? ENV.mergeCompanyId : (ctx.user.companyId ?? 1));
         // Mapping writes land under companyId — same scope rule as syncs.
         const scope = await resolveRequestScope(ctx.user);
         if (!scopeAllows(scope, companyId)) {
@@ -8414,19 +8458,23 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
       }).optional())
       .query(async ({ input, ctx }) => {
         if (ENV.accountingSyncProvider === "merge") {
-          if (!isMergeConfigured()) return { connected: false, months: [] };
           // The linked Merge account's P&L belongs to one ERP entity; users
           // scoped away from it must not see those actuals.
           const scope = await resolveRequestScope(ctx.user);
           if (!scopeAllows(scope, ENV.mergeCompanyId)) {
             return { connected: false, months: [] };
           }
+          // Same reachability semantics as getConnectionStatus: an invalid
+          // token or unlinked account reports as not connected, not as a
+          // connected provider with an error.
+          const check = await checkMergeConnection();
+          if (!check.connected) return { connected: false, months: [] };
           const res = await getMergeProfitAndLoss({
             startDate: input?.startDate,
             endDate: input?.endDate,
             summarizeBy: input?.summarizeBy ?? "Month",
           });
-          if (res.error) return { connected: true, error: res.error, months: [] };
+          if (res.error) return { connected: false, error: res.error, months: [] };
           return { connected: true, months: res.report!.months, expenseAccounts: res.report!.expenseAccounts };
         }
 
