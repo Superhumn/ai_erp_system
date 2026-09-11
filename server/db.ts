@@ -9,6 +9,7 @@ import {
   MATCH_EPSILON,
 } from "./purchaseOrderMatching";
 import { classifyDuplicateGroup, resolveMergedQuantities } from "./inventoryDeduplication";
+import { attributeLines, summarizeInflation, type RedundantLine } from "./receiptInflation";
 import {
   assertTransition, computeVariance, computeVarianceValue, resolveAdjustment,
   summarizeVariance, uncountedLines,
@@ -2196,6 +2197,101 @@ export async function getDuplicatePurchaseOrderGroups() {
       keepId: g.ids[0],
       duplicateIds: g.ids.slice(1),
     }));
+}
+
+/** Keeps `inArray` placeholder counts inside what mysql2 will accept. */
+const RECEIPT_SCAN_CHUNK = 500;
+
+/**
+ * Reports how much of each raw material's `quantityReceived` came from
+ * duplicate purchase orders rather than real deliveries.
+ *
+ * Read-only by design. The attribution is partly re-derived (see
+ * receiptInflation.ts for why the database holds no ledger for these
+ * increments), so this produces a reviewable report and leaves the decision
+ * to correct — and by how much — to a human.
+ *
+ * Only redundant POs with status 'received' are counted: that is the status
+ * the importer sets when `markAsReceived` ran, which is the branch that
+ * incremented the running total in the first place.
+ */
+export async function getReceiptInflationReport() {
+  const empty = {
+    perMaterial: [] as ReturnType<typeof summarizeInflation>["perMaterial"],
+    unattributed: [] as ReturnType<typeof summarizeInflation>["unattributed"],
+    totals: { redundantLines: 0, attributedLines: 0, materialsAffected: 0, materialsNeedingReview: 0 },
+    scannedDuplicatePos: 0,
+  };
+
+  const db = await getDb();
+  if (!db) return empty;
+
+  const groups = await getDuplicatePurchaseOrderGroups();
+  const redundantIds = groups.flatMap((g) => g.duplicateIds);
+  if (redundantIds.length === 0) return empty;
+
+  // Only the copies that actually ran the receiving branch moved stock.
+  const receivedPos: { id: number; poNumber: string }[] = [];
+  for (let i = 0; i < redundantIds.length; i += RECEIPT_SCAN_CHUNK) {
+    const chunk = redundantIds.slice(i, i + RECEIPT_SCAN_CHUNK);
+    const rows = await db
+      .select({ id: purchaseOrders.id, poNumber: purchaseOrders.poNumber })
+      .from(purchaseOrders)
+      .where(and(inArray(purchaseOrders.id, chunk), eq(purchaseOrders.status, "received" as any)));
+    receivedPos.push(...rows);
+  }
+  if (receivedPos.length === 0) return { ...empty, scannedDuplicatePos: 0 };
+
+  const poNumberById = new Map(receivedPos.map((p) => [p.id, p.poNumber]));
+  const receivedIds = receivedPos.map((p) => p.id);
+
+  // One query per chunk rather than per PO. The junction is joined in so a
+  // persisted material link is preferred over re-matching the description.
+  const lines: RedundantLine[] = [];
+  for (let i = 0; i < receivedIds.length; i += RECEIPT_SCAN_CHUNK) {
+    const chunk = receivedIds.slice(i, i + RECEIPT_SCAN_CHUNK);
+    const rows = await db
+      .select({
+        purchaseOrderId: purchaseOrderItems.purchaseOrderId,
+        description: purchaseOrderItems.description,
+        quantity: purchaseOrderItems.quantity,
+        linkedMaterialId: purchaseOrderRawMaterials.rawMaterialId,
+      })
+      .from(purchaseOrderItems)
+      .leftJoin(
+        purchaseOrderRawMaterials,
+        eq(purchaseOrderRawMaterials.purchaseOrderItemId, purchaseOrderItems.id),
+      )
+      .where(inArray(purchaseOrderItems.purchaseOrderId, chunk));
+
+    for (const r of rows) {
+      const quantity = parseFloat((r.quantity as string) ?? "0");
+      if (!Number.isFinite(quantity) || quantity === 0) continue;
+      lines.push({
+        purchaseOrderId: r.purchaseOrderId,
+        poNumber: poNumberById.get(r.purchaseOrderId) ?? String(r.purchaseOrderId),
+        description: (r.description as string) ?? "",
+        quantity,
+        linkedMaterialId: r.linkedMaterialId ?? null,
+      });
+    }
+  }
+
+  const materialRows = await db
+    .select({
+      id: rawMaterials.id,
+      name: rawMaterials.name,
+      sku: rawMaterials.sku,
+      quantityReceived: rawMaterials.quantityReceived,
+    })
+    .from(rawMaterials);
+
+  const currentReceivedById = new Map(
+    materialRows.map((m) => [m.id, parseFloat((m.quantityReceived as string) ?? "0") || 0]),
+  );
+
+  const report = summarizeInflation(attributeLines(lines, materialRows), currentReceivedById);
+  return { ...report, scannedDuplicatePos: receivedPos.length };
 }
 
 /**

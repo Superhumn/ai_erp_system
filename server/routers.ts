@@ -4684,6 +4684,10 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
     // POs that duplicate another PO on (poNumber, vendor, total). Lets the list
     // filter down to the copies left behind by repeated document imports.
     duplicates: opsProcedure.query(() => db.getDuplicatePurchaseOrderGroups()),
+
+    // Read-only. Deleting the duplicate POs destroys the line items this
+    // report is derived from, so run it before any bulk cleanup.
+    receiptInflation: opsProcedure.query(() => db.getReceiptInflationReport()),
     // Filtered / sorted / paged list for the PO page. `list` stays as-is for
     // its many other callers.
     listPaged: opsProcedure
