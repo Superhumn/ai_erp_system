@@ -84,6 +84,8 @@ import { listAllTranscripts, getTranscript, extractParticipants, parseActionItem
 import { queueFirefliesActionItemsForApproval } from "./firefliesSyncService";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
 import type { InsertDataRoomDriveSyncConfig } from "../drizzle/schema";
+import { autoReplyRules } from "../drizzle/schema";
+import { definedFields } from "./_core/definedFields";
 import { collectERPData, autoPopulateFields, generateApplicationNarrative, reviewApplication, generateApplicationDocument, DEFAULT_SECTIONS, searchOpportunities, evaluateOpportunityFit, analyzeWebFormFields, generateAutoFillScript, generateCopyPasteGuide, generateApiPayload } from "./grantBidService";
 import { runFormFillerAgent } from "./formFillerAgent";
 import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
@@ -93,7 +95,7 @@ import { getYouTubeAuthUrl } from "./_core/youtube";
 import { encrypt, decrypt } from "./_core/crypto";
 import { ENV } from "./_core/env";
 import { reassignProjectTaskToHuman, createProjectTaskFromSource } from "./taskAgentBridge";
-import { createDecipheriv, createHash, scrypt, randomBytes, timingSafeEqual } from "crypto";
+import { createDecipheriv, createHash, scrypt, randomBytes, randomInt, timingSafeEqual } from "crypto";
 import { promisify } from "util";
 import { parseLlmJson } from "./llmJson";
 import { isFetchableAttachmentUrl } from "./attachmentUrl";
@@ -863,8 +865,7 @@ export function generateNumber(prefix: string) {
   const date = new Date();
   const year = date.getFullYear().toString().slice(-2);
   const month = (date.getMonth() + 1).toString().padStart(2, '0');
-  const crypto = require('crypto');
-  const random = crypto.randomInt(10000).toString().padStart(4, '0');
+  const random = randomInt(10000).toString().padStart(4, '0');
   return `${prefix}-${year}${month}-${random}`;
 }
 // Secure password hashing helpers using scrypt. Async so the (deliberately slow)
@@ -14626,7 +14627,7 @@ Ask if they received the original request and if they can provide a quote.`;
           
           // Create PO if requested
           if (input.createPO && rfq) {
-            const poNumber = `PO-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${require('crypto').randomBytes(2).toString('hex').toUpperCase()}`;
+            const poNumber = `PO-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${randomBytes(2).toString('hex').toUpperCase()}`;
             const poResult = await db.createPurchaseOrder({
               poNumber,
               vendorId: quote.vendorId,
@@ -16216,7 +16217,9 @@ Then rank all quotes by best leveled value (1 = best; quotes marked NOT COMPARAB
       }))
       .mutation(async ({ input }) => {
         const { id, ...data } = input;
-        await db.updateInventoryAllocation(id, data);
+        const patch = definedFields(data);
+        if (!patch) return { success: true };
+        await db.updateInventoryAllocation(id, patch);
         return { success: true };
       }),
   }),
@@ -16494,7 +16497,7 @@ Then rank all quotes by best leveled value (1 = best; quotes marked NOT COMPARAB
         
         // Create inbound email record with initial category
         const { id: emailId } = await db.createInboundEmail({
-          messageId: `manual-${Date.now()}-${require('crypto').randomBytes(8).toString('hex')}`,
+          messageId: `manual-${Date.now()}-${randomBytes(8).toString('hex')}`,
           fromEmail: input.fromEmail,
           fromName: input.fromName || null,
           toEmail: "erp@system.local",
@@ -16953,7 +16956,7 @@ Then rank all quotes by best leveled value (1 = best; quotes marked NOT COMPARAB
     createAutoReplyRule: protectedProcedure
       .input(z.object({
         name: z.string().min(1),
-        category: z.string(),
+        category: z.enum(autoReplyRules.category.enumValues),
         replyTemplate: z.string().min(1),
         senderPattern: z.string().optional(),
         subjectPattern: z.string().optional(),
@@ -19917,12 +19920,18 @@ Then rank all quotes by best leveled value (1 = best; quotes marked NOT COMPARAB
           reviewStatus: z.enum(['pending', 'approved', 'needs_attention', 'rejected']),
           reviewNotes: z.string().optional(),
         }))
-        .mutation(async ({ input, ctx }) => {
-          await (db as any).updateChecklistItem(input.id, {
-            reviewStatus: input.reviewStatus,
-            reviewNotes: input.reviewNotes,
-            reviewedBy: ctx.user.id,
-            reviewedAt: new Date(),
+        .mutation(async ({ input }) => {
+          // dataRoomChecklistItems has `status` and `notes`, not review* columns;
+          // writing unknown keys produced `UPDATE … SET WHERE`, a SQL syntax error.
+          const statusMap = {
+            pending: "pending",
+            approved: "approved",
+            rejected: "rejected",
+            needs_attention: "partial",
+          } as const;
+          await db.updateChecklistItem(input.id, {
+            status: statusMap[input.reviewStatus],
+            ...(input.reviewNotes !== undefined && { notes: input.reviewNotes }),
           });
           return { success: true };
         }),
@@ -20309,7 +20318,9 @@ Then rank all quotes by best leveled value (1 = best; quotes marked NOT COMPARAB
             updateData.nextRunAt = new Date(Date.now() + intervalMinutes * 60 * 1000);
           }
 
-          await db.updateScheduledScan(id, updateData);
+          const patch = definedFields(updateData);
+          if (!patch) return { success: true };
+          await db.updateScheduledScan(id, patch);
           return { success: true };
         }),
 
@@ -21543,11 +21554,7 @@ Then rank all quotes by best leveled value (1 = best; quotes marked NOT COMPARAB
 
       deleteAll: protectedProcedure
         .mutation(async ({ ctx }) => {
-          const database = await db.getDb();
-          if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
-          const { crmContacts } = await import("../drizzle/schema");
-          const result = await database.delete(crmContacts);
-          const count = (result as any)[0]?.affectedRows || 0;
+          const count = await db.deleteAllCrmContacts();
           await createAuditLog(ctx.user.id, 'delete', 'crm_contact', 0, `Bulk deleted all ${count} contacts`);
           return { deleted: count };
         }),
@@ -22725,7 +22732,9 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         }))
         .mutation(async ({ input, ctx }) => {
           const { id, ...data } = input;
-          await db.updateInventoryCostingConfig(id, data);
+          const patch = definedFields(data);
+          if (!patch) return { success: true };
+          await db.updateInventoryCostingConfig(id, patch);
           await createAuditLog(ctx.user.id, 'update', 'inventoryCostingConfig', id);
           return { success: true };
         }),
@@ -23015,7 +23024,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
       create: opsProcedure
         .input(z.object({
           tradingPartnerId: z.number(),
-          transactionSetCode: z.string().min(1),
+          transactionSetCode: z.string().min(1).max(10),
           direction: z.enum(["inbound", "outbound"]),
           version: z.string().optional(),
           mappingRules: z.string(),
@@ -23039,7 +23048,9 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         }))
         .mutation(async ({ input, ctx }) => {
           const { id, ...data } = input;
-          await db.updateEdiDocumentMap(id, data);
+          const patch = definedFields(data);
+          if (!patch) return { success: true };
+          await db.updateEdiDocumentMap(id, patch);
           await createAuditLog(ctx.user.id, 'update', 'edi_document_map', id);
           return { success: true };
         }),
@@ -23146,7 +23157,9 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         }))
         .mutation(async ({ input, ctx }) => {
           const { id, ...data } = input;
-          await db.updateEdiProductCrosswalk(id, data);
+          const patch = definedFields(data);
+          if (!patch) return { success: true };
+          await db.updateEdiProductCrosswalk(id, patch);
           await createAuditLog(ctx.user.id, 'update', 'edi_product_crosswalk', id);
           return { success: true };
         }),
@@ -23335,12 +23348,9 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
       }))
       .mutation(async ({ input }) => {
         const { id, ...data } = input;
-        // Filter out undefined values
-        const updateData: Record<string, any> = {};
-        for (const [k, v] of Object.entries(data)) {
-          if (v !== undefined) updateData[k] = v;
-        }
-        return db.updateInventoryManagement(id, updateData);
+        const patch = definedFields(data);
+        if (!patch) return { success: true };
+        return db.updateInventoryManagement(id, patch);
       }),
   }),
 

@@ -602,6 +602,13 @@ export const inventory = mysqlTable("inventory", {
   lastCountQuantity: decimal("lastCountQuantity", { precision: 15, scale: 4 }),
   averageCost: decimal("averageCost", { precision: 15, scale: 4 }), // Average cost per unit for COGS calculation
   totalCostBasis: decimal("totalCostBasis", { precision: 15, scale: 2 }), // Total cost of inventory on hand
+  // Planning fields edited on Operations → Inventory Planning
+  // (inventoryManagement.update). They were accepted by the API but had no
+  // column behind them, so every save failed with a SQL syntax error.
+  forecastedQuantity: decimal("forecastedQuantity", { precision: 15, scale: 4 }),
+  poStatus: varchar("poStatus", { length: 64 }),
+  freightStatus: varchar("freightStatus", { length: 64 }),
+  freightTrackingNumber: varchar("freightTrackingNumber", { length: 128 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
