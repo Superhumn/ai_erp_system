@@ -1,0 +1,124 @@
+name: Deploy to Production (gated)
+
+# Runs after every successful "Deploy to Staging" on main and promotes that
+# exact commit to production — but only once a required reviewer approves the
+# run (the gate lives on the 'production' GitHub environment, not in this
+# file). Until the staging tier exists (second Railway service + env-scoped
+# service ids, see DEPLOYMENT.md "Staging tier"), the guard below refuses to
+# deploy before migrations run, so merging this workflow early is safe.
+on:
+  workflow_run:
+    workflows: ["Deploy to Staging"]
+    types: [completed]
+
+# Shares the manual deploy-production.yml group so a gated promotion and an
+# ad-hoc manual deploy can never replace the container mid-healthcheck.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy-production:
+    name: Promote staging build to Production
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
+
+    steps:
+      - name: Checkout the commit staging deployed
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      # Runs before the migration step, so a misrouted or under-configured
+      # deploy is refused while the production database is still untouched.
+      # STAGING_SERVICE_ID is a repository variable set when the staging
+      # service is created; while it is unset, staging and production share
+      # one container and promoting would just redeploy the same box, so the
+      # deploy is refused. RAILWAY_TOKEN is checked here too: discovering a
+      # missing token only at the deploy step would leave the schema migrated
+      # with no matching release.
+      - name: Verify production and staging are distinct services
+        env:
+          RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
+          STAGING_SERVICE_ID: ${{ vars.STAGING_SERVICE_ID }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "::error title=Railway token missing::RAILWAY_TOKEN secret is not set for the 'production' environment. Add it in GitHub → Settings → Secrets and variables → Actions → Secrets (generate a project/service token in the Railway dashboard)."
+            exit 1
+          fi
+          if [ -z "$RAILWAY_SERVICE_ID" ]; then
+            echo "::error title=Railway service id missing::RAILWAY_SERVICE_ID is not set. Add it as an environment-scoped variable on the 'production' environment (GitHub → Settings → Environments → production)."
+            exit 1
+          fi
+          if [ -z "$STAGING_SERVICE_ID" ]; then
+            echo "::error title=Staging tier not configured::STAGING_SERVICE_ID repository variable is not set, which means the second (staging) Railway service does not exist yet — staging and production would be the same container. Follow the 'Staging tier' section of DEPLOYMENT.md, then set STAGING_SERVICE_ID to the staging service id."
+            exit 1
+          fi
+          if [ "$RAILWAY_SERVICE_ID" = "$STAGING_SERVICE_ID" ]; then
+            echo "::error title=Production is pointing at the staging service::RAILWAY_SERVICE_ID resolved to ${RAILWAY_SERVICE_ID}, which is the staging service. Set the 'production' environment's RAILWAY_SERVICE_ID to the production service id from the Railway dashboard."
+            exit 1
+          fi
+          echo "Promoting to production service: $RAILWAY_SERVICE_ID"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Run type check
+        run: pnpm run check
+
+      - name: Build application
+        run: pnpm run build
+
+      - name: Run database migrations (production)
+        # Applies any new Drizzle migrations from drizzle/*.sql against the
+        # production DB before the new app build goes live. Idempotent — the
+        # migration runner tracks which files have already been applied.
+        # Unlike the staging workflow, a missing DATABASE_URL is a hard error:
+        # this job only runs once the staging tier exists (guard above), and
+        # the tier setup configures DATABASE_URL on the 'production'
+        # environment — promoting a build against an unmigrated schema is
+        # never intended.
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error title=Production DATABASE_URL missing::DATABASE_URL secret is not set for the 'production' environment, so production migrations cannot run. Refusing to promote a build against a possibly unmigrated schema. Set it in GitHub → Settings → Environments → production."
+            exit 1
+          fi
+          node dist/migrate.js
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - name: Deploy to Railway production
+        # Token and service id were preflighted in the guard step, before
+        # migrations, so this step should only fail on genuine Railway-side
+        # errors. NB: DB migrations already ran in the step above, so a deploy
+        # that fails here leaves the DB migrated but the app un-updated — fix
+        # the config and re-run rather than rolling back migrations.
+        run: |
+          # Constrain the CLI to the v4 major line so a v5 breaking release
+          # can't change deploy behavior. 4.x minors still float — set an exact
+          # version here if you need fully reproducible installs.
+          npm install -g @railway/cli@^4 || {
+            echo "::error title=Railway CLI install failed::Could not install @railway/cli."
+            exit 1
+          }
+          railway up --service "$RAILWAY_SERVICE_ID"
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
