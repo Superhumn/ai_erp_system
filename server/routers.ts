@@ -183,11 +183,18 @@ export async function resolveRequestScope(user: { id: number; companyId: number 
   );
 }
 
-export const scopedProcedure = protectedProcedure.use(async ({ ctx, next }) => {
-  const scope = await resolveRequestScope(ctx.user);
+// Reject a non-global scope that resolved to zero entities (a non-global user with no home/access
+// entity), matching scopedProcedure's behavior. Use in role-gated handlers that resolve scope
+// inline so they don't silently return empty instead of a clear FORBIDDEN.
+export function assertNonEmptyScope(scope: Awaited<ReturnType<typeof resolveRequestScope>>) {
   if (scope.companyIds !== 'all' && scope.companyIds.length === 0) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'No entity scope assigned' });
   }
+  return scope;
+}
+
+export const scopedProcedure = protectedProcedure.use(async ({ ctx, next }) => {
+  const scope = assertNonEmptyScope(await resolveRequestScope(ctx.user));
   return next({ ctx: { ...ctx, scope } });
 });
 
@@ -1454,7 +1461,7 @@ async function buildManualProductionPlan(
   // Finished goods already on hand, restated in the plan's unit.
   let currentInventory = 0;
   if (input.netOffInventory) {
-    const inventoryRecords = await db.getInventory({ productId });
+    const inventoryRecords = await db.getInventory(undefined, { productId });
     const onHandEach = inventoryRecords.reduce(
       (sum, inv) => sum + parseFloat(inv.quantity?.toString() || "0"),
       0,
@@ -2716,13 +2723,15 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
   // FINANCE - INVOICES
   // ============================================
   invoices: router({
+    // financeProcedure keeps the role gate; scope is resolved server-side. companyId is not client input.
     list: financeProcedure
       .input(z.object({
-        companyId: z.number().optional(),
         status: z.string().optional(),
         customerId: z.number().optional(),
       }).optional())
-      .query(({ input }) => db.getInvoices(input)),
+      .query(async ({ input, ctx }) =>
+        db.getInvoices(assertNonEmptyScope(await resolveRequestScope(ctx.user)), { status: input?.status, customerId: input?.customerId }),
+      ),
     get: financeProcedure
       .input(z.object({ id: z.number() }))
       .query(({ input }) => db.getInvoiceWithItems(input.id)),
@@ -3152,11 +3161,12 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
   payments: router({
     list: financeProcedure
       .input(z.object({
-        companyId: z.number().optional(),
         type: z.string().optional(),
         status: z.string().optional(),
       }).optional())
-      .query(({ input }) => db.getPayments(input)),
+      .query(async ({ input, ctx }) =>
+        db.getPayments(assertNonEmptyScope(await resolveRequestScope(ctx.user)), { type: input?.type, status: input?.status }),
+      ),
     get: financeProcedure
       .input(z.object({ id: z.number() }))
       .query(({ input }) => db.getPaymentById(input.id)),
@@ -3252,11 +3262,12 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
   transactions: router({
     list: financeProcedure
       .input(z.object({
-        companyId: z.number().optional(),
         type: z.string().optional(),
         status: z.string().optional(),
       }).optional())
-      .query(({ input }) => db.getTransactions(input)),
+      .query(async ({ input, ctx }) =>
+        db.getTransactions(assertNonEmptyScope(await resolveRequestScope(ctx.user)), { type: input?.type, status: input?.status }),
+      ),
     create: financeProcedure
       .input(z.object({
         companyId: z.number().optional(),
@@ -3406,14 +3417,21 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
   // OPERATIONS - INVENTORY
   // ============================================
   inventory: router({
+    // opsProcedure keeps the role gate; scope is resolved server-side and applied on top so a
+    // user only sees their entities' inventory. companyId is no longer a client input.
     list: opsProcedure
       .input(z.object({
-        companyId: z.number().optional(),
         warehouseId: z.number().optional(),
         productId: z.number().optional(),
         limit: z.number().min(1).max(1000).optional(),
       }).optional())
-      .query(({ input }) => db.getInventory(input)),
+      .query(async ({ input, ctx }) =>
+        db.getInventory(assertNonEmptyScope(await resolveRequestScope(ctx.user)), {
+          warehouseId: input?.warehouseId,
+          productId: input?.productId,
+          limit: input?.limit,
+        }),
+      ),
     create: opsProcedure
       .input(z.object({
         companyId: z.number().optional(),
@@ -11214,7 +11232,7 @@ Then recommend one quoteId and write a summary an operations manager could defen
                 const poItems = await db.getPurchaseOrderItems(shipment.purchaseOrderId);
                 for (const item of poItems) {
                   const quantity = item.quantity || '0';
-                  const existingInventory = await db.getInventory({ productId: item.productId, warehouseId });
+                  const existingInventory = await db.getInventory(undefined, { productId: item.productId, warehouseId });
                   if (existingInventory.length > 0) {
                     const existing = existingInventory[0];
                     const newQty = (parseFloat(existing.quantity) + parseFloat(quantity)).toString();
@@ -13745,7 +13763,7 @@ Provide your forecast in JSON format with the following structure:
         if (!product) throw new Error('Product not found');
         
         // Get current inventory
-        const inventoryRecords = await db.getInventory({ productId: product.id });
+        const inventoryRecords = await db.getInventory(undefined, { productId: product.id });
         const currentInventory = inventoryRecords.reduce((sum, inv) => sum + parseFloat(inv.quantity?.toString() || '0'), 0);
         
         // Calculate production needed

@@ -1313,7 +1313,7 @@ Provide your forecast in JSON format with the following structure:
         if (!product) throw new Error('Product not found');
         
         // Get current inventory
-        const inventoryRecords = await db.getInventory({ productId: product.id });
+        const inventoryRecords = await db.getInventory(undefined, { productId: product.id });
         const currentInventory = inventoryRecords.reduce((sum, inv) => sum + parseFloat(inv.quantity?.toString() || '0'), 0);
         
         // Calculate production needed
