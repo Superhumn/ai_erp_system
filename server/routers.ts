@@ -29,7 +29,7 @@ import { DEFAULT_PLANNER_TIMEZONE, type QuickAddIntent, type QuickAddResult } fr
 import { agentRouter } from "./agent";
 import { parseNoteWithLLM } from "./notesParser";
 import type { NoteAppliedItem, NoteParseResult, NoteParsedItem } from "@shared/notes";
-import { buildImportRecord } from "@shared/importFields";
+import { buildImportRecord, buildDefaultMapping } from "@shared/importFields";
 import { estimateOceanFreight } from "@shared/oceanFreightRates";
 import { employeePortalRouter } from "./routers/employeePortal";
 import { codeRouter } from "./routers/code";
@@ -452,12 +452,21 @@ async function getValidGoogleToken(userId: number): Promise<{ accessToken: strin
 const DRIVE_SUPPORTED_TYPES = [
   'vendors', 'customers', 'products', 'employees',
   'raw_materials', 'crm_contacts', 'crm_deals', 'fundraising',
+  'projects', 'project_tasks',
 ] as const;
 
 // Detect the destination type for a sheet from its (lowercased) header row.
 // Shared by previewGoogleDrive (detect-only) and syncGoogleDrive (detect+import)
 // so the suggestion the user confirms is exactly what gets imported.
 export function detectSheetType(headers: string[]): string {
+  // To-do lists and project trackers are checked first: an explicit task or
+  // project column is a stronger signal than the generic columns below (a
+  // to-do sheet with a "client" column is still a to-do sheet).
+  if (headers.some((h) => h.includes('task') || h.includes('to do') || h.includes('to-do') || h.includes('todo') || h.includes('action item'))) return 'project_tasks';
+  // Only headers that can actually supply the project name count, so a sheet
+  // we claim is a sheet we can import. A bare milestone tracker has no home
+  // here — it stays unrecognised and the user picks a destination.
+  if (headers.some((h) => h.includes('project') || h.includes('workstream') || h.includes('deliverable'))) return 'projects';
   if (headers.some((h) => h.includes('vendor') || h.includes('supplier'))) return 'vendors';
   if (headers.some((h) => h.includes('customer') || h.includes('client') || h.includes('buyer'))) return 'customers';
   if (headers.some((h) => h.includes('sku') || h.includes('product') || h.includes('item'))) return 'products';
@@ -472,7 +481,91 @@ export function detectSheetType(headers: string[]): string {
   return 'unknown';
 }
 
+/**
+ * Write one project row. Shared by both import paths (Drive sync and the
+ * CSV/XLSX upload) so they behave identically.
+ *
+ * Re-importing the same sheet is a no-op: a project is matched by name within
+ * the importer's own company and an existing one is left exactly as it is, so
+ * a re-sync only adds what is new and never overwrites an edit made inside
+ * the ERP.
+ */
+async function importProjectRecord(
+  record: Record<string, any>,
+  scope: { createdBy: number; companyId?: number },
+): Promise<{ created: boolean }> {
+  const name = String(record.name ?? '').trim();
+  if (!name) throw new Error('Missing project name');
+  const { name: _name, projectName: _projectName, ...fields } = record;
+  const { created } = await db.findOrCreateProjectByName(name, {
+    ...fields,
+    projectNumber: generateNumber('PRJ'),
+    createdBy: scope.createdBy,
+    companyId: scope.companyId ?? null,
+  });
+  return { created };
+}
+
+/** Catch-all project for to-dos whose sheet names no project. */
+const IMPORTED_TASKS_PROJECT = 'Imported to-dos';
+
+/**
+ * Write one to-do row. Tasks hang off a project, so the row's `projectName`
+ * column decides where it lands; a project with that name is opened when it
+ * doesn't exist yet, and rows with no project column go to a single
+ * "Imported to-dos" project. `projectIds` caches the lookups across rows of
+ * the same sheet.
+ *
+ * Idempotent like projects: a task already present under that project by name
+ * is skipped, so a re-sync adds only what is new.
+ */
+async function importProjectTaskRecord(
+  record: Record<string, any>,
+  scope: { createdBy: number; companyId?: number },
+  projectIds: Map<string, number>,
+): Promise<{ created: boolean }> {
+  const name = String(record.name ?? '').trim();
+  if (!name) throw new Error('Missing task name');
+
+  const projectName = String(record.projectName ?? '').trim() || IMPORTED_TASKS_PROJECT;
+  const cacheKey = projectName.toLowerCase();
+  let projectId = projectIds.get(cacheKey);
+  if (!projectId) {
+    // Scoped to the importer's company, so a same-named project belonging to
+    // another company can never collect this company's to-dos.
+    const { id } = await db.findOrCreateProjectByName(projectName, {
+      projectNumber: generateNumber('PRJ'),
+      createdBy: scope.createdBy,
+      companyId: scope.companyId ?? null,
+    });
+    projectId = id;
+    projectIds.set(cacheKey, projectId);
+  }
+
+  if (await db.findProjectTaskByName(projectId, name)) return { created: false };
+
+  const { projectName: _projectName, name: _name, ...fields } = record;
+  await db.createProjectTask({ ...fields, name, projectId, createdBy: scope.createdBy });
+  return { created: true };
+}
+
 export type DriveSyncResult = { sheet: string; type: string; imported: number; errors: string[] };
+
+/**
+ * The caller's still-running Drive import, if any. Queries pending
+ * google_drive jobs directly rather than scanning a global recency window —
+ * otherwise a burst of other sync logs could push the caller's running job out
+ * of view and break reconnection.
+ */
+async function findActiveDriveSyncJob(userId: number) {
+  const pending = await db.getPendingSyncLogs('google_drive', 50);
+  const oneHourAgo = Date.now() - 60 * 60 * 1000;
+  return pending.find((log: any) => {
+    const meta = (log.metadata as any) || {};
+    if (meta.userId !== userId) return false;
+    return new Date(log.createdAt).getTime() >= oneHourAgo;
+  });
+}
 
 // Read every (selected) spreadsheet from the user's Google Drive and import its
 // rows into the matching ERP tables. Extracted from the syncGoogleDrive mutation
@@ -482,6 +575,8 @@ export type DriveSyncResult = { sheet: string; type: string; imported: number; e
 // after navigating away from the Import page.
 async function importDriveFiles(opts: {
   userId: number;
+  /** Company the importing user belongs to — scopes anything the import creates. */
+  companyId?: number;
   accessToken: string;
   forcedTypes: Map<string, string> | null;
   onProgress?: (p: { results: DriveSyncResult[]; totalSheets: number; processedSheets: number; currentFile?: string }) => Promise<void> | void;
@@ -549,8 +644,16 @@ async function importDriveFiles(opts: {
 
       let imported = 0;
       const errors: string[] = [];
+      // Resolved once per sheet, reused across its rows.
+      const projectIds = new Map<string, number>();
+      const fieldMapping = (type === 'projects' || type === 'project_tasks')
+        ? buildDefaultMapping(headers, type)
+        : null;
 
-      for (const row of dataRows) {
+      // Row numbers are 1-based and count the header, so the number in an
+      // error message points at the same row the user sees in the sheet.
+      for (const [rowIndex, row] of dataRows.entries()) {
+        const rowNumber = rowIndex + 2;
         try {
           const record: Record<string, string> = {};
           headers.forEach((h: string, i: number) => { record[h] = row[i] || ''; });
@@ -558,7 +661,7 @@ async function importDriveFiles(opts: {
           switch (type) {
             case 'vendors': {
               const name = record.name || record.vendor || record.company || record['vendor name'];
-              if (!name) { errors.push(`Row ${imported + 1}: Missing vendor name`); continue; }
+              if (!name) { errors.push(`Row ${rowNumber}: Missing vendor name`); continue; }
               await db.createVendor({
                 name,
                 email: record.email || record['email address'] || null,
@@ -573,7 +676,7 @@ async function importDriveFiles(opts: {
             }
             case 'customers': {
               const name = record.name || record.customer || record.company || record['customer name'];
-              if (!name) { errors.push(`Row ${imported + 1}: Missing customer name`); continue; }
+              if (!name) { errors.push(`Row ${rowNumber}: Missing customer name`); continue; }
               await db.createCustomer({
                 name,
                 email: record.email || null,
@@ -587,7 +690,7 @@ async function importDriveFiles(opts: {
             }
             case 'products': {
               const name = record.name || record.product || record.item || record.description;
-              if (!name) { errors.push(`Row ${imported + 1}: Missing product name`); continue; }
+              if (!name) { errors.push(`Row ${rowNumber}: Missing product name`); continue; }
               const sku = record.sku || record['product code'] || record.code || generateNumber('PROD');
               await db.createProduct({
                 name,
@@ -602,7 +705,7 @@ async function importDriveFiles(opts: {
             case 'employees': {
               const firstName = record['first name'] || record.firstname || record['first'];
               const lastName = record['last name'] || record.lastname || record['last'];
-              if (!firstName || !lastName) { errors.push(`Row ${imported + 1}: Missing first/last name`); continue; }
+              if (!firstName || !lastName) { errors.push(`Row ${rowNumber}: Missing first/last name`); continue; }
               const employeeNumber = generateNumber('EMP');
               await db.createEmployee({
                 employeeNumber,
@@ -617,7 +720,7 @@ async function importDriveFiles(opts: {
             }
             case 'raw_materials': {
               const name = record.name || record.ingredient || record.material || record['material name'];
-              if (!name) { errors.push(`Row ${imported + 1}: Missing material name`); continue; }
+              if (!name) { errors.push(`Row ${rowNumber}: Missing material name`); continue; }
               await db.createRawMaterial({
                 name,
                 sku: record.sku || record.code || `RM-${Date.now().toString(36)}-${imported}`,
@@ -734,11 +837,24 @@ async function importDriveFiles(opts: {
               imported++;
               break;
             }
+            case 'projects':
+            case 'project_tasks': {
+              // Reuse the shared field catalogue so a Drive sheet and an
+              // uploaded CSV map their columns the same way.
+              const { record: mapped, errors: rowErrors } = buildImportRecord(record, fieldMapping!, type);
+              if (rowErrors.length > 0) { errors.push(`Row ${rowNumber}: ${rowErrors[0]}`); continue; }
+              const scope = { createdBy: opts.userId, companyId: opts.companyId };
+              const { created } = type === 'projects'
+                ? await importProjectRecord(mapped, scope)
+                : await importProjectTaskRecord(mapped, scope, projectIds);
+              if (created) imported++;
+              break;
+            }
             default:
               break;
           }
         } catch (e: any) {
-          errors.push(`Row ${imported + 1}: ${e.message}`);
+          errors.push(`Row ${rowNumber}: ${e.message}`);
         }
       }
 
@@ -7128,13 +7244,21 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
     // Import data into a specific module
     importData: protectedProcedure
       .input(z.object({
-        targetModule: z.enum(['customers', 'vendors', 'products', 'invoices', 'employees', 'contracts', 'projects']),
+        targetModule: z.enum(['customers', 'vendors', 'products', 'invoices', 'employees', 'contracts', 'projects', 'project_tasks']),
         data: z.array(z.record(z.string(), z.string())),
         columnMapping: z.record(z.string(), z.string()), // Maps sheet column to ERP field
       }))
       .mutation(async ({ input, ctx }) => {
         const { targetModule, data, columnMapping } = input;
         const results = { imported: 0, failed: 0, errors: [] as string[] };
+        // Projects/tasks are matched by name, so a row that already exists is
+        // skipped rather than duplicated — it counts as neither imported nor
+        // failed. `projectIds` caches task → project lookups across the rows.
+        const projectIds = new Map<string, number>();
+        const scope = {
+          createdBy: ctx.user.id,
+          companyId: (ctx.user as any).companyId as number | undefined,
+        };
         
         for (const row of data) {
           try {
@@ -7194,12 +7318,17 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
                 } as any);
                 break;
 
-              case 'projects':
-                await db.createProject({
-                  ...record,
-                  projectNumber: generateNumber('PROJ'),
-                } as any);
-                break;
+              case 'projects': {
+                const { created } = await importProjectRecord(record, scope);
+                if (created) results.imported++;
+                continue;
+              }
+
+              case 'project_tasks': {
+                const { created } = await importProjectTaskRecord(record, scope, projectIds);
+                if (created) results.imported++;
+                continue;
+              }
             }
 
             results.imported++;
@@ -7301,7 +7430,12 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           : null;
 
         // 2. Read + import every (selected) spreadsheet
-        const { results, totalSheets } = await importDriveFiles({ userId: ctx.user.id, accessToken, forcedTypes });
+        const { results, totalSheets } = await importDriveFiles({
+          userId: ctx.user.id,
+          companyId: (ctx.user as any).companyId as number | undefined,
+          accessToken,
+          forcedTypes,
+        });
 
         // 3. Audit log
         const totalImported = results.reduce((sum, r) => sum + r.imported, 0);
@@ -7346,6 +7480,14 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           ? new Map(input.selections.map((s) => [s.fileId, s.type as string]))
           : null;
         const userId = ctx.user.id;
+        const companyId = (ctx.user as any).companyId as number | undefined;
+
+        // One import at a time per user. A second run would read the same
+        // sheets concurrently and — because a project/task is matched by name
+        // before it is inserted — could duplicate rows the first run is still
+        // creating. Hand back the running job so the client just reconnects.
+        const running = await findActiveDriveSyncJob(userId);
+        if (running) return { jobId: running.id };
 
         // Create the job row up front so the client (and getActiveSync) can find it.
         const { id: jobId } = await db.createSyncLog({
@@ -7365,6 +7507,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
           try {
             const { results, totalSheets } = await importDriveFiles({
               userId,
+              companyId,
               accessToken,
               forcedTypes,
               onProgress: async ({ results, totalSheets, processedSheets, currentFile }) => {
@@ -7430,16 +7573,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot ve
     // reconnect to it on mount (after navigation / reload / tab close). Ignores
     // jobs older than an hour, which are treated as stale/abandoned.
     getActiveSync: protectedProcedure.query(async ({ ctx }) => {
-      // Query pending google_drive jobs directly rather than scanning a global
-      // recency window — otherwise a burst of other sync logs could push the
-      // caller's running job out of view and break reconnection.
-      const pending = await db.getPendingSyncLogs('google_drive', 50);
-      const oneHourAgo = Date.now() - 60 * 60 * 1000;
-      const active = pending.find((log: any) => {
-        const meta = (log.metadata as any) || {};
-        if (meta.userId !== ctx.user.id) return false;
-        return new Date(log.createdAt).getTime() >= oneHourAgo;
-      });
+      const active = await findActiveDriveSyncJob(ctx.user.id);
       if (!active) return null;
       const meta = (active.metadata as any) || {};
       return {

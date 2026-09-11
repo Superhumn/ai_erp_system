@@ -51,6 +51,7 @@ const DATA_SECTIONS = [
   { value: "invoices", label: "Invoices" },
   { value: "contracts", label: "Contracts" },
   { value: "projects", label: "Projects" },
+  { value: "project_tasks", label: "Project tasks / to-dos" },
 ] as const;
 
 type ParsedSheet = { headers: string[]; rows: Record<string, any>[] };
@@ -957,7 +958,8 @@ export default function Import() {
             Google Drive Sync
           </CardTitle>
           <CardDescription>
-            Auto-detect and import all spreadsheets from your Google Drive into the right ERP tables
+            Auto-detect and import all spreadsheets from your Google Drive into the right ERP tables —
+            including project trackers and to-do lists
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -969,7 +971,8 @@ export default function Import() {
               <div className="p-4 bg-muted rounded-lg">
                 <p className="text-sm text-muted-foreground">
                   Connect your Google account to automatically sync spreadsheets from Drive.
-                  Headers are analyzed to detect vendors, customers, products, employees, and raw materials.
+                  Headers are analyzed to detect projects, to-do lists, vendors, customers, products,
+                  employees, and raw materials.
                 </p>
               </div>
 
