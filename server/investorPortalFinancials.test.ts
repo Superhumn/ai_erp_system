@@ -170,7 +170,9 @@ describe("computeInvestorPortalFinancials", () => {
 
   it("scopes invoices and transactions to companyId when provided", async () => {
     await computeInvestorPortalFinancials({ companyId: 42 });
-    expect(db.getInvoices).toHaveBeenCalledWith({ companyId: 42 });
-    expect(db.getTransactions).toHaveBeenCalledWith({ type: "expense", companyId: 42 });
+    // Scope is the first arg (undefined here — this path filters by an explicit
+    // companyId, not by request scope); the companyId travels in the filters arg.
+    expect(db.getInvoices).toHaveBeenCalledWith(undefined, { companyId: 42 });
+    expect(db.getTransactions).toHaveBeenCalledWith(undefined, { type: "expense", companyId: 42 });
   });
 });
