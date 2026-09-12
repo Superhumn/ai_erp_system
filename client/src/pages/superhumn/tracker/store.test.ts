@@ -221,6 +221,33 @@ describe("TrackerStore keyboard layer", () => {
     expect(store.queueOrder().map(t => t.id)).toEqual(["t1"]);
   });
 
+  it("keyboard ids follow the visible queue view and the board pane", () => {
+    store.setQueueView("Later");
+    expect(store.paneIds()[0]).toBe("t4");
+    expect(store.paneIds()).not.toContain("t1");
+    store.setQueueView("Week grid");
+    expect(store.paneIds()).toEqual([
+      "t1",
+      "t2",
+      "t10",
+      "t15",
+      "t3",
+      "t11",
+      "t16",
+    ]);
+    store.setQueueView("Today");
+    store.setPane("1C");
+    expect(store.paneIds()).toContain("t20");
+  });
+
+  it("the checkbox path moves the cursor before toggling", () => {
+    store.check("t5");
+    expect(store.getState().cursor).toBe("t5");
+    expect(store.isDone(store.find("t5")!)).toBe(true);
+    key("x");
+    expect(store.isDone(store.find("t5")!)).toBe(false);
+  });
+
   it("owner edits are one source of truth across views", () => {
     store.setOwner("t1", "Sara");
     expect(store.find("t1")!.owner).toBe("Sara");
@@ -230,9 +257,13 @@ describe("TrackerStore keyboard layer", () => {
 
   it("1E pane walks every task, and ‹ › move a card between board columns", () => {
     store.setPane("1E");
-    store.setCursor("t22");
+    // Grid order: open rows by day, then done rows by day → t21 (Jul 15) last.
+    store.setCursor("t21");
     key("j");
-    expect(store.getState().cursor).toBe("t22");
+    expect(store.getState().cursor).toBe("t21");
+    store.setCursor("t2");
+    key("j");
+    expect(store.getState().cursor).toBe("t10");
     store.moveStatus("t3", 1);
     expect(store.statusOf(store.find("t3")!)).toBe("in_progress");
     store.moveStatus("t3", -1);

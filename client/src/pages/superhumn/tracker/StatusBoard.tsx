@@ -255,7 +255,7 @@ export default function StatusBoard() {
           }));
 
   return (
-    <TrackerFrame label="1C Status board" height={784} padded={false}>
+    <TrackerFrame label="1C Status board" height={784} padded={false} pane="1C">
       <div style={{ flex: 1, display: "flex", minWidth: 0, minHeight: 0 }}>
         <div
           style={{
@@ -304,7 +304,9 @@ export default function StatusBoard() {
                   )
                 )}
                 {g.rows.length > MAX_CARDS && (
-                  <p
+                  <button
+                    type="button"
+                    aria-expanded={!!expanded[g.key]}
                     onClick={() =>
                       setExpanded(x => {
                         const next = { ...x };
@@ -314,6 +316,8 @@ export default function StatusBoard() {
                       })
                     }
                     style={{
+                      ...BUTTON_RESET,
+                      display: "block",
                       margin: "3px 0 0",
                       fontSize: T.micro,
                       fontWeight: 700,
@@ -326,7 +330,7 @@ export default function StatusBoard() {
                     {expanded[g.key]
                       ? "Show less"
                       : `+${g.rows.length - MAX_CARDS} more`}
-                  </p>
+                  </button>
                 )}
               </Column>
             ))}

@@ -22,7 +22,9 @@ import {
   type ProjectKey,
 } from "./data";
 
-export type Pane = "1A" | "1E";
+/** Which frame the keyboard layer walks: 1A = the visible queue view; 1C
+ *  and 1E = every task (board order / grid order). */
+export type Pane = "1A" | "1C" | "1E";
 export type QueueView = "Today" | "This week" | "Later" | "Week grid";
 export type Bucket = "today" | "week" | "later" | "blocked";
 
@@ -68,6 +70,18 @@ export const rank = (t: Task) =>
 export function queueOrder(tasks: Task[], done: Record<string, true>): Task[] {
   const open = tasks.filter(t => !isDone({ done }, t));
   return open.slice().sort((a, b) => rank(a) - rank(b) || a.day - b.day);
+}
+
+/** 1E order: open rows by day (blocked carry day 99 so they sit last),
+ *  completed rows after them. Shared by the grid and the keyboard layer. */
+export function gridOrder(tasks: Task[], done: Record<string, true>): Task[] {
+  return tasks
+    .slice()
+    .sort(
+      (a, b) =>
+        Number(isDone({ done }, a)) - Number(isDone({ done }, b)) ||
+        a.day - b.day
+    );
 }
 
 export function bucketOf(t: Task, snoozed: Record<string, true>): Bucket {
@@ -199,10 +213,22 @@ export class TrackerStore {
   queueOrder = () => queueOrder(this.state.tasks, this.state.done);
   openBlockers = () =>
     this.state.tasks.filter(t => t.blocked && !this.isDone(t));
-  paneIds = () =>
-    this.state.pane === "1E"
-      ? this.state.tasks.map(t => t.id)
-      : this.queueOrder().map(t => t.id);
+  gridOrder = () => gridOrder(this.state.tasks, this.state.done);
+  /** Ids the keyboard layer may land on: exactly the rows the active
+   *  frame renders, in its visible order. */
+  paneIds = () => {
+    const { pane, queueView, snoozed } = this.state;
+    if (pane === "1E") return this.gridOrder().map(t => t.id);
+    if (pane === "1C") return this.state.tasks.map(t => t.id);
+    const queue = this.queueOrder();
+    if (queueView === "Later")
+      return queue.filter(t => bucketOf(t, snoozed) === "later").map(t => t.id);
+    if (queueView === "Week grid")
+      return queue
+        .filter(t => !t.blocked && t.day >= 20 && t.day <= 26)
+        .map(t => t.id);
+    return queue.map(t => t.id);
+  };
   find = (id: string) => this.state.tasks.find(t => t.id === id);
   selOrCursor = () => {
     const s = Object.keys(this.state.sel);
@@ -254,6 +280,13 @@ export class TrackerStore {
       done[id] = true;
       return { done };
     });
+
+  /** Checkbox path: move the cursor to the row, then toggle it, so the
+   *  keyboard undo (`x`) and `e`/`d` target the same task. */
+  check = (id: string) => {
+    this.setCursor(id);
+    this.toggle(id);
+  };
 
   cycleOwner = (id: string) =>
     this.setState(st => ({

@@ -33,7 +33,7 @@ import {
   type Status,
   type Task,
 } from "./data";
-import { trackerStore as store } from "./store";
+import { trackerStore as store, gridOrder } from "./store";
 import { useTracker } from "./useTracker";
 import {
   TrackerFrame,
@@ -135,7 +135,8 @@ function Row({ t }: { t: Task }) {
           done={done}
           today={today}
           size={17}
-          onClick={() => store.toggle(t.id)}
+          label={t.label}
+          onClick={() => store.check(t.id)}
         />
       </td>
       <td
@@ -337,12 +338,7 @@ export default function DenseGrid() {
   ).length;
   // "sorted by due date": open rows by day (blocked rows carry day 99 so
   // they sit last), completed rows after them.
-  const sorted = st.tasks
-    .slice()
-    .sort(
-      (a, b) =>
-        Number(store.isDone(a)) - Number(store.isDone(b)) || a.day - b.day
-    );
+  const sorted = gridOrder(st.tasks, st.done);
   const half = Math.ceil(sorted.length / 2) + 1; // 12 / 10 split on the seeded 22
   const left = sorted.slice(0, half);
   const right = sorted.slice(half);

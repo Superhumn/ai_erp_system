@@ -905,11 +905,14 @@ export function Check({
   today = false,
   size = 17,
   onClick,
+  label,
 }: {
   done: boolean;
   today?: boolean;
   size?: number;
   onClick?: (e: React.MouseEvent) => void;
+  /** Task label, so the accessible name says which task this toggles. */
+  label?: string;
 }) {
   const base: React.CSSProperties = {
     height: size,
@@ -937,7 +940,7 @@ export function Check({
     <span
       role="checkbox"
       aria-checked={done}
-      aria-label={done ? "Reopen task" : "Complete task"}
+      aria-label={`${done ? "Reopen" : "Complete"}${label ? `: ${label}` : " task"}`}
       tabIndex={0}
       onClick={(e) => {
         e.stopPropagation();
@@ -1052,7 +1055,21 @@ export function DenseRow({
   return (
     <div
       data-cursor={cursor || undefined}
+      role="button"
+      tabIndex={0}
+      aria-pressed={selected}
+      aria-label={label}
       onClick={onClick}
+      onKeyDown={(e) => {
+        // Enter moves the cursor here; Space toggles this row's selection
+        // (mirrors plain click vs. modifier-click). Nested controls handle
+        // their own keys.
+        if (e.target !== e.currentTarget) return;
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        e.stopPropagation();
+        onClick?.({ shiftKey: e.key === " " } as unknown as React.MouseEvent);
+      }}
       style={{
         display: "flex",
         alignItems: "center",
@@ -1071,7 +1088,7 @@ export function DenseRow({
         minHeight: 26,
       }}
     >
-      <Check done={done} today={today} size={checkSize} onClick={onToggle} />
+      <Check done={done} today={today} size={checkSize} onClick={onToggle} label={label} />
       <span style={labelStyle({ done, today, blocked })}>{label}</span>
       {blocked && blockedLabel && (
         <StatusChip tone="dark" size={T.micro} style={{ padding: "2px 9px" }}>
