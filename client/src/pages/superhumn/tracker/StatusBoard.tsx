@@ -43,15 +43,16 @@ function Card({
   /** ‹ › write `status`, which only moves a card when grouped by status. */
   movable: boolean;
 }) {
-  const { kSel } = useTracker();
-  const sel = kSel === t.id;
+  const { kSel, sel: selection } = useTracker();
+  const sel = kSel === t.id; // detail-rail selection (ring)
+  const bulk = !!selection[t.id]; // shared bulk selection (tint)
   const isDone = colKey === "done";
   const who = t.owner;
   return (
     <div
       onClick={e => store.rowClick(t.id, e)}
       style={{
-        background: "#fff",
+        background: bulk ? blueTint(0.14) : "#fff",
         border: sel
           ? `1.5px solid ${blueTint(0.5)}`
           : `1px solid ${c.borderLight}`,
@@ -65,7 +66,7 @@ function Card({
     >
       <RowLabel
         label={t.label}
-        selected={sel}
+        selected={bulk}
         onActivate={e => store.rowClick(t.id, e)}
         style={{
           display: "block",

@@ -184,7 +184,8 @@ function WeekColumn({
             key={r.id}
             onClick={e => store.rowClick(r.id, e)}
             style={{
-              background: "#fff",
+              // Shared bulk selection tints the card; the cursor rings it.
+              background: sel[r.id] ? blueTint(0.14) : "#fff",
               border: `1px solid ${cursor === r.id ? blueTint(0.45) : c.borderLight}`,
               borderRadius: 11,
               padding: "10px 11px",

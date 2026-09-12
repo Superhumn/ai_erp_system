@@ -361,6 +361,14 @@ describe("TrackerStore keyboard layer", () => {
     expect(store.getState().cursor).toBe("t1");
   });
 
+  it("plain selection closes an inline editor left open on another row", () => {
+    store.editCell("t5", "owner");
+    expect(store.getState().editing).toEqual({ id: "t5", field: "owner" });
+    store.rowClick("t6");
+    expect(store.getState().editing).toBeNull();
+    expect(store.getState().cursor).toBe("t6");
+  });
+
   it("owner edits are one source of truth across views", () => {
     store.setOwner("t1", "Sara");
     expect(store.find("t1")!.owner).toBe("Sara");

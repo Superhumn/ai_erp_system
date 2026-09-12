@@ -299,7 +299,9 @@ export class TrackerStore {
       return;
     this.setState({ boardIds: ids });
   };
-  setCursor = (id: string) => this.setState({ cursor: id, gSel: id, kSel: id });
+  /** Moving the cursor also closes any inline editor attached to another row. */
+  setCursor = (id: string) =>
+    this.setState({ cursor: id, gSel: id, kSel: id, editing: null });
   toggleSel = (id: string) =>
     this.setState(st => {
       const sel = { ...st.sel };
