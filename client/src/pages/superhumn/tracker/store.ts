@@ -271,7 +271,8 @@ export class TrackerStore {
     // undo); otherwise land on the first visible row.
     const ids = this.paneIds();
     const t = this.find(st.cursor);
-    if (ids.includes(st.cursor) || (t && this.isDone(t))) return;
+    const justCompleted = !!t && !!st.done[t.id] && t.status !== "done";
+    if (ids.includes(st.cursor) || justCompleted) return;
     if (ids.length) this.setCursor(ids[0]);
   };
   find = (id: string) => this.state.tasks.find(t => t.id === id);

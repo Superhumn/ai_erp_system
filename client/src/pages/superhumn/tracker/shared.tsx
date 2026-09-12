@@ -3,7 +3,7 @@
  * header bar, saved-view pills, bulk-edit bar with the keyboard legend, and
  * the AI suggestion strip. All read/write the shared store.
  */
-import React, { useRef } from "react";
+import React, { useEffect, useRef } from "react";
 import {
   color as c,
   font,
@@ -49,6 +49,13 @@ export function TrackerFrame({
   const { toast, activeFrame } = useTracker();
   const main = useRef<HTMLDivElement>(null);
   const hovering = useRef(false);
+  // An unmounted frame can no longer be "hovered".
+  useEffect(
+    () => () => {
+      if (hovered?.label === label) hovered = null;
+    },
+    [label]
+  );
   const own = () => store.own(label, pane ?? null);
   // Release the keyboard layer once neither the pointer nor focus is here;
   // if another tracker frame still holds focus, ownership returns to it.

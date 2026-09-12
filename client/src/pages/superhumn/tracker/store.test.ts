@@ -351,6 +351,16 @@ describe("TrackerStore keyboard layer", () => {
     expect(store.isDone(store.find("t1")!)).toBe(false);
   });
 
+  it("owning 1A moves the cursor off a seeded done row but keeps a just-completed one", () => {
+    store.setPane("1E");
+    store.setCursor("t20");
+    store.own("1A Priority queue", "1A");
+    expect(store.getState().cursor).toBe("t1");
+    key("x"); // t1 just completed (overlay)
+    store.own("1A Priority queue", "1A");
+    expect(store.getState().cursor).toBe("t1");
+  });
+
   it("owner edits are one source of truth across views", () => {
     store.setOwner("t1", "Sara");
     expect(store.find("t1")!.owner).toBe("Sara");
