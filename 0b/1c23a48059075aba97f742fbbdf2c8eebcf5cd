@@ -1,0 +1,31 @@
+server/_core/invoicePdf.test.ts
+  s_c2bc34cc15eb7f::t_04335f53a63a87 1-77
+server/_core/invoicePdf.ts
+  s_c2bc34cc15eb7f::t_dc16f48cd6c1e6 425-432
+server/_core/messageExport.test.ts
+  s_c2bc34cc15eb7f::t_41bfe8fb9a2a1b 1-84
+server/_core/messageExport.ts
+  s_c2bc34cc15eb7f::t_bcbfac6969cc45 109-116
+server/routers/crm.ts
+  s_c2bc34cc15eb7f::t_a60cb4936e89e4 276-288,505-517
+server/routers/emailScanning.ts
+  s_c2bc34cc15eb7f::t_ced136ff7db202 1396-1408
+server/routers/invoices.ts
+  s_c2bc34cc15eb7f::t_5f4bda25f52328 205-242
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "0b1c23a48059075aba97f742fbbdf2c8eebcf5cd",
+  "prompts": {},
+  "sessions": {
+    "s_c2bc34cc15eb7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9928e53-5247-4262-810c-098bf219ad0b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Jade Cheng <jade@Jades-MacBook-Pro.local>"
+    }
+  }
+}
