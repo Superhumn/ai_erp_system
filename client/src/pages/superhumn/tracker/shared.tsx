@@ -56,6 +56,10 @@ export function TrackerFrame({
     >
       <Sidebar active="Projects" width={SIDEBAR_W} />
       <div
+        onFocusCapture={() => {
+          store.setActiveFrame(label);
+          if (pane) store.setPane(pane);
+        }}
         style={{
           flex: 1,
           display: "flex",

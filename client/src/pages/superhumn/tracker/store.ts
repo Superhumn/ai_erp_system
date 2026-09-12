@@ -392,7 +392,9 @@ export class TrackerStore {
     // A focused button / checkbox activates natively on Space or Enter.
     if (
       (e.key === " " || e.key === "Enter") &&
-      (tag === "BUTTON" || el?.getAttribute("role") === "checkbox")
+      (tag === "BUTTON" ||
+        el?.getAttribute("role") === "checkbox" ||
+        el?.getAttribute("role") === "button")
     )
       return;
     const ids = this.paneIds();
@@ -400,8 +402,11 @@ export class TrackerStore {
     // on the first remaining row instead of skipping it.
     const at = ids.indexOf(this.state.cursor);
     const k = e.key;
-    const rowKeys = ["j", "k", "ArrowDown", "ArrowUp", "x", " ", "e", "d"];
+    // Navigation / selection need a visible row; `x` only needs the cursor
+    // to resolve, so completing the last open row can still be undone.
+    const rowKeys = ["j", "k", "ArrowDown", "ArrowUp", " ", "e", "d"];
     if (rowKeys.includes(k) && !ids.length) return;
+    if (k === "x" && !this.find(this.state.cursor)) return;
     if (k === "j" || k === "ArrowDown") {
       this.setCursor(ids[Math.min(at + 1, ids.length - 1)]);
       e.preventDefault();

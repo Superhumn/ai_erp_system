@@ -20,6 +20,7 @@ import {
   StatusChip,
   AICardDense,
   ThinBar,
+  BUTTON_RESET,
 } from "../primitives";
 import { BLOCKER_DOWNSTREAM, BLOCKER_META, PROJ } from "./data";
 import { trackerStore as store } from "./store";
@@ -40,7 +41,6 @@ function BlockerCard({ id }: { id: string }) {
   const isNudged = !!nudged[id];
   return (
     <div
-      onClick={() => store.openBlocker(id)}
       style={{
         border: open
           ? `1.5px solid ${blueTint(0.45)}`
@@ -51,11 +51,23 @@ function BlockerCard({ id }: { id: string }) {
         borderRadius: radius.cardSm,
         padding: "7px 11px",
         boxShadow: shadow.row,
-        cursor: "pointer",
         transition: "background-color 120ms ease, border-color 120ms ease",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+      {/* Disclosure: the header row is the button; actions live in the body. */}
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => store.openBlocker(id)}
+        style={{
+          ...BUTTON_RESET,
+          display: "flex",
+          alignItems: "center",
+          gap: 14,
+          width: "100%",
+          cursor: "pointer",
+        }}
+      >
         <StatusChip tone="dark" size={T.micro} style={{ padding: "1px 11px" }}>
           {meta.days}d
         </StatusChip>
@@ -84,7 +96,7 @@ function BlockerCard({ id }: { id: string }) {
         >
           gates {down.length || t.gates || 0}
         </span>
-      </div>
+      </button>
       <div
         style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 4 }}
       >

@@ -777,6 +777,63 @@ export const BUTTON_RESET: React.CSSProperties = {
   textAlign: "inherit",
 };
 
+/** Makes a non-button element (card, row) keyboard-operable: focusable,
+ *  announced as a button, activated with Enter or Space. */
+export function pressable(onActivate: () => void, extra?: { pressed?: boolean; expanded?: boolean }) {
+  return {
+    role: "button" as const,
+    tabIndex: 0,
+    "aria-pressed": extra?.pressed,
+    "aria-expanded": extra?.expanded,
+    onClick: onActivate,
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      if (e.target !== e.currentTarget) return; // a nested control handles its own key
+      e.preventDefault();
+      e.stopPropagation();
+      onActivate();
+    },
+  };
+}
+
+/** Option row inside an inline popover menu. */
+export function MenuOption({
+  children,
+  active = false,
+  onSelect,
+  style,
+}: {
+  children: React.ReactNode;
+  active?: boolean;
+  onSelect: () => void;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitemradio"
+      aria-checked={active}
+      onClick={onSelect}
+      style={{
+        ...BUTTON_RESET,
+        display: "block",
+        width: "100%",
+        textAlign: "left",
+        padding: "4px 13px",
+        borderRadius: 5,
+        fontSize: T.body,
+        fontWeight: active ? 600 : 500,
+        color: active ? c.blueText : c.inkMid,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+        ...style,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
 export type PillVariant = "primary" | "solid" | "secondary" | "tint" | "text";
 /** Pill heights by density (prototype 18 / 22 / 24 / 26 → 25 / 31 / 34 / 36). */
 export type PillSize = "xs" | "sm" | "md" | "lg";

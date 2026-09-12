@@ -15,7 +15,7 @@ import {
   font,
   tabular,
 } from "../tokens";
-import { Eyebrow, Pill, AICardDense, ThinBar } from "../primitives";
+import { Eyebrow, Pill, AICardDense, ThinBar, pressable } from "../primitives";
 import { PROJ, PROJECT_END_DAY, PROJECT_KEYS, type ProjectKey } from "./data";
 import { trackerStore as store, dueLabelFor } from "./store";
 import { useTracker } from "./useTracker";
@@ -40,6 +40,7 @@ function Row({
   due,
   style,
   onClick,
+  pressed,
 }: {
   label: React.ReactNode;
   graph: React.ReactNode;
@@ -47,10 +48,11 @@ function Row({
   due?: React.ReactNode;
   style?: React.CSSProperties;
   onClick?: () => void;
+  pressed?: boolean;
 }) {
   return (
     <div
-      onClick={onClick}
+      {...(onClick ? pressable(onClick, { pressed }) : {})}
       style={{ display: "flex", alignItems: "center", gap: COLS.gap, ...style }}
     >
       <div
@@ -210,6 +212,7 @@ export default function Timeline() {
             <Row
               key={pk}
               onClick={() => store.selectProject(pk)}
+              pressed={sel}
               style={{
                 padding: "3px 8px",
                 borderRadius: 7,

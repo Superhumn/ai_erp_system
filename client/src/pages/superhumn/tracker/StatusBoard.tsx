@@ -12,7 +12,13 @@ import {
   shadow,
   font,
 } from "../tokens";
-import { Eyebrow, Pill, LinkChip } from "../primitives";
+import {
+  Eyebrow,
+  Pill,
+  LinkChip,
+  BUTTON_RESET,
+  pressable,
+} from "../primitives";
 import { PROJ, SHORT, STATUS_LABEL, type Status, type Task } from "./data";
 import { trackerStore as store } from "./store";
 import { useTracker } from "./useTracker";
@@ -33,14 +39,24 @@ const COLS: { key: Status; label: string }[] = [
 const MAX_CARDS = 9;
 type GroupBy = "Status" | "Project" | "Assignee";
 
-function Card({ t, colKey }: { t: Task; colKey: Status }) {
+function Card({
+  t,
+  colKey,
+  movable,
+}: {
+  t: Task;
+  colKey: Status;
+  /** ‹ › write `status`, which only moves a card when grouped by status. */
+  movable: boolean;
+}) {
   const { kSel } = useTracker();
   const sel = kSel === t.id;
   const isDone = colKey === "done";
   const who = t.owner;
   return (
     <div
-      onClick={() => store.selectCard(t.id)}
+      {...pressable(() => store.selectCard(t.id), { pressed: sel })}
+      aria-label={t.label}
       style={{
         background: "#fff",
         border: sel
@@ -106,38 +122,48 @@ function Card({ t, colKey }: { t: Task; colKey: Status }) {
           {who}
         </span>
         <span style={{ fontSize: T.micro, color: c.faint3 }}>{t.dueLabel}</span>
-        <span
-          title="Move left"
-          style={{
-            fontSize: T.body,
-            fontWeight: 700,
-            color: c.muted3,
-            cursor: "pointer",
-            padding: "0 3px",
-          }}
-          onClick={e => {
-            e.stopPropagation();
-            store.moveStatus(t.id, -1);
-          }}
-        >
-          ‹
-        </span>
-        <span
-          title="Move right"
-          style={{
-            fontSize: T.body,
-            fontWeight: 700,
-            color: c.blueText,
-            cursor: "pointer",
-            padding: "0 3px",
-          }}
-          onClick={e => {
-            e.stopPropagation();
-            store.moveStatus(t.id, 1);
-          }}
-        >
-          ›
-        </span>
+        {movable && (
+          <>
+            <button
+              type="button"
+              aria-label="Move to previous column"
+              title="Move to previous column"
+              style={{
+                ...BUTTON_RESET,
+                fontSize: T.body,
+                fontWeight: 700,
+                color: c.muted3,
+                cursor: "pointer",
+                padding: "0 3px",
+              }}
+              onClick={e => {
+                e.stopPropagation();
+                store.moveStatus(t.id, -1);
+              }}
+            >
+              ‹
+            </button>
+            <button
+              type="button"
+              aria-label="Move to next column"
+              title="Move to next column"
+              style={{
+                ...BUTTON_RESET,
+                fontSize: T.body,
+                fontWeight: 700,
+                color: c.blueText,
+                cursor: "pointer",
+                padding: "0 3px",
+              }}
+              onClick={e => {
+                e.stopPropagation();
+                store.moveStatus(t.id, 1);
+              }}
+            >
+              ›
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
@@ -270,6 +296,7 @@ export default function StatusBoard() {
                     <Card
                       key={t.id}
                       t={t}
+                      movable={groupBy === "Status"}
                       colKey={
                         groupBy === "Status" ? g.statusKey : store.statusOf(t)
                       }

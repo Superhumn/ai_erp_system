@@ -213,6 +213,14 @@ describe("TrackerStore keyboard layer", () => {
     expect(store.getState().cursor).toBe("t9");
   });
 
+  it("x can undo completing the last open row", () => {
+    store.setState({ tasks: [TASKS[0]], done: {} });
+    key("x");
+    expect(store.queueOrder().length).toBe(0);
+    key("x");
+    expect(store.queueOrder().map(t => t.id)).toEqual(["t1"]);
+  });
+
   it("owner edits are one source of truth across views", () => {
     store.setOwner("t1", "Sara");
     expect(store.find("t1")!.owner).toBe("Sara");

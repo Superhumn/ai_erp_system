@@ -21,6 +21,8 @@ import {
   dateStyle,
   labelStyle,
   ThinBar,
+  BUTTON_RESET,
+  MenuOption,
 } from "../primitives";
 import {
   OWNERS,
@@ -159,8 +161,13 @@ function Row({ t }: { t: Task }) {
         {SHORT[t.pk]}
       </td>
       <td style={{ ...TD, position: "relative" }}>
-        <span
+        <button
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={editingOwner}
+          aria-label={`Owner: ${who}. Change owner`}
           style={{
+            ...BUTTON_RESET,
             fontWeight: 600,
             cursor: "pointer",
             borderBottom: "1px dashed oklch(0.88 0.008 250)",
@@ -171,23 +178,17 @@ function Row({ t }: { t: Task }) {
           }}
         >
           {who}
-        </span>
+        </button>
         {editingOwner && (
-          <span style={POPOVER} onClick={e => e.stopPropagation()}>
+          <span role="menu" style={POPOVER} onClick={e => e.stopPropagation()}>
             {OWNERS.map(o => (
-              <span
+              <MenuOption
                 key={o}
-                onClick={() => store.setOwner(t.id, o)}
-                style={{
-                  padding: "4px 13px",
-                  fontSize: T.body,
-                  fontWeight: o === who ? 600 : 500,
-                  color: o === who ? c.blueText : c.inkMid,
-                  cursor: "pointer",
-                }}
+                active={o === who}
+                onSelect={() => store.setOwner(t.id, o)}
               >
                 {o}
-              </span>
+              </MenuOption>
             ))}
           </span>
         )}
@@ -208,35 +209,33 @@ function Row({ t }: { t: Task }) {
         )}
       </td>
       <td style={{ ...TD, padding: "3px 0 3px 14px", position: "relative" }}>
-        <span
-          style={statusChip(st)}
+        <button
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={editingStatus}
+          aria-label={`Status: ${STATUS_LABEL[st]}. Change status`}
+          style={{ ...BUTTON_RESET, ...statusChip(st) }}
           onClick={e => {
             e.stopPropagation();
             store.editCell(t.id, "status");
           }}
         >
           {STATUS_LABEL[st]}
-        </span>
+        </button>
         {editingStatus && (
           <span
+            role="menu"
             style={{ ...POPOVER, left: 14, minWidth: 146 }}
             onClick={e => e.stopPropagation()}
           >
             {STATUS_ORDER.map(o => (
-              <span
+              <MenuOption
                 key={o}
-                onClick={() => store.setStatus(t.id, o)}
-                style={{
-                  padding: "4px 13px",
-                  fontSize: T.body,
-                  fontWeight: o === st ? 600 : 500,
-                  color: o === st ? c.blueText : c.inkMid,
-                  cursor: "pointer",
-                  whiteSpace: "nowrap",
-                }}
+                active={o === st}
+                onSelect={() => store.setStatus(t.id, o)}
               >
                 {STATUS_LABEL[o]}
-              </span>
+              </MenuOption>
             ))}
           </span>
         )}
