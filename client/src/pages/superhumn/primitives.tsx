@@ -764,6 +764,19 @@ export function Eyebrow({
   );
 }
 
+/** Strips the UA button chrome so a `<button>` can carry pill styles. */
+export const BUTTON_RESET: React.CSSProperties = {
+  appearance: "none",
+  WebkitAppearance: "none",
+  border: "none",
+  margin: 0,
+  font: "inherit",
+  color: "inherit",
+  background: "transparent",
+  lineHeight: "inherit",
+  textAlign: "inherit",
+};
+
 export type PillVariant = "primary" | "solid" | "secondary" | "tint" | "text";
 /** Pill heights by density (prototype 18 / 22 / 24 / 26 → 25 / 31 / 34 / 36). */
 export type PillSize = "xs" | "sm" | "md" | "lg";
@@ -811,8 +824,18 @@ export function Pill({
     tint: { color: c.blueText, background: blueTint(0.12) },
     text: { color: c.muted3, background: "transparent", fontWeight: 400, padding: 0, height: "auto" },
   };
+  const merged = { ...base, ...variants[variant], ...style };
+  // Interactive pills are native buttons (focusable, announced as buttons);
+  // presentational ones stay spans.
+  if (onClick) {
+    return (
+      <button type="button" title={title} onClick={onClick} style={{ ...BUTTON_RESET, ...merged }}>
+        {children}
+      </button>
+    );
+  }
   return (
-    <span title={title} onClick={onClick} style={{ ...base, ...variants[variant], ...style }}>
+    <span title={title} style={merged}>
       {children}
     </span>
   );

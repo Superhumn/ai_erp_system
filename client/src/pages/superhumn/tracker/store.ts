@@ -334,7 +334,8 @@ export class TrackerStore {
     this.setState(st => ({ nudged: { ...st.nudged, [id]: true } }));
 
   /* ---- 1C */
-  selectCard = (id: string) => this.setState({ kSel: id });
+  /** Selecting a card also moves the keyboard cursor so x/e/d act on it. */
+  selectCard = (id: string) => this.setCursor(id);
   moveStatus = (id: string, dir: 1 | -1) => {
     const t = this.find(id);
     if (!t) return;
@@ -347,7 +348,8 @@ export class TrackerStore {
   selectProject = (pk: ProjectKey) => this.setState({ tlSel: pk });
 
   /* ---- 1E */
-  selectRow = (id: string) => this.setState({ gSel: id, editing: null });
+  selectRow = (id: string) =>
+    this.setState({ cursor: id, gSel: id, kSel: id, editing: null });
   editCell = (id: string, field: "status" | "owner") =>
     this.setState(st => ({
       cursor: id,
@@ -387,6 +389,12 @@ export class TrackerStore {
     )
       return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+    // A focused button / checkbox activates natively on Space or Enter.
+    if (
+      (e.key === " " || e.key === "Enter") &&
+      (tag === "BUTTON" || el?.getAttribute("role") === "checkbox")
+    )
+      return;
     const ids = this.paneIds();
     // -1 when the cursor row just left the list (completed): j/k then land
     // on the first remaining row instead of skipping it.
@@ -405,13 +413,22 @@ export class TrackerStore {
       const t = this.find(this.state.cursor);
       this.flash(t && this.isDone(t) ? "Completed" : "Reopened");
     } else if (k === " ") {
-      this.toggleSel(this.state.cursor);
+      // The cursor may still point at a row that just left the list
+      // (completed, kept for undo); never select an invisible row.
+      if (at >= 0) this.toggleSel(this.state.cursor);
       e.preventDefault();
     } else if (k === "e") {
-      this.cycleOwner(this.state.cursor);
+      if (at >= 0) this.cycleOwner(this.state.cursor);
     } else if (k === "d") {
-      this.shiftDays(this.selOrCursor(), 3);
-      this.flash("Pushed 3 days");
+      const targets = Object.keys(this.state.sel).length
+        ? this.selOrCursor()
+        : at >= 0
+          ? [this.state.cursor]
+          : [];
+      if (targets.length) {
+        this.shiftDays(targets, 3);
+        this.flash("Pushed 3 days");
+      }
     } else if (k === "a") {
       this.addTask();
     } else if (k === "y") {

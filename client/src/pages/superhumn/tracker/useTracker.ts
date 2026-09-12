@@ -6,24 +6,33 @@ export function useTracker(store: TrackerStore = trackerStore): TrackerState {
   return useSyncExternalStore(store.subscribe, store.getState, store.getState);
 }
 
-let keyboardRefs = 0;
-let detach: (() => void) | null = null;
+type Listener = { refs: number; detach: () => void };
+const listeners = new Map<TrackerStore, Listener>();
 
 /**
- * Global keyboard layer (j/k/x/space/e/d/a/y/n/esc/1–4). Ref-counted so any
- * number of frames can mount it and exactly one window listener exists.
+ * Global keyboard layer (j/k/x/space/e/d/a/y/n/esc/1–4). Ref-counted per
+ * store, so any number of frames can mount it and exactly one window
+ * listener exists for each store in use.
  */
 export function useTrackerKeyboard(store: TrackerStore = trackerStore) {
   useEffect(() => {
-    if (keyboardRefs++ === 0) {
+    let entry = listeners.get(store);
+    if (!entry) {
       const h = (e: KeyboardEvent) => store.handleKey(e);
       window.addEventListener("keydown", h);
-      detach = () => window.removeEventListener("keydown", h);
+      entry = {
+        refs: 0,
+        detach: () => window.removeEventListener("keydown", h),
+      };
+      listeners.set(store, entry);
     }
+    entry.refs++;
     return () => {
-      if (--keyboardRefs === 0) {
-        detach?.();
-        detach = null;
+      const cur = listeners.get(store);
+      if (!cur) return;
+      if (--cur.refs === 0) {
+        cur.detach();
+        listeners.delete(store);
       }
     };
   }, [store]);

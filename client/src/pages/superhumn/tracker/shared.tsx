@@ -12,7 +12,15 @@ import {
   blueTint,
   radius,
 } from "../tokens";
-import { Frame, Sidebar, Toast, Pill, Kbd, SparkIcon } from "../primitives";
+import {
+  Frame,
+  Sidebar,
+  Toast,
+  Pill,
+  Kbd,
+  SparkIcon,
+  BUTTON_RESET,
+} from "../primitives";
 import { SAVED_VIEWS } from "./data";
 import { trackerStore as store, type Pane } from "./store";
 import { useTracker, useTrackerKeyboard } from "./useTracker";
@@ -112,15 +120,22 @@ export function TrackerHeader({
 export function SavedViewPills() {
   const { savedView } = useTracker();
   return (
-    <div style={{ display: "flex", gap: 6 }}>
+    <div
+      style={{ display: "flex", gap: 6 }}
+      role="group"
+      aria-label="Saved views"
+    >
       {SAVED_VIEWS.map((v, i) => {
         const on = v.key === savedView;
         return (
-          <span
+          <button
             key={v.key}
+            type="button"
             title={v.hint}
+            aria-pressed={on}
             onClick={() => store.setSavedView(v.key)}
             style={{
+              ...BUTTON_RESET,
               display: "inline-flex",
               alignItems: "center",
               gap: 7,
@@ -140,14 +155,15 @@ export function SavedViewPills() {
           >
             {v.label}
             <span style={{ opacity: 0.55, fontWeight: 600 }}>{i + 1}</span>
-          </span>
+          </button>
         );
       })}
     </div>
   );
 }
 
-/** Segmented control at tracker density (13px, `4px 13px`). */
+/** Segmented control at tracker density (13px, `4px 13px`). Native buttons
+ *  with `aria-pressed` so it is keyboard-operable. */
 export function SegmentedDense<Tv extends string>({
   options,
   value,
@@ -159,6 +175,7 @@ export function SegmentedDense<Tv extends string>({
 }) {
   return (
     <div
+      role="group"
       style={{
         display: "flex",
         background: c.sunken,
@@ -169,10 +186,13 @@ export function SegmentedDense<Tv extends string>({
       {options.map(o => {
         const on = o === value;
         return (
-          <span
+          <button
             key={o}
+            type="button"
+            aria-pressed={on}
             onClick={() => onChange?.(o)}
             style={{
+              ...BUTTON_RESET,
               fontSize: T.body,
               fontWeight: on ? 600 : 500,
               color: on ? c.ink : c.muted,
@@ -186,7 +206,7 @@ export function SegmentedDense<Tv extends string>({
             }}
           >
             {o}
-          </span>
+          </button>
         );
       })}
     </div>

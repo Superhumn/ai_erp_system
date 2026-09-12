@@ -196,6 +196,23 @@ describe("TrackerStore keyboard layer", () => {
     expect(store.find("t5")!.owner).toBe("Jenna");
   });
 
+  it("space/e/d ignore a cursor row that has left the list", () => {
+    key("x"); // t1 completed, cursor still on t1 for undo
+    key(" ");
+    expect(store.getState().sel).toEqual({});
+    const before = store.find("t1")!;
+    key("e");
+    key("d");
+    expect(store.find("t1")).toEqual(before);
+  });
+
+  it("selecting a board card or grid row moves the keyboard cursor", () => {
+    store.selectCard("t7");
+    expect(store.getState().cursor).toBe("t7");
+    store.selectRow("t9");
+    expect(store.getState().cursor).toBe("t9");
+  });
+
   it("owner edits are one source of truth across views", () => {
     store.setOwner("t1", "Sara");
     expect(store.find("t1")!.owner).toBe("Sara");
