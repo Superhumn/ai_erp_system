@@ -113,9 +113,9 @@ docs/                Feature + integration docs
 
 Do **not** read these in full. Use one of: the generated index, `rg`/`grep`, or `Read` with `offset`/`limit`.
 
-- `server/db.ts` — **~17.7k lines, ~1,100 exports, 114 banner sections**. See [`DB_INDEX.md`](./DB_INDEX.md) for section map and per-export coverage. Still the default import target for most of the codebase.
-- `drizzle/schema.ts` — **~8k lines, ~295 tables**. Drizzle table definitions.
-- `server/routers/` — no single large file any more, but `dataRoom.ts`, `procurement.ts`, `emailScanning.ts` and `_shared.ts` are each 1.4–2.4k lines. `rg` for the procedure name; don't read whole files.
+- `server/db.ts` — **18.2k lines, 1,156 exports, 120 banner sections**. See [`DB_INDEX.md`](./DB_INDEX.md) for section map and per-export coverage. Still the default import target for most of the codebase.
+- `drizzle/schema.ts` — **~8.3k lines, ~300 tables**. Drizzle table definitions.
+- `server/routers/` — 130 files, no single large one any more, but seven are over 1k lines: `dataRoom.ts` (2.4k), `_shared.ts` (1.6k), `emailScanning.ts` (1.4k), `crm.ts` (1.3k), `aiAgent.ts`, `freight.ts`, `vendorQuotes.ts` (~1k each). `rg` for the procedure name; don't read whole files.
 
 **Rule: for any investigation that requires scanning `server/db.ts` beyond a single feature's line range, delegate to an `Explore` subagent.** Keeps the main context lean and avoids accidentally pulling tens of thousands of lines into the transcript.
 
