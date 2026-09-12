@@ -306,7 +306,6 @@ export default function PriorityQueue() {
         rows: blockedRows,
       },
       { key: "c", label: "Tue Jul 21 – Sun Jul 26", rows: weekRows },
-      { key: "d", label: "Later · Jul 27 onward", rows: laterRows },
     ];
   else if (qv === "Later")
     groups = [
@@ -325,7 +324,9 @@ export default function PriorityQueue() {
   const cols: Group[][] =
     groups.length === 4
       ? [[groups[0], groups[1]], [groups[2]], [groups[3]]]
-      : [[groups[0]].filter(Boolean), [groups[1]].filter(Boolean), []];
+      : groups.length === 3
+        ? [[groups[0], groups[1]], [groups[2]], []]
+        : [[groups[0]].filter(Boolean), [groups[1]].filter(Boolean), []];
   const dayRows = (d: number) => open.filter(t => t.day === d && !t.blocked);
   const isWeekGrid = qv === "Week grid";
 
@@ -465,7 +466,13 @@ export default function PriorityQueue() {
                 <Pill
                   variant="primary"
                   size="sm"
-                  onClick={() => store.flash("Nudges sent to Tom, Maria")}
+                  onClick={() => {
+                    const open = store.openBlockers();
+                    open.forEach(t => store.nudge(t.id));
+                    store.flash(
+                      `Nudges sent to ${open.map(t => t.owner).join(", ")}`
+                    );
+                  }}
                 >
                   Send nudges
                 </Pill>

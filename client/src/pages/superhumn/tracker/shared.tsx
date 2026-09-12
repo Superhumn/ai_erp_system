@@ -46,18 +46,25 @@ export function TrackerFrame({
   const { toast, activeFrame } = useTracker();
   const main = useRef<HTMLDivElement>(null);
   const hovering = useRef(false);
-  const own = () => {
-    store.setActiveFrame(label);
-    store.setPane(pane ?? null);
-  };
-  // Release the keyboard layer once neither the pointer nor focus is here.
+  const own = () => store.own(label, pane ?? null);
+  // Release the keyboard layer once neither the pointer nor focus is here;
+  // if another tracker frame still holds focus, ownership returns to it.
   const release = () => {
     if (hovering.current) return;
     if (main.current && main.current.contains(document.activeElement)) return;
-    if (store.getState().activeFrame === label) {
-      store.setActiveFrame(null);
-      store.setPane(null);
+    if (store.getState().activeFrame !== label) return;
+    const focused = (
+      document.activeElement as HTMLElement | null
+    )?.closest<HTMLElement>("[data-tracker-frame]");
+    if (focused && focused.dataset.trackerFrame) {
+      store.own(
+        focused.dataset.trackerFrame,
+        (focused.dataset.trackerPane || null) as Pane | null
+      );
+      return;
     }
+    store.setActiveFrame(null);
+    store.setPane(null);
   };
   return (
     <Frame
@@ -76,6 +83,8 @@ export function TrackerFrame({
       <Sidebar active="Projects" width={SIDEBAR_W} />
       <div
         ref={main}
+        data-tracker-frame={label}
+        data-tracker-pane={pane ?? ""}
         onFocusCapture={own}
         onBlurCapture={e => {
           const next = e.relatedTarget as Node | null;

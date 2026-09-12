@@ -284,6 +284,46 @@ describe("TrackerStore keyboard layer", () => {
     expect(store.isDone(store.find("t5")!)).toBe(false);
   });
 
+  it("taking ownership aligns the cursor with the frame's selection", () => {
+    const board = new TrackerStore();
+    board.own("1C Status board", "1C");
+    expect(board.getState().cursor).toBe("t3");
+    const grid = new TrackerStore();
+    grid.own("1E Dense grid", "1E");
+    expect(grid.getState().cursor).toBe("t8");
+    grid.own("1B Blocker triage", null);
+    expect(grid.paneIds()).toEqual([]);
+  });
+
+  it("x ignores a cursor made stale by a view change but still undoes a completion", () => {
+    store.setQueueView("Later"); // cursor t1 is not a later row → moves to first visible
+    expect(store.getState().cursor).toBe("t4");
+    store.setState({ cursor: "t1" }); // force a stale cursor
+    key("x");
+    expect(store.isDone(store.find("t1")!)).toBe(false);
+    store.setQueueView("Today");
+    key("x");
+    expect(store.isDone(store.find("t1")!)).toBe(true);
+    key("x");
+    expect(store.isDone(store.find("t1")!)).toBe(false);
+  });
+
+  it("This week excludes later rows for both the view and the keyboard", () => {
+    store.setQueueView("This week");
+    expect(store.paneIds()).toEqual([
+      "t1",
+      "t2",
+      "t8",
+      "t9",
+      "t19",
+      "t10",
+      "t15",
+      "t3",
+      "t11",
+      "t16",
+    ]);
+  });
+
   it("owner edits are one source of truth across views", () => {
     store.setOwner("t1", "Sara");
     expect(store.find("t1")!.owner).toBe("Sara");

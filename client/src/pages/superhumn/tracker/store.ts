@@ -90,6 +90,20 @@ export function gridOrder(tasks: Task[], done: Record<string, true>): Task[] {
     );
 }
 
+/** Which open tasks a 1A queue view renders — shared by the view and the
+ *  keyboard layer so j/k walk exactly the rows on screen. */
+export function inQueueView(
+  t: Task,
+  view: QueueView,
+  snoozed: Record<string, true>
+): boolean {
+  const b = bucketOf(t, snoozed);
+  if (view === "Today") return true;
+  if (view === "This week") return b !== "later";
+  if (view === "Later") return b === "later";
+  return !t.blocked && t.day >= 20 && t.day <= 26; // Week grid
+}
+
 export function bucketOf(t: Task, snoozed: Record<string, true>): Bucket {
   if (t.blocked) return "blocked";
   if (snoozed[t.id]) return "later";
@@ -229,14 +243,30 @@ export class TrackerStore {
     if (pane === null) return [];
     if (pane === "1E") return this.gridOrder().map(t => t.id);
     if (pane === "1C") return this.state.boardIds;
-    const queue = this.queueOrder();
-    if (queueView === "Later")
-      return queue.filter(t => bucketOf(t, snoozed) === "later").map(t => t.id);
-    if (queueView === "Week grid")
-      return queue
-        .filter(t => !t.blocked && t.day >= 20 && t.day <= 26)
-        .map(t => t.id);
-    return queue.map(t => t.id);
+    return this.queueOrder()
+      .filter(t => inQueueView(t, queueView, snoozed))
+      .map(t => t.id);
+  };
+  /** Take keyboard ownership for a frame and align the cursor with what
+   *  that frame shows selected (board / grid detail rails, or the first
+   *  visible queue row when the cursor is not on screen). */
+  own = (activeFrame: string, pane: Pane | null) => {
+    this.setActiveFrame(activeFrame);
+    this.setPane(pane);
+    if (pane === null) return;
+    const st = this.state;
+    if (pane !== "1A") {
+      // Board / grid: the detail rail's selection is the cursor.
+      const target = pane === "1C" ? st.kSel : st.gSel;
+      if (target !== st.cursor && this.find(target)) this.setCursor(target);
+      return;
+    }
+    // Queue: keep the cursor if it is on screen (or just completed, for
+    // undo); otherwise land on the first visible row.
+    const ids = this.paneIds();
+    const t = this.find(st.cursor);
+    if (ids.includes(st.cursor) || (t && this.isDone(t))) return;
+    if (ids.length) this.setCursor(ids[0]);
   };
   find = (id: string) => this.state.tasks.find(t => t.id === id);
   selOrCursor = () => {
@@ -377,7 +407,11 @@ export class TrackerStore {
   };
 
   setSavedView = (key: SavedView["key"]) => this.setState({ savedView: key });
-  setQueueView = (queueView: QueueView) => this.setState({ queueView });
+  setQueueView = (queueView: QueueView) => {
+    this.setState({ queueView });
+    const ids = this.paneIds();
+    if (ids.length && !ids.includes(this.state.cursor)) this.setCursor(ids[0]);
+  };
   snooze = (id: string) =>
     this.setState(st => ({ snoozed: { ...st.snoozed, [id]: true } }));
 
@@ -466,11 +500,13 @@ export class TrackerStore {
     // to resolve, so completing the last open row can still be undone.
     const rowKeys = ["j", "k", "ArrowDown", "ArrowUp", " ", "e", "d"];
     if (rowKeys.includes(k) && !ids.length) return;
-    if (
-      k === "x" &&
-      (this.state.pane === null || !this.find(this.state.cursor))
-    )
-      return;
+    if (k === "x") {
+      // Allowed on a visible row, or on the row that just left the list
+      // (completed → undo). A cursor made stale by a view change is not.
+      const t = this.find(this.state.cursor);
+      if (this.state.pane === null || !t) return;
+      if (at < 0 && !this.isDone(t)) return;
+    }
     if (k === "j" || k === "ArrowDown") {
       this.setCursor(ids[Math.min(at + 1, ids.length - 1)]);
       e.preventDefault();
