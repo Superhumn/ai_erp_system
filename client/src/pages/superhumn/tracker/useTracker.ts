@@ -33,6 +33,8 @@ export function useTrackerKeyboard(store: TrackerStore = trackerStore) {
       if (--cur.refs === 0) {
         cur.detach();
         listeners.delete(store);
+        // No frame is mounted any more: nothing may own the keyboard.
+        store.disown();
       }
     };
   }, [store]);

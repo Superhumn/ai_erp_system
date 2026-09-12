@@ -25,6 +25,9 @@ import { SAVED_VIEWS } from "./data";
 import { trackerStore as store, type Pane } from "./store";
 import { useTracker, useTrackerKeyboard } from "./useTracker";
 
+/** The tracker frame currently under the pointer (one at a time). */
+let hovered: { label: string; pane: Pane | null } | null = null;
+
 export const TRACKER_W = 1792;
 export const SIDEBAR_W = 128;
 
@@ -53,6 +56,12 @@ export function TrackerFrame({
     if (hovering.current) return;
     if (main.current && main.current.contains(document.activeElement)) return;
     if (store.getState().activeFrame !== label) return;
+    // Another frame still under the pointer keeps ownership …
+    if (hovered && hovered.label !== label) {
+      store.own(hovered.label, hovered.pane);
+      return;
+    }
+    // … then one still holding focus …
     const focused = (
       document.activeElement as HTMLElement | null
     )?.closest<HTMLElement>("[data-tracker-frame]");
@@ -63,8 +72,8 @@ export function TrackerFrame({
       );
       return;
     }
-    store.setActiveFrame(null);
-    store.setPane(null);
+    // … otherwise nobody does.
+    store.disown();
   };
   return (
     <Frame
@@ -73,10 +82,12 @@ export function TrackerFrame({
       height={height}
       onMouseEnter={() => {
         hovering.current = true;
+        hovered = { label, pane: pane ?? null };
         own();
       }}
       onMouseLeave={() => {
         hovering.current = false;
+        if (hovered?.label === label) hovered = null;
         release();
       }}
     >

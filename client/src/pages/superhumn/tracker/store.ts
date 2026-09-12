@@ -153,9 +153,15 @@ export const nextOwner = (owner: string) =>
 export function applySuggestion(tasks: Task[], s: Suggestion): Task[] {
   if ("create" in s.apply) return tasks.concat([s.apply.create]);
   const patch = s.apply;
-  return tasks.map(t =>
-    t.id === patch.id ? { ...t, ...patch, due: patch.dueLabel ?? t.due } : t
-  );
+  return tasks.map(t => {
+    if (t.id !== patch.id) return t;
+    const next = { ...t, ...patch };
+    if (patch.day !== undefined && patch.dueLabel === undefined) {
+      next.dueLabel = dueLabelFor(patch.day);
+    }
+    next.due = next.dueLabel;
+    return next;
+  });
 }
 
 /** "Tom · 9 days" → "Tom · 9d"; "Fresh Farms · 11 days" → "Fresh · 11d". */
@@ -280,6 +286,11 @@ export class TrackerStore {
   };
   setActiveFrame = (activeFrame: string | null) => {
     if (this.state.activeFrame !== activeFrame) this.setState({ activeFrame });
+  };
+  /** Drop keyboard ownership entirely (all tracker frames unmounted). */
+  disown = () => {
+    this.setActiveFrame(null);
+    this.setPane(null);
   };
   setBoardIds = (ids: string[]) => {
     const cur = this.state.boardIds;
@@ -503,9 +514,11 @@ export class TrackerStore {
     if (k === "x") {
       // Allowed on a visible row, or on the row that just left the list
       // (completed → undo). A cursor made stale by a view change is not.
+      // The undo case is a completion *overlay* on a row whose own status
+      // is not "done" — seeded done rows or cards moved to Done stay put.
       const t = this.find(this.state.cursor);
       if (this.state.pane === null || !t) return;
-      if (at < 0 && !this.isDone(t)) return;
+      if (at < 0 && !(this.state.done[t.id] && t.status !== "done")) return;
     }
     if (k === "j" || k === "ArrowDown") {
       this.setCursor(ids[Math.min(at + 1, ids.length - 1)]);

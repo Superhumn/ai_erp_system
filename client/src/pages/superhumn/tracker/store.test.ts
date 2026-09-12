@@ -324,6 +324,33 @@ describe("TrackerStore keyboard layer", () => {
     ]);
   });
 
+  it("the x undo exception never reaches a seeded or board-completed row", () => {
+    store.setPane("1E");
+    store.setCursor("t20"); // seeded done row, hidden from the queue
+    store.setPane("1A");
+    key("x");
+    expect(store.isDone(store.find("t20")!)).toBe(true);
+    store.setStatus("t3", "done"); // moved to Done, no overlay
+    store.setCursor("t3");
+    key("x");
+    expect(store.isDone(store.find("t3")!)).toBe(true);
+  });
+
+  it("a day-only reschedule derives its label, and disown clears ownership", () => {
+    const out = applySuggestion(TASKS, {
+      id: "s9",
+      verb: "Reschedule",
+      text: "",
+      why: "",
+      apply: { id: "t15", day: 34 },
+    });
+    expect(out.find(t => t.id === "t15")!.dueLabel).toBe("Aug 3");
+    store.disown();
+    expect(store.getState().activeFrame).toBeNull();
+    key("x");
+    expect(store.isDone(store.find("t1")!)).toBe(false);
+  });
+
   it("owner edits are one source of truth across views", () => {
     store.setOwner("t1", "Sara");
     expect(store.find("t1")!.owner).toBe("Sara");
