@@ -21,6 +21,7 @@ import { PROJECT_KEYS, SHORT, type Task } from "./data";
 import {
   trackerStore as store,
   bucketOf,
+  queueOrder,
   waitingShort,
   type QueueView,
 } from "./store";
@@ -266,7 +267,7 @@ function AIDidItem({ children }: { children: React.ReactNode }) {
 export default function PriorityQueue() {
   const st = useTracker();
   const qv = st.queueView;
-  const open = st.tasks.filter(t => t.status !== "done" && !st.done[t.id]);
+  const open = queueOrder(st.tasks, st.done);
   const pick = (b: ReturnType<typeof bucketOf>) =>
     open.filter(t => bucketOf(t, st.snoozed) === b);
   const todayRows = pick("today");

@@ -21,7 +21,7 @@ import {
   AICardDense,
   ThinBar,
 } from "../primitives";
-import { BLOCKER_DOWNSTREAM, BLOCKER_IDS, BLOCKER_META, PROJ } from "./data";
+import { BLOCKER_DOWNSTREAM, BLOCKER_META, PROJ } from "./data";
 import { trackerStore as store } from "./store";
 import { useTracker } from "./useTracker";
 import { TrackerFrame, TrackerHeader, AskPill, Rail, RailRule } from "./shared";
@@ -30,8 +30,12 @@ function BlockerCard({ id }: { id: string }) {
   const { tasks, openBlocker, nudged, sel } = useTracker();
   const t = tasks.find(x => x.id === id);
   if (!t) return null;
-  const meta = BLOCKER_META[id];
-  const down = BLOCKER_DOWNSTREAM[id];
+  const meta = BLOCKER_META[id] ?? {
+    days: Number((t.waiting?.match(/\d+/) || [0])[0]),
+    channel: t.source,
+    impact: `Gates ${t.gates ?? 0} downstream tasks`,
+  };
+  const down = BLOCKER_DOWNSTREAM[id] ?? [];
   const open = openBlocker === id;
   const isNudged = !!nudged[id];
   return (
@@ -78,7 +82,7 @@ function BlockerCard({ id }: { id: string }) {
             whiteSpace: "nowrap",
           }}
         >
-          gates {down.length}
+          gates {down.length || t.gates || 0}
         </span>
       </div>
       <div
@@ -277,7 +281,7 @@ export default function BlockerTriage() {
   const { tasks, done } = useTracker();
   const blocked = tasks.filter(t => t.blocked && !done[t.id]);
   const gated = blocked.reduce(
-    (n, t) => n + (BLOCKER_DOWNSTREAM[t.id]?.length ?? t.gates ?? 0),
+    (n, t) => n + (BLOCKER_DOWNSTREAM[t.id]?.length || t.gates || 0),
     0
   );
   const waitingDays = blocked.reduce(
@@ -297,7 +301,7 @@ export default function BlockerTriage() {
               size="md"
               glow
               onClick={() => {
-                BLOCKER_IDS.forEach(id => store.nudge(id));
+                blocked.forEach(t => store.nudge(t.id));
                 store.flash(`Nudged ${blocked.length}`);
               }}
             >
@@ -325,8 +329,8 @@ export default function BlockerTriage() {
             gap: 4,
           }}
         >
-          {BLOCKER_IDS.map(id => (
-            <BlockerCard key={id} id={id} />
+          {blocked.map(t => (
+            <BlockerCard key={t.id} id={t.id} />
           ))}
 
           <Eyebrow style={{ margin: "8px 0 3px" }}>Waiting on partners</Eyebrow>

@@ -286,7 +286,7 @@ export default function Timeline() {
                   color: c.muted3,
                 }}
               >
-                {store.ownerOf(t)}
+                {t.owner}
               </span>
               <span
                 style={{

@@ -34,10 +34,10 @@ const MAX_CARDS = 9;
 type GroupBy = "Status" | "Project" | "Assignee";
 
 function Card({ t, colKey }: { t: Task; colKey: Status }) {
-  const { kSel, ownerOv } = useTracker();
+  const { kSel } = useTracker();
   const sel = kSel === t.id;
   const isDone = colKey === "done";
-  const who = ownerOv[t.id] || t.owner;
+  const who = t.owner;
   return (
     <div
       onClick={() => store.selectCard(t.id)}
@@ -196,6 +196,7 @@ function Column({
 export default function StatusBoard() {
   const st = useTracker();
   const [groupBy, setGroupBy] = useState<GroupBy>("Status");
+  const [expanded, setExpanded] = useState<Record<string, true>>({});
   const selected = st.tasks.find(t => t.id === st.kSel) ?? null;
 
   // Column definitions by grouping mode. Status is the canonical board; the
@@ -220,11 +221,11 @@ export default function StatusBoard() {
             statusKey: "todo" as Status,
             rows: st.tasks.filter(t => t.pk === pk),
           }))
-        : Array.from(new Set(st.tasks.map(t => store.ownerOf(t)))).map(o => ({
+        : Array.from(new Set(st.tasks.map(t => t.owner))).map(o => ({
             key: o,
             label: o,
             statusKey: "todo" as Status,
-            rows: st.tasks.filter(t => store.ownerOf(t) === o),
+            rows: st.tasks.filter(t => t.owner === o),
           }));
 
   return (
@@ -264,17 +265,27 @@ export default function StatusBoard() {
           >
             {groups.map(g => (
               <Column key={g.key} label={g.label} count={g.rows.length}>
-                {g.rows.slice(0, MAX_CARDS).map(t => (
-                  <Card
-                    key={t.id}
-                    t={t}
-                    colKey={
-                      groupBy === "Status" ? g.statusKey : store.statusOf(t)
-                    }
-                  />
-                ))}
+                {(expanded[g.key] ? g.rows : g.rows.slice(0, MAX_CARDS)).map(
+                  t => (
+                    <Card
+                      key={t.id}
+                      t={t}
+                      colKey={
+                        groupBy === "Status" ? g.statusKey : store.statusOf(t)
+                      }
+                    />
+                  )
+                )}
                 {g.rows.length > MAX_CARDS && (
                   <p
+                    onClick={() =>
+                      setExpanded(x => {
+                        const next = { ...x };
+                        if (next[g.key]) delete next[g.key];
+                        else next[g.key] = true;
+                        return next;
+                      })
+                    }
                     style={{
                       margin: "3px 0 0",
                       fontSize: T.micro,
@@ -285,7 +296,9 @@ export default function StatusBoard() {
                       cursor: "pointer",
                     }}
                   >
-                    +{g.rows.length - MAX_CARDS} more
+                    {expanded[g.key]
+                      ? "Show less"
+                      : `+${g.rows.length - MAX_CARDS} more`}
                   </p>
                 )}
               </Column>
@@ -334,7 +347,7 @@ export default function StatusBoard() {
                     color: c.muted2,
                   }}
                 >
-                  {PROJ[selected.pk].name} · {store.ownerOf(selected)} ·{" "}
+                  {PROJ[selected.pk].name} · {selected.owner} ·{" "}
                   {STATUS_LABEL[store.statusOf(selected)]}
                 </p>
               </div>

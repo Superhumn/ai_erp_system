@@ -857,9 +857,18 @@ export function Check({
     <span
       role="checkbox"
       aria-checked={done}
+      aria-label={done ? "Reopen task" : "Complete task"}
+      tabIndex={0}
       onClick={(e) => {
         e.stopPropagation();
         onClick?.(e);
+      }}
+      onKeyDown={(e) => {
+        if (e.key !== " " && e.key !== "Enter") return;
+        // Keep the global j/k/space layer from also acting on this key.
+        e.preventDefault();
+        e.stopPropagation();
+        onClick?.(e as unknown as React.MouseEvent);
       }}
       style={{ ...base, ...state }}
     >

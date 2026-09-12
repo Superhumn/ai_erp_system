@@ -6,6 +6,9 @@
  * store (subscribe / getState) consumed through `useSyncExternalStore`, with
  * the mutations from the handoff's logic class as methods. Pure helpers are
  * exported separately so the ordering / bucketing rules are unit-testable.
+ *
+ * Owner and status edits write to the task itself; completion (`x`) is an
+ * overlay so it can be undone with a second `x`.
  */
 import {
   AI_SUGGESTIONS,
@@ -25,6 +28,8 @@ export type Bucket = "today" | "week" | "later" | "blocked";
 
 export type TrackerState = {
   tasks: Task[];
+  /** Frame label under the pointer — the single toast slot renders there. */
+  activeFrame: string;
   cursor: string;
   sel: Record<string, true>;
   /** Completion overlay on top of `task.status` — undoable with a second `x`. */
@@ -38,8 +43,6 @@ export type TrackerState = {
   nudged: Record<string, true>;
   kSel: string;
   snoozed: Record<string, true>;
-  statusOv: Record<string, Status>;
-  ownerOv: Record<string, string>;
   tlSel: ProjectKey;
   gSel: string;
   editing: { id: string; field: "status" | "owner" } | null;
@@ -49,8 +52,13 @@ export const TOAST_MS = 1600;
 
 /* ----------------------------------------------------------- pure helpers */
 
+/** Effective status: the `done` overlay wins, then the task's own status. */
+export const statusOf = (st: Pick<TrackerState, "done">, t: Task): Status =>
+  st.done[t.id] ? "done" : t.status;
+
+/** One completion selector for every view (overlay OR status "done"). */
 export const isDone = (st: Pick<TrackerState, "done">, t: Task) =>
-  !!st.done[t.id] || t.status === "done";
+  statusOf(st, t) === "done";
 
 /** Ordering rule (implement exactly): due-today/imminent first, blockers
  *  second, this week third, later last. */
@@ -58,7 +66,7 @@ export const rank = (t: Task) =>
   t.blocked ? 1 : t.day <= 21 ? 0 : t.day <= 26 ? 2 : 3;
 
 export function queueOrder(tasks: Task[], done: Record<string, true>): Task[] {
-  const open = tasks.filter(t => t.status !== "done" && !done[t.id]);
+  const open = tasks.filter(t => !isDone({ done }, t));
   return open.slice().sort((a, b) => rank(a) - rank(b) || a.day - b.day);
 }
 
@@ -70,9 +78,24 @@ export function bucketOf(t: Task, snoozed: Record<string, true>): Bucket {
   return "later";
 }
 
-/** Day index → "Jul N" / "Aug N" label (Jul has 31 days on this axis). */
-export const dueLabelFor = (day: number) =>
-  day > 31 ? "Aug " + (day - 31) : "Jul " + day;
+const MONTHS: [string, number][] = [
+  ["Jul", 31],
+  ["Aug", 31],
+  ["Sep", 30],
+  ["Oct", 31],
+  ["Nov", 30],
+  ["Dec", 31],
+];
+
+/** Day index (Jul 1 = 1, Aug 1 = 32, Sep 1 = 63 …) → "Mon N" label. */
+export function dueLabelFor(day: number): string {
+  let d = day;
+  for (const [name, len] of MONTHS) {
+    if (d <= len) return `${name} ${d}`;
+    d -= len;
+  }
+  return `Dec ${d + 31}`;
+}
 
 export function shiftDays(tasks: Task[], ids: string[], n: number): Task[] {
   const set = new Set(ids);
@@ -104,14 +127,6 @@ export function waitingShort(waiting?: string) {
   return `${who} · ${n}d`;
 }
 
-export const statusOf = (
-  st: Pick<TrackerState, "done" | "statusOv">,
-  t: Task
-): Status => (st.done[t.id] ? "done" : st.statusOv[t.id] || t.status);
-
-export const ownerOf = (st: Pick<TrackerState, "ownerOv">, t: Task) =>
-  st.ownerOv[t.id] || t.owner;
-
 /* ------------------------------------------------------------------ store */
 
 type Listener = () => void;
@@ -119,6 +134,7 @@ type Listener = () => void;
 export function initialState(): TrackerState {
   return {
     tasks: TASKS.slice(),
+    activeFrame: "1A Priority queue",
     cursor: "t1",
     sel: {},
     done: { t20: true, t21: true, t22: true },
@@ -131,8 +147,6 @@ export function initialState(): TrackerState {
     nudged: {},
     kSel: "t3",
     snoozed: {},
-    statusOv: {},
-    ownerOv: {},
     tlSel: "FDA",
     gSel: "t8",
     editing: null,
@@ -177,8 +191,9 @@ export class TrackerStore {
   /* ---- selectors */
   isDone = (t: Task) => isDone(this.state, t);
   statusOf = (t: Task) => statusOf(this.state, t);
-  ownerOf = (t: Task) => ownerOf(this.state, t);
   queueOrder = () => queueOrder(this.state.tasks, this.state.done);
+  openBlockers = () =>
+    this.state.tasks.filter(t => t.blocked && !this.isDone(t));
   paneIds = () =>
     this.state.pane === "1E"
       ? this.state.tasks.map(t => t.id)
@@ -191,6 +206,9 @@ export class TrackerStore {
 
   /* ---- cursor / selection */
   setPane = (pane: Pane) => this.setState({ pane });
+  setActiveFrame = (activeFrame: string) => {
+    if (this.state.activeFrame !== activeFrame) this.setState({ activeFrame });
+  };
   setCursor = (id: string) => this.setState({ cursor: id, gSel: id, kSel: id });
   toggleSel = (id: string) =>
     this.setState(st => {
@@ -210,11 +228,25 @@ export class TrackerStore {
       : this.setCursor(id);
 
   /* ---- task mutations */
+  /** Complete / reopen. Completion is an overlay (undone by a second `x`);
+   *  reopening a row whose own `status` is already "done" (seeded rows, or a
+   *  card moved to the Done column) writes it back to "todo". */
   toggle = (id: string) =>
     this.setState(st => {
+      const t = st.tasks.find(x => x.id === id);
+      if (!t) return {};
       const done = { ...st.done };
-      if (done[id]) delete done[id];
-      else done[id] = true;
+      if (isDone(st, t)) {
+        delete done[id];
+        const tasks =
+          t.status === "done"
+            ? st.tasks.map(x =>
+                x.id === id ? { ...x, status: "todo" as Status } : x
+              )
+            : st.tasks;
+        return { done, tasks };
+      }
+      done[id] = true;
       return { done };
     });
 
@@ -303,8 +335,7 @@ export class TrackerStore {
     if (!t) return;
     const order: Status[] = ["todo", "in_progress", "review", "done"];
     const idx = order.indexOf(this.statusOf(t));
-    const next = order[Math.max(0, Math.min(3, idx + dir))];
-    this.setState(st => ({ statusOv: { ...st.statusOv, [id]: next } }));
+    this.setStatus(id, order[Math.max(0, Math.min(3, idx + dir))]);
   };
 
   /* ---- 1D */
@@ -320,14 +351,21 @@ export class TrackerStore {
           ? null
           : { id, field },
     }));
+  /** Writes `status` on the task itself. Leaving "done" also clears the
+   *  completion overlay so the row really reopens everywhere. */
   setStatus = (id: string, status: Status) =>
-    this.setState(st => ({
-      statusOv: { ...st.statusOv, [id]: status },
-      editing: null,
-    }));
+    this.setState(st => {
+      const done = { ...st.done };
+      if (status !== "done") delete done[id];
+      return {
+        tasks: st.tasks.map(t => (t.id === id ? { ...t, status } : t)),
+        done,
+        editing: null,
+      };
+    });
   setOwner = (id: string, owner: string) =>
     this.setState(st => ({
-      ownerOv: { ...st.ownerOv, [id]: owner },
+      tasks: st.tasks.map(t => (t.id === id ? { ...t, owner } : t)),
       editing: null,
     }));
 
@@ -344,7 +382,9 @@ export class TrackerStore {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const ids = this.paneIds();
     if (!ids.length) return;
-    const at = Math.max(0, ids.indexOf(this.state.cursor));
+    // -1 when the cursor row just left the list (completed): j/k then land
+    // on the first remaining row instead of skipping it.
+    const at = ids.indexOf(this.state.cursor);
     const k = e.key;
     if (k === "j" || k === "ArrowDown") {
       this.setCursor(ids[Math.min(at + 1, ids.length - 1)]);
@@ -354,7 +394,8 @@ export class TrackerStore {
       e.preventDefault();
     } else if (k === "x") {
       this.toggle(this.state.cursor);
-      this.flash(this.state.done[this.state.cursor] ? "Completed" : "Reopened");
+      const t = this.find(this.state.cursor);
+      this.flash(t && this.isDone(t) ? "Completed" : "Reopened");
     } else if (k === " ") {
       this.toggleSel(this.state.cursor);
       e.preventDefault();

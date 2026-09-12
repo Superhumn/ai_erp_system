@@ -42,6 +42,14 @@ describe("tracker ordering rule", () => {
 });
 
 describe("tracker mutations", () => {
+  it("dueLabelFor walks the calendar past August", () => {
+    expect(dueLabelFor(31)).toBe("Jul 31");
+    expect(dueLabelFor(32)).toBe("Aug 1");
+    expect(dueLabelFor(62)).toBe("Aug 31");
+    expect(dueLabelFor(63)).toBe("Sep 1");
+    expect(dueLabelFor(93)).toBe("Oct 1");
+  });
+
   it("shiftDays skips blocked tasks and rolls Jul into Aug", () => {
     const out = shiftDays(TASKS, ["t18", "t8"], 3);
     const t18 = out.find(t => t.id === "t18")!;
@@ -142,6 +150,36 @@ describe("TrackerStore keyboard layer", () => {
       "Elena"
     );
     expect(store.getState().suggestions.map(s => s.id)).toEqual(["s3"]);
+  });
+
+  it("j after completing the cursor row lands on the next row, not the one after", () => {
+    key("x"); // t1 leaves the queue
+    key("j");
+    expect(store.getState().cursor).toBe("t2");
+  });
+
+  it("x reopens a seeded done row and a card moved to Done, and status writes clear the overlay", () => {
+    store.setPane("1E");
+    store.setCursor("t20");
+    key("x");
+    expect(store.isDone(store.find("t20")!)).toBe(false);
+    expect(store.find("t20")!.status).toBe("todo");
+    store.setStatus("t3", "done");
+    expect(store.queueOrder().map(t => t.id)).not.toContain("t3");
+    store.setCursor("t3");
+    key("x");
+    expect(store.isDone(store.find("t3")!)).toBe(false);
+    store.bulkComplete(["t4"]);
+    store.setStatus("t4", "review");
+    expect(store.isDone(store.find("t4")!)).toBe(false);
+    expect(store.statusOf(store.find("t4")!)).toBe("review");
+  });
+
+  it("owner edits are one source of truth across views", () => {
+    store.setOwner("t1", "Sara");
+    expect(store.find("t1")!.owner).toBe("Sara");
+    key("e");
+    expect(store.find("t1")!.owner).toBe("Ops");
   });
 
   it("1E pane walks every task, and ‹ › move a card between board columns", () => {

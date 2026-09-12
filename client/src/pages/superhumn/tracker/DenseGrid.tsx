@@ -106,7 +106,7 @@ function Row({ t }: { t: Task }) {
   const { cursor, sel, editing } = useTracker();
   const done = store.isDone(t);
   const st = store.statusOf(t);
-  const who = store.ownerOf(t);
+  const who = t.owner;
   const today = t.dueLabel === "today";
   const isCursor = cursor === t.id;
   const editingStatus = editing?.id === t.id && editing.field === "status";
@@ -336,9 +336,17 @@ export default function DenseGrid() {
   const blockedCount = st.tasks.filter(
     t => t.blocked && !store.isDone(t)
   ).length;
-  const half = Math.ceil(st.tasks.length / 2) + 1; // 12 / 10 split on the seeded 22
-  const left = st.tasks.slice(0, half);
-  const right = st.tasks.slice(half);
+  // "sorted by due date": open rows by day (blocked rows carry day 99 so
+  // they sit last), completed rows after them.
+  const sorted = st.tasks
+    .slice()
+    .sort(
+      (a, b) =>
+        Number(store.isDone(a)) - Number(store.isDone(b)) || a.day - b.day
+    );
+  const half = Math.ceil(sorted.length / 2) + 1; // 12 / 10 split on the seeded 22
+  const left = sorted.slice(0, half);
+  const right = sorted.slice(half);
   const selected = st.tasks.find(t => t.id === st.gSel) ?? null;
   const openIn = (pk: keyof typeof PROJ) =>
     st.tasks.filter(t => t.pk === pk && !store.isDone(t)).length;
@@ -467,7 +475,7 @@ export default function DenseGrid() {
                     color: c.muted2,
                   }}
                 >
-                  {PROJ[selected.pk].name} · {store.ownerOf(selected)}
+                  {PROJ[selected.pk].name} · {selected.owner}
                 </p>
               </div>
               <div style={{ display: "flex", flexDirection: "column" }}>

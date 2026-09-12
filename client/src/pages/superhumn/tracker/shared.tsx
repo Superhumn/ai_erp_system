@@ -35,13 +35,16 @@ export function TrackerFrame({
   padded?: boolean;
 }) {
   useTrackerKeyboard();
-  const { toast } = useTracker();
+  const { toast, activeFrame } = useTracker();
   return (
     <Frame
       label={label}
       width={TRACKER_W}
       height={height}
-      onMouseEnter={pane ? () => store.setPane(pane) : undefined}
+      onMouseEnter={() => {
+        store.setActiveFrame(label);
+        if (pane) store.setPane(pane);
+      }}
     >
       <Sidebar active="Projects" width={SIDEBAR_W} />
       <div
@@ -55,7 +58,8 @@ export function TrackerFrame({
       >
         {children}
       </div>
-      <Toast message={toast} />
+      {/* One toast slot: only the frame the pointer is in shows it. */}
+      {activeFrame === label && <Toast message={toast} />}
     </Frame>
   );
 }
