@@ -422,9 +422,14 @@ export async function generateInvoicePdf(invoice: InvoiceData, company: CompanyI
       await browser.close();
     }
   } catch (error) {
-    // Fallback: return HTML as buffer if PDF generation fails
-    console.error('[InvoicePDF] PDF generation failed, returning HTML:', error);
-    return Buffer.from(html, 'utf-8');
+    // Never return HTML here. It used to fall back to `Buffer.from(html)`, which
+    // the caller then served as application/pdf — the user got a file named
+    // .pdf that no reader could open, with nothing in the response to say why.
+    console.error('[InvoicePDF] PDF generation failed:', error);
+    throw new Error(
+      `Invoice PDF generation failed: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
   }
 }
 
