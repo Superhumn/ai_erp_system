@@ -48,6 +48,8 @@ describe("tracker mutations", () => {
     expect(dueLabelFor(62)).toBe("Aug 31");
     expect(dueLabelFor(63)).toBe("Sep 1");
     expect(dueLabelFor(93)).toBe("Oct 1");
+    expect(dueLabelFor(184)).toBe("Dec 31");
+    expect(dueLabelFor(185)).toBe("Jan 1");
   });
 
   it("shiftDays skips blocked tasks and rolls Jul into Aug", () => {
@@ -173,6 +175,25 @@ describe("TrackerStore keyboard layer", () => {
     store.setStatus("t4", "review");
     expect(store.isDone(store.find("t4")!)).toBe(false);
     expect(store.statusOf(store.find("t4")!)).toBe("review");
+  });
+
+  it("global keys still work when the queue is empty", () => {
+    store.setState({ tasks: [] });
+    key("a");
+    expect(store.getState().tasks.length).toBe(1);
+    store.setState({ tasks: [] });
+    key("3");
+    expect(store.getState().savedView).toBe("v3");
+    key("n");
+    expect(store.getState().suggestions.length).toBe(2);
+  });
+
+  it("opening an inline editor moves the keyboard cursor to that row", () => {
+    store.setPane("1E");
+    store.editCell("t5", "owner");
+    expect(store.getState().cursor).toBe("t5");
+    key("e");
+    expect(store.find("t5")!.owner).toBe("Jenna");
   });
 
   it("owner edits are one source of truth across views", () => {

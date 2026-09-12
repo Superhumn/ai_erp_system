@@ -27,7 +27,7 @@ import { useTracker } from "./useTracker";
 import { TrackerFrame, TrackerHeader, AskPill, Rail, RailRule } from "./shared";
 
 function BlockerCard({ id }: { id: string }) {
-  const { tasks, openBlocker, nudged, sel } = useTracker();
+  const { tasks, openBlocker, nudged } = useTracker();
   const t = tasks.find(x => x.id === id);
   if (!t) return null;
   const meta = BLOCKER_META[id] ?? {
@@ -183,12 +183,7 @@ function BlockerCard({ id }: { id: string }) {
                 <Pill
                   variant="secondary"
                   size="sm"
-                  onClick={() =>
-                    store.bulkOwner(
-                      Object.keys(sel).length ? Object.keys(sel) : [id],
-                      "Elena"
-                    )
-                  }
+                  onClick={() => store.bulkOwner([id], "Elena")}
                 >
                   Reassign
                 </Pill>
@@ -278,8 +273,8 @@ function ApprovalRow({
 }
 
 export default function BlockerTriage() {
-  const { tasks, done } = useTracker();
-  const blocked = tasks.filter(t => t.blocked && !done[t.id]);
+  const { tasks } = useTracker();
+  const blocked = tasks.filter(t => t.blocked && !store.isDone(t));
   const gated = blocked.reduce(
     (n, t) => n + (BLOCKER_DOWNSTREAM[t.id]?.length || t.gates || 0),
     0

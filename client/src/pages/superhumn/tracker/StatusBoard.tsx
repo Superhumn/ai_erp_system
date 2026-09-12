@@ -409,13 +409,12 @@ export default function StatusBoard() {
                   variant="primary"
                   size="sm"
                   onClick={() => {
+                    const wasDone = store.isDone(selected);
                     store.toggle(selected.id);
-                    store.flash(
-                      st.done[selected.id] ? "Reopened" : "Completed"
-                    );
+                    store.flash(wasDone ? "Reopened" : "Completed");
                   }}
                 >
-                  {st.done[selected.id] ? "Reopen" : "Complete"}
+                  {store.isDone(selected) ? "Reopen" : "Complete"}
                 </Pill>
                 {selected.link && (
                   <Pill

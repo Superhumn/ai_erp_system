@@ -78,23 +78,28 @@ export function bucketOf(t: Task, snoozed: Record<string, true>): Bucket {
   return "later";
 }
 
-const MONTHS: [string, number][] = [
-  ["Jul", 31],
-  ["Aug", 31],
-  ["Sep", 30],
-  ["Oct", 31],
-  ["Nov", 30],
-  ["Dec", 31],
+const MONTH_NAMES = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
 ];
+/** The seeded axis is anchored on Jul 2026 ("today" = Mon Jul 20). */
+const AXIS_YEAR = 2026;
 
-/** Day index (Jul 1 = 1, Aug 1 = 32, Sep 1 = 63 …) → "Mon N" label. */
+/** Day index (Jul 1 = 1, Aug 1 = 32, Sep 1 = 63 …) → "Mon N" label, via
+ *  real calendar arithmetic so any offset the `d` shortcut reaches is valid. */
 export function dueLabelFor(day: number): string {
-  let d = day;
-  for (const [name, len] of MONTHS) {
-    if (d <= len) return `${name} ${d}`;
-    d -= len;
-  }
-  return `Dec ${d + 31}`;
+  const dt = new Date(Date.UTC(AXIS_YEAR, 6, day));
+  return `${MONTH_NAMES[dt.getUTCMonth()]} ${dt.getUTCDate()}`;
 }
 
 export function shiftDays(tasks: Task[], ids: string[], n: number): Task[] {
@@ -345,7 +350,9 @@ export class TrackerStore {
   selectRow = (id: string) => this.setState({ gSel: id, editing: null });
   editCell = (id: string, field: "status" | "owner") =>
     this.setState(st => ({
+      cursor: id,
       gSel: id,
+      kSel: id,
       editing:
         st.editing && st.editing.id === id && st.editing.field === field
           ? null
@@ -381,11 +388,12 @@ export class TrackerStore {
       return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const ids = this.paneIds();
-    if (!ids.length) return;
     // -1 when the cursor row just left the list (completed): j/k then land
     // on the first remaining row instead of skipping it.
     const at = ids.indexOf(this.state.cursor);
     const k = e.key;
+    const rowKeys = ["j", "k", "ArrowDown", "ArrowUp", "x", " ", "e", "d"];
+    if (rowKeys.includes(k) && !ids.length) return;
     if (k === "j" || k === "ArrowDown") {
       this.setCursor(ids[Math.min(at + 1, ids.length - 1)]);
       e.preventDefault();
