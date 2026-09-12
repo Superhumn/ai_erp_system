@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -87,6 +87,61 @@ function normalizeSuggestedSource(taskData: Record<string, unknown> | null | und
     return { kind: "text", label: "Text" };
   }
   return { kind: "text", label: "Text" };
+}
+
+function formatShortDate(value: string | Date | null | undefined) {
+  if (!value) return "-";
+  const date = typeof value === "string" ? new Date(value) : value;
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/** One-line human summary of a task, used by the compact queue rows. */
+function taskSummary(
+  task: any,
+  taskData: any,
+  projectName?: string,
+  assigneeName?: string,
+): string {
+  const join = (parts: unknown[]) => parts.filter(Boolean).join(" · ");
+  switch (task.taskType) {
+    case "generate_po":
+      return join([
+        taskData.vendorName || "Unknown vendor",
+        `${taskData.materialName || "Unknown material"} × ${taskData.quantity ?? "?"}`,
+        taskData.totalAmount != null ? formatCurrency(taskData.totalAmount) : null,
+      ]);
+    case "send_rfq":
+      return join([
+        `${taskData.materialName || "Unknown material"} × ${taskData.quantity ?? "?"}`,
+        `${taskData.vendorIds?.length || 0} vendors`,
+      ]);
+    case "send_email":
+      return join([`To ${taskData.to || "unknown"}`, taskData.subject || "No subject"]);
+    case "concierge_errand":
+      return join([taskData.goal, taskData.riskLevel ? `${taskData.riskLevel} risk` : null]);
+    case "create_vendor":
+    case "create_customer":
+      return join([taskData.name || "Unknown", taskData.email]);
+    case "create_material":
+    case "create_product":
+      return join([taskData.name || "Unknown", taskData.sku]);
+    case "create_crm_deal":
+      return join([
+        taskData.company || "Unknown",
+        taskData.amount ? formatCurrency(taskData.amount) : null,
+        taskData.stage,
+      ]);
+    case "query":
+      if (taskData.action === "create_project_task") {
+        return join([
+          taskData.name || "Untitled task",
+          projectName || (taskData.projectId ? `Project #${taskData.projectId}` : "Unassigned"),
+          assigneeName || "Unassigned",
+        ]);
+      }
+      break;
+  }
+  return task.aiReasoning || task.description || taskData.name || taskData.goal || "";
 }
 
 function SuggestedSourceDialog({
@@ -395,8 +450,7 @@ const statusColors: Record<string, string> = {
 
 export default function ApprovalQueue() {
   const [selectedTask, setSelectedTask] = useState<any>(null);
-  const [rejectReason, setRejectReason] = useState("");
-  const [isRejectDialogOpen, setIsRejectDialogOpen] = useState(false);
+  const [focusedIndex, setFocusedIndex] = useState(0);
   const [showAgentConfig, setShowAgentConfig] = useState(false);
   const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false);
   const [editedTaskData, setEditedTaskData] = useState("");
@@ -423,8 +477,6 @@ export default function ApprovalQueue() {
     onSuccess: () => {
       toast.success("Task rejected");
       utils.aiAgent.tasks.invalidate();
-      setIsRejectDialogOpen(false);
-      setRejectReason("");
     },
     onError: (err) => toast.error(err.message),
   });
@@ -450,19 +502,21 @@ export default function ApprovalQueue() {
     approveMutation.mutate({ id: taskId });
   };
   
-  const handleReject = (task: any) => {
-    setSelectedTask(task);
-    setIsRejectDialogOpen(true);
-  };
-  
-  const confirmReject = () => {
-    if (selectedTask) {
-      rejectMutation.mutate({ id: selectedTask.id, reason: rejectReason });
-    }
+  const handleReject = (taskId: number) => {
+    rejectMutation.mutate({ id: taskId });
   };
   
   const handleExecute = (taskId: number) => {
     executeMutation.mutate({ id: taskId });
+  };
+
+  const handleApproveAndExecute = async (taskId: number) => {
+    try {
+      await approveMutation.mutateAsync({ id: taskId });
+      executeMutation.mutate({ id: taskId });
+    } catch {
+      // approve error already toasted by the mutation
+    }
   };
   
   const handleViewTask = (task: any) => {
@@ -496,7 +550,73 @@ export default function ApprovalQueue() {
     }
   };
   
-  const renderTaskCard = (task: any, showActions = true) => {
+  const visibleTasks: any[] =
+    activeTab === "pending" ? pendingTasks || [] : activeTab === "all" ? allTasks || [] : [];
+  const focusedTask: any = visibleTasks[focusedIndex];
+  const anyMutationPending =
+    approveMutation.isPending || rejectMutation.isPending || executeMutation.isPending;
+
+  // Clamp focus when the list shrinks (after approve/reject) or the tab changes.
+  useEffect(() => {
+    setFocusedIndex((i) => Math.max(0, Math.min(i, visibleTasks.length - 1)));
+  }, [visibleTasks.length, activeTab]);
+
+  // Keyboard shortcuts: j/k or arrows move, a approve, r reject, e approve & execute, enter/d details.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el?.isContentEditable) return;
+      if (document.querySelector('[role="dialog"]')) return;
+      if (visibleTasks.length === 0) return;
+
+      const task = visibleTasks[focusedIndex];
+      const pending = task?.status === "pending_approval";
+      switch (e.key) {
+        case "j":
+        case "ArrowDown":
+          e.preventDefault();
+          setFocusedIndex((i) => Math.min(i + 1, visibleTasks.length - 1));
+          return;
+        case "k":
+        case "ArrowUp":
+          e.preventDefault();
+          setFocusedIndex((i) => Math.max(i - 1, 0));
+          return;
+        case "a":
+          if (task && pending && !anyMutationPending) handleApprove(task.id);
+          return;
+        case "r":
+          if (task && pending && !anyMutationPending) handleReject(task.id);
+          return;
+        case "e":
+          if (task && pending && !anyMutationPending) void handleApproveAndExecute(task.id);
+          else if (task && task.status === "approved" && !anyMutationPending) handleExecute(task.id);
+          return;
+        case "Enter":
+        case "d":
+          if (task) {
+            e.preventDefault();
+            handleViewTask(task);
+          }
+          return;
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleTasks, focusedIndex, anyMutationPending]);
+
+  // Keep the focused row in view while navigating with the keyboard.
+  useEffect(() => {
+    if (!focusedTask) return;
+    document
+      .querySelector(`[data-task-row="${focusedTask.id}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [focusedTask?.id]);
+
+  const renderTaskRow = (task: any, index: number) => {
     const Icon = taskTypeIcons[task.taskType] || Bot;
     let taskData: any = {};
     try {
@@ -507,353 +627,126 @@ export default function ApprovalQueue() {
     const assigneeName = teamMembers?.find((u: any) => u.id === taskData.assigneeId)?.name;
     const title = isSuggestedProjectTask ? "Suggested Project Task" : (taskTypeLabels[task.taskType] || task.taskType);
     const suggestedSource = isSuggestedProjectTask ? normalizeSuggestedSource(taskData) : null;
+    const summary = taskSummary(task, taskData, projectName ?? undefined, assigneeName ?? undefined);
+    const focused = index === focusedIndex;
+    const isPending = task.status === "pending_approval";
+    const isApproved = task.status === "approved";
+    const approving = approveMutation.isPending && (approveMutation.variables as { id?: number } | undefined)?.id === task.id;
+    const rejecting = rejectMutation.isPending && (rejectMutation.variables as { id?: number } | undefined)?.id === task.id;
+    const executing = executeMutation.isPending && (executeMutation.variables as { id?: number } | undefined)?.id === task.id;
 
     return (
-      <Card key={task.id} className="mb-4 overflow-hidden">
+      <div
+        key={task.id}
+        data-task-row={task.id}
+        onClick={() => setFocusedIndex(index)}
+        onDoubleClick={() => handleViewTask(task)}
+        className={`flex items-center gap-2 px-2 py-1 text-sm border-b border-border/60 last:border-b-0 cursor-default hover:bg-muted/40 ${
+          focused ? "bg-primary/5 ring-1 ring-inset ring-primary/40" : ""
+        }`}
+      >
+        <Icon className="h-4 w-4 text-primary shrink-0" />
+        <span className="font-medium shrink-0 whitespace-nowrap">{title}</span>
+        <span className="text-muted-foreground truncate flex-1 min-w-0" title={summary}>
+          {summary}
+        </span>
         {suggestedSource && (
-          <div className="flex flex-wrap items-center gap-2 px-6 py-2.5 bg-muted/30 border-b border-border/60">
-            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Source</span>
-            <button
-              type="button"
-              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium text-primary hover:bg-primary/10 transition-colors"
-              onClick={() => setSourceViewerTask(task)}
-            >
-              {suggestedSource.kind === "email" && <Mail className="h-3.5 w-3.5 shrink-0" />}
-              {suggestedSource.kind === "fireflies" && <Mic className="h-3.5 w-3.5 shrink-0" />}
-              {suggestedSource.kind === "text" && <FileText className="h-3.5 w-3.5 shrink-0" />}
-              <span>{suggestedSource.label}</span>
-              <ExternalLink className="h-3 w-3 opacity-70" />
-            </button>
-          </div>
+          <button
+            type="button"
+            title={`View source (${suggestedSource.label})`}
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-primary hover:bg-primary/10 shrink-0"
+            onClick={(e) => {
+              e.stopPropagation();
+              setSourceViewerTask(task);
+            }}
+          >
+            {suggestedSource.kind === "email" && <Mail className="h-3.5 w-3.5" />}
+            {suggestedSource.kind === "fireflies" && <Mic className="h-3.5 w-3.5" />}
+            {suggestedSource.kind === "text" && <FileText className="h-3.5 w-3.5" />}
+          </button>
         )}
-        <CardContent className="pt-6">
-          <div className="flex items-start justify-between">
-            <div className="flex items-start gap-4">
-              <div className="p-3 rounded-lg bg-primary/10">
-                <Icon className="h-6 w-6 text-primary" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <h3 className="font-semibold">{title}</h3>
-                  <Badge className={priorityColors[task.priority]}>
-                    {task.priority}
-                  </Badge>
-                  <Badge className={statusColors[task.status]}>
-                    {task.status.replace(/_/g, " ")}
-                  </Badge>
-                </div>
-                
-                {/* Task-specific details */}
-                {task.taskType === "generate_po" && (
-                  <div className="text-sm text-muted-foreground space-y-1">
-                    <p><strong>Vendor:</strong> {taskData.vendorId ? (
-                      <Link href={`/operations/procurement-hub?tab=vendors&id=${taskData.vendorId}`} className="text-primary hover:underline inline-flex items-center gap-1">
-                        {taskData.vendorName || "Unknown"}
-                        <ExternalLink className="h-3 w-3" />
-                      </Link>
-                    ) : (taskData.vendorName || "Unknown")}</p>
-                    <p><strong>Material:</strong> {taskData.materialId ? (
-                      <Link href={`/operations/procurement-hub?tab=materials&id=${taskData.materialId}`} className="text-primary hover:underline inline-flex items-center gap-1">
-                        {taskData.materialName || "Unknown"}
-                        <ExternalLink className="h-3 w-3" />
-                      </Link>
-                    ) : (taskData.materialName || "Unknown")}</p>
-                    <p><strong>Quantity:</strong> {taskData.quantity} | <strong>Total:</strong> {formatCurrency(taskData.totalAmount)}</p>
-                    {taskData.expectedDate && <p><strong>Expected:</strong> {formatDate(taskData.expectedDate)}</p>}
-                    {task.resultData && (
-                      <p className="mt-2 p-2 bg-muted/50 rounded border border-border">
-                        <strong>Created:</strong>{" "}
-                        <Link href={`/operations/procurement-hub?tab=orders&id=${JSON.parse(task.resultData).poId}`} className="text-primary hover:underline inline-flex items-center gap-1">
-                          PO #{JSON.parse(task.resultData).poNumber}
-                          <ExternalLink className="h-3 w-3" />
-                        </Link>
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                {task.taskType === "concierge_errand" && (
-                  <div className="text-sm text-muted-foreground space-y-2">
-                    {taskData.goal && (
-                      <p><strong>Goal:</strong> {taskData.goal}</p>
-                    )}
-                    {taskData.riskLevel && (
-                      <p>
-                        <strong>Risk:</strong>{" "}
-                        <Badge className={priorityColors[taskData.riskLevel === "high" ? "high" : taskData.riskLevel === "low" ? "low" : "medium"]}>
-                          {taskData.riskLevel}
-                        </Badge>
-                      </p>
-                    )}
-                    {Array.isArray(taskData.steps) && taskData.steps.some((s: any) => typeof s === "string" && s.trim()) && (
-                      <div>
-                        <p className="font-medium text-foreground mb-1 flex items-center gap-1">
-                          <ListChecks className="h-4 w-4" /> Plan
-                        </p>
-                        <ol className="list-decimal list-inside space-y-0.5">
-                          {taskData.steps
-                            .filter((s: any) => typeof s === "string" && s.trim())
-                            .map((step: string, i: number) => (
-                              <li key={i}>{step}</li>
-                            ))}
-                        </ol>
-                      </div>
-                    )}
-                    {task.executionResult && (() => {
-                      try {
-                        const r = JSON.parse(task.executionResult);
-                        return (
-                          <div className="mt-2 p-2 bg-muted/50 rounded border border-border text-foreground">
-                            {r.summary && <p>{r.summary}</p>}
-                            {Array.isArray(r.failedActions) && r.failedActions.length > 0 && (
-                              <p className="mt-1 text-foreground font-semibold">
-                                {r.failedActions.length} action(s) could not be completed.
-                              </p>
-                            )}
-                          </div>
-                        );
-                      } catch {
-                        return null;
-                      }
-                    })()}
-                  </div>
-                )}
-
-                {task.taskType === "send_rfq" && (
-                  <div className="text-sm text-muted-foreground space-y-1">
-                    <p><strong>Material:</strong> {taskData.materialId ? (
-                      <Link href={`/operations/procurement-hub?tab=materials&id=${taskData.materialId}`} className="text-primary hover:underline inline-flex items-center gap-1">
-                        {taskData.materialName || "Unknown"}
-                        <ExternalLink className="h-3 w-3" />
-                      </Link>
-                    ) : (taskData.materialName || "Unknown")}</p>
-                    <p><strong>Quantity:</strong> {taskData.quantity}</p>
-                    <p><strong>Vendors:</strong> {taskData.vendorIds?.length || 0} selected</p>
-                  </div>
-                )}
-                
-                {task.taskType === "send_email" && (
-                  <div className="text-sm text-muted-foreground space-y-1">
-                    <p><strong>To:</strong> {taskData.to || "Unknown"}</p>
-                    <p><strong>Subject:</strong> {taskData.subject || "No subject"}</p>
-                    {task.resultData && (
-                      <p className="mt-2 p-2 bg-muted/50 rounded border border-border">
-                        <strong>Sent:</strong>{" "}
-                        <Link href="/operations/email-inbox?tab=sent" className="text-primary hover:underline inline-flex items-center gap-1">
-                          View in Sent Emails
-                          <ExternalLink className="h-3 w-3" />
-                        </Link>
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                {isSuggestedProjectTask && (
-                  <div className="text-sm text-muted-foreground space-y-1">
-                    <p><strong>Task:</strong> {taskData.name || "Untitled task"}</p>
-                    <p><strong>Project:</strong> {projectName || `Project #${taskData.projectId || "Unassigned"}`}</p>
-                    <p><strong>Assignee:</strong> {assigneeName || "Unassigned"}</p>
-                    {taskData.domain && <p><strong>Domain:</strong> {taskData.domain}</p>}
-                  </div>
-                )}
-                
-                {/* Entity creation tasks with result links */}
-                {task.taskType === "create_vendor" && (
-                  <div className="text-sm text-muted-foreground space-y-1">
-                    <p><strong>Vendor Name:</strong> {taskData.name || "Unknown"}</p>
-                    {taskData.email && <p><strong>Email:</strong> {taskData.email}</p>}
-                    {task.resultData && (
-                      <p className="mt-2 p-2 bg-muted/50 rounded border border-border">
-                        <strong>Created:</strong>{" "}
-                        <Link href={`/operations/procurement-hub?tab=vendors&id=${JSON.parse(task.resultData).vendorId}`} className="text-primary hover:underline inline-flex items-center gap-1">
-                          View Vendor
-                          <ExternalLink className="h-3 w-3" />
-                        </Link>
-                      </p>
-                    )}
-                  </div>
-                )}
-                
-                {task.taskType === "create_material" && (
-                  <div className="text-sm text-muted-foreground space-y-1">
-                    <p><strong>Material Name:</strong> {taskData.name || "Unknown"}</p>
-                    {taskData.sku && <p><strong>SKU:</strong> {taskData.sku}</p>}
-                    {task.resultData && (
-                      <p className="mt-2 p-2 bg-muted/50 rounded border border-border">
-                        <strong>Created:</strong>{" "}
-                        <Link href={`/operations/procurement-hub?tab=materials&id=${JSON.parse(task.resultData).materialId}`} className="text-primary hover:underline inline-flex items-center gap-1">
-                          View Material
-                          <ExternalLink className="h-3 w-3" />
-                        </Link>
-                      </p>
-                    )}
-                  </div>
-                )}
-                
-                {task.taskType === "create_product" && (
-                  <div className="text-sm text-muted-foreground space-y-1">
-                    <p><strong>Product Name:</strong> {taskData.name || "Unknown"}</p>
-                    {taskData.sku && <p><strong>SKU:</strong> {taskData.sku}</p>}
-                    {task.resultData && (
-                      <p className="mt-2 p-2 bg-muted/50 rounded border border-border">
-                        <strong>Created:</strong>{" "}
-                        <Link href={`/sales/products?id=${JSON.parse(task.resultData).productId}`} className="text-primary hover:underline inline-flex items-center gap-1">
-                          View Product
-                          <ExternalLink className="h-3 w-3" />
-                        </Link>
-                      </p>
-                    )}
-                  </div>
-                )}
-                
-                {task.taskType === "create_customer" && (
-                  <div className="text-sm text-muted-foreground space-y-1">
-                    <p><strong>Customer Name:</strong> {taskData.name || "Unknown"}</p>
-                    {taskData.email && <p><strong>Email:</strong> {taskData.email}</p>}
-                    {task.resultData && (
-                      <p className="mt-2 p-2 bg-muted/50 rounded border border-border">
-                        <strong>Created:</strong>{" "}
-                        <Link href={`/sales/customers?id=${JSON.parse(task.resultData).customerId}`} className="text-primary hover:underline inline-flex items-center gap-1">
-                          View Customer
-                          <ExternalLink className="h-3 w-3" />
-                        </Link>
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                {task.taskType === "create_crm_deal" && (
-                  <div className="text-sm text-muted-foreground space-y-1">
-                    <p><strong>Company:</strong> {taskData.company || "Unknown"}</p>
-                    {taskData.amount && <p><strong>Amount:</strong> {formatCurrency(taskData.amount)}</p>}
-                    {taskData.stage && <p><strong>Stage:</strong> {taskData.stage}</p>}
-                    {taskData.source && <p><strong>Source:</strong> {taskData.source}</p>}
-                    {taskData.notes && <p className="line-clamp-2"><strong>Notes:</strong> {taskData.notes}</p>}
-                    {task.resultData && (
-                      <p className="mt-2 p-2 bg-muted/50 rounded border border-border">
-                        <strong>Created:</strong>{" "}
-                        <Link href={`/crm`} className="text-primary hover:underline inline-flex items-center gap-1">
-                          View Deal
-                          <ExternalLink className="h-3 w-3" />
-                        </Link>
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                {/* AI Reasoning */}
-                {task.aiReasoning && (
-                  <div className="mt-3 p-3 bg-muted/50 rounded-lg">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Bot className="h-4 w-4 text-primary" />
-                      <span className="text-xs font-medium">AI Reasoning</span>
-                      {task.aiConfidence && (
-                        <Badge variant="outline" className="text-xs">
-                          {parseFloat(task.aiConfidence)}% confidence
-                        </Badge>
-                      )}
-                    </div>
-                    <p className="text-sm text-muted-foreground">{task.aiReasoning}</p>
-                  </div>
-                )}
-                
-                <p className="text-xs text-muted-foreground mt-2">
-                  Created: {formatDate(task.createdAt)}
-                </p>
-              </div>
-            </div>
-            
-            {showActions && task.status === "pending_approval" && (
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => handleViewTask(task)}
-                >
-                  <Eye className="h-4 w-4 mr-1" />
-                  Details
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => handleReject(task)}
-                  disabled={rejectMutation.isPending}
-                >
-                  <XCircle className="h-4 w-4 mr-1" />
-                  Reject
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => handleApprove(task.id)}
-                  disabled={approveMutation.isPending}
-                >
-                  {approveMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                  ) : (
-                    <CheckCircle className="h-4 w-4 mr-1" />
-                  )}
-                  Approve
-                </Button>
-                <Button
-                  size="sm"
-                  className="bg-primary text-primary-foreground hover:bg-primary/90"
-                  onClick={async () => {
-                    await handleApprove(task.id);
-                    setTimeout(() => handleExecute(task.id), 500);
-                  }}
-                  disabled={approveMutation.isPending || executeMutation.isPending}
-                >
-                  {(approveMutation.isPending || executeMutation.isPending) ? (
-                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                  ) : (
-                    <Play className="h-4 w-4 mr-1" />
-                  )}
-                  Approve & Execute
-                </Button>
-              </div>
-            )}
-            
-            {showActions && task.status === "approved" && (
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => handleViewTask(task)}
-                >
-                  <Eye className="h-4 w-4 mr-1" />
-                  Details
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={() => handleExecute(task.id)}
-                  disabled={executeMutation.isPending}
-                >
-                  {executeMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                  ) : (
-                    <Play className="h-4 w-4 mr-1" />
-                  )}
-                  Execute
-                </Button>
-              </div>
-            )}
-            
-            {showActions && !["pending_approval", "approved"].includes(task.status) && (
+        {task.aiConfidence && (
+          <span className="text-xs text-muted-foreground tabular-nums shrink-0 hidden md:inline">
+            {parseFloat(task.aiConfidence)}%
+          </span>
+        )}
+        <Badge className={`${priorityColors[task.priority]} shrink-0`}>{task.priority}</Badge>
+        {!isPending && (
+          <Badge className={`${statusColors[task.status]} shrink-0`}>
+            {task.status.replace(/_/g, " ")}
+          </Badge>
+        )}
+        <span className="text-xs text-muted-foreground tabular-nums shrink-0 hidden sm:inline">
+          {formatShortDate(task.createdAt)}
+        </span>
+        <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+          <Button size="icon" variant="ghost" className="h-7 w-7" title="Details (d)" onClick={() => handleViewTask(task)}>
+            <Eye className="h-4 w-4" />
+          </Button>
+          {isPending && (
+            <>
               <Button
-                size="sm"
-                variant="outline"
-                onClick={() => handleViewTask(task)}
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7"
+                title="Reject (r)"
+                onClick={() => handleReject(task.id)}
+                disabled={anyMutationPending}
               >
-                <Eye className="h-4 w-4 mr-1" />
-                View Details
+                {rejecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
               </Button>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7"
+                title="Approve (a)"
+                onClick={() => handleApprove(task.id)}
+                disabled={anyMutationPending}
+              >
+                {approving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
+              </Button>
+              <Button
+                size="icon"
+                className="h-7 w-7"
+                title="Approve & Execute (e)"
+                onClick={() => void handleApproveAndExecute(task.id)}
+                disabled={anyMutationPending}
+              >
+                {approving || executing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+              </Button>
+            </>
+          )}
+          {isApproved && (
+            <Button
+              size="icon"
+              className="h-7 w-7"
+              title="Execute (e)"
+              onClick={() => handleExecute(task.id)}
+              disabled={anyMutationPending}
+            >
+              {executing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+            </Button>
+          )}
+        </div>
+      </div>
     );
   };
+
+  const renderTaskList = (tasks: any[]) => (
+    <div className="rounded-md border border-border overflow-hidden">
+      {tasks.map((task, i) => renderTaskRow(task, i))}
+    </div>
+  );
+
+  const shortcutLegend = (
+    <p className="text-xs text-muted-foreground mt-2">
+      <kbd className="px-1 rounded border">j</kbd>/<kbd className="px-1 rounded border">k</kbd> move ·{" "}
+      <kbd className="px-1 rounded border">a</kbd> approve ·{" "}
+      <kbd className="px-1 rounded border">r</kbd> reject ·{" "}
+      <kbd className="px-1 rounded border">e</kbd> approve &amp; execute ·{" "}
+      <kbd className="px-1 rounded border">d</kbd> details
+    </p>
+  );
   
   const pendingCount = pendingTasks?.length || 0;
   const approvedCount = allTasks?.filter((t: any) => t.status === "approved").length || 0;
@@ -963,8 +856,9 @@ export default function ApprovalQueue() {
               </CardContent>
             </Card>
           ) : (
-            pendingTasks?.map((task: any) => renderTaskCard(task))
+            renderTaskList(pendingTasks || [])
           )}
+          {!pendingLoading && (pendingTasks?.length || 0) > 0 && shortcutLegend}
         </TabsContent>
         
         <TabsContent value="all" className="mt-4">
@@ -981,8 +875,9 @@ export default function ApprovalQueue() {
               </CardContent>
             </Card>
           ) : (
-            allTasks?.map((task: any) => renderTaskCard(task))
+            renderTaskList(allTasks || [])
           )}
+          {!allLoading && (allTasks?.length || 0) > 0 && shortcutLegend}
         </TabsContent>
         
         <TabsContent value="logs" className="mt-4">
@@ -1022,41 +917,6 @@ export default function ApprovalQueue() {
           </Card>
         </TabsContent>
       </Tabs>
-      
-      {/* Reject Dialog */}
-      <Dialog open={isRejectDialogOpen} onOpenChange={setIsRejectDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Reject Task</DialogTitle>
-            <DialogDescription>
-              Please provide a reason for rejecting this task.
-            </DialogDescription>
-          </DialogHeader>
-          <Textarea
-            placeholder="Enter rejection reason..."
-            value={rejectReason}
-            onChange={(e) => setRejectReason(e.target.value)}
-            rows={3}
-          />
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsRejectDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button 
-              variant="destructive" 
-              onClick={confirmReject}
-              disabled={rejectMutation.isPending}
-            >
-              {rejectMutation.isPending ? (
-                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-              ) : (
-                <XCircle className="h-4 w-4 mr-1" />
-              )}
-              Reject
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
       
       {/* Task Detail Dialog */}
       <Dialog open={isDetailDialogOpen} onOpenChange={(open) => {
