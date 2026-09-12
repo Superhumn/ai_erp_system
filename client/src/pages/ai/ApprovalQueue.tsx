@@ -104,13 +104,28 @@ function taskSummary(
 ): string {
   const join = (parts: unknown[]) => parts.filter(Boolean).join(" · ");
   switch (task.taskType) {
-    case "generate_po":
+    case "generate_po": {
+      // Scheduler-created POs carry a materials[] array + totalValue instead of a single material.
+      if (Array.isArray(taskData.materials)) {
+        const names = taskData.materials
+          .map((m: any) => (m?.name ? `${m.name} × ${m.quantity ?? "?"}` : null))
+          .filter(Boolean);
+        return join([
+          taskData.vendorName,
+          names.length ? names.join(", ") : taskData.title,
+          taskData.totalValue != null ? formatCurrency(taskData.totalValue) : null,
+        ]);
+      }
+      if (!taskData.materialName && taskData.title) return taskData.title;
       return join([
         taskData.vendorName || "Unknown vendor",
         `${taskData.materialName || "Unknown material"} × ${taskData.quantity ?? "?"}`,
         taskData.totalAmount != null ? formatCurrency(taskData.totalAmount) : null,
       ]);
+    }
     case "send_rfq":
+      // Scheduler-created freight RFQs carry title + rfqId instead of material/vendor fields.
+      if (!taskData.materialName && taskData.title) return taskData.title;
       return join([
         `${taskData.materialName || "Unknown material"} × ${taskData.quantity ?? "?"}`,
         `${taskData.vendorIds?.length || 0} vendors`,
@@ -512,7 +527,8 @@ export default function ApprovalQueue() {
 
   const handleApproveAndExecute = async (taskId: number) => {
     try {
-      await approveMutation.mutateAsync({ id: taskId });
+      const result: any = await approveMutation.mutateAsync({ id: taskId });
+      if (result?.autoExecuted) return;
       executeMutation.mutate({ id: taskId });
     } catch {
       // approve error already toasted by the mutation
@@ -568,6 +584,7 @@ export default function ApprovalQueue() {
       const el = e.target as HTMLElement | null;
       const tag = el?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el?.isContentEditable) return;
+      if (el?.closest?.('button, a, [role="button"], [role="tab"]')) return;
       if (document.querySelector('[role="dialog"]')) return;
       if (visibleTasks.length === 0) return;
 
@@ -640,7 +657,10 @@ export default function ApprovalQueue() {
         key={task.id}
         data-task-row={task.id}
         onClick={() => setFocusedIndex(index)}
-        onDoubleClick={() => handleViewTask(task)}
+        onDoubleClick={(e) => {
+          if ((e.target as HTMLElement).closest("button, a")) return;
+          handleViewTask(task);
+        }}
         className={`flex items-center gap-2 px-2 py-1 text-sm border-b border-border/60 last:border-b-0 cursor-default hover:bg-muted/40 ${
           focused ? "bg-primary/5 ring-1 ring-inset ring-primary/40" : ""
         }`}
@@ -740,11 +760,12 @@ export default function ApprovalQueue() {
 
   const shortcutLegend = (
     <p className="text-xs text-muted-foreground mt-2">
-      <kbd className="px-1 rounded border">j</kbd>/<kbd className="px-1 rounded border">k</kbd> move ·{" "}
+      <kbd className="px-1 rounded border">j</kbd>/<kbd className="px-1 rounded border">k</kbd> or{" "}
+      <kbd className="px-1 rounded border">↑</kbd>/<kbd className="px-1 rounded border">↓</kbd> move ·{" "}
       <kbd className="px-1 rounded border">a</kbd> approve ·{" "}
       <kbd className="px-1 rounded border">r</kbd> reject ·{" "}
       <kbd className="px-1 rounded border">e</kbd> approve &amp; execute ·{" "}
-      <kbd className="px-1 rounded border">d</kbd> details
+      <kbd className="px-1 rounded border">d</kbd> or <kbd className="px-1 rounded border">Enter</kbd> details
     </p>
   );
   
