@@ -3,7 +3,7 @@
  * a segmented control; ‹ › on a card moves it between columns (writes
  * `status`). Selected card details in a glass right panel.
  */
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   color as c,
   type as T,
@@ -12,13 +12,7 @@ import {
   shadow,
   font,
 } from "../tokens";
-import {
-  Eyebrow,
-  Pill,
-  LinkChip,
-  BUTTON_RESET,
-  pressable,
-} from "../primitives";
+import { Eyebrow, Pill, LinkChip, BUTTON_RESET, RowLabel } from "../primitives";
 import { PROJ, SHORT, STATUS_LABEL, type Status, type Task } from "./data";
 import { trackerStore as store } from "./store";
 import { useTracker } from "./useTracker";
@@ -55,8 +49,7 @@ function Card({
   const who = t.owner;
   return (
     <div
-      {...pressable(() => store.selectCard(t.id), { pressed: sel })}
-      aria-label={t.label}
+      onClick={e => store.rowClick(t.id, e)}
       style={{
         background: "#fff",
         border: sel
@@ -70,18 +63,20 @@ function Card({
         transition: "box-shadow 120ms ease, border-color 120ms ease",
       }}
     >
-      <p
+      <RowLabel
+        label={t.label}
+        selected={sel}
+        onActivate={e => store.rowClick(t.id, e)}
         style={{
-          margin: 0,
+          display: "block",
+          width: "100%",
           fontSize: T.body,
           fontWeight: 600,
           lineHeight: 1.35,
           color: isDone ? c.done : c.ink,
           textDecoration: isDone ? "line-through" : "none",
         }}
-      >
-        {t.label}
-      </p>
+      />
       <div
         style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 3 }}
       >
@@ -133,11 +128,14 @@ function Card({
                 fontSize: T.body,
                 fontWeight: 700,
                 color: c.muted3,
-                cursor: "pointer",
+                cursor: colKey === "todo" ? "default" : "pointer",
+                opacity: colKey === "todo" ? 0.35 : 1,
                 padding: "0 3px",
               }}
+              disabled={colKey === "todo"}
               onClick={e => {
                 e.stopPropagation();
+                store.setCursor(t.id);
                 store.moveStatus(t.id, -1);
               }}
             >
@@ -152,11 +150,14 @@ function Card({
                 fontSize: T.body,
                 fontWeight: 700,
                 color: c.blueText,
-                cursor: "pointer",
+                cursor: colKey === "done" ? "default" : "pointer",
+                opacity: colKey === "done" ? 0.35 : 1,
                 padding: "0 3px",
               }}
+              disabled={colKey === "done"}
               onClick={e => {
                 e.stopPropagation();
+                store.setCursor(t.id);
                 store.moveStatus(t.id, 1);
               }}
             >
@@ -253,6 +254,16 @@ export default function StatusBoard() {
             statusKey: "todo" as Status,
             rows: st.tasks.filter(t => t.owner === o),
           }));
+
+  // Report what the board renders (column order, collapsed tails excluded)
+  // so the keyboard layer walks the same list.
+  const visibleIds = groups
+    .flatMap(g => (expanded[g.key] ? g.rows : g.rows.slice(0, MAX_CARDS)))
+    .map(t => t.id);
+  const visibleKey = visibleIds.join("|");
+  useEffect(() => {
+    store.setBoardIds(visibleKey ? visibleKey.split("|") : []);
+  }, [visibleKey]);
 
   return (
     <TrackerFrame label="1C Status board" height={784} padded={false} pane="1C">

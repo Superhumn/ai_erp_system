@@ -16,7 +16,7 @@ import {
   AICardDense,
   ThinBar,
   type DateKind,
-  pressable,
+  RowLabel,
 } from "../primitives";
 import { PROJECT_KEYS, SHORT, type Task } from "./data";
 import {
@@ -148,7 +148,7 @@ function WeekColumn({
   rows: Task[];
 }) {
   const today = day === 20;
-  const { cursor } = useTracker();
+  const { cursor, sel } = useTracker();
   return (
     <div
       style={{
@@ -182,10 +182,7 @@ function WeekColumn({
         return (
           <div
             key={r.id}
-            {...pressable(() => store.setCursor(r.id), {
-              pressed: cursor === r.id,
-            })}
-            aria-label={r.label}
+            onClick={e => store.rowClick(r.id, e)}
             style={{
               background: "#fff",
               border: `1px solid ${cursor === r.id ? blueTint(0.45) : c.borderLight}`,
@@ -204,18 +201,19 @@ function WeekColumn({
                 label={r.label}
                 onClick={() => store.check(r.id)}
               />
-              <p
+              <RowLabel
+                label={r.label}
+                selected={!!sel[r.id]}
+                onActivate={e => store.rowClick(r.id, e)}
                 style={{
-                  margin: 0,
+                  display: "block",
                   fontSize: T.body,
                   fontWeight: 600,
                   lineHeight: 1.3,
                   color: done ? c.done : c.ink,
                   textDecoration: done ? "line-through" : "none",
                 }}
-              >
-                {r.label}
-              </p>
+              />
             </div>
             <p
               style={{ margin: "7px 0 0", fontSize: T.micro, color: c.muted3 }}

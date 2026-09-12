@@ -17,6 +17,7 @@ export function Frame({
   width = 1360,
   children,
   onMouseEnter,
+  onMouseLeave,
 }: {
   label: string;
   height?: number;
@@ -24,11 +25,13 @@ export function Frame({
   width?: number;
   children: React.ReactNode;
   onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
 }) {
   return (
     <div
       data-screen-label={label}
       onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
       style={{
         width,
         height,
@@ -1015,6 +1018,41 @@ export function labelStyle(o: { done: boolean; today: boolean; blocked: boolean 
   return base;
 }
 
+/** Focusable task label used by rows and cards. Click / Enter → plain
+ *  activation (moves the cursor); Space → activation with `shiftKey`
+ *  (toggles selection), mirroring modifier-click. */
+export function RowLabel({
+  label,
+  selected = false,
+  onActivate,
+  style,
+}: {
+  label: string;
+  selected?: boolean;
+  onActivate?: (e: React.MouseEvent) => void;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      onClick={(e) => {
+        e.stopPropagation();
+        onActivate?.(e);
+      }}
+      onKeyDown={(e) => {
+        if (e.key !== " ") return;
+        e.preventDefault();
+        e.stopPropagation();
+        onActivate?.({ shiftKey: true } as unknown as React.MouseEvent);
+      }}
+      style={{ ...BUTTON_RESET, textAlign: "left", cursor: "pointer", ...style }}
+    >
+      {label}
+    </button>
+  );
+}
+
 /**
  * The dense task row — the unit every tracker view is built from.
  * Flex row, 26px tall (13px body, `3px 11px` padding), radius 6, zero
@@ -1055,21 +1093,7 @@ export function DenseRow({
   return (
     <div
       data-cursor={cursor || undefined}
-      role="button"
-      tabIndex={0}
-      aria-pressed={selected}
-      aria-label={label}
       onClick={onClick}
-      onKeyDown={(e) => {
-        // Enter moves the cursor here; Space toggles this row's selection
-        // (mirrors plain click vs. modifier-click). Nested controls handle
-        // their own keys.
-        if (e.target !== e.currentTarget) return;
-        if (e.key !== "Enter" && e.key !== " ") return;
-        e.preventDefault();
-        e.stopPropagation();
-        onClick?.({ shiftKey: e.key === " " } as unknown as React.MouseEvent);
-      }}
       style={{
         display: "flex",
         alignItems: "center",
@@ -1089,7 +1113,10 @@ export function DenseRow({
       }}
     >
       <Check done={done} today={today} size={checkSize} onClick={onToggle} label={label} />
-      <span style={labelStyle({ done, today, blocked })}>{label}</span>
+      {/* The label is the row's focus target (a sibling of the checkbox, so
+          no interactive element nests another): Enter/click move the cursor,
+          Space or modifier-click toggle selection. */}
+      <RowLabel label={label} selected={selected} onActivate={onClick} style={labelStyle({ done, today, blocked })} />
       {blocked && blockedLabel && (
         <StatusChip tone="dark" size={T.micro} style={{ padding: "2px 9px" }}>
           {blockedLabel}

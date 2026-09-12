@@ -23,6 +23,7 @@ import {
   ThinBar,
   BUTTON_RESET,
   MenuOption,
+  RowLabel,
 } from "../primitives";
 import {
   OWNERS,
@@ -149,14 +150,16 @@ function Row({ t }: { t: Task }) {
         }}
         onClick={select}
       >
-        <span
+        <RowLabel
+          label={t.label}
+          selected={!!sel[t.id]}
+          onActivate={e => store.rowClick(t.id, e)}
           style={{
             ...labelStyle({ done, today, blocked: !!t.blocked }),
-            display: "inline",
+            display: "inline-block",
+            maxWidth: "100%",
           }}
-        >
-          {t.label}
-        </span>
+        />
       </td>
       <td style={{ ...TD, color: c.muted2 }} onClick={select}>
         {SHORT[t.pk]}

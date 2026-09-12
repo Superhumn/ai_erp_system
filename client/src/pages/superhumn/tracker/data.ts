@@ -243,10 +243,21 @@ export const BLOCKER_META: Record<
   },
 };
 
-/** 1D timeline — project end day on the Jul-20-anchored axis. */
-export const PROJECT_END_DAY: Record<ProjectKey, number> = {
-  Q3: 77,
-  FDA: 46,
-  SHOP: 31,
-  REISHI: 40,
+/** 1D timeline — project span on the Jul-anchored day axis (Jul 20 = 20,
+ *  earlier dates are negative). FDA: Jun 19 → Aug 15 = 31 of 57 days elapsed. */
+export const PROJECT_SPAN: Record<ProjectKey, { start: number; end: number }> =
+  {
+    Q3: { start: -29, end: 77 }, // Jun 1 → Sep 15
+    FDA: { start: -11, end: 46 }, // Jun 19 → Aug 15
+    SHOP: { start: -29, end: 31 }, // Jun 1 → Jul 31
+    REISHI: { start: 1, end: 40 }, // Jul 1 → Aug 9 (paused)
+  };
+
+/** 1D critical-path narrative per project. */
+export const CRITICAL_PATH: Record<ProjectKey, string> = {
+  Q3: "Erewhon pricing → launch PO plan → demo staffing → Aug 1 Erewhon launch. Pricing is due today and gates the PO plan; the 12-store demo schedule can't lock until PO-2044 lands.",
+  FDA: "Sanitation SOP → batch records → mock audit walkthrough. The chain needs 19 working days; 26 remain, and every day the SOP waits burns one of the seven days of float.",
+  SHOP: "Cutover rehearsal → redirect map + SEO checks → go-live + DNS cutover on Jul 31. Two working days of float remain; the rehearsal already slipped once when PO-2044's ETA moved.",
+  REISHI:
+    "Fresh Farms COA → trial batch WO-322 → reformulation cost model. Nothing can start until the COA lands; the project has been frozen for 11 days.",
 };

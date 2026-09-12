@@ -30,13 +30,19 @@ export type Bucket = "today" | "week" | "later" | "blocked";
 
 export type TrackerState = {
   tasks: Task[];
-  /** Frame label under the pointer — the single toast slot renders there. */
-  activeFrame: string;
+  /** Frame label under the pointer / holding focus — the single toast slot
+   *  renders there; `null` (pointer and focus outside every tracker frame)
+   *  disables the keyboard layer. */
+  activeFrame: string | null;
+  /** Visible card ids the board reports (column order, collapsed tails
+   *  excluded) — the 1C keyboard order. */
+  boardIds: string[];
   cursor: string;
   sel: Record<string, true>;
   /** Completion overlay on top of `task.status` — undoable with a second `x`. */
   done: Record<string, true>;
-  pane: Pane;
+  /** `null` while a frame without task rows (1B, 1D) is active. */
+  pane: Pane | null;
   savedView: SavedView["key"];
   suggestions: Suggestion[];
   toast: string;
@@ -153,7 +159,9 @@ type Listener = () => void;
 export function initialState(): TrackerState {
   return {
     tasks: TASKS.slice(),
-    activeFrame: "1A Priority queue",
+    // No frame owns the keyboard until one is hovered or focused.
+    activeFrame: null,
+    boardIds: [],
     cursor: "t1",
     sel: {},
     done: { t20: true, t21: true, t22: true },
@@ -218,8 +226,9 @@ export class TrackerStore {
    *  frame renders, in its visible order. */
   paneIds = () => {
     const { pane, queueView, snoozed } = this.state;
+    if (pane === null) return [];
     if (pane === "1E") return this.gridOrder().map(t => t.id);
-    if (pane === "1C") return this.state.tasks.map(t => t.id);
+    if (pane === "1C") return this.state.boardIds;
     const queue = this.queueOrder();
     if (queueView === "Later")
       return queue.filter(t => bucketOf(t, snoozed) === "later").map(t => t.id);
@@ -236,9 +245,17 @@ export class TrackerStore {
   };
 
   /* ---- cursor / selection */
-  setPane = (pane: Pane) => this.setState({ pane });
-  setActiveFrame = (activeFrame: string) => {
+  setPane = (pane: Pane | null) => {
+    if (this.state.pane !== pane) this.setState({ pane });
+  };
+  setActiveFrame = (activeFrame: string | null) => {
     if (this.state.activeFrame !== activeFrame) this.setState({ activeFrame });
+  };
+  setBoardIds = (ids: string[]) => {
+    const cur = this.state.boardIds;
+    if (cur.length === ids.length && cur.every((id, i) => id === ids[i]))
+      return;
+    this.setState({ boardIds: ids });
   };
   setCursor = (id: string) => this.setState({ cursor: id, gSel: id, kSel: id });
   toggleSel = (id: string) =>
@@ -278,7 +295,10 @@ export class TrackerStore {
         return { done, tasks };
       }
       done[id] = true;
-      return { done };
+      // A completed row leaves the open lists, so it leaves the selection too.
+      const sel = { ...st.sel };
+      delete sel[id];
+      return { done, sel };
     });
 
   /** Checkbox path: move the cursor to the row, then toggle it, so the
@@ -335,6 +355,7 @@ export class TrackerStore {
       tasks: st.tasks.concat([t]),
       cursor: t.id,
       gSel: t.id,
+      kSel: t.id,
     }));
     this.flash("Task added");
   };
@@ -398,10 +419,13 @@ export class TrackerStore {
   setStatus = (id: string, status: Status) =>
     this.setState(st => {
       const done = { ...st.done };
+      const sel = { ...st.sel };
       if (status !== "done") delete done[id];
+      else delete sel[id]; // completed rows leave the selection
       return {
         tasks: st.tasks.map(t => (t.id === id ? { ...t, status } : t)),
         done,
+        sel,
         editing: null,
       };
     });
@@ -422,6 +446,9 @@ export class TrackerStore {
     )
       return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+    // Keys only act while a tracker frame is under the pointer or holds
+    // focus; elsewhere in the gallery the tracker store is left alone.
+    if (this.state.activeFrame === null) return;
     // A focused button / checkbox activates natively on Space or Enter.
     if (
       (e.key === " " || e.key === "Enter") &&
@@ -439,7 +466,11 @@ export class TrackerStore {
     // to resolve, so completing the last open row can still be undone.
     const rowKeys = ["j", "k", "ArrowDown", "ArrowUp", " ", "e", "d"];
     if (rowKeys.includes(k) && !ids.length) return;
-    if (k === "x" && !this.find(this.state.cursor)) return;
+    if (
+      k === "x" &&
+      (this.state.pane === null || !this.find(this.state.cursor))
+    )
+      return;
     if (k === "j" || k === "ArrowDown") {
       this.setCursor(ids[Math.min(at + 1, ids.length - 1)]);
       e.preventDefault();

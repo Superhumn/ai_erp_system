@@ -93,7 +93,14 @@ describe("TrackerStore keyboard layer", () => {
 
   beforeEach(() => {
     store = new TrackerStore();
+    store.setActiveFrame("1A Priority queue"); // as if the frame were hovered
     vi.useFakeTimers();
+  });
+
+  it("does nothing until a tracker frame takes ownership", () => {
+    const fresh = new TrackerStore();
+    fresh.handleKey({ key: "x", preventDefault: () => {} } as KeyboardEvent);
+    expect(fresh.isDone(fresh.find("t1")!)).toBe(false);
   });
 
   it("j/k move the cursor through the queue order", () => {
@@ -237,7 +244,36 @@ describe("TrackerStore keyboard layer", () => {
     ]);
     store.setQueueView("Today");
     store.setPane("1C");
-    expect(store.paneIds()).toContain("t20");
+    store.setBoardIds(["t3", "t1", "t20"]);
+    expect(store.paneIds()).toEqual(["t3", "t1", "t20"]);
+  });
+
+  it("frames without task rows and non-tracker frames disable row keys", () => {
+    store.setPane(null);
+    key("j");
+    key("x");
+    expect(store.getState().cursor).toBe("t1");
+    expect(store.isDone(store.find("t1")!)).toBe(false);
+    key("3");
+    expect(store.getState().savedView).toBe("v3");
+    store.setPane("1A");
+    store.setActiveFrame(null);
+    key("x");
+    key("1");
+    expect(store.isDone(store.find("t1")!)).toBe(false);
+    expect(store.getState().savedView).toBe("v3");
+  });
+
+  it("completing a selected row drops it from the selection", () => {
+    key(" ");
+    key("x");
+    expect(store.getState().sel).toEqual({});
+    key("x");
+    key(" ");
+    store.setStatus("t1", "done");
+    expect(store.getState().sel).toEqual({});
+    key("a");
+    expect(store.getState().kSel).toBe("new1");
   });
 
   it("the checkbox path moves the cursor before toggling", () => {

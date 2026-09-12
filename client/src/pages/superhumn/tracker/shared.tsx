@@ -3,7 +3,7 @@
  * header bar, saved-view pills, bulk-edit bar with the keyboard legend, and
  * the AI suggestion strip. All read/write the shared store.
  */
-import React from "react";
+import React, { useRef } from "react";
 import {
   color as c,
   font,
@@ -44,21 +44,44 @@ export function TrackerFrame({
 }) {
   useTrackerKeyboard();
   const { toast, activeFrame } = useTracker();
+  const main = useRef<HTMLDivElement>(null);
+  const hovering = useRef(false);
+  const own = () => {
+    store.setActiveFrame(label);
+    store.setPane(pane ?? null);
+  };
+  // Release the keyboard layer once neither the pointer nor focus is here.
+  const release = () => {
+    if (hovering.current) return;
+    if (main.current && main.current.contains(document.activeElement)) return;
+    if (store.getState().activeFrame === label) {
+      store.setActiveFrame(null);
+      store.setPane(null);
+    }
+  };
   return (
     <Frame
       label={label}
       width={TRACKER_W}
       height={height}
       onMouseEnter={() => {
-        store.setActiveFrame(label);
-        if (pane) store.setPane(pane);
+        hovering.current = true;
+        own();
+      }}
+      onMouseLeave={() => {
+        hovering.current = false;
+        release();
       }}
     >
       <Sidebar active="Projects" width={SIDEBAR_W} />
       <div
-        onFocusCapture={() => {
-          store.setActiveFrame(label);
-          if (pane) store.setPane(pane);
+        ref={main}
+        onFocusCapture={own}
+        onBlurCapture={e => {
+          const next = e.relatedTarget as Node | null;
+          if (next && main.current?.contains(next)) return;
+          // Let focus settle, then check whether it left this frame.
+          setTimeout(release, 0);
         }}
         style={{
           flex: 1,

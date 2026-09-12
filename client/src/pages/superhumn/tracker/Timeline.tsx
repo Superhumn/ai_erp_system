@@ -16,7 +16,7 @@ import {
   tabular,
 } from "../tokens";
 import { Eyebrow, Pill, AICardDense, ThinBar, pressable } from "../primitives";
-import { PROJ, PROJECT_END_DAY, PROJECT_KEYS, type ProjectKey } from "./data";
+import { CRITICAL_PATH, PROJ, PROJECT_SPAN, PROJECT_KEYS } from "./data";
 import { trackerStore as store, dueLabelFor } from "./store";
 import { useTracker } from "./useTracker";
 import { TrackerFrame, TrackerHeader, SegmentedDense } from "./shared";
@@ -117,6 +117,19 @@ export default function Timeline() {
   const selPk = st.tlSel;
   const p = PROJ[selPk];
   const taskBars = st.tasks.filter(t => t.pk === selPk && !store.isDone(t));
+  // Budget vs calendar for the selected project.
+  const span = PROJECT_SPAN[selPk];
+  const total = span.end - span.start;
+  const elapsed = Math.max(0, Math.min(total, START - span.start));
+  const calendarPct = Math.round((elapsed / total) * 100);
+  const burnNote =
+    Math.abs(p.burn - calendarPct) <= 10
+      ? p.percent < calendarPct - 10
+        ? "Spend tracks the calendar; only progress lags."
+        : "Spend tracks the calendar."
+      : p.burn > calendarPct
+        ? "Spend is running ahead of the calendar."
+        : "Spend is running behind the calendar.";
   const atRiskCount = PROJECT_KEYS.filter(
     k => PROJ[k].chip === "AT RISK"
   ).length;
@@ -204,7 +217,7 @@ export default function Timeline() {
         {PROJECT_KEYS.map(pk => {
           const proj = PROJ[pk];
           const sel = st.tlSel === pk;
-          const endDay = PROJECT_END_DAY[pk];
+          const endDay = PROJECT_SPAN[pk].end;
           const atRisk = proj.chip === "AT RISK";
           const onHold = proj.chip === "ON HOLD";
           const width = clamp(pos(endDay));
@@ -354,9 +367,7 @@ export default function Timeline() {
           label="Critical path"
           style={{ flex: 1, borderRadius: radius.panel - 4 }}
         >
-          Sanitation SOP → batch records → mock audit walkthrough. The chain
-          needs 19 working days; 26 remain, and every day the SOP waits burns
-          one of the seven days of float.
+          {CRITICAL_PATH[selPk]}
         </AICardDense>
         <div
           style={{
@@ -392,11 +403,13 @@ export default function Timeline() {
             }}
           >
             <span style={{ color: c.muted3 }}>Calendar elapsed</span>
-            <span style={{ fontWeight: 700, ...tabular }}>31 of 57 days</span>
+            <span style={{ fontWeight: 700, ...tabular }}>
+              {elapsed} of {total} days
+            </span>
           </div>
-          <ThinBar value={54} dark />
+          <ThinBar value={calendarPct} dark />
           <p style={{ margin: "6px 0 0", fontSize: T.body, color: c.muted }}>
-            Spend tracks the calendar; only progress lags.
+            {burnNote}
           </p>
         </div>
       </div>

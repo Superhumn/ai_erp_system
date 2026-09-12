@@ -125,7 +125,12 @@ function BlockerCard({ id }: { id: string }) {
           transition: "grid-template-rows 160ms ease-out",
         }}
       >
-        <div style={{ overflow: "hidden", minHeight: 0 }}>
+        {/* Collapsed content leaves the tab order and the a11y tree. */}
+        <div
+          style={{ overflow: "hidden", minHeight: 0 }}
+          inert={!open}
+          aria-hidden={!open}
+        >
           <div
             style={{
               marginTop: 6,
