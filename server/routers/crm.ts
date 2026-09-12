@@ -273,7 +273,19 @@ export const crmRouter = router({
           });
           const name = contact?.fullName || contact?.firstName || `contact_${input.contactId}`;
           const label = `messages_${name.replace(/\s+/g, "_")}`;
-          return exportMessages(rows, input.format, label, name);
+          try {
+            return await exportMessages(rows, input.format, label, name);
+          } catch (error) {
+            // exportMessages throws when the headless browser cannot start.
+            // CSV and XLSX never reach this path, so the message names the
+            // formats that still work.
+            console.error('[crm.contacts.exportMessagingHistory] export failed:', error);
+            throw new TRPCError({
+              code: 'SERVICE_UNAVAILABLE',
+              message: 'PDF generation is currently unavailable. Export as CSV or XLSX instead.',
+              cause: error,
+            });
+          }
         }),
     }),
 
@@ -490,7 +502,19 @@ export const crmRouter = router({
             subtitle = input.whatsappNumber;
           }
 
-          return exportMessages(tagged, input.format, label, subtitle);
+          try {
+            return await exportMessages(tagged, input.format, label, subtitle);
+          } catch (error) {
+            // exportMessages throws when the headless browser cannot start.
+            // CSV and XLSX never reach this path, so the message names the
+            // formats that still work.
+            console.error('[crm.whatsapp.exportMessages] export failed:', error);
+            throw new TRPCError({
+              code: 'SERVICE_UNAVAILABLE',
+              message: 'PDF generation is currently unavailable. Export as CSV or XLSX instead.',
+              cause: error,
+            });
+          }
         }),
     }),
 
