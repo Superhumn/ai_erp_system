@@ -7,24 +7,30 @@
  * element, and inline styles keep each primitive self-contained and scoped.
  */
 import React from "react";
-import { color as c, shadow, font, tabular, microCaps } from "./tokens";
+import { color as c, shadow, font, tabular, microCaps, type as T, blueTint, radius } from "./tokens";
 
 /* ------------------------------------------------------------------ Frame */
 
 export function Frame({
   label,
   height = 680,
+  width = 1360,
   children,
+  onMouseEnter,
 }: {
   label: string;
   height?: number;
+  /** 1360 on the canonical screens; 1792 on the dense tracker screens (prototype 1280 × 1.4). */
+  width?: number;
   children: React.ReactNode;
+  onMouseEnter?: () => void;
 }) {
   return (
     <div
       data-screen-label={label}
+      onMouseEnter={onMouseEnter}
       style={{
-        width: 1360,
+        width,
         height,
         background: c.frame,
         border: `1px solid ${c.border}`,
@@ -61,15 +67,18 @@ export function Sidebar({
   active,
   groups = CANONICAL_NAV,
   user = "Alex",
+  width = 110,
 }: {
   active: string;
   groups?: NavGroup[];
   user?: string;
+  /** 110 on the canonical screens; 128 on the dense tracker screens. */
+  width?: number;
 }) {
   return (
     <div
       style={{
-        width: 110,
+        width,
         boxSizing: "border-box",
         flexShrink: 0,
         display: "flex",
@@ -335,11 +344,21 @@ export function HDivider({ marginTop = 0 }: { marginTop?: number }) {
 
 export type ChipTone = "neutral" | "active" | "draft" | "dark";
 
-export function StatusChip({ children, tone = "neutral" }: { children: React.ReactNode; tone?: ChipTone }) {
+export function StatusChip({
+  children,
+  tone = "neutral",
+  size = 10,
+  style,
+}: {
+  children: React.ReactNode;
+  tone?: ChipTone;
+  size?: number;
+  style?: React.CSSProperties;
+}) {
   const base: React.CSSProperties = {
     display: "inline-flex",
     alignItems: "center",
-    fontSize: 10,
+    fontSize: size,
     fontWeight: 700,
     letterSpacing: "0.04em",
     textTransform: "uppercase",
@@ -353,7 +372,7 @@ export function StatusChip({ children, tone = "neutral" }: { children: React.Rea
     draft: { color: c.ink2, background: "#fff", border: `1px solid ${c.border}` },
     dark: { color: "#fff", background: c.darkChip },
   };
-  return <span style={{ ...base, ...tones[tone] }}>{children}</span>;
+  return <span style={{ ...base, ...tones[tone], ...style }}>{children}</span>;
 }
 
 /* ------------------------------------------------------------------ Meter */
@@ -708,4 +727,368 @@ export function RightRail({ children, style }: { children: React.ReactNode; styl
 /** Micro-caps section label used throughout the right rail + lists. */
 export function Caps({ children, marginTop = 0, marginBottom = 6 }: { children: React.ReactNode; marginTop?: number; marginBottom?: number }) {
   return <p style={{ ...microCaps(10), letterSpacing: "0.1em", marginTop, marginBottom }}>{children}</p>;
+}
+
+/* ================================================================== */
+/*  Dense tracker primitives (project tracker 1A–1E)                   */
+/*  Production scale: prototype × 1.4. The 19px prototype row becomes  */
+/*  a 26px row (13px body, 3px 11px padding).                           */
+/* ================================================================== */
+
+/** Eyebrow / column-header label: 11px / 700 / uppercase / tracked. */
+export function Eyebrow({
+  children,
+  tone = c.faint,
+  tracking = "0.1em",
+  style,
+}: {
+  children: React.ReactNode;
+  tone?: string;
+  tracking?: string;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <p
+      style={{
+        margin: 0,
+        fontSize: T.micro,
+        fontWeight: 700,
+        letterSpacing: tracking,
+        textTransform: "uppercase",
+        color: tone,
+        ...style,
+      }}
+    >
+      {children}
+    </p>
+  );
+}
+
+export type PillVariant = "primary" | "solid" | "secondary" | "tint" | "text";
+/** Pill heights by density (prototype 18 / 22 / 24 / 26 → 25 / 31 / 34 / 36). */
+export type PillSize = "xs" | "sm" | "md" | "lg";
+const PILL_H: Record<PillSize, number> = { xs: 25, sm: 31, md: 34, lg: 36 };
+const PILL_PX: Record<PillSize, number> = { xs: 11, sm: 13, md: 15, lg: 17 };
+
+/** Small action pill. `primary` = gradient (+ optional glow, header CTA),
+ *  `solid` = flat blue (bulk bar), `secondary` = white with border,
+ *  `tint` = blue-on-tint confirmation, `text` = bare link-style text. */
+export function Pill({
+  children,
+  variant = "secondary",
+  size = "sm",
+  onClick,
+  glow = false,
+  style,
+  title,
+}: {
+  children: React.ReactNode;
+  variant?: PillVariant;
+  size?: PillSize;
+  onClick?: (e: React.MouseEvent) => void;
+  glow?: boolean;
+  style?: React.CSSProperties;
+  title?: string;
+}) {
+  const base: React.CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    height: PILL_H[size],
+    padding: `0 ${PILL_PX[size]}px`,
+    borderRadius: radius.pill,
+    fontSize: T.body,
+    fontWeight: 600,
+    whiteSpace: "nowrap",
+    cursor: onClick ? "pointer" : "default",
+    transition: "background-color 120ms ease, color 120ms ease",
+    boxSizing: "border-box",
+  };
+  const variants: Record<PillVariant, React.CSSProperties> = {
+    primary: { color: "#fff", background: c.blueGrad, boxShadow: glow ? shadow.cta : "none" },
+    solid: { color: "#fff", background: c.blue, fontWeight: 700 },
+    secondary: { color: c.ink, background: "#fff", border: `1px solid ${c.border}` },
+    tint: { color: c.blueText, background: blueTint(0.12) },
+    text: { color: c.muted3, background: "transparent", fontWeight: 400, padding: 0, height: "auto" },
+  };
+  return (
+    <span title={title} onClick={onClick} style={{ ...base, ...variants[variant], ...style }}>
+      {children}
+    </span>
+  );
+}
+
+/** Task checkbox. Unchecked grey; due-today gets a blue ring; checked is
+ *  solid blue with a white ✓. */
+export function Check({
+  done,
+  today = false,
+  size = 17,
+  onClick,
+}: {
+  done: boolean;
+  today?: boolean;
+  size?: number;
+  onClick?: (e: React.MouseEvent) => void;
+}) {
+  const base: React.CSSProperties = {
+    height: size,
+    width: size,
+    borderRadius: radius.check,
+    flexShrink: 0,
+    boxSizing: "border-box",
+    cursor: "pointer",
+    transition: "background-color 120ms ease, border-color 120ms ease",
+  };
+  const state: React.CSSProperties = done
+    ? {
+        background: c.blue,
+        color: "#fff",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: Math.round(size * 0.75),
+        fontWeight: 700,
+        lineHeight: 1,
+        border: "none",
+      }
+    : { border: `1.5px solid ${today ? c.blue : c.borderInput}` };
+  return (
+    <span
+      role="checkbox"
+      aria-checked={done}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick?.(e);
+      }}
+      style={{ ...base, ...state }}
+    >
+      {done ? "✓" : ""}
+    </span>
+  );
+}
+
+/** Linked-record chip (SO-1182, PO-2044 …): 11px/700 blue on 9% tint. */
+export function LinkChip({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        fontSize: T.micro,
+        fontWeight: 700,
+        color: c.blueText,
+        background: blueTint(0.09),
+        borderRadius: 7,
+        padding: "1px 7px",
+        whiteSpace: "nowrap",
+        ...tabular,
+        ...style,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+export type DateKind = "today" | "week" | "plain";
+
+/** Date cell styles: due-today = bold blue, no chip; within the week =
+ *  bold blue on tint chip; otherwise faint, right-aligned. Width 62. */
+export function dateStyle(kind: DateKind): React.CSSProperties {
+  const w = 62;
+  if (kind === "today") return { fontSize: T.num, fontWeight: 700, color: c.blueText, width: w, textAlign: "right", ...tabular };
+  if (kind === "week")
+    return {
+      fontSize: T.num,
+      fontWeight: 700,
+      color: c.blueText,
+      background: blueTint(0.09),
+      borderRadius: 7,
+      padding: "1px 7px",
+      width: w,
+      textAlign: "center",
+      boxSizing: "border-box",
+      ...tabular,
+    };
+  return { fontSize: T.num, color: c.faint3, width: w, textAlign: "right", ...tabular };
+}
+
+/** Label styles by state: done = struck faint; today = 600 blue; blocked = 600. */
+export function labelStyle(o: { done: boolean; today: boolean; blocked: boolean }): React.CSSProperties {
+  const base: React.CSSProperties = { flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
+  if (o.done) return { ...base, color: c.done, textDecoration: "line-through" };
+  if (o.today) return { ...base, fontWeight: 600, color: c.blueText };
+  if (o.blocked) return { ...base, fontWeight: 600 };
+  return base;
+}
+
+/**
+ * The dense task row — the unit every tracker view is built from.
+ * Flex row, 26px tall (13px body, `3px 11px` padding), radius 6, zero
+ * vertical margin: checkbox → label → blocked pill → link chip → owner → date.
+ * Cursor row tinted 8% with a 2px inset blue rule; selected row 14%.
+ */
+export function DenseRow({
+  label,
+  done,
+  today = false,
+  blocked = false,
+  blockedLabel,
+  link,
+  who,
+  date,
+  dateKind = "plain",
+  cursor = false,
+  selected = false,
+  onClick,
+  onToggle,
+  checkSize = 18,
+}: {
+  label: string;
+  done: boolean;
+  today?: boolean;
+  blocked?: boolean;
+  blockedLabel?: string;
+  link?: string;
+  who?: string;
+  date?: string;
+  dateKind?: DateKind;
+  cursor?: boolean;
+  selected?: boolean;
+  onClick?: (e: React.MouseEvent) => void;
+  onToggle?: () => void;
+  checkSize?: number;
+}) {
+  return (
+    <div
+      data-cursor={cursor || undefined}
+      onClick={onClick}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 11,
+        fontSize: T.body,
+        lineHeight: 1,
+        padding: "3px 11px",
+        borderRadius: radius.row,
+        margin: 0,
+        background: selected ? blueTint(0.14) : cursor ? blueTint(0.08) : "transparent",
+        boxShadow: cursor ? `inset 2px 0 0 ${c.blue}` : "none",
+        borderBottom: `1px solid ${c.rowSepSoft}`,
+        cursor: "pointer",
+        transition: "background-color 120ms ease",
+        boxSizing: "border-box",
+        minHeight: 26,
+      }}
+    >
+      <Check done={done} today={today} size={checkSize} onClick={onToggle} />
+      <span style={labelStyle({ done, today, blocked })}>{label}</span>
+      {blocked && blockedLabel && (
+        <StatusChip tone="dark" size={T.micro} style={{ padding: "2px 9px" }}>
+          {blockedLabel}
+        </StatusChip>
+      )}
+      {link && <LinkChip>{link}</LinkChip>}
+      {who !== undefined && (
+        <span style={{ width: 50, fontSize: T.micro, fontWeight: 600, color: c.muted2, textAlign: "right", flexShrink: 0 }}>{who}</span>
+      )}
+      {date !== undefined && <span style={dateStyle(dateKind)}>{date}</span>}
+    </div>
+  );
+}
+
+/** Thin progress bar (5px → 7px production). Dark fill flags near/over capacity. */
+export function ThinBar({ value, dark = false, height = 7, fill }: { value: number; dark?: boolean; height?: number; fill?: string }) {
+  return (
+    <div style={{ height, borderRadius: radius.pill, background: c.track, overflow: "hidden" }}>
+      <div
+        style={{
+          height: "100%",
+          width: `${Math.min(value, 100)}%`,
+          borderRadius: radius.pill,
+          background: fill ?? (dark ? c.darkFill : c.blueGradBar),
+        }}
+      />
+    </div>
+  );
+}
+
+/** Keyboard key cap used in the shortcut legend. */
+export function Kbd({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      style={{
+        fontWeight: 700,
+        background: "#fff",
+        border: `1px solid ${c.border}`,
+        borderRadius: 5,
+        padding: "0 6px",
+        lineHeight: 1.4,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+/** Compact AI card for dense screens (8px radius, 8px 11px padding). */
+export function AICardDense({
+  label,
+  children,
+  actions,
+  style,
+}: {
+  label: string;
+  children: React.ReactNode;
+  actions?: React.ReactNode;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <div
+      style={{
+        border: `1px solid ${c.blueBorder}`,
+        background: c.aiCard,
+        borderRadius: radius.cardSm,
+        padding: "8px 11px",
+        ...style,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
+        <SparkIcon size={15} />
+        <Eyebrow tone={c.blueText} tracking="0.12em">
+          {label}
+        </Eyebrow>
+      </div>
+      <p style={{ margin: 0, fontSize: T.body, color: c.inkSoft, lineHeight: 1.5 }}>{children}</p>
+      {actions && <div style={{ display: "flex", gap: 8, marginTop: 13 }}>{actions}</div>}
+    </div>
+  );
+}
+
+/** Bottom-centre toast: single slot, auto-dismissed by the store after 1600ms. */
+export function Toast({ message }: { message: string }) {
+  if (!message) return null;
+  return (
+    <div
+      role="status"
+      style={{
+        position: "absolute",
+        left: "50%",
+        bottom: 14,
+        transform: "translateX(-50%)",
+        background: c.darkChip,
+        color: "#fff",
+        fontSize: T.body,
+        fontWeight: 600,
+        padding: "7px 14px",
+        borderRadius: radius.pill,
+        boxShadow: shadow.popover,
+        whiteSpace: "nowrap",
+        zIndex: 20,
+      }}
+    >
+      {message}
+    </div>
+  );
 }
