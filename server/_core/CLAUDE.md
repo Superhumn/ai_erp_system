@@ -14,6 +14,7 @@ All env access goes through `env.ts` → `ENV.<camelCase>`. Never read `process.
 | Email in | `emailInboxScanner.ts`, `emailParser.ts`, `gmail.ts` | `IMAP_HOST`, `IMAP_PORT`, `IMAP_USER`, `IMAP_PASSWORD` |
 | Google | `googleToken.ts`, `googleDrive.ts`, `googleWorkspace.ts`, `googleChat.ts`, `googleServiceAccount.ts` | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `GOOGLE_CHAT_OPS_WEBHOOK`, `GOOGLE_SERVICE_ACCOUNT_JSON` (or `_EMAIL` + `_PRIVATE_KEY`) |
 | QuickBooks | `quickbooks.ts` | `QUICKBOOKS_CLIENT_ID`, `QUICKBOOKS_CLIENT_SECRET`, `QUICKBOOKS_REDIRECT_URI`, `QUICKBOOKS_ENVIRONMENT` |
+| Accounting sync (Merge.dev alternative) | `merge.ts` | `ACCOUNTING_SYNC_PROVIDER` (`intuit`\|`merge`), `MERGE_API_KEY`, `MERGE_ACCOUNT_TOKEN`, `MERGE_COMPANY_ID` |
 | Shopify | `shopify.ts` | `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`, `SHOPIFY_REDIRECT_URI` |
 | Twilio / WhatsApp | `twilioWebhooks.ts` | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, `TWILIO_WHATSAPP_NUMBER` |
 | Storage (R2) | `../storage.ts`, `attachmentRoutes.ts`, `attachmentOcr.ts` | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_URL` |

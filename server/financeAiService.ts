@@ -90,7 +90,7 @@ export async function detectFinancialAnomalies(params?: {
   const lookbackDays = params?.lookbackDays || 90;
 
   // Gather recent transaction data
-  const transactions = await db.getTransactions({ companyId: params?.companyId });
+  const transactions = await db.getTransactions(undefined, { companyId: params?.companyId });
   const recentTransactions = transactions.filter(t => {
     const txDate = t.date ? new Date(t.date) : null;
     if (!txDate) return false;
@@ -100,7 +100,7 @@ export async function detectFinancialAnomalies(params?: {
   });
 
   // Gather invoice data for cross-reference
-  const invoices = await db.getInvoices({ companyId: params?.companyId });
+  const invoices = await db.getInvoices(undefined, { companyId: params?.companyId });
   const recentInvoices = invoices.filter(inv => {
     const invDate = inv.issueDate ? new Date(inv.issueDate) : null;
     if (!invDate) return false;
@@ -110,7 +110,7 @@ export async function detectFinancialAnomalies(params?: {
   });
 
   // Gather payments
-  const payments = await db.getPayments({ companyId: params?.companyId });
+  const payments = await db.getPayments(undefined, { companyId: params?.companyId });
 
   const prompt = `Analyze these financial records for anomalies, fraud indicators, and unusual patterns.
 
@@ -200,8 +200,8 @@ export async function forecastRevenue(params?: {
   const historyMonths = params?.historyMonths || 12;
 
   // Gather historical data
-  const invoices = await db.getInvoices({ companyId: params?.companyId });
-  const transactions = await db.getTransactions({ companyId: params?.companyId });
+  const invoices = await db.getInvoices(undefined, { companyId: params?.companyId });
+  const transactions = await db.getTransactions(undefined, { companyId: params?.companyId });
   const orders = await db.getOrders(undefined, { companyId: params?.companyId });
 
   // Aggregate by month
@@ -311,8 +311,8 @@ export async function predictCashFlow(params?: {
 }): Promise<CashFlowPrediction> {
   const weeksAhead = params?.weeksAhead || 8;
 
-  const invoices = await db.getInvoices({ companyId: params?.companyId });
-  const payments = await db.getPayments({ companyId: params?.companyId });
+  const invoices = await db.getInvoices(undefined, { companyId: params?.companyId });
+  const payments = await db.getPayments(undefined, { companyId: params?.companyId });
   const purchaseOrders = await db.getPurchaseOrders({ companyId: params?.companyId });
 
   // Compute pending receivables and payables
@@ -403,7 +403,7 @@ export async function classifyTransactions(params: {
   transactionIds: number[];
   companyId?: number;
 }): Promise<TransactionClassification> {
-  const allTransactions = await db.getTransactions({ companyId: params.companyId });
+  const allTransactions = await db.getTransactions(undefined, { companyId: params.companyId });
   const targetTransactions = allTransactions.filter(t => params.transactionIds.includes(t.id));
   const accounts = await db.getAccounts(params.companyId);
 

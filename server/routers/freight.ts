@@ -1,26 +1,162 @@
+// appRouter.freight — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+import { protectedProcedure, router } from "../_core/trpc";
 import { invokeLLM } from "../_core/llm";
 import { sendEmail, isEmailConfigured, formatEmailHtml } from "../_core/email";
-import * as db from "../db";
-import { storagePut } from "../storage";
-import { nanoid } from "nanoid";
-import { router, protectedProcedure, opsProcedure, createAuditLog } from "./middleware";
+import { trackShipment, getFreightRates, getShippingLines, getVesselSchedules } from "../searatesService";
+import { estimateOceanFreight } from "@shared/oceanFreightRates";
 import { normalizeFreightQuotesForRfq, SERVICE_SCOPES } from "../freightQuoteNormalization";
 import { parseFreightQuoteEmail, parseFreightQuoteAttachment, mergeFreightExtractions, quoteValuesFromExtraction } from "../freightQuoteParser";
+import { getCompanyWebSources, sourceCompanyContacts, sourceCompanyContactsBatch } from "../companyContactSourcing";
+import * as db from "../db";
 import { parseLlmJson } from "../llmJson";
 import { isFetchableAttachmentUrl } from "../attachmentUrl";
-import { getCompanyWebSources, sourceCompanyContacts, sourceCompanyContactsBatch } from "../companyContactSourcing";
+import { opsProcedure, createAuditLog } from "./_shared";
 
+// ============================================
+// FREIGHT MANAGEMENT
+// ============================================
 export const freightRouter = router({
-  // ============================================
-  // FREIGHT MANAGEMENT
-  // ============================================
-  freight: router({
     // Dashboard stats
     dashboardStats: protectedProcedure.query(() => db.getFreightDashboardStats()),
+
+    // SeaRates: Live container/BL tracking
+    trackShipment: protectedProcedure
+      .input(z.object({
+        number: z.string().min(1),
+        type: z.enum(["CT", "BL", "BK"]).optional(),
+        sealine: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return trackShipment(input.number, { type: input.type, sealine: input.sealine, route: true });
+      }),
+
+    // SeaRates: Get freight rate quotes
+    getQuotes: protectedProcedure
+      .input(z.object({
+        fromCity: z.string(),
+        toCity: z.string(),
+        fromCountry: z.string(),
+        toCountry: z.string(),
+        weight: z.number().optional(),
+        volume: z.number().optional(),
+        containerType: z.enum(["20ST", "40ST", "40HQ", "20RF", "40RF"]).optional(),
+        mode: z.enum(["fcl", "lcl", "air"]).optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return getFreightRates(input);
+      }),
+
+    // Ocean freight matrix: indicative pricing off the Superhumn rate matrix,
+    // no carrier API call. The matrix itself lives in @shared/oceanFreightRates
+    // so the client can render the same numbers without a round trip.
+    rateEstimate: router({
+      estimate: protectedProcedure
+        .input(z.object({
+          originCountry: z.string().trim().min(1),
+          destination: z.string().trim().min(1),
+          loadPort: z.string().trim().min(1).optional(),
+          mode: z.enum(["fcl20", "fcl40", "lcl"]),
+          containers: z.number().int().min(1).max(100).optional(),
+          volumeCbm: z.number().min(0).optional(),
+          weightKg: z.number().min(0).optional(),
+          cargoValueUsd: z.number().min(0).optional(),
+          rateScenario: z.number().min(0.1).max(5).optional(),
+          shipDate: z.string().optional(),
+          includeDrayage: z.boolean().optional(),
+          includeInsurance: z.boolean().optional(),
+          applyPeakSeason: z.boolean().optional(),
+        }))
+        .query(({ input }) => estimateOceanFreight(input)),
+    }),
+
+    // SeaRates: List supported shipping lines
+    shippingLines: protectedProcedure.query(async () => {
+      try { return await getShippingLines(); } catch { return { lines: [] }; }
+    }),
+
+    // SeaRates: Vessel sailing schedules
+    vesselSchedules: protectedProcedure
+      .input(z.object({
+        origin: z.string().min(2),
+        destination: z.string().min(2),
+        fromDate: z.string().optional(),
+        weeks: z.number().min(1).max(6).optional(),
+        cargoType: z.enum(["GC", "REEF", "LCL", "RORO"]).optional(),
+        directOnly: z.boolean().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return getVesselSchedules(input);
+      }),
     
     // Carriers
+    /**
+     * Suggest carriers to consider for a shipment.
+     *
+     * The model names companies and their websites — that is a recall task it is
+     * good at. It is deliberately NOT asked for an email address, a phone number
+     * or a rating: those would be invented, and an invented address is one that
+     * gets an RFQ sent to a stranger. Contact details come from the carrier's own
+     * website afterwards (`carriers.addDiscovered`), and until they do the record
+     * stays `contactSource: 'discovered'`, which `rfqs.sendToCarriers` refuses to
+     * mail.
+     */
+    discoverCarriers: protectedProcedure
+      .input(z.object({
+        origin: z.string().optional(),
+        destination: z.string().optional(),
+        cargoType: z.string().optional(),
+        shippingMode: z.enum(['ocean', 'air', 'ground', 'rail', 'multimodal']).optional(),
+        specialRequirements: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const prompt = `You are a freight logistics expert. Suggest 8 real freight carriers/forwarders for this shipment:
+${input.origin ? `Origin: ${input.origin}` : ''}
+${input.destination ? `Destination: ${input.destination}` : ''}
+${input.cargoType ? `Cargo: ${input.cargoType}` : ''}
+${input.shippingMode ? `Mode: ${input.shippingMode}` : 'Any mode'}
+${input.specialRequirements ? `Requirements: ${input.specialRequirements}` : ''}
+
+Return a JSON array of carrier objects with these fields ONLY:
+- name: company name (real companies only)
+- type: "ocean"|"air"|"ground"|"rail"|"multimodal"
+- country: HQ country
+- website: the company's real primary website domain (e.g. "maersk.com"). Omit this field entirely if you are not confident of the real domain.
+- notes: brief description of their specialty and why they're a good fit
+
+Do NOT return an email address, phone number or rating. If you do not know a
+company's real website, omit the website field rather than guessing one.
+
+ONLY return the JSON array, no other text.`;
+
+        const response = await invokeLLM({
+          messages: [
+            { role: "system", content: "You are a freight logistics expert. Return only valid JSON arrays." },
+            { role: "user", content: prompt },
+          ],
+        });
+
+        const content = response.choices?.[0]?.message?.content || "[]";
+        try {
+          const text = typeof content === 'string' ? content : String(content);
+          const jsonMatch = text.match(/\[[\s\S]*\]/);
+          const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+          // Strip anything the model volunteered beyond the fields we asked for,
+          // so a stray "email" can never reach the client and be saved.
+          const carriers = (Array.isArray(parsed) ? parsed : []).slice(0, 10).map((c: any) => ({
+            name: typeof c?.name === 'string' ? c.name.trim() : '',
+            type: ['ocean', 'air', 'ground', 'rail', 'multimodal'].includes(c?.type) ? c.type : 'multimodal',
+            country: typeof c?.country === 'string' ? c.country.trim() : undefined,
+            website: typeof c?.website === 'string' ? c.website.trim() : undefined,
+            notes: typeof c?.notes === 'string' ? c.notes.trim() : undefined,
+          })).filter((c: any) => c.name);
+          return { carriers };
+        } catch {
+          return { carriers: [] };
+        }
+      }),
+
     carriers: router({
       list: protectedProcedure
         .input(z.object({ type: z.string().optional(), isActive: z.boolean().optional() }).optional())
@@ -362,7 +498,6 @@ export const freightRouter = router({
               continue;
             }
             
-
             // Build supplier documentation info for email
             let supplierDocsInfo = '';
             if (freightInfo) {
@@ -526,6 +661,7 @@ Format the email professionally and request a response by ${rfq.quoteDueDate ? n
           shippingMode: z.string().optional(),
           routeDescription: z.string().optional(),
           validUntil: z.date().optional(),
+          // Commercial terms needed to level this quote against the others
           serviceScope: z.enum(SERVICE_SCOPES).optional(),
           rateBasis: z.enum(['per_kg', 'per_cbm', 'per_revenue_ton', 'per_container', 'flat']).optional(),
           chargeableWeightKg: z.string().optional(),
@@ -561,6 +697,7 @@ Format the email professionally and request a response by ${rfq.quoteDueDate ? n
           return { success: true };
         }),
       
+      // AI analyze and compare quotes
       // Deterministic normalization only — no LLM. Lets the UI re-level after a
       // rate or allowance changes without paying for an analysis pass.
       normalizeQuotes: opsProcedure
@@ -734,6 +871,7 @@ Then recommend one quoteId and write a summary an operations manager could defen
           };
         }),
 
+      // Accept a quote and create booking
       accept: opsProcedure
         .input(z.object({ quoteId: z.number() }))
         .mutation(async ({ input, ctx }) => {
@@ -917,230 +1055,4 @@ Then recommend one quoteId and write a summary an operations manager could defen
           return { success: true };
         }),
     }),
-  }),
-  // ============================================
-  // CUSTOMS CLEARANCE
-  // ============================================
-  customs: router({
-    clearances: router({
-      list: protectedProcedure
-        .input(z.object({ status: z.string().optional(), type: z.enum(['import', 'export']).optional() }).optional())
-        .query(({ input }) => db.getCustomsClearances(input)),
-      get: protectedProcedure
-        .input(z.object({ id: z.number() }))
-        .query(({ input }) => db.getCustomsClearanceById(input.id)),
-      create: opsProcedure
-        .input(z.object({
-          shipmentId: z.number().optional(),
-          rfqId: z.number().optional(),
-          type: z.enum(['import', 'export']),
-          customsOffice: z.string().optional(),
-          portOfEntry: z.string().optional(),
-          country: z.string().optional(),
-          customsBrokerId: z.number().optional(),
-          brokerReference: z.string().optional(),
-          expectedClearanceDate: z.date().optional(),
-          hsCode: z.string().optional(),
-          countryOfOrigin: z.string().optional(),
-          notes: z.string().optional(),
-        }))
-        .mutation(async ({ input, ctx }) => {
-          const result = await db.createCustomsClearance(input);
-          await createAuditLog(ctx.user.id, 'create', 'customs_clearance', result.id, result.clearanceNumber);
-          return result;
-        }),
-      update: opsProcedure
-        .input(z.object({
-          id: z.number(),
-          status: z.enum(['pending_documents', 'documents_submitted', 'under_review', 'additional_info_required', 'cleared', 'held', 'rejected']).optional(),
-          submissionDate: z.date().optional(),
-          expectedClearanceDate: z.date().optional(),
-          actualClearanceDate: z.date().optional(),
-          dutyAmount: z.string().optional(),
-          taxAmount: z.string().optional(),
-          otherFees: z.string().optional(),
-          totalAmount: z.string().optional(),
-          notes: z.string().optional(),
-          warehouseId: z.number().optional(),
-        }))
-        .mutation(async ({ input, ctx }) => {
-          const { id, warehouseId, ...data } = input;
-
-          if (data.status === 'cleared') {
-            const clearance = await db.getCustomsClearanceById(id);
-            if (clearance?.shipmentId) {
-              if (!warehouseId) {
-                throw new TRPCError({ code: 'BAD_REQUEST', message: 'warehouseId is required when clearing customs with inventory update' });
-              }
-              const shipment = await db.getShipmentById(clearance.shipmentId);
-              if (shipment?.purchaseOrderId) {
-                const poItems = await db.getPurchaseOrderItems(shipment.purchaseOrderId);
-                for (const item of poItems) {
-                  if (!item.productId) continue;
-                  const allInventory = await db.getInventory();
-                  const existing = allInventory.find(
-                    (inv: any) => inv.productId === item.productId && inv.warehouseId === warehouseId
-                  );
-                  const qty = item.quantity ?? '0';
-                  if (existing) {
-                    await db.updateInventory(existing.id, {
-                      quantity: String(Number(existing.quantity) + Number(qty)),
-                    });
-                  } else {
-                    await db.createInventory({
-                      productId: item.productId,
-                      warehouseId,
-                      quantity: qty,
-                      companyId: (shipment as any).companyId,
-                    });
-                  }
-                  await db.createInventoryTransaction({
-                    transactionType: 'receive',
-                    productId: item.productId,
-                    toWarehouseId: warehouseId,
-                    quantity: qty,
-                    referenceType: 'shipment',
-                    referenceId: clearance.shipmentId,
-                    performedBy: ctx.user.id,
-                  } as any);
-                  await db.updatePurchaseOrderItem(item.id, { receivedQuantity: qty });
-                }
-                await db.updateShipment(clearance.shipmentId, { status: 'delivered' });
-              }
-            }
-          }
-
-          await db.updateCustomsClearance(id, data);
-          await createAuditLog(ctx.user.id, 'update', 'customs_clearance', id);
-          return { success: true };
-        }),
-      
-      // AI summary of clearance status
-      getSummary: protectedProcedure
-        .input(z.object({ id: z.number() }))
-        .query(async ({ input }) => {
-          const clearance = await db.getCustomsClearanceById(input.id);
-          if (!clearance) return null;
-          
-          const documents = await db.getCustomsDocuments(input.id);
-          
-          const summaryPrompt = `Summarize the customs clearance status:
-
-Clearance Number: ${clearance.clearanceNumber}
-Type: ${clearance.type}
-Status: ${clearance.status}
-Port: ${clearance.portOfEntry || 'N/A'}
-Country: ${clearance.country || 'N/A'}
-HS Code: ${clearance.hsCode || 'N/A'}
-Country of Origin: ${clearance.countryOfOrigin || 'N/A'}
-
-Documents (${documents.length} total):
-${documents.map(d => `- ${d.documentType}: ${d.status}`).join('\n')}
-
-Duties/Taxes:
-- Duty: ${clearance.dutyAmount || 'TBD'}
-- Tax: ${clearance.taxAmount || 'TBD'}
-- Other: ${clearance.otherFees || 'TBD'}
-- Total: ${clearance.totalAmount || 'TBD'}
-
-Provide a brief status summary, any missing documents, and next steps.`;
-
-          const response = await invokeLLM({
-            messages: [
-              { role: 'system', content: 'You are a customs clearance specialist. Provide clear, actionable status summaries.' },
-              { role: 'user', content: summaryPrompt },
-            ],
-          });
-          
-          const rawSummary = response.choices[0]?.message?.content;
-          return {
-            clearance,
-            documents,
-            aiSummary: typeof rawSummary === 'string' ? rawSummary : 'Unable to generate summary.',
-          };
-        }),
-    }),
-    
-    documents: router({
-      list: protectedProcedure
-        .input(z.object({ clearanceId: z.number() }))
-        .query(({ input }) => db.getCustomsDocuments(input.clearanceId)),
-      create: opsProcedure
-        .input(z.object({
-          clearanceId: z.number(),
-          documentType: z.enum([
-            'commercial_invoice', 'packing_list', 'bill_of_lading', 'airway_bill',
-            'certificate_of_origin', 'customs_declaration', 'import_license', 'export_license',
-            'insurance_certificate', 'inspection_certificate', 'phytosanitary_certificate',
-            'fumigation_certificate', 'dangerous_goods_declaration', 'other'
-          ]),
-          name: z.string(),
-          fileUrl: z.string().optional(),
-          fileKey: z.string().optional(),
-          mimeType: z.string().optional(),
-          fileSize: z.number().optional(),
-          expiryDate: z.date().optional(),
-          notes: z.string().optional(),
-        }))
-        .mutation(async ({ input, ctx }) => {
-          const result = await db.createCustomsDocument({ ...input, status: input.fileUrl ? 'uploaded' : 'pending' });
-          await createAuditLog(ctx.user.id, 'create', 'customs_document', result.id, input.name);
-          return result;
-        }),
-      update: opsProcedure
-        .input(z.object({
-          id: z.number(),
-          status: z.enum(['pending', 'uploaded', 'verified', 'rejected', 'expired']).optional(),
-          fileUrl: z.string().optional(),
-          fileKey: z.string().optional(),
-          notes: z.string().optional(),
-        }))
-        .mutation(async ({ input, ctx }) => {
-          const { id, ...data } = input;
-          if (data.status === 'verified') {
-            (data as any).verifiedAt = new Date();
-            (data as any).verifiedById = ctx.user.id;
-          }
-          await db.updateCustomsDocument(id, data);
-          await createAuditLog(ctx.user.id, 'update', 'customs_document', id);
-          return { success: true };
-        }),
-      
-      // Upload document file
-      upload: opsProcedure
-        .input(z.object({
-          clearanceId: z.number(),
-          documentType: z.enum([
-            'commercial_invoice', 'packing_list', 'bill_of_lading', 'airway_bill',
-            'certificate_of_origin', 'customs_declaration', 'import_license', 'export_license',
-            'insurance_certificate', 'inspection_certificate', 'phytosanitary_certificate',
-            'fumigation_certificate', 'dangerous_goods_declaration', 'other'
-          ]),
-          name: z.string(),
-          fileData: z.string(), // Base64 encoded
-          mimeType: z.string(),
-        }))
-        .mutation(async ({ input, ctx }) => {
-          const buffer = Buffer.from(input.fileData, 'base64');
-          const fileKey = `customs/${input.clearanceId}/${nanoid()}-${input.name}`;
-          
-          const { url } = await storagePut(fileKey, buffer, input.mimeType);
-          
-          const result = await db.createCustomsDocument({
-            clearanceId: input.clearanceId,
-            documentType: input.documentType,
-            name: input.name,
-            fileUrl: url,
-            fileKey,
-            mimeType: input.mimeType,
-            fileSize: buffer.length,
-            status: 'uploaded',
-          });
-          
-          await createAuditLog(ctx.user.id, 'create', 'customs_document', result.id, input.name);
-          
-          return { id: result.id, url };
-        }),
-     }),
-  }),
-});
+  });

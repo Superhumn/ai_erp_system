@@ -331,6 +331,50 @@ export async function upsertUser(user: InsertUser): Promise<void> {
   }
 }
 
+/** True when MySQL rejected a query for a missing column (schema drift). */
+function isUnknownColumnError(error: unknown): boolean {
+  const err = error as {
+    code?: string;
+    errno?: number;
+    message?: string;
+    cause?: { code?: string; errno?: number; message?: string };
+  };
+  const code = err?.code || err?.cause?.code;
+  const errno = err?.errno ?? err?.cause?.errno;
+  const message = `${err?.message || ""} ${err?.cause?.message || ""}`;
+  return code === "ER_BAD_FIELD_ERROR" || errno === 1054 || /Unknown column/i.test(message);
+}
+
+/**
+ * Core users columns that existed before emailVerified / multi-region.
+ * Used when the full Drizzle select fails due to missing columns so auth
+ * can keep working until ensureAuthSchema / migration 0056 catches up.
+ */
+function padUserRow(row: Record<string, unknown>) {
+  return {
+    ...row,
+    companyId: (row.companyId as number | null | undefined) ?? null,
+    regionScope: (row.regionScope as "entity" | "region" | "global" | undefined) ?? "global",
+    emailVerified: Boolean(row.emailVerified ?? false),
+  } as typeof users.$inferSelect;
+}
+
+function rowsFromExecute(result: unknown): Record<string, unknown>[] {
+  if (Array.isArray(result)) {
+    const first = result[0];
+    if (Array.isArray(first)) return first as Record<string, unknown>[];
+    if (first && typeof first === "object" && "id" in (first as object)) {
+      return result as Record<string, unknown>[];
+    }
+  }
+  const rows = (result as { rows?: Record<string, unknown>[] })?.rows;
+  return Array.isArray(rows) ? rows : [];
+}
+
+const USER_CORE_SELECT_SQL = `id, openId, name, email, loginMethod, \`role\`, departmentId,
+  avatarUrl, phone, linkedVendorId, linkedWarehouseId, isActive,
+  invitedBy, invitedAt, createdAt, updatedAt, lastSignedIn`;
+
 export async function getUserByOpenId(openId: string) {
   const db = await getDb();
   if (!db) {
@@ -338,8 +382,18 @@ export async function getUserByOpenId(openId: string) {
     return undefined;
   }
 
-  const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
+  try {
+    const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
+    return result.length > 0 ? result[0] : undefined;
+  } catch (error) {
+    if (!isUnknownColumnError(error)) throw error;
+    console.warn("[Database] getUserByOpenId falling back to core columns (schema drift)");
+    const result = await db.execute(
+      sql`SELECT ${sql.raw(USER_CORE_SELECT_SQL)} FROM users WHERE openId = ${openId} LIMIT 1`
+    );
+    const rows = rowsFromExecute(result);
+    return rows[0] ? padUserRow(rows[0]) : undefined;
+  }
 }
 
 export async function getUserByEmail(email: string) {
@@ -348,14 +402,33 @@ export async function getUserByEmail(email: string) {
     console.warn("[Database] Cannot get user by email: database not available");
     return undefined;
   }
-  const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
+  try {
+    const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
+    return result.length > 0 ? result[0] : undefined;
+  } catch (error) {
+    if (!isUnknownColumnError(error)) throw error;
+    console.warn("[Database] getUserByEmail falling back to core columns (schema drift)");
+    const result = await db.execute(
+      sql`SELECT ${sql.raw(USER_CORE_SELECT_SQL)} FROM users WHERE email = ${email} LIMIT 1`
+    );
+    const rows = rowsFromExecute(result);
+    return rows[0] ? padUserRow(rows[0]) : undefined;
+  }
 }
 
 export async function getAllUsers() {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(users).orderBy(desc(users.createdAt));
+  try {
+    return await db.select().from(users).orderBy(desc(users.createdAt));
+  } catch (error) {
+    if (!isUnknownColumnError(error)) throw error;
+    console.warn("[Database] getAllUsers falling back to core columns (schema drift)");
+    const result = await db.execute(
+      sql`SELECT ${sql.raw(USER_CORE_SELECT_SQL)} FROM users ORDER BY createdAt DESC`
+    );
+    return rowsFromExecute(result).map(padUserRow);
+  }
 }
 
 /**
@@ -960,12 +1033,19 @@ export async function updateAccount(id: number, data: Partial<InsertAccount>) {
 // FINANCE - INVOICES
 // ============================================
 
-export async function getInvoices(filters?: { companyId?: number; status?: string; customerId?: number }) {
+// Pass `ctx.scope` to restrict to the caller's visible entities. `filters` are non-security
+// refinements (status/customerId, and companyId for trusted internal callers).
+export async function getInvoices(scope?: Scope, filters?: { companyId?: number; status?: string; customerId?: number }) {
   const db = await getDb();
   if (!db) return [];
-  
+
   const conditions = [];
-  
+
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return []; // scoped user with no visible entities
+    conditions.push(inArray(invoices.companyId, ids));
+  }
   if (filters?.companyId) conditions.push(eq(invoices.companyId, filters.companyId));
   if (filters?.status) conditions.push(eq(invoices.status, filters.status as any));
   if (filters?.customerId) conditions.push(eq(invoices.customerId, filters.customerId));
@@ -1090,11 +1170,16 @@ export async function createInvoiceItem(data: typeof invoiceItems.$inferInsert) 
 // FINANCE - PAYMENTS
 // ============================================
 
-export async function getPayments(filters?: { companyId?: number; type?: string; status?: string }) {
+export async function getPayments(scope?: Scope, filters?: { companyId?: number; type?: string; status?: string }) {
   const db = await getDb();
   if (!db) return [];
-  
+
   const conditions = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return [];
+    conditions.push(inArray(payments.companyId, ids));
+  }
   if (filters?.companyId) conditions.push(eq(payments.companyId, filters.companyId));
   if (filters?.type) conditions.push(eq(payments.type, filters.type as any));
   if (filters?.status) conditions.push(eq(payments.status, filters.status as any));
@@ -1129,11 +1214,16 @@ export async function updatePayment(id: number, data: Partial<InsertPayment>) {
 // FINANCE - TRANSACTIONS
 // ============================================
 
-export async function getTransactions(filters?: { companyId?: number; type?: string; status?: string }) {
+export async function getTransactions(scope?: Scope, filters?: { companyId?: number; type?: string; status?: string }) {
   const db = await getDb();
   if (!db) return [];
-  
+
   const conditions = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return [];
+    conditions.push(inArray(transactions.companyId, ids));
+  }
   if (filters?.companyId) conditions.push(eq(transactions.companyId, filters.companyId));
   if (filters?.type) conditions.push(eq(transactions.type, filters.type as any));
   if (filters?.status) conditions.push(eq(transactions.status, filters.status as any));
@@ -1269,11 +1359,18 @@ export async function createOrderItem(data: typeof orderItems.$inferInsert) {
 // OPERATIONS - INVENTORY
 // ============================================
 
-export async function getInventory(filters?: { companyId?: number; warehouseId?: number; productId?: number; limit?: number }) {
+// Pass a request's `ctx.scope` to restrict to the caller's visible entities. `filters` are
+// non-security refinements (warehouse/product/limit, and companyId for trusted internal callers).
+export async function getInventory(scope?: Scope, filters?: { companyId?: number; warehouseId?: number; productId?: number; limit?: number }) {
   const db = await getDb();
   if (!db) return [];
 
   const conditions = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return []; // scoped user with no visible entities
+    conditions.push(inArray(inventory.companyId, ids));
+  }
   if (filters?.companyId) conditions.push(eq(inventory.companyId, filters.companyId));
   if (filters?.warehouseId) conditions.push(eq(inventory.warehouseId, filters.warehouseId));
   if (filters?.productId) conditions.push(eq(inventory.productId, filters.productId));
@@ -16115,6 +16212,87 @@ export async function syncQuickBooksItems(companyIdOrItems: number | InsertQuick
     synced++;
   }
   return { count: synced, synced };
+}
+
+/**
+ * Accounts for one company, optionally filtered by the classification
+ * column (Asset/Liability/Equity/Revenue/Expense). Unlike
+ * getQuickBooksAccountsByType — whose numeric-first overload filters the
+ * accountType column — this matches the classification the sync paths
+ * normalize into `classification`.
+ */
+export async function getQuickBooksAccountsByClassification(companyId: number, classification?: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [eq(quickbooksAccounts.companyId, companyId)];
+  if (classification) conditions.push(eq(quickbooksAccounts.classification, classification));
+  return db.select().from(quickbooksAccounts).where(and(...conditions));
+}
+
+// Atomic company-scoped sync upserts. Rows are keyed on the composite
+// unique indexes uq_qb_accounts_company_account / uq_qb_items_company_item
+// (migration 0067), so INSERT ... ON DUPLICATE KEY UPDATE is race-free
+// across processes and replicas — no read-then-write pair, no app-side
+// locking. Batched to keep statements under packet limits. Nullable
+// informational columns update via COALESCE(VALUES(col), col) so a provider
+// that doesn't supply a field (e.g. Merge items have no SKU) can't wipe a
+// value another provider synced.
+const QB_SYNC_CHUNK = 500;
+
+/**
+ * Company-scoped account upsert. Unlike syncQuickBooksAccounts (which matches
+ * on quickbooksAccountId alone), rows are matched on (companyId,
+ * quickbooksAccountId) so provider-local IDs can't collide across entities.
+ */
+export async function syncQuickBooksAccountsForCompany(companyId: number, accounts: InsertQuickBooksAccount[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const rows = accounts.map((a) => ({ ...a, companyId }));
+  for (let i = 0; i < rows.length; i += QB_SYNC_CHUNK) {
+    await db.insert(quickbooksAccounts).values(rows.slice(i, i + QB_SYNC_CHUNK)).onDuplicateKeyUpdate({
+      set: {
+        name: sql`VALUES(\`name\`)`,
+        accountType: sql`COALESCE(VALUES(\`accountType\`), \`accountType\`)`,
+        accountSubType: sql`COALESCE(VALUES(\`accountSubType\`), \`accountSubType\`)`,
+        classification: sql`COALESCE(VALUES(\`classification\`), \`classification\`)`,
+        fullyQualifiedName: sql`COALESCE(VALUES(\`fullyQualifiedName\`), \`fullyQualifiedName\`)`,
+        active: sql`VALUES(\`active\`)`,
+        currentBalance: sql`COALESCE(VALUES(\`currentBalance\`), \`currentBalance\`)`,
+        currency: sql`COALESCE(VALUES(\`currency\`), \`currency\`)`,
+        lastSyncedAt: sql`VALUES(\`lastSyncedAt\`)`,
+      },
+    });
+  }
+  return { count: rows.length, synced: rows.length };
+}
+
+/**
+ * Company-scoped item upsert. Same (companyId, quickbooksItemId) matching
+ * rationale as syncQuickBooksAccountsForCompany.
+ */
+export async function syncQuickBooksItemsForCompany(companyId: number, items: InsertQuickBooksItem[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const rows = items.map((i) => ({ ...i, companyId }));
+  for (let i = 0; i < rows.length; i += QB_SYNC_CHUNK) {
+    await db.insert(quickbooksItems).values(rows.slice(i, i + QB_SYNC_CHUNK)).onDuplicateKeyUpdate({
+      set: {
+        name: sql`VALUES(\`name\`)`,
+        sku: sql`COALESCE(VALUES(\`sku\`), \`sku\`)`,
+        type: sql`COALESCE(VALUES(\`type\`), \`type\`)`,
+        description: sql`COALESCE(VALUES(\`description\`), \`description\`)`,
+        unitPrice: sql`COALESCE(VALUES(\`unitPrice\`), \`unitPrice\`)`,
+        purchaseCost: sql`COALESCE(VALUES(\`purchaseCost\`), \`purchaseCost\`)`,
+        quantityOnHand: sql`COALESCE(VALUES(\`quantityOnHand\`), \`quantityOnHand\`)`,
+        incomeAccountId: sql`COALESCE(VALUES(\`incomeAccountId\`), \`incomeAccountId\`)`,
+        expenseAccountId: sql`COALESCE(VALUES(\`expenseAccountId\`), \`expenseAccountId\`)`,
+        assetAccountId: sql`COALESCE(VALUES(\`assetAccountId\`), \`assetAccountId\`)`,
+        active: sql`VALUES(\`active\`)`,
+        lastSyncedAt: sql`VALUES(\`lastSyncedAt\`)`,
+      },
+    });
+  }
+  return { count: rows.length, synced: rows.length };
 }
 
 export async function getQuickBooksAccountMappings(companyId?: number) {

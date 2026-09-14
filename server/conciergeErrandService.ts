@@ -11,7 +11,7 @@
 // full access to the ERP action tools.
 //
 // This module is the single execution path shared by:
-//   - `aiAgent.tasks.execute` (manual admin execution in server/routers.ts)
+//   - `aiAgent.tasks.execute` (manual admin execution in server/routers/aiAgent.ts)
 //   - `executeApprovedTasks()` (background scheduler in server/aiAgentScheduler.ts)
 
 import type { AiAgentTask } from "../drizzle/schema";

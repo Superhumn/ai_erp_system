@@ -71,6 +71,31 @@ export const ENV = {
     quickbooksRedirectUri: process.env.QUICKBOOKS_REDIRECT_URI ?? "",
     quickbooksEnvironment: process.env.QUICKBOOKS_ENVIRONMENT ?? "production", // sandbox or production
 
+    // Accounting sync provider: "intuit" (direct QuickBooks OAuth, default) or
+    // "merge" (Merge.dev unified accounting API — hosts the Intuit OAuth with
+    // their approved app). The quickbooks tRPC routes branch on this. Any
+    // other value becomes "invalid" and the accounting routes fail closed —
+    // a typo like "merg" must not silently activate the wrong provider.
+    accountingSyncProvider: ((): string => {
+      const raw = (process.env.ACCOUNTING_SYNC_PROVIDER ?? "intuit").toLowerCase();
+      if (raw === "intuit" || raw === "merge") return raw;
+      console.error(`[env] Invalid ACCOUNTING_SYNC_PROVIDER "${raw}" — expected "intuit" or "merge"; accounting sync disabled.`);
+      return "invalid";
+    })(),
+    mergeApiKey: process.env.MERGE_API_KEY ?? "",
+    mergeAccountToken: process.env.MERGE_ACCOUNT_TOKEN ?? "",
+    // ERP company (companies.id) the linked Merge account belongs to. The
+    // Merge account token is process-wide, so sync/reads are bound to this
+    // one entity to preserve multi-entity data isolation. Required in merge
+    // mode: no default — an unset or invalid value parses to NaN and
+    // isMergeConfigured() fails closed rather than silently binding the
+    // linked company's financials to company 1.
+    // Strict whole-string parse: parseInt would accept "12oops" as 12 and
+    // silently bind Merge data to the wrong entity.
+    mergeCompanyId: /^[1-9]\d*$/.test(process.env.MERGE_COMPANY_ID ?? "")
+      ? Number(process.env.MERGE_COMPANY_ID)
+      : Number.NaN,
+
     // Shopify OAuth configuration
     shopifyClientId: process.env.SHOPIFY_CLIENT_ID ?? "",
     shopifyClientSecret: process.env.SHOPIFY_CLIENT_SECRET ?? "",

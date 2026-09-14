@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import type { inferRouterOutputs } from "@trpc/server";
-import type { AppRouter } from "../../../../server/routers";
+import type { AppRouter } from "../../../../server/routers/index";
 
 type RouterOutput = inferRouterOutputs<AppRouter>;
 type StudyDetails = NonNullable<RouterOutput["rdTaxCredit"]["getStudy"]>;

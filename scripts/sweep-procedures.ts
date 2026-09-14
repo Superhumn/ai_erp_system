@@ -12,7 +12,7 @@
 // ones worth reading: SQL_ERROR, SCHEMA_DRIFT, NULL_REQUIRED, DATA_MISMATCH,
 // SERVER_ERROR. Never point this at a real database.
 import fs from "fs";
-import { appRouter } from "../server/routers";
+import { appRouter } from "../server/routers/index";
 import * as db from "../server/db";
 import { sql } from "drizzle-orm";
 

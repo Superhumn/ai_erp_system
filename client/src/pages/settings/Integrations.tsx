@@ -502,7 +502,9 @@ export default function IntegrationsPage() {
                     icon: <Calculator className="w-4 h-4 text-muted-foreground" />,
                     bg: "bg-muted",
                     name: "QuickBooks",
-                    desc: status?.quickbooks?.configured ? `Company ${status.quickbooks.realmId}` : "Accounting software",
+                    desc: status?.quickbooks?.configured
+                      ? (status.quickbooks.companyName ?? `Company ${status.quickbooks.realmId}`)
+                      : "Accounting software",
                     status: status?.quickbooks?.status || "not_configured",
                     action: () => setActiveTab("quickbooks"),
                     actionLabel: "Configure",
@@ -1567,8 +1569,10 @@ export default function IntegrationsPage() {
                       {status?.quickbooks?.configured ? 'QuickBooks Connected' : 'QuickBooks Not Connected'}
                     </h4>
                     <p className="text-sm text-muted-foreground">
-                      {status?.quickbooks?.configured 
-                        ? `Connected to company ${status.quickbooks.realmId}`
+                      {status?.quickbooks?.configured
+                        ? (status.quickbooks.companyName
+                            ? `Connected to ${status.quickbooks.companyName}`
+                            : `Connected to company ${status.quickbooks.realmId}`)
                         : 'Connect your QuickBooks account to sync financial data'}
                     </p>
                   </div>
@@ -1576,6 +1580,36 @@ export default function IntegrationsPage() {
 
                 {!status?.quickbooks?.configured ? (
                   <div className="space-y-4">
+                    {status?.quickbooks?.provider === "merge" ? (
+                    <div className="p-4 border rounded-lg">
+                      <h4 className="font-medium mb-2">Connect via Merge.dev</h4>
+                      <p className="text-sm text-muted-foreground mb-4">
+                        Accounting sync is set to Merge.dev (<code className="bg-muted px-2 py-1 rounded">ACCOUNTING_SYNC_PROVIDER=merge</code>).
+                        Merge hosts the QuickBooks connection with their approved Intuit app — no in-app OAuth needed.
+                      </p>
+                      <ol className="text-sm text-muted-foreground space-y-2 mb-4 list-decimal list-inside">
+                        <li>In the <a href="https://app.merge.dev" target="_blank" rel="noreferrer" className="underline">Merge dashboard</a>, open <strong>Linked Accounts</strong> and link your QuickBooks Online company (sign in with the Intuit account that owns the company).</li>
+                        <li>Copy your Merge <strong>API key</strong> (Settings → API keys) and the linked account's <strong>account token</strong>.</li>
+                        <li>Set <code className="bg-muted px-2 py-1 rounded">MERGE_API_KEY</code> and <code className="bg-muted px-2 py-1 rounded">MERGE_ACCOUNT_TOKEN</code> in the server environment.</li>
+                        <li>Set <code className="bg-muted px-2 py-1 rounded">MERGE_COMPANY_ID</code> to the ERP company (companies.id) the linked QuickBooks company belongs to — required; for a single-company deployment this is usually <code className="bg-muted px-2 py-1 rounded">1</code>. Then redeploy.</li>
+                      </ol>
+                      {quickbooksDebug && (
+                        <div className="p-3 bg-slate-500/5 border border-slate-500/20 rounded-md text-xs space-y-1.5">
+                          <p className="font-medium text-sm">Live server config (admin diagnostic)</p>
+                          <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 font-mono pt-1">
+                            <span className="text-muted-foreground">provider:</span>
+                            <span>{quickbooksDebug.provider}</span>
+                            <span className="text-muted-foreground">MERGE_API_KEY:</span>
+                            <span>{quickbooksDebug.mergeApiKeySet ? "set" : <em className="text-foreground font-semibold">not set</em>}</span>
+                            <span className="text-muted-foreground">MERGE_ACCOUNT_TOKEN:</span>
+                            <span>{quickbooksDebug.mergeAccountTokenSet ? "set" : <em className="text-foreground font-semibold">not set</em>}</span>
+                            <span className="text-muted-foreground">MERGE_COMPANY_ID:</span>
+                            <span>{quickbooksDebug.mergeCompanyIdValid ? String(quickbooksDebug.mergeCompanyId) : <em className="text-foreground font-semibold">not set / invalid — required</em>}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    ) : (
                     <div className="p-4 border rounded-lg">
                       <h4 className="font-medium mb-2">Connect QuickBooks</h4>
                       <p className="text-sm text-muted-foreground mb-4">
@@ -1657,6 +1691,7 @@ export default function IntegrationsPage() {
                         Connect QuickBooks
                       </Button>
                     </div>
+                    )}
 
                     <div className="p-4 bg-muted/50 border rounded-lg">
                       <h4 className="font-medium text-foreground mb-2">
@@ -1679,8 +1714,8 @@ export default function IntegrationsPage() {
                         <h4 className="font-medium mb-2">Connection Info</h4>
                         <div className="space-y-2 text-sm">
                           <div className="flex justify-between">
-                            <span className="text-muted-foreground">Company ID:</span>
-                            <span className="font-medium">{status.quickbooks.realmId}</span>
+                            <span className="text-muted-foreground">{status.quickbooks.companyName ? "Company:" : "Company ID:"}</span>
+                            <span className="font-medium">{status.quickbooks.companyName ?? status.quickbooks.realmId}</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Status:</span>
@@ -1707,6 +1742,16 @@ export default function IntegrationsPage() {
                       </div>
                     </div>
 
+                    {status?.quickbooks?.provider === "merge" ? (
+                      <div className="p-4 bg-muted/50 rounded-lg">
+                        <h4 className="font-medium">Managed via Merge.dev</h4>
+                        <p className="text-sm text-muted-foreground">
+                          This connection is configured through server environment variables. To disconnect,
+                          remove <code className="bg-muted px-1.5 py-0.5 rounded">MERGE_API_KEY</code> / <code className="bg-muted px-1.5 py-0.5 rounded">MERGE_ACCOUNT_TOKEN</code> or
+                          unlink the account in the Merge dashboard.
+                        </p>
+                      </div>
+                    ) : (
                     <div className="p-4 bg-muted/50 rounded-lg">
                       <div className="flex items-center justify-between">
                         <div>
@@ -1715,8 +1760,8 @@ export default function IntegrationsPage() {
                             Remove QuickBooks integration from your account
                           </p>
                         </div>
-                        <Button 
-                          variant="outline" 
+                        <Button
+                          variant="outline"
                           size="sm"
                           onClick={() => quickbooksDisconnectMutation.mutate()}
                         >
@@ -1724,6 +1769,7 @@ export default function IntegrationsPage() {
                         </Button>
                       </div>
                     </div>
+                    )}
                   </div>
                 )}
               </CardContent>

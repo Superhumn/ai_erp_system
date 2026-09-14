@@ -109,8 +109,8 @@ export async function computeInvestorPortalFinancials(options?: {
   // in multi-tenant setups and keeps the aggregate small on single-tenant
   // installs too.
   const [invoices, expenseTxns, cash, margins] = await Promise.all([
-    db.getInvoices(companyId ? { companyId } : undefined),
-    db.getTransactions({ type: "expense", ...(companyId ? { companyId } : {}) }),
+    db.getInvoices(undefined, companyId ? { companyId } : undefined),
+    db.getTransactions(undefined, { type: "expense", ...(companyId ? { companyId } : {}) }),
     getCashBalance(),
     getMargins(),
   ]);

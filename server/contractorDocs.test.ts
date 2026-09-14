@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { appRouter } from "./routers";
+import { appRouter } from "./routers/index";
 import type { TrpcContext } from "./_core/context";
 import * as db from "./db";
 import { filterAccessibleFolders } from "./db";

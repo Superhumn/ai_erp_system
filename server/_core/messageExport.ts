@@ -106,11 +106,14 @@ async function htmlToPdfBase64(html: string): Promise<string> {
       await browser.close();
     }
   } catch (err) {
-    // Fallback: return HTML so the caller can still hand the user *something*
-    // instead of an opaque 500. Filename will still claim .pdf — same
-    // behaviour as the existing invoicePdf fallback.
-    console.error("[messageExport] PDF generation failed, returning HTML:", err);
-    return Buffer.from(html, "utf-8").toString("base64");
+    // Never fall back to HTML. Handing back the markup base64-encoded under a
+    // .pdf filename and an application/pdf mime type produces a file the user
+    // cannot open and cannot diagnose. Fail loudly instead.
+    console.error("[messageExport] PDF generation failed:", err);
+    throw new Error(
+      `PDF export failed: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
+    );
   }
 }
 

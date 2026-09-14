@@ -164,7 +164,9 @@ export const quickbooksAccounts = mysqlTable("quickbooksAccounts", {
   lastSyncedAt: timestamp("lastSyncedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (t) => ({
+  companyAccountUnique: uniqueIndex("uq_qb_accounts_company_account").on(t.companyId, t.quickbooksAccountId),
+}));
 
 export type QuickBooksAccount = typeof quickbooksAccounts.$inferSelect;
 export type InsertQuickBooksAccount = typeof quickbooksAccounts.$inferInsert;
@@ -214,7 +216,9 @@ export const quickbooksItems = mysqlTable("quickbooksItems", {
   lastSyncedAt: timestamp("lastSyncedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (t) => ({
+  companyItemUnique: uniqueIndex("uq_qb_items_company_item").on(t.companyId, t.quickbooksItemId),
+}));
 
 export type QuickBooksItem = typeof quickbooksItems.$inferSelect;
 export type InsertQuickBooksItem = typeof quickbooksItems.$inferInsert;
