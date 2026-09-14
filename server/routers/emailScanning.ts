@@ -1393,6 +1393,18 @@ export const emailScanningRouter = router({
             ? `inbox_${input.category}`
             : "inbox";
 
-        return exportEmails(emails, input.format, label);
+        try {
+          return await exportEmails(emails, input.format, label);
+        } catch (error) {
+          // exportEmails throws when the headless browser cannot start. CSV and
+          // XLSX never reach this path, so the message names the formats that
+          // still work.
+          console.error('[emailScanning.exportEmails] export failed:', error);
+          throw new TRPCError({
+            code: 'SERVICE_UNAVAILABLE',
+            message: 'PDF generation is currently unavailable. Export as CSV or XLSX instead.',
+            cause: error,
+          });
+        }
       }),
   });

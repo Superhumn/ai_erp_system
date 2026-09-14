@@ -202,31 +202,44 @@ export const invoicesRouter = router({
         const { generateInvoicePdf, getDefaultCompanyInfo } = await import('../_core/invoicePdf');
         const company = getDefaultCompanyInfo();
         
-        const pdfBuffer = await generateInvoicePdf({
-          invoiceNumber: invoice.invoiceNumber,
-          issueDate: invoice.issueDate,
-          dueDate: invoice.dueDate,
-          customer: {
-            name: invoice.customer?.name || 'Customer',
-            email: invoice.customer?.email,
-          },
-          items: invoice.items.map((item: any) => ({
-            description: item.description,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-            taxRate: item.taxRate,
-            taxAmount: item.taxAmount,
-            totalAmount: item.totalAmount,
-          })),
-          subtotal: invoice.subtotal,
-          taxAmount: invoice.taxAmount,
-          discountAmount: invoice.discountAmount,
-          totalAmount: invoice.totalAmount,
-          notes: invoice.notes,
-          terms: invoice.terms,
-          currency: invoice.currency || 'USD',
-        }, company);
-        
+        let pdfBuffer: Buffer;
+        try {
+          pdfBuffer = await generateInvoicePdf({
+            invoiceNumber: invoice.invoiceNumber,
+            issueDate: invoice.issueDate,
+            dueDate: invoice.dueDate,
+            customer: {
+              name: invoice.customer?.name || 'Customer',
+              email: invoice.customer?.email,
+            },
+            items: invoice.items.map((item: any) => ({
+              description: item.description,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              taxRate: item.taxRate,
+              taxAmount: item.taxAmount,
+              totalAmount: item.totalAmount,
+            })),
+            subtotal: invoice.subtotal,
+            taxAmount: invoice.taxAmount,
+            discountAmount: invoice.discountAmount,
+            totalAmount: invoice.totalAmount,
+            notes: invoice.notes,
+            terms: invoice.terms,
+            currency: invoice.currency || 'USD',
+          }, company);
+        } catch (error) {
+          // generateInvoicePdf throws when the headless browser cannot start.
+          // Surface that as a readable message rather than an opaque 500 — the
+          // client toasts `error.message` directly.
+          console.error('[invoices.generatePdf] PDF generation failed:', error);
+          throw new TRPCError({
+            code: 'SERVICE_UNAVAILABLE',
+            message: 'PDF generation is currently unavailable. Please try again later.',
+            cause: error,
+          });
+        }
+
         // Return base64 encoded PDF
         return { 
           pdf: pdfBuffer.toString('base64'),
