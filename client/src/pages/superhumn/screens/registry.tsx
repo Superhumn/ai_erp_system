@@ -28,6 +28,7 @@ import EDI from "./EDI";
 import Settings from "./Settings";
 import Login from "./Login";
 import AIEverywhere from "./AIEverywhere";
+import { PriorityQueue, BlockerTriage, StatusBoard, Timeline, DenseGrid } from "../tracker";
 
 export type ScreenEntry = {
   badge: string;
@@ -44,6 +45,14 @@ export const SCREENS: ScreenEntry[] = [
   { badge: "14a", title: "Home — needs-you queue, today & live operations", Component: Home },
   { badge: "7a", title: "Projects — portfolio + milestones panel", Component: Projects },
   { badge: "8a", title: "Projects: task list — grouped tasks, 2 columns", Component: TaskList },
+  // Project tracker redesign (handoff "ERP To-Do List Tracker"). 7a/8a above
+  // are the "before"; 1A–1E share one task store, so a change in any frame
+  // carries to all of them. Keyboard: j/k · x · space · e · d · a · y/n · 1–4.
+  { badge: "1A", title: "Project tracker: priority queue — one ordered stream, today / this week / later (primary)", Component: PriorityQueue },
+  { badge: "1B", title: "Project tracker: blocker triage — what's stuck, who clears it, what it gates", Component: BlockerTriage },
+  { badge: "1C", title: "Project tracker: status board — ‹ › moves a card between columns", Component: StatusBoard },
+  { badge: "1D", title: "Project tracker: timeline — portfolio bars over 8 weeks, click a project to expand", Component: Timeline },
+  { badge: "1E", title: "Project tracker: dense grid — all rows in two columns, inline status / owner edit (secondary)", Component: DenseGrid },
   { badge: "10a", title: "Meetings", Component: Meetings },
   { badge: "10b", title: "Messaging", Component: Messaging },
   { badge: "7d", title: "Email inbox", Component: EmailInbox },
