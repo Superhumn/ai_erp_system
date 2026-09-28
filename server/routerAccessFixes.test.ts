@@ -42,6 +42,7 @@ vi.mock("./db", () => ({
   getAiAgentTaskById: vi.fn(),
   updateAiAgentTask: vi.fn(),
   createAiAgentLog: vi.fn(),
+  createNotification: vi.fn().mockResolvedValue({ id: 1 }),
   createProduct: vi.fn().mockResolvedValue({ id: 5 }),
   // importDriveFiles
   createVendor: vi.fn().mockResolvedValue({ id: 1 }),

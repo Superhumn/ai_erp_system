@@ -3,11 +3,24 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router } from "../_core/trpc";
 import * as db from "../db";
-import { financeProcedure, createAuditLog, calculateNextGenerationDate } from "./_shared";
+import type { Scope } from "../_core/scope";
+import { scopeAllows } from "../_core/scope";
+import { postInvoiceJournalEntry } from "../invoicePosting";
+import { financeProcedure, scopedFinanceProcedure, createAuditLog, calculateNextGenerationDate, generateNumber } from "./_shared";
 
 // ============================================
 // RECURRING INVOICES
 // ============================================
+
+/** Load a recurring-invoice template the caller's entity scope may see; anything else is NOT_FOUND. */
+async function loadScopedRecurringInvoice(scope: Scope, id: number) {
+  const recurring = await db.getRecurringInvoiceById(id);
+  if (!recurring || !scopeAllows(scope, recurring.companyId)) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'Recurring invoice not found' });
+  }
+  return recurring;
+}
+
 export const recurringInvoicesRouter = router({
     list: financeProcedure
       .input(z.object({
@@ -17,9 +30,10 @@ export const recurringInvoicesRouter = router({
       .query(async ({ input }) => {
         return db.getRecurringInvoices(input);
       }),
-    getById: financeProcedure
+    getById: scopedFinanceProcedure
       .input(z.object({ id: z.number() }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
+        await loadScopedRecurringInvoice(ctx.scope, input.id);
         return db.getRecurringInvoiceWithItems(input.id);
       }),
     create: financeProcedure
@@ -66,8 +80,12 @@ export const recurringInvoicesRouter = router({
         // Calculate next generation date
         const nextGenerationDate = new Date(input.startDate);
         
+        // Default to the caller's home entity: invoices generated from this template inherit its
+        // companyId, and invoices.list is entity-scoped, so a NULL here hides every generated invoice.
+        const companyId = ctx.user.companyId ?? undefined;
         const result = await db.createRecurringInvoice({
           ...invoiceData,
+          companyId,
           subtotal: subtotal.toString(),
           taxAmount: taxAmount.toString(),
           totalAmount: totalAmount.toString(),
@@ -92,7 +110,7 @@ export const recurringInvoicesRouter = router({
         await createAuditLog(ctx.user.id, 'create', 'recurring_invoice', result.id, input.templateName);
         return result;
       }),
-    update: financeProcedure
+    update: scopedFinanceProcedure
       .input(z.object({
         id: z.number(),
         templateName: z.string().optional(),
@@ -109,18 +127,22 @@ export const recurringInvoicesRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
+        // Scoped read: a template outside the caller's entity access is indistinguishable from a missing one.
+        const existing = await loadScopedRecurringInvoice(ctx.scope, id);
         await db.updateRecurringInvoice(id, data);
-        await createAuditLog(ctx.user.id, 'update', 'recurring_invoice', id);
+        await createAuditLog(ctx.user.id, 'update', 'recurring_invoice', id, existing.templateName, existing, data);
         return { success: true };
       }),
-    generateNow: financeProcedure
+    generateNow: scopedFinanceProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input, ctx }) => {
+        await loadScopedRecurringInvoice(ctx.scope, input.id);
         const recurring = await db.getRecurringInvoiceWithItems(input.id);
         if (!recurring) throw new TRPCError({ code: 'NOT_FOUND', message: 'Recurring invoice not found' });
         
-        // Generate invoice number
-        const invoiceNumber = `INV-${Date.now()}`;
+        // Same numbering as invoices.create (INV-YYMM-####), so generated invoices sort and
+        // dedupe with manually raised ones.
+        const invoiceNumber = generateNumber('INV');
         const issueDate = new Date();
         const dueDate = new Date();
         dueDate.setDate(dueDate.getDate() + (recurring.daysUntilDue || 30));
@@ -175,17 +197,29 @@ export const recurringInvoicesRouter = router({
         });
         
         await createAuditLog(ctx.user.id, 'create', 'invoice', invoiceResult.id, `Generated from recurring: ${recurring.templateName}`);
+
+        // Same AR debit / Revenue credit journal entry invoices.create posts.
+        await postInvoiceJournalEntry({
+          invoiceId: invoiceResult.id,
+          invoiceNumber,
+          companyId: recurring.companyId,
+          totalAmount: recurring.totalAmount,
+          userId: ctx.user.id,
+          date: issueDate,
+        });
         
         return { invoiceId: invoiceResult.id, invoiceNumber };
       }),
-    history: financeProcedure
+    history: scopedFinanceProcedure
       .input(z.object({ id: z.number() }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
+        await loadScopedRecurringInvoice(ctx.scope, input.id);
         return db.getRecurringInvoiceHistory(input.id);
       }),
-    toggleActive: financeProcedure
+    toggleActive: scopedFinanceProcedure
       .input(z.object({ id: z.number(), isActive: z.boolean() }))
       .mutation(async ({ input, ctx }) => {
+        await loadScopedRecurringInvoice(ctx.scope, input.id);
         await db.updateRecurringInvoice(input.id, { isActive: input.isActive });
         await createAuditLog(ctx.user.id, 'update', 'recurring_invoice', input.id, input.isActive ? 'Activated' : 'Paused');
         return { success: true };

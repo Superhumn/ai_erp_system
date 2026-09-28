@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -29,8 +30,29 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Loader2, Trash2, Edit, Megaphone, Tag } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Plus, Loader2, Trash2, Edit, Megaphone, Tag, Send, Users, Clock, X } from "lucide-react";
 import { toast } from "sonner";
+import { ContactMultiPicker } from "@/components/ContactMultiPicker";
+import {
+  type CampaignStatus,
+  campaignStatusLabel,
+  canEditRecipients,
+  canSendCampaign,
+  parseDateTimeLocal,
+  recipientStatusCounts,
+  toDateTimeLocalValue,
+  unsentRecipientCount,
+} from "@/lib/emailOutreach";
 
 // ============================================
 // CRM ADMIN PAGE (Issue #268)
@@ -77,12 +99,13 @@ function CampaignsSection() {
   const utils = trpc.useUtils();
   const [showNew, setShowNew] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [sendingId, setSendingId] = useState<number | null>(null);
   const [form, setForm] = useState({
     name: "",
     subject: "",
     bodyHtml: "",
     type: "custom" as "newsletter" | "drip" | "announcement" | "follow_up" | "custom",
-    status: "draft" as "draft" | "scheduled" | "sending" | "sent" | "paused" | "cancelled",
+    status: "draft" as CampaignStatus,
     scheduledAt: "",
   });
 
@@ -168,12 +191,16 @@ function CampaignsSection() {
                       c.status === "scheduled" ? "bg-muted text-foreground" :
                       c.status === "paused" ? "bg-muted text-foreground font-semibold" :
                       c.status === "cancelled" ? "bg-[oklch(0.30_0.02_262)] text-white" :
+                      c.status === "partially_failed" ? "bg-destructive/10 text-destructive" :
                       "bg-muted text-muted-foreground"
-                    }>{c.status || "draft"}</Badge>
+                    }>{campaignStatusLabel(c.status)}</Badge>
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">{c.scheduledAt ? new Date(c.scheduledAt).toLocaleDateString() : "—"}</TableCell>
-                  <TableCell>
-                    <Button variant="ghost" size="sm" onClick={() => openEdit(c)}>
+                  <TableCell className="whitespace-nowrap">
+                    <Button variant="ghost" size="sm" onClick={() => setSendingId(c.id)} title="Recipients & send">
+                      <Send className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => openEdit(c)} title="Edit">
                       <Edit className="h-4 w-4" />
                     </Button>
                   </TableCell>
@@ -238,7 +265,8 @@ function CampaignsSection() {
                   subject: form.subject,
                   bodyHtml: form.bodyHtml,
                   type: form.type,
-                  status: form.status,
+                  // partially_failed is set by the sender only; leave it untouched on edit.
+                  status: form.status === "partially_failed" ? undefined : form.status,
                   scheduledAt,
                 };
                 if (editingId) {
@@ -254,7 +282,230 @@ function CampaignsSection() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {sendingId !== null && <CampaignSendDialog campaignId={sendingId} onClose={() => setSendingId(null)} />}
     </Card>
+  );
+}
+
+// ============================================
+// CAMPAIGN RECIPIENTS + SEND
+// ============================================
+const CONTACT_TYPES = ["lead", "prospect", "customer", "partner", "investor", "donor", "vendor", "other"] as const;
+const PIPELINE_STAGES = ["new", "contacted", "qualified", "proposal", "negotiation", "won", "lost"] as const;
+
+function CampaignSendDialog({ campaignId, onClose }: { campaignId: number; onClose: () => void }) {
+  const utils = trpc.useUtils();
+  const { data: campaign } = trpc.crm.campaigns.get.useQuery({ id: campaignId });
+  const { data: recipients, isLoading } = trpc.crm.campaigns.recipients.useQuery({ campaignId });
+  const [picked, setPicked] = useState<number[]>([]);
+  const [segTypes, setSegTypes] = useState<Array<(typeof CONTACT_TYPES)[number]>>([]);
+  const [segStages, setSegStages] = useState<Array<(typeof PIPELINE_STAGES)[number]>>([]);
+  const [testTo, setTestTo] = useState("");
+  const [scheduleAt, setScheduleAt] = useState(() => toDateTimeLocalValue(new Date(Date.now() + 60 * 60 * 1000)));
+  const [confirm, setConfirm] = useState<"send" | "schedule" | null>(null);
+
+  const refresh = () => {
+    utils.crm.campaigns.recipients.invalidate({ campaignId });
+    utils.crm.campaigns.get.invalidate({ id: campaignId });
+    utils.crm.campaigns.list.invalidate();
+  };
+  const onError = (e: { message: string }) => toast.error(e.message);
+
+  const addRecipients = trpc.crm.campaigns.addRecipients.useMutation({
+    onSuccess: (r) => {
+      toast.success(`Added ${r.added} recipient${r.added === 1 ? "" : "s"}${r.skipped.length ? ` (${r.skipped.length} skipped)` : ""}`);
+      setPicked([]);
+      refresh();
+    },
+    onError,
+  });
+  const removeRecipient = trpc.crm.campaigns.removeRecipient.useMutation({ onSuccess: refresh, onError });
+  const sendTest = trpc.crm.campaigns.sendTest.useMutation({ onSuccess: () => toast.success(`Test sent to ${testTo}`), onError });
+  const send = trpc.crm.campaigns.send.useMutation({
+    onSuccess: (r) => {
+      if (r.failed > 0) toast.warning(`Sent ${r.sent}, ${r.failed} failed — send again to retry the failures`);
+      else toast.success(`Sent to ${r.sent} recipient${r.sent === 1 ? "" : "s"}${r.skipped ? ` (${r.skipped} skipped)` : ""}`);
+      refresh();
+    },
+    onError: (e) => { onError(e); refresh(); },
+  });
+  const schedule = trpc.crm.campaigns.schedule.useMutation({
+    onSuccess: (r) => { toast.success(`Scheduled for ${new Date(r.scheduledAt).toLocaleString()}`); refresh(); },
+    onError,
+  });
+  const unschedule = trpc.crm.campaigns.unschedule.useMutation({ onSuccess: () => { toast.success("Schedule cleared"); refresh(); }, onError });
+
+  const rows = recipients ?? [];
+  const editable = canEditRecipients(campaign?.status);
+  const unsent = unsentRecipientCount(rows);
+  const onCampaign = new Set(rows.map((r) => r.contactId));
+  const scheduleDate = parseDateTimeLocal(scheduleAt);
+  const toggleIn = <T,>(list: T[], v: T, on: boolean) => (on ? [...list, v] : list.filter((x) => x !== v));
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {campaign?.name ?? "Campaign"}
+            {campaign && <Badge variant="outline" className="capitalize">{campaignStatusLabel(campaign.status)}</Badge>}
+          </DialogTitle>
+          <DialogDescription>
+            Subject: {campaign?.subject ?? "…"} · Merge fields: {"{{firstName}}"}, {"{{lastName}}"}, {"{{company}}"}, {"{{jobTitle}}"}; fallback with {"{{firstName|there}}"}.
+            {campaign?.status === "scheduled" && campaign.scheduledAt && <> · Scheduled for {new Date(campaign.scheduledAt).toLocaleString()}</>}
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* Recipients */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold flex items-center gap-1"><Users className="h-4 w-4" /> Recipients ({rows.length})</h3>
+            <div className="flex gap-1 flex-wrap">
+              {recipientStatusCounts(rows).map(([s, n]) => <Badge key={s} variant="outline" className="capitalize">{s}: {n}</Badge>)}
+            </div>
+          </div>
+          {isLoading ? (
+            <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin" /></div>
+          ) : rows.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No recipients yet — add contacts below.</p>
+          ) : (
+            <div className="max-h-56 overflow-y-auto border rounded-md">
+              <Table>
+                <TableHeader>
+                  <TableRow><TableHead>Contact</TableHead><TableHead>Email</TableHead><TableHead>Status</TableHead><TableHead>Sent</TableHead><TableHead></TableHead></TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.map((r) => (
+                    <TableRow key={r.id}>
+                      <TableCell className="font-medium">{r.contactName ?? `#${r.contactId}`}</TableCell>
+                      <TableCell className="text-sm">{r.email}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className={`capitalize ${r.status === "failed" ? "text-destructive border-destructive/40" : ""}`} title={r.error ?? undefined}>{r.status ?? "pending"}</Badge>
+                        {r.error && <div className="text-xs text-muted-foreground mt-1 max-w-[220px] truncate" title={r.error}>{r.error}</div>}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{r.sentAt ? new Date(r.sentAt).toLocaleString() : "—"}</TableCell>
+                      <TableCell>
+                        {editable && (r.status === "pending" || r.status === "failed" || r.status === "skipped") && (
+                          <Button variant="ghost" size="sm" disabled={removeRecipient.isPending} onClick={() => removeRecipient.mutate({ campaignId, recipientId: r.id })} title="Remove">
+                            <X className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </div>
+
+        {editable && (
+          <div className="grid md:grid-cols-2 gap-4 border-t pt-4">
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold">Add contacts</h3>
+              <ContactMultiPicker value={picked} onChange={setPicked} excludeIds={onCampaign} />
+              <Button size="sm" disabled={!picked.length || addRecipients.isPending} onClick={() => addRecipients.mutate({ campaignId, contactIds: picked })}>
+                <Plus className="h-4 w-4 mr-1" /> Add {picked.length || ""} selected
+              </Button>
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold">Add a segment</h3>
+              <p className="text-xs text-muted-foreground">Active contacts with an email who have not opted out.</p>
+              <div>
+                <Label className="text-xs">Contact types</Label>
+                <div className="flex flex-wrap gap-2 mt-1">
+                  {CONTACT_TYPES.map((t) => (
+                    <label key={t} className="flex items-center gap-1 text-xs capitalize">
+                      <Checkbox checked={segTypes.includes(t)} onCheckedChange={(v) => setSegTypes((l) => toggleIn(l, t, v === true))} /> {t}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <Label className="text-xs">Pipeline stages</Label>
+                <div className="flex flex-wrap gap-2 mt-1">
+                  {PIPELINE_STAGES.map((t) => (
+                    <label key={t} className="flex items-center gap-1 text-xs capitalize">
+                      <Checkbox checked={segStages.includes(t)} onCheckedChange={(v) => setSegStages((l) => toggleIn(l, t, v === true))} /> {t}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                <Button size="sm" variant="outline" disabled={(!segTypes.length && !segStages.length) || addRecipients.isPending}
+                  onClick={() => addRecipients.mutate({ campaignId, segment: { contactTypes: segTypes, pipelineStages: segStages } })}>
+                  Add segment
+                </Button>
+                {(campaign?.targetContactTypes || campaign?.targetPipelineStages || campaign?.targetTags) && (
+                  <Button size="sm" variant="outline" disabled={addRecipients.isPending}
+                    onClick={() => addRecipients.mutate({ campaignId, segment: { useCampaignTargeting: true } })}>
+                    Use campaign targeting
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Test + send */}
+        <div className="border-t pt-4 space-y-3">
+          <div className="flex items-end gap-2">
+            <div className="flex-1">
+              <Label className="text-xs">Send a test to</Label>
+              <Input type="email" value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="you@company.com" />
+            </div>
+            <Button variant="outline" disabled={!testTo.includes("@") || sendTest.isPending} onClick={() => sendTest.mutate({ campaignId, to: testTo.trim() })}>
+              {sendTest.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Send test
+            </Button>
+          </div>
+          {canSendCampaign(campaign?.status) ? (
+            <div className="flex items-end gap-2 flex-wrap">
+              <div>
+                <Label className="text-xs">Schedule for</Label>
+                <Input type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} />
+              </div>
+              <Button variant="outline" disabled={!unsent || !scheduleDate || schedule.isPending} onClick={() => setConfirm("schedule")}>
+                <Clock className="h-4 w-4 mr-1" /> Schedule
+              </Button>
+              {campaign?.status === "scheduled" && (
+                <Button variant="ghost" disabled={unschedule.isPending} onClick={() => unschedule.mutate({ campaignId })}>Clear schedule</Button>
+              )}
+              <div className="flex-1" />
+              <Button disabled={!unsent || send.isPending} onClick={() => setConfirm("send")}>
+                {send.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-1" />}
+                Send now ({unsent})
+              </Button>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">This campaign is {campaignStatusLabel(campaign?.status)}; nothing left to send.</p>
+          )}
+        </div>
+
+        <AlertDialog open={confirm !== null} onOpenChange={(o) => { if (!o) setConfirm(null); }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{confirm === "send" ? "Send campaign now?" : "Schedule campaign?"}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {confirm === "send"
+                  ? `This emails ${unsent} recipient${unsent === 1 ? "" : "s"} immediately. Recipients already sent to are never emailed again.`
+                  : `This emails ${unsent} recipient${unsent === 1 ? "" : "s"} at ${scheduleDate?.toLocaleString() ?? "the chosen time"} (checked every 5 minutes).`}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={() => {
+                if (confirm === "send") send.mutate({ campaignId });
+                else if (scheduleDate) schedule.mutate({ campaignId, scheduledAt: scheduleDate });
+                setConfirm(null);
+              }}>
+                {confirm === "send" ? "Send" : "Schedule"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </DialogContent>
+    </Dialog>
   );
 }
 

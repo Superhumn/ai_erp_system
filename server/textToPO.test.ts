@@ -13,7 +13,9 @@ vi.mock("./db", () => ({
   getVendors: vi.fn(),
   getVendorById: vi.fn(),
   createPurchaseOrder: vi.fn(),
-  createPurchaseOrderItem: vi.fn(),
+  createPurchaseOrderItem: vi.fn().mockResolvedValue({ id: 7 }),
+  getRawMaterialById: vi.fn().mockResolvedValue({ id: 1, unit: "ton" }),
+  createPurchaseOrderRawMaterialLink: vi.fn().mockResolvedValue({ id: 1 }),
 }));
 
 import { invokeLLM } from "./_core/llm";
@@ -186,7 +188,7 @@ describe("Text to PO Service", () => {
       };
 
       vi.mocked(db.createPurchaseOrder).mockResolvedValue(mockPO as any);
-      vi.mocked(db.createPurchaseOrderItem).mockResolvedValue({} as any);
+      vi.mocked(db.createPurchaseOrderItem).mockResolvedValue({ id: 7 } as any);
 
       const preview = {
         vendorId: 10,
@@ -227,8 +229,13 @@ describe("Text to PO Service", () => {
           quantity: "3",
           unitPrice: "5.50",
           totalAmount: "16.50",
-          productId: 1,
+          // A raw material is not a product: the FK stays null and the
+          // material is linked through purchaseOrderRawMaterials instead.
+          productId: null,
         })
+      );
+      expect(db.createPurchaseOrderRawMaterialLink).toHaveBeenCalledWith(
+        expect.objectContaining({ rawMaterialId: 1, orderedQuantity: "3", unit: "ton" })
       );
       expect(result.id).toBe(42);
       expect(result.status).toBe("draft");
@@ -237,7 +244,7 @@ describe("Text to PO Service", () => {
     it("should generate PO number in standard format", async () => {
       const mockPO = { id: 1, vendorId: 10, poNumber: "", status: "draft" };
       vi.mocked(db.createPurchaseOrder).mockResolvedValue(mockPO as any);
-      vi.mocked(db.createPurchaseOrderItem).mockResolvedValue({} as any);
+      vi.mocked(db.createPurchaseOrderItem).mockResolvedValue({ id: 7 } as any);
 
       const preview = {
         vendorId: 10,

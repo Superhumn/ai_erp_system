@@ -491,6 +491,20 @@
 			"when": 1787700400000,
 			"tag": "0069_bills",
 			"breakpoints": true
+		},
+		{
+			"idx": 70,
+			"version": "5",
+			"when": 1787700500000,
+			"tag": "0070_bank_payment_reconciliation",
+			"breakpoints": true
+		},
+		{
+			"idx": 71,
+			"version": "5",
+			"when": 1787700600000,
+			"tag": "0071_email_sequence_enrollments",
+			"breakpoints": true
 		}
 	]
 }

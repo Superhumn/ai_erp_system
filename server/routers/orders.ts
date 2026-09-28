@@ -1,10 +1,10 @@
 // appRouter.orders — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { protectedProcedure, router } from "../_core/trpc";
+import { router } from "../_core/trpc";
 import * as db from "../db";
 import { scopeAllows } from "../_core/scope";
-import { resolveRequestScope, scopedProcedure, createAuditLog, generateNumber } from "./_shared";
+import { resolveRequestScope, scopedInternalProcedure, internalProcedure, createAuditLog, generateNumber } from "./_shared";
 
 // ============================================
 // SALES - ORDERS
@@ -12,16 +12,20 @@ import { resolveRequestScope, scopedProcedure, createAuditLog, generateNumber } 
 export const ordersRouter = router({
     // Scope derived server-side from the caller's entity access (ctx.scope); status/customerId
     // remain client-side non-security filters. companyId is no longer a client input.
-    list: scopedProcedure
+    // Sales orders are internal-staff work: every procedure here also blocks the portal roles
+    // (vendor, copacker, investor, contractor) the way `create` does.
+    list: scopedInternalProcedure
       .input(z.object({
         status: z.string().optional(),
         customerId: z.number().optional(),
       }).optional())
       .query(({ input, ctx }) => db.getOrders(ctx.scope, { status: input?.status, customerId: input?.customerId })),
-    get: scopedProcedure
+    get: scopedInternalProcedure
       .input(z.object({ id: z.number() }))
       .query(({ input, ctx }) => db.getOrderWithItems(input.id, ctx.scope)),
-    create: protectedProcedure
+    // Sales orders are internal-staff work; portal roles (vendor, copacker, investor, contractor)
+    // must not be able to raise them.
+    create: internalProcedure
       .input(z.object({
         companyId: z.number().optional(),
         customerId: z.number().optional(),
@@ -70,7 +74,7 @@ export const ordersRouter = router({
         await createAuditLog(ctx.user.id, 'create', 'order', result.id, orderNumber);
         return result;
       }),
-    update: scopedProcedure
+    update: scopedInternalProcedure
       .input(z.object({
         id: z.number(),
         status: z.enum(['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded']).optional(),
@@ -102,7 +106,7 @@ export const ordersRouter = router({
 
         return { success: true };
       }),
-    delete: scopedProcedure
+    delete: scopedInternalProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input, ctx }) => {
         const existing = await db.getOrderById(input.id, ctx.scope);
@@ -113,7 +117,7 @@ export const ordersRouter = router({
         await createAuditLog(ctx.user.id, 'delete', 'order', input.id);
         return { success: true };
       }),
-    bulkDelete: scopedProcedure
+    bulkDelete: scopedInternalProcedure
       .input(z.object({ ids: z.array(z.number()) }))
       .mutation(async ({ input, ctx }) => {
         let deleted = 0;

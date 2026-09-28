@@ -4,7 +4,8 @@ import { z } from "zod";
 import { router } from "../_core/trpc";
 import { sendEmail } from "../_core/email";
 import * as db from "../db";
-import { adminProcedure } from "./_shared";
+import { checkEmployeeInvite } from "../employeeLinkService";
+import { adminProcedure, assertNonEmptyScope, resolveRequestScope } from "./_shared";
 
 // Team Invites (email-based invite flow)
 export const teamInvitesRouter = router({
@@ -14,8 +15,20 @@ export const teamInvitesRouter = router({
         email: z.string().email(),
         name: z.string().optional(),
         role: z.enum(["user", "admin", "finance", "ops", "legal", "exec", "copacker", "vendor", "contractor"]).optional(),
+        // Invite an existing employee to the employee portal. team_invites has
+        // no column for it, so the new login is linked at signup by matching
+        // the invite email to the employee's work/personal email (checked here).
+        employeeId: z.number().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        let companyId: number | undefined;
+        if (input.employeeId != null) {
+          const scope = assertNonEmptyScope(await resolveRequestScope(ctx.user));
+          const check = await checkEmployeeInvite(input.employeeId, input.email, scope);
+          if (check.ok === false) throw new TRPCError({ code: check.code, message: check.message });
+          companyId = check.employee.companyId ?? undefined;
+        }
+
         // 1. Generate a secure token
         const crypto = await import("crypto");
         const token = crypto.randomBytes(32).toString("hex");
@@ -23,6 +36,7 @@ export const teamInvitesRouter = router({
         // 2. Create invite record (expires in 7 days)
         const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
         await db.createTeamInvite({
+          ...(companyId != null ? { companyId } : {}),
           email: input.email.toLowerCase(),
           name: input.name,
           role: input.role || "user",

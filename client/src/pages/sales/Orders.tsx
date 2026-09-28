@@ -33,11 +33,19 @@ import {
 } from "@/components/ui/alert-dialog";
 import { SpreadsheetTable, Column } from "@/components/SpreadsheetTable";
 import { DetailSheet } from "@/components/DetailSheet";
-import { ShoppingCart, Plus, Loader2, ExternalLink, Trash2 } from "lucide-react";
+import { ShoppingCart, Plus, Loader2, ExternalLink, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { Link } from "wouter";
 import { formatCurrency } from "@/lib/format";
+import {
+  type DraftOrderLine,
+  emptyOrderLine,
+  isUsableOrderLine,
+  orderItemsPayload,
+  orderLineTotal,
+  orderLinesSubtotal,
+} from "@/lib/orderLineItems";
 
 // Must stay a subset of the `orders.status` enum (drizzle/schema.ts) — see Orders.test.ts.
 export const orderStatusOptions = [
@@ -122,7 +130,22 @@ export default function Orders() {
     tax: "",
     total: "",
   });
+  // Optional line items. While at least one usable line exists the subtotal and total are
+  // derived from them; with none, the totals-only form works as it always has.
+  const [lineItems, setLineItems] = useState<DraftOrderLine[]>([]);
+  const hasLineItems = lineItems.some(isUsableOrderLine);
   const [newCustomerName, setNewCustomerName] = useState("");
+
+  const applyLineItems = (next: DraftOrderLine[]) => {
+    setLineItems(next);
+    if (next.some(isUsableOrderLine)) {
+      const subtotal = orderLinesSubtotal(next);
+      const total = subtotal + (parseFloat(formData.tax) || 0);
+      setFormData({ ...formData, subtotal: subtotal.toFixed(2), total: total.toFixed(2) });
+    }
+  };
+  const updateLine = (index: number, patch: Partial<DraftOrderLine>) =>
+    applyLineItems(lineItems.map((line, i) => (i === index ? { ...line, ...patch } : line)));
 
   const utils = trpc.useUtils();
   const { data: orders, isLoading } = trpc.orders.list.useQuery();
@@ -143,6 +166,7 @@ export default function Orders() {
       toast.success("Order created successfully");
       setIsOpen(false);
       setFormData({ customerId: 0, subtotal: "", tax: "", total: "" });
+      setLineItems([]);
       setNewCustomerName("");
       utils.orders.list.invalidate();
       utils.customers.list.invalidate();
@@ -231,12 +255,15 @@ export default function Orders() {
         return;
       }
     }
+    // Blank lines are dropped; with no usable line the key is omitted entirely (totals-only order).
+    const items = orderItemsPayload(lineItems);
     createOrder.mutate({
       customerId: customerId || undefined,
       orderDate: new Date(),
       subtotal: formData.subtotal,
       taxAmount: formData.tax || "0",
       totalAmount: formData.total,
+      ...(items ? { items } : {}),
     });
   };
 
@@ -306,6 +333,68 @@ export default function Orders() {
                     </div>
                   )}
                 </div>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Line items</Label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => applyLineItems([...lineItems, emptyOrderLine()])}
+                    >
+                      <Plus className="h-3.5 w-3.5 mr-1" />
+                      Add line
+                    </Button>
+                  </div>
+                  {lineItems.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      Optional — add lines to itemize the order, or just enter the totals below.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {lineItems.map((line, index) => (
+                        <div key={index} className="grid grid-cols-[1fr_4.5rem_6rem_5rem_auto] gap-2 items-center">
+                          <Input
+                            aria-label={`Line ${index + 1} description`}
+                            placeholder="Description"
+                            value={line.name}
+                            onChange={(e) => updateLine(index, { name: e.target.value })}
+                          />
+                          <Input
+                            aria-label={`Line ${index + 1} quantity`}
+                            type="number"
+                            step="any"
+                            min="0"
+                            placeholder="Qty"
+                            value={line.quantity}
+                            onChange={(e) => updateLine(index, { quantity: e.target.value })}
+                          />
+                          <Input
+                            aria-label={`Line ${index + 1} unit price`}
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder="Unit price"
+                            value={line.unitPrice}
+                            onChange={(e) => updateLine(index, { unitPrice: e.target.value })}
+                          />
+                          <span className="text-sm font-mono text-right" aria-label={`Line ${index + 1} total`}>
+                            {formatCurrency(orderLineTotal(line))}
+                          </span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`Remove line ${index + 1}`}
+                            onClick={() => applyLineItems(lineItems.filter((_, i) => i !== index))}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <div className="grid grid-cols-3 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="subtotal">Subtotal</Label>
@@ -314,6 +403,8 @@ export default function Orders() {
                       type="number"
                       step="0.01"
                       value={formData.subtotal}
+                      readOnly={hasLineItems}
+                      title={hasLineItems ? "Computed from the line items" : undefined}
                       onChange={(e) => {
                         const subtotal = e.target.value;
                         const tax = parseFloat(formData.tax) || 0;

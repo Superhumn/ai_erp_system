@@ -1533,6 +1533,16 @@ async function startServer() {
       });
     }
 
+    // Email sequence steps + scheduled CRM campaigns (every 5 minutes). Rows
+    // are claimed with guarded UPDATEs, so restarts/overlap never double-send.
+    import("../sequenceRunner").then(({ startSequenceRunner }) => {
+      startSequenceRunner();
+    }).catch(err => {
+      logger.error("Failed to start sequence runner — email sequences and scheduled campaigns disabled", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+
     // Start email inbox polling (IMAP) — supports multiple inboxes
     (async () => {
       try {

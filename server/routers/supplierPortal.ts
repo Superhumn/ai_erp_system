@@ -14,6 +14,9 @@ export const supplierPortalRouter = router({
       .query(async ({ input }) => {
         const session = await db.getSupplierPortalSession(input.token);
         if (!session) return null;
+        // Same rule as every other portal procedure: a completed / expired /
+        // revoked session no longer opens the PO.
+        if (session.status !== 'active') return null;
         if (new Date(session.expiresAt) < new Date()) {
           await db.updateSupplierPortalSession(session.id, { status: 'expired' });
           return null;

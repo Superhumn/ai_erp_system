@@ -11,6 +11,21 @@ import { adminProcedure, internalProcedure, createAuditLog, generateNumber } fro
 // ============================================
 // AI AGENT SYSTEM
 // ============================================
+
+/**
+ * Push an agent task's new status onto the project task it was assigned from
+ * (if any), so the project page and its owner see the result immediately
+ * rather than on the next task read. Never fails the calling mutation.
+ */
+async function writeBackToProjectTask(agentTaskId: number): Promise<void> {
+  try {
+    const { syncAgentStatusToProjectTask } = await import("../taskAgentBridge");
+    await syncAgentStatusToProjectTask(agentTaskId);
+  } catch (err) {
+    console.warn(`[aiAgent] project-task write-back failed for task ${agentTaskId}:`, err);
+  }
+}
+
 export const aiAgentRouter = router({
     // Tasks
     tasks: router({
@@ -128,6 +143,7 @@ export const aiAgentRouter = router({
                 message: `CRM deal created for ${company}`,
                 details: JSON.stringify(result),
               });
+              await writeBackToProjectTask(input.id);
               return { success: true, autoExecuted: true, dealId, company };
             } catch (error: any) {
               await db.updateAiAgentTask(input.id, {
@@ -144,6 +160,7 @@ export const aiAgentRouter = router({
             }
           }
 
+          await writeBackToProjectTask(input.id);
           return { success: true };
         }),
       
@@ -162,6 +179,7 @@ export const aiAgentRouter = router({
             status: 'warning',
             message: `Task rejected by ${ctx.user.name}: ${input.reason || 'No reason provided'}`,
           });
+          await writeBackToProjectTask(input.id);
           return { success: true };
         }),
 
@@ -210,6 +228,7 @@ export const aiAgentRouter = router({
               message: 'Errand executed successfully (inline approval)',
               details: JSON.stringify(r.data),
             });
+            await writeBackToProjectTask(input.id);
             return { success: true, result: r.data };
           } catch (error: any) {
             await db.updateAiAgentTask(input.id, {
@@ -222,6 +241,7 @@ export const aiAgentRouter = router({
               status: 'error',
               message: `Errand execution failed: ${error.message}`,
             });
+            await writeBackToProjectTask(input.id);
             throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
           }
         }),
@@ -376,14 +396,24 @@ export const aiAgentRouter = router({
                   status: 'draft',
                 });
                 
-                // Create PO line item for the raw material
+                // Create PO line item for the raw material. `material.id` is a
+                // rawMaterials id (purchaseOrderItems.productId references
+                // products), so the line carries no productId and is linked to
+                // the material through purchaseOrderRawMaterials — the same
+                // shape the scheduler path and purchaseOrders.create produce.
                 if (material) {
-                  await db.createPurchaseOrderItem({
+                  const poItem = await db.createPurchaseOrderItem({
                     purchaseOrderId: po.id,
                     description: material.name,
                     quantity: quantity.toString(),
                     unitPrice: unitCost.toFixed(2),
                     totalAmount: subtotal.toFixed(2),
+                  });
+                  await db.createPurchaseOrderRawMaterialLink({
+                    purchaseOrderItemId: poItem.id,
+                    rawMaterialId: material.id,
+                    orderedQuantity: quantity.toString(),
+                    unit: material.unit || 'EA',
                   });
                   
                   // Update raw material with on-order quantity
@@ -780,7 +810,24 @@ export const aiAgentRouter = router({
               message: `Task executed successfully`,
               details: JSON.stringify(result),
             });
+
+            // Tell whoever approved (or requested) the task that it ran; the
+            // executing admin is the fallback. Nobody used to be told.
+            const notifyUserId = task.approvedBy ?? (Number(taskData.createdBy ?? taskData.requestedBy) || ctx.user.id);
+            await db.createNotification({
+              userId: notifyUserId,
+              type: 'success',
+              title: `AI task completed: ${task.taskType.replace(/_/g, ' ')}`,
+              message: result?.poNumber
+                ? `Task #${task.id} created draft purchase order ${result.poNumber}.`
+                : `Task #${task.id} (${task.taskType.replace(/_/g, ' ')}) executed successfully.`,
+              entityType: 'ai_agent_task',
+              entityId: task.id,
+              link: '/ai/approvals',
+              metadata: { taskType: task.taskType, result },
+            });
             
+            await writeBackToProjectTask(input.id);
             return { success: true, result };
           } catch (error: any) {
             await db.updateAiAgentTask(input.id, {
@@ -795,6 +842,7 @@ export const aiAgentRouter = router({
               status: 'error',
               message: `Task execution failed: ${error.message}`,
             });
+            await writeBackToProjectTask(input.id);
             
             throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
           }

@@ -172,6 +172,42 @@ export interface DocumentMessageContent {
 
 const EMPTY_MESSAGE_CONTENT = { content: [] as any[], hasImageContent: false, isPdf: false };
 
+let pdfRasterizerChecked: string | null | undefined;
+
+/**
+ * Scanned-PDF OCR renders pages with GraphicsMagick + Ghostscript. Check once
+ * that `gm` is on PATH so a missing package surfaces as a clear message
+ * instead of a cryptic spawn error deep inside pdf2pic.
+ */
+export function assertPdfRasterizerAvailable(): void {
+  if (pdfRasterizerChecked === undefined) {
+    // GraphicsMagick reports its version even when its PDF delegate is
+    // missing, so probe Ghostscript separately: without `gs`, `gm convert`
+    // fails on the first PDF page with an opaque delegate error.
+    const missing: string[] = [];
+    for (const [name, probe] of [["GraphicsMagick (gm)", "gm version"], ["Ghostscript (gs)", "gs --version"]] as const) {
+      try {
+        execSync(probe, { stdio: ["ignore", "pipe", "ignore"] });
+      } catch {
+        missing.push(name);
+      }
+    }
+    pdfRasterizerChecked = missing.length === 0 ? "ok" : `missing: ${missing.join(", ")}`;
+  }
+  if (pdfRasterizerChecked !== "ok") {
+    throw new Error(
+      `Scanned-PDF OCR needs GraphicsMagick and Ghostscript on the server (${pdfRasterizerChecked}). ` +
+        "Install them with `apk add graphicsmagick ghostscript` or `apt install graphicsmagick ghostscript`. " +
+        "The PDF has no extractable text, so it cannot be parsed without them.",
+    );
+  }
+}
+
+/** Test hook: forget the cached rasterizer probe. */
+export function resetPdfRasterizerCheck(): void {
+  pdfRasterizerChecked = undefined;
+}
+
 /**
  * Render every sheet of an Excel workbook as CSV text so the LLM can read it.
  * Excel files are zipped XML: handing the raw bytes to the text branch below
@@ -309,10 +345,12 @@ export async function buildDocumentMessageContent(
             };
 
             console.log("[DocumentImport] Converting PDF to images for OCR...");
+            assertPdfRasterizerAvailable();
+            // pdf2pic drives GraphicsMagick (`gm`), which renders PDF pages via
+            // Ghostscript. Both are installed in the production image; see
+            // Dockerfile. GraphicsMagick is used rather than ImageMagick because
+            // distro ImageMagick builds ship a policy.xml that refuses PDFs.
             const convert = fromBuffer(buffer, options);
-
-            // Configure to use ImageMagick (not GraphicsMagick)
-            convert.setGMClass(true); // true = use ImageMagick
 
             // Convert all pages to base64 for vision OCR
             const imageContents: any[] = [];

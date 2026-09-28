@@ -230,17 +230,30 @@ export async function createPOFromPreview(
     status: "draft",
   });
 
-  // Create PO items
+  // Create PO items. `rawMaterialId` is a rawMaterials id and
+  // purchaseOrderItems.productId references products, so the line is created
+  // without a productId and linked to the material through the
+  // purchaseOrderRawMaterials junction — the same shape purchaseOrders.create
+  // and the AI agent produce.
   if (preview.items && preview.items.length > 0) {
     for (const item of preview.items) {
-      await db.createPurchaseOrderItem({
+      const poItem = await db.createPurchaseOrderItem({
         purchaseOrderId: result.id,
         description: item.description,
         quantity: item.quantity,
         unitPrice: item.unitPrice,
         totalAmount: item.totalAmount,
-        productId: item.rawMaterialId || undefined,
+        productId: null,
       });
+      if (item.rawMaterialId) {
+        const rawMaterial = await db.getRawMaterialById(item.rawMaterialId);
+        await db.createPurchaseOrderRawMaterialLink({
+          purchaseOrderItemId: poItem.id,
+          rawMaterialId: item.rawMaterialId,
+          orderedQuantity: item.quantity,
+          unit: rawMaterial?.unit || "EA",
+        });
+      }
     }
   }
 
