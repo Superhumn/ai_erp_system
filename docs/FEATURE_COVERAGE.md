@@ -13,11 +13,11 @@ node scripts/feature-coverage.mjs
 
 ## Summary
 
-- Top-level routers: **123**
-- Procedures (live `appRouter`): **1170**, reached from client: **945** (81%)
+- Top-level routers: **131**
+- Procedures (live `appRouter`): **1264**, reached from client: **1023** (81%)
 - 🔴 **ORPHANED** (0 procedures reached — real backend with no frontend): **0**
-- 🟡 **PARTIAL** (<50% of procedures reached): **0**
-- 🟢 **COVERED** (≥50% reached): **118**
+- 🟡 **PARTIAL** (<50% of procedures reached): **1**
+- 🟢 **COVERED** (≥50% reached): **125**
 - ⚪ **HEADLESS** (0 reached, but expected — stubs/helpers/plumbing): **5**
 
 ## Caveats
@@ -32,7 +32,29 @@ node scripts/feature-coverage.mjs
 _None._
 ## 🟡 Partial routers — page exists, capabilities under-wired
 
-_None._
+| Router | reached / total | % | unreached |
+|---|---|---|---|
+| `vendorQuotes` | 13 / 27 | 48% | 14 |
+
+<details><summary>Unreached procedures per partial router</summary>
+
+**`vendorQuotes`** (14 unreached):
+- `vendorQuotes.dashboardStats` _(query)_
+- `vendorQuotes.emails.list` _(query)_
+- `vendorQuotes.emails.parseIncoming` _(mutation)_
+- `vendorQuotes.emails.previewAttachment` _(mutation)_
+- `vendorQuotes.emails.previewEmail` _(mutation)_
+- `vendorQuotes.quotes.analyzeAndRank` _(mutation)_
+- `vendorQuotes.quotes.get` _(query)_
+- `vendorQuotes.quotes.getBest` _(query)_
+- `vendorQuotes.quotes.update` _(mutation)_
+- `vendorQuotes.responsiveness.byVendor` _(query)_
+- `vendorQuotes.responsiveness.closeStaleInvitations` _(mutation)_
+- `vendorQuotes.responsiveness.leaderboard` _(query)_
+- `vendorQuotes.rfqs.get` _(query)_
+- `vendorQuotes.rfqs.update` _(mutation)_
+
+</details>
 
 ## ⚪ Headless (expected — no UI intended)
 
@@ -44,4 +66,4 @@ _None._
 
 ## 🟢 Covered routers
 
-`accounts` (75%) · `ai` (100%) · `aiAgent` (86%) · `alerts` (71%) · `allocations` (100%) · `auditLogs` (100%) · `auth` (100%) · `autonomousWorkflows` (62%) · `backgroundTasks` (100%) · `banking` (100%) · `bom` (100%) · `brandAmbassadors` (100%) · `calendar` (100%) · `capTable` (87%) · `code` (100%) · `cogs` (83%) · `companies` (50%) · `contracts` (83%) · `copackerPortal` (100%) · `crm` (63%) · `customers` (100%) · `customs` (78%) · `dashboard` (50%) · `dataRoom` (70%) · `departments` (100%) · `disputes` (50%) · `documentImport` (100%) · `documents` (100%) · `edi` (82%) · `ediAi` (100%) · `emailCannedResponses` (100%) · `emailCredentials` (91%) · `emailScanning` (62%) · `emailSequences` (100%) · `employeePayments` (50%) · `employeePortal` (86%) · `employees` (57%) · `exerciseRequests` (100%) · `financeAi` (75%) · `financialModel` (100%) · `financialReports` (100%) · `fireflies` (100%) · `forecasting` (75%) · `freight` (73%) · `freightQuotes` (80%) · `gmail` (100%) · `googleWorkspace` (100%) · `governmentTenders` (100%) · `grantBid` (80%) · `hrAi` (100%) · `imapCredentials` (80%) · `ingredients` (100%) · `integrations` (70%) · `inventory` (100%) · `inventoryCosting` (62%) · `inventoryLots` (100%) · `inventoryManagement` (100%) · `investmentGrants` (86%) · `investorPortal` (100%) · `investorUpdates` (80%) · `invitations` (60%) · `invoices` (91%) · `kpiGoals` (50%) · `legalAi` (100%) · `legalCases` (67%) · `manufacturingAi` (100%) · `marketing` (91%) · `materialSupply` (100%) · `nda` (73%) · `notes` (75%) · `notifications` (100%) · `offerLetters` (83%) · `opsAutomations` (71%) · `opsForms` (89%) · `opsReports` (75%) · `opsViews` (75%) · `orderItems` (50%) · `orders` (100%) · `payments` (80%) · `pm` (93%) · `poReceiving` (100%) · `priceBook` (83%) · `productionBatches` (100%) · `products` (100%) · `projects` (100%) · `projectsAi` (100%) · `purchaseOrders` (88%) · `quickbooks` (91%) · `rawMaterialInventory` (100%) · `rawMaterials` (83%) · `rdTaxCredit` (82%) · `recipes` (100%) · `recommendations` (100%) · `reconciliation` (100%) · `recruiting` (100%) · `recurringInvoices` (57%) · `regionalSkus` (67%) · `regulatoryLicenses` (100%) · `salesOrders` (50%) · `sheetsImport` (87%) · `shipments` (100%) · `shopify` (86%) · `subsidiaryFundraising` (100%) · `supplierPortal` (100%) · `supplierScoring` (100%) · `team` (50%) · `teamInvites` (100%) · `timeTracking` (90%) · `transactionalEmail` (50%) · `transactions` (100%) · `transfers` (100%) · `users` (80%) · `vendorNegotiations` (78%) · `vendorPortal` (88%) · `vendorQuotes` (58%) · `vendors` (80%) · `warehouses` (83%) · `workOrders` (100%)
+`accounts` (75%) · `ai` (100%) · `aiAgent` (87%) · `alerts` (71%) · `allocations` (100%) · `auditLogs` (100%) · `auth` (100%) · `autonomousWorkflows` (62%) · `backgroundTasks` (100%) · `banking` (100%) · `bom` (100%) · `brandAmbassadors` (100%) · `calendar` (100%) · `capTable` (87%) · `code` (100%) · `cogs` (83%) · `companies` (83%) · `contracts` (83%) · `copackerPortal` (100%) · `crm` (65%) · `currency` (78%) · `customers` (100%) · `customs` (78%) · `cycleCounts` (91%) · `dashboard` (50%) · `dataRoom` (70%) · `departments` (100%) · `disputes` (75%) · `documentImport` (100%) · `documents` (100%) · `edi` (82%) · `ediAi` (100%) · `emailCannedResponses` (100%) · `emailCredentials` (91%) · `emailScanning` (62%) · `emailSequences` (100%) · `employeePayments` (100%) · `employeePortal` (86%) · `employees` (100%) · `exerciseRequests` (100%) · `financeAi` (75%) · `financialModel` (100%) · `financialReports` (100%) · `fireflies` (100%) · `forecasting` (86%) · `freight` (63%) · `freightControlTower` (100%) · `freightQuotes` (80%) · `gmail` (100%) · `googleWorkspace` (100%) · `governmentTenders` (100%) · `grantBid` (80%) · `hrAi` (100%) · `imapCredentials` (80%) · `ingredients` (100%) · `integrations` (70%) · `inventory` (83%) · `inventoryCosting` (62%) · `inventoryLots` (100%) · `inventoryManagement` (100%) · `investmentGrants` (86%) · `investorPortal` (100%) · `investorUpdates` (80%) · `invitations` (60%) · `invoices` (91%) · `kpiGoals` (50%) · `legalAi` (100%) · `legalCases` (67%) · `manufacturingAi` (100%) · `marketing` (91%) · `materialSupply` (100%) · `nda` (73%) · `notes` (75%) · `notifications` (100%) · `offerLetters` (83%) · `opsAutomations` (71%) · `opsForms` (89%) · `opsReports` (75%) · `opsViews` (75%) · `orderItems` (50%) · `orders` (100%) · `payments` (80%) · `planner` (100%) · `pm` (90%) · `poReceiving` (100%) · `priceBook` (83%) · `productionBatches` (100%) · `products` (100%) · `projects` (100%) · `projectsAi` (100%) · `purchaseOrders` (93%) · `quickAdd` (100%) · `quickbooks` (91%) · `rawMaterialInventory` (100%) · `rawMaterials` (83%) · `rdTaxCredit` (82%) · `recipes` (100%) · `recommendations` (100%) · `reconciliation` (100%) · `recruiting` (100%) · `recurringInvoices` (57%) · `regionalSkus` (67%) · `regulatoryLicenses` (100%) · `salesOrders` (50%) · `scheduling` (100%) · `serials` (80%) · `sheetsImport` (87%) · `shipments` (100%) · `shopify` (86%) · `subsidiaryFundraising` (100%) · `supplierPortal` (100%) · `supplierScoring` (100%) · `team` (50%) · `teamInvites` (100%) · `timeTracking` (90%) · `transactionalEmail` (50%) · `transactions` (100%) · `transfers` (100%) · `users` (100%) · `vendorNegotiations` (78%) · `vendorPortal` (88%) · `vendors` (69%) · `warehouseLocations` (63%) · `warehouses` (83%) · `workOrders` (100%)

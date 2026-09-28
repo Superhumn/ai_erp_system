@@ -103,6 +103,6 @@ export const financialModelRouter = router({
         if (input?.sheetName) {
           query = query.where(eq(fm.sheetName, input.sheetName)) as any;
         }
-        return (await query).map(r => r.category).filter(Boolean);
+        return (await query).map(r => r.category).filter((c): c is string => Boolean(c));
       }),
   });
