@@ -1,7 +1,9 @@
 // appRouter.poReceiving — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
+import { opsProcedure, createAuditLog } from "./_shared";
 
 // PO Receiving
 export const poReceivingRouter = router({
@@ -15,7 +17,10 @@ export const poReceivingRouter = router({
       .query(async ({ input }) => {
         return db.getPoReceivingItems(input.receivingRecordId);
       }),
-    receive: protectedProcedure
+    // Books goods into raw-material inventory and advances the PO. Ops-gated
+    // like every other PO mutation, guarded against draft/cancelled POs like
+    // purchaseOrders.receiveItems, and audited so a receipt is traceable.
+    receive: opsProcedure
       .input(z.object({
         purchaseOrderId: z.number(),
         warehouseId: z.number(),
@@ -31,12 +36,31 @@ export const poReceivingRouter = router({
         })),
       }))
       .mutation(async ({ input, ctx }) => {
+        const po = await db.getPurchaseOrderById(input.purchaseOrderId);
+        if (!po) throw new TRPCError({ code: 'NOT_FOUND', message: 'Purchase order not found' });
+        if (po.status === 'cancelled') {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'This PO has been cancelled and cannot receive items.' });
+        }
+        if (po.status === 'draft') {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Send this draft PO to the supplier before receiving items.' });
+        }
         const result = await db.receivePurchaseOrderItems(
           input.purchaseOrderId,
           input.warehouseId,
           input.items,
-          ctx.user?.id,
+          ctx.user.id,
           input.shipmentId
+        );
+        const after = await db.getPurchaseOrderById(input.purchaseOrderId);
+        await createAuditLog(
+          ctx.user.id, 'update', 'purchaseOrder', po.id, po.poNumber,
+          { status: po.status },
+          {
+            status: after?.status ?? po.status,
+            receivingRecordId: result.id,
+            warehouseId: input.warehouseId,
+            items: input.items.map((i) => ({ purchaseOrderItemId: i.purchaseOrderItemId, quantity: i.quantity })),
+          },
         );
         return result;
       }),

@@ -1,10 +1,10 @@
 // appRouter.orders — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { protectedProcedure, router } from "../_core/trpc";
+import { router } from "../_core/trpc";
 import * as db from "../db";
 import { scopeAllows } from "../_core/scope";
-import { resolveRequestScope, scopedProcedure, createAuditLog, generateNumber } from "./_shared";
+import { resolveRequestScope, scopedProcedure, internalProcedure, createAuditLog, generateNumber } from "./_shared";
 
 // ============================================
 // SALES - ORDERS
@@ -21,7 +21,9 @@ export const ordersRouter = router({
     get: scopedProcedure
       .input(z.object({ id: z.number() }))
       .query(({ input, ctx }) => db.getOrderWithItems(input.id, ctx.scope)),
-    create: protectedProcedure
+    // Sales orders are internal-staff work; portal roles (vendor, copacker, investor, contractor)
+    // must not be able to raise them.
+    create: internalProcedure
       .input(z.object({
         companyId: z.number().optional(),
         customerId: z.number().optional(),

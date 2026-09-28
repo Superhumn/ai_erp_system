@@ -17,7 +17,9 @@ export const workOrdersRouter = router({
       .query(async ({ input }) => {
         return db.getWorkOrderById(input.id);
       }),
-    create: protectedProcedure
+    // Work orders commit raw-material stock, so creating one is an Operations
+    // action (admin/ops/exec), not something any signed-in role may do.
+    create: opsProcedure
       .input(z.object({
         bomId: z.number().optional(),
         recipeId: z.number().optional(),

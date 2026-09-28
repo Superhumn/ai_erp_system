@@ -8,6 +8,7 @@ import { parseTextToPO, createPOPreview, createPOFromPreview } from "../textToPO
 import * as db from "../db";
 import { nanoid } from "nanoid";
 import { purchaseOrderTextEndpoints } from "../naturalLanguageRouterExtensions";
+import { scopeAllows } from "../_core/scope";
 import { opsProcedure, scopedOpsProcedure, createAuditLog, generateNumber } from "./_shared";
 
 // ============================================
@@ -21,9 +22,15 @@ export const purchaseOrdersRouter = router({
         vendorId: z.number().optional(),
       }).optional())
       .query(({ input }) => db.getPurchaseOrders(input)),
-    get: opsProcedure
+    // Entity-scoped like listPaged: a PO outside the caller's scope reads as
+    // not found so cross-entity existence isn't leaked through a by-id lookup.
+    get: scopedOpsProcedure
       .input(z.object({ id: z.number() }))
-      .query(({ input }) => db.getPurchaseOrderWithItems(input.id)),
+      .query(async ({ input, ctx }) => {
+        const po = await db.getPurchaseOrderWithItems(input.id);
+        if (!po || !scopeAllows(ctx.scope, po.companyId)) return undefined;
+        return po;
+      }),
     getItems: opsProcedure
       .input(z.object({ purchaseOrderId: z.number() }))
       .query(({ input }) => db.getPurchaseOrderItems(input.purchaseOrderId)),
@@ -72,7 +79,10 @@ export const purchaseOrdersRouter = router({
       .mutation(async ({ input, ctx }) => {
         const { items, ...poData } = input;
         const poNumber = generateNumber('PO');
-        const result = await db.createPurchaseOrder({ ...poData, poNumber, createdBy: ctx.user.id });
+        // listPaged/get are entity-scoped; a PO stored with companyId NULL would vanish
+        // from the creator's own list, so default the scope to the user's home entity.
+        const companyId = poData.companyId ?? ctx.user.companyId ?? undefined;
+        const result = await db.createPurchaseOrder({ ...poData, companyId, poNumber, createdBy: ctx.user.id });
 
         if (items && items.length > 0) {
           for (const item of items) {

@@ -66,8 +66,12 @@ export const recurringInvoicesRouter = router({
         // Calculate next generation date
         const nextGenerationDate = new Date(input.startDate);
         
+        // Default to the caller's home entity: invoices generated from this template inherit its
+        // companyId, and invoices.list is entity-scoped, so a NULL here hides every generated invoice.
+        const companyId = ctx.user.companyId ?? undefined;
         const result = await db.createRecurringInvoice({
           ...invoiceData,
+          companyId,
           subtotal: subtotal.toString(),
           taxAmount: taxAmount.toString(),
           totalAmount: totalAmount.toString(),

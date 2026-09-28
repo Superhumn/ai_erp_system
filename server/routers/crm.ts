@@ -6,7 +6,7 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { invokeLLM } from "../_core/llm";
 import * as db from "../db";
 import { ENV } from "../_core/env";
-import { adminProcedure, createAuditLog } from "./_shared";
+import { adminProcedure, internalProcedure, createAuditLog } from "./_shared";
 
 // ============================================
 // CRM MODULE - Contacts, Messaging & Tracking
@@ -54,7 +54,9 @@ export const crmRouter = router({
 
     // --- CONTACTS ---
     contacts: router({
-      list: protectedProcedure
+      // The contact book is internal-staff only; external portal roles
+      // (vendor, copacker, contractor, investor) must not read it.
+      list: internalProcedure
         .input(z.object({
           contactType: z.string().optional(),
           status: z.string().optional(),

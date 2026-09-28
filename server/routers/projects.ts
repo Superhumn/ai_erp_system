@@ -5,7 +5,7 @@ import { eq, and, inArray } from "drizzle-orm";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { reassignProjectTaskToHuman } from "../taskAgentBridge";
-import { createAuditLog, generateNumber } from "./_shared";
+import { createAuditLog, generateNumber, internalProcedure } from "./_shared";
 
 // ============================================
 // PROJECTS
@@ -22,7 +22,9 @@ export const projectsRouter = router({
     get: protectedProcedure
       .input(z.object({ id: z.number() }))
       .query(({ input }) => db.getProjectWithDetails(input.id)),
-    create: protectedProcedure
+    // Projects are internal work; external accounts (investor, vendor,
+    // copacker, contractor) can read what they are shown but never create one.
+    create: internalProcedure
       .input(z.object({
         name: z.string().min(1),
         companyId: z.number().optional(),

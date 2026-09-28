@@ -1,21 +1,23 @@
 // appRouter.employees — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
 import { z } from "zod";
-import { protectedProcedure, router } from "../_core/trpc";
+import { router } from "../_core/trpc";
 import * as db from "../db";
-import { adminProcedure, execProcedure, createAuditLog, generateNumber } from "./_shared";
+import { adminProcedure, execProcedure, internalProcedure, createAuditLog, generateNumber } from "./_shared";
 
 // ============================================
 // HR - EMPLOYEES
 // ============================================
 export const employeesRouter = router({
-    list: protectedProcedure
+    // Employee records carry salary and personal details. Internal staff only —
+    // external portal roles (vendor, copacker, contractor, investor) are blocked.
+    list: internalProcedure
       .input(z.object({
         companyId: z.number().optional(),
         status: z.string().optional(),
         departmentId: z.number().optional(),
       }).optional())
       .query(({ input }) => db.getEmployees(input)),
-    get: protectedProcedure
+    get: internalProcedure
       .input(z.object({ id: z.number() }))
       .query(({ input }) => db.getEmployeeById(input.id)),
     create: adminProcedure
@@ -73,7 +75,7 @@ export const employeesRouter = router({
         await createAuditLog(ctx.user.id, 'delete', 'employee', input.id);
         return { success: true };
       }),
-    compensationHistory: protectedProcedure
+    compensationHistory: internalProcedure
       .input(z.object({ employeeId: z.number() }))
       .query(({ input }) => db.getCompensationHistory(input.employeeId)),
     addCompensation: adminProcedure
