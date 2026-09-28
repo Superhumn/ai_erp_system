@@ -141,6 +141,9 @@ vi.mock("../db", () => {
     updateInvoice: vi.fn(async (id: number, data: Row) => {
       store.invoices.update(id, data);
     }),
+    deleteInvoice: vi.fn(async (id: number) => {
+      store.invoices.remove(id);
+    }),
     // ── payments ──
     getPayments: vi.fn(async (scope?: any, filters?: { type?: string; status?: string }) => {
       let rows = store.inScope(scope, store.payments.all());
@@ -442,7 +445,8 @@ describe("Sales flow: customer → order → invoice → payment → recurring",
 
     const invoice = await finance.invoices.get({ id: state.invoiceId });
     expect(invoice!.status).toBe("partial");
-    expect(Number(invoice!.paidAmount)).toBe(100);
+    // Money is stored as a 2-dp string like every other DECIMAL column ("100.00", never "100").
+    expect(invoice!.paidAmount).toBe("100.00");
     // Order is untouched until the invoice is fully paid.
     expect((await sales.orders.get({ id: state.orderId }))!.status).toBe("shipped");
 
@@ -464,7 +468,7 @@ describe("Sales flow: customer → order → invoice → payment → recurring",
 
     const invoice = await finance.invoices.get({ id: state.invoiceId });
     expect(invoice!.status).toBe("paid");
-    expect(Number(invoice!.paidAmount)).toBe(243);
+    expect(invoice!.paidAmount).toBe("243.00");
 
     expect(db.updateOrder).toHaveBeenCalledWith(state.orderId, { status: "delivered" });
     expect((await sales.orders.get({ id: state.orderId }))!.status).toBe("delivered");
@@ -522,12 +526,33 @@ describe("Sales flow: customer → order → invoice → payment → recurring",
     expect(list[0]).toMatchObject({ id: 1, customer: { name: "Acme Foods" } });
   });
 
-  it("6b. running the template now produces a draft invoice and advances the schedule", async () => {
+  it("6b. running the template now produces a draft invoice, posts its journal entry and advances the schedule", async () => {
     const before = Date.now();
+    const txnsBefore = store.transactions.all().length;
     const result = await finance.recurringInvoices.generateNow({ id: state.recurringId });
     expect(result.invoiceId).toBe(2);
-    expect(result.invoiceNumber).toMatch(/^INV-\d+$/);
+    // Same INV-YYMM-#### numbering as invoices.create, not an epoch timestamp.
+    expect(result.invoiceNumber).toMatch(/^INV-\d{4}-\d{4}$/);
     state.generatedInvoiceId = result.invoiceId;
+
+    // Same AR debit / Revenue credit posting as a manually raised invoice, under the template's entity.
+    expect(store.transactions.all()).toHaveLength(txnsBefore + 1);
+    expect(db.createTransaction).toHaveBeenLastCalledWith(expect.objectContaining({
+      companyId: 1,
+      transactionNumber: `JE-INV-${result.invoiceNumber}`,
+      type: "invoice",
+      referenceType: "invoice",
+      referenceId: 2,
+      totalAmount: "54",
+      status: "posted",
+      createdBy: 2,
+      postedBy: 2,
+    }));
+    const txnId = store.transactions.all().at(-1)!.id;
+    const lines = store.transactionLines.filter((l) => l.transactionId === txnId);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatchObject({ accountId: 2, debit: "54", credit: "0" }); // 1200 Accounts Receivable
+    expect(lines[1]).toMatchObject({ accountId: 3, debit: "0", credit: "54" }); // 4000 Revenue
 
     const invoice = await finance.invoices.get({ id: 2 });
     expect(invoice).toMatchObject({
@@ -572,6 +597,13 @@ describe("Sales flow: customer → order → invoice → payment → recurring",
     );
   });
 
+  it("6d. a payment recorded straight on the invoice stores 2-dp money and leaves it 'partial'", async () => {
+    const result = await finance.invoices.recordPayment({ invoiceId: state.generatedInvoiceId, amount: "20", paymentMethod: "cash" });
+    expect(result).toMatchObject({ success: true, newStatus: "partial", totalPaid: "20.00" });
+    expect(store.invoices.get(state.generatedInvoiceId)).toMatchObject({ paidAmount: "20.00", status: "partial" });
+    expect(store.payments.get(result.paymentId)).toMatchObject({ type: "received", status: "completed", amount: "20", invoiceId: state.generatedInvoiceId, companyId: 1 });
+  });
+
   // ─────────────────────────────────────────────────────────────────────────
   it("7. staff of another entity cannot see or touch entity 1's customer, order, invoices or payments", async () => {
     // Customer
@@ -605,17 +637,62 @@ describe("Sales flow: customer → order → invoice → payment → recurring",
     expect(await otherFinance.invoices.list()).toEqual([]);
     expect(await otherFinance.payments.list()).toEqual([]);
 
+    // ...and so are the by-id finance procedures: another entity's invoice, payment or recurring
+    // template reads as NOT_FOUND (never FORBIDDEN, which would confirm it exists) and is left untouched.
+    const invoiceBefore = { ...store.invoices.get(state.invoiceId)! };
+    await expect(otherFinance.invoices.get({ id: state.invoiceId })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(otherFinance.invoices.update({ id: state.invoiceId, status: "cancelled" })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(otherFinance.invoices.approve({ id: state.invoiceId })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(otherFinance.invoices.recordPayment({ invoiceId: state.invoiceId, amount: "1.00" })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(otherFinance.invoices.delete({ id: state.invoiceId })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(db.deleteInvoice).not.toHaveBeenCalled();
+    expect(store.invoices.get(state.invoiceId)).toEqual(invoiceBefore);
+
+    const paymentBefore = { ...store.payments.get(1)! };
+    await expect(otherFinance.payments.get({ id: 1 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(otherFinance.payments.update({ id: 1, status: "cancelled" })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(store.payments.get(1)).toEqual(paymentBefore);
+
+    const templateBefore = { ...store.recurringInvoices.get(state.recurringId)! };
+    const invoiceCount = store.invoices.all().length;
+    await expect(otherFinance.recurringInvoices.getById({ id: state.recurringId })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(otherFinance.recurringInvoices.update({ id: state.recurringId, isActive: false })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(otherFinance.recurringInvoices.toggleActive({ id: state.recurringId, isActive: false })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(otherFinance.recurringInvoices.history({ id: state.recurringId })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(otherFinance.recurringInvoices.generateNow({ id: state.recurringId })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(store.recurringInvoices.get(state.recurringId)).toEqual(templateBefore);
+    expect(store.invoices.all()).toHaveLength(invoiceCount);
+
+    // A missing id is NOT_FOUND for the owner as well.
+    await expect(finance.invoices.get({ id: 999 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(finance.payments.get({ id: 999 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(finance.recurringInvoices.getById({ id: 999 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+
     // A scoped user with no home entity at all is refused outright rather than shown nothing.
     const noEntity = appRouter.createCaller(ctxFor("sales", { id: 6, companyId: null as any, regionScope: "entity" }));
     await expect(noEntity.orders.list()).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  it("8. an external vendor account is forbidden from creating sales orders", async () => {
+  it("8. external portal accounts are forbidden from every sales-order procedure, even inside their own entity", async () => {
     await expect(vendor.orders.create({
       customerId: state.customerId, orderDate: new Date(), subtotal: "1.00", totalAmount: "1.00",
     })).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(store.orders.all()).toHaveLength(1);
     expect(db.createOrder).toHaveBeenCalledTimes(1);
+
+    // The vendor caller above sits in entity 1, so scope alone would let it through; the
+    // internal gate must reject it (and the other portal roles) on the reads and writes too.
+    const before = { ...store.orders.get(state.orderId)! };
+    for (const role of ["vendor", "copacker", "investor", "contractor"] as const) {
+      const portal = appRouter.createCaller(ctxFor(role, { id: 50, companyId: 1, regionScope: "entity" }));
+      await expect(portal.orders.list()).rejects.toMatchObject({ code: "FORBIDDEN", message: "Not available for external accounts" });
+      await expect(portal.orders.get({ id: state.orderId })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(portal.orders.update({ id: state.orderId, status: "cancelled" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(portal.orders.delete({ id: state.orderId })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(portal.orders.bulkDelete({ ids: [state.orderId] })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    }
+    expect(store.orders.get(state.orderId)).toEqual(before);
+    expect(db.deleteOrder).not.toHaveBeenCalled();
   });
 });

@@ -97,6 +97,17 @@ vi.mock("../db", async () => {
   };
 
   // ---- product inventory ledger ------------------------------------------
+  // Mirrors db.addProductStock: upsert the aggregate product inventory row,
+  // stamping the entity on a row it creates.
+  const addProductStock = vi.fn(async (productId: number, warehouseId: number, quantity: number, companyId?: number | null) => {
+    const existing = s.inventory.find((r) => r.productId === productId && r.warehouseId === warehouseId);
+    if (existing) {
+      s.inventory.update(existing.id, { quantity: (num(existing.quantity) + quantity).toString() });
+      return { created: false };
+    }
+    s.inventory.insert({ productId, warehouseId, quantity: quantity.toString(), companyId: companyId ?? null, reservedQuantity: "0" });
+    return { created: true };
+  });
   const createInventoryTransaction = async (data: Record<string, unknown>) => {
     const transactionNumber = `TXN-${s.inventoryTransactions.all().length + 1}`;
     const row = s.inventoryTransactions.insert({ ...data, transactionNumber, performedAt: new Date() });
@@ -302,8 +313,9 @@ vi.mock("../db", async () => {
     getPoReceivingItems: async (receivingRecordId: number) =>
       s.poReceivingItems.filter((r) => r.receivingRecordId === receivingRecordId),
     // Mirrors db.receivePurchaseOrderItems: receiving record + items, raw material
-    // inventory upsert + ledger row, PO item receivedQuantity increment, PO status
-    // partial/received, then a cost layer per product line at the PO unit price.
+    // inventory upsert + ledger row, product lines booked into the aggregate
+    // inventory row (+ receive ledger row), PO item receivedQuantity increment,
+    // PO status partial/received, then a cost layer per product line at the PO unit price.
     receivePurchaseOrderItems: vi.fn(async (
       purchaseOrderId: number,
       warehouseId: number,
@@ -311,6 +323,7 @@ vi.mock("../db", async () => {
       receivedBy?: number,
       shipmentId?: number,
     ) => {
+      const po = s.purchaseOrders.get(purchaseOrderId);
       const receiving = s.poReceivingRecords.insert({
         purchaseOrderId, shipmentId: shipmentId ?? null, receivedDate: new Date(), receivedBy: receivedBy ?? null, warehouseId,
       });
@@ -350,6 +363,14 @@ vi.mock("../db", async () => {
             referenceId: purchaseOrderId,
             lotNumber: item.lotNumber,
             performedBy: receivedBy,
+          });
+        }
+        if (item.productId && item.quantity > 0) {
+          await addProductStock(item.productId, warehouseId, item.quantity, po?.companyId ?? null);
+          await createInventoryTransaction({
+            transactionType: "receive", productId: item.productId, toWarehouseId: warehouseId, toStatus: "available",
+            quantity: item.quantity.toString(), unit: item.unit, referenceType: "purchase_order", referenceId: purchaseOrderId,
+            performedBy: receivedBy, reason: `PO receipt${item.lotNumber ? ` (lot ${item.lotNumber})` : ""}`,
           });
         }
         const poItem = s.purchaseOrderItems.get(item.purchaseOrderItemId);
@@ -433,6 +454,7 @@ vi.mock("../db", async () => {
     updateInventory: async (id: number, data: Record<string, unknown>) => { s.inventory.update(id, data); },
     getInventoryByProductAndWarehouse: async (productId: number, warehouseId: number) =>
       s.inventory.find((r) => r.productId === productId && r.warehouseId === warehouseId),
+    addProductStock,
     getInventory: vi.fn(async (scope?: Scope, filters?: { warehouseId?: number; productId?: number; limit?: number }) => {
       let rows = s.inventory.all();
       const ids = scope ? scopeCompanyIds(scope) : null;
@@ -802,6 +824,20 @@ describe("procurement flow: vendor → PO → supplier portal → receipt → la
     expect(state.purchaseOrders.get(poId)!.status).toBe("confirmed");
     expect(state.supplierPortalSessions.get(session.id)).toMatchObject({ status: "completed" });
     expect(state.supplierPortalSessions.get(session.id)!.completedAt).toBeInstanceOf(Date);
+
+    // A completed session no longer opens the PO (getSession used to ignore
+    // the status while every other portal procedure required "active").
+    expect(await supplier.supplierPortal.getSession({ token: portalToken })).toBeNull();
+    await expect(supplier.supplierPortal.completeSubmission({ token: portalToken })).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    // And a confirmed PO cannot be sent again: no new session, no second email, status untouched.
+    await expect(ops.purchaseOrders.sendToSupplier({ poId })).rejects.toMatchObject({
+      code: "PRECONDITION_FAILED", message: `Purchase order ${poNumber} is confirmed and cannot be sent to the supplier.`,
+    });
+    expect(db.createSupplierPortalSession).toHaveBeenCalledTimes(1);
+    expect(state.supplierPortalSessions.all()).toHaveLength(1);
+    expect(email.sendEmail).toHaveBeenCalledTimes(1);
+    expect(state.purchaseOrders.get(poId)!.status).toBe("confirmed");
   });
 
   // -------------------------------------------------------------------------
@@ -821,6 +857,16 @@ describe("procurement flow: vendor → PO → supplier portal → receipt → la
     expect(await ops.rawMaterialInventory.list({ rawMaterialId, warehouseId: WAREHOUSE_OTHER })).toEqual([]);
     expect(state.purchaseOrders.get(poId)!.status).toBe("partial");
     expect(state.purchaseOrderItems.get(poItemId)!.receivedQuantity).toBe("60.0000");
+
+    // The product line also reaches the aggregate inventory row (the planning
+    // record with the reorder point) with a receive ledger entry — previously
+    // only rawMaterialInventory and the cost layers moved.
+    expect(db.addProductStock).toHaveBeenCalledWith(productId, WAREHOUSE_MAIN, 60, 1);
+    expect(state.inventory.get(inventoryId)).toMatchObject({ productId, warehouseId: WAREHOUSE_MAIN, quantity: "60", companyId: 1 });
+    expect(state.inventory.all()).toHaveLength(1);
+    expect(await ops.inventory.getMovementHistory({ productId, type: "receive" })).toEqual([
+      expect.objectContaining({ transactionNumber: "TXN-1", productId, toWarehouseId: WAREHOUSE_MAIN, quantity: "60", referenceType: "purchase_order", referenceId: poId, performedBy: 1 }),
+    ]);
 
     const ledger1 = await ops.rawMaterialInventory.getTransactions({ rawMaterialId });
     expect(ledger1).toHaveLength(1);
@@ -858,6 +904,8 @@ describe("procurement flow: vendor → PO → supplier portal → receipt → la
     expect(state.purchaseOrders.get(poId)!.receivedDate).toBeInstanceOf(Date);
     expect(state.purchaseOrderItems.get(poItemId)!.receivedQuantity).toBe("100.0000");
     expect((await ops.rawMaterialInventory.list({ rawMaterialId }))[0]).toMatchObject({ quantity: "100.0000", availableQuantity: "100.0000", lotNumber: "LOT-B" });
+    expect(state.inventory.get(inventoryId)!.quantity).toBe("100");
+    expect((await ops.inventory.getMovementHistory({ productId, type: "receive" })).map((t) => [t.transactionNumber, t.quantity])).toEqual([["TXN-2", "40"], ["TXN-1", "60"]]);
 
     const layers2 = state.inventoryCostLayers.filter((l) => l.productId === productId);
     expect(layers2.map((l) => [l.originalQuantity, l.remainingQuantity, l.unitCost, l.totalCost])).toEqual([
@@ -892,6 +940,10 @@ describe("procurement flow: vendor → PO → supplier portal → receipt → la
       .rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(state.poReceivingRecords.all()).toHaveLength(2);
     expect((await ops.rawMaterialInventory.list({ rawMaterialId }))[0].quantity).toBe("100.0000");
+
+    // A fully received PO cannot be re-sent to the supplier (it used to get a fresh portal session).
+    await expect(ops.purchaseOrders.sendToSupplier({ poId })).rejects.toMatchObject({ code: "PRECONDITION_FAILED", message: expect.stringContaining("is received") });
+    expect(state.supplierPortalSessions.all()).toHaveLength(1);
   });
 
   // -------------------------------------------------------------------------
@@ -921,13 +973,8 @@ describe("procurement flow: vendor → PO → supplier portal → receipt → la
 
   // -------------------------------------------------------------------------
   it("6. a blind cycle count, approved by an admin, corrects book stock and posts a reason-coded ledger row", async () => {
-    // Receiving books raw-material stock, not product inventory (server/db.ts
-    // receivePurchaseOrderItems never touches `inventory`). Book the 100 kg on
-    // the product record through the ledger so the count has something to check.
-    const booked = await ops.inventory.adjust({
-      productId, warehouseId: WAREHOUSE_MAIN, quantityDelta: 100, reasonCode: "found", reason: `Book receipt of ${poNumber}`,
-    });
-    expect(booked).toMatchObject({ previousQuantity: 0, newQuantity: 100, transactionNumber: "TXN-1" });
+    // The two receipts in step 4 booked the 100 kg on the product record, so
+    // the count has book stock to check without a manual adjustment.
     expect(state.inventory.get(inventoryId)!.quantity).toBe("100");
     // At 100 on hand the reorder point (40) is not breached: no alert, nothing to order.
     expect(db.notifyUsersOfEvent).not.toHaveBeenCalled();
@@ -967,7 +1014,7 @@ describe("procurement flow: vendor → PO → supplier portal → receipt → la
 
     const approved = await admin.cycleCounts.approve({ id: countId });
     expect(approved).toMatchObject({ success: true, countNumber: "CC-0001", linesApproved: 1, adjustmentsPosted: 1, adjustmentsFailed: 0 });
-    expect(approved.posted).toEqual([{ lineId: countLineId, variance: -8, transactionNumber: "TXN-2" }]);
+    expect(approved.posted).toEqual([{ lineId: countLineId, variance: -8, transactionNumber: "TXN-3" }]);
 
     // Book stock corrected and stamped with the count.
     expect(state.inventory.get(inventoryId)).toMatchObject({ quantity: "92", lastCountQuantity: "92" });
@@ -978,7 +1025,7 @@ describe("procurement flow: vendor → PO → supplier portal → receipt → la
     const movements = await ops.inventory.getMovementHistory({ productId, type: "count_adjust" });
     expect(movements).toHaveLength(1);
     expect(movements[0]).toMatchObject({
-      transactionNumber: "TXN-2", transactionType: "count_adjust", productId, fromWarehouseId: WAREHOUSE_MAIN, toWarehouseId: null,
+      transactionNumber: "TXN-3", transactionType: "count_adjust", productId, fromWarehouseId: WAREHOUSE_MAIN, toWarehouseId: null,
       quantity: "8", previousBalance: "100", newBalance: "92", reasonCode: "shrinkage",
       reason: "Cycle count CC-0001: system 100, counted 92", referenceType: "cycle_count", referenceId: countId, performedBy: 3,
     });
@@ -990,11 +1037,11 @@ describe("procurement flow: vendor → PO → supplier portal → receipt → la
     const adjusted = await ops.inventory.adjust({
       productId, warehouseId: WAREHOUSE_MAIN, quantityDelta: -60, reasonCode: "damage", reason: "Water damage in bay 3",
     });
-    expect(adjusted).toMatchObject({ previousQuantity: 92, newQuantity: 32, transactionNumber: "TXN-3" });
+    expect(adjusted).toMatchObject({ previousQuantity: 92, newQuantity: 32, transactionNumber: "TXN-4" });
     expect(state.inventory.get(inventoryId)!.quantity).toBe("32");
-    expect(state.inventoryTransactions.get(3)).toMatchObject({ transactionType: "adjust", reasonCode: "damage", reason: "Water damage in bay 3", quantity: "60", performedBy: 1 });
+    expect(state.inventoryTransactions.get(4)).toMatchObject({ transactionType: "adjust", reasonCode: "damage", reason: "Water damage in bay 3", quantity: "60", performedBy: 1 });
     expect(auditRows("inventory", "update").at(-1)).toMatchObject({
-      entityId: productId, entityName: "TXN-3", oldValues: { quantity: 92 }, newValues: { quantity: 32, reasonCode: "damage" },
+      entityId: productId, entityName: "TXN-4", oldValues: { quantity: 92 }, newValues: { quantity: 32, reasonCode: "damage" },
     });
 
     // 32 on hand <= reorder level 40 → every ops/admin/exec user is alerted.
@@ -1018,7 +1065,7 @@ describe("procurement flow: vendor → PO → supplier portal → receipt → la
     // Negative stock is refused before anything is written.
     await expect(ops.inventory.adjust({ productId, warehouseId: WAREHOUSE_MAIN, quantityDelta: -33, reasonCode: "damage" })).rejects.toThrow(/negative/);
     expect(state.inventory.get(inventoryId)!.quantity).toBe("32");
-    expect(state.inventoryTransactions.all()).toHaveLength(3);
+    expect(state.inventoryTransactions.all()).toHaveLength(4);
   });
 
   // -------------------------------------------------------------------------
@@ -1048,5 +1095,29 @@ describe("procurement flow: vendor → PO → supplier portal → receipt → la
     await expect(sales.cycleCounts.create({ warehouseId: WAREHOUSE_MAIN })).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(state.purchaseOrders.all()).toHaveLength(2);
     expect(state.vendors.all()).toHaveLength(1);
+  });
+
+  // -------------------------------------------------------------------------
+  it("9. a PO created from text links its line to the raw material through the junction — never a raw-material id in productId", async () => {
+    const preview = {
+      vendorId, vendorName: "Sunrise Spice Co", rawMaterialId,
+      items: [{ description: "Smoked Paprika (30 kg)", quantity: "30", unitPrice: "12.50", totalAmount: "375.00", rawMaterialId }],
+      shippingAddress: "", notes: "From text", subtotal: "375.00", totalAmount: "375.00", suggested: false, isPriceEstimated: false,
+    };
+    const created = await ops.purchaseOrders.createFromText({ text: "order 30 kg of smoked paprika", preview });
+    expect(created).toMatchObject({ success: true, emailSent: false });
+    const po = state.purchaseOrders.get(created.po.id)!;
+    expect(po).toMatchObject({ vendorId, status: "draft", subtotal: "375.00", totalAmount: "375.00", notes: "From text", createdBy: 1 });
+    expect(po.poNumber).toMatch(/^PO-\d{4}-\d{4}$/);
+
+    // textToPOService used to write the rawMaterials id into purchaseOrderItems.productId (an FK to products).
+    const item = state.purchaseOrderItems.find((i) => i.purchaseOrderId === po.id)!;
+    expect(item).toMatchObject({ description: "Smoked Paprika (30 kg)", quantity: "30", unitPrice: "12.50", totalAmount: "375.00", productId: null });
+    expect(state.purchaseOrderRawMaterials.filter((l) => l.purchaseOrderItemId === item.id)).toEqual([
+      expect.objectContaining({ rawMaterialId, orderedQuantity: "30", receivedQuantity: "0", unit: "kg", status: "ordered" }),
+    ]);
+    // The line resolves to its material the way the PO screen and receiving read it.
+    expect((await ops.purchaseOrders.get({ id: po.id }))!.items[0].rawMaterial).toMatchObject({ id: rawMaterialId, name: "Smoked Paprika", unit: "kg" });
+    expect(auditRows("purchaseOrder", "create").at(-1)).toMatchObject({ entityId: po.id, entityName: po.poNumber });
   });
 });

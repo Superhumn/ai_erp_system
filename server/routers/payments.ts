@@ -4,12 +4,23 @@ import { z } from "zod";
 import { router } from "../_core/trpc";
 import { invokeLLM } from "../_core/llm";
 import * as db from "../db";
+import type { Scope } from "../_core/scope";
 import { scopeAllows } from "../_core/scope";
-import { financeProcedure, resolveRequestScope, assertNonEmptyScope, createAuditLog, generateNumber } from "./_shared";
+import { financeProcedure, scopedFinanceProcedure, resolveRequestScope, assertNonEmptyScope, createAuditLog, generateNumber } from "./_shared";
 
 // ============================================
 // FINANCE - PAYMENTS
 // ============================================
+
+/** Load a payment the caller's entity scope may see; anything else is NOT_FOUND (never "forbidden", which leaks existence). */
+async function loadScopedPayment(scope: Scope, id: number) {
+  const payment = await db.getPaymentById(id);
+  if (!payment || !scopeAllows(scope, payment.companyId)) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'Payment not found' });
+  }
+  return payment;
+}
+
 export const paymentsRouter = router({
     list: financeProcedure
       .input(z.object({
@@ -19,9 +30,9 @@ export const paymentsRouter = router({
       .query(async ({ input, ctx }) =>
         db.getPayments(assertNonEmptyScope(await resolveRequestScope(ctx.user)), { type: input?.type, status: input?.status }),
       ),
-    get: financeProcedure
+    get: scopedFinanceProcedure
       .input(z.object({ id: z.number() }))
-      .query(({ input }) => db.getPaymentById(input.id)),
+      .query(({ input, ctx }) => loadScopedPayment(ctx.scope, input.id)),
     create: financeProcedure
       .input(z.object({
         companyId: z.number().optional(),
@@ -54,7 +65,8 @@ export const paymentsRouter = router({
         if (input.invoiceId) {
           const invoice = await db.getInvoiceById(input.invoiceId);
           if (invoice) {
-            const newPaidAmount = (parseFloat(invoice.paidAmount || '0') + parseFloat(input.amount)).toString();
+            // Money columns are DECIMAL(…,2); store the 2-dp string the rest of the codebase writes ("100.00", not "100").
+            const newPaidAmount = (parseFloat(invoice.paidAmount || '0') + parseFloat(input.amount)).toFixed(2);
             const newStatus = parseFloat(newPaidAmount) >= parseFloat(invoice.totalAmount) ? 'paid' : 'partial';
             await db.updateInvoice(input.invoiceId, { paidAmount: newPaidAmount, status: newStatus });
 
@@ -77,7 +89,7 @@ export const paymentsRouter = router({
         await createAuditLog(ctx.user.id, 'create', 'payment', result.id, paymentNumber);
         return result;
       }),
-    update: financeProcedure
+    update: scopedFinanceProcedure
       .input(z.object({
         id: z.number(),
         status: z.enum(['pending', 'completed', 'failed', 'cancelled']).optional(),
@@ -85,8 +97,10 @@ export const paymentsRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
+        // Scoped read: a payment outside the caller's entity access is indistinguishable from a missing one.
+        const existing = await loadScopedPayment(ctx.scope, id);
         await db.updatePayment(id, data);
-        await createAuditLog(ctx.user.id, 'update', 'payment', id);
+        await createAuditLog(ctx.user.id, 'update', 'payment', id, existing.paymentNumber, existing, data);
         return { success: true };
       }),
 

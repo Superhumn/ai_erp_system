@@ -12,6 +12,8 @@ import {
   inventory,
   freightRfqs,
   freightCarriers,
+  notifications,
+  users,
 } from "../drizzle/schema";
 import { eq, and, desc, sql, inArray, like } from "drizzle-orm";
 import { sendEmail } from "./_core/email";
@@ -680,6 +682,7 @@ export async function executeApprovedTasks(): Promise<{
           })
           .where(eq(aiAgentTasks.id, task.id));
         executed++;
+        await notifyTaskCompleted(db, task, result.data);
       } else {
         await db
           .update(aiAgentTasks)
@@ -713,6 +716,49 @@ export async function executeApprovedTasks(): Promise<{
   }
 
   return { executed, failed, errors };
+}
+
+/**
+ * Tell the person who approved (or requested) a task that it ran. Tasks the
+ * scheduler auto-approved have neither, so those fall back to the admins.
+ * Never fails the (already completed) task.
+ */
+async function notifyTaskCompleted(
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  task: typeof aiAgentTasks.$inferSelect,
+  data: unknown,
+): Promise<void> {
+  try {
+    let inputData: Record<string, unknown> = {};
+    try { inputData = JSON.parse(task.taskData || "{}"); } catch { /* malformed taskData: no requester */ }
+    let userIds: number[] = [];
+    const requester = Number(inputData.createdBy ?? inputData.requestedBy) || null;
+    if (task.approvedBy) userIds = [task.approvedBy];
+    else if (requester) userIds = [requester];
+    else {
+      const admins = await db.select({ id: users.id }).from(users).where(eq(users.role, "admin"));
+      userIds = admins.map((a) => a.id);
+    }
+    if (userIds.length === 0) return;
+    const label = task.taskType.replace(/_/g, " ");
+    const poNumber = data && typeof data === "object" && "poNumber" in data ? String((data as { poNumber: unknown }).poNumber) : null;
+    await db.insert(notifications).values(userIds.map((userId) => ({
+      userId,
+      type: "success" as const,
+      title: `AI task completed: ${label}`,
+      message: poNumber
+        ? `Task #${task.id} created draft purchase order ${poNumber}.`
+        : `Task #${task.id} (${label}) executed successfully.`,
+      entityType: "ai_agent_task",
+      entityId: task.id,
+      severity: "info" as const,
+      link: "/ai/approvals",
+      metadata: { taskType: task.taskType, result: data ?? null },
+      isRead: false,
+    })));
+  } catch (err) {
+    console.warn(`[AIAgentScheduler] Could not notify completion of task ${task.id}:`, err);
+  }
 }
 
 async function executeTask(task: typeof aiAgentTasks.$inferSelect): Promise<{
@@ -784,7 +830,13 @@ async function executePOGeneration(task: typeof aiAgentTasks.$inferSelect): Prom
 
   try {
     const inputData = JSON.parse(task.taskData || "{}");
-    const { vendorId, materials, totalValue } = inputData;
+    const { materials, totalValue } = inputData;
+    // A task without a vendor cannot be turned into an order for anyone: fail
+    // it so a person picks the vendor, instead of quietly buying from vendor 1.
+    const vendorId = Number(inputData.vendorId) || null;
+    if (!vendorId) {
+      return { success: false, error: "PO generation task has no vendorId — select a vendor for this task before approving it" };
+    }
 
     // Generate PO number
     const poNumber = `PO-${Date.now().toString(36).toUpperCase()}`;
@@ -794,7 +846,7 @@ async function executePOGeneration(task: typeof aiAgentTasks.$inferSelect): Prom
       .insert(purchaseOrders)
       .values({
         poNumber,
-        vendorId: vendorId || 1, // Default to vendor 1 if not specified
+        vendorId,
         status: "draft",
         orderDate: new Date(),
         subtotal: totalValue?.toString() || "0",

@@ -411,6 +411,8 @@ describe("People process: hire → onboard → track time → get paid", () => {
     expect((await employee.timeTracking.entries.list({ status: "submitted" })).length).toBe(5);
 
     await expect(employee.timeTracking.entries.approve({ id: ids.entryIds[0] })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    // Approving an entry that does not exist is NOT_FOUND rather than a silent no-op update.
+    await expect(admin.timeTracking.entries.approve({ id: 9999 })).rejects.toMatchObject({ code: "NOT_FOUND" });
 
     for (const id of ids.entryIds) {
       expect(await admin.timeTracking.entries.approve({ id })).toEqual({ success: true });

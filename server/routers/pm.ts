@@ -3,7 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
-import { adminProcedure, opsProcedure, createAuditLog } from "./_shared";
+import { adminProcedure, opsProcedure, internalProcedure, createAuditLog } from "./_shared";
 
 // ============================================
 // PROJECT MANAGEMENT MODULE
@@ -160,7 +160,7 @@ export const pmRouter = router({
       get: protectedProcedure
         .input(z.object({ id: z.number() }))
         .query(({ input }) => db.getPmProgramById(input.id)),
-      create: protectedProcedure
+      create: internalProcedure
         .input(z.object({
           name: z.string().min(1),
           marketId: z.number(),
@@ -175,7 +175,7 @@ export const pmRouter = router({
           await createAuditLog(ctx.user.id, "create", "pmProgram", result.id, input.name);
           return result;
         }),
-      update: protectedProcedure
+      update: internalProcedure
         .input(z.object({
           id: z.number(),
           name: z.string().optional(),
@@ -192,7 +192,7 @@ export const pmRouter = router({
           await createAuditLog(ctx.user.id, "update", "pmProgram", id);
           return { success: true };
         }),
-      delete: protectedProcedure
+      delete: internalProcedure
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input, ctx }) => {
           await db.deletePmProgram(input.id);
@@ -227,7 +227,7 @@ export const pmRouter = router({
           ]);
           return { project, tasks, milestones, dependencies };
         }),
-      create: protectedProcedure
+      create: internalProcedure
         .input(z.object({
           name: z.string().min(1),
           marketId: z.number(),
@@ -248,7 +248,7 @@ export const pmRouter = router({
           await createAuditLog(ctx.user.id, "create", "pmProject", result.id, input.name);
           return result;
         }),
-      update: protectedProcedure
+      update: internalProcedure
         .input(z.object({
           id: z.number(),
           name: z.string().optional(),
@@ -303,7 +303,7 @@ export const pmRouter = router({
 
           return { success: true };
         }),
-      delete: protectedProcedure
+      delete: internalProcedure
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input, ctx }) => {
           await db.deletePmProject(input.id);
@@ -317,7 +317,7 @@ export const pmRouter = router({
       listByProject: protectedProcedure
         .input(z.object({ projectId: z.number() }))
         .query(({ input }) => db.getPmTasks(input.projectId)),
-      create: protectedProcedure
+      create: internalProcedure
         .input(z.object({
           projectId: z.number(),
           name: z.string().min(1),
@@ -328,7 +328,7 @@ export const pmRouter = router({
           orderIndex: z.number().optional(),
         }))
         .mutation(({ input }) => db.createPmTask(input)),
-      update: protectedProcedure
+      update: internalProcedure
         .input(z.object({
           id: z.number(),
           name: z.string().optional(),
@@ -345,7 +345,7 @@ export const pmRouter = router({
           await db.updatePmTask(id, next as Partial<typeof data>);
           return { success: true };
         }),
-      delete: protectedProcedure
+      delete: internalProcedure
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input }) => {
           await db.deletePmTask(input.id);
@@ -358,7 +358,7 @@ export const pmRouter = router({
       listForProject: protectedProcedure
         .input(z.object({ projectId: z.number() }))
         .query(({ input }) => db.getPmDependenciesForProject(input.projectId)),
-      create: protectedProcedure
+      create: internalProcedure
         .input(z.object({
           predecessorProjectId: z.number(),
           successorProjectId: z.number(),
@@ -366,7 +366,7 @@ export const pmRouter = router({
           notes: z.string().optional(),
         }))
         .mutation(({ input }) => db.createPmDependency(input)),
-      delete: protectedProcedure
+      delete: internalProcedure
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input }) => {
           await db.deletePmDependency(input.id);
@@ -379,7 +379,7 @@ export const pmRouter = router({
       listByProject: protectedProcedure
         .input(z.object({ projectId: z.number() }))
         .query(({ input }) => db.getPmMilestones(input.projectId)),
-      create: protectedProcedure
+      create: internalProcedure
         .input(z.object({
           projectId: z.number(),
           name: z.string().min(1),
@@ -387,7 +387,7 @@ export const pmRouter = router({
           description: z.string().optional(),
         }))
         .mutation(({ input }) => db.createPmMilestone(input)),
-      update: protectedProcedure
+      update: internalProcedure
         .input(z.object({
           id: z.number(),
           name: z.string().optional(),
@@ -400,7 +400,7 @@ export const pmRouter = router({
           await db.updatePmMilestone(id, data);
           return { success: true };
         }),
-      delete: protectedProcedure
+      delete: internalProcedure
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input }) => {
           await db.deletePmMilestone(input.id);

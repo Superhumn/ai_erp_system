@@ -5,11 +5,33 @@ import { router } from "../_core/trpc";
 import * as emailService from "../_core/emailService";
 import { parseInvoiceText } from "../_core/invoiceTextParser";
 import * as db from "../db";
-import { financeProcedure, resolveRequestScope, assertNonEmptyScope, createAuditLog, generateNumber } from "./_shared";
+import type { Scope } from "../_core/scope";
+import { scopeAllows } from "../_core/scope";
+import { postInvoiceJournalEntry } from "../invoicePosting";
+import { financeProcedure, scopedFinanceProcedure, resolveRequestScope, assertNonEmptyScope, createAuditLog, generateNumber } from "./_shared";
 
 // ============================================
 // FINANCE - INVOICES
 // ============================================
+
+/** Load an invoice the caller's entity scope may see; anything else is NOT_FOUND (never "forbidden", which leaks existence). */
+async function loadScopedInvoice(scope: Scope, id: number) {
+  const invoice = await db.getInvoiceById(id);
+  if (!invoice || !scopeAllows(scope, invoice.companyId)) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'Invoice not found' });
+  }
+  return invoice;
+}
+
+/** Same as loadScopedInvoice, but with the customer join and line items. */
+async function loadScopedInvoiceWithItems(scope: Scope, id: number) {
+  const invoice = await db.getInvoiceWithItems(id);
+  if (!invoice || !scopeAllows(scope, invoice.companyId)) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'Invoice not found' });
+  }
+  return invoice;
+}
+
 export const invoicesRouter = router({
     // financeProcedure keeps the role gate; scope is resolved server-side. companyId is not client input.
     list: financeProcedure
@@ -20,9 +42,9 @@ export const invoicesRouter = router({
       .query(async ({ input, ctx }) =>
         db.getInvoices(assertNonEmptyScope(await resolveRequestScope(ctx.user)), { status: input?.status, customerId: input?.customerId }),
       ),
-    get: financeProcedure
+    get: scopedFinanceProcedure
       .input(z.object({ id: z.number() }))
-      .query(({ input }) => db.getInvoiceWithItems(input.id)),
+      .query(({ input, ctx }) => loadScopedInvoiceWithItems(ctx.scope, input.id)),
     create: financeProcedure
       .input(z.object({
         companyId: z.number().optional(),
@@ -63,54 +85,18 @@ export const invoicesRouter = router({
         
         await createAuditLog(ctx.user.id, 'create', 'invoice', result.id, invoiceNumber);
 
-        // Auto-create journal entry for invoice (double-entry bookkeeping)
-        try {
-          const txn = await db.createTransaction({
-            companyId,
-            transactionNumber: `JE-INV-${invoiceNumber}`,
-            type: "invoice",
-            referenceType: "invoice",
-            referenceId: result.id,
-            date: new Date(),
-            description: `Journal entry for Invoice ${invoiceNumber}`,
-            totalAmount: input.totalAmount,
-            status: "posted",
-            createdBy: ctx.user.id,
-            postedBy: ctx.user.id,
-            postedAt: new Date(),
-          });
-
-          // Debit: Accounts Receivable, Credit: Revenue
-          const arAccount = await db.getAccountByCode("1200", companyId)
-            || await db.getAccountByName("Accounts Receivable", companyId);
-          const revenueAccount = await db.getAccountByCode("4000", companyId)
-            || await db.getAccountByName("Revenue", companyId);
-
-          if (arAccount) {
-            await db.createTransactionLine({
-              transactionId: txn.id,
-              accountId: arAccount.id,
-              debit: input.totalAmount,
-              credit: "0",
-              description: `AR - Invoice ${invoiceNumber}`,
-            });
-          }
-          if (revenueAccount) {
-            await db.createTransactionLine({
-              transactionId: txn.id,
-              accountId: revenueAccount.id,
-              debit: "0",
-              credit: input.totalAmount,
-              description: `Revenue - Invoice ${invoiceNumber}`,
-            });
-          }
-        } catch (e) {
-          console.warn("[Journal Entry] Failed to auto-create for invoice:", e);
-        }
+        // Auto-create journal entry for invoice (double-entry bookkeeping): AR debit / Revenue credit.
+        await postInvoiceJournalEntry({
+          invoiceId: result.id,
+          invoiceNumber,
+          companyId,
+          totalAmount: input.totalAmount,
+          userId: ctx.user.id,
+        });
 
         return result;
       }),
-    update: financeProcedure
+    update: scopedFinanceProcedure
       .input(z.object({
         id: z.number(),
         status: z.enum(['draft', 'sent', 'paid', 'partial', 'overdue', 'cancelled']).optional(),
@@ -120,12 +106,13 @@ export const invoicesRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
-        const oldInvoice = await db.getInvoiceById(id);
+        // Scoped read: an invoice outside the caller's entity access is indistinguishable from a missing one.
+        const oldInvoice = await loadScopedInvoice(ctx.scope, id);
         await db.updateInvoice(id, data);
-        await createAuditLog(ctx.user.id, 'update', 'invoice', id, oldInvoice?.invoiceNumber, oldInvoice, data);
+        await createAuditLog(ctx.user.id, 'update', 'invoice', id, oldInvoice.invoiceNumber, oldInvoice, data);
 
         // ── Cascade #16b: Invoice status changed to "paid" → mark linked order as "delivered" ──
-        if (input.status === "paid" && oldInvoice?.status !== "paid") {
+        if (input.status === "paid" && oldInvoice.status !== "paid") {
           try {
             const allOrders = await db.getOrders();
             const linkedOrder = allOrders.find((o: any) => o.invoiceId === id);
@@ -140,21 +127,21 @@ export const invoicesRouter = router({
 
         return { success: true };
       }),
-    approve: financeProcedure
+    approve: scopedFinanceProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input, ctx }) => {
+        const invoice = await loadScopedInvoice(ctx.scope, input.id);
         await db.updateInvoice(input.id, { status: 'sent', approvedBy: ctx.user.id, approvedAt: new Date() });
-        await createAuditLog(ctx.user.id, 'approve', 'invoice', input.id);
+        await createAuditLog(ctx.user.id, 'approve', 'invoice', input.id, invoice.invoiceNumber);
         return { success: true };
       }),
-    sendEmail: financeProcedure
+    sendEmail: scopedFinanceProcedure
       .input(z.object({
         invoiceId: z.number(),
         message: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const invoice = await db.getInvoiceWithItems(input.invoiceId);
-        if (!invoice) throw new TRPCError({ code: 'NOT_FOUND', message: 'Invoice not found' });
+        const invoice = await loadScopedInvoiceWithItems(ctx.scope, input.invoiceId);
         
         const customer = invoice.customer;
         if (!customer?.email) {
@@ -196,11 +183,10 @@ export const invoicesRouter = router({
         
         return { success: true };
       }),
-    generatePdf: financeProcedure
+    generatePdf: scopedFinanceProcedure
       .input(z.object({ invoiceId: z.number() }))
-      .mutation(async ({ input }) => {
-        const invoice = await db.getInvoiceWithItems(input.invoiceId);
-        if (!invoice) throw new TRPCError({ code: 'NOT_FOUND', message: 'Invoice not found' });
+      .mutation(async ({ input, ctx }) => {
+        const invoice = await loadScopedInvoiceWithItems(ctx.scope, input.invoiceId);
         
         const { generateInvoicePdf, getDefaultCompanyInfo } = await import('../_core/invoicePdf');
         const company = getDefaultCompanyInfo();
@@ -249,7 +235,7 @@ export const invoicesRouter = router({
           filename: `invoice-${invoice.invoiceNumber}.pdf`,
         };
       }),
-    recordPayment: financeProcedure
+    recordPayment: scopedFinanceProcedure
       .input(z.object({
         invoiceId: z.number(),
         amount: z.string(),
@@ -258,8 +244,7 @@ export const invoicesRouter = router({
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const invoice = await db.getInvoiceById(input.invoiceId);
-        if (!invoice) throw new TRPCError({ code: 'NOT_FOUND', message: 'Invoice not found' });
+        const invoice = await loadScopedInvoice(ctx.scope, input.invoiceId);
         
         // Create payment record
         const paymentResult = await db.createPayment({
@@ -282,8 +267,9 @@ export const invoicesRouter = router({
         const totalDue = parseFloat(invoice.totalAmount);
         
         const newStatus = totalPaid >= totalDue ? 'paid' : 'partial';
+        // Money columns are DECIMAL(…,2); store the 2-dp string the rest of the codebase writes.
         await db.updateInvoice(input.invoiceId, {
-          paidAmount: totalPaid.toString(),
+          paidAmount: totalPaid.toFixed(2),
           status: newStatus,
         });
 
@@ -353,7 +339,7 @@ export const invoicesRouter = router({
           success: true,
           paymentId: paymentResult.id,
           newStatus,
-          totalPaid: totalPaid.toString(),
+          totalPaid: totalPaid.toFixed(2),
         };
       }),
     createFromText: financeProcedure
@@ -408,13 +394,10 @@ export const invoicesRouter = router({
 
         return { id: created.id, invoiceNumber, parsed, invoiceId: created.id };
       }),
-    approveAndEmail: financeProcedure
+    approveAndEmail: scopedFinanceProcedure
       .input(z.object({ invoiceId: z.number() }))
       .mutation(async ({ input, ctx }) => {
-        const invoice = await db.getInvoiceById(input.invoiceId);
-        if (!invoice) {
-          throw new TRPCError({ code: "NOT_FOUND", message: "Invoice not found" });
-        }
+        const invoice = await loadScopedInvoice(ctx.scope, input.invoiceId);
 
         await db.updateInvoice(input.invoiceId, {
           status: "sent",
@@ -435,11 +418,12 @@ export const invoicesRouter = router({
           emailError: emailResult.success ? undefined : emailResult.error,
         };
       }),
-    delete: financeProcedure
+    delete: scopedFinanceProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input, ctx }) => {
+        const invoice = await loadScopedInvoice(ctx.scope, input.id);
         await db.deleteInvoice(input.id);
-        await createAuditLog(ctx.user.id, 'delete', 'invoice', input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'invoice', input.id, invoice.invoiceNumber);
         return { success: true };
       }),
   });

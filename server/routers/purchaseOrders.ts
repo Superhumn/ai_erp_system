@@ -401,6 +401,15 @@ export const purchaseOrdersRouter = router({
       .mutation(async ({ input, ctx }) => {
         const po = await db.getPurchaseOrderWithItems(input.poId);
         if (!po) throw new TRPCError({ code: 'NOT_FOUND', message: 'PO not found' });
+        // Only a draft (first send) or an already-sent PO (re-send / reminder)
+        // may go to the supplier. A confirmed, received or cancelled PO must
+        // not be re-sent, nor get a fresh portal session.
+        if (po.status !== 'draft' && po.status !== 'sent') {
+          throw new TRPCError({
+            code: 'PRECONDITION_FAILED',
+            message: `Purchase order ${po.poNumber} is ${po.status} and cannot be sent to the supplier.`,
+          });
+        }
         
         const vendor = await db.getVendorById(po.vendorId);
         if (!vendor) throw new TRPCError({ code: 'NOT_FOUND', message: 'Vendor not found' });

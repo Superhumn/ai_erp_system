@@ -217,6 +217,20 @@ export const procurementProcedure = protectedProcedure.use(({ ctx, next }) => {
   return next({ ctx });
 });
 
+// Finance role *and* entity scope. By-id reads/writes on invoices, payments and recurring
+// invoices need both: the role gate says who may touch finance rows, `ctx.scope` says whose.
+export const scopedFinanceProcedure = financeProcedure.use(async ({ ctx, next }) => {
+  const scope = assertNonEmptyScope(await resolveRequestScope(ctx.user));
+  return next({ ctx: { ...ctx, scope } });
+});
+
+// Internal staff *and* entity scope. Sales orders are internal work (portal roles must not
+// reach them at all), and each row is still fenced to the caller's visible entities.
+export const scopedInternalProcedure = internalProcedure.use(async ({ ctx, next }) => {
+  const scope = assertNonEmptyScope(await resolveRequestScope(ctx.user));
+  return next({ ctx: { ...ctx, scope } });
+});
+
 // Helper to create audit log
 export async function createAuditLog(userId: number, action: 'create' | 'update' | 'delete' | 'view' | 'export' | 'approve' | 'reject', entityType: string, entityId: number, entityName?: string, oldValues?: any, newValues?: any) {
   await db.createAuditLog({

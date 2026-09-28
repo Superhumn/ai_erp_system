@@ -5,6 +5,7 @@ import { invokeLLM } from "../_core/llm";
 import * as db from "../db";
 import { financeProcedure } from "./_shared";
 import { bucketBillsAging, billOutstanding, billDaysOverdue } from "../billsLogic";
+import { parseReportRange, inReportRange, onOrBefore } from "../financialReportRange";
 
 // ============================================
 // FINANCIAL REPORTS
@@ -21,9 +22,13 @@ export const financialReportsRouter = router({
           try { return await fn(); } catch { return fallback; }
         };
 
-        const now = new Date();
+        // Period reports (P&L, revenue/expense breakdowns, tax) cover startDate..endDate inclusive;
+        // point-in-time reports (aging) are taken as of endDate (else now). Each source is filtered
+        // on its own business date: invoices by issue date, bills by bill date, orders by order date.
+        const range = parseReportRange(input.startDate, input.endDate);
+        const now = range.asOf;
 
-        const [invoices, bills, accounts, orders, customers, vendors, inventory] = await Promise.all([
+        const [allInvoices, allBills, accounts, allOrders, customers, vendors, inventory] = await Promise.all([
           safeQuery(() => db.getInvoices(), []),
           safeQuery(() => db.getBills(), []),
           safeQuery(() => db.getAccounts(), []),
@@ -33,10 +38,14 @@ export const financialReportsRouter = router({
           safeQuery(() => db.getInventory(), []),
         ]);
 
-        const paidInvoices = (invoices as any[]).filter((i: any) => i.status === 'paid');
+        const invoices = (allInvoices as any[]).filter((i: any) => inReportRange(range, i.issueDate ?? i.createdAt));
+        const bills = (allBills as any[]).filter((b: any) => inReportRange(range, b.billDate ?? b.createdAt));
+        const orders = (allOrders as any[]).filter((o: any) => inReportRange(range, o.orderDate ?? o.createdAt));
+
+        const paidInvoices = invoices.filter((i: any) => i.status === 'paid');
         const totalRevenue = paidInvoices.reduce((s: number, i: any) => s + parseFloat(i.totalAmount || '0'), 0);
         // `bills` are vendor payables (db.getBills joins vendorName / poNumber); cancelled ones are not expenses.
-        const liveBills = (bills as any[]).filter((b: any) => b.status !== 'cancelled');
+        const liveBills = bills.filter((b: any) => b.status !== 'cancelled');
         const totalExpenses = liveBills.reduce((s: number, b: any) => s + parseFloat(b.totalAmount || '0'), 0);
         const netIncome = totalRevenue - totalExpenses;
 
@@ -83,6 +92,8 @@ export const financialReportsRouter = router({
             break;
           }
           case 'balance_sheet': {
+            // Account balances are point-in-time snapshots (no per-date history), so the sheet
+            // is the current position; `now` (= endDate) only stamps the report.
             title = 'Balance Sheet';
             headers = ['Item', 'Amount'];
             const assetAccounts = (accounts as any[]).filter((a: any) => a.type === 'asset');
@@ -109,7 +120,9 @@ export const financialReportsRouter = router({
           case 'accounts_receivable': {
             title = 'Accounts Receivable Aging';
             headers = ['Customer', 'Amount', 'Age (days)'];
-            const openInvoices = (invoices as any[]).filter((i: any) => ['sent', 'overdue', 'partial'].includes(i.status));
+            // Aging is as of `now` (endDate): every open invoice issued on or before that date, regardless of startDate.
+            const openInvoices = (allInvoices as any[]).filter((i: any) =>
+              ['sent', 'overdue', 'partial'].includes(i.status) && onOrBefore(now, i.issueDate ?? i.createdAt));
             rows = openInvoices.map((i: any) => {
               const daysOld = Math.floor((now.getTime() - new Date(i.createdAt || now).getTime()) / 86400000);
               return { label: i.customerName || `Invoice #${i.invoiceNumber}`, amount: parseFloat(i.totalAmount || '0'), type: daysOld > 90 ? 'overdue' : 'item', count: daysOld };
@@ -120,7 +133,9 @@ export const financialReportsRouter = router({
           case 'accounts_payable': {
             title = 'Accounts Payable Aging';
             headers = ['Vendor / Bill', 'Outstanding', 'Days past due'];
-            const openBills = liveBills.filter((b: any) => b.status !== 'paid' && billOutstanding(b) > 0);
+            // Aging is as of `now` (endDate): every open bill dated on or before that date, regardless of startDate.
+            const openBills = (allBills as any[]).filter((b: any) =>
+              b.status !== 'cancelled' && b.status !== 'paid' && billOutstanding(b) > 0 && onOrBefore(now, b.billDate ?? b.createdAt));
             const aging = bucketBillsAging(openBills, now);
             rows = [
               ...openBills.map((b: any) => {
@@ -201,7 +216,7 @@ export const financialReportsRouter = router({
               { label: 'Total Revenue', amount: totalRevenue, type: 'item' },
               { label: 'Total Expenses', amount: totalExpenses, type: 'item' },
               { label: 'Net Income', amount: netIncome, type: 'total' },
-              { label: 'Open Orders', amount: (orders as any[]).length, type: 'item' },
+              { label: 'Open Orders', amount: orders.length, type: 'item' },
               { label: 'Active Customers', amount: (customers as any[]).length, type: 'item' },
               { label: 'Active Vendors', amount: (vendors as any[]).length, type: 'item' },
               { label: 'Inventory SKUs', amount: (inventory as any[]).length, type: 'item' },

@@ -326,13 +326,25 @@ describe("finance flow", () => {
     expect(bill).toMatchObject({ matchStatus: "matched", purchaseOrderId: 100, status: "pending_approval" });
   });
 
-  it("2c. the AP aging report lists the unpaid bill before payment", async () => {
-    const report = await finance.financialReports.generate({ reportType: "accounts_payable", startDate: "2026-01-01", endDate: "2026-12-31" });
+  it("2c. the AP aging report lists the unpaid bill before payment, aged as of the report's end date", async () => {
+    // The client sends the year to date; aging is as of endDate (today) → 10 days past due.
+    const report = await finance.financialReports.generate({ reportType: "accounts_payable", startDate: "2026-01-01", endDate: today.toISOString() });
     expect(report.title).toBe("Accounts Payable Aging");
     expect(report.rows[0]).toEqual({ label: "Acme Mills — Bill #ACME-1001", amount: 1200, type: "item", count: 10 });
     expect(report.rows.find((r) => r.label === "1-30 days")?.amount).toBe(1200);
     expect(report.rows.find((r) => r.label === "Total Outstanding")?.amount).toBe(1200);
     expect(report.summary).toBe("1 open bills totalling $1,200 (1 past due)");
+
+    // As of a month later the same bill is 40 days past due and sits in the 31-60 bucket.
+    const later = await finance.financialReports.generate({ reportType: "accounts_payable", endDate: new Date(today.getTime() + 30 * DAY).toISOString() });
+    expect(later.rows[0]).toEqual({ label: "Acme Mills — Bill #ACME-1001", amount: 1200, type: "item", count: 40 });
+    expect(later.rows.find((r) => r.label === "1-30 days")?.amount).toBe(0);
+    expect(later.rows.find((r) => r.label === "31-60 days")?.amount).toBe(1200);
+
+    // As of a date before the bill was raised, there is nothing to age.
+    const earlier = await finance.financialReports.generate({ reportType: "accounts_payable", endDate: new Date(today.getTime() - 60 * DAY).toISOString() });
+    expect(earlier.rows.filter((r) => r.type === "item")).toEqual([]);
+    expect(earlier.summary).toBe("0 open bills totalling $0 (0 past due)");
   });
 
   it("2d. finance approves, then pays the bill: a 'made' payment is recorded, the bill is paid and aging drops to zero", async () => {
@@ -496,6 +508,36 @@ describe("finance flow", () => {
     expect(ap.summary).toBe("1 open bills totalling $4,500 (0 past due)");
   });
 
+  it("6b. period reports only count rows dated inside startDate..endDate", async () => {
+    // ACME-1001 was billed 40 days ago; a 30-day window keeps only the two bills dated today.
+    const window = { startDate: new Date(today.getTime() - 30 * DAY).toISOString(), endDate: today.toISOString() };
+    const pl = await finance.financialReports.generate({ reportType: "profit_loss", ...window });
+    expect(pl.rows.filter((r) => r.type === "item").map((r) => [r.label.trim(), r.amount])).toEqual([
+      ["Bill #ACME-1002 (Acme Mills)", 450],
+      ["Bill #ACME-1003 (Acme Mills)", 4500],
+    ]);
+    expect(pl.rows.find((r) => r.label === "Total Expenses")?.amount).toBe(4950);
+    expect(pl.rows.find((r) => r.label === "Net Income")?.amount).toBe(-4950);
+
+    const byVendor = await finance.financialReports.generate({ reportType: "expense_by_vendor", ...window });
+    expect(byVendor.rows).toEqual([{ label: "Acme Mills", amount: 4950, type: "item", pct: "100.0%" }]);
+    expect(byVendor.summary).toBe("1 vendors, total spend $4,950");
+
+    const tax = await finance.financialReports.generate({ reportType: "tax_summary", ...window });
+    expect(tax.rows.find((r) => r.label === "Deductible Expenses")?.amount).toBe(4950);
+
+    // Last year: nothing was billed, so every period figure is zero.
+    const lastYear = { startDate: "2025-01-01", endDate: "2025-12-31" };
+    const empty = await finance.financialReports.generate({ reportType: "profit_loss", ...lastYear });
+    expect(empty.rows.filter((r) => r.type === "item")).toEqual([]);
+    expect(empty.rows.find((r) => r.label === "Total Expenses")?.amount).toBe(0);
+    expect((await finance.financialReports.generate({ reportType: "expense_by_vendor", ...lastYear })).rows).toEqual([]);
+    expect((await finance.financialReports.generate({ reportType: "monthly_summary", ...lastYear })).rows.find((r) => r.label === "Total Expenses")?.amount).toBe(0);
+
+    // No range at all is still "everything".
+    expect((await finance.financialReports.generate({ reportType: "profit_loss" })).rows.find((r) => r.label === "Total Expenses")?.amount).toBe(6150);
+  });
+
   // -------------------------------------------------------------------------
   it("7. R&D tax credit: a 0% wage line stays at $0 qualified after a notes-only edit (#420)", async () => {
     const study = await finance.rdTaxCredit.createStudy({ companyId: 1, taxYear: 2026, studyName: "FY26 R&D", calculationMethod: "asc" });
@@ -548,6 +590,17 @@ describe("finance flow", () => {
     await expect(sales.bills.list()).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(sales.bills.create({ vendorId: 4, billDate: today, totalAmount: "1.00" })).rejects.toMatchObject({ code: "FORBIDDEN", message: "Finance or operations access required" });
     await expect(sales.accounts.list()).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    // A bill cannot be born approved or paid: the create payload only accepts draft / pending_approval,
+    // so the finance-only approve gate cannot be sidestepped by anyone who may key in bills.
+    const billsBefore = state.bills.all().length;
+    for (const status of ["approved", "paid", "scheduled", "partially_paid"] as const) {
+      await expect(ops.bills.create({ vendorId: 4, billDate: today, totalAmount: "1.00", status: status as any })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      await expect(finance.bills.create({ vendorId: 4, billDate: today, totalAmount: "1.00", status: status as any })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    }
+    expect(state.bills.all()).toHaveLength(billsBefore);
+    const pending = await ops.bills.create({ vendorId: 4, billNumber: "ACME-1004", billDate: today, totalAmount: "1.00", status: "pending_approval" });
+    expect(pending).toMatchObject({ status: "pending_approval", approvedBy: null });
 
     await expect(ops.bills.approve({ id: ids.billC })).rejects.toMatchObject({ code: "FORBIDDEN", message: "Finance access required" });
     await expect(ops.bills.markPaid({ id: ids.billC })).rejects.toMatchObject({ code: "FORBIDDEN" });

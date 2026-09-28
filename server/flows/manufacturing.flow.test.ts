@@ -29,6 +29,7 @@ vi.mock("../db", async () => {
   const inventoryLots = table<Row>();
   const inventoryBalances = table<Row>();
   const inventoryTransactions = table<Row>();
+  const inventory = table<Row>();
   const auditLogs = table<Row>();
 
   const num = (v: unknown) => parseFloat(String(v ?? "0")) || 0;
@@ -133,41 +134,52 @@ vi.mock("../db", async () => {
       });
     }
   });
-  // Mirrors db.consumeWorkOrderMaterials: pulls from the work order's warehouse only.
+  // Mirrors db.consumeWorkOrderMaterials: each line is consumed from the
+  // warehouse its reservation was taken in (falling back to the work order's
+  // own warehouse), and whatever was reserved but not consumed is released.
   const consumeWorkOrderMaterials = vi.fn(async (workOrderId: number, performedBy?: number) => {
     const workOrder = await getWorkOrderById(workOrderId);
     if (!workOrder) throw new Error("Work order not found");
-    const warehouseId = (workOrder.warehouseId as number) || 0;
     for (const mat of await getWorkOrderMaterials(workOrderId)) {
       if (!mat.rawMaterialId) continue;
       const requiredQty = num(mat.requiredQuantity);
+      const alreadyConsumed = num(mat.consumedQuantity);
+      const reservedQty = num(mat.reservedQuantity);
+      const outstanding = Math.max(0, requiredQty - alreadyConsumed);
+      const warehouseId = (mat.warehouseId as number | null | undefined) ?? (workOrder.warehouseId as number | null | undefined) ?? 0;
       const inv = await getRawMaterialInventoryByLocation(mat.rawMaterialId as number, warehouseId);
       if (!inv) {
         await updateWorkOrderMaterial(mat.id, { status: "shortage" });
         continue;
       }
       const currentQty = num(inv.quantity);
-      const consumeQty = Math.min(requiredQty, currentQty);
+      const currentAvailable = inv.availableQuantity != null ? num(inv.availableQuantity) : currentQty;
+      const consumeQty = Math.min(outstanding, currentQty);
       const newQty = currentQty - consumeQty;
+      const newAvailable = Math.min(newQty, Math.max(0, currentAvailable + reservedQty - consumeQty));
       await upsertRawMaterialInventory(mat.rawMaterialId as number, warehouseId, {
         quantity: newQty.toFixed(4),
-        availableQuantity: newQty.toFixed(4),
+        availableQuantity: newAvailable.toFixed(4),
       });
-      await createRawMaterialTransaction({
-        rawMaterialId: mat.rawMaterialId,
-        warehouseId,
-        transactionType: "consume",
-        quantity: (-consumeQty).toFixed(4),
-        previousQuantity: currentQty.toFixed(4),
-        newQuantity: newQty.toFixed(4),
-        unit: mat.unit,
-        referenceType: "work_order",
-        referenceId: workOrderId,
-        performedBy,
-      });
+      if (consumeQty > 0) {
+        await createRawMaterialTransaction({
+          rawMaterialId: mat.rawMaterialId,
+          warehouseId,
+          transactionType: "consume",
+          quantity: (-consumeQty).toFixed(4),
+          previousQuantity: currentQty.toFixed(4),
+          newQuantity: newQty.toFixed(4),
+          unit: mat.unit,
+          referenceType: "work_order",
+          referenceId: workOrderId,
+          performedBy,
+        });
+      }
+      const totalConsumed = alreadyConsumed + consumeQty;
       await updateWorkOrderMaterial(mat.id, {
-        consumedQuantity: consumeQty.toFixed(4),
-        status: consumeQty >= requiredQty ? "consumed" : "partial",
+        consumedQuantity: totalConsumed.toFixed(4),
+        reservedQuantity: "0.0000",
+        status: totalConsumed >= requiredQty ? "consumed" : "partial",
       });
     }
     await updateWorkOrder(workOrderId, { status: "completed", actualEndDate: new Date() });
@@ -192,7 +204,18 @@ vi.mock("../db", async () => {
     const transactionNumber = `TXN-${Date.now().toString(36).toUpperCase()}`;
     return { id: inventoryTransactions.insert({ ...data, transactionNumber }).id, transactionNumber };
   });
-  // Mirrors db.createWorkOrderOutput: new finished lot + output row + lot balance + receive ledger entry.
+  // Mirrors db.addProductStock: upsert the aggregate product inventory row
+  // (what inventory.list, transfers and scrap read), stamped with the entity.
+  const addProductStock = vi.fn(async (productId: number, warehouseId: number, quantity: number, companyId?: number | null) => {
+    const existing = inventory.find((r) => r.productId === productId && r.warehouseId === warehouseId);
+    if (existing) {
+      inventory.update(existing.id, { quantity: (num(existing.quantity) + quantity).toString() });
+      return { created: false };
+    }
+    inventory.insert({ productId, warehouseId, quantity: quantity.toString(), companyId: companyId ?? null, reservedQuantity: "0" });
+    return { created: true };
+  });
+  // Mirrors db.createWorkOrderOutput: new finished lot + output row + lot balance + receive ledger entry + aggregate stock.
   const createWorkOrderOutput = vi.fn(
     async (workOrderId: number, productId: number, quantity: number, warehouseId: number, yieldPercent?: number, performedBy?: number) => {
       const { id: lotId, lotCode } = await createInventoryLot({
@@ -207,6 +230,9 @@ vi.mock("../db", async () => {
         quantity: quantity.toString(), unit: "EA", newBalance: quantity.toString(),
         referenceType: "work_order", referenceId: workOrderId, performedBy, reason: "Production output",
       });
+      const wo = await getWorkOrderById(workOrderId);
+      const product = await getProductById(productId);
+      await addProductStock(productId, warehouseId, quantity, (wo?.companyId as number | undefined) ?? (product?.companyId as number | undefined) ?? null);
       return { id: output.id, lotId, lotCode };
     },
   );
@@ -220,7 +246,7 @@ vi.mock("../db", async () => {
     getDb: vi.fn().mockResolvedValue({}),
     __store: {
       products, rawMaterials, rawMaterialInventory, rawMaterialTransactions, boms, bomComponents, bomVersionHistory,
-      workOrders, workOrderMaterials, workOrderOutputs, inventoryLots, inventoryBalances, inventoryTransactions, auditLogs,
+      workOrders, workOrderMaterials, workOrderOutputs, inventoryLots, inventoryBalances, inventoryTransactions, inventory, auditLogs,
     },
     createProduct, getProductById,
     createRawMaterial, getRawMaterialById, getRawMaterialInventory, getRawMaterialInventoryByLocation,
@@ -229,7 +255,7 @@ vi.mock("../db", async () => {
     createBomVersionHistory, getBomVersionHistory, calculateBomCosts,
     getWorkOrderById, createWorkOrder, updateWorkOrder, getWorkOrderMaterials, createWorkOrderMaterial,
     updateWorkOrderMaterial, generateWorkOrderMaterialsFromBom, consumeWorkOrderMaterials,
-    createInventoryLot, upsertInventoryBalance, createInventoryTransaction, createWorkOrderOutput,
+    createInventoryLot, upsertInventoryBalance, createInventoryTransaction, addProductStock, createWorkOrderOutput,
     createAuditLog, getUsersByRoles, notifyUsersOfEvent,
   };
 });
@@ -248,6 +274,7 @@ const OVERFLOW_WAREHOUSE = 2;
 // Ids flow from one step to the next, exactly as a user's session would.
 const ids = { flour: 0, sugar: 0, cookie: 0, bom: 0, workOrder: 0, lot: 0 };
 let workOrderNumber = "";
+let bigWorkOrderId = 0;
 
 describe("manufacturing flow: raw materials → BOM → work order → production", () => {
   beforeEach(() => {
@@ -402,6 +429,11 @@ describe("manufacturing flow: raw materials → BOM → work order → productio
     expect(store.workOrderOutputs.all()).toEqual([
       expect.objectContaining({ workOrderId: ids.workOrder, lotId: ids.lot, productId: ids.cookie, quantity: "95", yieldPercent: "95", warehouseId: MAIN_WAREHOUSE, producedBy: 1 }),
     ]);
+    // ...and the aggregate inventory row — what inventory.list, transfers and
+    // scrap read. Before the fix only the lot moved, so produced goods were
+    // invisible there.
+    expect(db.addProductStock).toHaveBeenCalledWith(ids.cookie, MAIN_WAREHOUSE, 95, null);
+    expect(store.inventory.all()).toEqual([expect.objectContaining({ productId: ids.cookie, warehouseId: MAIN_WAREHOUSE, quantity: "95" })]);
 
     // Work order closes with the actual quantity.
     const wo = await ops.workOrders.getById({ id: ids.workOrder });
@@ -457,8 +489,13 @@ describe("manufacturing flow: raw materials → BOM → work order → productio
     expect(mainAvail).toBe(140);
     expect(overflowAvail).toBe(100);
 
+    // Sugar: 50 − 20 − 2 − 2 = 26 kg on hand and the run needs 80, so top it up
+    // (a genuine shortfall is the next test's subject).
+    await ops.rawMaterialInventory.adjust({ rawMaterialId: ids.sugar, warehouseId: MAIN_WAREHOUSE, quantity: 60, unit: "kg" });
+
     // 400 units × 0.5 kg = 200 kg flour: 140 from main, the remaining 60 from overflow — not 200 from each.
     const big = await ops.workOrders.create({ bomId: ids.bom, productId: ids.cookie, warehouseId: MAIN_WAREHOUSE, quantity: "400" });
+    bigWorkOrderId = big.id;
     vi.clearAllMocks();
     await ops.workOrders.startProduction({ id: big.id });
 
@@ -472,6 +509,81 @@ describe("manufacturing flow: raw materials → BOM → work order → productio
       [MAIN_WAREHOUSE, qty(0)],
       [OVERFLOW_WAREHOUSE, qty(40)],
     ]);
+
+    // The split is persisted on the material lines (one per source warehouse,
+    // same total) so completion can consume — and release — the same stock.
+    const materials = await ops.workOrders.getMaterials({ workOrderId: big.id });
+    expect(materials.map((m) => [m.name, m.warehouseId, m.requiredQuantity, m.reservedQuantity, m.status])).toEqual([
+      ["Flour", MAIN_WAREHOUSE, qty(140), qty(140), "reserved"],
+      ["Sugar", MAIN_WAREHOUSE, qty(80), qty(80), "reserved"],
+      ["Flour", OVERFLOW_WAREHOUSE, qty(60), qty(60), "reserved"],
+    ]);
+    expect((await ops.workOrders.getById({ id: big.id }))!.status).toBe("in_progress");
+  });
+
+  it("defect: a run the stock cannot cover is refused up front — nothing reserved, status untouched", async () => {
+    // Flour available: main 0 + overflow 40 against 100 kg for 200 units; sugar 6 kg left against 40.
+    const short = await ops.workOrders.create({ bomId: ids.bom, productId: ids.cookie, warehouseId: MAIN_WAREHOUSE, quantity: "200" });
+    vi.clearAllMocks();
+    await expect(ops.workOrders.startProduction({ id: short.id })).rejects.toMatchObject({
+      code: "PRECONDITION_FAILED",
+      message: "Insufficient raw material stock to start production — Flour: short 60.0000 kg (required 100.0000, available 40.0000); Sugar: short 34.0000 kg (required 40.0000, available 6.0000)",
+    });
+    // Previously the status flipped to in_progress and the failure was only logged.
+    expect((await ops.workOrders.getById({ id: short.id }))!.status).toBe("draft");
+    expect(db.updateWorkOrder).not.toHaveBeenCalled();
+    expect(db.upsertRawMaterialInventory).not.toHaveBeenCalled();
+    expect(db.createWorkOrderMaterial).not.toHaveBeenCalled();
+    expect((await ops.workOrders.getMaterials({ workOrderId: short.id })).map((m) => m.status)).toEqual(["pending", "pending"]);
+    expect((await ops.rawMaterialInventory.list({ rawMaterialId: ids.flour })).map((r) => [r.warehouseId, r.availableQuantity])).toEqual([
+      [MAIN_WAREHOUSE, qty(0)],
+      [OVERFLOW_WAREHOUSE, qty(40)],
+    ]);
+  });
+
+  it("defect: completing the split run consumes each reservation where it was taken", async () => {
+    await ops.workOrders.completeProduction({ id: bigWorkOrderId, completedQuantity: "400" });
+
+    // Flour leaves main (140 → 0) AND overflow (100 → 40); before the fix only
+    // the work order's own warehouse was drawn down, so overflow kept its 100
+    // on hand while its 60 kg reservation was never released.
+    expect((await ops.rawMaterialInventory.list({ rawMaterialId: ids.flour })).map((r) => [r.warehouseId, r.quantity, r.availableQuantity])).toEqual([
+      [MAIN_WAREHOUSE, qty(0), qty(0)],
+      [OVERFLOW_WAREHOUSE, qty(40), qty(40)],
+    ]);
+    expect((await ops.rawMaterialInventory.list({ rawMaterialId: ids.sugar }))[0]).toMatchObject({ quantity: qty(6), availableQuantity: qty(6) });
+
+    const consumeTxns = store.rawMaterialTransactions.filter((t) => t.transactionType === "consume" && t.referenceId === bigWorkOrderId);
+    expect(consumeTxns.map((t) => [t.rawMaterialId, t.warehouseId, t.quantity, t.previousQuantity, t.newQuantity])).toEqual([
+      [ids.flour, MAIN_WAREHOUSE, qty(-140), qty(140), qty(0)],
+      [ids.sugar, MAIN_WAREHOUSE, qty(-80), qty(86), qty(6)],
+      [ids.flour, OVERFLOW_WAREHOUSE, qty(-60), qty(100), qty(40)],
+    ]);
+    const materials = await ops.workOrders.getMaterials({ workOrderId: bigWorkOrderId });
+    expect(materials.map((m) => [m.warehouseId, m.consumedQuantity, m.reservedQuantity, m.status])).toEqual([
+      [MAIN_WAREHOUSE, qty(140), qty(0), "consumed"],
+      [MAIN_WAREHOUSE, qty(80), qty(0), "consumed"],
+      [OVERFLOW_WAREHOUSE, qty(60), qty(0), "consumed"],
+    ]);
+    expect(store.inventory.find((r) => r.productId === ids.cookie)!.quantity).toBe("513"); // 95 + 8 + 10 + 400
+  });
+
+  it("defect: a reservation the run does not fully use is released back to available on completion", async () => {
+    // 20 units: 10 kg flour (main is empty, so reserved from overflow) + 4 kg sugar.
+    const small = await ops.workOrders.create({ bomId: ids.bom, productId: ids.cookie, warehouseId: MAIN_WAREHOUSE, quantity: "20" });
+    await ops.workOrders.startProduction({ id: small.id });
+    const flourLine = store.workOrderMaterials.find((m) => m.workOrderId === small.id && m.rawMaterialId === ids.flour)!;
+    expect(flourLine).toMatchObject({ warehouseId: OVERFLOW_WAREHOUSE, reservedQuantity: qty(10), requiredQuantity: qty(10), status: "reserved" });
+    expect((await ops.rawMaterialInventory.list({ rawMaterialId: ids.flour }))[1]).toMatchObject({ warehouseId: OVERFLOW_WAREHOUSE, quantity: qty(40), availableQuantity: qty(30) });
+
+    // 4 kg of the flour was booked against the run by hand before completion.
+    store.workOrderMaterials.update(flourLine.id, { consumedQuantity: qty(4) });
+    await ops.workOrders.completeProduction({ id: small.id, completedQuantity: "20" });
+
+    // Only the outstanding 6 kg leaves stock; the 4 kg reserved but not needed is available again.
+    expect((await ops.rawMaterialInventory.list({ rawMaterialId: ids.flour }))[1]).toMatchObject({ warehouseId: OVERFLOW_WAREHOUSE, quantity: qty(34), availableQuantity: qty(34) });
+    expect(store.workOrderMaterials.get(flourLine.id)).toMatchObject({ consumedQuantity: qty(10), reservedQuantity: qty(0), status: "consumed" });
+    expect((await ops.rawMaterialInventory.list({ rawMaterialId: ids.sugar }))[0]).toMatchObject({ quantity: qty(2), availableQuantity: qty(2) });
   });
 
   it("step 7: a finance user cannot create a work order; ops-only procedures reject other roles too", async () => {

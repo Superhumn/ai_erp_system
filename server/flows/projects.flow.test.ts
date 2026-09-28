@@ -200,4 +200,46 @@ describe("projects flow", () => {
     expect(detail.tasks.map((t) => t.status)).toEqual(["done", "done"]);
     expect(store.auditLogs.all().at(-1)).toMatchObject({ userId: 2, action: "update", entityType: "pmProject", entityId: project.id });
   });
+
+  it("4. external accounts cannot change, assign or delete project work either — every projects/pm write is FORBIDDEN, reads stay open", async () => {
+    vi.clearAllMocks();
+    const forbidden = { code: "FORBIDDEN", message: "Not available for external accounts" };
+    for (const ext of [investor, vendor]) {
+      // classic projects router
+      await expect(ext.projects.update({ id: projectId, name: "hijacked" })).rejects.toMatchObject(forbidden);
+      await expect(ext.projects.addMilestone({ projectId, name: "Extra" })).rejects.toMatchObject(forbidden);
+      await expect(ext.projects.updateMilestone({ id: 1, status: "pending" })).rejects.toMatchObject(forbidden);
+      await expect(ext.projects.addTask({ projectId, name: "Extra" })).rejects.toMatchObject(forbidden);
+      await expect(ext.projects.updateTask({ id: taskA, status: "cancelled" })).rejects.toMatchObject(forbidden);
+      await expect(ext.projects.assignTasks({ ids: [taskA], assigneeId: 77 })).rejects.toMatchObject(forbidden);
+      await expect(ext.projects.deleteTask({ id: taskA })).rejects.toMatchObject(forbidden);
+      await expect(ext.projects.deleteTasks({ ids: [taskA, taskB] })).rejects.toMatchObject(forbidden);
+      await expect(ext.projects.delete({ id: projectId })).rejects.toMatchObject(forbidden);
+      await expect(ext.projects.deleteMany({ ids: [projectId] })).rejects.toMatchObject(forbidden);
+      // PM matrix
+      await expect(ext.pm.programs.create({ name: "P", marketId: 1 })).rejects.toMatchObject(forbidden);
+      await expect(ext.pm.projects.create({ name: "X", marketId: 1 })).rejects.toMatchObject(forbidden);
+      await expect(ext.pm.projects.update({ id: 1, status: "cancelled" })).rejects.toMatchObject(forbidden);
+      await expect(ext.pm.projects.delete({ id: 1 })).rejects.toMatchObject(forbidden);
+      await expect(ext.pm.tasks.create({ projectId: 1, name: "X" })).rejects.toMatchObject(forbidden);
+      await expect(ext.pm.tasks.update({ id: 1, status: "todo" })).rejects.toMatchObject(forbidden);
+      await expect(ext.pm.tasks.delete({ id: 1 })).rejects.toMatchObject(forbidden);
+      await expect(ext.pm.milestones.create({ projectId: 1, name: "M", targetDate: new Date("2026-12-01") })).rejects.toMatchObject(forbidden);
+      await expect(ext.pm.dependencies.create({ predecessorProjectId: 1, successorProjectId: 1 })).rejects.toMatchObject(forbidden);
+    }
+    // Nothing was written.
+    for (const fn of [db.updateProject, db.createProjectMilestone, db.updateProjectMilestone, db.createProjectTask, db.updateProjectTask, db.createPmProject, db.updatePmProject, db.createPmTask, db.updatePmTask, db.createAuditLog]) {
+      expect(fn).not.toHaveBeenCalled();
+    }
+    expect(store.projects.get(projectId)).toMatchObject({ name: "Launch EU webshop", status: "completed" });
+    expect(store.tasks.get(taskA)!.status).toBe("completed");
+    expect(store.pmProjects.all()).toHaveLength(1);
+    expect(store.pmProjects.get(1)!.status).toBe("complete");
+
+    // Reads stay open to external accounts; internal roles keep write access.
+    expect((await investor.projects.get({ id: projectId }))!.name).toBe("Launch EU webshop");
+    expect(await vendor.pm.markets.list()).toHaveLength(1);
+    expect(await ops.projects.updateTask({ id: taskB, priority: "low" })).toEqual({ success: true });
+    expect(store.tasks.get(taskB)!.priority).toBe("low");
+  });
 });

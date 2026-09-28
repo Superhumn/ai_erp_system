@@ -376,14 +376,24 @@ export const aiAgentRouter = router({
                   status: 'draft',
                 });
                 
-                // Create PO line item for the raw material
+                // Create PO line item for the raw material. `material.id` is a
+                // rawMaterials id (purchaseOrderItems.productId references
+                // products), so the line carries no productId and is linked to
+                // the material through purchaseOrderRawMaterials — the same
+                // shape the scheduler path and purchaseOrders.create produce.
                 if (material) {
-                  await db.createPurchaseOrderItem({
+                  const poItem = await db.createPurchaseOrderItem({
                     purchaseOrderId: po.id,
                     description: material.name,
                     quantity: quantity.toString(),
                     unitPrice: unitCost.toFixed(2),
                     totalAmount: subtotal.toFixed(2),
+                  });
+                  await db.createPurchaseOrderRawMaterialLink({
+                    purchaseOrderItemId: poItem.id,
+                    rawMaterialId: material.id,
+                    orderedQuantity: quantity.toString(),
+                    unit: material.unit || 'EA',
                   });
                   
                   // Update raw material with on-order quantity
@@ -779,6 +789,22 @@ export const aiAgentRouter = router({
               status: 'success',
               message: `Task executed successfully`,
               details: JSON.stringify(result),
+            });
+
+            // Tell whoever approved (or requested) the task that it ran; the
+            // executing admin is the fallback. Nobody used to be told.
+            const notifyUserId = task.approvedBy ?? (Number(taskData.createdBy ?? taskData.requestedBy) || ctx.user.id);
+            await db.createNotification({
+              userId: notifyUserId,
+              type: 'success',
+              title: `AI task completed: ${task.taskType.replace(/_/g, ' ')}`,
+              message: result?.poNumber
+                ? `Task #${task.id} created draft purchase order ${result.poNumber}.`
+                : `Task #${task.id} (${task.taskType.replace(/_/g, ' ')}) executed successfully.`,
+              entityType: 'ai_agent_task',
+              entityId: task.id,
+              link: '/ai/approvals',
+              metadata: { taskType: task.taskType, result },
             });
             
             return { success: true, result };

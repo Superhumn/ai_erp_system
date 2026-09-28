@@ -7,6 +7,7 @@ import {
   purchaseOrders,
   purchaseOrderItems,
   purchaseOrderRawMaterials,
+  notifications,
 } from "../drizzle/schema";
 
 vi.mock("./db", () => ({ getDb: vi.fn() }));
@@ -209,6 +210,7 @@ describe("aiAgentScheduler.executeApprovedTasks (generate_po)", () => {
       taskType: "generate_po",
       status: "approved",
       priority: "high",
+      approvedBy: 4,
       taskData: JSON.stringify({
         vendorId: 9,
         materials: [{ id: 1, name: "Flour", quantity: "50", unitCost: "2.5", unit: "kg" }],
@@ -249,5 +251,38 @@ describe("aiAgentScheduler.executeApprovedTasks (generate_po)", () => {
 
     const completed = db.updates.find((u) => u.table === aiAgentTasks && u.set.status === "completed");
     expect(completed).toBeDefined();
+
+    // The approver is told the task ran.
+    const note = db.inserts.find((i) => i.table === notifications);
+    expect(note).toBeDefined();
+    expect(note!.values).toEqual([expect.objectContaining({
+      userId: 4, type: "success", entityType: "ai_agent_task", entityId: 5, link: "/ai/approvals", isRead: false,
+      title: "AI task completed: generate po", message: `Task #5 created draft purchase order ${poInsert!.values.poNumber}.`,
+    })]);
+  });
+
+  it("fails a task that names no vendor instead of defaulting to vendor 1", async () => {
+    const task = {
+      id: 6,
+      taskType: "generate_po",
+      status: "approved",
+      priority: "high",
+      approvedBy: 4,
+      taskData: JSON.stringify({
+        materials: [{ id: 1, name: "Flour", quantity: "50", unitCost: "2.5", unit: "kg" }],
+        totalValue: 125,
+      }),
+    };
+    const db = createFakeDb((table) => (table === aiAgentTasks ? [task] : []));
+    vi.mocked(getDb).mockResolvedValue(db as any);
+
+    const result = await executeApprovedTasks();
+
+    expect(result).toEqual({ executed: 0, failed: 1, errors: ["Task 6 failed: PO generation task has no vendorId — select a vendor for this task before approving it"] });
+    expect(db.inserts.find((i) => i.table === purchaseOrders)).toBeUndefined();
+    expect(db.inserts.find((i) => i.table === notifications)).toBeUndefined();
+    const failed = db.updates.find((u) => u.table === aiAgentTasks && u.set.status === "failed");
+    expect(failed!.set.errorMessage).toContain("no vendorId");
+    expect(db.inserts.find((i) => i.table === aiAgentLogs)!.values).toMatchObject({ taskId: 6, action: "task_executed", status: "error" });
   });
 });

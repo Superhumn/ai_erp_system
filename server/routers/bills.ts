@@ -23,6 +23,9 @@ const opsOrFinanceProcedure = protectedProcedure.use(({ ctx, next }) => {
 });
 
 const BILL_STATUSES = ["draft", "pending_approval", "approved", "scheduled", "partially_paid", "paid", "overdue", "cancelled", "disputed"] as const;
+// A bill is keyed in as a draft or handed straight to finance; approved / paid are only ever
+// reached through `approve` and `markPaid` (finance-only), never from the create payload.
+const BILL_CREATE_STATUSES = ["draft", "pending_approval"] as const;
 const BILL_SOURCES = ["manual", "email", "document_import", "ai_draft", "quickbooks"] as const;
 const PAYMENT_METHODS = ["cash", "check", "bank_transfer", "credit_card", "ach", "wire", "other"] as const;
 
@@ -114,7 +117,7 @@ export const billsRouter = router({
       }),
 
     create: opsOrFinanceProcedure
-      .input(billFieldsSchema)
+      .input(billFieldsSchema.extend({ status: z.enum(BILL_CREATE_STATUSES).default("draft") }))
       .mutation(async ({ input, ctx }) => {
         // bills.list is entity-scoped; default companyId to the caller's home entity or the
         // row is stored NULL and disappears from the creator's own list.
@@ -127,7 +130,7 @@ export const billsRouter = router({
           companyId,
           billNumber,
           sourceType: input.sourceType ?? "manual",
-          status: input.status ?? "draft",
+          status: input.status,
           lineItems: input.lineItems ?? undefined,
           createdBy: ctx.user.id,
         });

@@ -4469,6 +4469,26 @@ export async function mergeDuplicateInventoryRows(
   });
 }
 
+/**
+ * Book `quantity` of a product into the aggregate `inventory` row for a
+ * warehouse — the row inventory.list, transfers (updateInventoryQuantity) and
+ * inventory.scrap all read. Goes through updateInventoryQuantity so the
+ * read-then-write is row-locked; a row created by that call is stamped with
+ * `companyId` so entity-scoped inventory lists can see it. Used by production
+ * output and PO receipt, which previously wrote lots / raw-material stock only.
+ */
+export async function addProductStock(productId: number, warehouseId: number, quantity: number, companyId?: number | null) {
+  const existing = await getInventoryByProductAndWarehouse(productId, warehouseId);
+  await updateInventoryQuantity(productId, warehouseId, quantity);
+  if (!existing && companyId != null) {
+    const created = await getInventoryByProductAndWarehouse(productId, warehouseId);
+    if (created && created.companyId == null) {
+      await updateInventory(created.id, { companyId });
+    }
+  }
+  return { created: !existing };
+}
+
 // ============================================
 // INVENTORY TRANSFERS
 // ============================================
@@ -5653,7 +5673,10 @@ export async function receivePurchaseOrderItems(
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
+
+  // The PO's entity stamps any inventory row this receipt creates.
+  const po = await getPurchaseOrderById(purchaseOrderId);
+
   // Create receiving record
   const receiving = await createPoReceivingRecord({
     purchaseOrderId,
@@ -5707,7 +5730,27 @@ export async function receivePurchaseOrderItems(
         performedBy: receivedBy,
       });
     }
-    
+
+    // Product lines land in the aggregate `inventory` row for the receiving
+    // warehouse (as the customs receipt path does) with a receive ledger entry.
+    // Before this only rawMaterialInventory and the cost layers moved, so a
+    // received product never showed up in inventory.list.
+    if (item.productId && item.quantity > 0) {
+      await addProductStock(item.productId, warehouseId, item.quantity, po?.companyId ?? null);
+      await createInventoryTransaction({
+        transactionType: 'receive',
+        productId: item.productId,
+        toWarehouseId: warehouseId,
+        toStatus: 'available',
+        quantity: item.quantity.toString(),
+        unit: item.unit,
+        referenceType: 'purchase_order',
+        referenceId: purchaseOrderId,
+        performedBy: receivedBy,
+        reason: `PO receipt${item.lotNumber ? ` (lot ${item.lotNumber})` : ''}`,
+      });
+    }
+
     // Update PO item received quantity using SQL increment to avoid extra SELECT
     await db.update(purchaseOrderItems)
       .set({ receivedQuantity: sql`CAST(COALESCE(${purchaseOrderItems.receivedQuantity}, '0') + ${item.quantity.toFixed(4)} AS CHAR)` })
@@ -5864,7 +5907,16 @@ export async function consumeWorkOrderMaterials(workOrderId: number, performedBy
     if (!mat.rawMaterialId) continue;
     
     const requiredQty = parseFloat(mat.requiredQuantity?.toString() || '0');
-    const inv = await getRawMaterialInventoryByLocation(mat.rawMaterialId, workOrder.warehouseId || 0);
+    const alreadyConsumed = parseFloat(mat.consumedQuantity?.toString() || '0');
+    const reservedQty = parseFloat(mat.reservedQuantity?.toString() || '0');
+    const outstanding = Math.max(0, requiredQty - alreadyConsumed);
+
+    // workOrders.startProduction records on each line where its reservation was
+    // taken (a requirement split across warehouses becomes one line per
+    // warehouse), so consumption draws from the same place. A line that was
+    // never reserved falls back to the work order's own warehouse as before.
+    const warehouseId = mat.warehouseId ?? workOrder.warehouseId ?? 0;
+    const inv = await getRawMaterialInventoryByLocation(mat.rawMaterialId, warehouseId);
     
     if (!inv) {
       await updateWorkOrderMaterial(mat.id, { status: 'shortage' });
@@ -5872,33 +5924,42 @@ export async function consumeWorkOrderMaterials(workOrderId: number, performedBy
     }
     
     const currentQty = parseFloat(inv.quantity?.toString() || '0');
-    const consumeQty = Math.min(requiredQty, currentQty);
+    const currentAvailable = inv.availableQuantity != null ? parseFloat(inv.availableQuantity.toString()) : currentQty;
+    const consumeQty = Math.min(outstanding, currentQty);
     const newQty = currentQty - consumeQty;
+    // Release this line's reservation: what was reserved but not consumed goes
+    // back to available, consumption beyond the reservation comes off available.
+    // Other work orders' reservations on the same stock are left alone.
+    const newAvailable = Math.min(newQty, Math.max(0, currentAvailable + reservedQty - consumeQty));
     
     // Update inventory
-    await upsertRawMaterialInventory(mat.rawMaterialId, workOrder.warehouseId || 0, {
+    await upsertRawMaterialInventory(mat.rawMaterialId, warehouseId, {
       quantity: newQty.toFixed(4),
-      availableQuantity: newQty.toFixed(4),
+      availableQuantity: newAvailable.toFixed(4),
     });
     
     // Create transaction
-    await createRawMaterialTransaction({
-      rawMaterialId: mat.rawMaterialId,
-      warehouseId: workOrder.warehouseId || 0,
-      transactionType: 'consume',
-      quantity: (-consumeQty).toFixed(4),
-      previousQuantity: currentQty.toFixed(4),
-      newQuantity: newQty.toFixed(4),
-      unit: mat.unit,
-      referenceType: 'work_order',
-      referenceId: workOrderId,
-      performedBy,
-    });
+    if (consumeQty > 0) {
+      await createRawMaterialTransaction({
+        rawMaterialId: mat.rawMaterialId,
+        warehouseId,
+        transactionType: 'consume',
+        quantity: (-consumeQty).toFixed(4),
+        previousQuantity: currentQty.toFixed(4),
+        newQuantity: newQty.toFixed(4),
+        unit: mat.unit,
+        referenceType: 'work_order',
+        referenceId: workOrderId,
+        performedBy,
+      });
+    }
     
     // Update material status
+    const totalConsumed = alreadyConsumed + consumeQty;
     await updateWorkOrderMaterial(mat.id, {
-      consumedQuantity: consumeQty.toFixed(4),
-      status: consumeQty >= requiredQty ? 'consumed' : 'partial',
+      consumedQuantity: totalConsumed.toFixed(4),
+      reservedQuantity: '0.0000',
+      status: totalConsumed >= requiredQty ? 'consumed' : 'partial',
     });
   }
   
@@ -8306,7 +8367,13 @@ export async function createWorkOrderOutput(workOrderId: number, productId: numb
     performedBy,
     reason: 'Production output'
   });
-  
+
+  // The lot / balance / ledger rows above are the traceability record; the
+  // aggregate `inventory` row is what inventory.list, transfers and scrap read.
+  // Without it the finished goods were invisible everywhere but the lot view.
+  const [workOrder, product] = await Promise.all([getWorkOrderById(workOrderId), getProductById(productId)]);
+  await addProductStock(productId, warehouseId, quantity, workOrder?.companyId ?? product?.companyId ?? null);
+
   return { id: result[0].insertId, lotId, lotCode };
 }
 

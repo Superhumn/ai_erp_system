@@ -23,7 +23,8 @@ export const projectsRouter = router({
       .input(z.object({ id: z.number() }))
       .query(({ input }) => db.getProjectWithDetails(input.id)),
     // Projects are internal work; external accounts (investor, vendor,
-    // copacker, contractor) can read what they are shown but never create one.
+    // copacker, contractor) can read what they are shown but never create,
+    // change, assign or delete anything — every write below is internalProcedure.
     create: internalProcedure
       .input(z.object({
         name: z.string().min(1),
@@ -45,7 +46,7 @@ export const projectsRouter = router({
         await createAuditLog(ctx.user.id, 'create', 'project', result.id, input.name);
         return result;
       }),
-    update: protectedProcedure
+    update: internalProcedure
       .input(z.object({
         id: z.number(),
         name: z.string().optional(),
@@ -67,7 +68,7 @@ export const projectsRouter = router({
         await createAuditLog(ctx.user.id, 'update', 'project', id);
         return { success: true };
       }),
-    addMilestone: protectedProcedure
+    addMilestone: internalProcedure
       .input(z.object({
         projectId: z.number(),
         name: z.string().min(1),
@@ -79,7 +80,7 @@ export const projectsRouter = router({
         await createAuditLog(ctx.user.id, 'create', 'projectMilestone', result.id, input.name);
         return result;
       }),
-    updateMilestone: protectedProcedure
+    updateMilestone: internalProcedure
       .input(z.object({
         id: z.number(),
         name: z.string().optional(),
@@ -94,7 +95,7 @@ export const projectsRouter = router({
         await createAuditLog(ctx.user.id, 'update', 'projectMilestone', id);
         return { success: true };
       }),
-    addTask: protectedProcedure
+    addTask: internalProcedure
       .input(z.object({
         projectId: z.number(),
         milestoneId: z.number().optional(),
@@ -110,7 +111,7 @@ export const projectsRouter = router({
         await createAuditLog(ctx.user.id, 'create', 'projectTask', result.id, input.name);
         return result;
       }),
-    updateTask: protectedProcedure
+    updateTask: internalProcedure
       .input(z.object({
         id: z.number(),
         name: z.string().optional(),
@@ -129,14 +130,14 @@ export const projectsRouter = router({
         await createAuditLog(ctx.user.id, 'update', 'projectTask', id);
         return { success: true };
       }),
-    delete: protectedProcedure
+    delete: internalProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input, ctx }) => {
         await db.deleteProject(input.id);
         await createAuditLog(ctx.user.id, 'delete', 'project', input.id);
         return { success: true };
       }),
-    deleteMany: protectedProcedure
+    deleteMany: internalProcedure
       .input(z.object({ ids: z.array(z.number()).min(1) }))
       .mutation(async ({ input, ctx }) => {
         await db.deleteProjects(input.ids);
@@ -145,14 +146,14 @@ export const projectsRouter = router({
         }
         return { success: true, count: input.ids.length };
       }),
-    deleteTask: protectedProcedure
+    deleteTask: internalProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input, ctx }) => {
         await db.deleteProjectTask(input.id);
         await createAuditLog(ctx.user.id, 'delete', 'projectTask', input.id);
         return { success: true };
       }),
-    deleteTasks: protectedProcedure
+    deleteTasks: internalProcedure
       .input(z.object({ ids: z.array(z.number()).min(1) }))
       .mutation(async ({ input, ctx }) => {
         await db.deleteProjectTasks(input.ids);
@@ -161,7 +162,7 @@ export const projectsRouter = router({
         }
         return { success: true, count: input.ids.length };
       }),
-    assignTasks: protectedProcedure
+    assignTasks: internalProcedure
       .input(z.object({
         ids: z.array(z.number()).min(1),
         assigneeId: z.number().nullable(),
