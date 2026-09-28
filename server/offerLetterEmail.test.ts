@@ -111,7 +111,7 @@ describe("renderOfferLetterEmail", () => {
       { name: `Acme <Corp>` },
       { message: `<a href="javascript:alert(1)">click</a>`, senderName: "<Admin>" },
     );
-    expect(out.html).not.toMatch(/<script|<img|<iframe|<b>Ops|<a href="javascript|<Admin>|<Corp>/);
+    expect(out.html).not.toMatch(/<script|<img|<iframe|<b>Ops|<a href="javascript|<Admin>|<Corp>/i);
     expect(out.html).toContain("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;");
     expect(out.html).toContain("Eng &amp; &lt;b&gt;Ops&lt;/b&gt;");
     expect(out.html).toContain("&lt;iframe src=&quot;evil&quot;&gt;&lt;/iframe&gt;");
