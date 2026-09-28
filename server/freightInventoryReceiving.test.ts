@@ -7,7 +7,7 @@ vi.mock("./db", () => ({
   createVendor: vi.fn(),
   findPurchaseOrderByNumber: vi.fn(),
   updatePurchaseOrder: vi.fn(),
-  createFreightHistory: vi.fn(),
+  createFreightBooking: vi.fn(),
   receivePurchaseOrderIntoInventory: vi.fn(),
 }));
 
@@ -29,7 +29,7 @@ describe("importFreightInvoice — receive carried goods into inventory", () => 
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(db.getVendorByName).mockResolvedValue({ id: 7, name: "Qingdao Freight Forwarders" } as any);
-    vi.mocked(db.createFreightHistory).mockResolvedValue(55 as any);
+    vi.mocked(db.createFreightBooking).mockResolvedValue({ id: 55, bookingNumber: "BK-2026-00001" });
     vi.mocked(db.findPurchaseOrderByNumber).mockResolvedValue({ id: 42, poNumber: "PO-123" } as any);
     vi.mocked(db.updatePurchaseOrder).mockResolvedValue(undefined as any);
   });

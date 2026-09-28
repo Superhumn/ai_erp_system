@@ -8,11 +8,12 @@ import {
   vendors,
   purchaseOrders,
   purchaseOrderItems,
+  purchaseOrderRawMaterials,
   inventory,
   freightRfqs,
   freightCarriers,
 } from "../drizzle/schema";
-import { eq, and, lt, gte, desc, sql, isNull, or } from "drizzle-orm";
+import { eq, and, desc, sql, inArray, like } from "drizzle-orm";
 import { sendEmail } from "./_core/email";
 import * as ingredientQuoteService from "./ingredientQuoteService";
 import * as manufacturingDb from "./db/manufacturing";
@@ -76,6 +77,11 @@ export async function evaluateRules(): Promise<{
           if (minutesSinceLastTrigger < freqMinutes) continue; // Skip — too soon
         }
 
+        // Skip rules that already have an open (pending/approved) task — every
+        // scheduler cycle would otherwise create a duplicate task for the same
+        // condition, flooding the approval queue.
+        if (await hasOpenTaskForRule(db, rule.id)) continue;
+
         const shouldTrigger = await evaluateRuleCondition(rule);
         
         if (shouldTrigger) {
@@ -120,6 +126,56 @@ export async function evaluateRules(): Promise<{
   }
 
   return { triggeredRules, tasksCreated, errors };
+}
+
+type SchedulerDb = NonNullable<Awaited<ReturnType<typeof getDb>>>;
+
+const OPEN_TASK_STATUSES = ["pending_approval", "approved"] as const;
+
+/**
+ * True when a task created by this rule is still waiting for approval or
+ * execution. Tasks do not carry a ruleId, but the "rule_triggered" log row
+ * written at creation links ruleId -> taskId.
+ */
+async function hasOpenTaskForRule(db: SchedulerDb, ruleId: number): Promise<boolean> {
+  const rows = await db
+    .select({ id: aiAgentTasks.id })
+    .from(aiAgentLogs)
+    .innerJoin(aiAgentTasks, eq(aiAgentLogs.taskId, aiAgentTasks.id))
+    .where(
+      and(
+        eq(aiAgentLogs.ruleId, ruleId),
+        eq(aiAgentLogs.action, "rule_triggered"),
+        inArray(aiAgentTasks.status, [...OPEN_TASK_STATUSES])
+      )
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
+/**
+ * True when an open task of the given type already targets the same entity.
+ * `relatedEntityId` matches the task's relatedEntityId column; `taskDataLike`
+ * matches a JSON fragment inside taskData for tasks without an entity id.
+ */
+async function hasOpenTaskForEntity(
+  db: SchedulerDb,
+  taskType: typeof aiAgentTasks.$inferSelect["taskType"],
+  target: { relatedEntityId?: number; taskDataLike?: string }
+): Promise<boolean> {
+  const conditions = [
+    eq(aiAgentTasks.taskType, taskType),
+    inArray(aiAgentTasks.status, [...OPEN_TASK_STATUSES]),
+  ];
+  if (target.relatedEntityId !== undefined) conditions.push(eq(aiAgentTasks.relatedEntityId, target.relatedEntityId));
+  if (target.taskDataLike) conditions.push(like(aiAgentTasks.taskData, `%${target.taskDataLike}%`));
+
+  const rows = await db
+    .select({ id: aiAgentTasks.id })
+    .from(aiAgentTasks)
+    .where(and(...conditions))
+    .limit(1);
+  return rows.length > 0;
 }
 
 async function evaluateRuleCondition(rule: typeof aiAgentRules.$inferSelect): Promise<boolean> {
@@ -169,18 +225,36 @@ async function checkPOAutoGenerateCondition(condition: RuleCondition): Promise<b
   const db = await getDb();
   if (!db) return false;
 
-  // Check for materials needing reorder without pending POs
-  const materialsNeedingPO = await db.execute(sql`
-    SELECT rm.id, rm.name
-    FROM rawMaterials rm
-    LEFT JOIN purchaseOrderItems poi ON poi.rawMaterialId = rm.id
-    LEFT JOIN purchase_orders po ON po.id = poi.purchaseOrderId AND po.status IN ('draft', 'pending', 'approved', 'sent')
-    WHERE rm.status = 'active'
-    AND po.id IS NULL
-    LIMIT 10
-  `);
-  
-  return (materialsNeedingPO as any[]).length > 0;
+  // Materials needing reorder (same low-stock definition createPOGenerationTask
+  // uses) that are not already covered by an open PO. PO lines link to raw
+  // materials through the purchaseOrderRawMaterials junction table.
+  const lowStock = await db
+    .select({ id: rawMaterials.id })
+    .from(rawMaterials)
+    .where(
+      and(
+        sql`CAST(${rawMaterials.quantityOnOrder} AS DECIMAL) < 10`,
+        eq(rawMaterials.status, "active")
+      )
+    )
+    .limit(50);
+  if (lowStock.length === 0) return false;
+
+  const lowStockIds = lowStock.map((m) => m.id);
+  const covered = await db
+    .select({ rawMaterialId: purchaseOrderRawMaterials.rawMaterialId })
+    .from(purchaseOrderRawMaterials)
+    .innerJoin(purchaseOrderItems, eq(purchaseOrderRawMaterials.purchaseOrderItemId, purchaseOrderItems.id))
+    .innerJoin(purchaseOrders, eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id))
+    .where(
+      and(
+        inArray(purchaseOrderRawMaterials.rawMaterialId, lowStockIds),
+        inArray(purchaseOrders.status, ["draft", "sent", "confirmed", "partial"])
+      )
+    );
+  const coveredIds = new Set(covered.map((c) => c.rawMaterialId));
+
+  return lowStockIds.some((id) => !coveredIds.has(id));
 }
 
 async function checkRFQAutoSendCondition(condition: RuleCondition): Promise<boolean> {
@@ -266,6 +340,7 @@ async function createPOGenerationTask(
       minOrderQty: rawMaterials.minOrderQty,
       preferredVendorId: rawMaterials.preferredVendorId,
       unitCost: rawMaterials.unitCost,
+      unit: rawMaterials.unit,
     })
     .from(rawMaterials)
     .where(
@@ -292,6 +367,9 @@ async function createPOGenerationTask(
   const firstEntry = vendorGroups.entries().next().value;
   if (!firstEntry) return null;
   const [vendorId, materials] = firstEntry;
+
+  // Don't queue a second PO for a vendor that already has one awaiting approval/execution
+  if (await hasOpenTaskForEntity(db, "generate_po", { taskDataLike: `"vendorId":${vendorId},` })) return null;
   
   const totalValue = materials.reduce((sum: number, m: any) => {
     const qty = parseFloat(m.minOrderQty || "0");
@@ -355,6 +433,7 @@ Respond with JSON: { "summary": "brief description", "urgency": "low|medium|high
           name: m.name,
           quantity: m.minOrderQty,
           unitCost: m.unitCost,
+          unit: m.unit,
         })),
         totalValue,
       }),
@@ -390,6 +469,8 @@ async function createRFQTask(
   if (pendingRFQs.length === 0) return null;
 
   const rfq = pendingRFQs[0];
+
+  if (await hasOpenTaskForEntity(db, "send_rfq", { relatedEntityId: rfq.id })) return null;
 
   const [task] = await db
     .insert(aiAgentTasks)
@@ -439,6 +520,8 @@ async function createVendorFollowupTask(
   if (stalePOs.length === 0) return null;
 
   const { po, vendor } = stalePOs[0];
+
+  if (await hasOpenTaskForEntity(db, "vendor_followup", { relatedEntityId: po.id })) return null;
 
   // Generate follow-up email content
   const aiResponse = await invokeLLM({
@@ -721,18 +804,36 @@ async function executePOGeneration(task: typeof aiAgentTasks.$inferSelect): Prom
       })
       .$returningId();
 
-    // Create line items
+    // Create line items. `material.id` is a rawMaterials id, and
+    // purchaseOrderItems.productId references products, so the line is created
+    // without a productId and linked to the raw material through the
+    // purchaseOrderRawMaterials junction table (same shape as the PO router).
     for (const material of materials || []) {
-      const qty = parseFloat(material.quantity || "1");
-      const price = parseFloat(material.unitCost || "0");
-      await db.insert(purchaseOrderItems).values({
-        purchaseOrderId: po.id,
-        productId: material.id,
-        description: material.name,
-        quantity: qty.toString(),
-        unitPrice: price.toString(),
-        totalAmount: (qty * price).toString(),
-      });
+      const qty = parseFloat(material.quantity || "1") || 1;
+      const price = parseFloat(material.unitCost || "0") || 0;
+      const [item] = await db
+        .insert(purchaseOrderItems)
+        .values({
+          purchaseOrderId: po.id,
+          productId: null,
+          description: material.name,
+          quantity: qty.toString(),
+          unitPrice: price.toString(),
+          totalAmount: (qty * price).toString(),
+        })
+        .$returningId();
+
+      if (material.id) {
+        await db.insert(purchaseOrderRawMaterials).values({
+          purchaseOrderItemId: item.id,
+          rawMaterialId: material.id,
+          orderedQuantity: qty.toString(),
+          receivedQuantity: "0",
+          unit: material.unit || "EA",
+          unitCost: price.toString(),
+          status: "ordered",
+        });
+      }
     }
 
     return {

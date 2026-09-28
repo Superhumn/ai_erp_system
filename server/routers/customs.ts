@@ -68,8 +68,12 @@ export const customsRouter = router({
               if (shipment?.purchaseOrderId) {
                 const poItems = await db.getPurchaseOrderItems(shipment.purchaseOrderId);
                 for (const item of poItems) {
+                  // A line with no product (e.g. a service/raw-material line) has no inventory
+                  // row to receive into; an undefined productId filter would match every row
+                  // in the warehouse and the transaction insert would fail on productId NULL.
+                  if (!item.productId) continue;
                   const quantity = item.quantity || '0';
-                  const existingInventory = await db.getInventory(undefined, { productId: item.productId ?? undefined, warehouseId });
+                  const existingInventory = await db.getInventory(undefined, { productId: item.productId, warehouseId });
                   if (existingInventory.length > 0) {
                     const existing = existingInventory[0];
                     const newQty = (parseFloat(existing.quantity) + parseFloat(quantity)).toString();

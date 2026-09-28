@@ -91,6 +91,7 @@ import {
   vendorRfqs, vendorQuotes, vendorRfqEmails, vendorRfqInvitations,
   InsertCompany, InsertCustomer, InsertVendor, InsertProduct,
   InsertAccount, InsertInvoice, InsertPayment, InsertTransaction,
+  bills, type Bill, type InsertBill,
   InsertOrder, InsertInventory, InsertPurchaseOrder, InsertWarehouse,
   InsertEmployee, InsertContract, InsertDispute, InsertDocument,
   InsertProject, InsertAuditLog,
@@ -227,6 +228,7 @@ import {
   savedReports, InsertSavedReport,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
+import { bucketBillsAging, nextStatusAfterPayment, OPEN_BILL_STATUSES } from "./billsLogic";
 import {
   SAMPLE_MATERIAL_SUPPLY,
   DEFAULT_MATERIAL_SUPPLY_PLANNING,
@@ -526,6 +528,14 @@ export async function updateLocalAuthCredential(openId: string, updates: Partial
     }
 
     await db.update(localAuthCredentials).set(updates).where(eq(localAuthCredentials.openId, openId));
+}
+
+// Change a user's email and reset verification in one write (a new address is
+// unverified until the verification flow runs again).
+export async function setUserEmailUnverified(userId: number, email: string) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(users).set({ email, emailVerified: false }).where(eq(users.id, userId));
 }
 
 // ============================================
@@ -10524,6 +10534,20 @@ export async function updateDataRoomInvitation(id: number, data: Partial<InsertD
   await db.update(dataRoomInvitations).set(data).where(eq(dataRoomInvitations.id, id));
 }
 
+export async function getDataRoomLinkById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(dataRoomLinks).where(eq(dataRoomLinks.id, id)).limit(1);
+  return result[0] || null;
+}
+
+export async function getDataRoomInvitationById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(dataRoomInvitations).where(eq(dataRoomInvitations.id, id)).limit(1);
+  return result[0] || null;
+}
+
 // ============================================
 // IMAP CREDENTIALS MANAGEMENT
 // ============================================
@@ -10885,6 +10909,13 @@ export async function updateEmailCategory(id: number, data: {
   if (!db) return;
   
   await db.update(inboundEmails).set(data).where(eq(inboundEmails.id, id));
+}
+
+export async function getScheduledScanById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(scheduledEmailScans).where(eq(scheduledEmailScans.id, id)).limit(1);
+  return result[0] || null;
 }
 
 
@@ -12345,13 +12376,34 @@ export async function generateVendorRfqNumber() {
 // DOCUMENT IMPORT HELPERS
 // ============================================
 
-export async function getVendorByName(name: string) {
+/**
+ * Find a vendor by name for document import. Tries an exact (case-insensitive)
+ * match first, then a prefix match, then a contains match, so "ABC" resolves to
+ * the vendor "ABC" when one exists rather than to "ABC Logistics". A blank name
+ * never matches (the contains pattern would otherwise be `%%`). When `companyId`
+ * is given every lookup is limited to that entity; callers that omit it keep
+ * the unscoped behaviour.
+ */
+export async function getVendorByName(name: string, companyId?: number) {
   const db = await getDb();
   if (!db) return null;
-  const result = await db.select().from(vendors).where(
-    sql`LOWER(${vendors.name}) = LOWER(${name}) OR LOWER(${vendors.name}) LIKE LOWER(${`%${name}%`})`
-  ).limit(1);
-  return result[0] || null;
+  const trimmed = (name ?? "").trim();
+  if (!trimmed) return null;
+  // `%` and `_` are LIKE wildcards; a vendor called "100% Juice" must not match everything.
+  const escaped = trimmed.replace(/[\\%_]/g, "\\$&");
+  const scope = companyId != null ? eq(vendors.companyId, companyId) : undefined;
+  const lookups = [
+    sql`LOWER(${vendors.name}) = LOWER(${trimmed})`,
+    sql`LOWER(${vendors.name}) LIKE LOWER(${`${escaped}%`})`,
+    sql`LOWER(${vendors.name}) LIKE LOWER(${`%${escaped}%`})`,
+  ];
+  for (const match of lookups) {
+    const result = await db.select().from(vendors)
+      .where(scope ? and(match, scope) : match)
+      .limit(1);
+    if (result[0]) return result[0];
+  }
+  return null;
 }
 
 export async function getPurchaseOrderByNumber(poNumber: string) {
@@ -12372,117 +12424,104 @@ export async function updatePurchaseOrderFreight(poId: number, freightCost: stri
   } as any).where(eq(purchaseOrders.id, poId));
 }
 
-// Freight history table functions
-export interface FreightHistoryData {
-  invoiceNumber: string;
-  carrierId: number;
-  invoiceDate: number;
-  shipmentDate?: number;
-  deliveryDate?: number;
-  origin?: string;
-  destination?: string;
-  trackingNumber?: string;
-  weight?: string;
-  dimensions?: string;
-  freightCharges: string;
-  fuelSurcharge?: string;
-  accessorialCharges?: string;
-  totalAmount: string;
-  currency?: string;
-  relatedPoId?: number;
-  notes?: string;
-  createdBy: number;
-}
-
-// Note: freightHistory table needs to be created in schema
-// For now, we'll store freight data in a JSON field or create records in freightBookings
-export async function createFreightHistory(data: FreightHistoryData) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  
-  // Store as a freight booking with invoice data
-  const result = await db.insert(freightBookings).values({
-    rfqId: 0, // No RFQ for imported invoices
-    quoteId: 0, // No quote for imported invoices
-    carrierId: data.carrierId,
-    status: "completed",
-    bookingDate: data.invoiceDate,
-    pickupDate: data.shipmentDate,
-    deliveryDate: data.deliveryDate,
-    totalCost: data.totalAmount,
-    trackingNumber: data.trackingNumber,
-    notes: JSON.stringify({
-      invoiceNumber: data.invoiceNumber,
-      origin: data.origin,
-      destination: data.destination,
-      weight: data.weight,
-      dimensions: data.dimensions,
-      freightCharges: data.freightCharges,
-      fuelSurcharge: data.fuelSurcharge,
-      accessorialCharges: data.accessorialCharges,
-      currency: data.currency,
-      relatedPoId: data.relatedPoId,
-      importedInvoice: true
-    }),
-    createdBy: data.createdBy
-  } as any);
-  
-  return result[0].insertId;
-}
-
 // Document import log
 export interface DocumentImportLog {
   filename: string;
   documentType: string;
   status: "success" | "failed" | "partial";
-  createdRecords: string; // JSON
-  updatedRecords: string; // JSON
-  warnings: string; // JSON
+  createdRecords: string; // JSON array of { type, id, name }
+  updatedRecords: string; // JSON array of { type, id, name, changes? }
+  warnings: string; // JSON array of strings
   error?: string;
   importedBy: number;
   importedAt: number;
+  companyId?: number;
 }
 
-// For now, store import logs in audit_logs
+/**
+ * The JSON stored in audit_logs.newValues for an import. This is the one shape
+ * both createDocumentImportLog (writer) and getDocumentImportLogs (reader) use;
+ * the client (DocumentImport.tsx history tab) also reads `importData` directly.
+ */
+export interface DocumentImportLogData {
+  filename: string;
+  status: DocumentImportLog["status"];
+  createdRecords: Array<{ type: string; id: number; name: string }>;
+  updatedRecords: Array<{ type: string; id: number; name: string; changes?: string }>;
+  warnings: string[];
+  error?: string;
+  importedAt: number;
+}
+
+function parseJsonArray<T>(value: unknown): T[] {
+  if (Array.isArray(value)) return value as T[];
+  if (typeof value !== "string" || !value.trim()) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+// Import history lives in audit_logs (entityType `document_import_<type>`);
+// there is no dedicated table.
 export async function createDocumentImportLog(data: DocumentImportLog) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
+
+  const importData: DocumentImportLogData = {
+    filename: data.filename,
+    status: data.status,
+    createdRecords: parseJsonArray(data.createdRecords),
+    updatedRecords: parseJsonArray(data.updatedRecords),
+    warnings: parseJsonArray<string>(data.warnings),
+    error: data.error,
+    importedAt: data.importedAt,
+  };
   await db.insert(auditLogs).values({
+    companyId: data.companyId ?? null,
     userId: data.importedBy,
     action: "create", // Use 'create' as the action type
     entityType: `document_import_${data.documentType}`,
     entityId: 0,
     entityName: data.filename,
-    newValues: {
-      filename: data.filename,
-      status: data.status,
-      createdRecords: JSON.parse(data.createdRecords),
-      updatedRecords: JSON.parse(data.updatedRecords),
-      warnings: JSON.parse(data.warnings),
-      error: data.error
-    }
+    newValues: importData,
   });
 }
 
 export async function getDocumentImportLogs(limit: number = 50) {
   const db = await getDb();
   if (!db) return [];
-  
+
   const result = await db.select().from(auditLogs)
     .where(sql`${auditLogs.entityType} LIKE 'document_import_%'`)
     .orderBy(desc(auditLogs.createdAt))
     .limit(limit);
-  
+
   return result.map(log => {
-    const importData = (log.newValues as any) || {};
+    const raw = (log.newValues as Partial<DocumentImportLogData> & { fileName?: string }) || {};
+    const createdRecords = parseJsonArray<DocumentImportLogData["createdRecords"][number]>(raw.createdRecords);
+    const updatedRecords = parseJsonArray<DocumentImportLogData["updatedRecords"][number]>(raw.updatedRecords);
+    const importData: DocumentImportLogData = {
+      filename: raw.filename || raw.fileName || log.entityName || "Unknown",
+      status: raw.status || "success",
+      createdRecords,
+      updatedRecords,
+      warnings: parseJsonArray<string>(raw.warnings),
+      error: raw.error,
+      importedAt: typeof raw.importedAt === "number" ? raw.importedAt : new Date(log.createdAt).getTime(),
+    };
     return {
       id: log.id,
-      fileName: importData.fileName || log.entityName || 'Unknown',
-      documentType: log.entityType?.replace('document_import_', '') || 'unknown',
-      status: importData.status || (log.action === 'create' ? 'completed' : 'pending'),
-      recordsCreated: importData.recordsCreated || 0,
-      recordsUpdated: importData.recordsUpdated || 0,
+      fileName: importData.filename,
+      documentType: log.entityType?.replace("document_import_", "") || "unknown",
+      // Writer vocabulary (success | partial | failed); the client maps success → completed.
+      status: importData.status,
+      recordsCreated: createdRecords.length,
+      recordsUpdated: updatedRecords.length,
+      warnings: importData.warnings,
+      error: importData.error,
       createdAt: log.createdAt,
       importData,
     };
@@ -15517,18 +15556,34 @@ export async function deleteTransactionalEmailTemplate(id: number) {
   await db.delete(transactionalEmailTemplates).where(eq(transactionalEmailTemplates.id, id));
 }
 
-export async function getEmailMessages(filters?: { status?: string; templateName?: string; relatedEntityType?: string; relatedEntityId?: number }) {
+export async function getEmailMessages(filters?: {
+  status?: string;
+  templateName?: string;
+  toEmail?: string;
+  relatedEntityType?: string;
+  relatedEntityId?: number;
+  fromDate?: Date;
+  toDate?: Date;
+  limit?: number;
+  offset?: number;
+}) {
   const db = await getDb();
   if (!db) return [];
   const conditions: any[] = [];
   if (filters?.status) conditions.push(eq(emailMessages.status, filters.status as any));
   if (filters?.templateName) conditions.push(eq(emailMessages.templateName, filters.templateName as any));
+  if (filters?.toEmail) conditions.push(eq(emailMessages.toEmail, filters.toEmail));
   if (filters?.relatedEntityType) conditions.push(eq(emailMessages.relatedEntityType, filters.relatedEntityType));
   if (filters?.relatedEntityId) conditions.push(eq(emailMessages.relatedEntityId, filters.relatedEntityId));
-  if (conditions.length > 0) {
-    return db.select().from(emailMessages).where(and(...conditions)).orderBy(desc(emailMessages.createdAt));
-  }
-  return db.select().from(emailMessages).orderBy(desc(emailMessages.createdAt));
+  if (filters?.fromDate) conditions.push(gte(emailMessages.createdAt, filters.fromDate));
+  if (filters?.toDate) conditions.push(lte(emailMessages.createdAt, filters.toDate));
+  const base = conditions.length > 0
+    ? db.select().from(emailMessages).where(and(...conditions))
+    : db.select().from(emailMessages);
+  return base
+    .orderBy(desc(emailMessages.createdAt))
+    .limit(filters?.limit ?? 100)
+    .offset(filters?.offset ?? 0);
 }
 
 export async function getQueuedEmailMessages(limit?: number) {
@@ -15586,60 +15641,98 @@ export async function getRecentEmailEvents(limit: number = 100) {
 // COGS / COSTING FUNCTIONS
 // ============================================
 
-export async function recordCOGSSale(data: { productId: number; quantity: number; salePrice: string; companyId?: number; orderId?: number }) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(cogsRecords).values({
-    ...data,
-    type: "sale",
-    recordDate: new Date(),
-  } as any);
-  return { id: result[0].insertId };
-}
-
-export async function getCOGSTransactions(filters?: { companyId?: number; productId?: number; startDate?: Date; endDate?: Date }) {
+/**
+ * Per-product profitability rolled up from cogsRecords (the table the
+ * costing service writes). Optional product / date-range / company filters.
+ */
+export async function getCogsProfitabilityByProduct(filters?: {
+  companyId?: number;
+  productId?: number;
+  startDate?: Date;
+  endDate?: Date;
+}) {
   const db = await getDb();
   if (!db) return [];
   const conditions: any[] = [];
   if (filters?.companyId) conditions.push(eq(cogsRecords.companyId, filters.companyId));
   if (filters?.productId) conditions.push(eq(cogsRecords.productId, filters.productId));
-  if (conditions.length > 0) return db.select().from(cogsRecords).where(and(...conditions)).orderBy(desc(cogsRecords.createdAt));
-  return db.select().from(cogsRecords).orderBy(desc(cogsRecords.createdAt));
+  if (filters?.startDate) conditions.push(gte(cogsRecords.periodDate, filters.startDate));
+  if (filters?.endDate) conditions.push(lte(cogsRecords.periodDate, filters.endDate));
+
+  const rows = await db.select({
+    productId: cogsRecords.productId,
+    productName: products.name,
+    sku: products.sku,
+    unitsSold: sum(cogsRecords.quantitySold),
+    revenue: sum(cogsRecords.totalRevenue),
+    cogs: sum(cogsRecords.totalCogs),
+    recordCount: count(),
+  })
+    .from(cogsRecords)
+    .leftJoin(products, eq(cogsRecords.productId, products.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .groupBy(cogsRecords.productId, products.name, products.sku);
+
+  return rows.map((r) => {
+    const revenue = parseFloat(String(r.revenue ?? "0")) || 0;
+    const cogs = parseFloat(String(r.cogs ?? "0")) || 0;
+    const grossProfit = revenue - cogs;
+    return {
+      productId: r.productId,
+      productName: r.productName,
+      sku: r.sku,
+      unitsSold: parseFloat(String(r.unitsSold ?? "0")) || 0,
+      revenue: revenue.toFixed(2),
+      cogs: cogs.toFixed(2),
+      grossProfit: grossProfit.toFixed(2),
+      margin: revenue > 0 ? ((grossProfit / revenue) * 100).toFixed(2) + "%" : "-",
+      recordCount: Number(r.recordCount ?? 0),
+    };
+  });
 }
 
-export async function getProductProfitability(productId: number) {
-  const db = await getDb();
-  if (!db) return null;
-  const records = await db.select().from(cogsRecords).where(eq(cogsRecords.productId, productId));
-  return { productId, records, totalRecords: records.length };
-}
-
-export async function getInventoryValuation(companyId?: number) {
+/**
+ * Inventory valuation from active cost layers, grouped by product (and
+ * warehouse when the layer carries one). Optional warehouse / company filters.
+ */
+export async function getInventoryValuation(filters?: { companyId?: number; warehouseId?: number }) {
   const db = await getDb();
   if (!db) return [];
-  const conditions: any[] = [];
-  if (companyId) conditions.push(eq(inventoryCostLayers.companyId, companyId));
-  if (conditions.length > 0) return db.select().from(inventoryCostLayers).where(and(...conditions));
-  return db.select().from(inventoryCostLayers);
-}
+  const conditions: any[] = [eq(inventoryCostLayers.status, "active")];
+  if (filters?.companyId) conditions.push(eq(inventoryCostLayers.companyId, filters.companyId));
+  if (filters?.warehouseId) conditions.push(eq(inventoryCostLayers.warehouseId, filters.warehouseId));
 
-export async function allocateFreightCosts(data: { purchaseOrderId: number; freightCost: string; allocationMethod: string }) {
-  // Allocate freight costs to inventory cost layers based on the PO
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  // Update PO items cost basis with allocated freight
-  return { success: true, allocated: data.freightCost };
-}
+  const rows = await db.select({
+    productId: inventoryCostLayers.productId,
+    productName: products.name,
+    sku: products.sku,
+    warehouseId: inventoryCostLayers.warehouseId,
+    warehouseName: warehouses.name,
+    quantity: sum(inventoryCostLayers.remainingQuantity),
+    totalValue: sum(sql`CAST(${inventoryCostLayers.remainingQuantity} AS DECIMAL(15,4)) * CAST(${inventoryCostLayers.unitCost} AS DECIMAL(15,4))`),
+    layerCount: count(),
+  })
+    .from(inventoryCostLayers)
+    .leftJoin(products, eq(inventoryCostLayers.productId, products.id))
+    .leftJoin(warehouses, eq(inventoryCostLayers.warehouseId, warehouses.id))
+    .where(and(...conditions))
+    .groupBy(inventoryCostLayers.productId, products.name, products.sku, inventoryCostLayers.warehouseId, warehouses.name);
 
-export async function updateInventoryCostBasis(lotId: number, data: { additionalCost?: string; reason?: string }) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const lot = await db.select().from(inventoryLots).where(eq(inventoryLots.id, lotId));
-  if (!lot[0]) throw new Error("Lot not found");
-  const currentCost = parseFloat((lot[0] as any).unitCost || '0');
-  const additional = parseFloat(data.additionalCost || '0');
-  await db.update(inventoryLots).set({ unitCost: String(currentCost + additional) } as any).where(eq(inventoryLots.id, lotId));
-  return { success: true };
+  return rows.map((r) => {
+    const quantity = parseFloat(String(r.quantity ?? "0")) || 0;
+    const totalValue = parseFloat(String(r.totalValue ?? "0")) || 0;
+    return {
+      productId: r.productId,
+      productName: r.productName,
+      sku: r.sku,
+      warehouseId: r.warehouseId,
+      warehouseName: r.warehouseName,
+      quantity: quantity.toFixed(4),
+      unitCost: quantity > 0 ? (totalValue / quantity).toFixed(4) : "0.0000",
+      totalValue: totalValue.toFixed(2),
+      layerCount: Number(r.layerCount ?? 0),
+    };
+  });
 }
 
 // ============================================
@@ -16460,8 +16553,137 @@ export async function getFundraisingReminders(filters?: { status?: string; inves
   return db.select().from(fundraisingReminders);
 }
 
-export async function getBills() {
-  return getPurchaseOrders();
+// ============================================
+// BILLS (ACCOUNTS PAYABLE)
+// ============================================
+// Vendor liabilities. `invoices` is customer receivables; settle a bill with a
+// `payments` row of type "made" via recordBillPayment.
+
+export type BillStatus = Bill["status"];
+export type BillMatchStatus = Bill["matchStatus"];
+
+export interface BillFilters {
+  companyId?: number;
+  /** Entity scope allow-list (scopeCompanyIds). An empty list yields no rows. */
+  companyIds?: number[];
+  vendorId?: number;
+  status?: BillStatus;
+  statuses?: readonly BillStatus[];
+  matchStatus?: BillMatchStatus;
+  dueBefore?: Date;
+  dueAfter?: Date;
+  purchaseOrderId?: number;
+  limit?: number;
+}
+
+export async function createBill(data: InsertBill) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(bills).values(data);
+  return { id: result[0].insertId };
+}
+
+/** Bills ordered by due date (soonest first), then newest. Joins the vendor name and PO number. */
+export async function getBills(filters?: BillFilters) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.companyIds) {
+    if (filters.companyIds.length === 0) return [];
+    conditions.push(inArray(bills.companyId, filters.companyIds));
+  }
+  if (filters?.companyId) conditions.push(eq(bills.companyId, filters.companyId));
+  if (filters?.vendorId) conditions.push(eq(bills.vendorId, filters.vendorId));
+  if (filters?.status) conditions.push(eq(bills.status, filters.status));
+  if (filters?.statuses && filters.statuses.length > 0) conditions.push(inArray(bills.status, [...filters.statuses]));
+  if (filters?.matchStatus) conditions.push(eq(bills.matchStatus, filters.matchStatus));
+  if (filters?.dueBefore) conditions.push(lte(bills.dueDate, filters.dueBefore));
+  if (filters?.dueAfter) conditions.push(gte(bills.dueDate, filters.dueAfter));
+  if (filters?.purchaseOrderId) conditions.push(eq(bills.purchaseOrderId, filters.purchaseOrderId));
+
+  const base = db
+    .select({ bill: bills, vendorName: vendors.name, poNumber: purchaseOrders.poNumber })
+    .from(bills)
+    .leftJoin(vendors, eq(bills.vendorId, vendors.id))
+    .leftJoin(purchaseOrders, eq(bills.purchaseOrderId, purchaseOrders.id));
+
+  let query = conditions.length > 0
+    ? base.where(and(...conditions)).orderBy(asc(bills.dueDate), desc(bills.createdAt))
+    : base.orderBy(asc(bills.dueDate), desc(bills.createdAt));
+  if (filters?.limit) query = query.limit(filters.limit) as typeof query;
+
+  const rows = await query;
+  return rows.map((r) => ({ ...r.bill, vendorName: r.vendorName, poNumber: r.poNumber }));
+}
+
+export async function getBillById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db
+    .select({ bill: bills, vendorName: vendors.name, poNumber: purchaseOrders.poNumber })
+    .from(bills)
+    .leftJoin(vendors, eq(bills.vendorId, vendors.id))
+    .leftJoin(purchaseOrders, eq(bills.purchaseOrderId, purchaseOrders.id))
+    .where(eq(bills.id, id));
+  return row ? { ...row.bill, vendorName: row.vendorName, poNumber: row.poNumber } : null;
+}
+
+export async function updateBill(id: number, data: Partial<InsertBill>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(bills).set(data).where(eq(bills.id, id));
+  return getBillById(id);
+}
+
+/** Dedupe key for imports: the vendor's own bill number. */
+export async function findBillByNumber(billNumber: string, vendorId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db
+    .select()
+    .from(bills)
+    .where(and(eq(bills.billNumber, billNumber), eq(bills.vendorId, vendorId)))
+    .limit(1);
+  return row || null;
+}
+
+/** Bills the vendor is still owed money on, soonest due first. */
+export async function getOpenBillsForVendor(vendorId: number) {
+  return getBills({ vendorId, statuses: OPEN_BILL_STATUSES });
+}
+
+/**
+ * Apply a payment to a bill: bumps amountPaid and flips the status to
+ * partially_paid or paid (stamping paidAt). The `payments` row itself is
+ * created by the caller (see billsService.payBill) so this stays a pure
+ * bill-state transition.
+ */
+export async function recordBillPayment(billId: number, payment: { amount: number; paymentId?: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const bill = await getBillById(billId);
+  if (!bill) throw new Error("Bill not found");
+  if (!(payment.amount > 0)) throw new Error("Payment amount must be positive");
+
+  const next = nextStatusAfterPayment(bill, payment.amount);
+  const noteLine = `Payment${payment.paymentId ? ` #${payment.paymentId}` : ""} of ${payment.amount.toFixed(2)} recorded ${new Date().toISOString().slice(0, 10)}`;
+  await db
+    .update(bills)
+    .set({
+      amountPaid: next.amountPaid.toFixed(2),
+      status: next.status,
+      paidAt: next.status === "paid" ? new Date() : bill.paidAt,
+      notes: bill.notes ? `${bill.notes}\n${noteLine}` : noteLine,
+    })
+    .where(eq(bills.id, billId));
+  return getBillById(billId);
+}
+
+/** Outstanding balance of open bills bucketed by days past due (current / 1-30 / 31-60 / 61-90 / 90+). */
+export async function getBillsAgingSummary(companyId?: number, asOf: Date = new Date()) {
+  const rows = await getBills({ companyId });
+  return bucketBillsAging(rows, asOf);
 }
 
 // ============================================

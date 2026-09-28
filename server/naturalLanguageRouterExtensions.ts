@@ -24,6 +24,19 @@ const financeProcedure = protectedProcedure.use(({ ctx, next }) => {
   return next({ ctx });
 });
 
+/**
+ * Case-insensitive product lookup by name or SKU. Products are never created
+ * from free text here — a transfer of an unknown item is rejected instead.
+ */
+async function findProductByNameOrSku(nameOrSku: string) {
+  const needle = nameOrSku.trim().toLowerCase();
+  if (!needle) return undefined;
+  const bySku = await db.getProductBySku(nameOrSku.trim());
+  if (bySku) return bySku;
+  const products = await db.getProducts();
+  return products.find(p => p.name?.toLowerCase() === needle || p.sku?.toLowerCase() === needle);
+}
+
 function generateNumber(prefix: string) {
   const date = new Date();
   const year = date.getFullYear().toString().slice(-2);
@@ -89,10 +102,15 @@ export const purchaseOrderTextEndpoints = {
           const total = quantity * unitPrice;
           subtotal += total;
           
-          // Find or create material
-          let productId: number | undefined;
+          // Find or create the raw material. Its id is a rawMaterials id, which
+          // must NOT be written to purchaseOrderItems.productId (FK to products);
+          // the line is linked through purchaseOrderRawMaterials instead.
+          let rawMaterialId: number | undefined;
+          let rawMaterialUnit: string | undefined;
           try {
-            productId = await findOrCreateEntity(item.materialName, 'material', db);
+            const existing = await db.getRawMaterialByNameOrSku(item.materialName, item.materialName);
+            rawMaterialId = existing?.id ?? await findOrCreateEntity(item.materialName, 'material', db);
+            rawMaterialUnit = existing?.unit ?? (await db.getRawMaterialById(rawMaterialId))?.unit;
           } catch (err) {
             // Log material linking failure to audit trail
             console.warn('Failed to link material:', err);
@@ -103,7 +121,8 @@ export const purchaseOrderTextEndpoints = {
           }
           
           items.push({
-            productId,
+            rawMaterialId,
+            unit: item.unit || rawMaterialUnit || 'EA',
             description: `${item.quantity} ${item.unit || 'units'} ${item.materialName}`,
             quantity: quantity.toString(),
             unitPrice: unitPrice.toFixed(2),
@@ -130,12 +149,21 @@ export const purchaseOrderTextEndpoints = {
           createdBy: ctx.user.id,
         });
         
-        // Create PO line items
-        for (const item of items) {
-          await db.createPurchaseOrderItem({
+        // Create PO line items and link each to its raw material (same
+        // pattern as server/routers/purchaseOrders.ts)
+        for (const { rawMaterialId, unit, ...line } of items) {
+          const poItem = await db.createPurchaseOrderItem({
             purchaseOrderId: po.id,
-            ...item,
+            ...line,
           });
+          if (rawMaterialId) {
+            await db.createPurchaseOrderRawMaterialLink({
+              purchaseOrderItemId: poItem.id,
+              rawMaterialId,
+              orderedQuantity: line.quantity,
+              unit,
+            });
+          }
         }
         
         await createAuditLog(ctx.user.id, 'create', 'purchaseOrder', po.id, poNumber, null, { source: 'text', originalText: input.text });
@@ -378,6 +406,23 @@ export const inventoryTextEndpoints = {
           throw new Error(`Warehouse not found: ${!fromWarehouse ? parsed.fromLocation : parsed.toLocation}`);
         }
         
+        // Resolve every product up front so an unknown/raw-material line fails
+        // before any transfer row is written.
+        const resolvedItems: Array<{ productId: number; quantity: string }> = [];
+        for (const item of parsed.items || []) {
+          const product = await findProductByNameOrSku(item.materialName);
+          if (!product) {
+            const rawMaterial = await db.getRawMaterialByNameOrSku(item.materialName, item.materialName);
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: rawMaterial
+                ? `"${item.materialName}" is a raw material; inventory transfers move finished products only`
+                : `No product found matching "${item.materialName}"`,
+            });
+          }
+          resolvedItems.push({ productId: product.id, quantity: item.quantity.toString() });
+        }
+
         // Create inventory transfer
         const transfer = await db.createTransfer({
           fromWarehouseId: fromWarehouse.id,
@@ -389,20 +434,12 @@ export const inventoryTextEndpoints = {
         });
 
 
-        // Create transfer items
-        for (const item of parsed.items || []) {
-          // Find material/product
-          let productId: number | undefined;
-          try {
-            productId = await findOrCreateEntity(item.materialName, 'material', db);
-          } catch (err) {
-            console.warn('Failed to find/create material:', err);
-          }
-
+        // Create transfer items (inventoryTransferItems.productId -> products)
+        for (const item of resolvedItems) {
           await db.addTransferItem({
             transferId: transfer.id,
-            productId: productId!,
-            requestedQuantity: item.quantity.toString(),
+            productId: item.productId,
+            requestedQuantity: item.quantity,
           });
         }
 
@@ -414,6 +451,8 @@ export const inventoryTextEndpoints = {
           parsed,
         };
       } catch (error) {
+        // Keep the BAD_REQUEST raised for unresolved products/raw materials
+        if (error instanceof TRPCError) throw error;
         console.error('[InventoryTransfer createFromText] Error:', error);
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',

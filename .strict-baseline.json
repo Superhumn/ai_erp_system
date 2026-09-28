@@ -1,8 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-09-11",
-  "totalErrors": 1,
-  "files": {
-    "client/src/pages/finance/FinancialReports.tsx": 1
-  }
+  "generatedAt": "2026-09-28",
+  "totalErrors": 0,
+  "files": {}
 }

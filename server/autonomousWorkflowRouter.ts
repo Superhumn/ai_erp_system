@@ -19,7 +19,7 @@ import {
   supplierPerformance,
   workflowNotifications,
 } from "../drizzle/schema";
-import { eq, and, desc, asc, sql, gte, lte, or } from "drizzle-orm";
+import { eq, and, desc, asc, sql, gte, lte, or, type SQL } from "drizzle-orm";
 
 // ============================================
 // AUTONOMOUS WORKFLOW MANAGEMENT ROUTER
@@ -39,6 +39,49 @@ const adminOnlyProcedure = protectedProcedure.use(({ ctx, next }) => {
   }
   return next({ ctx });
 });
+
+function parseJsonList(raw: string | null | undefined): unknown[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * An approval that names specific users and/or roles may only be decided by
+ * one of them. An approval with no assignment is open to any ops/admin user.
+ */
+export function isApprovalAssignedTo(
+  approval: { assignedToUsers?: string | null; assignedToRoles?: string | null },
+  user: { id: number; role: string }
+): boolean {
+  const userIds = parseJsonList(approval.assignedToUsers).map((v) => Number(v));
+  const roles = parseJsonList(approval.assignedToRoles).map((v) => String(v));
+  if (userIds.length === 0 && roles.length === 0) return true;
+  return userIds.includes(user.id) || roles.includes(user.role);
+}
+
+async function assertCanDecideApproval(approvalId: number, user: { id: number; role: string }): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+  const [approval] = await db
+    .select({
+      id: workflowApprovalQueue.id,
+      assignedToUsers: workflowApprovalQueue.assignedToUsers,
+      assignedToRoles: workflowApprovalQueue.assignedToRoles,
+    })
+    .from(workflowApprovalQueue)
+    .where(eq(workflowApprovalQueue.id, approvalId));
+
+  if (!approval) throw new TRPCError({ code: "NOT_FOUND", message: "Approval not found" });
+  if (!isApprovalAssignedTo(approval, user)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "This approval is assigned to other users or roles" });
+  }
+}
 
 export const autonomousWorkflowRouter = router({
   // ============================================
@@ -218,7 +261,13 @@ export const autonomousWorkflowRouter = router({
         const db = await getDb();
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-        let query = db
+        // Collect filters and apply them in a single .where(); chaining
+        // .where() twice replaces the first condition instead of combining.
+        const conditions: SQL[] = [];
+        if (input.workflowId) conditions.push(eq(workflowRuns.workflowId, input.workflowId));
+        if (input.status) conditions.push(eq(workflowRuns.status, input.status as any));
+
+        const query = db
           .select({
             run: workflowRuns,
             workflow: supplyChainWorkflows,
@@ -226,15 +275,7 @@ export const autonomousWorkflowRouter = router({
           .from(workflowRuns)
           .innerJoin(supplyChainWorkflows, eq(workflowRuns.workflowId, supplyChainWorkflows.id));
 
-        if (input.workflowId) {
-          query = query.where(eq(workflowRuns.workflowId, input.workflowId)) as any;
-        }
-
-        if (input.status) {
-          query = query.where(eq(workflowRuns.status, input.status as any)) as any;
-        }
-
-        return query
+        return (conditions.length > 0 ? query.where(and(...conditions)) : query)
           .orderBy(desc(workflowRuns.createdAt))
           .limit(input.limit)
           .offset(input.offset);
@@ -351,12 +392,13 @@ export const autonomousWorkflowRouter = router({
       }),
 
     // Approve an item
-    approve: protectedProcedure
+    approve: opsOrAdminProcedure
       .input(z.object({
         id: z.number(),
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        await assertCanDecideApproval(input.id, ctx.user);
         const orchestrator = getOrchestrator();
         const result = await orchestrator.processApprovalDecision(
           input.id,
@@ -368,12 +410,13 @@ export const autonomousWorkflowRouter = router({
       }),
 
     // Reject an item
-    reject: protectedProcedure
+    reject: opsOrAdminProcedure
       .input(z.object({
         id: z.number(),
         reason: z.string().min(1),
       }))
       .mutation(async ({ input, ctx }) => {
+        await assertCanDecideApproval(input.id, ctx.user);
         const orchestrator = getOrchestrator();
         const result = await orchestrator.processApprovalDecision(
           input.id,

@@ -18,6 +18,8 @@ import {
   isFetchableAttachmentUrl,
   allowedAttachmentHosts,
   UnsafeAttachmentUrlError,
+  fetchAttachment,
+  decodeDataUrl,
 } from "./attachmentUrl";
 
 const PUBLIC = "https://files.example-erp.com";
@@ -132,5 +134,61 @@ describe("isFetchableAttachmentUrl", () => {
   it("returns a boolean instead of throwing", () => {
     expect(isFetchableAttachmentUrl(`${PUBLIC}/a.pdf`)).toBe(true);
     expect(isFetchableAttachmentUrl("http://169.254.169.254/")).toBe(false);
+  });
+});
+
+describe("fetchAttachment", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("decodes base64 and percent-encoded data URLs without calling fetch", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const b64 = await fetchAttachment(`data:text/csv;base64,${Buffer.from("a,b").toString("base64")}`);
+    expect(b64.buffer.toString("utf8")).toBe("a,b");
+    expect(b64.contentType).toBe("text/csv");
+    const plain = decodeDataUrl("data:text/plain,hello%20world");
+    expect(plain.buffer.toString("utf8")).toBe("hello world");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rebuilds the remote URL from the configured storage host, never the caller's string", async () => {
+    const fetchSpy = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: (k: string) => (k === "content-type" ? "application/pdf" : null) },
+      arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+    }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const result = await fetchAttachment(`${PUBLIC}/uploads/doc.pdf?x=1`);
+    expect(fetchSpy).toHaveBeenCalledWith("https://files.example-erp.com/uploads/doc.pdf?x=1");
+    expect(result.buffer).toEqual(Buffer.from([1, 2, 3]));
+    expect(result.contentType).toBe("application/pdf");
+  });
+
+  it("refuses hosts outside the allowlist before any request", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    await expect(fetchAttachment("https://169.254.169.254/latest/meta-data")).rejects.toBeInstanceOf(UnsafeAttachmentUrlError);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("enforces the byte limit from Content-Length and from the body", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: (k: string) => (k === "content-length" ? "999" : null) },
+      arrayBuffer: async () => new Uint8Array(10).buffer,
+    })));
+    await expect(fetchAttachment(`${PUBLIC}/big.bin`, { maxBytes: 100 })).rejects.toThrow(/exceeds/);
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      arrayBuffer: async () => new Uint8Array(200).buffer,
+    })));
+    await expect(fetchAttachment(`${PUBLIC}/big.bin`, { maxBytes: 100 })).rejects.toThrow(/exceeds/);
+    await expect(fetchAttachment(`data:text/plain,${"x".repeat(200)}`, { maxBytes: 100 })).rejects.toThrow(/exceeds/);
   });
 });

@@ -6,7 +6,9 @@ import { tmpdir } from "os";
 import { execSync } from "child_process";
 import { fromBuffer } from "pdf2pic";
 import { randomBytes } from "crypto";
-import { assertFetchableAttachmentUrl, MAX_ATTACHMENT_BYTES } from "./attachmentUrl";
+import * as XLSX from "xlsx";
+import { assertFetchableAttachmentUrl, fetchAttachment } from "./attachmentUrl";
+import { parseLlmJson } from "./llmJson";
 
 // PDF.js will be imported dynamically in the function to avoid worker issues
 
@@ -170,31 +172,23 @@ export interface DocumentMessageContent {
 
 const EMPTY_MESSAGE_CONTENT = { content: [] as any[], hasImageContent: false, isPdf: false };
 
-/** Reject an oversized download from its Content-Length, before reading the body. */
-function assertWithinAttachmentLimit(response: Response, kind: string): void {
-  // Content-Length is advisory and the header bag is absent on some fetch
-  // implementations, so a missing value simply defers to the post-read check.
-  const declared = Number(response?.headers?.get?.("content-length") ?? "");
-  if (Number.isFinite(declared) && declared > MAX_ATTACHMENT_BYTES) {
-    throw new Error(
-      `Refusing to fetch ${kind}: ${declared} bytes exceeds the ${MAX_ATTACHMENT_BYTES}-byte attachment limit.`,
-    );
-  }
-}
-
-/** Content-Length is advisory, so re-check once the body is in hand. */
-function assertBufferWithinLimit(byteLength: number, kind: string): void {
-  if (byteLength > MAX_ATTACHMENT_BYTES) {
-    throw new Error(
-      `Refusing to process ${kind}: ${byteLength} bytes exceeds the ${MAX_ATTACHMENT_BYTES}-byte attachment limit.`,
-    );
-  }
+/**
+ * Render every sheet of an Excel workbook as CSV text so the LLM can read it.
+ * Excel files are zipped XML: handing the raw bytes to the text branch below
+ * produced binary garbage and a guaranteed "unknown" parse.
+ */
+export function spreadsheetBufferToText(buffer: Buffer | Uint8Array): string {
+  const workbook = XLSX.read(buffer, { type: "buffer" });
+  return workbook.SheetNames
+    .map((name) => `SHEET: ${name}\n${XLSX.utils.sheet_to_csv(workbook.Sheets[name])}`)
+    .join("\n\n");
 }
 
 export async function buildDocumentMessageContent(
   fileUrl: string,
   filename: string,
   prompt: string,
+  mimeType?: string,
 ): Promise<DocumentMessageContent> {
   try {
     // Every branch below fetches this URL server-side, so it is validated once
@@ -208,26 +202,36 @@ export async function buildDocumentMessageContent(
       return { ok: false, ...EMPTY_MESSAGE_CONTENT, error: message };
     }
 
-    // Determine file type
-    const isImage = filename.toLowerCase().match(/\.(png|jpg|jpeg|gif|webp)$/i);
-    const isPdf = filename.toLowerCase().endsWith('.pdf');
-    const isCsv = filename.toLowerCase().endsWith('.csv');
-    
+    // Determine file type. The extension is the primary signal; the caller's
+    // MIME type is a fallback for files uploaded without a usable extension.
+    const mime = (mimeType || "").toLowerCase();
+    const isImage = filename.toLowerCase().match(/\.(png|jpg|jpeg|gif|webp)$/i) || mime.startsWith("image/");
+    const isPdf = filename.toLowerCase().endsWith('.pdf') || mime === "application/pdf";
+    const isSpreadsheet = !isImage && !isPdf && (
+      /\.(xlsx|xlsm|xls)$/i.test(filename) || /spreadsheetml|ms-excel/.test(mime)
+    );
+
     // Build the message content
     let messageContent: any[];
-    
-    if (isImage) {
+
+    if (isSpreadsheet) {
+      try {
+        console.log("[DocumentImport] Reading spreadsheet from URL:", fileUrl);
+        const { buffer } = await fetchAttachment(fileUrl, { kind: 'spreadsheet' });
+        const text = spreadsheetBufferToText(buffer);
+        console.log("[DocumentImport] Spreadsheet text length:", text.length);
+        messageContent = [
+          { type: "text", text: `${prompt}\n\nDOCUMENT CONTENT:\n${text.substring(0, 50000)}` }
+        ];
+      } catch (sheetError) {
+        console.error("[DocumentImport] Failed to read spreadsheet:", sheetError);
+        return { ok: false, ...EMPTY_MESSAGE_CONTENT, error: "Failed to read spreadsheet content" };
+      }
+    } else if (isImage) {
       // For images, download and convert to base64 data URL
       try {
         console.log("[DocumentImport] Downloading image from:", fileUrl);
-        const response = await fetch(fileUrl);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch image: ${response.status}`);
-        }
-        assertWithinAttachmentLimit(response, 'image');
-        const arrayBuffer = await response.arrayBuffer();
-        assertBufferWithinLimit(arrayBuffer.byteLength, 'image');
-        const buffer = Buffer.from(arrayBuffer);
+        const { buffer } = await fetchAttachment(fileUrl, { kind: 'image' });
         const base64 = buffer.toString('base64');
         const ext = filename.toLowerCase().match(/\.(png|jpg|jpeg|gif|webp)$/i)?.[1] || 'png';
         const mimeTypeMap: Record<string, string> = {
@@ -237,7 +241,7 @@ export async function buildDocumentMessageContent(
           'gif': 'image/gif',
           'webp': 'image/webp'
         };
-        const imageMimeType = mimeTypeMap[ext] || 'image/png';
+        const imageMimeType = mimeTypeMap[ext] || (mime.startsWith("image/") ? mime : 'image/png');
         const dataUrl = `data:${imageMimeType};base64,${base64}`;
         console.log("[DocumentImport] Converted image to base64 data URL, length:", dataUrl.length);
         messageContent = [
@@ -253,14 +257,8 @@ export async function buildDocumentMessageContent(
       console.log("[DocumentImport] Extracting text from PDF using pdfjs-dist");
       try {
         // Download the PDF
-        const response = await fetch(fileUrl);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch PDF: ${response.status}`);
-        }
-        assertWithinAttachmentLimit(response, 'PDF');
-        const arrayBuffer = await response.arrayBuffer();
-        assertBufferWithinLimit(arrayBuffer.byteLength, 'PDF');
-        const uint8Array = new Uint8Array(arrayBuffer);
+        const { buffer: pdfBuffer } = await fetchAttachment(fileUrl, { kind: 'PDF' });
+        const uint8Array = new Uint8Array(pdfBuffer.buffer, pdfBuffer.byteOffset, pdfBuffer.byteLength);
         console.log("[DocumentImport] Downloaded PDF, size:", uint8Array.byteLength);
         
         // Use pdfjs-dist to extract text (pure JavaScript, no native dependencies)
@@ -290,7 +288,7 @@ export async function buildDocumentMessageContent(
           console.log(`[DocumentImport] Processing ${pagesToProcess} page(s) for OCR`);
 
           // Create buffer for pdf2pic (only needed for scanned PDFs)
-          const buffer = Buffer.from(arrayBuffer);
+          const buffer = pdfBuffer;
 
           // Convert PDF to images using pdf2pic for OCR
           // Use crypto.randomBytes for unique directory name to avoid collisions
@@ -372,12 +370,8 @@ export async function buildDocumentMessageContent(
       // For CSV/Excel/text files, download and extract text content
       try {
         console.log("[DocumentImport] Fetching document content from URL:", fileUrl);
-        const response = await fetch(fileUrl);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch document: ${response.status}`);
-        }
-        assertWithinAttachmentLimit(response, 'document');
-        const textContent = await response.text();
+        const { buffer } = await fetchAttachment(fileUrl, { kind: 'document' });
+        const textContent = buffer.toString('utf8');
         console.log("[DocumentImport] Extracted text content length:", textContent.length);
         messageContent = [
           { type: "text", text: `${prompt}\n\nDOCUMENT CONTENT:\n${textContent.substring(0, 50000)}` }
@@ -398,6 +392,154 @@ export async function buildDocumentMessageContent(
     console.error("[DocumentImport] Failed to build message content:", error);
     return { ok: false, ...EMPTY_MESSAGE_CONTENT, error: error instanceof Error ? error.message : "Failed to read document" };
   }
+}
+
+const DOCUMENT_TYPES: ReadonlySet<string> = new Set([
+  "purchase_order", "freight_invoice", "vendor_invoice", "customs_document", "unknown",
+]);
+
+// Keys the parser must hand back as numbers. The json_schema response_format is
+// only a hint, so the model can (and does) emit "1,200.00" or null for these.
+const NUMERIC_KEYS: ReadonlySet<string> = new Set([
+  "quantity", "unitPrice", "totalPrice", "subtotal", "taxAmount", "shippingAmount",
+  "totalAmount", "freightCharges", "fuelSurcharge", "accessorialCharges", "declaredValue",
+  "dutyRate", "dutyAmount", "totalDeclaredValue", "totalDuties", "totalTaxes", "totalCharges",
+  "confidence",
+]);
+
+function toFiniteNumber(value: unknown): number | undefined {
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (typeof value === "string") {
+    const cleaned = value.replace(/[^0-9.+-]/g, "");
+    if (!/\d/.test(cleaned)) return undefined; // "N/A", "", "-" carry no number
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
+}
+
+/** Recursively drop nulls (so `?.`/`??`/zod optional all behave) and coerce numeric keys. */
+function cleanParsedValue(value: unknown, key?: string): unknown {
+  if (value === null || value === undefined) return undefined;
+  if (Array.isArray(value)) {
+    return value.map((v) => cleanParsedValue(v)).filter((v) => v !== undefined);
+  }
+  if (typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      const cleaned = cleanParsedValue(v, k);
+      if (cleaned !== undefined) out[k] = cleaned;
+    }
+    return out;
+  }
+  if (key && NUMERIC_KEYS.has(key)) return toFiniteNumber(value);
+  return value;
+}
+
+/**
+ * Shape whatever JSON the model returned into a `DocumentParseResult` the
+ * importers can trust: known document type, no nulls, numeric fields that are
+ * real finite numbers (never NaN / "1,200"), line items always an array, and
+ * the top-level confidence copied onto the document (the response schema puts
+ * it at the top level; the importers read it off the document).
+ *
+ * Pure so it can be unit-tested without an LLM.
+ */
+export function normalizeParsedDocument(parsed: unknown): DocumentParseResult {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { success: false, documentType: "unknown", error: "AI response was not a JSON object" };
+  }
+  const raw = cleanParsedValue(parsed) as Record<string, any>;
+  const documentType = (DOCUMENT_TYPES.has(raw.documentType) ? raw.documentType : "unknown") as DocumentParseResult["documentType"];
+  const topConfidence = typeof raw.confidence === "number" ? raw.confidence : undefined;
+  const num = (v: unknown, fallback = 0): number => (typeof v === "number" ? v : fallback);
+  const str = (v: unknown): string | undefined => (typeof v === "string" ? v : v == null ? undefined : String(v));
+
+  const goodsLines = (doc: Record<string, any>): ImportedLineItem[] =>
+    (Array.isArray(doc.lineItems) ? doc.lineItems : [])
+      .filter((li: unknown) => li && typeof li === "object")
+      .map((li: Record<string, any>) => {
+        const quantity = num(li.quantity);
+        const unitPrice = num(li.unitPrice);
+        return {
+          ...li,
+          description: str(li.description) ?? "",
+          quantity,
+          unitPrice,
+          totalPrice: num(li.totalPrice, Math.round(quantity * unitPrice * 100) / 100),
+        } as ImportedLineItem;
+      });
+
+  const withConfidence = <T extends { confidence?: number }>(doc: T): T => ({
+    ...doc,
+    confidence: typeof doc.confidence === "number" ? doc.confidence : topConfidence,
+  });
+
+  const result: DocumentParseResult = { success: true, documentType };
+
+  if (raw.purchaseOrder && typeof raw.purchaseOrder === "object") {
+    const po = raw.purchaseOrder;
+    const totalAmount = num(po.totalAmount);
+    result.purchaseOrder = withConfidence({
+      ...po,
+      lineItems: goodsLines(po),
+      totalAmount,
+      subtotal: num(po.subtotal, totalAmount),
+    }) as ImportedPurchaseOrder;
+  }
+  if (raw.vendorInvoice && typeof raw.vendorInvoice === "object") {
+    const inv = raw.vendorInvoice;
+    const totalAmount = num(inv.totalAmount);
+    result.vendorInvoice = withConfidence({
+      ...inv,
+      lineItems: goodsLines(inv),
+      totalAmount,
+      subtotal: num(inv.subtotal, totalAmount),
+    }) as ImportedVendorInvoice;
+  }
+  if (raw.freightInvoice && typeof raw.freightInvoice === "object") {
+    const fr = raw.freightInvoice;
+    const totalAmount = num(fr.totalAmount);
+    result.freightInvoice = withConfidence({
+      ...fr,
+      totalAmount,
+      freightCharges: num(fr.freightCharges, totalAmount),
+    }) as ImportedFreightInvoice;
+  }
+  if (raw.customsDocument && typeof raw.customsDocument === "object") {
+    const cd = raw.customsDocument;
+    const totalDeclaredValue = num(cd.totalDeclaredValue);
+    const lineItems = (Array.isArray(cd.lineItems) ? cd.lineItems : [])
+      .filter((li: unknown) => li && typeof li === "object")
+      .map((li: Record<string, any>) => ({
+        ...li,
+        description: str(li.description) ?? "",
+        quantity: num(li.quantity),
+        declaredValue: num(li.declaredValue),
+      }));
+    result.customsDocument = withConfidence({
+      ...cd,
+      lineItems,
+      totalDeclaredValue,
+      totalCharges: num(cd.totalCharges, totalDeclaredValue),
+    }) as ImportedCustomsDocument;
+  }
+  return result;
+}
+
+/** Parse a document date string; undefined when it is missing or unreadable. */
+export function parseDocumentDate(value: unknown): Date | undefined {
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? undefined : value;
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const d = new Date(value.trim());
+  return Number.isNaN(d.getTime()) ? undefined : d;
+}
+
+/** ISO-4217 codes are exactly three letters; the columns are varchar(3). */
+export function normalizeCurrency(value: unknown, fallback = "USD"): string {
+  if (typeof value !== "string") return fallback;
+  const code = value.trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(code) ? code : fallback;
 }
 
 /**
@@ -545,7 +687,7 @@ Return a JSON object with this structure:
 Only include the relevant object based on document type.
 If document type is unknown, return all as null.`;
 
-    const built = await buildDocumentMessageContent(fileUrl, filename, prompt);
+    const built = await buildDocumentMessageContent(fileUrl, filename, prompt, mimeType);
     if (!built.ok) {
       return { success: false, documentType: "unknown", error: built.error };
     }
@@ -767,30 +909,21 @@ If document type is unknown, return all as null.`;
     
     console.log("[DocumentImport] Raw content:", contentText.substring(0, 300));
     
-    // Strip markdown code blocks if present
-    let jsonText = contentText.trim();
-    if (jsonText.startsWith('```json')) {
-      jsonText = jsonText.slice(7); // Remove ```json
-    } else if (jsonText.startsWith('```')) {
-      jsonText = jsonText.slice(3); // Remove ```
+    // Tolerant JSON recovery (fences, leading prose) — response_format is only
+    // a hint, so never bare JSON.parse. See server/llmJson.ts.
+    const parsed = parseLlmJson(contentText);
+    if (parsed === null) {
+      console.error("[DocumentImport] AI response was not JSON:", contentText.substring(0, 300));
+      return { success: false, documentType: "unknown", error: "AI response was not valid JSON" };
     }
-    if (jsonText.endsWith('```')) {
-      jsonText = jsonText.slice(0, -3); // Remove trailing ```
-    }
-    jsonText = jsonText.trim();
-    
-    console.log("[DocumentImport] Cleaned JSON:", jsonText.substring(0, 500));
-    const parsed = JSON.parse(jsonText);
     console.log("[DocumentImport] Parsed result:", JSON.stringify(parsed, null, 2).substring(0, 1000));
-    
+
+    const normalized = normalizeParsedDocument(parsed);
+    if (!normalized.success) return normalized;
     return reclassifyFreightDocument({
-      success: true,
-      documentType: parsed.documentType,
-      purchaseOrder: parsed.purchaseOrder,
-      vendorInvoice: parsed.vendorInvoice,
-      freightInvoice: parsed.freightInvoice,
-      customsDocument: parsed.customsDocument,
-      rawText: `Document parsed from: ${fileUrl}`
+      ...normalized,
+      // Never echo a data: URL (megabytes of base64) back to the client.
+      rawText: `Document parsed from: ${/^data:/i.test(fileUrl) ? filename : fileUrl}`,
     });
   } catch (error) {
     console.error("Document parse error:", error);
@@ -929,13 +1062,18 @@ export async function matchLineItemsToMaterials(
   lineItems: ImportedLineItem[]
 ): Promise<ImportedLineItem[]> {
   const rawMaterials = await db.getRawMaterials();
-  
+
   return lineItems.map(item => {
-    // Try to match by description or SKU
+    // Try to match by description or SKU. A blank/too-short description must
+    // not match: `"Anything".includes("")` is true, so an empty line used to be
+    // matched to the first material in the catalog and receive its quantity.
+    const desc = (item.description ?? "").trim().toLowerCase();
+    const sku = (item.sku ?? "").trim().toLowerCase();
     const match = rawMaterials.find(rm => {
-      const descMatch = rm.name.toLowerCase().includes(item.description.toLowerCase()) ||
-                       item.description.toLowerCase().includes(rm.name.toLowerCase());
-      const skuMatch = item.sku && rm.sku && rm.sku.toLowerCase() === item.sku.toLowerCase();
+      const rmName = (rm.name ?? "").toLowerCase();
+      const descMatch = desc.length >= 3 && rmName.length >= 3 &&
+        (rmName.includes(desc) || desc.includes(rmName));
+      const skuMatch = !!sku && !!rm.sku && rm.sku.toLowerCase() === sku;
       return descMatch || skuMatch;
     });
     
@@ -949,32 +1087,58 @@ export async function matchLineItemsToMaterials(
 /**
  * Import a parsed purchase order into the system
  */
+/**
+ * Options shared by the per-type importers. `companyId` is the importing
+ * user's entity: every row written carries it so entity-scoped readers
+ * (vendors/POs/materials lists) can see what was imported.
+ */
+export interface ImportOptions {
+  companyId?: number;
+  /** PO / vendor invoice: also add received quantities to the raw materials (default true). */
+  updateInventory?: boolean;
+  /** Freight / customs: attach the document to the related PO it names (default true). */
+  linkToPO?: boolean;
+}
+
 export async function importPurchaseOrder(
   po: ImportedPurchaseOrder,
   userId: number,
   markAsReceived: boolean = true,
-  createMissingVendor: boolean = false
+  createMissingVendor: boolean = false,
+  options: ImportOptions = {}
 ): Promise<ImportResult> {
   const createdRecords: ImportResult["createdRecords"] = [];
   const updatedRecords: ImportResult["updatedRecords"] = [];
   const warnings: string[] = [];
+  const companyId = options.companyId ?? undefined;
+  const updateInventory = options.updateInventory ?? true;
 
   try {
+    // 0. Validate before any write: nothing below is transactional, so a bad
+    // document must be rejected up front rather than after the vendor and the
+    // materials have already been created.
+    const fail = (error: string): ImportResult =>
+      ({ success: false, documentType: "purchase_order", createdRecords, updatedRecords, warnings, error });
+    const vendorName = (po.vendorName ?? "").trim();
+    // An empty name would LIKE-match every vendor (getVendorByName uses '%name%').
+    if (!vendorName) return fail("The document has no vendor name. Fill it in before importing.");
+    if (!(po.poNumber ?? "").trim()) return fail("The document has no PO number. Fill it in before importing.");
+    const orderDate = parseDocumentDate(po.orderDate);
+    if (!orderDate) return fail(`Order date "${po.orderDate ?? ""}" is not a valid date. Fix it before importing.`);
+    const expectedDate = parseDocumentDate(po.deliveryDate);
+    if (po.deliveryDate && !expectedDate) {
+      warnings.push(`Delivery date "${po.deliveryDate}" was not a valid date and was left blank.`);
+    }
+
     // 1. Find vendor; only create if caller opted in
-    let vendor = await db.getVendorByName(po.vendorName);
+    let vendor = await db.getVendorByName(vendorName);
     if (!vendor) {
       if (!createMissingVendor) {
-        return {
-          success: false,
-          documentType: "purchase_order",
-          createdRecords,
-          updatedRecords,
-          warnings,
-          error: `Vendor "${po.vendorName}" was not found. Enable "Add vendor if missing" to create it, or add the vendor first.`
-        };
+        return fail(`Vendor "${vendorName}" was not found. Enable "Add vendor if missing" to create it, or add the vendor first.`);
       }
       const vendorResult = await db.createVendor({
-        name: po.vendorName,
+        companyId,
+        name: vendorName,
         email: po.vendorEmail || "",
         type: "supplier",
         status: "active"
@@ -1012,6 +1176,7 @@ export async function importPurchaseOrder(
           continue;
         }
         const materialResult = await db.createRawMaterial({
+          companyId,
           name: item.description,
           sku: item.sku || `RM-${Date.now()}`,
           unit: item.unit || "EA",
@@ -1029,14 +1194,16 @@ export async function importPurchaseOrder(
     // so two concurrent imports of the same document could both pass the guard
     // and both insert. createPurchaseOrderIfAbsent re-checks under a row lock.
     const poOutcome = await db.createPurchaseOrderIfAbsent({
+      companyId,
       poNumber: po.poNumber,
       vendorId: vendor!.id,
       status: markAsReceived ? "received" : "confirmed",
-      orderDate: new Date(po.orderDate),
-      expectedDate: po.deliveryDate ? new Date(po.deliveryDate) : undefined,
+      orderDate,
+      expectedDate,
       subtotal: po.subtotal.toString(),
       totalAmount: po.totalAmount.toString(),
-      notes: po.notes,
+      currency: normalizeCurrency(po.currency),
+      notes: po.notes || undefined,
       createdBy: userId
     });
     if (!poOutcome.created) {
@@ -1063,8 +1230,9 @@ export async function importPurchaseOrder(
       });
     }
 
-    // 6. If marking as received, update inventory
-    if (markAsReceived) {
+    // 6. If marking as received, update inventory (unless the caller opted out
+    // with updateInventory=false — the "Update inventory" checkbox on the page).
+    if (markAsReceived && updateInventory) {
       // Batch load all raw materials instead of N+1
       const rmIds = matchedItems.map(i => i.rawMaterialId).filter((id): id is number => id != null);
       const materialsToUpdate = rmIds.length > 0 ? await db.getRawMaterialsByIds(rmIds) : [];
@@ -1091,6 +1259,8 @@ export async function importPurchaseOrder(
           }
         }
       }
+    } else if (markAsReceived) {
+      warnings.push("Inventory was not updated (Update inventory is off).");
     }
 
     return {
@@ -1120,39 +1290,49 @@ export async function importFreightInvoice(
   userId: number,
   createMissingVendor: boolean = false,
   receiveInventory: boolean = false,
-  warehouseId?: number
+  warehouseId?: number,
+  options: ImportOptions = {}
 ): Promise<ImportResult> {
   const createdRecords: ImportResult["createdRecords"] = [];
   const updatedRecords: ImportResult["updatedRecords"] = [];
   const warnings: string[] = [];
+  const companyId = options.companyId ?? undefined;
+  const linkToPO = options.linkToPO ?? true;
 
   try {
+    // 0. Validate before any write (see importPurchaseOrder).
+    const fail = (error: string): ImportResult =>
+      ({ success: false, documentType: "freight_invoice", createdRecords, updatedRecords, warnings, error });
+    const carrierName = (invoice.carrierName ?? "").trim();
+    if (!carrierName) return fail("The invoice has no carrier name. Fill it in before importing.");
+    if (!(invoice.invoiceNumber ?? "").trim()) return fail("The invoice has no invoice number. Fill it in before importing.");
+    const invoiceDate = parseDocumentDate(invoice.invoiceDate);
+    if (!invoiceDate) return fail(`Invoice date "${invoice.invoiceDate ?? ""}" is not a valid date. Fix it before importing.`);
+    const shipmentDate = parseDocumentDate(invoice.shipmentDate);
+    const deliveryDate = parseDocumentDate(invoice.deliveryDate);
+    if (invoice.shipmentDate && !shipmentDate) warnings.push(`Shipment date "${invoice.shipmentDate}" was not a valid date and was left blank.`);
+    if (invoice.deliveryDate && !deliveryDate) warnings.push(`Delivery date "${invoice.deliveryDate}" was not a valid date and was left blank.`);
+
     // 1. Find carrier as vendor; only create if caller opted in
-    let carrier = await db.getVendorByName(invoice.carrierName);
+    let carrier = await db.getVendorByName(carrierName);
     if (!carrier) {
       if (!createMissingVendor) {
-        return {
-          success: false,
-          documentType: "freight_invoice",
-          createdRecords,
-          updatedRecords,
-          warnings,
-          error: `Carrier "${invoice.carrierName}" was not found as a vendor. Enable "Add vendor if missing" to create it, or add the carrier first.`
-        };
+        return fail(`Carrier "${carrierName}" was not found as a vendor. Enable "Add vendor if missing" to create it, or add the carrier first.`);
       }
       const carrierResult = await db.createVendor({
-        name: invoice.carrierName,
+        companyId,
+        name: carrierName,
         email: invoice.carrierEmail || "",
         type: "service", // Use 'service' for carriers since 'carrier' is not a valid type
         status: "active"
       });
       carrier = await db.getVendorById(carrierResult.id) || null;
-      createdRecords.push({ type: "vendor", id: carrierResult.id, name: invoice.carrierName });
+      createdRecords.push({ type: "vendor", id: carrierResult.id, name: carrierName });
     }
 
-    // 2. Try to find related PO if specified
+    // 2. Try to find related PO if specified (and the caller wants it linked)
     let relatedPoId: number | undefined;
-    if (invoice.relatedPoNumber) {
+    if (invoice.relatedPoNumber && linkToPO) {
       const po = await db.findPurchaseOrderByNumber(invoice.relatedPoNumber);
       if (po) {
         relatedPoId = po.id;
@@ -1161,27 +1341,40 @@ export async function importFreightInvoice(
       }
     }
 
-    // 3. Create freight history record
-    const freightId = await db.createFreightHistory({
-      invoiceNumber: invoice.invoiceNumber,
+    // 3. Create the freight record. Imported invoices live in freightBookings
+    // (there is no separate freight-history table); the invoice details that
+    // have no column of their own go in the notes JSON.
+    const currency = normalizeCurrency(invoice.currency);
+    const booking = await db.createFreightBooking({
+      companyId,
+      rfqId: 0, // No RFQ for imported invoices
+      quoteId: 0, // No quote for imported invoices
       carrierId: carrier!.id,
-      invoiceDate: new Date(invoice.invoiceDate).getTime(),
-      shipmentDate: invoice.shipmentDate ? new Date(invoice.shipmentDate).getTime() : undefined,
-      deliveryDate: invoice.deliveryDate ? new Date(invoice.deliveryDate).getTime() : undefined,
-      origin: invoice.origin,
-      destination: invoice.destination,
-      trackingNumber: invoice.trackingNumber,
-      weight: invoice.weight,
-      dimensions: invoice.dimensions,
-      freightCharges: invoice.freightCharges.toString(),
-      fuelSurcharge: invoice.fuelSurcharge?.toString(),
-      accessorialCharges: invoice.accessorialCharges?.toString(),
-      totalAmount: invoice.totalAmount.toString(),
-      currency: invoice.currency || "USD",
-      relatedPoId,
-      notes: invoice.notes,
-      createdBy: userId
+      status: "delivered",
+      bookingDate: invoiceDate,
+      pickupDate: shipmentDate,
+      deliveryDate,
+      actualCost: invoice.totalAmount.toString(),
+      currency,
+      trackingNumber: invoice.trackingNumber || undefined,
+      notes: JSON.stringify({
+        invoiceNumber: invoice.invoiceNumber,
+        invoiceDate: invoiceDate.toISOString(),
+        origin: invoice.origin,
+        destination: invoice.destination,
+        weight: invoice.weight,
+        dimensions: invoice.dimensions,
+        freightCharges: invoice.freightCharges.toString(),
+        fuelSurcharge: invoice.fuelSurcharge?.toString(),
+        accessorialCharges: invoice.accessorialCharges?.toString(),
+        currency,
+        relatedPoId,
+        notes: invoice.notes,
+        importedInvoice: true,
+        createdBy: userId,
+      }),
     });
+    const freightId = booking.id;
     createdRecords.push({ type: "freight_history", id: freightId, name: invoice.invoiceNumber });
 
     // 4. If related to a PO, update the PO with freight cost
@@ -1234,40 +1427,102 @@ export async function importFreightInvoice(
 }
 
 /**
+ * Record the vendor's bill (accounts payable) for an imported invoice, linked
+ * to the PO that carries its line items. Idempotent on (invoiceNumber, vendor):
+ * a re-import of a document, or a PO that was imported before bills existed,
+ * gets exactly one bill. Never throws — a bill failure must not undo the PO /
+ * inventory work that already happened, so it is reported as a warning.
+ */
+async function ensureBillForVendorInvoice(
+  invoice: ImportedVendorInvoice,
+  vendor: { id: number; companyId?: number | null },
+  purchaseOrderId: number | undefined,
+  userId: number,
+  createdRecords: ImportResult["createdRecords"],
+  warnings: string[],
+  ctx: { billDate: Date; dueDate?: Date; companyId?: number },
+): Promise<void> {
+  try {
+    const existing = await db.findBillByNumber(invoice.invoiceNumber, vendor.id);
+    if (existing) return;
+    const { id } = await db.createBill({
+      // A vendor created by this very import may come back without its
+      // companyId (or with none at all); fall back to the importer's entity.
+      companyId: vendor.companyId ?? ctx.companyId ?? undefined,
+      billNumber: invoice.invoiceNumber,
+      vendorId: vendor.id,
+      purchaseOrderId,
+      sourceType: "document_import",
+      billDate: ctx.billDate,
+      dueDate: ctx.dueDate,
+      subtotal: (invoice.subtotal ?? invoice.totalAmount).toString(),
+      taxAmount: (invoice.taxAmount ?? 0).toString(),
+      shippingAmount: (invoice.shippingAmount ?? 0).toString(),
+      totalAmount: invoice.totalAmount.toString(),
+      currency: invoice.currency || "USD",
+      status: "draft",
+      paymentTerms: invoice.paymentTerms,
+      notes: invoice.notes,
+      lineItems: invoice.lineItems?.map((item) => ({
+        description: item.description,
+        sku: item.sku,
+        quantity: item.quantity,
+        unit: item.unit,
+        unitPrice: item.unitPrice,
+        totalPrice: item.totalPrice,
+      })),
+      createdBy: userId,
+    });
+    createdRecords.push({ type: "bill", id, name: invoice.invoiceNumber });
+  } catch (error) {
+    warnings.push(`Bill ${invoice.invoiceNumber} could not be recorded: ${error instanceof Error ? error.message : "unknown error"}`);
+  }
+}
+
+/**
  * Import a parsed vendor invoice into the system
  */
 export async function importVendorInvoice(
   invoice: ImportedVendorInvoice,
   userId: number,
   markAsReceived: boolean = false,
-  createMissingVendor: boolean = false
+  createMissingVendor: boolean = false,
+  options: ImportOptions = {}
 ): Promise<ImportResult> {
   const createdRecords: ImportResult["createdRecords"] = [];
   const updatedRecords: ImportResult["updatedRecords"] = [];
   const warnings: string[] = [];
+  const companyId = options.companyId ?? undefined;
+  const updateInventory = options.updateInventory ?? true;
 
   try {
+    // 0. Validate before any write (see importPurchaseOrder).
+    const fail = (error: string): ImportResult =>
+      ({ success: false, documentType: "vendor_invoice", createdRecords, updatedRecords, warnings, error });
+    const vendorName = (invoice.vendorName ?? "").trim();
+    if (!vendorName) return fail("The invoice has no vendor name. Fill it in before importing.");
+    if (!(invoice.invoiceNumber ?? "").trim()) return fail("The invoice has no invoice number. Fill it in before importing.");
+    const invoiceDate = parseDocumentDate(invoice.invoiceDate);
+    if (!invoiceDate) return fail(`Invoice date "${invoice.invoiceDate ?? ""}" is not a valid date. Fix it before importing.`);
+    const dueDate = parseDocumentDate(invoice.dueDate);
+    if (invoice.dueDate && !dueDate) return fail(`Due date "${invoice.dueDate}" is not a valid date. Fix it before importing.`);
+    const billCtx = { billDate: invoiceDate, dueDate, companyId };
+
     // 1. Find vendor; only create if caller opted in
-    let vendor = await db.getVendorByName(invoice.vendorName);
+    let vendor = await db.getVendorByName(vendorName);
     if (!vendor) {
       if (!createMissingVendor) {
-        return {
-          success: false,
-          documentType: "vendor_invoice",
-          createdRecords,
-          updatedRecords,
-          warnings,
-          error: `Vendor "${invoice.vendorName}" was not found. Enable "Add vendor if missing" to create it, or add the vendor first.`
-        };
+        return fail(`Vendor "${vendorName}" was not found. Enable "Add vendor if missing" to create it, or add the vendor first.`);
       }
       const vendorResult = await db.createVendor({
-        name: invoice.vendorName,
+        companyId,
+        name: vendorName,
         email: invoice.vendorEmail || "",
         type: "supplier",
         status: "active"
       });
       vendor = await db.getVendorById(vendorResult.id) || null;
-      createdRecords.push({ type: "vendor", id: vendorResult.id, name: invoice.vendorName });
+      createdRecords.push({ type: "vendor", id: vendorResult.id, name: vendorName });
     }
 
     // 2. Bail out before anything is written if this invoice has already been
@@ -1284,6 +1539,8 @@ export async function importVendorInvoice(
       warnings.push(
         `Invoice ${invoice.invoiceNumber} was already imported as PO ${existingPo.poNumber} (#${existingPo.id}) — skipped to avoid a duplicate.`
       );
+      // The PO may predate the bills table; make sure the payable exists either way.
+      await ensureBillForVendorInvoice(invoice, vendor!, existingPo.id, userId, createdRecords, warnings, billCtx);
       return {
         success: true,
         documentType: "vendor_invoice",
@@ -1315,6 +1572,7 @@ export async function importVendorInvoice(
           continue;
         }
         const materialResult = await db.createRawMaterial({
+          companyId,
           name: item.description,
           sku: item.sku || `RM-${Date.now()}`,
           unit: item.unit || "EA",
@@ -1328,11 +1586,12 @@ export async function importVendorInvoice(
 
     // 6. Create a purchase order from the invoice (as a received order).
     const poOutcome = await db.createPurchaseOrderIfAbsent({
+      companyId,
       poNumber: poNumberForInvoice,
       vendorId: vendor!.id,
       status: markAsReceived ? "received" : "confirmed",
-      orderDate: new Date(invoice.invoiceDate),
-      expectedDate: invoice.dueDate ? new Date(invoice.dueDate) : undefined,
+      orderDate: invoiceDate,
+      expectedDate: dueDate,
       subtotal: invoice.subtotal.toString(),
       totalAmount: invoice.totalAmount.toString(),
       notes: `Imported from vendor invoice ${invoice.invoiceNumber}. ${invoice.paymentTerms ? `Payment terms: ${invoice.paymentTerms}. ` : ''}${invoice.notes || ''}`,
@@ -1345,10 +1604,14 @@ export async function importVendorInvoice(
       warnings.push(
         `Invoice ${invoice.invoiceNumber} was imported concurrently as PO #${poOutcome.id} — skipped to avoid a duplicate.`
       );
+      await ensureBillForVendorInvoice(invoice, vendor!, poOutcome.id, userId, createdRecords, warnings, billCtx);
       return { success: true, documentType: "vendor_invoice", createdRecords, updatedRecords, warnings };
     }
     const poResult = { id: poOutcome.id };
     createdRecords.push({ type: "purchase_order", id: poResult.id, name: invoice.invoiceNumber });
+
+    // 6b. The payable itself, linked to the PO that holds the line items.
+    await ensureBillForVendorInvoice(invoice, vendor!, poResult.id, userId, createdRecords, warnings, billCtx);
 
     // 7. Create PO line items
     for (const item of matchedItems) {
@@ -1362,8 +1625,9 @@ export async function importVendorInvoice(
       });
     }
 
-    // 8. If marking as received, update inventory
-    if (markAsReceived) {
+    // 8. If marking as received, update inventory (unless the caller opted out
+    // with updateInventory=false — the "Update inventory" checkbox on the page).
+    if (markAsReceived && updateInventory) {
       // Batch load all raw materials instead of N+1
       const rmIds = matchedItems.map(i => i.rawMaterialId).filter((id): id is number => id != null);
       const materialsToUpdate = rmIds.length > 0 ? await db.getRawMaterialsByIds(rmIds) : [];
@@ -1390,6 +1654,8 @@ export async function importVendorInvoice(
           }
         }
       }
+    } else if (markAsReceived) {
+      warnings.push("Inventory was not updated (Update inventory is off).");
     }
 
     return {
@@ -1417,35 +1683,41 @@ export async function importVendorInvoice(
 export async function importCustomsDocument(
   doc: ImportedCustomsDocument,
   userId: number,
-  createMissingVendor: boolean = false
+  createMissingVendor: boolean = false,
+  options: ImportOptions = {}
 ): Promise<ImportResult> {
   const createdRecords: ImportResult["createdRecords"] = [];
   const updatedRecords: ImportResult["updatedRecords"] = [];
   const warnings: string[] = [];
+  const companyId = options.companyId ?? undefined;
+  const linkToPO = options.linkToPO ?? true;
 
   try {
+    // 0. Validate before any write (see importPurchaseOrder).
+    const fail = (error: string): ImportResult =>
+      ({ success: false, documentType: "customs_document", createdRecords, updatedRecords, warnings, error });
+    const shipperName = (doc.shipperName ?? "").trim();
+    if (!shipperName) return fail("The document has no shipper name. Fill it in before importing.");
+    if (!(doc.documentNumber ?? "").trim()) return fail("The document has no document number. Fill it in before importing.");
+    const entryDate = parseDocumentDate(doc.entryDate);
+    if (!entryDate) return fail(`Entry date "${doc.entryDate ?? ""}" is not a valid date. Fix it before importing.`);
+
     // 1. Find shipper as a vendor; only create if caller opted in
-    let shipper = await db.getVendorByName(doc.shipperName);
+    let shipper = await db.getVendorByName(shipperName);
     if (!shipper) {
       if (!createMissingVendor) {
-        return {
-          success: false,
-          documentType: "customs_document",
-          createdRecords,
-          updatedRecords,
-          warnings,
-          error: `Shipper "${doc.shipperName}" was not found as a vendor. Enable "Add vendor if missing" to create it, or add the shipper first.`
-        };
+        return fail(`Shipper "${shipperName}" was not found as a vendor. Enable "Add vendor if missing" to create it, or add the shipper first.`);
       }
       const shipperResult = await db.createVendor({
-        name: doc.shipperName,
+        companyId,
+        name: shipperName,
         email: "",
         type: "supplier",
         status: "active",
-        country: doc.shipperCountry
+        country: doc.shipperCountry || undefined
       });
       shipper = await db.getVendorById(shipperResult.id) || null;
-      createdRecords.push({ type: "vendor", id: shipperResult.id, name: doc.shipperName });
+      createdRecords.push({ type: "vendor", id: shipperResult.id, name: shipperName });
     }
 
     // 2. Find customs broker as a vendor (if specified); only create if caller opted in
@@ -1457,43 +1729,61 @@ export async function importCustomsDocument(
           warnings.push(`Broker "${doc.brokerName}" was not found; skipped (enable "Add vendor if missing" to create).`);
         } else {
           const brokerResult = await db.createVendor({
+            companyId,
             name: doc.brokerName,
             email: "",
             type: "service",
             status: "active"
           });
+          createdRecords.push({ type: "vendor", id: brokerResult.id, name: doc.brokerName });
         }
       }
     }
 
-    // 3. Try to find related PO if specified
-    let relatedPoId: number | undefined;
-    if (doc.relatedPoNumber) {
-      const po = await db.findPurchaseOrderByNumber(doc.relatedPoNumber);
-      if (po) {
-        relatedPoId = po.id;
-      } else {
+    // 3. Try to find related PO if specified (and the caller wants it linked)
+    let relatedPo: { id: number; notes?: string | null } | null = null;
+    if (doc.relatedPoNumber && linkToPO) {
+      relatedPo = await db.findPurchaseOrderByNumber(doc.relatedPoNumber);
+      if (!relatedPo) {
         warnings.push(`Related PO ${doc.relatedPoNumber} not found`);
       }
     }
+    const relatedPoId = relatedPo?.id;
 
-    // 4. Create customs entry record in freight history (using it to track customs docs)
-    const freightId = await db.createFreightHistory({
-      invoiceNumber: doc.documentNumber,
+    // 4. Create the customs entry as a freight record (the same freightBookings
+    // row an imported freight invoice becomes; there is no customs-history table).
+    const currency = normalizeCurrency(doc.currency);
+    const booking = await db.createFreightBooking({
+      companyId,
+      rfqId: 0,
+      quoteId: 0,
       carrierId: shipper!.id, // Using shipper as carrier for customs docs
-      invoiceDate: new Date(doc.entryDate).getTime(),
-      origin: doc.portOfExit || doc.shipperCountry,
-      destination: doc.portOfEntry || doc.consigneeCountry,
-      trackingNumber: doc.containerNumber || doc.trackingNumber,
-      freightCharges: (doc.totalDeclaredValue ?? 0).toString(),
-      fuelSurcharge: (doc.totalDuties ?? 0).toString(),
-      accessorialCharges: (doc.totalTaxes ?? 0).toString(),
-      totalAmount: (doc.totalCharges ?? 0).toString(),
-      currency: doc.currency || "USD",
-      relatedPoId,
-      notes: `${doc.documentType.replace(/_/g, ' ').toUpperCase()} | Shipper: ${doc.shipperName} (${doc.shipperCountry || 'N/A'}) | Consignee: ${doc.consigneeName} | Country of Origin: ${doc.countryOfOrigin}${doc.vesselName ? ` | Vessel: ${doc.vesselName}` : ''}${doc.voyageNumber ? ` | Voyage: ${doc.voyageNumber}` : ''}${doc.brokerName ? ` | Broker: ${doc.brokerName}` : ''}${doc.brokerReference ? ` (Ref: ${doc.brokerReference})` : ''}${doc.notes ? ` | Notes: ${doc.notes}` : ''}`,
-      createdBy: userId
+      status: "arrived",
+      bookingDate: entryDate,
+      arrivalDate: entryDate,
+      actualCost: (doc.totalCharges ?? 0).toString(),
+      currency,
+      trackingNumber: doc.containerNumber || doc.trackingNumber || undefined,
+      containerNumber: doc.containerNumber || undefined,
+      vesselName: doc.vesselName || undefined,
+      voyageNumber: doc.voyageNumber || undefined,
+      notes: JSON.stringify({
+        invoiceNumber: doc.documentNumber,
+        documentType: doc.documentType,
+        invoiceDate: entryDate.toISOString(),
+        origin: doc.portOfExit || doc.shipperCountry,
+        destination: doc.portOfEntry || doc.consigneeCountry,
+        freightCharges: (doc.totalDeclaredValue ?? 0).toString(),
+        fuelSurcharge: (doc.totalDuties ?? 0).toString(),
+        accessorialCharges: (doc.totalTaxes ?? 0).toString(),
+        currency,
+        relatedPoId,
+        notes: `${String(doc.documentType || "other").replace(/_/g, ' ').toUpperCase()} | Shipper: ${shipperName} (${doc.shipperCountry || 'N/A'}) | Consignee: ${doc.consigneeName} | Country of Origin: ${doc.countryOfOrigin}${doc.vesselName ? ` | Vessel: ${doc.vesselName}` : ''}${doc.voyageNumber ? ` | Voyage: ${doc.voyageNumber}` : ''}${doc.brokerName ? ` | Broker: ${doc.brokerName}` : ''}${doc.brokerReference ? ` (Ref: ${doc.brokerReference})` : ''}${doc.notes ? ` | Notes: ${doc.notes}` : ''}`,
+        importedCustomsDocument: true,
+        createdBy: userId,
+      }),
     });
+    const freightId = booking.id;
     createdRecords.push({ type: "customs_document", id: freightId, name: doc.documentNumber });
 
     // 5. Create or update raw materials for line items with HS codes
@@ -1522,12 +1812,17 @@ export async function importCustomsDocument(
         } else if (isNonMaterialLineItem(item)) {
           warnings.push(`Skipped non-material line item "${item.description}" — recorded on the customs document but not added to materials.`);
         } else {
-          // Create new material with HS code
+          // Create new material with HS code. A zero/missing quantity would
+          // make the unit cost Infinity/NaN, which the decimal column rejects.
+          const unitCost = item.quantity > 0 && Number.isFinite(item.declaredValue / item.quantity)
+            ? (item.declaredValue / item.quantity).toFixed(4)
+            : undefined;
           const materialResult = await db.createRawMaterial({
+            companyId,
             name: item.description,
             sku: `HS-${item.hsCode}`,
             unit: item.unit || "EA",
-            unitCost: (item.declaredValue / item.quantity).toString(),
+            unitCost,
             preferredVendorId: shipper!.id
           });
           createdRecords.push({ type: "raw_material", id: materialResult.id, name: item.description });
@@ -1536,10 +1831,12 @@ export async function importCustomsDocument(
       }
     }
 
-    // 6. If related to a PO, add customs info to the PO
+    // 6. If related to a PO, add customs info to the PO (appended — the PO's
+    // own notes must survive the import).
     if (relatedPoId) {
+      const customsNote = `Customs Doc: ${doc.documentNumber} | Duties: ${currency} ${doc.totalDuties ?? 0} | Taxes: ${currency} ${doc.totalTaxes ?? 0}`;
       await db.updatePurchaseOrder(relatedPoId, {
-        notes: `Customs Doc: ${doc.documentNumber} | Duties: $${doc.totalDuties ?? 0} | Taxes: $${doc.totalTaxes ?? 0}`
+        notes: relatedPo?.notes ? `${relatedPo.notes}\n${customsNote}` : customsNote
       } as any);
       updatedRecords.push({
         type: "purchase_order",
@@ -1802,7 +2099,7 @@ export async function importEmailAttachmentToErp(opts: {
       taxAmount: summary.taxAmount != null ? summary.taxAmount.toString() : null,
       shippingAmount: summary.shippingAmount != null ? summary.shippingAmount.toString() : null,
       totalAmount: summary.totalAmount != null ? summary.totalAmount.toString() : null,
-      currency: summary.currency ?? "USD",
+      currency: normalizeCurrency(summary.currency),
       trackingNumber: summary.trackingNumber ?? null,
       carrierName: summary.carrierName ?? null,
       lineItems: summary.lineItems ?? null,
@@ -1966,7 +2263,7 @@ export async function importWhatsappDocumentToErp(opts: {
       taxAmount: summary.taxAmount != null ? summary.taxAmount.toString() : null,
       shippingAmount: summary.shippingAmount != null ? summary.shippingAmount.toString() : null,
       totalAmount: summary.totalAmount != null ? summary.totalAmount.toString() : null,
-      currency: summary.currency ?? "USD",
+      currency: normalizeCurrency(summary.currency),
       trackingNumber: summary.trackingNumber ?? null,
       carrierName: summary.carrierName ?? null,
       shipmentId,

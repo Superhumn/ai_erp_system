@@ -1,7 +1,9 @@
 // appRouter.transactions — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router } from "../_core/trpc";
 import * as db from "../db";
+import { scopeAllows } from "../_core/scope";
 import { financeProcedure, resolveRequestScope, assertNonEmptyScope, createAuditLog, generateNumber } from "./_shared";
 
 // ============================================
@@ -24,8 +26,17 @@ export const transactionsRouter = router({
         currency: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        // Can't create a transaction under an entity the caller doesn't have access to.
+        if (input.companyId != null) {
+          const scope = await resolveRequestScope(ctx.user);
+          if (!scopeAllows(scope, input.companyId)) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Cannot create a transaction under an entity outside your access.' });
+          }
+        }
+        // Default to the caller's home entity so scoped users can see the row they just created.
+        const companyId = input.companyId ?? ctx.user.companyId ?? undefined;
         const transactionNumber = generateNumber('TXN');
-        const result = await db.createTransaction({ ...input, transactionNumber, createdBy: ctx.user.id });
+        const result = await db.createTransaction({ ...input, companyId, transactionNumber, createdBy: ctx.user.id });
         await createAuditLog(ctx.user.id, 'create', 'transaction', result.id, transactionNumber);
         return result;
       }),

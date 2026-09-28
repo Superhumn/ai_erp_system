@@ -61,6 +61,7 @@ import {
   CalendarPlus,
 } from "lucide-react";
 import { format } from "date-fns";
+import { parseDateInput } from "@/lib/dateInput";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -492,8 +493,8 @@ export default function Projects() {
     createProject.mutate({
       name: projectForm.name,
       priority: projectForm.priority,
-      startDate: projectForm.startDate ? new Date(projectForm.startDate) : undefined,
-      targetEndDate: projectForm.endDate ? new Date(projectForm.endDate) : undefined,
+      startDate: parseDateInput(projectForm.startDate),
+      targetEndDate: parseDateInput(projectForm.endDate),
       budget: projectForm.budget || undefined,
       description: projectForm.description || undefined,
     });
@@ -506,7 +507,7 @@ export default function Projects() {
       projectId: taskForm.projectId,
       name: taskForm.name,
       priority: taskForm.priority,
-      dueDate: taskForm.dueDate ? new Date(taskForm.dueDate) : undefined,
+      dueDate: parseDateInput(taskForm.dueDate),
       description: taskForm.description || undefined,
     });
   }
@@ -1663,7 +1664,7 @@ function MilestonesDialog({
                     addMilestone.mutate({
                       projectId,
                       name: newName.trim(),
-                      dueDate: newDate ? new Date(newDate) : undefined,
+                      dueDate: parseDateInput(newDate),
                     });
                   }
                 }}
@@ -1683,7 +1684,7 @@ function MilestonesDialog({
                   addMilestone.mutate({
                     projectId,
                     name: newName.trim(),
-                    dueDate: newDate ? new Date(newDate) : undefined,
+                    dueDate: parseDateInput(newDate),
                   });
                 }}
               >

@@ -52,6 +52,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { format, addMonths } from "date-fns";
+import { parseDateInput, toDateInputValue } from "@/lib/dateInput";
 import { getStatusColor } from "@/lib/statusColors";
 import DocumentsCell from "@/components/DocumentsCell";
 import { DetailSheet } from "@/components/DetailSheet";
@@ -79,7 +80,10 @@ function fmtPct(v: number | null | undefined): string {
 
 function fmtDate(v: string | Date | null | undefined): string {
   if (!v) return "-";
-  try { return format(new Date(v), "MMM d, yyyy"); } catch { return "-"; }
+  // Date-only strings ("yyyy-MM-dd", e.g. hireDate) must be read as local dates, not UTC.
+  const d = v instanceof Date ? v : parseDateInput(v);
+  if (!d) return "-";
+  try { return format(d, "MMM d, yyyy"); } catch { return "-"; }
 }
 
 function calcNextVestDate(
@@ -604,7 +608,7 @@ export default function PeopleAndEquity() {
         employmentType: personForm.employmentType,
         departmentId: personForm.departmentId || undefined,
         jobTitle: personForm.jobTitle || undefined,
-        hireDate: personForm.hireDate ? new Date(personForm.hireDate) : undefined,
+        hireDate: parseDateInput(personForm.hireDate),
         salary: personForm.salary || undefined,
         notes: personForm.notes || undefined,
       });
@@ -1603,9 +1607,7 @@ export default function PeopleAndEquity() {
                                 provider: v.provider || "",
                                 methodology: v.methodology || "",
                                 status: (v.status || "draft") as any,
-                                expirationDate: v.expirationDate
-                                  ? new Date(v.expirationDate).toISOString().slice(0, 10)
-                                  : "",
+                                expirationDate: toDateInputValue(v.expirationDate),
                                 notes: v.notes || "",
                               });
                             }}
@@ -1873,7 +1875,8 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
   });
   const handleAddCompensation = () => {
     if (!person.employeeId) return;
-    if (!compForm.effectiveDate) {
+    const effectiveDate = parseDateInput(compForm.effectiveDate);
+    if (!effectiveDate) {
       toast.error("Effective date is required");
       return;
     }
@@ -1883,7 +1886,7 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
     }
     addCompensation.mutate({
       employeeId: person.employeeId,
-      effectiveDate: new Date(compForm.effectiveDate),
+      effectiveDate,
       salary: compForm.salary.trim(),
       salaryFrequency: compForm.salaryFrequency,
       reason: compForm.reason || undefined,
@@ -1909,7 +1912,8 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
   });
   const handleAddPayment = () => {
     if (!person.employeeId) return;
-    if (!payForm.paymentDate) {
+    const paymentDate = parseDateInput(payForm.paymentDate);
+    if (!paymentDate) {
       toast.error("Payment date is required");
       return;
     }
@@ -1919,7 +1923,7 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
     }
     addPayment.mutate({
       employeeId: person.employeeId,
-      paymentDate: new Date(payForm.paymentDate),
+      paymentDate,
       type: payForm.type,
       amount: payForm.amount.trim(),
       paymentMethod: payForm.paymentMethod,

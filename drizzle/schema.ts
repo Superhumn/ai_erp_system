@@ -735,6 +735,53 @@ export const purchaseOrderItems = mysqlTable("purchase_order_items", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
+// Vendor bills (accounts payable). `invoices` holds customer receivables, so
+// every vendor liability — keyed in by hand, parsed from an inbound email,
+// imported from a document, drafted by AI or synced from QuickBooks — lands
+// here. `payments` rows with type "made" settle them (see recordBillPayment).
+export type BillLineItem = {
+  description: string;
+  sku?: string;
+  quantity: number;
+  unit?: string;
+  unitPrice: number;
+  totalPrice: number;
+};
+
+export const bills = mysqlTable("bills", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
+  billNumber: varchar("billNumber", { length: 64 }).notNull(),
+  vendorId: int("vendorId").notNull().references(() => vendors.id),
+  purchaseOrderId: int("purchaseOrderId").references(() => purchaseOrders.id),
+  sourceType: mysqlEnum("sourceType", ["manual", "email", "document_import", "ai_draft", "quickbooks"]).default("manual").notNull(),
+  // inbound email id / imported document id / QuickBooks bill id, per sourceType
+  sourceRef: varchar("sourceRef", { length: 128 }),
+  billDate: timestamp("billDate").notNull(),
+  dueDate: timestamp("dueDate"),
+  subtotal: decimal("subtotal", { precision: 15, scale: 2 }),
+  taxAmount: decimal("taxAmount", { precision: 15, scale: 2 }).default("0"),
+  shippingAmount: decimal("shippingAmount", { precision: 15, scale: 2 }).default("0"),
+  totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).notNull(),
+  amountPaid: decimal("amountPaid", { precision: 15, scale: 2 }).default("0"),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  status: mysqlEnum("status", ["draft", "pending_approval", "approved", "scheduled", "partially_paid", "paid", "overdue", "cancelled", "disputed"]).default("draft").notNull(),
+  matchStatus: mysqlEnum("matchStatus", ["unmatched", "matched", "variance"]).default("unmatched").notNull(),
+  approvedBy: int("approvedBy").references(() => users.id),
+  approvedAt: timestamp("approvedAt"),
+  paidAt: timestamp("paidAt"),
+  paymentTerms: varchar("paymentTerms", { length: 64 }),
+  notes: text("notes"),
+  attachmentUrl: varchar("attachmentUrl", { length: 512 }),
+  lineItems: json("lineItems").$type<BillLineItem[]>(),
+  createdBy: int("createdBy").references(() => users.id),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Bill = typeof bills.$inferSelect;
+export type InsertBill = typeof bills.$inferInsert;
+
 export const shipments = mysqlTable("shipments", {
   id: int("id").autoincrement().primaryKey(),
   companyId: int("companyId").references(() => companies.id),
@@ -990,6 +1037,34 @@ export const disputes = mysqlTable("disputes", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
+
+// Legal case tracker (client/src/pages/legal/CaseTracker.tsx, appRouter.legalCases).
+// Table name is snake_case to match the pre-existing production table that meta/0042_snapshot.json
+// introspected; companyId was added by 0068_legal_cases.sql.
+export const legalCases = mysqlTable("legal_cases", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  caseNumber: varchar("caseNumber", { length: 64 }),
+  title: varchar("title", { length: 255 }).notNull(),
+  type: mysqlEnum("type", ["trademark", "litigation", "compliance", "contract_dispute", "ip", "regulatory", "employment", "other"]).default("other"),
+  status: mysqlEnum("status", ["open", "pending", "in_review", "resolved", "closed", "dismissed"]).default("open"),
+  priority: mysqlEnum("priority", ["low", "medium", "high", "critical"]).default("medium"),
+  opposingParty: varchar("opposingParty", { length: 255 }),
+  attorney: varchar("attorney", { length: 255 }),
+  lawFirm: varchar("lawFirm", { length: 255 }),
+  filedDate: timestamp("filedDate"),
+  nextHearingDate: timestamp("nextHearingDate"),
+  jurisdiction: varchar("jurisdiction", { length: 128 }),
+  description: text("description"),
+  notes: text("notes"),
+  assignedTo: int("assignedTo"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
+});
+
+export type LegalCase = typeof legalCases.$inferSelect;
+export type InsertLegalCase = typeof legalCases.$inferInsert;
 
 export const documents = mysqlTable("documents", {
   id: int("id").autoincrement().primaryKey(),

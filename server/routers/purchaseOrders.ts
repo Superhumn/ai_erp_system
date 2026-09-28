@@ -398,6 +398,14 @@ export const purchaseOrdersRouter = router({
         // Generate supplier portal link for document uploads
         const portalToken = nanoid(32);
         const portalLink = `${process.env.VITE_APP_URL || ''}/supplier-portal/${portalToken}`;
+        // Persist the session so supplierPortal.getSession can resolve the token.
+        await db.createSupplierPortalSession({
+          token: portalToken,
+          purchaseOrderId: po.id,
+          vendorId: po.vendorId,
+          vendorEmail: vendor.email ?? undefined,
+          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        });
         
         // Create shipment if requested
         let shipmentId: number | undefined;

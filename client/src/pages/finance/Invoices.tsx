@@ -45,6 +45,7 @@ import {
 } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { parseDateInput } from "@/lib/dateInput";
 import { formatCurrency } from "@/lib/format";
 import { getStatusColor } from "@/lib/statusColors";
 
@@ -340,7 +341,7 @@ export default function Invoices() {
       subtotal: totals.subtotal.toFixed(2),
       taxAmount: totals.tax.toFixed(2),
       totalAmount: totals.total.toFixed(2),
-      dueDate: new Date(formData.dueDate),
+      dueDate: parseDateInput(formData.dueDate),
       notes: formData.notes || undefined,
       items: lineItems.map(item => ({
         productId: item.productId,
@@ -377,9 +378,14 @@ export default function Invoices() {
       toast.error("Please fill all required fields and add at least one line item");
       return;
     }
+    const startDate = parseDateInput(recurringData.startDate);
+    if (!startDate) {
+      toast.error("Start date is required");
+      return;
+    }
     createRecurringInvoice.mutate({
       ...recurringData,
-      startDate: new Date(recurringData.startDate),
+      startDate,
       items: recurringLineItems.map(item => ({
         productId: item.productId,
         description: item.description,

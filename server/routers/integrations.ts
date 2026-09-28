@@ -241,14 +241,14 @@ export const integrationsRouter = router({
           const authUrl = `https://${shopDomain}/admin/oauth/authorize?client_id=${clientId}&scope=${scopes}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
           return { authUrl };
         }),
-      disconnect: protectedProcedure
+      disconnect: adminProcedure
         .input(z.object({ storeId: z.number() }))
         .mutation(async ({ input }) => {
           await db.updateShopifyStore(input.storeId, { isEnabled: false, accessToken: null });
           await db.createSyncLog({ integration: 'shopify', action: 'disconnect', status: 'success', details: `Disconnected store ${input.storeId}` });
           return { success: true };
         }),
-      testConnection: protectedProcedure
+      testConnection: adminProcedure
         .input(z.object({ storeId: z.number() }))
         .mutation(async ({ input }) => {
           const store = await db.getShopifyStoreById(input.storeId);

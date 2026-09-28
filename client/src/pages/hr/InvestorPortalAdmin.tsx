@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +34,8 @@ type StakeholderRow = {
 
 export default function InvestorPortalAdmin() {
   const utils = trpc.useUtils();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const { data: stakeholders, isLoading } = trpc.capTable.stakeholders.list.useQuery(undefined);
 
   const inviteMutation = trpc.investorPortal.inviteToPortal.useMutation({
@@ -89,7 +92,8 @@ export default function InvestorPortalAdmin() {
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={!s.email || pendingForThisRow}
+                      disabled={!isAdmin || !s.email || pendingForThisRow}
+                      title={isAdmin ? undefined : "Only admins can invite investors to the portal"}
                       onClick={() => inviteMutation.mutate({ stakeholderId: s.id })}
                     >
                       {pendingForThisRow ? (
@@ -172,6 +176,8 @@ function ActivatedInvestorRow({ stakeholder }: { stakeholder: StakeholderRow }) 
 
 function DeleteStakeholderRow({ stakeholder }: { stakeholder: StakeholderRow }) {
   const utils = trpc.useUtils();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const deleteMutation = trpc.capTable.stakeholders.delete.useMutation({
     onSuccess: () => {
       toast.success("Stakeholder removed");
@@ -179,6 +185,7 @@ function DeleteStakeholderRow({ stakeholder }: { stakeholder: StakeholderRow }) 
     },
     onError: (err) => toast.error(err.message),
   });
+  if (!isAdmin) return null;
   return (
     <div className="pt-3 border-t border-destructive/20">
       <Label className="text-xs uppercase tracking-wider text-destructive mb-1">

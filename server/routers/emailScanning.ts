@@ -7,10 +7,75 @@ import * as db from "../db";
 import { autoReplyRules } from "../../drizzle/schema";
 import { randomBytes } from "crypto";
 import { sanitizeAttachments } from "./_shared";
+import { toBillLineItems } from "../billsService";
 
 // ============================================
 // EMAIL SCANNING & DOCUMENT PARSING
 // ============================================
+
+/** Thrown inside an automation's try block to bail out without logging a failure. */
+class SkipAutomation extends Error {}
+
+/** The RFQ an inbound carrier quote should attach to: the newest open one, if any. */
+function pickOpenRfq<T extends { id: number }>(openRfqs: T[]): T | null {
+  return openRfqs.length > 0 ? openRfqs[0] : null;
+}
+
+/**
+ * Draft a vendor bill from an inbound email the parser classified as an invoice.
+ * Vendor liabilities live in `bills` (the `invoices` table is customer
+ * receivables). Needs a matched vendor: bills.vendorId is NOT NULL, and
+ * auto-creating vendors from unsolicited mail is not something we want.
+ * Returns the bill id, or null with the reason it was skipped.
+ */
+async function draftBillFromEmail(args: {
+  emailId: number;
+  subject: string;
+  userId: number;
+  doc: {
+    documentNumber?: string | null;
+    vendorName?: string | null;
+    vendorEmail?: string | null;
+    documentDate?: string | null;
+    dueDate?: string | null;
+    subtotal?: number | null;
+    taxAmount?: number | null;
+    totalAmount?: number | null;
+    currency?: string | null;
+    lineItems?: Array<{ description?: string | null; sku?: string | null; quantity?: number | null; unit?: string | null; unitPrice?: number | null; totalPrice?: number | null }> | null;
+  };
+}): Promise<{ billId: number | null; billNumber: string; reason?: string }> {
+  const { doc } = args;
+  const billNumber = doc.documentNumber || `DRAFT-EMAIL-${args.emailId}`;
+  const vendor = (doc.vendorEmail || doc.vendorName)
+    ? await db.findVendorByEmailOrName(doc.vendorEmail || undefined, doc.vendorName || undefined)
+    : null;
+  if (!vendor) {
+    return { billId: null, billNumber, reason: `no vendor matches ${[doc.vendorName, doc.vendorEmail].filter(Boolean).join(" ") || "the sender"}` };
+  }
+  const existing = await db.findBillByNumber(billNumber, vendor.id);
+  if (existing) return { billId: null, billNumber, reason: `bill ${billNumber} already exists (#${existing.id})` };
+
+  const { id } = await db.createBill({
+    companyId: vendor.companyId ?? undefined,
+    billNumber,
+    vendorId: vendor.id,
+    sourceType: "email",
+    sourceRef: String(args.emailId),
+    billDate: doc.documentDate ? new Date(doc.documentDate) : new Date(),
+    dueDate: doc.dueDate ? new Date(doc.dueDate) : undefined,
+    subtotal: (doc.subtotal ?? doc.totalAmount ?? 0).toString(),
+    taxAmount: (doc.taxAmount ?? 0).toString(),
+    totalAmount: (doc.totalAmount ?? 0).toString(),
+    currency: doc.currency || "USD",
+    status: "draft",
+    notes: `Auto-created from email: ${args.subject}`,
+    lineItems: toBillLineItems(doc.lineItems),
+    createdBy: args.userId,
+  });
+  return { billId: id, billNumber };
+}
+
 export const emailScanningRouter = router({
     // Manual scan — scan specific folders, date range, all emails (not just unseen)
     scanNow: protectedProcedure
@@ -20,7 +85,7 @@ export const emailScanningRouter = router({
         unseenOnly: z.boolean().optional(),
         limit: z.number().optional(),
       }).optional())
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const { scanAndCategorizeInbox, getImapConfig } = await import("../_core/emailInboxScanner");
         const config = getImapConfig();
         if (!config) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "IMAP not configured. Set IMAP_HOST, IMAP_USER, IMAP_PASSWORD in env." });
@@ -56,9 +121,10 @@ export const emailScanningRouter = router({
                   subject: email.subject,
                   bodyText: email.bodyText?.substring(0, 10000) || "",
                   receivedAt: email.date,
-                  status: "parsed",
-                  category: email.categorization?.category || "other",
-                } as any);
+                  parsingStatus: "parsed",
+                  parsedAt: new Date(),
+                  category: email.categorization?.category || "general",
+                });
 
                 // A quote often arrives as an attached sheet rather than in the
                 // body, so keep the first document-shaped attachment to hand it
@@ -109,7 +175,7 @@ export const emailScanningRouter = router({
                         content: dataUrl,
                         filename: att.filename,
                         mimeType: att.contentType,
-                        userId: 1,
+                        userId: ctx.user.id,
                       });
                       if (r.success) totalAttachmentsParsed++;
                     } catch { /* skip individual attachment failures */ }
@@ -414,46 +480,20 @@ export const emailScanningRouter = router({
             console.warn("[Email→DocumentLinker] Auto-link failed:", e);
           }
 
-          // ── Automation #1: Auto-create draft invoice from parsed email ──
+          // ── Automation #1: Auto-create a draft vendor bill from the parsed email ──
           if (result.categorization?.category === "invoice" && result.documents.length > 0) {
             try {
               const invoiceDoc = result.documents.find(d => d.documentType === "invoice") || result.documents[0];
               if (invoiceDoc.totalAmount) {
-                const vendorId = invoiceDoc.vendorEmail
-                  ? (await db.findVendorByEmailOrName(invoiceDoc.vendorEmail, invoiceDoc.vendorName))?.id ?? null
-                  : null;
-                const invoiceNumber = invoiceDoc.documentNumber || `DRAFT-EMAIL-${Date.now().toString(36).toUpperCase()}`;
-                const existing = await db.getInvoiceByNumber(invoiceNumber);
-                if (!existing) {
-                  const draftInvoice = await db.createInvoice({
-                    invoiceNumber,
-                    type: "bill",
-                    status: "draft",
-                    customerId: vendorId,
-                    issueDate: invoiceDoc.documentDate ? new Date(invoiceDoc.documentDate) : new Date(),
-                    dueDate: invoiceDoc.dueDate ? new Date(invoiceDoc.dueDate) : undefined,
-                    subtotal: invoiceDoc.subtotal?.toString() || invoiceDoc.totalAmount?.toString() || "0",
-                    taxAmount: invoiceDoc.taxAmount?.toString() || "0",
-                    totalAmount: invoiceDoc.totalAmount?.toString() || "0",
-                    currency: invoiceDoc.currency || "USD",
-                    notes: `Auto-created from email: ${input.subject}`,
-                  } as any);
-                  console.log(`[Email→Invoice] Auto-created draft invoice ${invoiceNumber} (id=${draftInvoice.id}) from email ${emailId}`);
-                  if (invoiceDoc.lineItems?.length) {
-                    for (const item of invoiceDoc.lineItems) {
-                      await db.createInvoiceItem({
-                        invoiceId: draftInvoice.id,
-                        description: item.description || "Line item",
-                        quantity: item.quantity?.toString() || "1",
-                        unitPrice: item.unitPrice?.toString() || "0",
-                        totalAmount: item.totalPrice?.toString() || "0",
-                      } as any);
-                    }
-                  }
+                const drafted = await draftBillFromEmail({ emailId, subject: input.subject, userId: ctx.user.id, doc: invoiceDoc });
+                if (drafted.billId) {
+                  console.log(`[Email→Bill] Auto-created draft bill ${drafted.billNumber} (id=${drafted.billId}) from email ${emailId}`);
+                } else {
+                  console.log(`[Email→Bill] Skipped draft bill from email ${emailId}: ${drafted.reason}`);
                 }
               }
             } catch (e) {
-              console.warn("[Email→Invoice] Auto-creation failed:", e);
+              console.warn("[Email→Bill] Auto-creation failed:", e);
             }
           }
 
@@ -485,10 +525,16 @@ export const emailScanningRouter = router({
               const matchedCarrier = carriers.find(
                 (c: any) => c.email && senderEmail && c.email.toLowerCase() === senderEmail.toLowerCase()
               );
-              const carrierId = matchedCarrier?.id ?? 0;
-              const openRfqs = await db.getFreightRfqs({ status: "awaiting_quotes" });
-              const linkedRfq = openRfqs.length > 0 ? openRfqs[0] : null;
-              const rfqId = linkedRfq?.id ?? 0;
+              // rfqs.sendToCarriers marks an RFQ "sent"; nothing ever sets
+              // "awaiting_quotes", so that filter matched no rows.
+              const openRfqs = await db.getFreightRfqs({ status: "sent" });
+              const linkedRfq = pickOpenRfq(openRfqs);
+              if (!matchedCarrier || !linkedRfq) {
+                console.log(`[Email→Quote] Skipped freight quote from email ${emailId}: ${!matchedCarrier ? `no carrier matches ${senderEmail || "unknown sender"}` : "no open RFQ"}`);
+                throw new SkipAutomation();
+              }
+              const carrierId = matchedCarrier.id;
+              const rfqId = linkedRfq.id;
 
               await db.createFreightQuote({
                 rfqId,
@@ -504,13 +550,11 @@ export const emailScanningRouter = router({
                 rawEmailContent: input.bodyText?.substring(0, 5000) || null,
                 notes: `Auto-created from vendor quote email: ${input.subject}`,
               } as any);
-              console.log(`[Email→Quote] Auto-created freight quote from email ${emailId} (carrier=${matchedCarrier?.name || 'unknown'}, rfq=${rfqId || 'standalone'})`);
+              console.log(`[Email→Quote] Auto-created freight quote from email ${emailId} (carrier=${matchedCarrier.name}, rfq=${rfqId})`);
 
-              if (linkedRfq) {
-                await db.updateFreightRfq(linkedRfq.id, { status: "quotes_received" });
-              }
+              await db.updateFreightRfq(linkedRfq.id, { status: "quotes_received" });
             } catch (e) {
-              console.warn("[Email→Quote] Auto-creation failed:", e);
+              if (!(e instanceof SkipAutomation)) console.warn("[Email→Quote] Auto-creation failed:", e);
             }
           }
 
@@ -1187,34 +1231,20 @@ export const emailScanningRouter = router({
               console.warn("[IMAP→DocumentLinker] Auto-link failed:", e);
             }
 
-            // ── IMAP Automation #1: Auto-create draft invoice ──
+            // ── IMAP Automation #1: Auto-create a draft vendor bill ──
             if (email.categorization?.category === "invoice" && parseResult?.documents?.length) {
               try {
                 const invoiceDoc = parseResult.documents.find((d: any) => d.documentType === "invoice") || parseResult.documents[0];
                 if (invoiceDoc.totalAmount) {
-                  const invNum = invoiceDoc.documentNumber || `DRAFT-IMAP-${Date.now().toString(36).toUpperCase()}`;
-                  const existingInv = await db.getInvoiceByNumber(invNum);
-                  if (!existingInv) {
-                    const vendorMatch = invoiceDoc.vendorEmail
-                      ? (await db.findVendorByEmailOrName(invoiceDoc.vendorEmail, invoiceDoc.vendorName))?.id ?? null
-                      : null;
-                    await db.createInvoice({
-                      invoiceNumber: invNum,
-                      type: "bill",
-                      status: "draft",
-                      customerId: vendorMatch,
-                      issueDate: invoiceDoc.documentDate ? new Date(invoiceDoc.documentDate) : new Date(),
-                      subtotal: invoiceDoc.totalAmount?.toString() || "0",
-                      taxAmount: "0",
-                      totalAmount: invoiceDoc.totalAmount?.toString() || "0",
-                      currency: invoiceDoc.currency || "USD",
-                      notes: `Auto-created from IMAP email: ${email.subject}`,
-                    } as any);
-                    console.log(`[IMAP→Invoice] Auto-created draft invoice ${invNum} from email ${emailId}`);
+                  const drafted = await draftBillFromEmail({ emailId, subject: email.subject, userId: ctx.user.id, doc: invoiceDoc });
+                  if (drafted.billId) {
+                    console.log(`[IMAP→Bill] Auto-created draft bill ${drafted.billNumber} (id=${drafted.billId}) from email ${emailId}`);
+                  } else {
+                    console.log(`[IMAP→Bill] Skipped draft bill from email ${emailId}: ${drafted.reason}`);
                   }
                 }
               } catch (e) {
-                console.warn("[IMAP→Invoice] Auto-creation failed:", e);
+                console.warn("[IMAP→Bill] Auto-creation failed:", e);
               }
             }
 
@@ -1243,10 +1273,14 @@ export const emailScanningRouter = router({
                 const matchedCarrier = carriers.find(
                   (c: any) => c.email && senderEmail && c.email.toLowerCase() === senderEmail.toLowerCase()
                 );
-                const carrierId = matchedCarrier?.id ?? 0;
-                const openRfqs = await db.getFreightRfqs({ status: "awaiting_quotes" });
-                const linkedRfq = openRfqs.length > 0 ? openRfqs[0] : null;
-                const rfqId = linkedRfq?.id ?? 0;
+                const openRfqs = await db.getFreightRfqs({ status: "sent" });
+                const linkedRfq = pickOpenRfq(openRfqs);
+                if (!matchedCarrier || !linkedRfq) {
+                  console.log(`[IMAP→Quote] Skipped freight quote from email ${emailId}: ${!matchedCarrier ? `no carrier matches ${senderEmail || "unknown sender"}` : "no open RFQ"}`);
+                  throw new SkipAutomation();
+                }
+                const carrierId = matchedCarrier.id;
+                const rfqId = linkedRfq.id;
 
                 await db.createFreightQuote({
                   rfqId,
@@ -1262,13 +1296,11 @@ export const emailScanningRouter = router({
                   rawEmailContent: email.bodyText?.substring(0, 5000) || null,
                   notes: `Auto-created from IMAP vendor quote email: ${email.subject}`,
                 } as any);
-                console.log(`[IMAP→Quote] Auto-created freight quote from email ${emailId} (carrier=${matchedCarrier?.name || 'unknown'}, rfq=${rfqId || 'standalone'})`);
+                console.log(`[IMAP→Quote] Auto-created freight quote from email ${emailId} (carrier=${matchedCarrier.name}, rfq=${rfqId})`);
 
-                if (linkedRfq) {
-                  await db.updateFreightRfq(linkedRfq.id, { status: "quotes_received" });
-                }
+                await db.updateFreightRfq(linkedRfq.id, { status: "quotes_received" });
               } catch (e) {
-                console.warn("[IMAP→Quote] Auto-creation failed:", e);
+                if (!(e instanceof SkipAutomation)) console.warn("[IMAP→Quote] Auto-creation failed:", e);
               }
             }
 

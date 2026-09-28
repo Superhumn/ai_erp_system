@@ -616,6 +616,7 @@ export async function importDriveFiles(opts: {
               if (!name) { errors.push(`Row ${rowNumber}: Missing vendor name`); continue; }
               await db.createVendor({
                 name,
+                companyId: opts.companyId ?? null,
                 email: record.email || record['email address'] || null,
                 phone: record.phone || record.telephone || null,
                 address: record.address || null,
@@ -631,6 +632,7 @@ export async function importDriveFiles(opts: {
               if (!name) { errors.push(`Row ${rowNumber}: Missing customer name`); continue; }
               await db.createCustomer({
                 name,
+                companyId: opts.companyId ?? null,
                 email: record.email || null,
                 phone: record.phone || null,
                 address: record.address || null,
@@ -647,6 +649,7 @@ export async function importDriveFiles(opts: {
               await db.createProduct({
                 name,
                 sku,
+                companyId: opts.companyId ?? null,
                 unitPrice: record.price || record['unit price'] || record.cost || record.rate || '0',
                 category: record.category || record.type || null,
                 description: record.description || record.notes || null,
@@ -661,6 +664,7 @@ export async function importDriveFiles(opts: {
               const employeeNumber = generateNumber('EMP');
               await db.createEmployee({
                 employeeNumber,
+                companyId: opts.companyId ?? null,
                 firstName,
                 lastName,
                 email: record.email || null,
@@ -675,6 +679,7 @@ export async function importDriveFiles(opts: {
               if (!name) { errors.push(`Row ${rowNumber}: Missing material name`); continue; }
               await db.createRawMaterial({
                 name,
+                companyId: opts.companyId ?? null,
                 sku: record.sku || record.code || `RM-${Date.now().toString(36)}-${imported}`,
                 unit: record.unit || record.uom || 'kg',
                 unitCost: record.cost || record['unit cost'] || record.price || '0',

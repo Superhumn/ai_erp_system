@@ -1,4 +1,5 @@
 // appRouter.ai — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { invokeLLM } from "../_core/llm";
@@ -14,8 +15,11 @@ export const aiRouter = router({
     getConversation: protectedProcedure
       .input(z.object({ id: z.number() }))
       .query(async ({ input, ctx }) => {
+        // Conversations are private to their owner; a foreign id reads as not found.
         const conversation = await db.getAiConversationById(input.id);
-        if (!conversation) return null;
+        if (!conversation || conversation.userId !== ctx.user.id) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Conversation not found' });
+        }
         const messages = await db.getAiMessages(input.id);
         return { ...conversation, messages };
       }),
@@ -31,6 +35,12 @@ export const aiRouter = router({
         message: z.string().min(1),
       }))
       .mutation(async ({ input, ctx }) => {
+        // Conversations are private to their owner; a foreign id reads as not found.
+        const conversation = await db.getAiConversationById(input.conversationId);
+        if (!conversation || conversation.userId !== ctx.user.id) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Conversation not found' });
+        }
+
         // Save user message
         await db.createAiMessage({
           conversationId: input.conversationId,

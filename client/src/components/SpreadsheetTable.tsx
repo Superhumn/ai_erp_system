@@ -34,6 +34,15 @@ import { formatCurrency } from "@/lib/format";
 
 export type ColumnType = "text" | "number" | "currency" | "date" | "status" | "badge" | "actions" | "checkbox";
 
+/**
+ * Serialise one CSV row (RFC 4180): every cell is quoted, embedded quotes are
+ * doubled, and null/undefined become empty strings. Newlines are safe inside
+ * quoted cells.
+ */
+export function toCsvRow(values: unknown[]): string {
+  return values.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",");
+}
+
 export interface Column<T> {
   key: keyof T | string;
   header: string;
@@ -295,13 +304,14 @@ export function SpreadsheetTable<T extends { id: number | string }>({
         })
     );
     
-    const csv = [headers.join(","), ...rows.map(r => r.map(v => `"${v}"`).join(","))].join("\n");
+    const csv = [toCsvRow(headers), ...rows.map(toCsvRow)].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = "export.csv";
     a.click();
+    URL.revokeObjectURL(url);
   };
 
   // Helper to get nested value from object using dot notation

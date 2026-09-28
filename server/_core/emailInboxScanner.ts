@@ -276,6 +276,21 @@ export async function scanInbox(
 }
 
 /**
+ * Resolve the IMAP body-part number to download for a child of the top-level
+ * multipart node. ImapFlow's parsed BODYSTRUCTURE carries the exact part path
+ * on each node (`part`, e.g. "1", "2", "1.2"); prefer it. When it is missing,
+ * fall back to the node's 1-based position among its siblings, which is the
+ * MIME part number for direct children of a multipart root.
+ */
+export function resolveAttachmentPartNumber(
+  child: { part?: string } | null | undefined,
+  oneBasedIndex: number
+): string {
+  if (child && typeof child.part === "string" && child.part.length > 0) return child.part;
+  return String(oneBasedIndex);
+}
+
+/**
  * Parse an IMAP message into our ScannedEmail format
  */
 async function parseImapMessage(
@@ -314,9 +329,11 @@ async function parseImapMessage(
     // Download actual attachment content for parseable files
     const attachmentContents: Array<{ filename: string; contentType: string; data: Buffer }> = [];
     if (message.bodyStructure?.childNodes) {
-      let partIndex = 1;
-      for (const child of message.bodyStructure.childNodes) {
-        partIndex++;
+      const children = message.bodyStructure.childNodes;
+      for (let i = 0; i < children.length; i++) {
+        const child = children[i];
+        // MIME part numbers are 1-based: the first child of a multipart root is "1".
+        const partNumber = resolveAttachmentPartNumber(child, i + 1);
         if (child.disposition === "attachment" || (child.disposition === "inline" && child.type !== "text")) {
           const filename = child.dispositionParameters?.filename || child.parameters?.name || "";
           const contentType = `${child.type}/${child.subtype}`;
@@ -324,7 +341,7 @@ async function parseImapMessage(
           const isParseable = /pdf|image|msword|spreadsheet|csv|excel|png|jpg|jpeg/i.test(contentType) || /\.pdf$|\.png$|\.jpg$|\.jpeg$|\.xlsx?$|\.csv$|\.doc/i.test(filename);
           if (isParseable && (child.size || 0) < 20 * 1024 * 1024) {
             try {
-              const part = await client.download(uid.toString(), String(partIndex), { uid: true, markSeen: false });
+              const part = await client.download(uid.toString(), partNumber, { uid: true, markSeen: false });
               if (part?.content) {
                 const chunks: Buffer[] = [];
                 for await (const chunk of part.content) chunks.push(chunk);

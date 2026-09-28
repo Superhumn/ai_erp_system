@@ -49,8 +49,11 @@ export const invoicesRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         const { items, ...invoiceData } = input;
+        // invoices.list is entity-scoped; the client never sends companyId, so default it to the
+        // user's home entity or the row is stored NULL and disappears from the creator's own list.
+        const companyId = input.companyId ?? ctx.user.companyId ?? undefined;
         const invoiceNumber = generateNumber('INV');
-        const result = await db.createInvoice({ ...invoiceData, invoiceNumber, createdBy: ctx.user.id });
+        const result = await db.createInvoice({ ...invoiceData, companyId, invoiceNumber, createdBy: ctx.user.id });
         
         if (items && items.length > 0) {
           for (const item of items) {
@@ -63,7 +66,7 @@ export const invoicesRouter = router({
         // Auto-create journal entry for invoice (double-entry bookkeeping)
         try {
           const txn = await db.createTransaction({
-            companyId: input.companyId || 1,
+            companyId,
             transactionNumber: `JE-INV-${invoiceNumber}`,
             type: "invoice",
             referenceType: "invoice",
@@ -78,10 +81,10 @@ export const invoicesRouter = router({
           });
 
           // Debit: Accounts Receivable, Credit: Revenue
-          const arAccount = await db.getAccountByCode("1200", input.companyId)
-            || await db.getAccountByName("Accounts Receivable", input.companyId);
-          const revenueAccount = await db.getAccountByCode("4000", input.companyId)
-            || await db.getAccountByName("Revenue", input.companyId);
+          const arAccount = await db.getAccountByCode("1200", companyId)
+            || await db.getAccountByName("Accounts Receivable", companyId);
+          const revenueAccount = await db.getAccountByCode("4000", companyId)
+            || await db.getAccountByName("Revenue", companyId);
 
           if (arAccount) {
             await db.createTransactionLine({

@@ -36,7 +36,9 @@ export const inventoryRouter = router({
         reorderQuantity: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const result = await db.createInventory(input);
+        // inventory.list is entity-scoped; a row stored with companyId NULL would vanish from the
+        // creator's own list, so default the scope to the user's home entity.
+        const result = await db.createInventory({ ...input, companyId: input.companyId ?? ctx.user.companyId ?? undefined });
         await createAuditLog(ctx.user.id, 'create', 'inventory', result.id);
         return result;
       }),
@@ -390,13 +392,22 @@ export const inventoryRouter = router({
           const raw = typeof rawContent === 'string' ? rawContent : '{}';
           transferData = JSON.parse(raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim());
         } catch { transferData = {}; }
+        // inventory_transfers.fromWarehouseId / toWarehouseId / requestedDate are NOT NULL with no
+        // default, so an unparsed warehouse must be rejected up front instead of failing at insert.
+        const fromWarehouseId = Number.isInteger(transferData.fromWarehouseId) ? Number(transferData.fromWarehouseId) : null;
+        const toWarehouseId = Number.isInteger(transferData.toWarehouseId) ? Number(transferData.toWarehouseId) : null;
+        if (fromWarehouseId === null || toWarehouseId === null) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Could not determine both the source and destination warehouse from the text. Please name both warehouses.' });
+        }
         const result = await db.createTransfer({
-          fromWarehouseId: transferData.fromWarehouseId || null,
-          toWarehouseId: transferData.toWarehouseId || null,
-          notes: transferData.notes || input.text,
+          companyId: ctx.user.companyId ?? undefined,
+          fromWarehouseId,
+          toWarehouseId,
+          notes: typeof transferData.notes === 'string' && transferData.notes ? transferData.notes : input.text,
           status: 'pending',
+          requestedDate: new Date(),
           requestedBy: ctx.user.id,
-        } as any);
+        });
         await createAuditLog(ctx.user.id, 'create', 'inventory_transfer', result.id, result.transferNumber);
         return { transferNumber: result.transferNumber, id: result.id };
       }),

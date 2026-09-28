@@ -1585,10 +1585,16 @@ async function executeGenerateReport(params: any, ctx: AIAgentContext): Promise<
 }
 
 async function executeCreateTask(params: any, ctx: AIAgentContext): Promise<any> {
+  assertCanMutate(ctx, "create task");
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const { taskType, priority = "medium", description, taskData, requiresApproval = true } = params;
+  const { taskType, priority = "medium", description, taskData } = params;
+  // A caller-supplied `requiresApproval: false` writes the task as "approved",
+  // which the scheduler then executes (POs, vendor emails) without the approval
+  // queue. Only mutation roles may skip approval; everyone else is forced to
+  // pending_approval regardless of what the model passed.
+  const requiresApproval = params.requiresApproval === false && MUTATION_ROLES.includes(ctx.userRole) ? false : true;
 
   const task = await db.insert(aiAgentTasks).values({
     taskType,

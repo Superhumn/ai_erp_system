@@ -54,7 +54,7 @@ export default function VendorPortal() {
     },
   });
 
-  const uploadCustomsDocument = (trpc.vendorPortal as any).uploadCustomsDocument.useMutation({
+  const uploadCustomsDocument = trpc.vendorPortal.uploadCustomsDocument.useMutation({
     onSuccess: () => {
       toast.success("Customs document uploaded");
       setCustomsUploadOpen(false);
@@ -92,9 +92,8 @@ export default function VendorPortal() {
     reader.onload = () => {
       const base64 = (reader.result as string).split(",")[1];
       uploadCustomsDocument.mutate({
-        relatedEntityType: "shipment" as const,
-        relatedEntityId: selectedClearanceId!,
-        documentType: customsDocType as "invoice" | "receipt" | "contract" | "legal" | "report" | "hr" | "other",
+        clearanceId: selectedClearanceId,
+        documentType: customsDocType,
         name: file.name,
         fileData: base64,
         mimeType: file.type,

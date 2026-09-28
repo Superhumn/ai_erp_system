@@ -22,10 +22,34 @@ export const usersRouter = router({
       .mutation(async ({ input, ctx }) => {
         const updates: Record<string, string> = {};
         if (input.name !== undefined) updates.name = input.name;
-        if (input.email !== undefined) updates.email = input.email;
         if (input.phone !== undefined) updates.phone = input.phone;
+
+        const newEmail = input.email?.trim();
+        const emailChanged = newEmail !== undefined && newEmail !== ctx.user.email;
+        if (emailChanged) {
+          if (!newEmail) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Email cannot be empty' });
+          // The address must not already identify another account (users or local auth).
+          const existingUser = await db.getUserByEmail(newEmail);
+          if (existingUser && existingUser.id !== ctx.user.id) {
+            throw new TRPCError({ code: 'CONFLICT', message: 'That email address is already in use' });
+          }
+          const existingCred = await db.getLocalAuthCredentialByEmail(newEmail);
+          if (existingCred && existingCred.openId !== ctx.user.openId) {
+            throw new TRPCError({ code: 'CONFLICT', message: 'That email address is already in use' });
+          }
+        }
+
         if (Object.keys(updates).length > 0) {
           await db.updateUser(ctx.user.id, updates);
+        }
+        if (emailChanged && newEmail) {
+          // Changing the address invalidates prior verification and must keep the
+          // local-auth login lookup (by email) pointing at this same account.
+          await db.setUserEmailUnverified(ctx.user.id, newEmail);
+          const ownCred = await db.getLocalAuthCredentialByOpenId(ctx.user.openId);
+          if (ownCred) {
+            await db.updateLocalAuthCredential(ctx.user.openId, { email: newEmail });
+          }
         }
         return { success: true };
       }),

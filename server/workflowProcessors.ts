@@ -27,15 +27,16 @@ import {
   freightRfqs,
   freightQuotes,
   freightCarriers,
-  invoices,
-  payments,
   vendorRfqs,
   vendorQuotes,
   vendorRfqInvitations,
   vendorRfqEmails,
 } from "../drizzle/schema";
-import { eq, and, lt, lte, gte, gt, desc, asc, sql, isNull, or, inArray, between } from "drizzle-orm";
+import { eq, and, gte, desc, asc, sql, or, inArray } from "drizzle-orm";
 import type { WorkflowEngine, WorkflowContext, WorkflowResult, StepResult } from "./autonomousWorkflowEngine";
+import * as billsDb from "./db";
+import { payBill, type PaymentMethod } from "./billsService";
+import { billOutstanding, compareBillToPo, isBillDueForPayment, pickClosestPurchaseOrder } from "./billsLogic";
 import { supplierPerformance, exceptionLog } from "../drizzle/schema";
 import {
   computeResponsivenessForVendors,
@@ -2202,100 +2203,90 @@ const qualityInspectionProcessor: WorkflowProcessor = {
 };
 
 // ============================================
-// INVOICE MATCHING WORKFLOW
+// INVOICE MATCHING / PAYMENT PROCESSING WORKFLOWS
 // ============================================
+//
+// Both workflows are accounts-payable processes over the `bills` table
+// (vendor liabilities). The `invoices` table holds customer receivables and is
+// never read or written here. Bills are matched against their purchase order
+// first (invoiceMatching), then approved/scheduled bills that fall due are paid
+// (paymentProcessing) — small ones automatically, larger ones after a
+// workflow approval.
+
+const DEFAULT_MATCH_TOLERANCE_PERCENT = 2;
+const DEFAULT_AUTO_PAY_THRESHOLD = 1000;
+
+function configNumber(config: Record<string, any>, keys: string[], fallback: number): number {
+  for (const key of keys) {
+    const value = Number(config?.[key]);
+    if (Number.isFinite(value)) return value;
+  }
+  return fallback;
+}
 
 const invoiceMatchingProcessor: WorkflowProcessor = {
   async execute(engine: WorkflowEngine, context: WorkflowContext): Promise<WorkflowResult> {
-    const db = engine.getDb();
     let itemsProcessed = 0;
     let itemsSucceeded = 0;
     let itemsFailed = 0;
     let totalValue = 0;
+    const tolerancePercent = configNumber(context.config, ["matchTolerancePercent", "tolerancePercent"], DEFAULT_MATCH_TOLERANCE_PERCENT);
 
-    // Step 1: Get pending vendor invoices
-    const step1 = await engine.recordStep(context, 1, "Fetch Pending Invoices", "data_fetch", async () => {
-      const pendingInvoices = await db
-        .select()
-        .from(invoices)
-        .where(eq(invoices.status, "draft"));
-
-      return { success: true, data: { invoices: pendingInvoices } };
+    // Step 1: Unmatched bills still open for matching
+    const step1 = await engine.recordStep(context, 1, "Fetch Pending Vendor Invoices", "data_fetch", async () => {
+      const pendingBills = await billsDb.getBills({ matchStatus: "unmatched", statuses: ["draft", "pending_approval", "approved"] });
+      return { success: true, data: { bills: pendingBills } };
     });
 
-    if (!step1.success || !step1.data?.invoices.length) {
+    if (!step1.success || !step1.data?.bills.length) {
       return { success: true, runId: context.runId, status: "completed", itemsProcessed: 0, itemsSucceeded: 0, itemsFailed: 0 };
     }
 
-    itemsProcessed = step1.data.invoices.length;
+    itemsProcessed = step1.data.bills.length;
 
-    // Step 2: Match invoices to POs
+    // Step 2: Match each bill to its PO (linked id first, else closest open PO for the vendor)
     const step2 = await engine.recordStep(context, 2, "Match to Purchase Orders", "ai_analysis", async () => {
       const matched: any[] = [];
       const discrepancies: any[] = [];
 
-      for (const invoice of step1.data.invoices) {
-        // Try to find matching PO by vendor
-        const [matchingPO] = await db
-          .select()
-          .from(purchaseOrders)
-          .where(
-            and(
-              eq(purchaseOrders.vendorId, invoice.customerId!), // In this context, customerId might be vendorId for payables
-              eq(purchaseOrders.status, "received")
-            )
-          );
+      for (const bill of step1.data.bills) {
+        let po = bill.purchaseOrderId ? await billsDb.getPurchaseOrderById(bill.purchaseOrderId) : null;
+        if (!po) {
+          const candidates = await billsDb.getPurchaseOrders({ vendorId: bill.vendorId });
+          po = pickClosestPurchaseOrder(bill.totalAmount, candidates, tolerancePercent);
+        }
 
-        if (matchingPO) {
-          const invoiceAmount = parseFloat(invoice.totalAmount);
-          const poAmount = parseFloat(matchingPO.totalAmount);
-          const variance = Math.abs(invoiceAmount - poAmount);
-          const variancePercent = (variance / poAmount) * 100;
-
-          if (variancePercent <= 2) {
-            // Within acceptable variance
-            matched.push({
-              invoiceId: invoice.id,
-              poId: matchingPO.id,
-              invoiceAmount,
-              poAmount,
-              variance,
-            });
-            totalValue += invoiceAmount;
-            itemsSucceeded++;
-          } else {
-            // Price variance exception
-            discrepancies.push({
-              invoiceId: invoice.id,
-              poId: matchingPO.id,
-              invoiceAmount,
-              poAmount,
-              variance,
-              variancePercent,
-            });
-
-            await engine.handleException(
-              context,
-              "price_variance",
-              `Invoice ${invoice.invoiceNumber} price variance`,
-              `Variance of $${variance.toFixed(2)} (${variancePercent.toFixed(1)}%) from PO ${matchingPO.poNumber}`,
-              { invoiceId: invoice.id, poId: matchingPO.id, variance },
-              "invoice",
-              invoice.id
-            );
-
-            itemsFailed++;
-          }
-        } else {
-          // No matching PO
+        if (!po) {
           await engine.handleException(
             context,
             "documentation_missing",
-            `No matching PO for invoice ${invoice.invoiceNumber}`,
-            "Cannot match invoice to any received purchase order",
-            { invoiceId: invoice.id },
-            "invoice",
-            invoice.id
+            `No matching PO for bill ${bill.billNumber}`,
+            "Cannot match bill to any purchase order for this vendor",
+            { billId: bill.id, vendorId: bill.vendorId },
+            "bill",
+            bill.id
+          );
+          itemsFailed++;
+          continue;
+        }
+
+        const cmp = compareBillToPo(bill.totalAmount, po.totalAmount, tolerancePercent);
+        if (cmp.matched) {
+          await billsDb.updateBill(bill.id, { matchStatus: "matched", purchaseOrderId: po.id });
+          matched.push({ billId: bill.id, poId: po.id, billAmount: cmp.billAmount, poAmount: cmp.poAmount, variance: cmp.variance, previousStatus: bill.status });
+          totalValue += cmp.billAmount;
+          itemsSucceeded++;
+        } else {
+          await billsDb.updateBill(bill.id, { matchStatus: "variance", purchaseOrderId: po.id });
+          discrepancies.push({ billId: bill.id, poId: po.id, billAmount: cmp.billAmount, poAmount: cmp.poAmount, variance: cmp.variance, variancePercent: cmp.variancePercent });
+          await engine.handleException(
+            context,
+            "price_variance",
+            `Bill ${bill.billNumber} price variance`,
+            `Variance of $${cmp.variance.toFixed(2)} (${cmp.variancePercent.toFixed(1)}%) from PO ${po.poNumber}`,
+            { billId: bill.id, poId: po.id, variance: cmp.variance },
+            "bill",
+            bill.id
           );
           itemsFailed++;
         }
@@ -2304,16 +2295,16 @@ const invoiceMatchingProcessor: WorkflowProcessor = {
       return { success: true, data: { matched, discrepancies } };
     });
 
-    // Step 3: Queue matched invoices for payment
-    await engine.recordStep(context, 3, "Queue for Payment", "update_record", async () => {
+    // Step 3: Matched drafts move on to approval
+    await engine.recordStep(context, 3, "Queue for Approval", "update_record", async () => {
+      let queuedCount = 0;
       for (const match of step2.data?.matched || []) {
-        await db
-          .update(invoices)
-          .set({ status: "sent" }) // Ready for payment
-          .where(eq(invoices.id, match.invoiceId));
+        if (match.previousStatus === "draft") {
+          await billsDb.updateBill(match.billId, { status: "pending_approval" });
+          queuedCount++;
+        }
       }
-
-      return { success: true, data: { queuedCount: step2.data?.matched.length } };
+      return { success: true, data: { queuedCount } };
     });
 
     return {
@@ -2329,88 +2320,81 @@ const invoiceMatchingProcessor: WorkflowProcessor = {
   },
 };
 
-// ============================================
-// PAYMENT PROCESSING WORKFLOW
-// ============================================
-
 const paymentProcessingProcessor: WorkflowProcessor = {
   async execute(engine: WorkflowEngine, context: WorkflowContext): Promise<WorkflowResult> {
-    const db = engine.getDb();
     let itemsProcessed = 0;
     let itemsSucceeded = 0;
     let itemsFailed = 0;
     let totalValue = 0;
+    const lookaheadDays = configNumber(context.config, ["paymentLookaheadDays", "lookaheadDays"], 0);
+    const autoPayThreshold = configNumber(context.config, ["autoPayThreshold", "autoApproveThreshold"], DEFAULT_AUTO_PAY_THRESHOLD);
+    const paymentMethod = (context.config?.paymentMethod as PaymentMethod | undefined) ?? "bank_transfer";
 
-    // Step 1: Get approved invoices due for payment
-    const step1 = await engine.recordStep(context, 1, "Fetch Due Payments", "data_fetch", async () => {
-      const today = new Date();
-      const approvedInvoices = await db
-        .select()
-        .from(invoices)
-        .where(
-          and(
-            eq(invoices.status, "sent"),
-            lte(invoices.dueDate, today)
-          )
-        );
-
-      return { success: true, data: { invoices: approvedInvoices } };
+    // Step 1: Approved / scheduled bills due inside the run window
+    const step1 = await engine.recordStep(context, 1, "Fetch Due Payables", "data_fetch", async () => {
+      const now = new Date();
+      const candidates = await billsDb.getBills({ statuses: ["approved", "scheduled"] });
+      const dueBills = candidates.filter((bill) => isBillDueForPayment(bill, now, lookaheadDays) && billOutstanding(bill) > 0);
+      return { success: true, data: { bills: dueBills } };
     });
 
-    if (!step1.success || !step1.data?.invoices.length) {
+    if (!step1.success || !step1.data?.bills.length) {
       return { success: true, runId: context.runId, status: "completed", itemsProcessed: 0, itemsSucceeded: 0, itemsFailed: 0 };
     }
 
-    itemsProcessed = step1.data.invoices.length;
+    itemsProcessed = step1.data.bills.length;
 
-    // Step 2: Request approval for payments over threshold
+    // Step 2: Pay under the threshold; request approval above it
     const step2 = await engine.recordStep(context, 2, "Process Payments", "wait_approval", async () => {
       const processed: any[] = [];
       const pendingApproval: any[] = [];
+      const failed: any[] = [];
 
-      for (const invoice of step1.data.invoices) {
-        const amount = parseFloat(invoice.totalAmount);
-        totalValue += amount;
-
-        const approval = await engine.requestApproval(
-          context,
-          "payment",
-          `Payment for Invoice ${invoice.invoiceNumber}`,
-          `Pay $${amount.toFixed(2)} to vendor`,
+      const pay = async (bill: { id: number; billNumber: string }, amount: number) => {
+        const result = await payBill(bill.id, {
           amount,
-          "invoice",
-          invoice.id,
-          "Invoice matched to PO and approved for payment",
-          90
-        );
+          paymentMethod,
+          paymentNumber: `PAY-${Date.now().toString(36).toUpperCase()}-${bill.id}`,
+          notes: `Automated payment for bill ${bill.billNumber} (workflow run ${context.runId})`,
+        });
+        processed.push({ billId: bill.id, amount, paymentId: result.paymentId });
+        itemsSucceeded++;
+      };
 
-        if (approval.autoApproved) {
-          // Create payment record
-          const paymentNumber = `PAY-${Date.now().toString(36).toUpperCase()}`;
-          await db.insert(payments).values({
-            paymentNumber,
-            type: "made",
-            invoiceId: invoice.id,
-            vendorId: invoice.customerId, // Vendor in this context
-            amount: invoice.totalAmount,
-            paymentMethod: "bank_transfer",
-            paymentDate: new Date(),
-            status: "completed",
-          });
+      for (const bill of step1.data.bills) {
+        const amount = billOutstanding(bill);
+        totalValue += amount;
+        try {
+          if (amount <= autoPayThreshold) {
+            await pay(bill, amount);
+            continue;
+          }
 
-          await db
-            .update(invoices)
-            .set({ status: "paid", paidAmount: invoice.totalAmount })
-            .where(eq(invoices.id, invoice.id));
+          const approval = await engine.requestApproval(
+            context,
+            "payment",
+            `Payment for Bill ${bill.billNumber}`,
+            `Pay $${amount.toFixed(2)} to ${bill.vendorName || `vendor #${bill.vendorId}`}`,
+            amount,
+            "bill",
+            bill.id,
+            bill.matchStatus === "matched" ? "Bill matched to PO and approved for payment" : "Bill approved for payment",
+            90
+          );
 
-          processed.push({ invoiceId: invoice.id, amount });
-          itemsSucceeded++;
-        } else {
-          pendingApproval.push({ invoiceId: invoice.id, amount, approvalId: approval.approvalId });
+          if (approval.autoApproved) {
+            await pay(bill, amount);
+          } else {
+            await billsDb.updateBill(bill.id, { status: "pending_approval" });
+            pendingApproval.push({ billId: bill.id, amount, approvalId: approval.approvalId });
+          }
+        } catch (error) {
+          itemsFailed++;
+          failed.push({ billId: bill.id, amount, error: error instanceof Error ? error.message : String(error) });
         }
       }
 
-      return { success: true, data: { processed, pendingApproval } };
+      return { success: true, data: { processed, pendingApproval, failed } };
     });
 
     return {

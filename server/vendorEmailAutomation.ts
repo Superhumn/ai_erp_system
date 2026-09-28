@@ -11,6 +11,7 @@
 import { invokeLLM } from "./_core/llm";
 import * as emailService from "./_core/emailService";
 import * as db from "./db";
+import { billOutstanding } from "./billsLogic";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -76,15 +77,20 @@ Items:\n${itemList}`;
       break;
     }
     case "payment_reminder": {
-      const invoices = await db.getInvoices();
-      const vendorInvoices = invoices.filter(
-        i => i.customerId === request.vendorId && ["sent", "overdue"].includes(i.status)
-      );
-      if (vendorInvoices.length > 0) {
-        const invList = vendorInvoices.map(
-          i => `- ${i.invoiceNumber}: $${i.totalAmount} (due: ${i.dueDate ? new Date(i.dueDate).toLocaleDateString() : 'N/A'})`
-        ).join("\n");
-        context = `Outstanding invoices:\n${invList}`;
+      // Vendor payables live in `bills` (the `invoices` table is customer
+      // receivables, so it is never consulted here).
+      const openBills = await db.getOpenBillsForVendor(vendor.id);
+      if (openBills.length > 0) {
+        const lines = openBills.map((bill) => {
+          const due = bill.dueDate ? new Date(bill.dueDate).toLocaleDateString() : "no due date";
+          return `- Bill ${bill.billNumber}: outstanding $${billOutstanding(bill).toFixed(2)} ${bill.currency || "USD"} (due ${due}, status ${bill.status})`;
+        });
+        const totalOutstanding = openBills.reduce((sum, bill) => sum + billOutstanding(bill), 0);
+        context = `Outstanding bills on this vendor's account (total $${totalOutstanding.toFixed(2)}):\n${lines.join("\n")}`;
+        if (request.customMessage) context += `\n${request.customMessage}`;
+      } else {
+        context = request.customMessage
+          || "We are reviewing the status of payments on your account and would like to confirm any outstanding invoices you have issued to us.";
       }
       defaultSubject = `Payment Status Update - ${vendor.name}`;
       break;

@@ -1,10 +1,20 @@
 // appRouter.inventoryCosting — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
 import { z } from "zod";
-import { router } from "../_core/trpc";
+import { router, protectedProcedure } from "../_core/trpc";
+import { TRPCError } from "@trpc/server";
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "../inventoryCostingService";
 import * as db from "../db";
 import { definedFields } from "../_core/definedFields";
 import { financeProcedure, opsProcedure, createAuditLog } from "./_shared";
+
+// Inventory costing lives under Operations in the sidebar, so period-summary generation must admit
+// ops as well as the finance roles (admin/finance/exec). _shared has no combined guard, so define it here.
+const opsOrFinanceProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (!['admin', 'ops', 'exec', 'finance'].includes(ctx.user.role)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Operations or finance access required' });
+  }
+  return next({ ctx });
+});
 
 export const inventoryCostingRouter = router({
     // Costing config per product
@@ -126,7 +136,7 @@ export const inventoryCostingRouter = router({
           endDate: z.date().optional(),
         }).optional())
         .query(({ input }) => db.getCogsSummary(input)),
-      generateSummary: financeProcedure
+      generateSummary: opsOrFinanceProcedure
         .input(z.object({
           companyId: z.number().optional(),
           productId: z.number().optional(),

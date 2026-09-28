@@ -19,7 +19,7 @@ export const ediRouter = router({
     partners: router({
       list: protectedProcedure
         .input(z.object({ status: z.string().optional(), partnerType: z.string().optional() }).optional())
-        .query(({ input }) => db.getEdiTradingPartners((input as any)?.companyId)),
+        .query(({ input }) => db.getEdiTradingPartners(input ?? undefined)),
       get: protectedProcedure
         .input(z.object({ id: z.number() }))
         .query(({ input }) => db.getEdiTradingPartnerById(input.id)),
@@ -349,7 +349,9 @@ export const ediRouter = router({
 
     // EDI Settings (company-wide config)
     settings: router({
-      get: protectedProcedure.query(() => db.getEdiSettings(1)),
+      // The client never sends companyId on upsert (row saved with companyId
+      // NULL), so read back the same way: no companyId → first/default row.
+      get: protectedProcedure.query(() => db.getEdiSettings()),
       upsert: adminProcedure
         .input(z.object({
           companyId: z.number().optional(),

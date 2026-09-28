@@ -12,6 +12,34 @@ import { adminProcedure, contractorProcedure, createAuditLog, getValidGoogleToke
 // ============================================
 // DATA ROOM
 // ============================================
+
+type OwnerCtx = { user: { id: number; role: string } };
+
+/**
+ * Owner-side gate shared by every authenticated data-room mutation: the room
+ * must exist and belong to the caller (admins pass). Same rule getById /
+ * update / delete / driveSync.* already enforce inline.
+ */
+async function assertRoomOwner(dataRoomId: number, ctx: OwnerCtx) {
+  const room = await db.getDataRoomById(dataRoomId);
+  if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+  if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+  }
+  return room;
+}
+
+/** Resolve a child row to its room and gate on that room's owner. */
+async function assertChildRoomOwner<T extends { dataRoomId: number }>(
+  row: T | null | undefined,
+  ctx: OwnerCtx,
+  missing: string,
+): Promise<T> {
+  if (!row) throw new TRPCError({ code: 'NOT_FOUND', message: missing });
+  await assertRoomOwner(row.dataRoomId, ctx);
+  return row;
+}
+
 export const dataRoomRouter = router({
     // List all data rooms for the current user
     list: protectedProcedure.query(async ({ ctx }) => {
@@ -227,7 +255,8 @@ export const dataRoomRouter = router({
           description: z.string().optional(),
           googleDriveFolderId: z.string().optional(),
         }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertRoomOwner(input.dataRoomId, ctx);
           const { id } = await db.createDataRoomFolder(input);
           return { id };
         }),
@@ -239,7 +268,8 @@ export const dataRoomRouter = router({
           description: z.string().optional(),
           sortOrder: z.number().optional(),
         }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertChildRoomOwner(await db.getDataRoomFolderById(input.id), ctx, 'Folder not found');
           const { id, ...data } = input;
           await db.updateDataRoomFolder(id, data);
           return { success: true };
@@ -247,7 +277,8 @@ export const dataRoomRouter = router({
 
       delete: protectedProcedure
         .input(z.object({ id: z.number() }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertChildRoomOwner(await db.getDataRoomFolderById(input.id), ctx, 'Folder not found');
           await db.deleteDataRoomFolder(input.id);
           return { success: true };
         }),
@@ -285,6 +316,7 @@ export const dataRoomRouter = router({
           thumbnailUrl: z.string().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
+          await assertRoomOwner(input.dataRoomId, ctx);
           const { id } = await db.createDataRoomDocument({
             ...input,
             uploadedBy: ctx.user.id,
@@ -303,6 +335,7 @@ export const dataRoomRouter = router({
           base64Content: z.string(),
         }))
         .mutation(async ({ input, ctx }) => {
+          await assertRoomOwner(input.dataRoomId, ctx);
           // Upload to S3
           const buffer = Buffer.from(input.base64Content, 'base64');
           const key = `dataroom/${input.dataRoomId}/${nanoid()}-${input.name.replace(/[/\\]/g, '_')}`;
@@ -333,7 +366,8 @@ export const dataRoomRouter = router({
           sortOrder: z.number().optional(),
           isHidden: z.boolean().optional(),
         }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertChildRoomOwner(await db.getDataRoomDocumentById(input.id), ctx, 'Document not found');
           const { id, ...data } = input;
           await db.updateDataRoomDocument(id, data);
           return { success: true };
@@ -341,7 +375,8 @@ export const dataRoomRouter = router({
 
       delete: protectedProcedure
         .input(z.object({ id: z.number() }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertChildRoomOwner(await db.getDataRoomDocumentById(input.id), ctx, 'Document not found');
           await db.deleteDataRoomDocument(input.id);
           return { success: true };
         }),
@@ -478,6 +513,7 @@ export const dataRoomRouter = router({
           restrictedDocumentIds: z.array(z.number()).optional(),
         }))
         .mutation(async ({ input, ctx }) => {
+          await assertRoomOwner(input.dataRoomId, ctx);
           // Use custom slug, or generate from name, or random
           const linkCode = input.customSlug
             ? input.customSlug.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
@@ -507,7 +543,8 @@ export const dataRoomRouter = router({
           expiresAt: z.date().nullable().optional(),
           maxViews: z.number().nullable().optional(),
         }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertChildRoomOwner(await db.getDataRoomLinkById(input.id), ctx, 'Link not found');
           const { id, ...data } = input;
           await db.updateDataRoomLink(id, data);
           return { success: true };
@@ -515,7 +552,8 @@ export const dataRoomRouter = router({
 
       delete: protectedProcedure
         .input(z.object({ id: z.number() }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertChildRoomOwner(await db.getDataRoomLinkById(input.id), ctx, 'Link not found');
           await db.deleteDataRoomLink(input.id);
           return { success: true };
         }),
@@ -589,7 +627,8 @@ export const dataRoomRouter = router({
           id: z.number(),
           reason: z.string().optional(),
         }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertChildRoomOwner(await db.getDataRoomVisitorById(input.id), ctx, 'Visitor not found');
           await db.blockDataRoomVisitor(input.id, input.reason);
           return { success: true };
         }),
@@ -606,7 +645,8 @@ export const dataRoomRouter = router({
           id: z.number(),
           reason: z.string().optional(),
         }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertChildRoomOwner(await db.getDataRoomVisitorById(input.id), ctx, 'Visitor not found');
           await db.revokeDataRoomVisitorAccess(input.id, input.reason);
           return { success: true };
         }),
@@ -654,6 +694,7 @@ export const dataRoomRouter = router({
           expiresAt: z.date().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
+          await assertRoomOwner(input.dataRoomId, ctx);
           const inviteCode = nanoid(16);
           const { id } = await db.createDataRoomInvitation({
             ...input,
@@ -687,7 +728,8 @@ export const dataRoomRouter = router({
 
       revoke: protectedProcedure
         .input(z.object({ id: z.number() }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertChildRoomOwner(await db.getDataRoomInvitationById(input.id), ctx, 'Invitation not found');
           await db.updateDataRoomInvitation(input.id, { status: 'expired' });
           return { success: true };
         }),
@@ -703,7 +745,8 @@ export const dataRoomRouter = router({
           allowPrint: z.boolean().optional(),
           role: z.enum(['viewer', 'editor', 'admin']).optional(),
         }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertChildRoomOwner(await db.getDataRoomInvitationById(input.id), ctx, 'Invitation not found');
           const { id, ...data } = input;
           await db.updateDataRoomInvitationPermissions(id, data);
           return { success: true };
@@ -1951,6 +1994,7 @@ export const dataRoomRouter = router({
           priority: z.number().default(0),
         }))
         .mutation(async ({ input, ctx }) => {
+          await assertRoomOwner(input.dataRoomId, ctx);
           const id = await db.createEmailAccessRule({
             ...input,
             createdBy: ctx.user.id,
@@ -2100,21 +2144,24 @@ export const dataRoomRouter = router({
       // Get checklist summary for a data room
       getSummary: protectedProcedure
         .input(z.object({ dataRoomId: z.number() }))
-        .query(async ({ input }) => {
+        .query(async ({ input, ctx }) => {
+          await assertRoomOwner(input.dataRoomId, ctx);
           return (db as any).getChecklistSummary(input.dataRoomId);
         }),
 
       // List all checklists for a data room
       list: protectedProcedure
         .input(z.object({ dataRoomId: z.number() }))
-        .query(async ({ input }) => {
+        .query(async ({ input, ctx }) => {
+          await assertRoomOwner(input.dataRoomId, ctx);
           return (db as any).getDataRoomChecklists(input.dataRoomId);
         }),
 
       // Get a checklist with all its items
       getById: protectedProcedure
         .input(z.object({ id: z.number() }))
-        .query(async ({ input }) => {
+        .query(async ({ input, ctx }) => {
+          await assertChildRoomOwner(await db.getDataRoomChecklistById(input.id), ctx, 'Checklist not found');
           return (db as any).getChecklistWithItems(input.id);
         }),
 
@@ -2126,6 +2173,7 @@ export const dataRoomRouter = router({
           customName: z.string().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
+          await assertRoomOwner(input.dataRoomId, ctx);
           const checklist = await (db as any).createStandardChecklist(
             input.dataRoomId,
             ctx.user.id,
@@ -2143,6 +2191,7 @@ export const dataRoomRouter = router({
           customName: z.string().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
+          await assertRoomOwner(input.dataRoomId, ctx);
           return (db as any).createChecklistFromTemplate(
             input.dataRoomId,
             input.templateId,
@@ -2154,7 +2203,8 @@ export const dataRoomRouter = router({
       // Auto-match documents against checklist items
       autoMatch: protectedProcedure
         .input(z.object({ checklistId: z.number() }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertChildRoomOwner(await db.getDataRoomChecklistById(input.checklistId), ctx, 'Checklist not found');
           return (db as any).autoMatchChecklistDocuments(input.checklistId);
         }),
 
@@ -2168,6 +2218,7 @@ export const dataRoomRouter = router({
           waiverReason: z.string().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
+          await assertChildRoomOwner(await db.getChecklistItemById(input.id), ctx, 'Checklist item not found');
           const { id, waiverReason, ...data } = input;
 
           const updateData: any = { ...data };
@@ -2196,11 +2247,8 @@ export const dataRoomRouter = router({
           itemId: z.number(),
           documentId: z.number(),
         }))
-        .mutation(async ({ input }) => {
-          const item = await (db as any).getChecklistItemById(input.itemId);
-          if (!item) {
-            throw new TRPCError({ code: 'NOT_FOUND', message: 'Checklist item not found' });
-          }
+        .mutation(async ({ input, ctx }) => {
+          const item = await assertChildRoomOwner(await db.getChecklistItemById(input.itemId), ctx, 'Checklist item not found');
 
           let linkedIds: number[] = [];
           try {
@@ -2230,11 +2278,8 @@ export const dataRoomRouter = router({
           itemId: z.number(),
           documentId: z.number(),
         }))
-        .mutation(async ({ input }) => {
-          const item = await (db as any).getChecklistItemById(input.itemId);
-          if (!item) {
-            throw new TRPCError({ code: 'NOT_FOUND', message: 'Checklist item not found' });
-          }
+        .mutation(async ({ input, ctx }) => {
+          const item = await assertChildRoomOwner(await db.getChecklistItemById(input.itemId), ctx, 'Checklist item not found');
 
           let linkedIds: number[] = [];
           try {
@@ -2266,11 +2311,8 @@ export const dataRoomRouter = router({
           requirement: z.enum(['required', 'recommended', 'optional']).default('required'),
           matchKeywords: z.array(z.string()).optional(),
         }))
-        .mutation(async ({ input }) => {
-          const checklist = await (db as any).getDataRoomChecklistById(input.checklistId);
-          if (!checklist) {
-            throw new TRPCError({ code: 'NOT_FOUND', message: 'Checklist not found' });
-          }
+        .mutation(async ({ input, ctx }) => {
+          const checklist = await assertChildRoomOwner(await db.getDataRoomChecklistById(input.checklistId), ctx, 'Checklist not found');
 
           const result = await (db as any).createDataRoomChecklistItem({
             checklistId: input.checklistId,
@@ -2291,19 +2333,18 @@ export const dataRoomRouter = router({
       // Delete a checklist item
       deleteItem: protectedProcedure
         .input(z.object({ id: z.number() }))
-        .mutation(async ({ input }) => {
-          const item = await (db as any).getChecklistItemById(input.id);
-          if (item) {
-            await (db as any).deleteChecklistItem(input.id);
-            await (db as any).recalculateChecklistProgress(item.checklistId);
-          }
+        .mutation(async ({ input, ctx }) => {
+          const item = await assertChildRoomOwner(await db.getChecklistItemById(input.id), ctx, 'Checklist item not found');
+          await (db as any).deleteChecklistItem(input.id);
+          await (db as any).recalculateChecklistProgress(item.checklistId);
           return { success: true };
         }),
 
       // Delete entire checklist
       delete: protectedProcedure
         .input(z.object({ id: z.number() }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertChildRoomOwner(await db.getDataRoomChecklistById(input.id), ctx, 'Checklist not found');
           await (db as any).deleteDataRoomChecklist(input.id);
           return { success: true };
         }),
@@ -2315,7 +2356,8 @@ export const dataRoomRouter = router({
           reviewStatus: z.enum(['pending', 'approved', 'needs_attention', 'rejected']),
           reviewNotes: z.string().optional(),
         }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertChildRoomOwner(await db.getChecklistItemById(input.id), ctx, 'Checklist item not found');
           // dataRoomChecklistItems has `status` and `notes`, not review* columns;
           // writing unknown keys produced `UPDATE … SET WHERE`, a SQL syntax error.
           const statusMap = {
@@ -2355,9 +2397,10 @@ export const dataRoomRouter = router({
           status: "interested",
         });
 
-        // Notify admin
+        // Notify the room's owner (fall back to the first admin user)
+        const room = await db.getDataRoomById(input.dataRoomId);
         await db.createNotification({
-          userId: 1,
+          userId: room?.ownerId ?? 1,
           type: "system" as any,
           title: `New investment interest: ${input.investorName}`,
           message: `${input.investorName} (${input.investorCompany || ''}) expressed interest in investing $${input.investmentAmount}`,

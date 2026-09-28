@@ -9,6 +9,33 @@ import { adminProcedure } from "./_shared";
 // ============================================
 // TIME TRACKING
 // ============================================
+type TimeTrackingUser = { id: number; role: string };
+
+// Non-admins only ever see their own rows; an admin may pass another userId.
+function effectiveUserId(user: TimeTrackingUser, requested?: number): number {
+  return user.role === 'admin' ? (requested ?? user.id) : user.id;
+}
+
+// Load a time entry the caller may act on: owner or admin. Missing → NOT_FOUND,
+// someone else's → FORBIDDEN.
+async function loadOwnedTimeEntry(id: number, user: TimeTrackingUser) {
+  const entry = await db.getTimeEntryById(id);
+  if (!entry) throw new TRPCError({ code: 'NOT_FOUND', message: 'Time entry not found' });
+  if (entry.userId !== user.id && user.role !== 'admin') {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this time entry' });
+  }
+  return entry;
+}
+
+async function loadOwnedTimeInvoice(id: number, user: TimeTrackingUser) {
+  const invoice = await db.getTimeInvoiceById(id);
+  if (!invoice) throw new TRPCError({ code: 'NOT_FOUND', message: 'Invoice not found' });
+  if (invoice.userId !== user.id && user.role !== 'admin') {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this invoice' });
+  }
+  return invoice;
+}
+
 export const timeTrackingRouter = router({
     entries: router({
       list: protectedProcedure
@@ -18,7 +45,7 @@ export const timeTrackingRouter = router({
           startDate: z.string().optional(),
           endDate: z.string().optional(),
         }).optional())
-        .query(({ input, ctx }) => db.getTimeEntries({ ...input, userId: input?.userId || ctx.user.id })),
+        .query(({ input, ctx }) => db.getTimeEntries({ ...input, userId: effectiveUserId(ctx.user, input?.userId) })),
 
       create: protectedProcedure
         .input(z.object({
@@ -54,8 +81,9 @@ export const timeTrackingRouter = router({
           billable: z.boolean().optional(),
           notes: z.string().optional(),
         }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
           const { id, ...data } = input;
+          await loadOwnedTimeEntry(id, ctx.user);
           await db.updateTimeEntry(id, {
             ...data,
             date: data.date ? new Date(data.date) : undefined,
@@ -65,14 +93,16 @@ export const timeTrackingRouter = router({
 
       delete: protectedProcedure
         .input(z.object({ id: z.number() }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await loadOwnedTimeEntry(input.id, ctx.user);
           await db.deleteTimeEntry(input.id);
           return { success: true };
         }),
 
       submit: protectedProcedure
         .input(z.object({ id: z.number() }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await loadOwnedTimeEntry(input.id, ctx.user);
           await db.updateTimeEntry(input.id, { status: "submitted" } as any);
           return { success: true };
         }),
@@ -88,11 +118,11 @@ export const timeTrackingRouter = router({
     invoices: router({
       list: protectedProcedure
         .input(z.object({ userId: z.number().optional(), status: z.string().optional() }).optional())
-        .query(({ input, ctx }) => db.getTimeInvoices({ ...input, userId: input?.userId || ctx.user.id })),
+        .query(({ input, ctx }) => db.getTimeInvoices({ ...input, userId: effectiveUserId(ctx.user, input?.userId) })),
 
       get: protectedProcedure
         .input(z.object({ id: z.number() }))
-        .query(({ input }) => db.getTimeInvoiceById(input.id)),
+        .query(({ input, ctx }) => loadOwnedTimeInvoice(input.id, ctx.user)),
     }),
 
     generateInvoice: protectedProcedure
@@ -150,21 +180,18 @@ export const timeTrackingRouter = router({
     submitInvoice: protectedProcedure
       .input(z.object({ invoiceId: z.number() }))
       .mutation(async ({ input, ctx }) => {
-        // 1. Get the invoice
-        const invoice = await db.getTimeInvoiceById(input.invoiceId);
-        if (!invoice) {
-          throw new TRPCError({ code: "NOT_FOUND", message: "Invoice not found" });
-        }
+        // 1. Get the invoice (owner or admin only)
+        const invoice = await loadOwnedTimeInvoice(input.invoiceId, ctx.user);
 
-        // 2. Get user details
+        // 2. Get the invoice owner's details (an admin may submit on a contractor's behalf)
         const allUsers = await db.getAllUsers();
-        const user = allUsers.find(u => u.id === ctx.user.id);
+        const user = allUsers.find(u => u.id === invoice.userId);
         const userName = user?.name || user?.email || "Contractor";
         const userEmail = user?.email || "noreply@superhumn.com";
 
         // 3. Get all time entries for this invoice period
         const entries = await db.getTimeEntries({
-          userId: ctx.user.id,
+          userId: invoice.userId,
           startDate: invoice.periodStart.toISOString(),
           endDate: invoice.periodEnd.toISOString(),
         });

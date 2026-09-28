@@ -1,8 +1,10 @@
 // appRouter.payments — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router } from "../_core/trpc";
 import { invokeLLM } from "../_core/llm";
 import * as db from "../db";
+import { scopeAllows } from "../_core/scope";
 import { financeProcedure, resolveRequestScope, assertNonEmptyScope, createAuditLog, generateNumber } from "./_shared";
 
 // ============================================
@@ -36,8 +38,17 @@ export const paymentsRouter = router({
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        // Can't create a payment under an entity the caller doesn't have access to.
+        if (input.companyId != null) {
+          const scope = await resolveRequestScope(ctx.user);
+          if (!scopeAllows(scope, input.companyId)) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Cannot create a payment under an entity outside your access.' });
+          }
+        }
+        // Default to the caller's home entity so scoped users can see the row they just created.
+        const companyId = input.companyId ?? ctx.user.companyId ?? undefined;
         const paymentNumber = generateNumber('PAY');
-        const result = await db.createPayment({ ...input, paymentNumber, createdBy: ctx.user.id });
+        const result = await db.createPayment({ ...input, companyId, paymentNumber, createdBy: ctx.user.id });
         
         // Update invoice paid amount if linked
         if (input.invoiceId) {

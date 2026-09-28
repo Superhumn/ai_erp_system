@@ -61,6 +61,7 @@ import {
 import { Link } from "wouter";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/format";
+import { useAuth } from "@/_core/hooks/useAuth";
 
 function formatDate(value: string | Date | null | undefined) {
   if (!value) return "-";
@@ -1602,7 +1603,7 @@ function VendorDetailPanel({ vendor, onClose }: { vendor: any; onClose: () => vo
         </div>
         <div className="bg-muted/50 rounded-lg p-3">
           <div className="text-xs text-muted-foreground mb-1">Lead Time</div>
-          <div className="font-semibold text-sm">{vendor.leadTimeDays || 14} days</div>
+          <div className="font-semibold text-sm">{vendor.defaultLeadTimeDays ?? 14} days</div>
         </div>
       </div>
 
@@ -1687,6 +1688,8 @@ function MaterialDetailPanel({ material, onClose }: { material: any; onClose: ()
 }
 
 export default function ProcurementHub() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [isPoDialogOpen, setIsPoDialogOpen] = useState(false);
   const [isVendorDialogOpen, setIsVendorDialogOpen] = useState(false);
   const [isMaterialDialogOpen, setIsMaterialDialogOpen] = useState(false);
@@ -1841,7 +1844,9 @@ export default function ProcurementHub() {
   };
 
   const handleVendorCellEdit = (rowId: number | string, key: string, value: any) => {
-    updateVendor.mutate({ id: rowId as number, [key]: value });
+    // vendors.update expects `defaultLeadTimeDays: number`; the grid hands back a string.
+    const parsed = key === "defaultLeadTimeDays" ? Number(value) : value;
+    updateVendor.mutate({ id: rowId as number, [key]: parsed });
   };
 
   const handlePoCellEdit = (rowId: number | string, key: string, value: any) => {
@@ -1887,6 +1892,10 @@ export default function ProcurementHub() {
   const handleMaterialBulkAction = (action: string, selectedIds: Set<number | string>) => {
     const ids = Array.from(selectedIds) as number[];
     if (action === "reorder") {
+      if (!isAdmin) {
+        toast.error("Only admins can create AI purchase order suggestions");
+        return;
+      }
       // Create AI-driven PO suggestions for each material
       ids.forEach(id => {
         const material = rawMaterials?.find((m: any) => m.id === id);
@@ -1925,7 +1934,8 @@ export default function ProcurementHub() {
   ];
 
   const materialBulkActions = [
-    { key: "reorder", label: "AI: Create Reorder PO", icon: <Sparkles className="h-3 w-3 mr-1" /> },
+    // AI PO suggestions are admin-only (they land in the Approval Queue).
+    ...(isAdmin ? [{ key: "reorder", label: "AI: Create Reorder PO", icon: <Sparkles className="h-3 w-3 mr-1" /> }] : []),
     { key: "mark_received", label: "Mark Received" },
     { key: "mark_inspected", label: "Mark Inspected" },
   ];
@@ -1945,7 +1955,7 @@ export default function ProcurementHub() {
     { key: "email", header: "Email", type: "text", sortable: true, editable: true },
     { key: "contactName", header: "Contact", type: "text", editable: true },
     { key: "phone", header: "Phone", type: "text", editable: true },
-    { key: "leadTimeDays", header: "Lead Time", type: "number", editable: true, render: (row) => `${row.leadTimeDays || 14} days` },
+    { key: "defaultLeadTimeDays", header: "Lead Time", type: "number", editable: true, render: (row) => `${row.defaultLeadTimeDays ?? 14} days` },
     { key: "status", header: "Status", type: "status", editable: true, options: [
       { value: "active", label: "Active", color: "bg-primary/10 text-primary" },
       { value: "inactive", label: "Inactive", color: "bg-muted text-muted-foreground" },

@@ -41,7 +41,8 @@ export function SentEmailsTab() {
   const handleViewRelatedEntity = (type: string, id: number) => {
     const routes: Record<string, string> = {
       purchase_order: `/operations/procurement-hub?po=${id}`,
-      invoice: `/finance/invoices/${id}`,
+      // Invoices has no /:id route and doesn't read a query param; land on the list.
+      invoice: `/finance/invoices`,
       rfq: `/operations/procurement-hub?rfq=${id}`,
       work_order: `/operations/manufacturing-hub?wo=${id}`,
     };

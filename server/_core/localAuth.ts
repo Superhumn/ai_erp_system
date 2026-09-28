@@ -8,6 +8,7 @@ import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import type { Express, Request, Response } from "express";
 import * as db from "../db";
 import { getSessionCookieOptions } from "./cookies";
+import { secureCompare } from "./crypto";
 import { sdk } from "./sdk";
 import { ENV } from "./env";
 import { isEmailConfigured, sendEmail } from "./email";
@@ -97,12 +98,11 @@ function resetRateLimit(ip: string, map: Map<string, RateBucket> = loginAttempts
  * Get client IP address from request
  */
 function getClientIp(req: Request): string {
-  return (
-    (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-    (req.headers['x-real-ip'] as string) ||
-    req.socket.remoteAddress ||
-    'unknown'
-  );
+  // Use Express's resolved IP, which honours `app.set('trust proxy', ...)` in
+  // index.ts (1 hop in production). Never read X-Forwarded-For / X-Real-IP
+  // directly: those headers are client-controlled and would let an attacker
+  // pick their own rate-limit bucket.
+  return req.ip || req.socket?.remoteAddress || 'unknown';
 }
 
 /**
@@ -709,7 +709,7 @@ export function registerLocalAuthRoutes(app: Express) {
         secret: string;
       };
 
-      if (!secret || secret !== process.env.JWT_SECRET) {
+      if (!secret || !secureCompare(secret, process.env.JWT_SECRET)) {
         return res.status(403).json({ error: "Invalid secret" });
       }
 
@@ -769,7 +769,7 @@ export function registerLocalAuthRoutes(app: Express) {
       const { email, secret } = req.body as { email: string; secret: string };
 
       // Require JWT_SECRET as the promotion key for security
-      if (!secret || secret !== process.env.JWT_SECRET) {
+      if (!secret || !secureCompare(secret, process.env.JWT_SECRET)) {
         return res.status(403).json({ error: "Invalid secret" });
       }
 

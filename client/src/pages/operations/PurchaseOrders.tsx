@@ -60,6 +60,16 @@ type LineItem = {
   totalAmount: string;
 };
 
+// Must stay a subset of the `purchaseOrders.status` enum (drizzle/schema.ts) — see PurchaseOrders.test.ts.
+export const PO_STATUS_FILTER_OPTIONS = [
+  { value: "draft", label: "Draft" },
+  { value: "sent", label: "Sent" },
+  { value: "confirmed", label: "Confirmed" },
+  { value: "partial", label: "Partially Received" },
+  { value: "received", label: "Received" },
+  { value: "cancelled", label: "Cancelled" },
+] as const;
+
 export default function PurchaseOrders() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -1003,12 +1013,9 @@ export default function PurchaseOrders() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="draft">Draft</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="approved">Approved</SelectItem>
-                <SelectItem value="ordered">Ordered</SelectItem>
-                <SelectItem value="received">Received</SelectItem>
-                <SelectItem value="cancelled">Cancelled</SelectItem>
+                {PO_STATUS_FILTER_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <Select value={vendorFilter} onValueChange={setVendorFilter}>

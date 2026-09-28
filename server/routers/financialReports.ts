@@ -4,6 +4,7 @@ import { router } from "../_core/trpc";
 import { invokeLLM } from "../_core/llm";
 import * as db from "../db";
 import { financeProcedure } from "./_shared";
+import { bucketBillsAging, billOutstanding, billDaysOverdue } from "../billsLogic";
 
 // ============================================
 // FINANCIAL REPORTS
@@ -34,7 +35,9 @@ export const financialReportsRouter = router({
 
         const paidInvoices = (invoices as any[]).filter((i: any) => i.status === 'paid');
         const totalRevenue = paidInvoices.reduce((s: number, i: any) => s + parseFloat(i.totalAmount || '0'), 0);
-        const totalExpenses = (bills as any[]).reduce((s: number, b: any) => s + parseFloat(b.totalAmount || '0'), 0);
+        // `bills` are vendor payables (db.getBills joins vendorName / poNumber); cancelled ones are not expenses.
+        const liveBills = (bills as any[]).filter((b: any) => b.status !== 'cancelled');
+        const totalExpenses = liveBills.reduce((s: number, b: any) => s + parseFloat(b.totalAmount || '0'), 0);
         const netIncome = totalRevenue - totalExpenses;
 
         type ReportRow = {
@@ -68,8 +71,8 @@ export const financialReportsRouter = router({
               })),
               { label: 'Total Revenue', amount: totalRevenue, type: 'total' },
               { label: 'Expenses', amount: null, type: 'header' },
-              ...(bills as any[]).slice(0, 10).map((b: any) => ({
-                label: `  Bill #${b.billNumber || b.id}`,
+              ...liveBills.slice(0, 10).map((b: any) => ({
+                label: `  Bill #${b.billNumber || b.id}${b.vendorName ? ` (${b.vendorName})` : ''}`,
                 amount: parseFloat(b.totalAmount || '0'),
                 type: 'item',
               })),
@@ -114,6 +117,31 @@ export const financialReportsRouter = router({
             summary = `${openInvoices.length} open invoices totalling $${openInvoices.reduce((s: number, i: any) => s + parseFloat(i.totalAmount || '0'), 0).toLocaleString()}`;
             break;
           }
+          case 'accounts_payable': {
+            title = 'Accounts Payable Aging';
+            headers = ['Vendor / Bill', 'Outstanding', 'Days past due'];
+            const openBills = liveBills.filter((b: any) => b.status !== 'paid' && billOutstanding(b) > 0);
+            const aging = bucketBillsAging(openBills, now);
+            rows = [
+              ...openBills.map((b: any) => {
+                const daysOverdue = billDaysOverdue(b, now);
+                return {
+                  label: `${b.vendorName || `Vendor #${b.vendorId}`} — Bill #${b.billNumber || b.id}`,
+                  amount: billOutstanding(b),
+                  type: daysOverdue > 90 ? 'overdue' : 'item',
+                  count: Math.max(0, daysOverdue),
+                };
+              }),
+              { label: 'Current', amount: aging.current, type: 'total' },
+              { label: '1-30 days', amount: aging.days1to30, type: 'total' },
+              { label: '31-60 days', amount: aging.days31to60, type: 'total' },
+              { label: '61-90 days', amount: aging.days61to90, type: 'total' },
+              { label: '90+ days', amount: aging.days90plus, type: 'total' },
+              { label: 'Total Outstanding', amount: aging.totalOutstanding, type: 'grand_total' },
+            ];
+            summary = `${aging.billCount} open bills totalling $${aging.totalOutstanding.toLocaleString()} (${aging.overdueCount} past due)`;
+            break;
+          }
           case 'revenue_by_customer': {
             title = 'Revenue by Customer';
             headers = ['Customer', 'Revenue', '% of Total'];
@@ -137,7 +165,7 @@ export const financialReportsRouter = router({
             title = 'Expenses by Vendor';
             headers = ['Vendor', 'Amount', '% of Total'];
             const byVendor: Record<string, number> = {};
-            for (const bill of bills as any[]) {
+            for (const bill of liveBills) {
               const name = bill.vendorName || `Vendor #${bill.vendorId}`;
               byVendor[name] = (byVendor[name] || 0) + parseFloat(bill.totalAmount || '0');
             }

@@ -68,6 +68,35 @@ export async function addCostLayer(params: {
 }
 
 /**
+ * Spread an overhead amount (freight, duties, copacker fees, ...) across the
+ * active cost layers of a product, raising each layer's unit cost in
+ * proportion to its remaining quantity. Unlike addCostLayer this never creates
+ * inventory quantity, so on-hand counts and FIFO consumption stay unchanged.
+ * Returns the number of layers touched (0 when the product has no active stock).
+ */
+export async function allocateOverheadToLayers(params: {
+  productId: number;
+  warehouseId?: number;
+  totalAmount: number;
+}): Promise<number> {
+  if (!(params.totalAmount > 0)) return 0;
+  const layers = await db.getActiveCostLayers(params.productId, "asc", params.warehouseId);
+  const totalQty = layers.reduce((sum, l) => sum + parseFloat(l.remainingQuantity), 0);
+  if (totalQty <= 0) return 0;
+  const perUnit = params.totalAmount / totalQty;
+  for (const layer of layers) {
+    const remaining = parseFloat(layer.remainingQuantity);
+    if (remaining <= 0) continue;
+    const unitCost = parseFloat(layer.unitCost) + perUnit;
+    await db.updateInventoryCostLayer(layer.id, {
+      unitCost: unitCost.toFixed(4),
+      totalCost: (unitCost * parseFloat(layer.originalQuantity)).toFixed(2),
+    });
+  }
+  return layers.filter((l) => parseFloat(l.remainingQuantity) > 0).length;
+}
+
+/**
  * Calculate COGS using FIFO method
  * Consumes oldest cost layers first
  */

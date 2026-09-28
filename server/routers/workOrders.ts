@@ -103,7 +103,7 @@ export const workOrdersRouter = router({
             if (!mat.rawMaterialId) continue;
             const reqQty = parseFloat(mat.requiredQuantity?.toString() || "0");
             const consumedQty = parseFloat(mat.consumedQuantity?.toString() || "0");
-            const remaining = Math.max(0, reqQty - consumedQty);
+            let remaining = Math.max(0, reqQty - consumedQty);
             if (remaining <= 0) continue;
 
             const inventoryRecords = await db.getRawMaterialInventory({ rawMaterialId: mat.rawMaterialId });
@@ -115,6 +115,9 @@ export const workOrdersRouter = router({
                 await db.upsertRawMaterialInventory(mat.rawMaterialId, inv.warehouseId, {
                   availableQuantity: (availableQty - toReserve).toFixed(4),
                 });
+                // Only the still-unreserved balance carries over to the next warehouse.
+                remaining -= toReserve;
+                if (remaining <= 0) break;
               }
             }
             await db.updateWorkOrderMaterial(mat.id, { status: "reserved" as any });

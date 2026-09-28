@@ -17,6 +17,7 @@ import {
   invoices,
   invoiceItems,
   payments,
+  bills,
   transactions,
   transactionLines,
   orders,
@@ -129,6 +130,7 @@ export const customersRelations = relations(customers, ({ one, many }) => ({
 export const vendorsRelations = relations(vendors, ({ one, many }) => ({
   company: one(companies, { fields: [vendors.companyId], references: [companies.id] }),
   purchaseOrders: many(purchaseOrders),
+  bills: many(bills),
   payments: many(payments),
   contracts: many(contracts),
   vendorQuotes: many(vendorQuotes),
@@ -228,6 +230,13 @@ export const purchaseOrdersRelations = relations(purchaseOrders, ({ one, many })
   company: one(companies, { fields: [purchaseOrders.companyId], references: [companies.id] }),
   items: many(purchaseOrderItems),
   shipments: many(shipments),
+  bills: many(bills),
+}));
+
+export const billsRelations = relations(bills, ({ one }) => ({
+  company: one(companies, { fields: [bills.companyId], references: [companies.id] }),
+  vendor: one(vendors, { fields: [bills.vendorId], references: [vendors.id] }),
+  purchaseOrder: one(purchaseOrders, { fields: [bills.purchaseOrderId], references: [purchaseOrders.id] }),
 }));
 
 export const purchaseOrderItemsRelations = relations(purchaseOrderItems, ({ one }) => ({

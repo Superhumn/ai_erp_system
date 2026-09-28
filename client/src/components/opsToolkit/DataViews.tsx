@@ -273,15 +273,15 @@ function startOfMonth(d: Date) { return new Date(d.getFullYear(), d.getMonth(), 
 function addMonths(d: Date, n: number) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-function CalendarView({ rows, config, titleField }: { rows: Row[]; config: ViewConfig; titleField: string }) {
+export function CalendarView({ rows, config, titleField }: { rows: Row[]; config: ViewConfig; titleField: string }) {
   const [cursor, setCursor] = useState(() => startOfMonth(new Date()));
-  if (!config.dateField) {
-    return <p className="text-sm text-muted-foreground">Pick a “Date” field to place records on the calendar.</p>;
-  }
   const field = config.dateField;
 
+  // Hooks must run unconditionally: keep this above the early return so
+  // choosing a date field later doesn't change the hook count between renders.
   const byDay = useMemo(() => {
     const map = new Map<string, Row[]>();
+    if (!field) return map;
     for (const row of rows) {
       const d = coerceDate(row[field]);
       if (!d) continue;
@@ -291,6 +291,10 @@ function CalendarView({ rows, config, titleField }: { rows: Row[]; config: ViewC
     }
     return map;
   }, [rows, field]);
+
+  if (!field) {
+    return <p className="text-sm text-muted-foreground">Pick a “Date” field to place records on the calendar.</p>;
+  }
 
   const monthStart = cursor;
   const gridStart = new Date(monthStart);

@@ -62,7 +62,7 @@ export const aiAgentRouter = router({
           return task;
         }),
       
-      bulkDelete: protectedProcedure
+      bulkDelete: adminProcedure
         .input(z.object({
           taskType: z.string().optional(),
           status: z.string().optional(),
@@ -602,7 +602,8 @@ export const aiAgentRouter = router({
                 // Create new product
                 const product = await db.createProduct({
                   name: taskData.name,
-                  sku: taskData.sku || undefined,
+                  // products.sku is NOT NULL — generate one when the task didn't supply it
+                  sku: taskData.sku || generateNumber('PROD'),
                   category: taskData.category || undefined,
                   unitPrice: taskData.price || taskData.unitPrice || undefined,
                   description: taskData.description || undefined,

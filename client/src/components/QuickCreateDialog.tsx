@@ -189,7 +189,7 @@ interface QuickCreateDialogProps {
   defaultValues?: Record<string, any>;
 }
 
-const entityConfig: Record<EntityType, {
+export const entityConfig: Record<EntityType, {
   title: string;
   description: string;
   icon: React.ReactNode;
@@ -330,12 +330,14 @@ const entityConfig: Record<EntityType, {
     icon: <MapPin className="h-5 w-5" />,
     fields: [
       { name: "name", label: "Location Name", type: "text", placeholder: "e.g., Main Warehouse", required: true },
+      // Values must match the server enum in server/routers/warehouses.ts
       { name: "type", label: "Location Type", type: "select", required: true, options: [
         { value: "warehouse", label: "Warehouse" },
-        { value: "production", label: "Production Facility" },
-        { value: "cold_storage", label: "Cold Storage" },
+        { value: "factory", label: "Production Facility" },
         { value: "distribution", label: "Distribution Center" },
-        { value: "retail", label: "Retail Location" },
+        { value: "store", label: "Retail Store" },
+        { value: "copacker", label: "Co-packer" },
+        { value: "3pl", label: "3PL" },
       ]},
       { name: "address", label: "Address", type: "textarea", placeholder: "123 Industrial Blvd, City, State" },
       { name: "capacity", label: "Capacity (units)", type: "number", placeholder: "10000" },

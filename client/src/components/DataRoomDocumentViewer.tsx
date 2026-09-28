@@ -79,6 +79,12 @@ export default function DataRoomDocumentViewer({
   // Mutations for tracking
   const recordPageViewMutation = trpc.dataRoom.pageTracking.recordPageView.useMutation();
   const updatePageViewMutation = trpc.dataRoom.pageTracking.updatePageView.useMutation();
+  // The mutation object is a new reference every render; keep the latest in a
+  // ref so the unmount-cleanup effect below can use `[]` deps.
+  const updatePageViewRef = useRef(updatePageViewMutation);
+  updatePageViewRef.current = updatePageViewMutation;
+  const sessionTokenRef = useRef(sessionToken);
+  sessionTokenRef.current = sessionToken;
 
   // Get device info
   const getDeviceInfo = useCallback(() => {
@@ -209,15 +215,16 @@ export default function DataRoomDocumentViewer({
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
     };
   }, []);
-  // Cleanup on unmount
+  // Cleanup on unmount (runs once — reads the latest mutation/token via refs)
   useEffect(() => {
     return () => {
       // Save final tracking data
-      if (currentPageTracking.current && currentPageTracking.current.pageViewId && sessionToken) {
+      const token = sessionTokenRef.current;
+      if (currentPageTracking.current && currentPageTracking.current.pageViewId && token) {
         const duration = Date.now() - currentPageTracking.current.startTime;
-        updatePageViewMutation.mutate({
+        updatePageViewRef.current.mutate({
           id: currentPageTracking.current.pageViewId,
-          sessionToken,
+          sessionToken: token,
           durationMs: duration,
           scrollDepth: currentPageTracking.current.scrollDepth,
           mouseMovements: currentPageTracking.current.mouseMovements,
@@ -225,7 +232,7 @@ export default function DataRoomDocumentViewer({
         });
       }
     };
-  }, [sessionToken, updatePageViewMutation]);
+  }, []);
 
   // Add event listeners
   useEffect(() => {
@@ -339,6 +346,7 @@ export default function DataRoomDocumentViewer({
             <Page
               pageNumber={currentPage}
               scale={scale}
+              rotate={rotation}
               className="shadow-2xl"
             />
             {/* Watermark overlay */}

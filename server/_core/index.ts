@@ -183,6 +183,7 @@ import { startOrchestrator } from "../supplyChainOrchestrator";
 import { startScheduler } from "../aiAgentScheduler";
 import { createLogger } from "./logger";
 import { initErrorTracking, captureException } from "./errorTracking";
+import { secureCompare } from "./crypto";
 
 const logger = createLogger("Server");
 
@@ -796,6 +797,12 @@ async function startServer() {
     // Safe methods don't need CSRF protection
     if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
 
+    // Twilio callbacks (POST /api/twilio/*) are machine-to-machine and carry no
+    // Origin/Referer. They are authenticated by X-Twilio-Signature in
+    // twilioWebhooks.ts, so skip the Origin check here. (Other webhooks live
+    // under /webhooks/* and never pass through this middleware.)
+    if (req.path.startsWith("/twilio/")) return next();
+
     const origin = req.headers.origin || req.headers.referer;
     if (!origin) {
       return res.status(403).json({ error: "Missing Origin header" });
@@ -842,7 +849,17 @@ async function startServer() {
   });
 
   // Configure body parser with larger size limit for file uploads
-  app.use(express.json({ limit: "50mb" }));
+  // `verify` stashes the exact request bytes on req.rawBody so webhook handlers
+  // registered below (SendGrid, Shopify) can verify signatures / HMACs against
+  // what was actually sent, even though this global JSON parser runs first.
+  app.use(
+    express.json({
+      limit: "50mb",
+      verify: (req, _res, buf) => {
+        (req as any).rawBody = buf;
+      },
+    })
+  );
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   // Auth routes (login, register)
   registerOAuthRoutes(app);
@@ -854,12 +871,25 @@ async function startServer() {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
+  // Raw request bytes for webhook signature verification. Prefers the buffer
+  // captured by express.json's `verify` hook (the global parser runs before the
+  // per-route express.raw(), so req.body is usually already an object here),
+  // then a Buffer body from express.raw(), and only as a last resort
+  // re-serialises the parsed object.
+  const getRawBody = (req: any): Buffer => {
+    if (Buffer.isBuffer(req.rawBody)) return req.rawBody;
+    if (Buffer.isBuffer(req.body)) return req.body;
+    if (typeof req.body === 'string') return Buffer.from(req.body, 'utf8');
+    if (req.body && typeof req.body === 'object') return Buffer.from(JSON.stringify(req.body), 'utf8');
+    return Buffer.alloc(0);
+  };
+
   // ============================================
   // SENDGRID WEBHOOK ENDPOINT
   // ============================================
   app.post('/webhooks/sendgrid/events', express.raw({ type: 'application/json' }), async (req, res) => {
     try {
-      const rawBody = req.body.toString();
+      const rawBody = getRawBody(req).toString('utf8');
       if (ENV.sendgridWebhookSecret) {
         const signature = req.headers['x-twilio-email-event-webhook-signature'] as string;
         const timestamp = req.headers['x-twilio-email-event-webhook-timestamp'] as string;
@@ -917,7 +947,7 @@ async function startServer() {
   // Shopify webhooks
   const handleShopifyWebhook = async (req: any, res: any, _topic?: string) => {
     try {
-      const rawBody = req.body.toString();
+      const rawBody = getRawBody(req).toString('utf8');
       const { processShopifyWebhook } = await import('./shopify');
       const result = await processShopifyWebhook(rawBody, {
         hmac: req.headers['x-shopify-hmac-sha256'] as string,
@@ -960,7 +990,7 @@ async function startServer() {
       return next();
     }
 
-    if (apiKey !== expectedKey) {
+    if (!secureCompare(apiKey, expectedKey)) {
       return res.status(401).json({ error: "Invalid API key" });
     }
 
@@ -1020,7 +1050,7 @@ async function startServer() {
       }
       return next();
     }
-    if (provided !== expected) {
+    if (!secureCompare(provided, expected)) {
       return res.status(401).json({ error: "Invalid webhook secret" });
     }
     next();
@@ -1532,6 +1562,16 @@ async function startServer() {
               // Save each email to DB and parse attachments
               for (const { email, parseResult } of parsedResults) {
                 try {
+                  // The scan runs with { unseenOnly: true, markAsSeen: false }, so the
+                  // same unread messages come back every poll. createInboundEmail
+                  // dedupes by messageId but returns the existing row's id without
+                  // signalling it, so check first and skip the (non-idempotent)
+                  // attachment import + notification for messages we've already saved.
+                  if (email.messageId) {
+                    const alreadySaved = await db.findInboundEmailByMessageId?.(email.messageId);
+                    if (alreadySaved) continue;
+                  }
+
                   // Save inbound email record
                   const savedEmail = await db.createInboundEmail?.({
                     messageId: email.messageId,
