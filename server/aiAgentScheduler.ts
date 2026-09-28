@@ -13,7 +13,7 @@ import {
   freightRfqs,
   freightCarriers,
 } from "../drizzle/schema";
-import { eq, and, lt, gte, desc, sql, isNull, or, inArray, like } from "drizzle-orm";
+import { eq, and, desc, sql, inArray, like } from "drizzle-orm";
 import { sendEmail } from "./_core/email";
 import * as ingredientQuoteService from "./ingredientQuoteService";
 import * as manufacturingDb from "./db/manufacturing";

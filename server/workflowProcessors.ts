@@ -32,7 +32,7 @@ import {
   vendorRfqInvitations,
   vendorRfqEmails,
 } from "../drizzle/schema";
-import { eq, and, lt, lte, gte, gt, desc, asc, sql, isNull, or, inArray, between } from "drizzle-orm";
+import { eq, and, lt, gte, gt, desc, asc, sql, isNull, or, inArray, between } from "drizzle-orm";
 import type { WorkflowEngine, WorkflowContext, WorkflowResult, StepResult } from "./autonomousWorkflowEngine";
 import { supplierPerformance, exceptionLog } from "../drizzle/schema";
 import {
