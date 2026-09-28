@@ -181,18 +181,23 @@ let pdfRasterizerChecked: string | null | undefined;
  */
 export function assertPdfRasterizerAvailable(): void {
   if (pdfRasterizerChecked === undefined) {
-    try {
-      pdfRasterizerChecked = execSync("gm version", { stdio: ["ignore", "pipe", "ignore"] })
-        .toString("utf8")
-        .split("\n")[0]
-        .trim();
-    } catch {
-      pdfRasterizerChecked = null;
+    // GraphicsMagick reports its version even when its PDF delegate is
+    // missing, so probe Ghostscript separately: without `gs`, `gm convert`
+    // fails on the first PDF page with an opaque delegate error.
+    const missing: string[] = [];
+    for (const [name, probe] of [["GraphicsMagick (gm)", "gm version"], ["Ghostscript (gs)", "gs --version"]] as const) {
+      try {
+        execSync(probe, { stdio: ["ignore", "pipe", "ignore"] });
+      } catch {
+        missing.push(name);
+      }
     }
+    pdfRasterizerChecked = missing.length === 0 ? "ok" : `missing: ${missing.join(", ")}`;
   }
-  if (pdfRasterizerChecked === null) {
+  if (pdfRasterizerChecked !== "ok") {
     throw new Error(
-      "Scanned-PDF OCR needs GraphicsMagick and Ghostscript on the server (apk add graphicsmagick ghostscript / apt install graphicsmagick ghostscript). " +
+      `Scanned-PDF OCR needs GraphicsMagick and Ghostscript on the server (${pdfRasterizerChecked}). ` +
+        "Install them with `apk add graphicsmagick ghostscript` or `apt install graphicsmagick ghostscript`. " +
         "The PDF has no extractable text, so it cannot be parsed without them.",
     );
   }

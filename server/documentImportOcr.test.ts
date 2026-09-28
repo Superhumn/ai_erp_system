@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { execSync } from "child_process";
-import { mkdtempSync, readFileSync, rmSync } from "fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -39,9 +39,24 @@ describe("assertPdfRasterizerAvailable", () => {
     const origPath = process.env.PATH;
     process.env.PATH = "/nonexistent";
     try {
-      expect(() => assertPdfRasterizerAvailable()).toThrow(/GraphicsMagick and Ghostscript/);
+      expect(() => assertPdfRasterizerAvailable()).toThrow(/missing: GraphicsMagick \(gm\), Ghostscript \(gs\)/);
     } finally {
       process.env.PATH = origPath;
+    }
+  });
+
+  it("reports Ghostscript specifically when only gm is present", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gm-only-"));
+    const origPath = process.env.PATH;
+    try {
+      // A stub `gm` that answers `gm version`, and no `gs` at all.
+      const gmPath = join(dir, "gm");
+      writeFileSync(gmPath, "#!/bin/sh\necho 'GraphicsMagick stub'\n", { mode: 0o755 });
+      process.env.PATH = dir;
+      expect(() => assertPdfRasterizerAvailable()).toThrow(/missing: Ghostscript \(gs\)/);
+    } finally {
+      process.env.PATH = origPath;
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
