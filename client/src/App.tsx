@@ -30,6 +30,7 @@ const FinanceHub = lazy(() => import("./pages/finance/FinanceHub"));
 const Accounts = lazy(() => import("./pages/finance/Accounts"));
 const Invoices = lazy(() => import("./pages/finance/Invoices"));
 const Payments = lazy(() => import("./pages/finance/Payments"));
+const Bills = lazy(() => import("./pages/finance/Bills"));
 const Transactions = lazy(() => import("./pages/finance/Transactions"));
 const FinancialReports = lazy(() => import("./pages/finance/FinancialReports"));
 const Banking = lazy(() => import("./pages/finance/Banking"));
@@ -285,6 +286,7 @@ function Router() {
           <Route path="/finance/accounts" component={Accounts} />
           <Route path="/finance/invoices" component={Invoices} />
           <Route path="/finance/payments" component={Payments} />
+          <Route path="/finance/bills" component={Bills} />
           <Route path="/finance/transactions" component={Transactions} />
           <Route path="/finance/reports" component={FinancialReports} />
           <Route path="/finance/banking" component={Banking} />

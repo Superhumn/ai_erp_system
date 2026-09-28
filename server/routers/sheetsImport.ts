@@ -320,14 +320,19 @@ export const sheetsImportRouter = router({
           createdBy: ctx.user.id,
           companyId: (ctx.user as any).companyId as number | undefined,
         };
-        
-        for (const row of data) {
+        // Every imported row carries the importer's entity, otherwise the
+        // entity-scoped list pages (customers, vendors, ...) never show it.
+        const companyId = scope.companyId ?? undefined;
+
+        for (const [index, row] of data.entries()) {
+          // Spreadsheet row number (1 = header), so an error can be found in the file.
+          const rowLabel = `Row ${index + 2}`;
           try {
             // Coerce + validate the row against the destination's field catalogue.
             // What the UI advertises == what we persist (see shared/importFields.ts).
             const { record, errors: rowErrors } = buildImportRecord(row, columnMapping, targetModule);
             if (rowErrors.length > 0) {
-              results.errors.push(rowErrors[0]);
+              results.errors.push(`${rowLabel}: ${rowErrors.join('; ')}`);
               results.failed++;
               continue;
             }
@@ -335,16 +340,17 @@ export const sheetsImportRouter = router({
             // Per-module glue: generated numbers + synthetic/derived columns.
             switch (targetModule) {
               case 'customers':
-                await db.createCustomer(record as any);
+                await db.createCustomer({ ...record, companyId } as any);
                 break;
 
               case 'vendors':
-                await db.createVendor(record as any);
+                await db.createVendor({ ...record, companyId } as any);
                 break;
 
               case 'products':
                 await db.createProduct({
                   ...record,
+                  companyId,
                   sku: record.sku || generateNumber('PROD'),
                   unitPrice: record.unitPrice ?? '0', // NOT NULL on the table
                 } as any);
@@ -353,6 +359,7 @@ export const sheetsImportRouter = router({
               case 'employees':
                 await db.createEmployee({
                   ...record,
+                  companyId,
                   employeeNumber: generateNumber('EMP'),
                 } as any);
                 break;
@@ -362,11 +369,13 @@ export const sheetsImportRouter = router({
                 delete record.amount; // synthetic -> subtotal/total below
                 await db.createInvoice({
                   ...record,
+                  companyId,
                   invoiceNumber: generateNumber('INV'),
                   issueDate: new Date(),
                   dueDate: record.dueDate ?? new Date(),
                   subtotal: amount,
                   totalAmount: amount,
+                  createdBy: ctx.user.id,
                 } as any);
                 break;
               }
@@ -374,6 +383,7 @@ export const sheetsImportRouter = router({
               case 'contracts':
                 await db.createContract({
                   ...record,
+                  companyId,
                   contractNumber: generateNumber('CON'),
                   type: record.type || 'service', // NOT NULL, no default
                 } as any);
@@ -394,11 +404,11 @@ export const sheetsImportRouter = router({
 
             results.imported++;
           } catch (error: any) {
-            results.errors.push(`Import error: ${error.message}`);
+            results.errors.push(`${rowLabel}: ${error.message}`);
             results.failed++;
           }
         }
-        
+
         // Create audit log for the import
         await createAuditLog(ctx.user.id, 'create', `${targetModule}_import`, 0, `Imported ${results.imported} records`);
         

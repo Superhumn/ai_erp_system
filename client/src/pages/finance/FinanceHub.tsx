@@ -24,6 +24,10 @@ const CFOStrategy = lazy(() =>
 const ReportsSection = lazy(() =>
   import("./FinancialReports").then((m) => ({ default: m.ReportsSection })),
 );
+// ── 5b · Bills / Accounts Payable (collapsible) ────────────────
+const BillsSection = lazy(() =>
+  import("./Bills").then((m) => ({ default: m.BillsSection })),
+);
 // ── 6 · Transactions + Chart of Accounts (collapsible) ─────────
 const AccountsAndTransactions = lazy(() => import("./AccountsAndTransactions"));
 // ── 7 · KPI Goals (collapsible) ────────────────────────────────
@@ -115,6 +119,16 @@ export default function FinanceHub() {
         subtitle="On-demand P&L, balance sheet, cash flow, and more"
       >
         <ReportsSection />
+      </CollapsibleSection>
+
+      {divider}
+
+      {/* 5b · Bills — vendor bills, approvals, and payments */}
+      <CollapsibleSection
+        title="Bills (Accounts Payable)"
+        subtitle="Vendor bills, approvals, and payments"
+      >
+        <BillsSection />
       </CollapsibleSection>
 
       {divider}

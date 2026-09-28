@@ -357,61 +357,6 @@ export async function getFreightDashboardStats() {
   };
 }
 
-// Freight history table functions
-export interface FreightHistoryData {
-  invoiceNumber: string;
-  carrierId: number;
-  invoiceDate: number;
-  shipmentDate?: number;
-  deliveryDate?: number;
-  origin?: string;
-  destination?: string;
-  trackingNumber?: string;
-  weight?: string;
-  dimensions?: string;
-  freightCharges: string;
-  fuelSurcharge?: string;
-  accessorialCharges?: string;
-  totalAmount: string;
-  currency?: string;
-  relatedPoId?: number;
-  notes?: string;
-  createdBy: number;
-}
-
-export async function createFreightHistory(data: FreightHistoryData) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  
-  const result = await db.insert(freightBookings).values({
-    rfqId: 0,
-    quoteId: 0,
-    carrierId: data.carrierId,
-    status: "completed",
-    bookingDate: data.invoiceDate,
-    pickupDate: data.shipmentDate,
-    deliveryDate: data.deliveryDate,
-    totalCost: data.totalAmount,
-    trackingNumber: data.trackingNumber,
-    notes: JSON.stringify({
-      invoiceNumber: data.invoiceNumber,
-      origin: data.origin,
-      destination: data.destination,
-      weight: data.weight,
-      dimensions: data.dimensions,
-      freightCharges: data.freightCharges,
-      fuelSurcharge: data.fuelSurcharge,
-      accessorialCharges: data.accessorialCharges,
-      currency: data.currency,
-      relatedPoId: data.relatedPoId,
-      importedInvoice: true
-    }),
-    createdBy: data.createdBy
-  } as any);
-  
-  return result[0].insertId;
-}
-
 export interface DocumentImportLog {
   filename: string;
   documentType: string;

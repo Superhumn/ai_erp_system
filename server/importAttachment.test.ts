@@ -24,7 +24,7 @@ vi.mock("./db", () => ({
   getRawMaterialById: vi.fn(async () => null),
   createRawMaterial: vi.fn(async () => ({ id: 30 })),
   updateRawMaterial: vi.fn(async () => {}),
-  createFreightHistory: vi.fn(async () => ({ id: 40 })),
+  createFreightBooking: vi.fn(async () => ({ id: 40, bookingNumber: "BK-2026-00001" })),
   // Touched by importWhatsappDocumentToErp for shipment linkage
   findShipmentByTracking: vi.fn(async () => null),
 }));
@@ -195,7 +195,9 @@ describe("importEmailAttachmentToErp — document-type routing", () => {
     const result = await importEmailAttachmentToErp(baseOpts);
 
     expect(result.documentType).toBe("freight_invoice");
-    expect(db.createFreightHistory).toHaveBeenCalled();
+    expect(db.createFreightBooking).toHaveBeenCalledWith(
+      expect.objectContaining({ carrierId: 10, status: "delivered", actualCost: expect.any(String), bookingDate: expect.any(Date) })
+    );
     expect(db.createParsedDocument).toHaveBeenCalledWith(
       expect.objectContaining({ documentType: "invoice", documentNumber: "FR-3003", carrierName: "Speedy Freight", trackingNumber: "TRK-9" })
     );

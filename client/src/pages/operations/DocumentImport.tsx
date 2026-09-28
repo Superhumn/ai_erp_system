@@ -149,6 +149,8 @@ export default function DocumentImport() {
   const [receiveFreightInventory, setReceiveFreightInventory] = useState(false);
   const [createMissingVendor, setCreateMissingVendor] = useState(false);
   const [editingLineItem, setEditingLineItem] = useState<number | null>(null);
+  // Name of the file the current preview came from, recorded in Import History.
+  const [sourceFileName, setSourceFileName] = useState<string>("");
   
   // Google Drive state
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
@@ -185,7 +187,8 @@ export default function DocumentImport() {
     
     const file = acceptedFiles[0];
     setIsUploading(true);
-    
+    setSourceFileName(file.name);
+
     // Convert file to base64
     const reader = new FileReader();
     reader.onload = async () => {
@@ -317,6 +320,7 @@ export default function DocumentImport() {
         markAsReceived,
         updateInventory,
         createMissingVendor,
+        fileName: sourceFileName || undefined,
       });
 
       if (!result.success) {
@@ -343,6 +347,7 @@ export default function DocumentImport() {
         linkToPO,
         createMissingVendor,
         receiveInventory: receiveFreightInventory,
+        fileName: sourceFileName || undefined,
       });
 
       if (!result.success) {
@@ -369,6 +374,7 @@ export default function DocumentImport() {
         markAsReceived,
         updateInventory,
         createMissingVendor,
+        fileName: sourceFileName || undefined,
       });
 
       if (!result.success) {
@@ -394,6 +400,7 @@ export default function DocumentImport() {
         documentData: parsedCustoms,
         linkToPO,
         createMissingVendor,
+        fileName: sourceFileName || undefined,
       });
 
       if (!result.success) {
@@ -615,7 +622,18 @@ export default function DocumentImport() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {historyQuery.data?.map((log) => (
+                    {historyQuery.data?.map((rawLog) => {
+                      // The history rows are audit_logs entries: the writer stores the
+                      // created/updated record arrays under `importData`, and its status
+                      // vocabulary is success/partial/failed.
+                      const importData = (rawLog.importData ?? {}) as { createdRecords?: unknown[]; updatedRecords?: unknown[]; status?: string };
+                      const log = {
+                        ...rawLog,
+                        recordsCreated: rawLog.recordsCreated || importData.createdRecords?.length || 0,
+                        recordsUpdated: rawLog.recordsUpdated || importData.updatedRecords?.length || 0,
+                        status: rawLog.status === "success" ? "completed" : rawLog.status,
+                      };
+                      return (
                       <TableRow key={log.id}>
                         <TableCell className="font-medium">
                           {log.fileName}
@@ -640,7 +658,8 @@ export default function DocumentImport() {
                           {new Date(log.createdAt).toLocaleDateString()}
                         </TableCell>
                       </TableRow>
-                    ))}
+                      );
+                    })}
                   </TableBody>
                 </Table>
               )}
@@ -905,6 +924,7 @@ export default function DocumentImport() {
                               size="sm"
                               className="h-6 px-2"
                               onClick={() => {
+                                setSourceFileName(result.fileName);
                                 if (result.data.documentType === 'purchase_order' && result.data.purchaseOrder) {
                                   setParsedPO(result.data.purchaseOrder);
                                   setUploadType('po');

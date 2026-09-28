@@ -7,6 +7,7 @@ import * as db from "../db";
 import { autoReplyRules } from "../../drizzle/schema";
 import { randomBytes } from "crypto";
 import { sanitizeAttachments } from "./_shared";
+import { toBillLineItems } from "../billsService";
 
 // ============================================
 // EMAIL SCANNING & DOCUMENT PARSING
@@ -21,19 +22,58 @@ function pickOpenRfq<T extends { id: number }>(openRfqs: T[]): T | null {
 }
 
 /**
- * Notes for an auto-created draft invoice. The vendor cannot go in
- * `invoices.customerId` (FK to customers), so it is recorded here.
+ * Draft a vendor bill from an inbound email the parser classified as an invoice.
+ * Vendor liabilities live in `bills` (the `invoices` table is customer
+ * receivables). Needs a matched vendor: bills.vendorId is NOT NULL, and
+ * auto-creating vendors from unsolicited mail is not something we want.
+ * Returns the bill id, or null with the reason it was skipped.
  */
-function describeVendorDraft(
-  base: string,
-  vendor: { id: number; name?: string | null } | null | undefined,
-  vendorName?: string | null,
-  vendorEmail?: string | null,
-): string {
-  const parts = [base];
-  if (vendor) parts.push(`Vendor: ${vendor.name || vendorName || vendorEmail} (vendor id ${vendor.id})`);
-  else if (vendorName || vendorEmail) parts.push(`Vendor (unmatched): ${[vendorName, vendorEmail].filter(Boolean).join(" ")}`);
-  return parts.join("\n");
+async function draftBillFromEmail(args: {
+  emailId: number;
+  subject: string;
+  userId: number;
+  doc: {
+    documentNumber?: string | null;
+    vendorName?: string | null;
+    vendorEmail?: string | null;
+    documentDate?: string | null;
+    dueDate?: string | null;
+    subtotal?: number | null;
+    taxAmount?: number | null;
+    totalAmount?: number | null;
+    currency?: string | null;
+    lineItems?: Array<{ description?: string | null; sku?: string | null; quantity?: number | null; unit?: string | null; unitPrice?: number | null; totalPrice?: number | null }> | null;
+  };
+}): Promise<{ billId: number | null; billNumber: string; reason?: string }> {
+  const { doc } = args;
+  const billNumber = doc.documentNumber || `DRAFT-EMAIL-${args.emailId}`;
+  const vendor = (doc.vendorEmail || doc.vendorName)
+    ? await db.findVendorByEmailOrName(doc.vendorEmail || undefined, doc.vendorName || undefined)
+    : null;
+  if (!vendor) {
+    return { billId: null, billNumber, reason: `no vendor matches ${[doc.vendorName, doc.vendorEmail].filter(Boolean).join(" ") || "the sender"}` };
+  }
+  const existing = await db.findBillByNumber(billNumber, vendor.id);
+  if (existing) return { billId: null, billNumber, reason: `bill ${billNumber} already exists (#${existing.id})` };
+
+  const { id } = await db.createBill({
+    companyId: vendor.companyId ?? undefined,
+    billNumber,
+    vendorId: vendor.id,
+    sourceType: "email",
+    sourceRef: String(args.emailId),
+    billDate: doc.documentDate ? new Date(doc.documentDate) : new Date(),
+    dueDate: doc.dueDate ? new Date(doc.dueDate) : undefined,
+    subtotal: (doc.subtotal ?? doc.totalAmount ?? 0).toString(),
+    taxAmount: (doc.taxAmount ?? 0).toString(),
+    totalAmount: (doc.totalAmount ?? 0).toString(),
+    currency: doc.currency || "USD",
+    status: "draft",
+    notes: `Auto-created from email: ${args.subject}`,
+    lineItems: toBillLineItems(doc.lineItems),
+    createdBy: args.userId,
+  });
+  return { billId: id, billNumber };
 }
 
 export const emailScanningRouter = router({
@@ -440,50 +480,20 @@ export const emailScanningRouter = router({
             console.warn("[Email→DocumentLinker] Auto-link failed:", e);
           }
 
-          // ── Automation #1: Auto-create draft invoice from parsed email ──
+          // ── Automation #1: Auto-create a draft vendor bill from the parsed email ──
           if (result.categorization?.category === "invoice" && result.documents.length > 0) {
             try {
               const invoiceDoc = result.documents.find(d => d.documentType === "invoice") || result.documents[0];
               if (invoiceDoc.totalAmount) {
-                // There is no payables table (db.getBills() is an alias for purchase
-                // orders), and `invoices.type` only allows invoice/credit_note/quote
-                // while `customerId` is an FK to customers — so a "bill" row keyed
-                // by vendor id could never be inserted. Store the draft as a plain
-                // invoice and keep the vendor in the notes instead.
-                const vendor = invoiceDoc.vendorEmail
-                  ? await db.findVendorByEmailOrName(invoiceDoc.vendorEmail, invoiceDoc.vendorName)
-                  : null;
-                const invoiceNumber = invoiceDoc.documentNumber || `DRAFT-EMAIL-${Date.now().toString(36).toUpperCase()}`;
-                const existing = await db.getInvoiceByNumber(invoiceNumber);
-                if (!existing) {
-                  const draftInvoice = await db.createInvoice({
-                    invoiceNumber,
-                    type: "invoice",
-                    status: "draft",
-                    issueDate: invoiceDoc.documentDate ? new Date(invoiceDoc.documentDate) : new Date(),
-                    dueDate: invoiceDoc.dueDate ? new Date(invoiceDoc.dueDate) : undefined,
-                    subtotal: invoiceDoc.subtotal?.toString() || invoiceDoc.totalAmount?.toString() || "0",
-                    taxAmount: invoiceDoc.taxAmount?.toString() || "0",
-                    totalAmount: invoiceDoc.totalAmount?.toString() || "0",
-                    currency: invoiceDoc.currency || "USD",
-                    notes: describeVendorDraft(`Auto-created from email: ${input.subject}`, vendor, invoiceDoc.vendorName, invoiceDoc.vendorEmail),
-                  });
-                  console.log(`[Email→Invoice] Auto-created draft invoice ${invoiceNumber} (id=${draftInvoice.id}) from email ${emailId}`);
-                  if (invoiceDoc.lineItems?.length) {
-                    for (const item of invoiceDoc.lineItems) {
-                      await db.createInvoiceItem({
-                        invoiceId: draftInvoice.id,
-                        description: item.description || "Line item",
-                        quantity: item.quantity?.toString() || "1",
-                        unitPrice: item.unitPrice?.toString() || "0",
-                        totalAmount: item.totalPrice?.toString() || "0",
-                      } as any);
-                    }
-                  }
+                const drafted = await draftBillFromEmail({ emailId, subject: input.subject, userId: ctx.user.id, doc: invoiceDoc });
+                if (drafted.billId) {
+                  console.log(`[Email→Bill] Auto-created draft bill ${drafted.billNumber} (id=${drafted.billId}) from email ${emailId}`);
+                } else {
+                  console.log(`[Email→Bill] Skipped draft bill from email ${emailId}: ${drafted.reason}`);
                 }
               }
             } catch (e) {
-              console.warn("[Email→Invoice] Auto-creation failed:", e);
+              console.warn("[Email→Bill] Auto-creation failed:", e);
             }
           }
 
@@ -1221,36 +1231,20 @@ export const emailScanningRouter = router({
               console.warn("[IMAP→DocumentLinker] Auto-link failed:", e);
             }
 
-            // ── IMAP Automation #1: Auto-create draft invoice ──
+            // ── IMAP Automation #1: Auto-create a draft vendor bill ──
             if (email.categorization?.category === "invoice" && parseResult?.documents?.length) {
               try {
                 const invoiceDoc = parseResult.documents.find((d: any) => d.documentType === "invoice") || parseResult.documents[0];
                 if (invoiceDoc.totalAmount) {
-                  const invNum = invoiceDoc.documentNumber || `DRAFT-IMAP-${Date.now().toString(36).toUpperCase()}`;
-                  const existingInv = await db.getInvoiceByNumber(invNum);
-                  if (!existingInv) {
-                    // See the submitEmail automation above: no payables table and
-                    // `type: "bill"` / vendor-as-customerId can never be inserted.
-                    const vendorMatch = invoiceDoc.vendorEmail
-                      ? await db.findVendorByEmailOrName(invoiceDoc.vendorEmail, invoiceDoc.vendorName)
-                      : null;
-                    await db.createInvoice({
-                      invoiceNumber: invNum,
-                      type: "invoice",
-                      status: "draft",
-                      issueDate: invoiceDoc.documentDate ? new Date(invoiceDoc.documentDate) : new Date(),
-                      dueDate: invoiceDoc.dueDate ? new Date(invoiceDoc.dueDate) : undefined,
-                      subtotal: invoiceDoc.totalAmount?.toString() || "0",
-                      taxAmount: "0",
-                      totalAmount: invoiceDoc.totalAmount?.toString() || "0",
-                      currency: invoiceDoc.currency || "USD",
-                      notes: describeVendorDraft(`Auto-created from IMAP email: ${email.subject}`, vendorMatch, invoiceDoc.vendorName, invoiceDoc.vendorEmail),
-                    });
-                    console.log(`[IMAP→Invoice] Auto-created draft invoice ${invNum} from email ${emailId}`);
+                  const drafted = await draftBillFromEmail({ emailId, subject: email.subject, userId: ctx.user.id, doc: invoiceDoc });
+                  if (drafted.billId) {
+                    console.log(`[IMAP→Bill] Auto-created draft bill ${drafted.billNumber} (id=${drafted.billId}) from email ${emailId}`);
+                  } else {
+                    console.log(`[IMAP→Bill] Skipped draft bill from email ${emailId}: ${drafted.reason}`);
                   }
                 }
               } catch (e) {
-                console.warn("[IMAP→Invoice] Auto-creation failed:", e);
+                console.warn("[IMAP→Bill] Auto-creation failed:", e);
               }
             }
 

@@ -80,7 +80,7 @@ describe("emailScanning.submitEmail automations", () => {
     vi.restoreAllMocks();
   });
 
-  it("auto-creates the draft as a real `invoice` row with the vendor in notes (no bill/customerId)", async () => {
+  it("auto-creates a draft vendor `bill` for the matched vendor (never a customer invoice)", async () => {
     stubSubmitEmailPipeline();
     vi.mocked(emailParser.parseEmailContent).mockResolvedValue({
       success: true,
@@ -90,6 +90,8 @@ describe("emailScanning.submitEmail automations", () => {
         vendorName: "Acme Corp",
         vendorEmail: "billing@acme.test",
         documentNumber: "INV-1001",
+        documentDate: "2026-09-01",
+        dueDate: "2026-10-01",
         totalAmount: 100,
         subtotal: 90,
         taxAmount: 10,
@@ -97,27 +99,64 @@ describe("emailScanning.submitEmail automations", () => {
       }],
       categorization: { category: "invoice", confidence: 95, keywords: [], priority: "medium" },
     } as any);
-    vi.spyOn(db, "findVendorByEmailOrName").mockResolvedValue({ id: 4, name: "Acme Corp" } as any);
-    vi.spyOn(db, "getInvoiceByNumber").mockResolvedValue(null as any);
-    const createInvoice = vi.spyOn(db, "createInvoice").mockResolvedValue({ id: 77 } as any);
-    const createInvoiceItem = vi.spyOn(db, "createInvoiceItem").mockResolvedValue({ id: 78 } as any);
+    vi.spyOn(db, "findVendorByEmailOrName").mockResolvedValue({ id: 4, name: "Acme Corp", companyId: 2 } as any);
+    const findBillByNumber = vi.spyOn(db, "findBillByNumber").mockResolvedValue(null as any);
+    const createBill = vi.spyOn(db, "createBill").mockResolvedValue({ id: 77 } as any);
+    const createInvoice = vi.spyOn(db, "createInvoice").mockResolvedValue({ id: 1 } as any);
+    const createInvoiceItem = vi.spyOn(db, "createInvoiceItem").mockResolvedValue({ id: 1 } as any);
 
-    const caller = appRouter.createCaller(ctxFor());
+    const caller = appRouter.createCaller(ctxFor({ id: 42 }));
     const result = await caller.emailScanning.submitEmail(baseInput);
     expect(result.success).toBe(true);
 
-    expect(createInvoice).toHaveBeenCalledTimes(1);
-    const row = createInvoice.mock.calls[0][0] as Record<string, unknown>;
-    // invoices.type enum is invoice | credit_note | quote — "bill" was rejected by MySQL.
-    expect(row.type).toBe("invoice");
-    // customerId is an FK to customers; a vendor id there fails the constraint.
-    expect(row).not.toHaveProperty("customerId");
-    expect(row.invoiceNumber).toBe("INV-1001");
-    expect(row.status).toBe("draft");
-    expect(row.totalAmount).toBe("100");
-    expect(String(row.notes)).toContain("Acme Corp");
-    expect(String(row.notes)).toContain("vendor id 4");
-    expect(createInvoiceItem).toHaveBeenCalledWith(expect.objectContaining({ invoiceId: 77, description: "Widget" }));
+    expect(findBillByNumber).toHaveBeenCalledWith("INV-1001", 4);
+    expect(createBill).toHaveBeenCalledTimes(1);
+    const row = createBill.mock.calls[0][0];
+    expect(row).toMatchObject({
+      companyId: 2,
+      billNumber: "INV-1001",
+      vendorId: 4,
+      sourceType: "email",
+      sourceRef: "501",
+      status: "draft",
+      subtotal: "90",
+      taxAmount: "10",
+      totalAmount: "100",
+      currency: "USD",
+      billDate: new Date("2026-09-01"),
+      dueDate: new Date("2026-10-01"),
+      lineItems: [{ description: "Widget", quantity: 2, unitPrice: 45, totalPrice: 90 }],
+      createdBy: 42,
+    });
+    expect(String(row.notes)).toContain("Invoice INV-1001");
+    // The `invoices` table is customer receivables; the automation must never write it.
+    expect(createInvoice).not.toHaveBeenCalled();
+    expect(createInvoiceItem).not.toHaveBeenCalled();
+  });
+
+  it("skips the draft bill when no vendor matches or the bill already exists", async () => {
+    stubSubmitEmailPipeline();
+    const parsed = {
+      success: true,
+      documents: [{ documentType: "invoice", confidence: 90, vendorName: "Nobody Inc", vendorEmail: "x@nobody.test", documentNumber: "INV-2", totalAmount: 10 }],
+      categorization: { category: "invoice", confidence: 95, keywords: [], priority: "medium" },
+    };
+    vi.mocked(emailParser.parseEmailContent).mockResolvedValue(parsed as any);
+    const createBill = vi.spyOn(db, "createBill").mockResolvedValue({ id: 1 } as any);
+    const createInvoice = vi.spyOn(db, "createInvoice").mockResolvedValue({ id: 1 } as any);
+    const caller = appRouter.createCaller(ctxFor());
+
+    // No vendor matched: bills.vendorId is NOT NULL and we do not auto-create vendors from mail.
+    vi.spyOn(db, "findVendorByEmailOrName").mockResolvedValue(null as any);
+    await caller.emailScanning.submitEmail(baseInput);
+    expect(createBill).not.toHaveBeenCalled();
+
+    // Vendor matched but the bill number is already on file.
+    vi.spyOn(db, "findVendorByEmailOrName").mockResolvedValue({ id: 4, name: "Nobody Inc" } as any);
+    vi.spyOn(db, "findBillByNumber").mockResolvedValue({ id: 9 } as any);
+    await caller.emailScanning.submitEmail(baseInput);
+    expect(createBill).not.toHaveBeenCalled();
+    expect(createInvoice).not.toHaveBeenCalled();
   });
 
   it("looks up open RFQs by status 'sent' and skips the quote when nothing matches (no rfqId 0 rows)", async () => {

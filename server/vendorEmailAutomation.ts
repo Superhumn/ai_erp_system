@@ -11,6 +11,7 @@
 import { invokeLLM } from "./_core/llm";
 import * as emailService from "./_core/emailService";
 import * as db from "./db";
+import { billOutstanding } from "./billsLogic";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -76,11 +77,21 @@ Items:\n${itemList}`;
       break;
     }
     case "payment_reminder": {
-      // The `invoices` table is customer receivables (customerId -> customers.id);
-      // there is no vendor payables (bills) table to list here, so do not try to
-      // match vendor ids against it. Rely on the caller-supplied message instead.
-      context = request.customMessage
-        || "We are reviewing the status of payments on your account and would like to confirm any outstanding invoices you have issued to us.";
+      // Vendor payables live in `bills` (the `invoices` table is customer
+      // receivables, so it is never consulted here).
+      const openBills = await db.getOpenBillsForVendor(vendor.id);
+      if (openBills.length > 0) {
+        const lines = openBills.map((bill) => {
+          const due = bill.dueDate ? new Date(bill.dueDate).toLocaleDateString() : "no due date";
+          return `- Bill ${bill.billNumber}: outstanding $${billOutstanding(bill).toFixed(2)} ${bill.currency || "USD"} (due ${due}, status ${bill.status})`;
+        });
+        const totalOutstanding = openBills.reduce((sum, bill) => sum + billOutstanding(bill), 0);
+        context = `Outstanding bills on this vendor's account (total $${totalOutstanding.toFixed(2)}):\n${lines.join("\n")}`;
+        if (request.customMessage) context += `\n${request.customMessage}`;
+      } else {
+        context = request.customMessage
+          || "We are reviewing the status of payments on your account and would like to confirm any outstanding invoices you have issued to us.";
+      }
       defaultSubject = `Payment Status Update - ${vendor.name}`;
       break;
     }

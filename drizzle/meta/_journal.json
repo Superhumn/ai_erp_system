@@ -484,6 +484,13 @@
 			"when": 1787700300000,
 			"tag": "0068_legal_cases",
 			"breakpoints": true
+		},
+		{
+			"idx": 69,
+			"version": "5",
+			"when": 1787700400000,
+			"tag": "0069_bills",
+			"breakpoints": true
 		}
 	]
 }
