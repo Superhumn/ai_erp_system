@@ -7,7 +7,7 @@ import { execSync } from "child_process";
 import { fromBuffer } from "pdf2pic";
 import { randomBytes } from "crypto";
 import * as XLSX from "xlsx";
-import { assertFetchableAttachmentUrl, MAX_ATTACHMENT_BYTES } from "./attachmentUrl";
+import { assertFetchableAttachmentUrl, fetchAttachment } from "./attachmentUrl";
 import { parseLlmJson } from "./llmJson";
 
 // PDF.js will be imported dynamically in the function to avoid worker issues
@@ -172,27 +172,6 @@ export interface DocumentMessageContent {
 
 const EMPTY_MESSAGE_CONTENT = { content: [] as any[], hasImageContent: false, isPdf: false };
 
-/** Reject an oversized download from its Content-Length, before reading the body. */
-function assertWithinAttachmentLimit(response: Response, kind: string): void {
-  // Content-Length is advisory and the header bag is absent on some fetch
-  // implementations, so a missing value simply defers to the post-read check.
-  const declared = Number(response?.headers?.get?.("content-length") ?? "");
-  if (Number.isFinite(declared) && declared > MAX_ATTACHMENT_BYTES) {
-    throw new Error(
-      `Refusing to fetch ${kind}: ${declared} bytes exceeds the ${MAX_ATTACHMENT_BYTES}-byte attachment limit.`,
-    );
-  }
-}
-
-/** Content-Length is advisory, so re-check once the body is in hand. */
-function assertBufferWithinLimit(byteLength: number, kind: string): void {
-  if (byteLength > MAX_ATTACHMENT_BYTES) {
-    throw new Error(
-      `Refusing to process ${kind}: ${byteLength} bytes exceeds the ${MAX_ATTACHMENT_BYTES}-byte attachment limit.`,
-    );
-  }
-}
-
 /**
  * Render every sheet of an Excel workbook as CSV text so the LLM can read it.
  * Excel files are zipped XML: handing the raw bytes to the text branch below
@@ -238,14 +217,8 @@ export async function buildDocumentMessageContent(
     if (isSpreadsheet) {
       try {
         console.log("[DocumentImport] Reading spreadsheet from URL:", fileUrl);
-        const response = await fetch(fileUrl);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch spreadsheet: ${response.status}`);
-        }
-        assertWithinAttachmentLimit(response, 'spreadsheet');
-        const arrayBuffer = await response.arrayBuffer();
-        assertBufferWithinLimit(arrayBuffer.byteLength, 'spreadsheet');
-        const text = spreadsheetBufferToText(Buffer.from(arrayBuffer));
+        const { buffer } = await fetchAttachment(fileUrl, { kind: 'spreadsheet' });
+        const text = spreadsheetBufferToText(buffer);
         console.log("[DocumentImport] Spreadsheet text length:", text.length);
         messageContent = [
           { type: "text", text: `${prompt}\n\nDOCUMENT CONTENT:\n${text.substring(0, 50000)}` }
@@ -258,14 +231,7 @@ export async function buildDocumentMessageContent(
       // For images, download and convert to base64 data URL
       try {
         console.log("[DocumentImport] Downloading image from:", fileUrl);
-        const response = await fetch(fileUrl);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch image: ${response.status}`);
-        }
-        assertWithinAttachmentLimit(response, 'image');
-        const arrayBuffer = await response.arrayBuffer();
-        assertBufferWithinLimit(arrayBuffer.byteLength, 'image');
-        const buffer = Buffer.from(arrayBuffer);
+        const { buffer } = await fetchAttachment(fileUrl, { kind: 'image' });
         const base64 = buffer.toString('base64');
         const ext = filename.toLowerCase().match(/\.(png|jpg|jpeg|gif|webp)$/i)?.[1] || 'png';
         const mimeTypeMap: Record<string, string> = {
@@ -291,14 +257,8 @@ export async function buildDocumentMessageContent(
       console.log("[DocumentImport] Extracting text from PDF using pdfjs-dist");
       try {
         // Download the PDF
-        const response = await fetch(fileUrl);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch PDF: ${response.status}`);
-        }
-        assertWithinAttachmentLimit(response, 'PDF');
-        const arrayBuffer = await response.arrayBuffer();
-        assertBufferWithinLimit(arrayBuffer.byteLength, 'PDF');
-        const uint8Array = new Uint8Array(arrayBuffer);
+        const { buffer: pdfBuffer } = await fetchAttachment(fileUrl, { kind: 'PDF' });
+        const uint8Array = new Uint8Array(pdfBuffer.buffer, pdfBuffer.byteOffset, pdfBuffer.byteLength);
         console.log("[DocumentImport] Downloaded PDF, size:", uint8Array.byteLength);
         
         // Use pdfjs-dist to extract text (pure JavaScript, no native dependencies)
@@ -328,7 +288,7 @@ export async function buildDocumentMessageContent(
           console.log(`[DocumentImport] Processing ${pagesToProcess} page(s) for OCR`);
 
           // Create buffer for pdf2pic (only needed for scanned PDFs)
-          const buffer = Buffer.from(arrayBuffer);
+          const buffer = pdfBuffer;
 
           // Convert PDF to images using pdf2pic for OCR
           // Use crypto.randomBytes for unique directory name to avoid collisions
@@ -410,12 +370,8 @@ export async function buildDocumentMessageContent(
       // For CSV/Excel/text files, download and extract text content
       try {
         console.log("[DocumentImport] Fetching document content from URL:", fileUrl);
-        const response = await fetch(fileUrl);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch document: ${response.status}`);
-        }
-        assertWithinAttachmentLimit(response, 'document');
-        const textContent = await response.text();
+        const { buffer } = await fetchAttachment(fileUrl, { kind: 'document' });
+        const textContent = buffer.toString('utf8');
         console.log("[DocumentImport] Extracted text content length:", textContent.length);
         messageContent = [
           { type: "text", text: `${prompt}\n\nDOCUMENT CONTENT:\n${textContent.substring(0, 50000)}` }
