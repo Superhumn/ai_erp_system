@@ -57,7 +57,9 @@ export const ordersRouter = router({
           }
         }
         const orderNumber = generateNumber('ORD');
-        const result = await db.createOrder({ ...orderData, orderNumber, createdBy: ctx.user.id });
+        // Default to the caller's home entity so scoped users can see the row they just created.
+        const companyId = orderData.companyId ?? ctx.user.companyId ?? undefined;
+        const result = await db.createOrder({ ...orderData, companyId, orderNumber, createdBy: ctx.user.id });
         
         if (items && items.length > 0) {
           for (const item of items) {
@@ -68,7 +70,7 @@ export const ordersRouter = router({
         await createAuditLog(ctx.user.id, 'create', 'order', result.id, orderNumber);
         return result;
       }),
-    update: protectedProcedure
+    update: scopedProcedure
       .input(z.object({
         id: z.number(),
         status: z.enum(['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded']).optional(),
@@ -76,6 +78,9 @@ export const ordersRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
+        // Scoped read: an order outside the caller's entity access is indistinguishable from a missing one.
+        const existing = await db.getOrderById(id, ctx.scope);
+        if (!existing) throw new TRPCError({ code: 'NOT_FOUND', message: 'Order not found' });
         await db.updateOrder(id, data);
         await createAuditLog(ctx.user.id, 'update', 'order', id);
 
@@ -97,21 +102,26 @@ export const ordersRouter = router({
 
         return { success: true };
       }),
-    delete: protectedProcedure
+    delete: scopedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input, ctx }) => {
+        const existing = await db.getOrderById(input.id, ctx.scope);
+        if (!existing) throw new TRPCError({ code: 'NOT_FOUND', message: 'Order not found' });
         // Delete order items first
         try { await db.deleteOrderItems(input.id); } catch { /* no items */ }
         await db.deleteOrder(input.id);
         await createAuditLog(ctx.user.id, 'delete', 'order', input.id);
         return { success: true };
       }),
-    bulkDelete: protectedProcedure
+    bulkDelete: scopedProcedure
       .input(z.object({ ids: z.array(z.number()) }))
       .mutation(async ({ input, ctx }) => {
         let deleted = 0;
         for (const id of input.ids) {
           try {
+            // Skip ids the caller cannot see under their entity scope.
+            const existing = await db.getOrderById(id, ctx.scope);
+            if (!existing) continue;
             try { await db.deleteOrderItems(id); } catch { /* no items */ }
             await db.deleteOrder(id);
             deleted++;

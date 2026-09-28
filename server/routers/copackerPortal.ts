@@ -284,8 +284,17 @@ export const copackerPortalRouter = router({
         if (ctx.user.role === 'copacker' && !ctx.user.linkedWarehouseId) {
           throw new TRPCError({ code: 'FORBIDDEN', message: 'No warehouse assigned' });
         }
+        if (!ctx.user.linkedWarehouseId) {
+          // For admin/ops users without a warehouse, use the first available warehouse
+          // (same fallback as createInventoryUpdate — warehouseId is NOT NULL on the row).
+          const locations = await db.getWarehouses();
+          if (!locations || locations.length === 0) {
+            throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'No warehouses configured. Create a location first.' });
+          }
+          ctx.user.linkedWarehouseId = locations[0].id;
+        }
 
-        const warehouseId = ctx.user.linkedWarehouseId!;
+        const warehouseId = ctx.user.linkedWarehouseId;
         const { items, fileName, fileData, mimeType, ...invoiceData } = input;
 
         const subtotal = items.reduce((sum, i) => sum + parseFloat(i.totalAmount), 0);
@@ -351,19 +360,15 @@ export const copackerPortalRouter = router({
               const grandTotalQty = Array.from(productQtyMap.values()).reduce((a, b) => a + b, 0);
 
               if (grandTotalQty > 0) {
-                const { addCostLayer } = await import("../inventoryCostingService");
+                // Raise the unit cost of the existing layers rather than adding
+                // new ones: a fee is overhead, not additional stock.
+                const { allocateOverheadToLayers } = await import("../inventoryCostingService");
                 for (const [productId, productQty] of productQtyMap) {
                   if (productQty > 0) {
-                    const copackerCostPerUnit = (totalAmount * (productQty / grandTotalQty)) / productQty;
-                    await addCostLayer({
+                    await allocateOverheadToLayers({
                       productId,
                       warehouseId,
-                      quantity: productQty,
-                      unitCost: copackerCostPerUnit,
-                      referenceType: "copacker_invoice",
-                      referenceId: result.id,
-                      notes: `Copacker fee allocation from invoice ${invoiceData.invoiceNumber}`,
-                      createdBy: ctx.user.id,
+                      totalAmount: totalAmount * (productQty / grandTotalQty),
                     });
                   }
                 }
@@ -400,8 +405,17 @@ export const copackerPortalRouter = router({
         if (ctx.user.role === 'copacker' && !ctx.user.linkedWarehouseId) {
           throw new TRPCError({ code: 'FORBIDDEN', message: 'No warehouse assigned' });
         }
+        if (!ctx.user.linkedWarehouseId) {
+          // For admin/ops users without a warehouse, use the first available warehouse
+          // (same fallback as createInventoryUpdate — warehouseId is NOT NULL on the row).
+          const locations = await db.getWarehouses();
+          if (!locations || locations.length === 0) {
+            throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'No warehouses configured. Create a location first.' });
+          }
+          ctx.user.linkedWarehouseId = locations[0].id;
+        }
 
-        const warehouseId = ctx.user.linkedWarehouseId!;
+        const warehouseId = ctx.user.linkedWarehouseId;
         const buffer = Buffer.from(input.fileData, 'base64');
         const fileKey = `copacker-shipping/${warehouseId}/${nanoid()}-${input.name}`;
         const { url } = await storagePut(fileKey, buffer, input.mimeType);

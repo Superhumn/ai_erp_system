@@ -658,13 +658,29 @@ export function generate997(
 // HIGH-LEVEL PROCESSING
 // ============================================
 
+export interface InboundEdiSetResult {
+  transactionId: number;
+  status: string;
+  message: string;
+}
+
+export interface InboundEdiResult extends InboundEdiSetResult {
+  /** One entry per transaction set in the interchange, in document order. */
+  results: InboundEdiSetResult[];
+  transactionIds: number[];
+}
+
 /**
- * Process an inbound EDI document - parse, validate, and create ERP records
+ * Process an inbound EDI document - parse, validate, and create ERP records.
+ *
+ * An interchange may carry several transaction sets (ST/SE pairs); each one
+ * becomes its own EDI transaction record. The top-level fields mirror the first
+ * set for callers that expect a single result, and `results` lists all of them.
  */
 export async function processInboundEdi(
   rawContent: string,
   tradingPartnerId: number
-): Promise<{ transactionId: number; status: string; message: string }> {
+): Promise<InboundEdiResult> {
   // Parse the envelope
   const envelope = parseEdiEnvelope(rawContent);
 
@@ -672,8 +688,46 @@ export async function processInboundEdi(
     throw new Error("No transaction sets found in EDI document");
   }
 
-  const txnSet = envelope.transactionSets[0];
+  const results: InboundEdiSetResult[] = [];
+  let processed850 = false;
 
+  for (const txnSet of envelope.transactionSets) {
+    const setResult = await processInboundTransactionSet(envelope, txnSet, tradingPartnerId, rawContent);
+    results.push(setResult);
+    if (txnSet.transactionSetCode === "850" && setResult.status === "validated") {
+      processed850 = true;
+    }
+  }
+
+  if (processed850) {
+    // Update partner's last transaction timestamp
+    await db.updateEdiTradingPartner(tradingPartnerId, { lastTransactionAt: new Date() });
+
+    // Auto-send one 997 Functional Acknowledgment for the whole interchange if enabled
+    try {
+      await sendAuto997(tradingPartnerId, envelope);
+    } catch (ackError: any) {
+      console.warn(`[EDI] Auto-997 failed for partner ${tradingPartnerId}: ${ackError.message}`);
+    }
+  }
+
+  const first = results[0];
+  const anyError = results.some((r) => r.status === "error");
+  return {
+    transactionId: first.transactionId,
+    status: results.length === 1 ? first.status : anyError ? "error" : first.status,
+    message: results.length === 1 ? first.message : results.map((r) => r.message).join("; "),
+    results,
+    transactionIds: results.map((r) => r.transactionId),
+  };
+}
+
+async function processInboundTransactionSet(
+  envelope: ParsedEdiEnvelope,
+  txnSet: ParsedTransactionSet,
+  tradingPartnerId: number,
+  rawContent: string
+): Promise<InboundEdiSetResult> {
   // Create transaction record
   const txnResult = await db.createEdiTransaction({
     tradingPartnerId,
@@ -738,15 +792,6 @@ export async function processInboundEdi(
         }
 
         await db.updateEdiTransaction(txnResult.id, { status: "validated" });
-        // Update partner's last transaction timestamp
-        await db.updateEdiTradingPartner(tradingPartnerId, { lastTransactionAt: new Date() });
-
-        // Auto-send 997 Functional Acknowledgment if enabled
-        try {
-          await sendAuto997(tradingPartnerId, envelope);
-        } catch (ackError: any) {
-          console.warn(`[EDI] Auto-997 failed for partner ${tradingPartnerId}: ${ackError.message}`);
-        }
 
         return { transactionId: txnResult.id, status: "validated", message: `Parsed 850 PO #${po.poNumber} with ${po.items.length} line items` };
       }

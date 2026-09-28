@@ -79,7 +79,10 @@ export default function RFQDetail() {
   const [, setLocation] = useLocation();
   const rfqId = parseInt(id || "0");
   
-  const [sendDialogOpen, setSendDialogOpen] = useState(false);
+  // `/freight/rfqs/:id?send=1` (the Send icon on the RFQ list) opens the send dialog directly.
+  const [sendDialogOpen, setSendDialogOpen] = useState(
+    () => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("send") === "1",
+  );
   const [selectedCarriers, setSelectedCarriers] = useState<number[]>([]);
   const [manualQuoteOpen, setManualQuoteOpen] = useState(false);
   const [emailParseOpen, setEmailParseOpen] = useState(false);

@@ -29,7 +29,16 @@ export const shopifyRouter = router({
           isActive: z.boolean().default(true),
         }))
         .mutation(async ({ input }) => {
-          return db.createShopifyStore(input);
+          // Map the public input names onto the actual shopifyStores columns; spreading
+          // `input` would silently drop apiKey / apiSecret / isActive.
+          return db.createShopifyStore({
+            storeName: input.storeName,
+            storeDomain: input.storeDomain,
+            clientId: input.apiKey,
+            clientSecret: input.apiSecret,
+            accessToken: input.accessToken,
+            isEnabled: input.isActive,
+          });
         }),
       update: protectedProcedure
         .input(z.object({

@@ -51,11 +51,15 @@ export function useAuth(options?: UseAuthOptions) {
       user: meQuery.data ?? null,
       loading: meQuery.isLoading || logoutMutation.isPending,
       error: meQuery.error ?? logoutMutation.error ?? null,
+      // True when the `me` request itself failed (network down, 5xx, ...),
+      // as opposed to the server answering "no session" with `null`.
+      isError: meQuery.isError,
       isAuthenticated: Boolean(meQuery.data),
     };
   }, [
     meQuery.data,
     meQuery.error,
+    meQuery.isError,
     meQuery.isLoading,
     logoutMutation.error,
     logoutMutation.isPending,

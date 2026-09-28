@@ -204,24 +204,14 @@ class SupplyChainOrchestrator {
   }
 
   private calculateNextRun(cronSchedule: string): Date {
-    // Simplified cron parsing - in production, use a cron library
-    const next = new Date();
-
-    // Default: run at next hour
-    const parts = cronSchedule.split(" ");
-    if (parts.length >= 2) {
-      const minute = parseInt(parts[0]) || 0;
-      const hour = parts[1] === "*" ? next.getHours() + 1 : parseInt(parts[1]) || 0;
-
-      next.setHours(hour, minute, 0, 0);
-      if (next <= new Date()) {
-        next.setDate(next.getDate() + 1);
-      }
-    } else {
+    try {
+      return computeNextCronRun(cronSchedule, new Date());
+    } catch (err) {
+      console.warn(`[Orchestrator] Invalid cron schedule "${cronSchedule}", defaulting to next hour:`, err);
+      const next = new Date();
       next.setHours(next.getHours() + 1, 0, 0, 0);
+      return next;
     }
-
-    return next;
   }
 
   // ============================================
@@ -980,6 +970,104 @@ Please review and approve/reject at your earliest convenience.`,
 // ============================================
 
 let orchestratorInstance: SupplyChainOrchestrator | null = null;
+
+// ============================================
+// CRON EVALUATION (pure, exported for tests)
+// ============================================
+
+/**
+ * Expand one 5-field cron field into the set of allowed values.
+ * Supports `*`, `N`, `a-b`, `a,b,c`, `* /N` and `a-b/N` (without the space).
+ */
+function expandCronField(field: string, min: number, max: number): Set<number> {
+  const values = new Set<number>();
+  for (const part of field.split(",")) {
+    const token = part.trim();
+    if (!token) throw new Error(`Empty cron field segment in "${field}"`);
+    const [rangePart, stepPart] = token.split("/");
+    const step = stepPart === undefined ? 1 : parseInt(stepPart, 10);
+    if (!Number.isInteger(step) || step < 1) throw new Error(`Invalid cron step "${token}"`);
+
+    let start: number;
+    let end: number;
+    if (rangePart === "*") {
+      start = min;
+      end = max;
+    } else if (rangePart.includes("-")) {
+      const [a, b] = rangePart.split("-").map((n) => parseInt(n, 10));
+      if (!Number.isInteger(a) || !Number.isInteger(b)) throw new Error(`Invalid cron range "${token}"`);
+      start = a;
+      end = b;
+    } else {
+      const n = parseInt(rangePart, 10);
+      if (!Number.isInteger(n)) throw new Error(`Invalid cron value "${token}"`);
+      start = n;
+      end = stepPart === undefined ? n : max;
+    }
+    if (start < min || end > max || start > end) {
+      throw new Error(`Cron value out of range: "${token}" (allowed ${min}-${max})`);
+    }
+    for (let v = start; v <= end; v += step) values.add(v);
+  }
+  return values;
+}
+
+/**
+ * Compute the next run time strictly after `from` for a standard 5-field cron
+ * expression (`minute hour day-of-month month day-of-week`), evaluated in local
+ * time. Day-of-month and day-of-week follow the usual cron rule: if both are
+ * restricted, a day matches when EITHER does; otherwise only the restricted one
+ * applies. Searches up to 366 days ahead and throws if nothing matches.
+ */
+export function computeNextCronRun(cronSchedule: string, from: Date = new Date()): Date {
+  const parts = cronSchedule.trim().split(/\s+/);
+  if (parts.length !== 5) {
+    throw new Error(`Cron expression must have 5 fields, got "${cronSchedule}"`);
+  }
+  const [minF, hourF, domF, monF, dowF] = parts;
+  const minutes = expandCronField(minF, 0, 59);
+  const hours = expandCronField(hourF, 0, 23);
+  const daysOfMonth = expandCronField(domF, 1, 31);
+  const months = expandCronField(monF, 1, 12);
+  // 0-7 accepted; 7 is an alias for Sunday (0)
+  const daysOfWeek = new Set<number>();
+  expandCronField(dowF, 0, 7).forEach((d) => daysOfWeek.add(d % 7));
+  const domRestricted = domF !== "*";
+  const dowRestricted = dowF !== "*";
+
+  const dayMatches = (d: Date): boolean => {
+    if (!months.has(d.getMonth() + 1)) return false;
+    const domOk = daysOfMonth.has(d.getDate());
+    const dowOk = daysOfWeek.has(d.getDay());
+    if (domRestricted && dowRestricted) return domOk || dowOk;
+    if (domRestricted) return domOk;
+    if (dowRestricted) return dowOk;
+    return true;
+  };
+
+  const limit = new Date(from.getTime() + 366 * 24 * 60 * 60 * 1000);
+  const cursor = new Date(from.getTime());
+  cursor.setSeconds(0, 0);
+  cursor.setMinutes(cursor.getMinutes() + 1); // strictly after `from`
+
+  while (cursor <= limit) {
+    if (!dayMatches(cursor)) {
+      cursor.setDate(cursor.getDate() + 1);
+      cursor.setHours(0, 0, 0, 0);
+      continue;
+    }
+    if (!hours.has(cursor.getHours())) {
+      cursor.setHours(cursor.getHours() + 1, 0, 0, 0);
+      continue;
+    }
+    if (!minutes.has(cursor.getMinutes())) {
+      cursor.setMinutes(cursor.getMinutes() + 1, 0, 0);
+      continue;
+    }
+    return new Date(cursor.getTime());
+  }
+  throw new Error(`No run time found within 366 days for cron "${cronSchedule}"`);
+}
 
 export function getOrchestrator(): SupplyChainOrchestrator {
   if (!orchestratorInstance) {

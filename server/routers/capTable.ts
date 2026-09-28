@@ -14,7 +14,7 @@ export const capTableRouter = router({
       list: protectedProcedure
         .input(z.object({ companyId: z.number().optional() }).optional())
         .query(({ input }) => db.getShareClasses(input?.companyId)),
-      create: protectedProcedure
+      create: adminProcedure
         .input(z.object({
           companyId: z.number().optional(),
           name: z.string().min(1),
@@ -39,7 +39,7 @@ export const capTableRouter = router({
           await createAuditLog(ctx.user.id, 'create', 'share_class', result.id, input.name);
           return result;
         }),
-      update: protectedProcedure
+      update: adminProcedure
         .input(z.object({
           id: z.number(),
           name: z.string().optional(),
@@ -65,7 +65,7 @@ export const capTableRouter = router({
           await createAuditLog(ctx.user.id, 'update', 'share_class', id);
           return { success: true };
         }),
-      delete: protectedProcedure
+      delete: adminProcedure
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input, ctx }) => {
           await db.deleteShareClass(input.id);
@@ -81,7 +81,7 @@ export const capTableRouter = router({
       get: protectedProcedure
         .input(z.object({ id: z.number() }))
         .query(({ input }) => db.getStakeholderById(input.id)),
-      create: protectedProcedure
+      create: adminProcedure
         .input(z.object({
           companyId: z.number().optional(),
           name: z.string().min(1),
@@ -100,7 +100,7 @@ export const capTableRouter = router({
           await createAuditLog(ctx.user.id, 'create', 'stakeholder', result.id, input.name);
           return result;
         }),
-      update: protectedProcedure
+      update: adminProcedure
         .input(z.object({
           id: z.number(),
           name: z.string().optional(),
@@ -125,7 +125,7 @@ export const capTableRouter = router({
           await createAuditLog(ctx.user.id, 'update', 'stakeholder', id);
           return { success: true };
         }),
-      delete: protectedProcedure
+      delete: adminProcedure
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input, ctx }) => {
           const database = await db.getDb();
@@ -135,7 +135,7 @@ export const capTableRouter = router({
           await createAuditLog(ctx.user.id, 'delete', 'stakeholder', input.id);
           return { success: true };
         }),
-      deletePlaceholders: protectedProcedure
+      deletePlaceholders: adminProcedure
         .mutation(async ({ ctx }) => {
           const database = await db.getDb();
           if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
@@ -219,7 +219,7 @@ export const capTableRouter = router({
           if (input?.stakeholderId) return db.getEquityGrantsByStakeholder(input.stakeholderId);
           return db.getEquityGrants(input?.companyId);
         }),
-      create: protectedProcedure
+      create: adminProcedure
         .input(z.object({
           companyId: z.number().optional(),
           stakeholderId: z.number(),
@@ -281,7 +281,7 @@ export const capTableRouter = router({
 
           return result;
         }),
-      update: protectedProcedure
+      update: adminProcedure
         .input(z.object({
           id: z.number(),
           status: z.enum(["active", "partially_vested", "fully_vested", "exercised", "cancelled", "expired", "converted"]).optional(),
@@ -323,7 +323,7 @@ export const capTableRouter = router({
       list: protectedProcedure
         .input(z.object({ companyId: z.number().optional() }).optional())
         .query(({ input }) => db.getValuations409a(input?.companyId)),
-      create: protectedProcedure
+      create: adminProcedure
         .input(z.object({
           companyId: z.number().optional(),
           valuationDate: z.string().or(z.date()),
@@ -346,7 +346,7 @@ export const capTableRouter = router({
           await createAuditLog(ctx.user.id, 'create', 'valuation_409a', result.id);
           return result;
         }),
-      update: protectedProcedure
+      update: adminProcedure
         .input(z.object({
           id: z.number(),
           fairMarketValue: z.string().optional(),
@@ -378,7 +378,7 @@ export const capTableRouter = router({
           stakeholderId: z.number().optional(),
         }).optional())
         .query(({ input }) => db.getEquityTransactions(input)),
-      create: protectedProcedure
+      create: adminProcedure
         .input(z.object({
           companyId: z.number().optional(),
           grantId: z.number(),
@@ -405,7 +405,7 @@ export const capTableRouter = router({
       .input(z.object({ companyId: z.number().optional() }).optional())
       .query(({ input }) => db.getCapTableSummary(input?.companyId)),
 
-    generateReport: protectedProcedure
+    generateReport: adminProcedure
       .input(z.object({
         reportType: z.string(),
         stakeholderId: z.number().optional(),

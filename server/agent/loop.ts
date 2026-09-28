@@ -8,8 +8,31 @@ import { createAgentRun, recordAgentStep, completeAgentRun } from "./persistence
 import type { AgentContext, AgentRunResult } from "./types";
 import { ENV } from "../_core/env";
 
-const client = new Anthropic();
 const DEFAULT_MAX_ITERATIONS = 20;
+
+/**
+ * Anthropic client, built lazily from the app's LLM configuration (LLM_API_KEY /
+ * LLM_API_URL via ENV, mirroring server/_core/llm.ts) with the SDK's own
+ * ANTHROPIC_API_KEY as a fallback. Constructed on first use rather than at
+ * module scope so importing the agent never requires credentials to be present.
+ */
+let client: Anthropic | null = null;
+function getClient(): Anthropic {
+  if (client) return client;
+  const apiKey = ENV.llmApiKey || process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "LLM_API_KEY is not configured. Set LLM_API_KEY in your environment. " +
+        "Get your Anthropic API key at: https://console.anthropic.com/settings/keys",
+    );
+  }
+  const baseURL =
+    ENV.llmApiUrl && ENV.llmApiUrl.trim().length > 0
+      ? ENV.llmApiUrl.trim().replace(/\/$/, "")
+      : undefined;
+  client = new Anthropic({ apiKey, baseURL });
+  return client;
+}
 const DEFAULT_AGENT_MODEL = "claude-opus-5";
 
 function resolveAgentModel(): string {
@@ -74,7 +97,7 @@ export async function runAgent(
       const requestTools = webSearchEnabled ? [...baseTools, webSearchTool] : baseTools;
       let response;
       try {
-        response = await client.messages.create({
+        response = await getClient().messages.create({
           model: AGENT_MODEL,
           max_tokens: 4096,
           system: buildSystemPrompt(context),
@@ -88,7 +111,7 @@ export async function runAgent(
         if (webSearchEnabled && /web[_ ]?search/i.test(msg)) {
           logAgent({ level: "warn", runId, iteration: iterations, message: "web_search unsupported — retrying without it" });
           webSearchEnabled = false;
-          response = await client.messages.create({
+          response = await getClient().messages.create({
             model: AGENT_MODEL,
             max_tokens: 4096,
             system: buildSystemPrompt(context),
@@ -143,7 +166,13 @@ export async function runAgent(
           logAgent({ level: "info", runId, iteration: iterations, toolName: block.name, message: `Calling tool` });
 
           try {
-            result = await dispatchTool(block.name, block.input);
+            // query_database gets the run's company scope so cross-tenant rows
+            // are never returned even if the model omits a companyId filter.
+            const toolInput =
+              block.name === "query_database" && options.companyId != null
+                ? { ...(block.input as Record<string, unknown>), scopeCompanyId: options.companyId }
+                : block.input;
+            result = await dispatchTool(block.name, toolInput);
           } catch (err) {
             result = `ERROR: ${(err as Error).message}`;
             isError = true;

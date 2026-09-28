@@ -75,6 +75,203 @@ const CATEGORY_DEFAULT_TYPE: Record<Category, ContactType> = {
   other: "other",
 };
 
+// Full contact profile shown inside the DetailSheet. Module-scope (not recreated per render)
+// so its state survives parent re-renders; the caller keys it by contact.id so switching
+// contacts resets the form.
+function ContactDetailView({
+  contact,
+  onClose,
+  onContactUpdated,
+}: {
+  contact: any;
+  onClose: () => void;
+  onContactUpdated: () => void;
+}) {
+  const utils = trpc.useUtils();
+  const [activeTab, setActiveTab] = useState<"profile" | "notes" | "emails" | "documents">("profile");
+  const [form, setForm] = useState({
+    email: contact.email || "",
+    phone: contact.phone || "",
+    whatsappNumber: contact.whatsappNumber || "",
+    linkedinUrl: contact.linkedinUrl || "",
+    contactType: contact.contactType || "lead",
+    notes: contact.notes || "",
+    organization: contact.organization || "",
+    jobTitle: contact.jobTitle || "",
+  });
+  const [newNote, setNewNote] = useState("");
+
+  const updateContact = trpc.crm.contacts.update.useMutation({
+    onSuccess: () => { toast.success("Contact updated"); onContactUpdated(); },
+    onError: (error: any) => toast.error(error.message),
+  });
+
+  // Fetch interactions (notes + activity)
+  const { data: interactions } = trpc.crm.interactions.list.useQuery({ contactId: contact.id });
+  // Fetch messaging history
+  const { data: msgHistory } = trpc.crm.contacts.getMessagingHistory.useQuery({ contactId: contact.id });
+
+  const addNote = trpc.crm.interactions.addNote.useMutation({
+    onSuccess: () => {
+      toast.success("Note added");
+      setNewNote("");
+      utils.crm.interactions.list.invalidate({ contactId: contact.id });
+    },
+    onError: (error: any) => toast.error(error.message),
+  });
+
+  const tabClass = (tab: string) => `px-3 py-1.5 text-sm font-medium rounded-md cursor-pointer transition-colors ${activeTab === tab ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`;
+
+  return (
+    <div className="space-y-4">
+      {/* Tab Navigation */}
+      <div className="flex gap-1 border-b pb-2">
+        <button className={tabClass("profile")} onClick={() => setActiveTab("profile")}>Profile</button>
+        <button className={tabClass("notes")} onClick={() => setActiveTab("notes")}>Notes & Activity</button>
+        <button className={tabClass("emails")} onClick={() => setActiveTab("emails")}>Email History</button>
+        <button className={tabClass("documents")} onClick={() => setActiveTab("documents")}>Documents</button>
+      </div>
+
+      {/* Profile Tab */}
+      {activeTab === "profile" && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs">Organization</Label>
+              <Input value={form.organization} onChange={(e) => setForm({ ...form, organization: e.target.value })} placeholder="Company name" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs">Job Title</Label>
+              <Input value={form.jobTitle} onChange={(e) => setForm({ ...form, jobTitle: e.target.value })} placeholder="Job title" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs">Email</Label>
+              <Input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="email@example.com" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs">Phone</Label>
+              <Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+1 (555) 000-0000" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs">WhatsApp</Label>
+              <Input value={form.whatsappNumber} onChange={(e) => setForm({ ...form, whatsappNumber: e.target.value })} placeholder="+1 (555) 000-0000" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs">LinkedIn</Label>
+              <Input value={form.linkedinUrl} onChange={(e) => setForm({ ...form, linkedinUrl: e.target.value })} placeholder="https://linkedin.com/in/..." />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs">Type</Label>
+              <Select value={form.contactType} onValueChange={(v) => setForm({ ...form, contactType: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="lead">Lead</SelectItem>
+                  <SelectItem value="prospect">Prospect</SelectItem>
+                  <SelectItem value="customer">Customer</SelectItem>
+                  <SelectItem value="partner">Partner</SelectItem>
+                  <SelectItem value="donor">Donor</SelectItem>
+                  <SelectItem value="vendor">Vendor</SelectItem>
+                  <SelectItem value="other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs">Source</Label>
+              <div className="capitalize text-sm pt-2">{contact.source?.replace(/_/g, " ") || "—"}</div>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-muted-foreground text-xs">Notes</Label>
+            <Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Notes about this contact..." rows={3} />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => onClose()}>Cancel</Button>
+            <Button onClick={() => updateContact.mutate({ id: contact.id, ...form })} disabled={updateContact.isPending}>
+              {updateContact.isPending ? "Saving..." : "Save Changes"}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Notes & Activity Tab */}
+      {activeTab === "notes" && (
+        <div className="space-y-4">
+          {/* Add Note */}
+          <div className="space-y-2">
+            <Label className="text-xs font-medium">Add a private note</Label>
+            <Textarea value={newNote} onChange={(e) => setNewNote(e.target.value)} placeholder="Write a note about this contact..." rows={2} />
+            <Button
+              size="sm"
+              disabled={!newNote.trim() || addNote.isPending}
+              onClick={() => addNote.mutate({ contactId: contact.id, content: newNote })}
+            >
+              {addNote.isPending ? "Adding..." : "Add Note"}
+            </Button>
+          </div>
+          {/* Activity Timeline */}
+          <div className="space-y-2">
+            <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Activity Timeline</Label>
+            {interactions && (interactions as any[]).length > 0 ? (
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {(interactions as any[]).map((i: any) => (
+                  <div key={i.id} className="p-2.5 border rounded-lg text-sm">
+                    <div className="flex items-center justify-between mb-1">
+                      <Badge variant="outline" className="text-xs">{i.channel || i.interactionType || "note"}</Badge>
+                      <span className="text-xs text-muted-foreground">
+                        {i.createdAt ? new Date(i.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : ""}
+                      </span>
+                    </div>
+                    <p className="text-sm">{i.content || i.summary || i.notes || "—"}</p>
+                    {i.sentiment && <Badge variant="secondary" className="text-xs mt-1">{i.sentiment}</Badge>}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground italic">No activity recorded yet.</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Email History Tab */}
+      {activeTab === "emails" && (
+        <div className="space-y-2">
+          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Email & Message History</Label>
+          {msgHistory && (msgHistory as any[]).length > 0 ? (
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {(msgHistory as any[]).map((msg: any, idx: number) => (
+                <div key={idx} className={`p-3 border rounded-lg text-sm ${msg.direction === "outbound" ? "ml-8 bg-primary/5" : "mr-8"}`}>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="text-xs">{msg.channel || "email"}</Badge>
+                      <span className="text-xs font-medium">{msg.direction === "outbound" ? "Sent" : "Received"}</span>
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      {msg.timestamp ? new Date(msg.timestamp).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : ""}
+                    </span>
+                  </div>
+                  {msg.subject && <p className="font-medium text-sm mb-1">{msg.subject}</p>}
+                  <p className="text-sm text-muted-foreground line-clamp-3">{msg.body || msg.content || msg.text || "—"}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground italic">No email history with this contact.</p>
+          )}
+        </div>
+      )}
+
+      {/* Documents Tab */}
+      {activeTab === "documents" && (
+        <div className="space-y-2">
+          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Documents & Attachments</Label>
+          <p className="text-sm text-muted-foreground italic">Documents associated with this contact will appear here. Upload attachments or link files from email conversations.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CRMHub() {
   const [category, setCategory] = useState<Category>("sales");
   const [search, setSearch] = useState("");
@@ -1561,192 +1758,14 @@ export default function CRMHub() {
         ].filter(Boolean).join(" at ")}
         width="lg"
       >
-        {selectedContact && (() => {
-          const ContactDetailView = () => {
-            const [activeTab, setActiveTab] = useState<"profile" | "notes" | "emails" | "documents">("profile");
-            const [form, setForm] = useState({
-              email: selectedContact.email || "",
-              phone: selectedContact.phone || "",
-              whatsappNumber: selectedContact.whatsappNumber || "",
-              linkedinUrl: selectedContact.linkedinUrl || "",
-              contactType: selectedContact.contactType || "lead",
-              notes: selectedContact.notes || "",
-              organization: selectedContact.organization || "",
-              jobTitle: selectedContact.jobTitle || "",
-              });
-              const [newNote, setNewNote] = useState("");
-
-              const updateContact = trpc.crm.contacts.update.useMutation({
-                onSuccess: () => { toast.success("Contact updated"); refetchContacts(); },
-                onError: (error: any) => toast.error(error.message),
-              });
-
-              // Fetch interactions (notes + activity)
-              const { data: interactions } = trpc.crm.interactions.list.useQuery({ contactId: selectedContact.id });
-              // Fetch messaging history
-              const { data: msgHistory } = trpc.crm.contacts.getMessagingHistory.useQuery({ contactId: selectedContact.id });
-
-              const addNote = trpc.crm.interactions.addNote.useMutation({
-                onSuccess: () => {
-                  toast.success("Note added");
-                  setNewNote("");
-                },
-                onError: (error: any) => toast.error(error.message),
-              });
-
-              const tabClass = (tab: string) => `px-3 py-1.5 text-sm font-medium rounded-md cursor-pointer transition-colors ${activeTab === tab ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`;
-
-              return (
-                <div className="space-y-4">
-                  {/* Tab Navigation */}
-                  <div className="flex gap-1 border-b pb-2">
-                    <button className={tabClass("profile")} onClick={() => setActiveTab("profile")}>Profile</button>
-                    <button className={tabClass("notes")} onClick={() => setActiveTab("notes")}>Notes & Activity</button>
-                    <button className={tabClass("emails")} onClick={() => setActiveTab("emails")}>Email History</button>
-                    <button className={tabClass("documents")} onClick={() => setActiveTab("documents")}>Documents</button>
-                  </div>
-
-                  {/* Profile Tab */}
-                  {activeTab === "profile" && (
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-1.5">
-                          <Label className="text-muted-foreground text-xs">Organization</Label>
-                          <Input value={form.organization} onChange={(e) => setForm({ ...form, organization: e.target.value })} placeholder="Company name" />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label className="text-muted-foreground text-xs">Job Title</Label>
-                          <Input value={form.jobTitle} onChange={(e) => setForm({ ...form, jobTitle: e.target.value })} placeholder="Job title" />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label className="text-muted-foreground text-xs">Email</Label>
-                          <Input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="email@example.com" />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label className="text-muted-foreground text-xs">Phone</Label>
-                          <Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+1 (555) 000-0000" />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label className="text-muted-foreground text-xs">WhatsApp</Label>
-                          <Input value={form.whatsappNumber} onChange={(e) => setForm({ ...form, whatsappNumber: e.target.value })} placeholder="+1 (555) 000-0000" />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label className="text-muted-foreground text-xs">LinkedIn</Label>
-                          <Input value={form.linkedinUrl} onChange={(e) => setForm({ ...form, linkedinUrl: e.target.value })} placeholder="https://linkedin.com/in/..." />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label className="text-muted-foreground text-xs">Type</Label>
-                          <Select value={form.contactType} onValueChange={(v) => setForm({ ...form, contactType: v })}>
-                            <SelectTrigger><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="lead">Lead</SelectItem>
-                              <SelectItem value="prospect">Prospect</SelectItem>
-                              <SelectItem value="customer">Customer</SelectItem>
-                              <SelectItem value="partner">Partner</SelectItem>
-                              <SelectItem value="donor">Donor</SelectItem>
-                              <SelectItem value="vendor">Vendor</SelectItem>
-                              <SelectItem value="other">Other</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label className="text-muted-foreground text-xs">Source</Label>
-                          <div className="capitalize text-sm pt-2">{selectedContact.source?.replace(/_/g, " ") || "—"}</div>
-                        </div>
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-muted-foreground text-xs">Notes</Label>
-                        <Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Notes about this contact..." rows={3} />
-                      </div>
-                      <div className="flex justify-end gap-2 pt-2">
-                        <Button variant="outline" onClick={() => setSelectedContact(null)}>Cancel</Button>
-                        <Button onClick={() => updateContact.mutate({ id: selectedContact.id, ...form })} disabled={updateContact.isPending}>
-                          {updateContact.isPending ? "Saving..." : "Save Changes"}
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Notes & Activity Tab */}
-                  {activeTab === "notes" && (
-                    <div className="space-y-4">
-                      {/* Add Note */}
-                      <div className="space-y-2">
-                        <Label className="text-xs font-medium">Add a private note</Label>
-                        <Textarea value={newNote} onChange={(e) => setNewNote(e.target.value)} placeholder="Write a note about this contact..." rows={2} />
-                        <Button
-                          size="sm"
-                          disabled={!newNote.trim() || addNote.isPending}
-                          onClick={() => addNote.mutate({ contactId: selectedContact.id, content: newNote } as any)}
-                        >
-                          {addNote.isPending ? "Adding..." : "Add Note"}
-                        </Button>
-                      </div>
-                      {/* Activity Timeline */}
-                      <div className="space-y-2">
-                        <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Activity Timeline</Label>
-                        {interactions && (interactions as any[]).length > 0 ? (
-                          <div className="space-y-2 max-h-64 overflow-y-auto">
-                            {(interactions as any[]).map((i: any) => (
-                              <div key={i.id} className="p-2.5 border rounded-lg text-sm">
-                                <div className="flex items-center justify-between mb-1">
-                                  <Badge variant="outline" className="text-xs">{i.channel || i.interactionType || "note"}</Badge>
-                                  <span className="text-xs text-muted-foreground">
-                                    {i.createdAt ? new Date(i.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : ""}
-                                  </span>
-                                </div>
-                                <p className="text-sm">{i.content || i.summary || i.notes || "—"}</p>
-                                {i.sentiment && <Badge variant="secondary" className="text-xs mt-1">{i.sentiment}</Badge>}
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="text-sm text-muted-foreground italic">No activity recorded yet.</p>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Email History Tab */}
-                  {activeTab === "emails" && (
-                    <div className="space-y-2">
-                      <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Email & Message History</Label>
-                      {msgHistory && (msgHistory as any[]).length > 0 ? (
-                        <div className="space-y-2 max-h-96 overflow-y-auto">
-                          {(msgHistory as any[]).map((msg: any, idx: number) => (
-                            <div key={idx} className={`p-3 border rounded-lg text-sm ${msg.direction === "outbound" ? "ml-8 bg-primary/5" : "mr-8"}`}>
-                              <div className="flex items-center justify-between mb-1">
-                                <div className="flex items-center gap-2">
-                                  <Badge variant="outline" className="text-xs">{msg.channel || "email"}</Badge>
-                                  <span className="text-xs font-medium">{msg.direction === "outbound" ? "Sent" : "Received"}</span>
-                                </div>
-                                <span className="text-xs text-muted-foreground">
-                                  {msg.timestamp ? new Date(msg.timestamp).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : ""}
-                                </span>
-                              </div>
-                              {msg.subject && <p className="font-medium text-sm mb-1">{msg.subject}</p>}
-                              <p className="text-sm text-muted-foreground line-clamp-3">{msg.body || msg.content || msg.text || "—"}</p>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-sm text-muted-foreground italic">No email history with this contact.</p>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Documents Tab */}
-                  {activeTab === "documents" && (
-                    <div className="space-y-2">
-                      <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Documents & Attachments</Label>
-                      <p className="text-sm text-muted-foreground italic">Documents associated with this contact will appear here. Upload attachments or link files from email conversations.</p>
-                    </div>
-                  )}
-                </div>
-              );
-            };
-            return <ContactDetailView />;
-          })()}
+        {selectedContact && (
+          <ContactDetailView
+            key={selectedContact.id}
+            contact={selectedContact}
+            onClose={() => setSelectedContact(null)}
+            onContactUpdated={refetchContacts}
+          />
+        )}
       </DetailSheet>
 
       <TagsManagerDialog open={showTagsManager} onClose={() => setShowTagsManager(false)} />

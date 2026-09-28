@@ -75,9 +75,14 @@ export default function RawMaterials() {
   
   const handleUpdate = () => {
     if (!editingMaterial) return;
+    // Send only the fields the dialog edits. The row comes straight from the DB with nullable
+    // columns as `null`, but the update schema is `.optional()` (undefined), not `.nullable()`.
     updateMaterial.mutate({
       id: editingMaterial.id,
-      ...editingMaterial,
+      name: editingMaterial.name ?? undefined,
+      sku: editingMaterial.sku ?? undefined,
+      unitCost: editingMaterial.unitCost ?? undefined,
+      status: editingMaterial.status ?? undefined,
     });
   };
   

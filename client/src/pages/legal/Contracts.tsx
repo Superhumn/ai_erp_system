@@ -33,6 +33,7 @@ import {
 import { FileText, Plus, Search, Loader2, Calendar, CheckCircle2, CalendarPlus } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { parseDateInput } from "@/lib/dateInput";
 import { formatCurrency } from "@/lib/format";
 import { getStatusColor } from "@/lib/statusColors";
 import { DetailSheet } from "@/components/DetailSheet";
@@ -133,8 +134,8 @@ export default function Contracts() {
       title: formData.title,
       type: formData.type,
       partyName: formData.partyName || undefined,
-      startDate: formData.startDate ? new Date(formData.startDate) : undefined,
-      endDate: formData.endDate ? new Date(formData.endDate) : undefined,
+      startDate: parseDateInput(formData.startDate),
+      endDate: parseDateInput(formData.endDate),
       value: formData.value || undefined,
       description: formData.description || undefined,
     });
@@ -456,11 +457,12 @@ export default function Contracts() {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              if (!selectedContract || !keyDateForm.date) return;
+              const keyDate = parseDateInput(keyDateForm.date);
+              if (!selectedContract || !keyDate) return;
               addKeyDate.mutate({
                 contractId: selectedContract.id,
                 dateType: keyDateForm.dateType,
-                date: new Date(keyDateForm.date),
+                date: keyDate,
                 description: keyDateForm.description || undefined,
                 reminderDays: keyDateForm.reminderDays
                   ? parseInt(keyDateForm.reminderDays)

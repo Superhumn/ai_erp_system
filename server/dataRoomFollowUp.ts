@@ -9,9 +9,16 @@ export async function sendDataRoomFollowUps() {
     const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const twoWeeksAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
 
-    // Get visitors who viewed 7-14 days ago and haven't been followed up
-    const allVisitors = await (db as any).getDataRoomVisitors?.();
-    if (!allVisitors) return { sent: 0 };
+    // Visitors are stored per data room, so collect them room by room.
+    const rooms = await db.getDataRooms();
+    if (!rooms || rooms.length === 0) return { sent: 0 };
+
+    const allVisitors: Awaited<ReturnType<typeof db.getDataRoomVisitors>> = [];
+    for (const room of rooms) {
+      const visitors = await db.getDataRoomVisitors(room.id);
+      if (visitors?.length) allVisitors.push(...visitors);
+    }
+    if (allVisitors.length === 0) return { sent: 0 };
 
     const { sendEmail } = await import("./_core/email");
     let sent = 0;

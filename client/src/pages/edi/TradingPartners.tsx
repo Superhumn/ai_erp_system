@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import { trpc } from "@/lib/trpc";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -49,6 +50,8 @@ import { Link } from "wouter";
 import { toast } from "sonner";
 
 export default function TradingPartners() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [filterStatus, setFilterStatus] = useState<string>("");
   const [filterType, setFilterType] = useState<string>("");
   const [showAddDialog, setShowAddDialog] = useState(false);
@@ -325,17 +328,19 @@ export default function TradingPartners() {
           >
             {sp.status}
           </Badge>
-          <div className="ml-auto">
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-destructive hover:text-destructive"
-              onClick={() => setPartnerToDelete(sp)}
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              Delete Partner
-            </Button>
-          </div>
+          {isAdmin && (
+            <div className="ml-auto">
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-destructive hover:text-destructive"
+                onClick={() => setPartnerToDelete(sp)}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete Partner
+              </Button>
+            </div>
+          )}
         </div>
 
         <Tabs defaultValue="overview">
@@ -641,14 +646,16 @@ export default function TradingPartners() {
                               >
                                 <Pencil className="h-3.5 w-3.5" />
                               </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="text-destructive hover:text-destructive"
-                                onClick={() => setCrosswalkToDelete(cw)}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
+                              {isAdmin && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="text-destructive hover:text-destructive"
+                                  onClick={() => setCrosswalkToDelete(cw)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
                             </div>
                           </td>
                         </tr>

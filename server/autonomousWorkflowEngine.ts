@@ -105,7 +105,9 @@ export class WorkflowEngine {
     // Generate run number
     const runNumber = `WF-${workflow.workflowType.toUpperCase().slice(0, 4)}-${Date.now().toString(36).toUpperCase()}`;
 
-    // Create workflow run
+    // Create workflow run. `$returningId()` only yields the new id, so keep the
+    // start timestamp locally for the duration calculation below.
+    const startedAt = new Date();
     const [run] = await this.db
       .insert(workflowRuns)
       .values({
@@ -113,9 +115,9 @@ export class WorkflowEngine {
         runNumber,
         status: "running",
         triggeredBy,
-        triggerData: JSON.stringify({ triggeredAt: new Date().toISOString(), ...inputData }),
+        triggerData: JSON.stringify({ triggeredAt: startedAt.toISOString(), ...inputData }),
         triggeredByUserId,
-        startedAt: new Date(),
+        startedAt,
         inputData: JSON.stringify(inputData),
         attemptNumber: 1,
       })
@@ -146,7 +148,7 @@ export class WorkflowEngine {
         .set({
           status: result.success ? "completed" : (result.pendingApprovals ? "awaiting_approval" : "failed"),
           completedAt: new Date(),
-          durationMs: Date.now() - new Date(run.startedAt || Date.now()).getTime(),
+          durationMs: Date.now() - startedAt.getTime(),
           outputData: JSON.stringify(result.outputData),
           itemsProcessed: result.itemsProcessed,
           itemsSucceeded: result.itemsSucceeded,

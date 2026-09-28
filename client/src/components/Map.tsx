@@ -107,6 +107,8 @@ function loadMapScript() {
     };
     script.onerror = () => {
       console.error("Failed to load Google Maps script");
+      script.remove();
+      resolve(null); // never leave `init` awaiting forever on a 404
     };
     document.head.appendChild(script);
   });
@@ -130,6 +132,11 @@ export function MapView({
 
   const init = usePersistFn(async () => {
     await loadMapScript();
+    if (!window.google?.maps) {
+      // Proxy not configured or the script failed to load — bail out rather
+      // than dereferencing window.google.maps and throwing.
+      return;
+    }
     if (!mapContainer.current) {
       console.error("Map container not found");
       return;

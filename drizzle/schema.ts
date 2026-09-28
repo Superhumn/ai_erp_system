@@ -991,6 +991,34 @@ export const disputes = mysqlTable("disputes", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+// Legal case tracker (client/src/pages/legal/CaseTracker.tsx, appRouter.legalCases).
+// Table name is snake_case to match the pre-existing production table that meta/0042_snapshot.json
+// introspected; companyId was added by 0068_legal_cases.sql.
+export const legalCases = mysqlTable("legal_cases", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  caseNumber: varchar("caseNumber", { length: 64 }),
+  title: varchar("title", { length: 255 }).notNull(),
+  type: mysqlEnum("type", ["trademark", "litigation", "compliance", "contract_dispute", "ip", "regulatory", "employment", "other"]).default("other"),
+  status: mysqlEnum("status", ["open", "pending", "in_review", "resolved", "closed", "dismissed"]).default("open"),
+  priority: mysqlEnum("priority", ["low", "medium", "high", "critical"]).default("medium"),
+  opposingParty: varchar("opposingParty", { length: 255 }),
+  attorney: varchar("attorney", { length: 255 }),
+  lawFirm: varchar("lawFirm", { length: 255 }),
+  filedDate: timestamp("filedDate"),
+  nextHearingDate: timestamp("nextHearingDate"),
+  jurisdiction: varchar("jurisdiction", { length: 128 }),
+  description: text("description"),
+  notes: text("notes"),
+  assignedTo: int("assignedTo"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
+});
+
+export type LegalCase = typeof legalCases.$inferSelect;
+export type InsertLegalCase = typeof legalCases.$inferInsert;
+
 export const documents = mysqlTable("documents", {
   id: int("id").autoincrement().primaryKey(),
   companyId: int("companyId"),

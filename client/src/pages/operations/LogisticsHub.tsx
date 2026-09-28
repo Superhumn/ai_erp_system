@@ -429,17 +429,12 @@ export default function LogisticsHub() {
           selectedShipment && (
             <>
               {selectedShipment.status === "pending" && (
-                <Button size="sm" variant="outline" onClick={() => updateShipmentStatus.mutate({ id: selectedShipment.id, status: "picked_up" } as any)}>
-                  Mark Picked Up
-                </Button>
-              )}
-              {selectedShipment.status === "picked_up" && (
-                <Button size="sm" variant="outline" onClick={() => updateShipmentStatus.mutate({ id: selectedShipment.id, status: "in_transit" } as any)}>
+                <Button size="sm" variant="outline" onClick={() => updateShipmentStatus.mutate({ id: selectedShipment.id, status: "in_transit" })}>
                   Mark In Transit
                 </Button>
               )}
               {selectedShipment.status === "in_transit" && (
-                <Button size="sm" variant="outline" onClick={() => updateShipmentStatus.mutate({ id: selectedShipment.id, status: "delivered" } as any)}>
+                <Button size="sm" variant="outline" onClick={() => updateShipmentStatus.mutate({ id: selectedShipment.id, status: "delivered" })}>
                   Mark Delivered
                 </Button>
               )}

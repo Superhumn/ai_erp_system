@@ -75,7 +75,8 @@ export default function CRMInvestors() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    createInvestor.mutate(formData);
+    // Server schema is `z.string().email().optional()` — an empty string fails validation.
+    createInvestor.mutate({ ...formData, email: formData.email || undefined });
   };
 
   const filteredInvestors = investors?.filter((investor: any) => {

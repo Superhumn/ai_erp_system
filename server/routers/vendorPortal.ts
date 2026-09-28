@@ -7,11 +7,45 @@ import { storagePut } from "../storage";
 import { nanoid } from "nanoid";
 import { vendorProcedure, createAuditLog } from "./_shared";
 
+type VendorPortalUser = { role: string; linkedVendorId: number | null };
+
+// A vendor-role user with no linked vendor must never fall through to the
+// unfiltered (admin/ops) branch. Returns true when vendor filtering applies.
+function isVendorUser(user: VendorPortalUser): boolean {
+  return user.role === 'vendor';
+}
+
+function assertVendorLinked(user: VendorPortalUser): void {
+  if (isVendorUser(user) && !user.linkedVendorId) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Your account is not linked to a vendor' });
+  }
+}
+
+// Resolve the vendor that owns a PO / shipment / customs clearance, or null when the
+// chain is broken (missing row or unlinked shipment).
+async function vendorIdForPurchaseOrder(poId: number): Promise<number | null> {
+  const po = await db.getPurchaseOrderById(poId);
+  return po ? po.vendorId : null;
+}
+
+async function vendorIdForShipment(shipmentId: number): Promise<number | null> {
+  const shipment = await db.getShipmentById(shipmentId);
+  if (!shipment?.purchaseOrderId) return null;
+  return vendorIdForPurchaseOrder(shipment.purchaseOrderId);
+}
+
+async function vendorIdForClearance(clearanceId: number): Promise<number | null> {
+  const clearance = await db.getCustomsClearanceById(clearanceId);
+  if (!clearance?.shipmentId) return null;
+  return vendorIdForShipment(clearance.shipmentId);
+}
+
 // Vendor Portal - restricted views for vendors
 export const vendorPortalRouter = router({
     // Get purchase orders for vendor
     getPurchaseOrders: vendorProcedure.query(async ({ ctx }) => {
-      if (ctx.user.role === 'vendor' && ctx.user.linkedVendorId) {
+      if (isVendorUser(ctx.user)) {
+        if (!ctx.user.linkedVendorId) return [];
         const allPOs = await db.getPurchaseOrders();
         return allPOs.filter(po => po.vendorId === ctx.user.linkedVendorId);
       }
@@ -34,11 +68,11 @@ export const vendorPortalRouter = router({
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        assertVendorLinked(ctx.user);
         // Verify vendor has access to this PO
-        if (ctx.user.role === 'vendor' && ctx.user.linkedVendorId) {
-          const allPOs = await db.getPurchaseOrders();
-          const po = allPOs.find(p => p.id === input.poId);
-          if (!po || po.vendorId !== ctx.user.linkedVendorId) {
+        if (isVendorUser(ctx.user)) {
+          const ownerVendorId = await vendorIdForPurchaseOrder(input.poId);
+          if (ownerVendorId == null || ownerVendorId !== ctx.user.linkedVendorId) {
             throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this purchase order' });
           }
         }
@@ -53,7 +87,8 @@ export const vendorPortalRouter = router({
 
     // Get shipments for vendor
     getShipments: vendorProcedure.query(async ({ ctx }) => {
-      if (ctx.user.role === 'vendor' && ctx.user.linkedVendorId) {
+      if (isVendorUser(ctx.user)) {
+        if (!ctx.user.linkedVendorId) return [];
         const allShipments = await db.getShipments();
         // Filter shipments related to vendor's POs
         const vendorPOs = await db.getPurchaseOrders();
@@ -76,14 +111,15 @@ export const vendorPortalRouter = router({
         mimeType: z.string(),
       }))
       .mutation(async ({ input, ctx }) => {
-        // Verify vendor has access
-        if (ctx.user.role === 'vendor' && ctx.user.linkedVendorId) {
-          if (input.relatedEntityType === 'purchase_order') {
-            const allPOs = await db.getPurchaseOrders();
-            const po = allPOs.find(p => p.id === input.relatedEntityId);
-            if (!po || po.vendorId !== ctx.user.linkedVendorId) {
-              throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this purchase order' });
-            }
+        assertVendorLinked(ctx.user);
+        // Verify vendor owns the PO, or the PO behind the shipment.
+        if (isVendorUser(ctx.user)) {
+          const ownerVendorId = input.relatedEntityType === 'purchase_order'
+            ? await vendorIdForPurchaseOrder(input.relatedEntityId)
+            : await vendorIdForShipment(input.relatedEntityId);
+          if (ownerVendorId == null || ownerVendorId !== ctx.user.linkedVendorId) {
+            const label = input.relatedEntityType === 'purchase_order' ? 'purchase order' : 'shipment';
+            throw new TRPCError({ code: 'FORBIDDEN', message: `You do not have access to this ${label}` });
           }
         }
 
@@ -112,8 +148,9 @@ export const vendorPortalRouter = router({
 
     // Get customs clearances accessible to vendor (filtered by their POs/shipments)
     getCustomsClearances: vendorProcedure.query(async ({ ctx }) => {
+      if (isVendorUser(ctx.user) && !ctx.user.linkedVendorId) return [];
       const allClearances = await db.getCustomsClearances();
-      if (ctx.user.role === 'vendor' && ctx.user.linkedVendorId) {
+      if (isVendorUser(ctx.user)) {
         const allPOs = await db.getPurchaseOrders();
         const vendorPOIds = new Set(allPOs.filter(po => po.vendorId === ctx.user.linkedVendorId).map(po => po.id));
         const allShipments = await db.getShipments();
@@ -127,17 +164,10 @@ export const vendorPortalRouter = router({
     getCustomsDocuments: vendorProcedure
       .input(z.object({ clearanceId: z.number() }))
       .query(async ({ input, ctx }) => {
-        if (ctx.user.role === 'vendor' && ctx.user.linkedVendorId) {
-          const clearance = await db.getCustomsClearanceById(input.clearanceId);
-          if (!clearance?.shipmentId) {
-            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
-          }
-          const shipment = await db.getShipmentById(clearance.shipmentId);
-          if (!shipment?.purchaseOrderId) {
-            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
-          }
-          const po = await db.getPurchaseOrderById(shipment.purchaseOrderId);
-          if (!po || po.vendorId !== ctx.user.linkedVendorId) {
+        assertVendorLinked(ctx.user);
+        if (isVendorUser(ctx.user)) {
+          const ownerVendorId = await vendorIdForClearance(input.clearanceId);
+          if (ownerVendorId == null || ownerVendorId !== ctx.user.linkedVendorId) {
             throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
           }
         }
@@ -153,8 +183,14 @@ export const vendorPortalRouter = router({
         mimeType: z.string(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const { storagePut } = await import('../storage');
-        const { nanoid } = await import('nanoid');
+        assertVendorLinked(ctx.user);
+        // Same clearance -> shipment -> PO -> vendor ownership chain as getCustomsDocuments.
+        if (isVendorUser(ctx.user)) {
+          const ownerVendorId = await vendorIdForClearance(input.clearanceId);
+          if (ownerVendorId == null || ownerVendorId !== ctx.user.linkedVendorId) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
+          }
+        }
         const buffer = Buffer.from(input.fileData, 'base64');
         const fileKey = `vendor/${ctx.user.linkedVendorId || 'unknown'}/customs/${input.clearanceId}/${nanoid()}-${input.name}`;
         const { url } = await storagePut(fileKey, buffer, input.mimeType);

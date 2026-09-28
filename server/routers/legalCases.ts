@@ -1,13 +1,28 @@
 // appRouter.legalCases — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
-import { legalProcedure } from "./_shared";
+import { legalCases } from "../../drizzle/schema";
+import { legalProcedure, resolveRequestScope, assertNonEmptyScope } from "./_shared";
 
 // ============================================
 // LEGAL CASES
 // ============================================
+const caseTypeEnum = z.enum(['trademark','litigation','compliance','contract_dispute','ip','regulatory','employment','other']);
+const caseStatusEnum = z.enum(['open','pending','in_review','resolved','closed','dismissed']);
+const casePriorityEnum = z.enum(['low','medium','high','critical']);
+
+/** The client sends `<input type="date">` values (YYYY-MM-DD); the columns are timestamps. */
+function toDate(value: string | undefined): Date | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === '') return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) throw new TRPCError({ code: 'BAD_REQUEST', message: `Invalid date: ${value}` });
+  return d;
+}
+
 export const legalCasesRouter = router({
     list: protectedProcedure
       .input(z.object({
@@ -15,27 +30,29 @@ export const legalCasesRouter = router({
         type: z.string().optional(),
         priority: z.string().optional(),
       }).optional())
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         const database = await db.getDb();
         if (!database) return [];
-        const conditions: string[] = [];
-        const params: any[] = [];
-        if (input?.status) { conditions.push('status = ?'); params.push(input.status); }
-        if (input?.type) { conditions.push('type = ?'); params.push(input.type); }
-        if (input?.priority) { conditions.push('priority = ?'); params.push(input.priority); }
-        const where = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
-        const conn = (database as any)._.session?.client;
-        if (!conn) return [];
-        const [rows] = await conn.query('SELECT * FROM legal_cases' + where + ' ORDER BY createdAt DESC', params);
-        return rows as any[];
+        const scope = assertNonEmptyScope(await resolveRequestScope(ctx.user));
+        const conditions = [];
+        if (scope.companyIds !== 'all') conditions.push(inArray(legalCases.companyId, scope.companyIds));
+        if (input?.status) conditions.push(eq(legalCases.status, input.status as typeof legalCases.status.enumValues[number]));
+        if (input?.type) conditions.push(eq(legalCases.type, input.type as typeof legalCases.type.enumValues[number]));
+        if (input?.priority) conditions.push(eq(legalCases.priority, input.priority as typeof legalCases.priority.enumValues[number]));
+        return database
+          .select()
+          .from(legalCases)
+          .where(conditions.length > 0 ? and(...conditions) : undefined)
+          .orderBy(desc(legalCases.createdAt));
       }),
     create: legalProcedure
       .input(z.object({
+        companyId: z.number().optional(),
         caseNumber: z.string().optional(),
         title: z.string().min(1),
-        type: z.enum(['trademark','litigation','compliance','contract_dispute','ip','regulatory','employment','other']).default('other'),
-        status: z.enum(['open','pending','in_review','resolved','closed','dismissed']).default('open'),
-        priority: z.enum(['low','medium','high','critical']).default('medium'),
+        type: caseTypeEnum.default('other'),
+        status: caseStatusEnum.default('open'),
+        priority: casePriorityEnum.default('medium'),
         opposingParty: z.string().optional(),
         attorney: z.string().optional(),
         lawFirm: z.string().optional(),
@@ -49,12 +66,14 @@ export const legalCasesRouter = router({
       .mutation(async ({ input, ctx }) => {
         const database = await db.getDb();
         if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
-        const conn = (database as any)._.session?.client;
-        if (!conn) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database connection not available' });
-        const [result] = await conn.query(
-          'INSERT INTO legal_cases (caseNumber, title, type, status, priority, opposingParty, attorney, lawFirm, filedDate, nextHearingDate, jurisdiction, description, notes, assignedTo, createdBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [input.caseNumber || null, input.title, input.type, input.status, input.priority, input.opposingParty || null, input.attorney || null, input.lawFirm || null, input.filedDate || null, input.nextHearingDate || null, input.jurisdiction || null, input.description || null, input.notes || null, input.assignedTo || null, ctx.user.id]
-        );
+        const { filedDate, nextHearingDate, companyId, ...rest } = input;
+        const [result] = await database.insert(legalCases).values({
+          ...rest,
+          companyId: companyId ?? ctx.user.companyId ?? undefined,
+          filedDate: toDate(filedDate),
+          nextHearingDate: toDate(nextHearingDate),
+          createdBy: ctx.user.id,
+        });
         return { id: result.insertId, success: true };
       }),
     update: legalProcedure
@@ -62,9 +81,9 @@ export const legalCasesRouter = router({
         id: z.number(),
         caseNumber: z.string().optional(),
         title: z.string().optional(),
-        type: z.enum(['trademark','litigation','compliance','contract_dispute','ip','regulatory','employment','other']).optional(),
-        status: z.enum(['open','pending','in_review','resolved','closed','dismissed']).optional(),
-        priority: z.enum(['low','medium','high','critical']).optional(),
+        type: caseTypeEnum.optional(),
+        status: caseStatusEnum.optional(),
+        priority: casePriorityEnum.optional(),
         opposingParty: z.string().optional(),
         attorney: z.string().optional(),
         lawFirm: z.string().optional(),
@@ -78,13 +97,15 @@ export const legalCasesRouter = router({
       .mutation(async ({ input }) => {
         const database = await db.getDb();
         if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
-        const conn = (database as any)._.session?.client;
-        if (!conn) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database connection not available' });
-        const { id, ...fields } = input;
-        const sets = Object.entries(fields).filter(([, v]) => v !== undefined).map(([k]) => `${k} = ?`);
-        const vals = Object.entries(fields).filter(([, v]) => v !== undefined).map(([, v]) => v);
-        if (sets.length === 0) return { success: true };
-        await conn.query('UPDATE legal_cases SET ' + sets.join(', ') + ' WHERE id = ?', [...vals, id]);
+        const { id, filedDate, nextHearingDate, ...rest } = input;
+        const fields = {
+          ...rest,
+          filedDate: toDate(filedDate),
+          nextHearingDate: toDate(nextHearingDate),
+        };
+        const set = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
+        if (Object.keys(set).length === 0) return { success: true };
+        await database.update(legalCases).set(set).where(eq(legalCases.id, id));
         return { success: true };
       }),
   });

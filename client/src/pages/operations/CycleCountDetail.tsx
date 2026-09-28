@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,6 +19,9 @@ import type { CycleCountType } from "@shared/inventoryAdjustments";
 
 export function CycleCountDetail({ countId, onBack }: { countId: number; onBack: () => void }) {
   const utils = trpc.useUtils();
+  const { user } = useAuth();
+  // cycleCounts.approve is adminProcedure on the server; mirror that in the UI.
+  const isAdmin = user?.role === "admin";
   const [drafts, setDrafts] = useState<Record<number, string>>({});
   const [reasons, setReasons] = useState<Record<number, AdjustmentReasonCode>>({});
 
@@ -144,7 +148,7 @@ export function CycleCountDetail({ countId, onBack }: { countId: number; onBack:
               <Send className="mr-2 h-4 w-4" />Submit for review
             </Button>
           )}
-          {isReview && (
+          {isReview && isAdmin && (
             <Button
               disabled={approveMutation.isPending}
               onClick={() => approveMutation.mutate({ id: countId })}

@@ -1,5 +1,5 @@
 import { getDb } from "../../../db";
-import { eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import * as schema from "../../../../drizzle/schema";
 import type { ToolAdapterInput, ToolAdapterResult } from "../../types";
 
@@ -47,6 +47,11 @@ export async function queryDatabase(input: ToolAdapterInput): Promise<ToolAdapte
   const db = await getDb();
   if (!db) throw new Error("Database connection unavailable");
   const { table: tableName, filters, limit: requestedLimit } = input;
+  // Company scope injected by the agent loop (from the run's context), not by the model.
+  const scopeCompanyId =
+    typeof input.scopeCompanyId === "number" && Number.isFinite(input.scopeCompanyId)
+      ? input.scopeCompanyId
+      : undefined;
 
   if (!tableName) {
     return { success: false, error: "table name is required" };
@@ -64,19 +69,36 @@ export async function queryDatabase(input: ToolAdapterInput): Promise<ToolAdapte
   const limit = Math.min(requestedLimit ?? DEFAULT_LIMIT, MAX_LIMIT);
 
   try {
-    let query = db.select().from(tableRef);
+    // Collect every condition and apply them in ONE .where(and(...)) call —
+    // Drizzle's .where() replaces (not appends to) the previous condition, so
+    // chaining it per-filter would silently keep only the last filter.
+    const conditions: any[] = [];
+    const companyCol = (tableRef as any).companyId;
+
+    if (scopeCompanyId !== undefined && companyCol) {
+      conditions.push(eq(companyCol, scopeCompanyId));
+    }
 
     // Apply simple equality filters
     if (filters && typeof filters === "object") {
       for (const [column, value] of Object.entries(filters)) {
+        // The run's company scope wins over a model-supplied companyId filter.
+        if (column === "companyId" && scopeCompanyId !== undefined && companyCol) continue;
         const col = (tableRef as any)[column];
         if (col) {
-          query = query.where(eq(col, value)) as any;
+          conditions.push(eq(col, value));
         }
       }
     }
 
-    const rows = await (query as any).limit(limit);
+    let query: any = db.select().from(tableRef);
+    if (conditions.length === 1) {
+      query = query.where(conditions[0]);
+    } else if (conditions.length > 1) {
+      query = query.where(and(...conditions));
+    }
+
+    const rows = await query.limit(limit);
     return { success: true, data: rows, rowCount: rows.length };
   } catch (err) {
     return {

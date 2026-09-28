@@ -51,6 +51,16 @@ import {
   Download,
 } from "lucide-react";
 
+// Must stay a subset of the `shippingMode` enum in freight.discoverCarriers (server/routers/freight.ts).
+export const SHIPPING_MODES = [
+  { value: "ocean", label: "Ocean" },
+  { value: "air", label: "Air" },
+  { value: "ground", label: "Ground" },
+  { value: "rail", label: "Rail" },
+  { value: "multimodal", label: "Multimodal" },
+] as const;
+export type ShippingMode = typeof SHIPPING_MODES[number]["value"];
+
 const carrierTypeIcons: Record<string, React.ReactNode> = {
   ocean: <Ship className="h-4 w-4" />,
   air: <Plane className="h-4 w-4" />,
@@ -104,7 +114,13 @@ export default function Carriers() {
   const [isDiscoverOpen, setIsDiscoverOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
-  const [discoverForm, setDiscoverForm] = useState({ origin: "", destination: "", cargoType: "", shippingMode: "" as string, specialRequirements: "" });
+  const [discoverForm, setDiscoverForm] = useState<{
+    origin: string;
+    destination: string;
+    cargoType: string;
+    shippingMode: ShippingMode | "";
+    specialRequirements: string;
+  }>({ origin: "", destination: "", cargoType: "", shippingMode: "", specialRequirements: "" });
   const [discoveredCarriers, setDiscoveredCarriers] = useState<any[]>([]);
   const [sourcingCarrierId, setSourcingCarrierId] = useState<number | null>(null);
   const [formData, setFormData] = useState({
@@ -218,7 +234,8 @@ export default function Carriers() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    createMutation.mutate(formData);
+    // Server schema is `z.string().email().optional()` — an empty string fails validation.
+    createMutation.mutate({ ...formData, email: formData.email || undefined });
   };
 
   const toggleActive = (id: number, isActive: boolean) => {
@@ -395,15 +412,13 @@ export default function Carriers() {
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">Shipping Mode</Label>
-                <Select value={discoverForm.shippingMode || "any"} onValueChange={(v) => setDiscoverForm({ ...discoverForm, shippingMode: v === "any" ? "" : v })}>
+                <Select value={discoverForm.shippingMode || "any"} onValueChange={(v) => setDiscoverForm({ ...discoverForm, shippingMode: v === "any" ? "" : (v as ShippingMode) })}>
                   <SelectTrigger><SelectValue placeholder="Any" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="any">Any Mode</SelectItem>
-                    <SelectItem value="ocean">Ocean</SelectItem>
-                    <SelectItem value="air">Air</SelectItem>
-                    <SelectItem value="ground">Ground</SelectItem>
-                    <SelectItem value="rail">Rail</SelectItem>
-                    <SelectItem value="multimodal">Multimodal</SelectItem>
+                    {SHIPPING_MODES.map((m) => (
+                      <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -413,7 +428,7 @@ export default function Carriers() {
               <Input placeholder="e.g. Temperature controlled, Oversized, DG certified" value={discoverForm.specialRequirements} onChange={(e) => setDiscoverForm({ ...discoverForm, specialRequirements: e.target.value })} />
             </div>
             <Button
-              onClick={() => discoverMutation.mutate(discoverForm as any)}
+              onClick={() => discoverMutation.mutate({ ...discoverForm, shippingMode: discoverForm.shippingMode || undefined })}
               disabled={discoverMutation.isPending}
               className="w-full"
             >

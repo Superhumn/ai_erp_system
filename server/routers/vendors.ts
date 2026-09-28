@@ -49,7 +49,7 @@ export const vendorsRouter = router({
         await createAuditLog(ctx.user.id, 'create', 'vendor', result.id, input.name);
         return result;
       }),
-    update: adminProcedure
+    update: opsProcedure
       .input(z.object({
         id: z.number(),
         name: z.string().optional(),

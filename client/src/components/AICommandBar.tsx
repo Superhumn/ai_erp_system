@@ -12,6 +12,7 @@ import {
   Send, X, CheckCircle, Clock, Building, AlertCircle, Box, Mail, Mic, MicOff, Square
 } from "lucide-react";
 import { useLocation } from "wouter";
+import { format, parseISO } from "date-fns";
 import { QuickCreateDialog } from "@/components/QuickCreateDialog";
 import type { AgentStreamEvent } from "@shared/aiChat";
 
@@ -411,7 +412,7 @@ function parseIntent(query: string): ParsedIntent {
         quantity: parsedQuantity?.value || 1,
         quantityUnit: parsedQuantity?.unit || 'units',
         unitCost: null,
-        requiredDate: parsedDate?.date.toISOString() || null,
+        requiredDate: parsedDate ? format(parsedDate.date, "yyyy-MM-dd") : null,
         requiredDateText: parsedDate?.originalText || null,
         vendorId: null
       },
@@ -426,7 +427,7 @@ function parseIntent(query: string): ParsedIntent {
       taskType: "send_rfq",
       taskData: {
         description: query,
-        requiredDate: parsedDate?.date.toISOString() || null,
+        requiredDate: parsedDate ? format(parsedDate.date, "yyyy-MM-dd") : null,
         requiredDateText: parsedDate?.originalText || null,
       },
       description: `Send RFQ${parsedDate ? ` (needed by ${parsedDate.originalText})` : ''}`
@@ -456,7 +457,7 @@ function parseIntent(query: string): ParsedIntent {
         description: query,
         quantity: parsedQuantity?.value || null,
         quantityUnit: parsedQuantity?.unit || null,
-        requiredDate: parsedDate?.date.toISOString() || null,
+        requiredDate: parsedDate ? format(parsedDate.date, "yyyy-MM-dd") : null,
       },
       description: `Create work order${parsedQuantity ? ` for ${parsedQuantity.value} ${parsedQuantity.unit}` : ''}${parsedDate ? ` by ${parsedDate.originalText}` : ''}`
     };
@@ -728,6 +729,10 @@ export function AICommandBar({ context }: AICommandBarProps) {
   // Voice input
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<any>(null);
+  // Voice auto-submit fires from a long-lived recognition callback; route it
+  // through a ref so it always sees the latest handleSubmit (agentMode,
+  // context, selected vendor/material) instead of the first-render closure.
+  const handleSubmitRef = useRef<(q: string, forceTaskType?: TaskType) => void>(() => {});
 
   const startVoiceInput = useCallback(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -752,7 +757,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
       if (recognitionRef.current?._autoSubmit) {
         setTimeout(() => {
           const currentQuery = (inputRef.current as any)?.value || "";
-          if (currentQuery.trim()) handleSubmit(currentQuery);
+          if (currentQuery.trim()) handleSubmitRef.current(currentQuery);
         }, 300);
       }
     };
@@ -991,7 +996,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
         description: `Work Order #${data.workOrderNumber} has been created`
       });
       utils.workOrders.list.invalidate();
-      setLocation("/operations/manufacturing");
+      setLocation("/operations/work-orders");
       setIsExpanded(false);
     },
     onError: (error) => {
@@ -1256,7 +1261,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
           : null;
     
     const parsedQty = intent.taskData?.quantity || null;
-    const parsedDate = intent.taskData?.requiredDate ? new Date(intent.taskData.requiredDate) : null;
+    const parsedDate = intent.taskData?.requiredDate ? parseISO(intent.taskData.requiredDate) : null;
     const lastPrice = vendorSuggestion?.lastPurchasePrice ? parseFloat(vendorSuggestion.lastPurchasePrice) : null;
     const estimatedPrice = parsedQty && lastPrice ? parsedQty * lastPrice : null;
     
@@ -1271,7 +1276,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
       originalQuery: q
     });
     setEditingQuantity(parsedQty?.toString() || "");
-    setEditingDate(parsedDate ? parsedDate.toISOString().split('T')[0] : "");
+    setEditingDate(parsedDate ? format(parsedDate, "yyyy-MM-dd") : "");
     // Pre-populate material search with extracted material name so user doesn't have to retype
     if (!material && intent.taskData?.rawMaterialName) {
       setMaterialSearch(intent.taskData.rawMaterialName);
@@ -1279,6 +1284,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
     }
     setShowDraftPreview(true);
   }, [context, streamAgentChat, agentMode, enrichVendor, vendorSuggestion, selectedVendorId, vendorsQuery.data, selectedMaterial]);
+  handleSubmitRef.current = handleSubmit;
 
   // Submit the draft after preview/editing
   const handleSubmitDraft = useCallback(async () => {
@@ -1305,7 +1311,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
         // Quantity and date from editing
         quantity: editingQuantity ? parseFloat(editingQuantity) : draftData.quantity,
         unit: draftData.unit,
-        requiredDate: editingDate || (draftData.requiredDate ? draftData.requiredDate.toISOString() : null),
+        requiredDate: editingDate || (draftData.requiredDate ? format(draftData.requiredDate, "yyyy-MM-dd") : null),
         estimatedPrice: draftData.estimatedPrice,
         needsVendorSelection: !draftData.vendor,
       };
@@ -1559,7 +1565,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
                     variant="default"
                     size="sm"
                     onClick={() => {
-                      setLocation("/logistics");
+                      setLocation("/operations/logistics-hub");
                       setIsExpanded(false);
                     }}
                   >
@@ -1571,7 +1577,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
                     variant="default"
                     size="sm"
                     onClick={() => {
-                      setLocation("/procurement");
+                      setLocation("/operations/vendors");
                       setIsExpanded(false);
                     }}
                   >
@@ -1583,7 +1589,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
                     variant="default"
                     size="sm"
                     onClick={() => {
-                      setLocation("/procurement");
+                      setLocation("/operations/raw-materials");
                       setIsExpanded(false);
                     }}
                   >
@@ -1595,7 +1601,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
                     variant="default"
                     size="sm"
                     onClick={() => {
-                      setLocation("/sales");
+                      setLocation("/operations/products");
                       setIsExpanded(false);
                     }}
                   >
@@ -1607,7 +1613,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
                     variant="default"
                     size="sm"
                     onClick={() => {
-                      setLocation("/sales");
+                      setLocation("/sales/customers");
                       setIsExpanded(false);
                     }}
                   >
@@ -1619,7 +1625,7 @@ export function AICommandBar({ context }: AICommandBarProps) {
                     variant="default"
                     size="sm"
                     onClick={() => {
-                      setLocation("/manufacturing");
+                      setLocation("/operations/work-orders");
                       setIsExpanded(false);
                     }}
                   >
@@ -2056,11 +2062,11 @@ export function AICommandBar({ context }: AICommandBarProps) {
               <button
                 className="text-primary hover:underline font-medium"
                 onClick={() => {
-                  setLocation("/procurement");
+                  setLocation("/operations/vendors");
                   setIsExpanded(false);
                 }}
               >
-                View in Procurement
+                View Vendors
               </button>
             </div>
           );
@@ -2088,11 +2094,11 @@ export function AICommandBar({ context }: AICommandBarProps) {
               <button
                 className="text-primary hover:underline font-medium"
                 onClick={() => {
-                  setLocation("/procurement");
+                  setLocation("/operations/raw-materials");
                   setIsExpanded(false);
                 }}
               >
-                View in Procurement
+                View Raw Materials
               </button>
             </div>
           );
@@ -2110,11 +2116,11 @@ export function AICommandBar({ context }: AICommandBarProps) {
               <button
                 className="text-primary hover:underline font-medium"
                 onClick={() => {
-                  setLocation("/sales");
+                  setLocation("/operations/products");
                   setIsExpanded(false);
                 }}
               >
-                View in Sales Hub
+                View Products
               </button>
             </div>
           );
@@ -2132,11 +2138,11 @@ export function AICommandBar({ context }: AICommandBarProps) {
               <button
                 className="text-primary hover:underline font-medium"
                 onClick={() => {
-                  setLocation("/sales");
+                  setLocation("/sales/customers");
                   setIsExpanded(false);
                 }}
               >
-                View in Sales Hub
+                View Customers
               </button>
             </div>
           );

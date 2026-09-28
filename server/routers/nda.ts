@@ -5,6 +5,36 @@ import { publicProcedure, protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { storagePut } from "../storage";
 
+type NdaCtxUser = { id: number; role: string };
+
+/**
+ * Same ownership rule the sibling dataRoom procedures enforce: only the room owner or an admin may
+ * manage a room's NDA documents and signatures. Public signer procedures (token/email based) are
+ * deliberately not gated by this.
+ */
+async function assertRoomOwner(user: NdaCtxUser, dataRoomId: number) {
+  const room = await db.getDataRoomById(dataRoomId);
+  if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+  if (room.ownerId !== user.id && user.role !== 'admin') {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+  }
+  return room;
+}
+
+async function assertNdaDocumentOwner(user: NdaCtxUser, documentId: number) {
+  const doc = await db.getNdaDocumentById(documentId);
+  if (!doc) throw new TRPCError({ code: 'NOT_FOUND', message: 'NDA document not found' });
+  await assertRoomOwner(user, doc.dataRoomId);
+  return doc;
+}
+
+async function assertNdaSignatureOwner(user: NdaCtxUser, signatureId: number) {
+  const signature = await db.getNdaSignatureById(signatureId);
+  if (!signature) throw new TRPCError({ code: 'NOT_FOUND', message: 'NDA signature not found' });
+  await assertRoomOwner(user, signature.dataRoomId);
+  return signature;
+}
+
 // ============================================
 // NDA E-SIGNATURES
 // ============================================
@@ -13,7 +43,8 @@ export const ndaRouter = router({
     documents: router({
       list: protectedProcedure
         .input(z.object({ dataRoomId: z.number() }))
-        .query(async ({ input }) => {
+        .query(async ({ input, ctx }) => {
+          await assertRoomOwner(ctx.user, input.dataRoomId);
           return db.getNdaDocuments(input.dataRoomId);
         }),
 
@@ -37,6 +68,7 @@ export const ndaRouter = router({
           allowDrawnSignature: z.boolean().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
+          await assertRoomOwner(ctx.user, input.dataRoomId);
           const { fileContent, ...rest } = input;
           const buffer = Buffer.from(fileContent, 'base64');
           const key = `nda/${input.dataRoomId}/${Date.now()}-${input.name.replace(/[/\\]/g, '_')}`;
@@ -61,15 +93,17 @@ export const ndaRouter = router({
           allowTypedSignature: z.boolean().optional(),
           allowDrawnSignature: z.boolean().optional(),
         }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
           const { id, ...data } = input;
+          await assertNdaDocumentOwner(ctx.user, id);
           await db.updateNdaDocument(id, data);
           return { success: true };
         }),
 
       delete: protectedProcedure
         .input(z.object({ id: z.number() }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertNdaDocumentOwner(ctx.user, input.id);
           await db.deleteNdaDocument(input.id);
           return { success: true };
         }),
@@ -82,14 +116,15 @@ export const ndaRouter = router({
           dataRoomId: z.number(),
           status: z.string().optional(),
         }))
-        .query(async ({ input }) => {
+        .query(async ({ input, ctx }) => {
+          await assertRoomOwner(ctx.user, input.dataRoomId);
           return db.getNdaSignatures(input.dataRoomId, { status: input.status });
         }),
 
       getById: protectedProcedure
         .input(z.object({ id: z.number() }))
-        .query(async ({ input }) => {
-          return db.getNdaSignatureById(input.id);
+        .query(async ({ input, ctx }) => {
+          return assertNdaSignatureOwner(ctx.user, input.id);
         }),
 
       // Check if visitor has signed NDA (public)
@@ -226,6 +261,7 @@ export const ndaRouter = router({
           reason: z.string().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
+          await assertNdaSignatureOwner(ctx.user, input.id);
           await db.updateNdaSignature(input.id, {
             status: 'revoked',
             revokedAt: new Date(),
@@ -245,7 +281,8 @@ export const ndaRouter = router({
       // Get audit log for a signature
       auditLog: protectedProcedure
         .input(z.object({ signatureId: z.number() }))
-        .query(async ({ input }) => {
+        .query(async ({ input, ctx }) => {
+          await assertNdaSignatureOwner(ctx.user, input.signatureId);
           return db.getNdaAuditLogs(input.signatureId);
         }),
     }),

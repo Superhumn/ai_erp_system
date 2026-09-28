@@ -221,8 +221,10 @@ export const rdTaxCreditRouter = router({
         };
         const category = data.category ?? (existing.category as "wages" | "supplies" | "contract_research" | "cloud_computing");
         const gross = data.grossAmount != null ? parseAmount(data.grossAmount, 'grossAmount') : (parseFloat(existing.grossAmount ?? "0") || 0);
-        const rdPct = data.rdPercentage != null ? parseAmount(data.rdPercentage, 'rdPercentage') : (parseFloat(existing.rdPercentage ?? "100") || 100);
-        const contractRate = data.contractResearchRate != null ? parseAmount(data.contractResearchRate, 'contractResearchRate') : (parseFloat(existing.contractResearchRate ?? "65") || 65);
+        // Nullish (not falsy) fallbacks: a stored 0% / 0 rate is a real value and must not be
+        // silently recomputed at the 100% / 65% defaults.
+        const rdPct = data.rdPercentage != null ? parseAmount(data.rdPercentage, 'rdPercentage') : (existing.rdPercentage != null ? Number(existing.rdPercentage) : 100);
+        const contractRate = data.contractResearchRate != null ? parseAmount(data.contractResearchRate, 'contractResearchRate') : (existing.contractResearchRate != null ? Number(existing.contractResearchRate) : 65);
         const qualifiedAmount = String(computeQualifiedAmount(category, gross, rdPct, contractRate).toFixed(2));
         await db.updateRdExpense(id, { ...data, qualifiedAmount });
         await createAuditLog(ctx.user.id, 'update', 'rdExpense', id);

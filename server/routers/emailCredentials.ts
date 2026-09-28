@@ -10,6 +10,21 @@ import { decryptPassword } from "./_shared";
 // ============================================
 // EMAIL CREDENTIALS & SCHEDULED SCANNING
 // ============================================
+
+/**
+ * A scheduled scan belongs to whoever owns its credential. Mirrors the
+ * check in schedules.create / logs.list; NOT_FOUND so ids are not probeable.
+ */
+async function assertScheduledScanOwner(scanId: number, userId: number) {
+  const scan = await db.getScheduledScanById(scanId);
+  if (!scan) throw new TRPCError({ code: 'NOT_FOUND' });
+  const credential = await db.getEmailCredentialById(scan.credentialId);
+  if (!credential || credential.userId !== userId) {
+    throw new TRPCError({ code: 'NOT_FOUND' });
+  }
+  return scan;
+}
+
 export const emailCredentialsRouter = router({
     list: protectedProcedure.query(async ({ ctx }) => {
       const credentials = await db.getEmailCredentials(ctx.user.id);
@@ -156,7 +171,12 @@ export const emailCredentialsRouter = router({
             throw new TRPCError({ code: 'FORBIDDEN' });
           }
 
-          return db.getScheduledScans(input.credentialId);
+          if (input.credentialId) return db.getScheduledScans(input.credentialId);
+
+          // No credential given: only the caller's own schedules, never everyone's.
+          const allowed = new Set(credentialIds);
+          const scans = await db.getScheduledScans();
+          return scans.filter((scan) => allowed.has(scan.credentialId));
         }),
 
       create: protectedProcedure
@@ -181,7 +201,8 @@ export const emailCredentialsRouter = router({
           isEnabled: z.boolean().optional(),
           intervalMinutes: z.number().min(5).optional(),
         }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertScheduledScanOwner(input.id, ctx.user.id);
           const { id, intervalMinutes, ...data } = input;
           const updateData: any = { ...data };
 
@@ -198,7 +219,8 @@ export const emailCredentialsRouter = router({
 
       delete: protectedProcedure
         .input(z.object({ id: z.number() }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertScheduledScanOwner(input.id, ctx.user.id);
           await db.deleteScheduledScan(input.id);
           return { success: true };
         }),

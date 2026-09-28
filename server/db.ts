@@ -528,6 +528,14 @@ export async function updateLocalAuthCredential(openId: string, updates: Partial
     await db.update(localAuthCredentials).set(updates).where(eq(localAuthCredentials.openId, openId));
 }
 
+// Change a user's email and reset verification in one write (a new address is
+// unverified until the verification flow runs again).
+export async function setUserEmailUnverified(userId: number, email: string) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(users).set({ email, emailVerified: false }).where(eq(users.id, userId));
+}
+
 // ============================================
 // AUTH TOKENS (email verification, password reset)
 // ============================================
@@ -10524,6 +10532,20 @@ export async function updateDataRoomInvitation(id: number, data: Partial<InsertD
   await db.update(dataRoomInvitations).set(data).where(eq(dataRoomInvitations.id, id));
 }
 
+export async function getDataRoomLinkById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(dataRoomLinks).where(eq(dataRoomLinks.id, id)).limit(1);
+  return result[0] || null;
+}
+
+export async function getDataRoomInvitationById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(dataRoomInvitations).where(eq(dataRoomInvitations.id, id)).limit(1);
+  return result[0] || null;
+}
+
 // ============================================
 // IMAP CREDENTIALS MANAGEMENT
 // ============================================
@@ -10885,6 +10907,13 @@ export async function updateEmailCategory(id: number, data: {
   if (!db) return;
   
   await db.update(inboundEmails).set(data).where(eq(inboundEmails.id, id));
+}
+
+export async function getScheduledScanById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(scheduledEmailScans).where(eq(scheduledEmailScans.id, id)).limit(1);
+  return result[0] || null;
 }
 
 
@@ -15517,18 +15546,34 @@ export async function deleteTransactionalEmailTemplate(id: number) {
   await db.delete(transactionalEmailTemplates).where(eq(transactionalEmailTemplates.id, id));
 }
 
-export async function getEmailMessages(filters?: { status?: string; templateName?: string; relatedEntityType?: string; relatedEntityId?: number }) {
+export async function getEmailMessages(filters?: {
+  status?: string;
+  templateName?: string;
+  toEmail?: string;
+  relatedEntityType?: string;
+  relatedEntityId?: number;
+  fromDate?: Date;
+  toDate?: Date;
+  limit?: number;
+  offset?: number;
+}) {
   const db = await getDb();
   if (!db) return [];
   const conditions: any[] = [];
   if (filters?.status) conditions.push(eq(emailMessages.status, filters.status as any));
   if (filters?.templateName) conditions.push(eq(emailMessages.templateName, filters.templateName as any));
+  if (filters?.toEmail) conditions.push(eq(emailMessages.toEmail, filters.toEmail));
   if (filters?.relatedEntityType) conditions.push(eq(emailMessages.relatedEntityType, filters.relatedEntityType));
   if (filters?.relatedEntityId) conditions.push(eq(emailMessages.relatedEntityId, filters.relatedEntityId));
-  if (conditions.length > 0) {
-    return db.select().from(emailMessages).where(and(...conditions)).orderBy(desc(emailMessages.createdAt));
-  }
-  return db.select().from(emailMessages).orderBy(desc(emailMessages.createdAt));
+  if (filters?.fromDate) conditions.push(gte(emailMessages.createdAt, filters.fromDate));
+  if (filters?.toDate) conditions.push(lte(emailMessages.createdAt, filters.toDate));
+  const base = conditions.length > 0
+    ? db.select().from(emailMessages).where(and(...conditions))
+    : db.select().from(emailMessages);
+  return base
+    .orderBy(desc(emailMessages.createdAt))
+    .limit(filters?.limit ?? 100)
+    .offset(filters?.offset ?? 0);
 }
 
 export async function getQueuedEmailMessages(limit?: number) {
@@ -15586,60 +15631,98 @@ export async function getRecentEmailEvents(limit: number = 100) {
 // COGS / COSTING FUNCTIONS
 // ============================================
 
-export async function recordCOGSSale(data: { productId: number; quantity: number; salePrice: string; companyId?: number; orderId?: number }) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(cogsRecords).values({
-    ...data,
-    type: "sale",
-    recordDate: new Date(),
-  } as any);
-  return { id: result[0].insertId };
-}
-
-export async function getCOGSTransactions(filters?: { companyId?: number; productId?: number; startDate?: Date; endDate?: Date }) {
+/**
+ * Per-product profitability rolled up from cogsRecords (the table the
+ * costing service writes). Optional product / date-range / company filters.
+ */
+export async function getCogsProfitabilityByProduct(filters?: {
+  companyId?: number;
+  productId?: number;
+  startDate?: Date;
+  endDate?: Date;
+}) {
   const db = await getDb();
   if (!db) return [];
   const conditions: any[] = [];
   if (filters?.companyId) conditions.push(eq(cogsRecords.companyId, filters.companyId));
   if (filters?.productId) conditions.push(eq(cogsRecords.productId, filters.productId));
-  if (conditions.length > 0) return db.select().from(cogsRecords).where(and(...conditions)).orderBy(desc(cogsRecords.createdAt));
-  return db.select().from(cogsRecords).orderBy(desc(cogsRecords.createdAt));
+  if (filters?.startDate) conditions.push(gte(cogsRecords.periodDate, filters.startDate));
+  if (filters?.endDate) conditions.push(lte(cogsRecords.periodDate, filters.endDate));
+
+  const rows = await db.select({
+    productId: cogsRecords.productId,
+    productName: products.name,
+    sku: products.sku,
+    unitsSold: sum(cogsRecords.quantitySold),
+    revenue: sum(cogsRecords.totalRevenue),
+    cogs: sum(cogsRecords.totalCogs),
+    recordCount: count(),
+  })
+    .from(cogsRecords)
+    .leftJoin(products, eq(cogsRecords.productId, products.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .groupBy(cogsRecords.productId, products.name, products.sku);
+
+  return rows.map((r) => {
+    const revenue = parseFloat(String(r.revenue ?? "0")) || 0;
+    const cogs = parseFloat(String(r.cogs ?? "0")) || 0;
+    const grossProfit = revenue - cogs;
+    return {
+      productId: r.productId,
+      productName: r.productName,
+      sku: r.sku,
+      unitsSold: parseFloat(String(r.unitsSold ?? "0")) || 0,
+      revenue: revenue.toFixed(2),
+      cogs: cogs.toFixed(2),
+      grossProfit: grossProfit.toFixed(2),
+      margin: revenue > 0 ? ((grossProfit / revenue) * 100).toFixed(2) + "%" : "-",
+      recordCount: Number(r.recordCount ?? 0),
+    };
+  });
 }
 
-export async function getProductProfitability(productId: number) {
-  const db = await getDb();
-  if (!db) return null;
-  const records = await db.select().from(cogsRecords).where(eq(cogsRecords.productId, productId));
-  return { productId, records, totalRecords: records.length };
-}
-
-export async function getInventoryValuation(companyId?: number) {
+/**
+ * Inventory valuation from active cost layers, grouped by product (and
+ * warehouse when the layer carries one). Optional warehouse / company filters.
+ */
+export async function getInventoryValuation(filters?: { companyId?: number; warehouseId?: number }) {
   const db = await getDb();
   if (!db) return [];
-  const conditions: any[] = [];
-  if (companyId) conditions.push(eq(inventoryCostLayers.companyId, companyId));
-  if (conditions.length > 0) return db.select().from(inventoryCostLayers).where(and(...conditions));
-  return db.select().from(inventoryCostLayers);
-}
+  const conditions: any[] = [eq(inventoryCostLayers.status, "active")];
+  if (filters?.companyId) conditions.push(eq(inventoryCostLayers.companyId, filters.companyId));
+  if (filters?.warehouseId) conditions.push(eq(inventoryCostLayers.warehouseId, filters.warehouseId));
 
-export async function allocateFreightCosts(data: { purchaseOrderId: number; freightCost: string; allocationMethod: string }) {
-  // Allocate freight costs to inventory cost layers based on the PO
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  // Update PO items cost basis with allocated freight
-  return { success: true, allocated: data.freightCost };
-}
+  const rows = await db.select({
+    productId: inventoryCostLayers.productId,
+    productName: products.name,
+    sku: products.sku,
+    warehouseId: inventoryCostLayers.warehouseId,
+    warehouseName: warehouses.name,
+    quantity: sum(inventoryCostLayers.remainingQuantity),
+    totalValue: sum(sql`CAST(${inventoryCostLayers.remainingQuantity} AS DECIMAL(15,4)) * CAST(${inventoryCostLayers.unitCost} AS DECIMAL(15,4))`),
+    layerCount: count(),
+  })
+    .from(inventoryCostLayers)
+    .leftJoin(products, eq(inventoryCostLayers.productId, products.id))
+    .leftJoin(warehouses, eq(inventoryCostLayers.warehouseId, warehouses.id))
+    .where(and(...conditions))
+    .groupBy(inventoryCostLayers.productId, products.name, products.sku, inventoryCostLayers.warehouseId, warehouses.name);
 
-export async function updateInventoryCostBasis(lotId: number, data: { additionalCost?: string; reason?: string }) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const lot = await db.select().from(inventoryLots).where(eq(inventoryLots.id, lotId));
-  if (!lot[0]) throw new Error("Lot not found");
-  const currentCost = parseFloat((lot[0] as any).unitCost || '0');
-  const additional = parseFloat(data.additionalCost || '0');
-  await db.update(inventoryLots).set({ unitCost: String(currentCost + additional) } as any).where(eq(inventoryLots.id, lotId));
-  return { success: true };
+  return rows.map((r) => {
+    const quantity = parseFloat(String(r.quantity ?? "0")) || 0;
+    const totalValue = parseFloat(String(r.totalValue ?? "0")) || 0;
+    return {
+      productId: r.productId,
+      productName: r.productName,
+      sku: r.sku,
+      warehouseId: r.warehouseId,
+      warehouseName: r.warehouseName,
+      quantity: quantity.toFixed(4),
+      unitCost: quantity > 0 ? (totalValue / quantity).toFixed(4) : "0.0000",
+      totalValue: totalValue.toFixed(2),
+      layerCount: Number(r.layerCount ?? 0),
+    };
+  });
 }
 
 // ============================================

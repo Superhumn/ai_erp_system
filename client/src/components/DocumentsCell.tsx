@@ -17,7 +17,7 @@ import {
 import { FileText, Upload, Download, File, FileSpreadsheet, FileImage, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
-const DOC_TYPES = [
+export const DOC_TYPES = [
   "contract",
   "invoice",
   "receipt",
@@ -30,7 +30,7 @@ const DOC_TYPES = [
   "other",
 ] as const;
 
-const HR_DOC_TYPES = [
+export const HR_DOC_TYPES = [
   "employment_agreement",
   "option_grant",
   "offer_letter",
@@ -104,9 +104,14 @@ export default function DocumentsCell({ referenceType, referenceId, docTypeSet =
     const reader = new FileReader();
     reader.onload = () => {
       const base64 = (reader.result as string).split(",")[1];
+      // The server accepts a fixed `type` enum (see server/routers/documents.ts);
+      // HR sub-types aren't in it, so send `type: "hr"` and keep the specific
+      // kind (offer_letter, nda, ...) in `category`.
+      const isHr = docTypeSet === "hr";
       uploadMutation.mutate({
         name: file.name,
-        type: docType as any,
+        type: isHr ? "hr" : (docType as DocType),
+        category: isHr ? docType : undefined,
         referenceType,
         referenceId,
         fileData: base64,

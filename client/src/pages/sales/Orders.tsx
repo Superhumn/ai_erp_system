@@ -39,14 +39,15 @@ import { format } from "date-fns";
 import { Link } from "wouter";
 import { formatCurrency } from "@/lib/format";
 
-const orderStatusOptions = [
-  { value: "draft", label: "Draft", color: "bg-muted text-muted-foreground" },
+// Must stay a subset of the `orders.status` enum (drizzle/schema.ts) — see Orders.test.ts.
+export const orderStatusOptions = [
   { value: "pending", label: "Pending", color: "bg-primary/10 text-primary" },
   { value: "confirmed", label: "Confirmed", color: "bg-primary/10 text-primary" },
   { value: "processing", label: "Processing", color: "bg-primary/10 text-primary" },
   { value: "shipped", label: "Shipped", color: "bg-primary/10 text-primary" },
   { value: "delivered", label: "Delivered", color: "bg-muted text-muted-foreground" },
   { value: "cancelled", label: "Cancelled", color: "bg-[oklch(0.30_0.02_262)] text-white" },
+  { value: "refunded", label: "Refunded", color: "bg-muted text-muted-foreground" },
 ];
 
 function OrderSummaryBody({ order }: { order: any }) {

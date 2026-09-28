@@ -31,6 +31,7 @@ import {
   LogOut,
   PanelLeft,
   ShoppingCart,
+  WifiOff,
   Users,
   Scale,
   Settings,
@@ -61,6 +62,7 @@ import {
 } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, Link } from "wouter";
+import { TRPCClientError } from "@trpc/client";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { AICommandBar } from './AICommandBar';
 import { QuickNoteDialog } from './QuickNoteDialog';
@@ -207,6 +209,44 @@ const roleColors: Record<string, string> = {
   user: "bg-muted text-muted-foreground border-border",
 };
 
+/**
+ * True when an auth `me` failure should be treated as "we can't reach the
+ * server" rather than "the server said you're logged out". Network failures
+ * surface as a TRPCClientError with no server `data` payload (fetch threw a
+ * TypeError), or the browser reports itself offline.
+ */
+export function isOfflineAuthError(error: unknown): boolean {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
+  if (!error) return false;
+  if (error instanceof TRPCClientError) {
+    // A real server response (UNAUTHORIZED, INTERNAL_SERVER_ERROR, ...) always
+    // carries `data`; a transport failure never does.
+    if (error.data == null) return true;
+    return false;
+  }
+  if (error instanceof TypeError) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /failed to fetch|networkerror|network request failed|load failed/i.test(message);
+}
+
+function OfflinePlaceholder({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background p-6 text-center">
+      <WifiOff className="h-8 w-8 text-muted-foreground" />
+      <div className="space-y-1">
+        <p className="text-base font-medium">You're offline</p>
+        <p className="text-sm text-muted-foreground">
+          We couldn't reach the server to confirm your session. Cached data and
+          queued changes are kept on this device and will sync when you're back online.
+        </p>
+      </div>
+      <Button variant="outline" size="sm" onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
+  );
+}
+
 export default function DashboardLayout({
   children,
 }: {
@@ -216,7 +256,7 @@ export default function DashboardLayout({
     const saved = localStorage.getItem(SIDEBAR_WIDTH_KEY);
     return saved ? parseInt(saved, 10) : DEFAULT_WIDTH;
   });
-  const { loading, user } = useAuth();
+  const { loading, user, isError, error, refresh } = useAuth();
 
   useEffect(() => {
     localStorage.setItem(SIDEBAR_WIDTH_KEY, sidebarWidth.toString());
@@ -227,6 +267,13 @@ export default function DashboardLayout({
   }
 
   if (!user) {
+    // Only bounce to /login when the server actually answered "no session".
+    // If the `me` request failed because the network is down (PWA booted
+    // offline), redirecting would defeat the offline layer (cached shell,
+    // IndexedDB query hydration, queued mutations) — show a placeholder instead.
+    if (isError && isOfflineAuthError(error)) {
+      return <OfflinePlaceholder onRetry={() => refresh()} />;
+    }
     window.location.href = getLoginUrl();
     return null;
   }

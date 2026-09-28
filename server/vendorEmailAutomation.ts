@@ -76,16 +76,11 @@ Items:\n${itemList}`;
       break;
     }
     case "payment_reminder": {
-      const invoices = await db.getInvoices();
-      const vendorInvoices = invoices.filter(
-        i => i.customerId === request.vendorId && ["sent", "overdue"].includes(i.status)
-      );
-      if (vendorInvoices.length > 0) {
-        const invList = vendorInvoices.map(
-          i => `- ${i.invoiceNumber}: $${i.totalAmount} (due: ${i.dueDate ? new Date(i.dueDate).toLocaleDateString() : 'N/A'})`
-        ).join("\n");
-        context = `Outstanding invoices:\n${invList}`;
-      }
+      // The `invoices` table is customer receivables (customerId -> customers.id);
+      // there is no vendor payables (bills) table to list here, so do not try to
+      // match vendor ids against it. Rely on the caller-supplied message instead.
+      context = request.customMessage
+        || "We are reviewing the status of payments on your account and would like to confirm any outstanding invoices you have issued to us.";
       defaultSubject = `Payment Status Update - ${vendor.name}`;
       break;
     }

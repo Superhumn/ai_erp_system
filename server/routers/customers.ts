@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
+import { scopeAllows } from "../_core/scope";
 import { adminProcedure, scopedProcedure, createAuditLog } from "./_shared";
 
 // ============================================
@@ -15,7 +16,7 @@ export const customersRouter = router({
     get: scopedProcedure
       .input(z.object({ id: z.number() }))
       .query(({ input, ctx }) => db.getCustomerById(input.id, ctx.scope)),
-    create: protectedProcedure
+    create: scopedProcedure
       .input(z.object({
         name: z.string().min(1),
         companyId: z.number().optional(),
@@ -32,11 +33,16 @@ export const customersRouter = router({
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const result = await db.createCustomer(input);
+        // Can't create a customer under an entity the caller doesn't have access to.
+        if (input.companyId != null && !scopeAllows(ctx.scope, input.companyId)) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Cannot create a customer under an entity outside your access.' });
+        }
+        const companyId = input.companyId ?? ctx.user.companyId ?? null;
+        const result = await db.createCustomer({ ...input, companyId });
         await createAuditLog(ctx.user.id, 'create', 'customer', result.id, input.name);
         return result;
       }),
-    update: protectedProcedure
+    update: scopedProcedure
       .input(z.object({
         id: z.number(),
         name: z.string().optional(),
@@ -53,13 +59,18 @@ export const customersRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
+        // Scoped lookup: a customer outside the caller's entities reads as not found.
+        const existing = await db.getCustomerById(id, ctx.scope);
+        if (!existing) throw new TRPCError({ code: 'NOT_FOUND', message: 'Customer not found' });
         await db.updateCustomer(id, data);
         await createAuditLog(ctx.user.id, 'update', 'customer', id);
         return { success: true };
       }),
-    delete: protectedProcedure
+    delete: scopedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input, ctx }) => {
+        const existing = await db.getCustomerById(input.id, ctx.scope);
+        if (!existing) throw new TRPCError({ code: 'NOT_FOUND', message: 'Customer not found' });
         await db.deleteCustomer(input.id);
         await createAuditLog(ctx.user.id, 'delete', 'customer', input.id);
         return { success: true };

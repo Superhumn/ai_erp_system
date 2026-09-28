@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,6 +11,8 @@ import { toast } from "sonner";
 import { Plus, Building2 } from "lucide-react";
 
 export default function Departments() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [isOpen, setIsOpen] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
@@ -61,6 +64,7 @@ export default function Departments() {
             <h1 className="text-xl font-semibold tracking-[-0.02em]">Departments</h1>
             <p className="text-muted-foreground">Manage your organization's departments</p>
           </div>
+          {isAdmin && (
           <Dialog open={isOpen} onOpenChange={(open) => {
             setIsOpen(open);
             if (!open) {
@@ -128,6 +132,7 @@ export default function Departments() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          )}
         </div>
 
         <Card>

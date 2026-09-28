@@ -11,6 +11,31 @@ import { sanitizeAttachments } from "./_shared";
 // ============================================
 // EMAIL SCANNING & DOCUMENT PARSING
 // ============================================
+
+/** Thrown inside an automation's try block to bail out without logging a failure. */
+class SkipAutomation extends Error {}
+
+/** The RFQ an inbound carrier quote should attach to: the newest open one, if any. */
+function pickOpenRfq<T extends { id: number }>(openRfqs: T[]): T | null {
+  return openRfqs.length > 0 ? openRfqs[0] : null;
+}
+
+/**
+ * Notes for an auto-created draft invoice. The vendor cannot go in
+ * `invoices.customerId` (FK to customers), so it is recorded here.
+ */
+function describeVendorDraft(
+  base: string,
+  vendor: { id: number; name?: string | null } | null | undefined,
+  vendorName?: string | null,
+  vendorEmail?: string | null,
+): string {
+  const parts = [base];
+  if (vendor) parts.push(`Vendor: ${vendor.name || vendorName || vendorEmail} (vendor id ${vendor.id})`);
+  else if (vendorName || vendorEmail) parts.push(`Vendor (unmatched): ${[vendorName, vendorEmail].filter(Boolean).join(" ")}`);
+  return parts.join("\n");
+}
+
 export const emailScanningRouter = router({
     // Manual scan — scan specific folders, date range, all emails (not just unseen)
     scanNow: protectedProcedure
@@ -20,7 +45,7 @@ export const emailScanningRouter = router({
         unseenOnly: z.boolean().optional(),
         limit: z.number().optional(),
       }).optional())
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const { scanAndCategorizeInbox, getImapConfig } = await import("../_core/emailInboxScanner");
         const config = getImapConfig();
         if (!config) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "IMAP not configured. Set IMAP_HOST, IMAP_USER, IMAP_PASSWORD in env." });
@@ -56,9 +81,10 @@ export const emailScanningRouter = router({
                   subject: email.subject,
                   bodyText: email.bodyText?.substring(0, 10000) || "",
                   receivedAt: email.date,
-                  status: "parsed",
-                  category: email.categorization?.category || "other",
-                } as any);
+                  parsingStatus: "parsed",
+                  parsedAt: new Date(),
+                  category: email.categorization?.category || "general",
+                });
 
                 // A quote often arrives as an attached sheet rather than in the
                 // body, so keep the first document-shaped attachment to hand it
@@ -109,7 +135,7 @@ export const emailScanningRouter = router({
                         content: dataUrl,
                         filename: att.filename,
                         mimeType: att.contentType,
-                        userId: 1,
+                        userId: ctx.user.id,
                       });
                       if (r.success) totalAttachmentsParsed++;
                     } catch { /* skip individual attachment failures */ }
@@ -419,25 +445,29 @@ export const emailScanningRouter = router({
             try {
               const invoiceDoc = result.documents.find(d => d.documentType === "invoice") || result.documents[0];
               if (invoiceDoc.totalAmount) {
-                const vendorId = invoiceDoc.vendorEmail
-                  ? (await db.findVendorByEmailOrName(invoiceDoc.vendorEmail, invoiceDoc.vendorName))?.id ?? null
+                // There is no payables table (db.getBills() is an alias for purchase
+                // orders), and `invoices.type` only allows invoice/credit_note/quote
+                // while `customerId` is an FK to customers — so a "bill" row keyed
+                // by vendor id could never be inserted. Store the draft as a plain
+                // invoice and keep the vendor in the notes instead.
+                const vendor = invoiceDoc.vendorEmail
+                  ? await db.findVendorByEmailOrName(invoiceDoc.vendorEmail, invoiceDoc.vendorName)
                   : null;
                 const invoiceNumber = invoiceDoc.documentNumber || `DRAFT-EMAIL-${Date.now().toString(36).toUpperCase()}`;
                 const existing = await db.getInvoiceByNumber(invoiceNumber);
                 if (!existing) {
                   const draftInvoice = await db.createInvoice({
                     invoiceNumber,
-                    type: "bill",
+                    type: "invoice",
                     status: "draft",
-                    customerId: vendorId,
                     issueDate: invoiceDoc.documentDate ? new Date(invoiceDoc.documentDate) : new Date(),
                     dueDate: invoiceDoc.dueDate ? new Date(invoiceDoc.dueDate) : undefined,
                     subtotal: invoiceDoc.subtotal?.toString() || invoiceDoc.totalAmount?.toString() || "0",
                     taxAmount: invoiceDoc.taxAmount?.toString() || "0",
                     totalAmount: invoiceDoc.totalAmount?.toString() || "0",
                     currency: invoiceDoc.currency || "USD",
-                    notes: `Auto-created from email: ${input.subject}`,
-                  } as any);
+                    notes: describeVendorDraft(`Auto-created from email: ${input.subject}`, vendor, invoiceDoc.vendorName, invoiceDoc.vendorEmail),
+                  });
                   console.log(`[Email→Invoice] Auto-created draft invoice ${invoiceNumber} (id=${draftInvoice.id}) from email ${emailId}`);
                   if (invoiceDoc.lineItems?.length) {
                     for (const item of invoiceDoc.lineItems) {
@@ -485,10 +515,16 @@ export const emailScanningRouter = router({
               const matchedCarrier = carriers.find(
                 (c: any) => c.email && senderEmail && c.email.toLowerCase() === senderEmail.toLowerCase()
               );
-              const carrierId = matchedCarrier?.id ?? 0;
-              const openRfqs = await db.getFreightRfqs({ status: "awaiting_quotes" });
-              const linkedRfq = openRfqs.length > 0 ? openRfqs[0] : null;
-              const rfqId = linkedRfq?.id ?? 0;
+              // rfqs.sendToCarriers marks an RFQ "sent"; nothing ever sets
+              // "awaiting_quotes", so that filter matched no rows.
+              const openRfqs = await db.getFreightRfqs({ status: "sent" });
+              const linkedRfq = pickOpenRfq(openRfqs);
+              if (!matchedCarrier || !linkedRfq) {
+                console.log(`[Email→Quote] Skipped freight quote from email ${emailId}: ${!matchedCarrier ? `no carrier matches ${senderEmail || "unknown sender"}` : "no open RFQ"}`);
+                throw new SkipAutomation();
+              }
+              const carrierId = matchedCarrier.id;
+              const rfqId = linkedRfq.id;
 
               await db.createFreightQuote({
                 rfqId,
@@ -504,13 +540,11 @@ export const emailScanningRouter = router({
                 rawEmailContent: input.bodyText?.substring(0, 5000) || null,
                 notes: `Auto-created from vendor quote email: ${input.subject}`,
               } as any);
-              console.log(`[Email→Quote] Auto-created freight quote from email ${emailId} (carrier=${matchedCarrier?.name || 'unknown'}, rfq=${rfqId || 'standalone'})`);
+              console.log(`[Email→Quote] Auto-created freight quote from email ${emailId} (carrier=${matchedCarrier.name}, rfq=${rfqId})`);
 
-              if (linkedRfq) {
-                await db.updateFreightRfq(linkedRfq.id, { status: "quotes_received" });
-              }
+              await db.updateFreightRfq(linkedRfq.id, { status: "quotes_received" });
             } catch (e) {
-              console.warn("[Email→Quote] Auto-creation failed:", e);
+              if (!(e instanceof SkipAutomation)) console.warn("[Email→Quote] Auto-creation failed:", e);
             }
           }
 
@@ -1195,21 +1229,23 @@ export const emailScanningRouter = router({
                   const invNum = invoiceDoc.documentNumber || `DRAFT-IMAP-${Date.now().toString(36).toUpperCase()}`;
                   const existingInv = await db.getInvoiceByNumber(invNum);
                   if (!existingInv) {
+                    // See the submitEmail automation above: no payables table and
+                    // `type: "bill"` / vendor-as-customerId can never be inserted.
                     const vendorMatch = invoiceDoc.vendorEmail
-                      ? (await db.findVendorByEmailOrName(invoiceDoc.vendorEmail, invoiceDoc.vendorName))?.id ?? null
+                      ? await db.findVendorByEmailOrName(invoiceDoc.vendorEmail, invoiceDoc.vendorName)
                       : null;
                     await db.createInvoice({
                       invoiceNumber: invNum,
-                      type: "bill",
+                      type: "invoice",
                       status: "draft",
-                      customerId: vendorMatch,
                       issueDate: invoiceDoc.documentDate ? new Date(invoiceDoc.documentDate) : new Date(),
+                      dueDate: invoiceDoc.dueDate ? new Date(invoiceDoc.dueDate) : undefined,
                       subtotal: invoiceDoc.totalAmount?.toString() || "0",
                       taxAmount: "0",
                       totalAmount: invoiceDoc.totalAmount?.toString() || "0",
                       currency: invoiceDoc.currency || "USD",
-                      notes: `Auto-created from IMAP email: ${email.subject}`,
-                    } as any);
+                      notes: describeVendorDraft(`Auto-created from IMAP email: ${email.subject}`, vendorMatch, invoiceDoc.vendorName, invoiceDoc.vendorEmail),
+                    });
                     console.log(`[IMAP→Invoice] Auto-created draft invoice ${invNum} from email ${emailId}`);
                   }
                 }
@@ -1243,10 +1279,14 @@ export const emailScanningRouter = router({
                 const matchedCarrier = carriers.find(
                   (c: any) => c.email && senderEmail && c.email.toLowerCase() === senderEmail.toLowerCase()
                 );
-                const carrierId = matchedCarrier?.id ?? 0;
-                const openRfqs = await db.getFreightRfqs({ status: "awaiting_quotes" });
-                const linkedRfq = openRfqs.length > 0 ? openRfqs[0] : null;
-                const rfqId = linkedRfq?.id ?? 0;
+                const openRfqs = await db.getFreightRfqs({ status: "sent" });
+                const linkedRfq = pickOpenRfq(openRfqs);
+                if (!matchedCarrier || !linkedRfq) {
+                  console.log(`[IMAP→Quote] Skipped freight quote from email ${emailId}: ${!matchedCarrier ? `no carrier matches ${senderEmail || "unknown sender"}` : "no open RFQ"}`);
+                  throw new SkipAutomation();
+                }
+                const carrierId = matchedCarrier.id;
+                const rfqId = linkedRfq.id;
 
                 await db.createFreightQuote({
                   rfqId,
@@ -1262,13 +1302,11 @@ export const emailScanningRouter = router({
                   rawEmailContent: email.bodyText?.substring(0, 5000) || null,
                   notes: `Auto-created from IMAP vendor quote email: ${email.subject}`,
                 } as any);
-                console.log(`[IMAP→Quote] Auto-created freight quote from email ${emailId} (carrier=${matchedCarrier?.name || 'unknown'}, rfq=${rfqId || 'standalone'})`);
+                console.log(`[IMAP→Quote] Auto-created freight quote from email ${emailId} (carrier=${matchedCarrier.name}, rfq=${rfqId})`);
 
-                if (linkedRfq) {
-                  await db.updateFreightRfq(linkedRfq.id, { status: "quotes_received" });
-                }
+                await db.updateFreightRfq(linkedRfq.id, { status: "quotes_received" });
               } catch (e) {
-                console.warn("[IMAP→Quote] Auto-creation failed:", e);
+                if (!(e instanceof SkipAutomation)) console.warn("[IMAP→Quote] Auto-creation failed:", e);
               }
             }
 

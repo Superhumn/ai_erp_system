@@ -6,7 +6,7 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { invokeLLM } from "../_core/llm";
 import * as db from "../db";
 import { ENV } from "../_core/env";
-import { createAuditLog } from "./_shared";
+import { adminProcedure, createAuditLog } from "./_shared";
 
 // ============================================
 // CRM MODULE - Contacts, Messaging & Tracking
@@ -171,14 +171,14 @@ export const crmRouter = router({
           return { success: true };
         }),
 
-      deleteAll: protectedProcedure
+      deleteAll: adminProcedure
         .mutation(async ({ ctx }) => {
           const count = await db.deleteAllCrmContacts();
           await createAuditLog(ctx.user.id, 'delete', 'crm_contact', 0, `Bulk deleted all ${count} contacts`);
           return { deleted: count };
         }),
 
-      deletePlaceholders: protectedProcedure
+      deletePlaceholders: adminProcedure
         .mutation(async ({ ctx }) => {
           const database = await db.getDb();
           if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });

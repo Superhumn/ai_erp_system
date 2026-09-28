@@ -277,14 +277,23 @@ export default function ShopifySettings() {
                           <Button variant="outline" onClick={() => setShowAddMapping(false)}>Cancel</Button>
                           <Button
                             onClick={() => {
+                              const productId = Number(newSkuMapping.productId);
+                              if (!Number.isFinite(productId) || productId <= 0) {
+                                toast.error("ERP Product ID must be a number");
+                                return;
+                              }
                               createSkuMapping.mutate({
                                 storeId: store.id,
-                                shopifyProductId: newSkuMapping.shopifyProductId,
-                                shopifyVariantId: newSkuMapping.shopifyVariantId,
-                                productId: parseInt(newSkuMapping.productId),
+                                shopifyProductId: newSkuMapping.shopifyProductId.trim(),
+                                shopifyVariantId: newSkuMapping.shopifyVariantId.trim(),
+                                productId,
                               });
                             }}
-                            disabled={createSkuMapping.isPending}
+                            disabled={
+                              createSkuMapping.isPending ||
+                              !newSkuMapping.shopifyProductId.trim() ||
+                              !newSkuMapping.productId.trim()
+                            }
                           >
                             {createSkuMapping.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                             Create Mapping

@@ -27,8 +27,6 @@ import {
   freightRfqs,
   freightQuotes,
   freightCarriers,
-  invoices,
-  payments,
   vendorRfqs,
   vendorQuotes,
   vendorRfqInvitations,
@@ -2202,228 +2200,53 @@ const qualityInspectionProcessor: WorkflowProcessor = {
 };
 
 // ============================================
-// INVOICE MATCHING WORKFLOW
+// INVOICE MATCHING / PAYMENT PROCESSING WORKFLOWS
 // ============================================
+//
+// Both workflows are accounts-payable processes (vendor invoices matched to
+// POs, then paid). The only invoice table in the schema, `invoices`, holds
+// customer receivables (invoices.customerId -> customers.id), and there is no
+// vendor bills table. Earlier versions of these processors read customer
+// invoices as if they were payables: they matched purchaseOrders.vendorId
+// against customer ids, auto-approved "payments" under the threshold and marked
+// CUSTOMER invoices as paid. Until a payables source exists, both processors
+// record a single informational step and finish without touching any rows.
+
+const NO_PAYABLES_SOURCE_MESSAGE =
+  "No vendor payables source: the `invoices` table holds customer receivables and there is no bills table. " +
+  "Vendor invoice matching and payment processing are disabled until a payables table exists.";
+
+async function noPayablesSourceResult(
+  engine: WorkflowEngine,
+  context: WorkflowContext,
+  stepName: string
+): Promise<WorkflowResult> {
+  await engine.recordStep(context, 1, stepName, "data_fetch", async () => ({
+    success: true,
+    data: { skipped: true, reason: NO_PAYABLES_SOURCE_MESSAGE },
+  }));
+
+  return {
+    success: true,
+    runId: context.runId,
+    status: "skipped",
+    itemsProcessed: 0,
+    itemsSucceeded: 0,
+    itemsFailed: 0,
+    totalValue: 0,
+    outputData: { skipped: true, reason: NO_PAYABLES_SOURCE_MESSAGE },
+  };
+}
 
 const invoiceMatchingProcessor: WorkflowProcessor = {
   async execute(engine: WorkflowEngine, context: WorkflowContext): Promise<WorkflowResult> {
-    const db = engine.getDb();
-    let itemsProcessed = 0;
-    let itemsSucceeded = 0;
-    let itemsFailed = 0;
-    let totalValue = 0;
-
-    // Step 1: Get pending vendor invoices
-    const step1 = await engine.recordStep(context, 1, "Fetch Pending Invoices", "data_fetch", async () => {
-      const pendingInvoices = await db
-        .select()
-        .from(invoices)
-        .where(eq(invoices.status, "draft"));
-
-      return { success: true, data: { invoices: pendingInvoices } };
-    });
-
-    if (!step1.success || !step1.data?.invoices.length) {
-      return { success: true, runId: context.runId, status: "completed", itemsProcessed: 0, itemsSucceeded: 0, itemsFailed: 0 };
-    }
-
-    itemsProcessed = step1.data.invoices.length;
-
-    // Step 2: Match invoices to POs
-    const step2 = await engine.recordStep(context, 2, "Match to Purchase Orders", "ai_analysis", async () => {
-      const matched: any[] = [];
-      const discrepancies: any[] = [];
-
-      for (const invoice of step1.data.invoices) {
-        // Try to find matching PO by vendor
-        const [matchingPO] = await db
-          .select()
-          .from(purchaseOrders)
-          .where(
-            and(
-              eq(purchaseOrders.vendorId, invoice.customerId!), // In this context, customerId might be vendorId for payables
-              eq(purchaseOrders.status, "received")
-            )
-          );
-
-        if (matchingPO) {
-          const invoiceAmount = parseFloat(invoice.totalAmount);
-          const poAmount = parseFloat(matchingPO.totalAmount);
-          const variance = Math.abs(invoiceAmount - poAmount);
-          const variancePercent = (variance / poAmount) * 100;
-
-          if (variancePercent <= 2) {
-            // Within acceptable variance
-            matched.push({
-              invoiceId: invoice.id,
-              poId: matchingPO.id,
-              invoiceAmount,
-              poAmount,
-              variance,
-            });
-            totalValue += invoiceAmount;
-            itemsSucceeded++;
-          } else {
-            // Price variance exception
-            discrepancies.push({
-              invoiceId: invoice.id,
-              poId: matchingPO.id,
-              invoiceAmount,
-              poAmount,
-              variance,
-              variancePercent,
-            });
-
-            await engine.handleException(
-              context,
-              "price_variance",
-              `Invoice ${invoice.invoiceNumber} price variance`,
-              `Variance of $${variance.toFixed(2)} (${variancePercent.toFixed(1)}%) from PO ${matchingPO.poNumber}`,
-              { invoiceId: invoice.id, poId: matchingPO.id, variance },
-              "invoice",
-              invoice.id
-            );
-
-            itemsFailed++;
-          }
-        } else {
-          // No matching PO
-          await engine.handleException(
-            context,
-            "documentation_missing",
-            `No matching PO for invoice ${invoice.invoiceNumber}`,
-            "Cannot match invoice to any received purchase order",
-            { invoiceId: invoice.id },
-            "invoice",
-            invoice.id
-          );
-          itemsFailed++;
-        }
-      }
-
-      return { success: true, data: { matched, discrepancies } };
-    });
-
-    // Step 3: Queue matched invoices for payment
-    await engine.recordStep(context, 3, "Queue for Payment", "update_record", async () => {
-      for (const match of step2.data?.matched || []) {
-        await db
-          .update(invoices)
-          .set({ status: "sent" }) // Ready for payment
-          .where(eq(invoices.id, match.invoiceId));
-      }
-
-      return { success: true, data: { queuedCount: step2.data?.matched.length } };
-    });
-
-    return {
-      success: true,
-      runId: context.runId,
-      status: "completed",
-      itemsProcessed,
-      itemsSucceeded,
-      itemsFailed,
-      totalValue,
-      outputData: step2.data,
-    };
+    return noPayablesSourceResult(engine, context, "Fetch Pending Vendor Invoices");
   },
 };
 
-// ============================================
-// PAYMENT PROCESSING WORKFLOW
-// ============================================
-
 const paymentProcessingProcessor: WorkflowProcessor = {
   async execute(engine: WorkflowEngine, context: WorkflowContext): Promise<WorkflowResult> {
-    const db = engine.getDb();
-    let itemsProcessed = 0;
-    let itemsSucceeded = 0;
-    let itemsFailed = 0;
-    let totalValue = 0;
-
-    // Step 1: Get approved invoices due for payment
-    const step1 = await engine.recordStep(context, 1, "Fetch Due Payments", "data_fetch", async () => {
-      const today = new Date();
-      const approvedInvoices = await db
-        .select()
-        .from(invoices)
-        .where(
-          and(
-            eq(invoices.status, "sent"),
-            lte(invoices.dueDate, today)
-          )
-        );
-
-      return { success: true, data: { invoices: approvedInvoices } };
-    });
-
-    if (!step1.success || !step1.data?.invoices.length) {
-      return { success: true, runId: context.runId, status: "completed", itemsProcessed: 0, itemsSucceeded: 0, itemsFailed: 0 };
-    }
-
-    itemsProcessed = step1.data.invoices.length;
-
-    // Step 2: Request approval for payments over threshold
-    const step2 = await engine.recordStep(context, 2, "Process Payments", "wait_approval", async () => {
-      const processed: any[] = [];
-      const pendingApproval: any[] = [];
-
-      for (const invoice of step1.data.invoices) {
-        const amount = parseFloat(invoice.totalAmount);
-        totalValue += amount;
-
-        const approval = await engine.requestApproval(
-          context,
-          "payment",
-          `Payment for Invoice ${invoice.invoiceNumber}`,
-          `Pay $${amount.toFixed(2)} to vendor`,
-          amount,
-          "invoice",
-          invoice.id,
-          "Invoice matched to PO and approved for payment",
-          90
-        );
-
-        if (approval.autoApproved) {
-          // Create payment record
-          const paymentNumber = `PAY-${Date.now().toString(36).toUpperCase()}`;
-          await db.insert(payments).values({
-            paymentNumber,
-            type: "made",
-            invoiceId: invoice.id,
-            vendorId: invoice.customerId, // Vendor in this context
-            amount: invoice.totalAmount,
-            paymentMethod: "bank_transfer",
-            paymentDate: new Date(),
-            status: "completed",
-          });
-
-          await db
-            .update(invoices)
-            .set({ status: "paid", paidAmount: invoice.totalAmount })
-            .where(eq(invoices.id, invoice.id));
-
-          processed.push({ invoiceId: invoice.id, amount });
-          itemsSucceeded++;
-        } else {
-          pendingApproval.push({ invoiceId: invoice.id, amount, approvalId: approval.approvalId });
-        }
-      }
-
-      return { success: true, data: { processed, pendingApproval } };
-    });
-
-    return {
-      success: true,
-      runId: context.runId,
-      status: step2.data?.pendingApproval.length ? "awaiting_approval" : "completed",
-      itemsProcessed,
-      itemsSucceeded,
-      itemsFailed,
-      totalValue,
-      outputData: step2.data,
-      pendingApprovals: step2.data?.pendingApproval.length,
-    };
+    return noPayablesSourceResult(engine, context, "Fetch Due Payables");
   },
 };
 

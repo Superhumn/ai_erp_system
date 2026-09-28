@@ -15,6 +15,7 @@ export const investorUpdatesRouter = router({
       .query(({ input }) => db.getInvestorUpdateById(input.id)),
     create: protectedProcedure
       .input(z.object({
+        companyId: z.number().optional(),
         title: z.string().min(1),
         period: z.string().optional(),
         type: z.enum(["quarterly", "monthly", "annual", "ad_hoc"]).optional(),
@@ -24,13 +25,17 @@ export const investorUpdatesRouter = router({
         callsToAction: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const result = await db.createInvestorUpdate({ ...input, createdBy: ctx.user.id });
+        // investorPortal.updates filters by the investor's companyId, so a NULL companyId never
+        // reaches investors. Default to the author's home entity.
+        const companyId = input.companyId ?? ctx.user.companyId ?? undefined;
+        const result = await db.createInvestorUpdate({ ...input, companyId, createdBy: ctx.user.id });
         await createAuditLog(ctx.user.id, 'create', 'investorUpdate', result.id, input.title);
         return result;
       }),
     update: protectedProcedure
       .input(z.object({
         id: z.number(),
+        companyId: z.number().optional(),
         title: z.string().optional(),
         content: z.string().optional(),
         highlights: z.string().optional(),
@@ -41,7 +46,7 @@ export const investorUpdatesRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
-        await db.updateInvestorUpdate(id, data as any);
+        await db.updateInvestorUpdate(id, data);
         return { success: true };
       }),
     generate: protectedProcedure

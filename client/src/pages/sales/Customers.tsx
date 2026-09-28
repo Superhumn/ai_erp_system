@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -102,6 +103,8 @@ function CustomerSummaryBody({ customer }: { customer: any }) {
 }
 
 export default function Customers() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null);
   const [customerToDelete, setCustomerToDelete] = useState<{ id: number; name: string } | null>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -199,6 +202,10 @@ export default function Customers() {
   };
 
   const handleSync = () => {
+    if (!isAdmin) {
+      toast.error("Only admins can sync customers from Shopify");
+      return;
+    }
     if (!syncCredentials.shopifyAccessToken || !syncCredentials.shopifyStoreDomain) {
       toast.error("Please enter Shopify credentials");
       return;
@@ -255,6 +262,7 @@ export default function Customers() {
           </p>
         </div>
         <div className="flex gap-2">
+          {isAdmin && (
           <Dialog open={isSyncOpen} onOpenChange={setIsSyncOpen}>
             <DialogTrigger asChild>
               <Button variant="outline">
@@ -310,6 +318,7 @@ export default function Customers() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          )}
           <Button variant="outline" onClick={() => window.location.href = "/import"}>
             <Upload className="h-4 w-4 mr-1" /> Import
           </Button>

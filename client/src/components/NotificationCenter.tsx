@@ -55,16 +55,24 @@ export function NotificationCenter() {
     refetchInterval: 30000, // Poll every 30 seconds
   });
 
+  const utils = trpc.useUtils();
+  // Refresh both the list and the badge count; otherwise unreadCount stays
+  // stale until its next 30s poll.
+  const onNotificationsChanged = () => {
+    refetch();
+    utils.notifications.unreadCount.invalidate();
+  };
+
   const markReadMutation = trpc.notifications.markRead.useMutation({
-    onSuccess: () => refetch(),
+    onSuccess: onNotificationsChanged,
   });
 
   const markAllReadMutation = trpc.notifications.markAllRead.useMutation({
-    onSuccess: () => refetch(),
+    onSuccess: onNotificationsChanged,
   });
 
   const deleteMutation = trpc.notifications.delete.useMutation({
-    onSuccess: () => refetch(),
+    onSuccess: onNotificationsChanged,
   });
 
   const handleMarkRead = (id: number, e: React.MouseEvent) => {

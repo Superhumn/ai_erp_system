@@ -652,7 +652,7 @@ export default function RFQs() {
                           </Button>
                         </Link>
                         {rfq.status === "draft" && (
-                          <Link href={`/freight/rfqs/${rfq.id}/send`}>
+                          <Link href={`/freight/rfqs/${rfq.id}?send=1`}>
                             <Button variant="ghost" size="icon">
                               <Send className="h-4 w-4" />
                             </Button>
