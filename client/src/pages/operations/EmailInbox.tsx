@@ -11,6 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { downloadExport } from "@/lib/downloadExport";
+import { ContactMultiPicker } from "@/components/ContactMultiPicker";
+import { enrollSummary } from "@/lib/emailOutreach";
 
 import {
   Mail,
@@ -52,6 +54,7 @@ import {
   Paperclip,
   Eye,
   Image as ImageIcon,
+  UserPlus,
 } from "lucide-react";
 
 const formatBytes = (n?: number | null) => {
@@ -241,6 +244,8 @@ export default function EmailInbox() {
   const [showStepDialog, setShowStepDialog] = useState(false);
   const [stepForm, setStepForm] = useState({ subject: "", body: "", delayDays: 1 });
   const [editingStepId, setEditingStepId] = useState<number | null>(null);
+  const [showEnrollDialog, setShowEnrollDialog] = useState(false);
+  const [enrollPicked, setEnrollPicked] = useState<number[]>([]);
   const [showCannedManager, setShowCannedManager] = useState(false);
   const [showAutoReplyManager, setShowAutoReplyManager] = useState(false);
   const [showCannedPicker, setShowCannedPicker] = useState(false);
@@ -291,6 +296,17 @@ export default function EmailInbox() {
   const deleteSeqMutation = trpc.emailSequences.delete.useMutation({ onSuccess: () => { toast.success("Deleted"); setSelectedSequenceId(null); utils.emailSequences.list.invalidate(); } });
   const addStepMutation = trpc.emailSequences.addStep.useMutation({ onSuccess: () => { toast.success("Step added"); setShowStepDialog(false); setStepForm({ subject: "", body: "", delayDays: 1 }); setEditingStepId(null); if (selectedSequenceId) utils.emailSequences.get.invalidate({ id: selectedSequenceId }); }, onError: (e) => toast.error(e.message) });
   const updateStepMutation = trpc.emailSequences.updateStep.useMutation({ onSuccess: () => { toast.success("Step updated"); setShowStepDialog(false); setStepForm({ subject: "", body: "", delayDays: 1 }); setEditingStepId(null); if (selectedSequenceId) utils.emailSequences.get.invalidate({ id: selectedSequenceId }); }, onError: (e) => toast.error(e.message) });
+  const { data: enrollmentRows } = trpc.emailSequences.enrollments.useQuery({ sequenceId: selectedSequenceId! }, { enabled: !!selectedSequenceId && showEnrollDialog });
+  const enrollMutation = trpc.emailSequences.enroll.useMutation({
+    onSuccess: (r) => {
+      toast.success(enrollSummary(r));
+      setShowEnrollDialog(false);
+      setEnrollPicked([]);
+      utils.emailSequences.enrollments.invalidate();
+      utils.emailSequences.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
   const deleteStepMutation = trpc.emailSequences.deleteStep.useMutation({ onSuccess: () => { toast.success("Step deleted"); if (selectedSequenceId) utils.emailSequences.get.invalidate({ id: selectedSequenceId }); } });
 
   const createCannedMutation = trpc.emailCannedResponses.create.useMutation({ onSuccess: () => { toast.success("Canned response saved"); setCannedForm({ open: false, id: null, name: "", content: "", shortcut: "", category: "" }); utils.emailCannedResponses.list.invalidate(); }, onError: (e) => toast.error(e.message) });
@@ -503,6 +519,12 @@ export default function EmailInbox() {
                 </div>
               )}
             </div>
+
+            <SequenceEnrollments
+              sequenceId={selectedSeq.id}
+              canEnroll={selectedSeq.status === "active" && !!selectedSeq.steps?.length}
+              onEnroll={() => { setEnrollPicked([]); setShowEnrollDialog(true); }}
+            />
           </div>
         )}
       </div>
@@ -870,6 +892,27 @@ export default function EmailInbox() {
         </DialogContent>
       </Dialog>
 
+      {/* Enroll Contacts Dialog */}
+      <Dialog open={showEnrollDialog} onOpenChange={(o) => { setShowEnrollDialog(o); if (!o) setEnrollPicked([]); }}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Enroll contacts</DialogTitle>
+            <DialogDescription>Each contact gets step 1 after its delay, then each following step. Merge fields like {"{{firstName}}"} and {"{{company}}"} are filled per contact.</DialogDescription>
+          </DialogHeader>
+          <ContactMultiPicker value={enrollPicked} onChange={setEnrollPicked} excludeIds={new Set((enrollmentRows ?? []).map((e) => e.contactId))} />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowEnrollDialog(false)}>Cancel</Button>
+            <Button
+              disabled={!enrollPicked.length || enrollMutation.isPending || !selectedSequenceId}
+              onClick={() => { if (selectedSequenceId) enrollMutation.mutate({ sequenceId: selectedSequenceId, contactIds: enrollPicked }); }}
+            >
+              {enrollMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <UserPlus className="h-4 w-4 mr-2" />}
+              Enroll {enrollPicked.length || ""}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Canned Responses Manager */}
       <Dialog open={showCannedManager} onOpenChange={v => { setShowCannedManager(v); if (!v) setCannedForm({ open: false, id: null, name: "", content: "", shortcut: "", category: "" }); }}>
         <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
@@ -937,6 +980,65 @@ export default function EmailInbox() {
 // matches inbound emails by category + optional sender/subject/
 // keyword patterns and either drafts or auto-sends a reply.
 // ──────────────────────────────────────────────────────────────
+// Contacts enrolled in a sequence, with pause / resume / unenroll. Module-level
+// so it keeps its identity across EmailInbox renders.
+function SequenceEnrollments({ sequenceId, canEnroll, onEnroll }: { sequenceId: number; canEnroll: boolean; onEnroll: () => void }) {
+  const utils = trpc.useUtils();
+  const { data: rows, isLoading } = trpc.emailSequences.enrollments.useQuery({ sequenceId });
+  const refresh = () => { utils.emailSequences.enrollments.invalidate({ sequenceId }); utils.emailSequences.list.invalidate(); };
+  const onError = (e: { message: string }) => toast.error(e.message);
+  const pause = trpc.emailSequences.pause.useMutation({ onSuccess: refresh, onError });
+  const resume = trpc.emailSequences.resume.useMutation({ onSuccess: refresh, onError });
+  const unenroll = trpc.emailSequences.unenroll.useMutation({ onSuccess: refresh, onError });
+  const busy = pause.isPending || resume.isPending || unenroll.isPending;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold">Enrolled Contacts{rows?.length ? ` (${rows.length})` : ""}</h3>
+        <Button size="sm" className="h-7 text-xs gap-1" disabled={!canEnroll} title={canEnroll ? undefined : "Activate the sequence and add a step first"} onClick={onEnroll}>
+          <UserPlus className="h-3.5 w-3.5" /> Enroll Contacts
+        </Button>
+      </div>
+      {isLoading ? (
+        <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin" /></div>
+      ) : !rows?.length ? (
+        <p className="text-sm text-muted-foreground border-2 border-dashed rounded-lg p-6 text-center">No contacts enrolled yet.</p>
+      ) : (
+        <div className="border rounded-lg bg-background divide-y">
+          {rows.map((e) => (
+            <div key={e.id} className="flex items-center gap-3 px-3 py-2 text-sm">
+              <div className="flex-1 min-w-0">
+                <div className="font-medium truncate">{e.contactName ?? `Contact #${e.contactId}`}</div>
+                <div className="text-xs text-muted-foreground truncate">
+                  {e.contactEmail ?? "no email"} · step {e.currentStepOrder} sent
+                  {e.status === "active" && e.nextSendAt ? ` · next ${new Date(e.nextSendAt).toLocaleString()}` : ""}
+                  {e.stoppedReason ? ` · ${e.stoppedReason}` : e.lastError ? ` · last error: ${e.lastError}` : ""}
+                </div>
+              </div>
+              <Badge variant="outline" className={`capitalize shrink-0 ${e.status === "failed" ? "text-destructive border-destructive/40" : ""}`}>{e.status}</Badge>
+              <div className="flex items-center gap-1 shrink-0">
+                {e.status === "active" && (
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" disabled={busy} title="Pause" onClick={() => pause.mutate({ enrollmentId: e.id })}><Pause className="h-3.5 w-3.5" /></Button>
+                )}
+                {e.status === "paused" && (
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" disabled={busy} title="Resume" onClick={() => resume.mutate({ enrollmentId: e.id })}><Play className="h-3.5 w-3.5" /></Button>
+                )}
+                {(e.status === "active" || e.status === "paused") && (
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" disabled={busy} title="Unenroll"
+                    onClick={() => { if (confirm("Stop this sequence for the contact?")) unenroll.mutate({ enrollmentId: e.id }); }}>
+                    <X className="h-3.5 w-3.5 text-destructive" />
+                  </Button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const REPLY_TONES = ["professional", "friendly", "formal"] as const;
 type ReplyTone = (typeof REPLY_TONES)[number];
 

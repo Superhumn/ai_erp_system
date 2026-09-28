@@ -1,6 +1,6 @@
 /**
  * Finance process flow: chart of accounts → vendor bill (AP) → PO match →
- * approval → payment → ledger → bank feed → reports → R&D credit → KPI goals
+ * approval → payment → ledger → bank feed → bank reconciliation → reports → R&D credit → KPI goals
  * → role gating. Walks the real tRPC routers and the real AP workflow
  * processors on top of a stateful in-memory db mock (see _harness.ts).
  *
@@ -186,8 +186,56 @@ vi.mock("../db", async () => {
         (!f.status || t.status === f.status) &&
         (!f.accountId || t.accountId === f.accountId))),
     getBankTransactionByExternalId: vi.fn(async (externalId: string) => s.bankTransactions.find((t) => t.externalId === externalId)),
-    createBankTransaction: vi.fn(async (data: Row) => ({ id: s.bankTransactions.insert({ categorizationStatus: "uncategorized", source: "mercury", ...data }).id })),
+    createBankTransaction: vi.fn(async (data: Row) => ({ id: s.bankTransactions.insert({ categorizationStatus: "uncategorized", source: "mercury", reconciliationStatus: "unreconciled", matchedPaymentId: null, reconciledAt: null, reconciledBy: null, notes: null, ...data }).id })),
     updateBankTransaction: vi.fn(async (id: number, data: Row) => { s.bankTransactions.update(id, data); }),
+    // bank-to-payment reconciliation (mirrors the db.ts helpers, incl. the unique matchedPaymentId index)
+    getBankTransactionById: vi.fn(async (id: number) => s.bankTransactions.get(id)),
+    getUnreconciledBankTransactions: vi.fn(async (f: Record<string, any> = {}) => {
+      if (f.companyIds && f.companyIds.length === 0) return [];
+      return s.bankTransactions
+        .filter((t) =>
+          ["unreconciled", "suggested", undefined, null].includes(t.reconciliationStatus) &&
+          (!f.companyIds || f.companyIds.includes(t.companyId)) &&
+          (!f.bankTransactionId || t.id === f.bankTransactionId))
+        .sort((a, b) => b.date.getTime() - a.date.getTime() || b.id - a.id)
+        .slice(0, f.limit ?? 500);
+    }),
+    getPaymentMatchCandidates: vi.fn(async (p: { amount: number; direction: string; from: Date; to: Date; companyIds?: number[]; excludeBankTransactionId?: number }) => {
+      if (p.companyIds && p.companyIds.length === 0) return [];
+      const taken = new Set(s.bankTransactions.filter((t) => t.matchedPaymentId != null && t.id !== p.excludeBankTransactionId).map((t) => t.matchedPaymentId));
+      return s.payments
+        .filter((x) =>
+          x.type === p.direction && x.amount === Math.abs(p.amount).toFixed(2) &&
+          x.paymentDate >= p.from && x.paymentDate <= p.to &&
+          ["pending", "completed"].includes(x.status) &&
+          (!p.companyIds || p.companyIds.includes(x.companyId)) &&
+          !taken.has(x.id))
+        .map((x) => ({ ...x, vendorName: s.vendors.get(x.vendorId)?.name ?? null, customerName: null }));
+    }),
+    getBankTransactionsMatchedToPayment: vi.fn(async (paymentId: number) => s.bankTransactions.filter((t) => t.matchedPaymentId === paymentId)),
+    setBankTransactionReconciliation: vi.fn(async (id: number, d: { matchedPaymentId: number | null; status: string; userId: number | null; notes?: string | null }) => {
+      const matchedPaymentId = d.status === "reconciled" ? d.matchedPaymentId : null;
+      if (matchedPaymentId != null && s.bankTransactions.find((t) => t.id !== id && t.matchedPaymentId === matchedPaymentId)) {
+        throw Object.assign(new Error("Duplicate entry for key 'uq_bank_transactions_matched_payment'"), { code: "ER_DUP_ENTRY", errno: 1062 });
+      }
+      const closed = d.status === "reconciled" || d.status === "excluded";
+      s.bankTransactions.update(id, {
+        matchedPaymentId, reconciliationStatus: d.status,
+        reconciledAt: closed ? new Date() : null, reconciledBy: closed ? d.userId : null,
+        ...(d.notes !== undefined ? { notes: d.notes } : {}),
+      });
+    }),
+    getBankReconciliationSummary: vi.fn(async (f: { companyIds?: number[] } = {}) => {
+      const groups = new Map<string, { status: string; type: string; count: number; total: string }>();
+      for (const t of s.bankTransactions.filter((t) => !f.companyIds || f.companyIds.includes(t.companyId))) {
+        const key = `${t.reconciliationStatus}|${t.type}`;
+        const g = groups.get(key) ?? { status: t.reconciliationStatus, type: t.type, count: 0, total: "0" };
+        g.count += 1;
+        g.total = (Number(g.total) + Number(t.amount)).toFixed(2);
+        groups.set(key, g);
+      }
+      return [...groups.values()];
+    }),
     // R&D tax credit
     createRdTaxCreditStudy: vi.fn(async (data: Row) => { const row = s.rdStudies.insert({ status: "draft", ...data }); return { id: row.id, ...data }; }),
     createRdProject: vi.fn(async (data: Row) => { const row = s.rdProjects.insert(data); return { id: row.id, ...data }; }),
@@ -244,7 +292,7 @@ function wfContext(config: Record<string, any> = {}): WorkflowContext {
 const auditCalls = () => vi.mocked(db.createAuditLog).mock.calls.map((c) => c[0]);
 
 // Ids handed from one step to the next.
-const ids = { apAccount: 0, cashAccount: 0, billA: 0, paymentA: 0, billB: 0, billC: 0, billD: 0, txn: 0, bankLine: 0, study: 0, project: 0, expense0: 0, expense100: 0, kpi: 0 };
+const ids = { apAccount: 0, cashAccount: 0, billA: 0, paymentA: 0, billB: 0, billC: 0, billD: 0, txn: 0, bankLine: 0, dupLine: 0, study: 0, project: 0, expense0: 0, expense100: 0, kpi: 0 };
 
 describe("finance flow", () => {
   beforeAll(() => vi.mocked(db.createAuditLog).mockClear());
@@ -476,6 +524,88 @@ describe("finance flow", () => {
     expect(await finance.banking.transactions({ categorizationStatus: "confirmed" })).toHaveLength(1);
     expect(await finance.banking.transactions({ categorizationStatus: "uncategorized" })).toEqual([]);
     expect(await finance.banking.autoCategorize()).toEqual({ categorized: 0, total: 0 });
+  });
+
+  it("5c. reconciliation: the ACH line is matched to the step-2 payment, unmatched, auto-matched back; a duplicate debit cannot take the same payment", async () => {
+    const recon = finance.banking.reconciliation;
+    const empty = { count: 0, inflow: 0, outflow: 0, total: 0 };
+    const open = { count: 1, inflow: 0, outflow: 1200, total: 1200 };
+
+    // The synced line landed under the syncing user's entity, so the entity-scoped finance user sees it.
+    expect(state.bankTransactions.get(ids.bankLine)).toMatchObject({ companyId: 1, reconciliationStatus: "unreconciled", matchedPaymentId: null });
+    expect(await recon.summary()).toMatchObject({ unreconciled: open, reconciled: empty, all: open });
+
+    // One suggestion: payment A ($1,200 made to Acme Mills, ref ACH-777). Payment B ($450) is a different amount.
+    const suggested = await recon.suggest();
+    expect(suggested).toHaveLength(1);
+    expect(suggested[0]).toMatchObject({ id: ids.bankLine, signedAmount: -1200 });
+    expect(suggested[0].suggestions).toHaveLength(1);
+    expect(suggested[0].suggestions[0]).toMatchObject({ paymentId: ids.paymentA, confidence: 100 });
+    expect(suggested[0].suggestions[0].reasons).toEqual(expect.arrayContaining([
+      "Amount matches exactly ($1,200.00)",
+      "Reference ACH-777 found in bank description",
+      "Vendor name matches (Acme Mills)",
+    ]));
+
+    // A payment of the wrong amount is refused before anything is written.
+    await expect(recon.match({ bankTransactionId: ids.bankLine, paymentId: 2 })).rejects.toMatchObject({ code: "BAD_REQUEST", message: "Amount differs: bank $1,200.00 vs payment $450.00" });
+
+    const matched = await recon.match({ bankTransactionId: ids.bankLine, paymentId: ids.paymentA });
+    expect(matched).toMatchObject({ id: ids.bankLine, reconciliationStatus: "reconciled", matchedPaymentId: ids.paymentA, reconciledBy: 2, reconciledAt: expect.any(Date) });
+    expect(auditCalls()).toContainEqual(expect.objectContaining({
+      userId: 2, action: "update", entityType: "bank_transaction", entityId: ids.bankLine,
+      newValues: { reconciliationStatus: "reconciled", matchedPaymentId: ids.paymentA },
+    }));
+    expect(await recon.summary()).toMatchObject({ unreconciled: empty, reconciled: open });
+    expect(await recon.suggest()).toEqual([]);
+
+    // Unmatch frees the line and the payment again.
+    expect(await recon.unmatch({ bankTransactionId: ids.bankLine })).toMatchObject({ reconciliationStatus: "unreconciled", matchedPaymentId: null, reconciledBy: null });
+    expect(await recon.summary()).toMatchObject({ unreconciled: open, reconciled: empty });
+
+    // Auto-match takes it back: exactly one suggestion, confidence 100 ≥ 90.
+    expect(await recon.autoMatch()).toEqual({
+      scanned: 1, reconciled: 1, needsReview: 0, noCandidates: 0, minConfidence: 90,
+      matches: [{ bankTransactionId: ids.bankLine, paymentId: ids.paymentA, confidence: 100 }],
+    });
+    expect(state.bankTransactions.get(ids.bankLine)).toMatchObject({ reconciliationStatus: "reconciled", matchedPaymentId: ids.paymentA });
+
+    // Mercury then posts a second, identical $1,200 debit (a duplicate the bank later reverses).
+    vi.mocked(mercury.getMercuryTransactions).mockResolvedValue({
+      configured: true,
+      transactions: [
+        { id: "txn_ach777", amount: -1200, postedDate: today.toISOString(), status: "sent", bankDescription: "ACH ACME MILLS ACH-777", counterpartyName: "Acme Mills" },
+        { id: "txn_ach777_dup", amount: -1200, postedDate: today.toISOString(), status: "sent", bankDescription: "ACH ACME MILLS ACH-777", counterpartyName: "Acme Mills" },
+      ],
+    });
+    expect(await finance.banking.syncTransactions()).toEqual({ totalImported: 1, totalSkipped: 1, accounts: 1 });
+    ids.dupLine = state.bankTransactions.find((t) => t.externalId === "txn_ach777_dup")!.id;
+
+    // Payment A is taken, so the duplicate gets no suggestion, and matching it by hand is a CONFLICT.
+    const dup = await recon.suggest({ bankTransactionId: ids.dupLine });
+    expect(dup.map((l) => [l.id, l.suggestions.length])).toEqual([[ids.dupLine, 0]]);
+    await expect(recon.match({ bankTransactionId: ids.dupLine, paymentId: ids.paymentA }))
+      .rejects.toMatchObject({ code: "CONFLICT", message: `Payment ${state.payments.get(ids.paymentA)!.paymentNumber} is already matched to bank line #${ids.bankLine}` });
+    expect(state.bankTransactions.get(ids.dupLine)).toMatchObject({ reconciliationStatus: "unreconciled", matchedPaymentId: null });
+
+    // Auto-match leaves it alone (no candidate), and finance excludes it with a reason.
+    expect(await recon.autoMatch()).toMatchObject({ scanned: 1, reconciled: 0, noCandidates: 1 });
+    expect(await recon.exclude({ bankTransactionId: ids.dupLine, reason: "Duplicate debit, reversed by bank" }))
+      .toMatchObject({ reconciliationStatus: "excluded", matchedPaymentId: null, notes: "Excluded from reconciliation: Duplicate debit, reversed by bank" });
+    expect(await recon.summary()).toMatchObject({
+      unreconciled: empty,
+      reconciled: open,
+      excluded: open,
+      all: { count: 2, inflow: 0, outflow: 2400, total: 2400 },
+    });
+
+    // Reconciliation is finance-only, and another entity's finance user sees none of it.
+    await expect(ops.banking.reconciliation.summary()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(sales.banking.reconciliation.match({ bankTransactionId: ids.dupLine, paymentId: ids.paymentA })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const otherEntityFinance = appRouter.createCaller(ctxFor("finance", { id: 9, companyId: 2, regionScope: "entity" }));
+    expect((await otherEntityFinance.banking.reconciliation.summary()).all.count).toBe(0);
+    await expect(otherEntityFinance.banking.reconciliation.unmatch({ bankTransactionId: ids.bankLine })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(state.bankTransactions.get(ids.bankLine)).toMatchObject({ reconciliationStatus: "reconciled", matchedPaymentId: ids.paymentA });
   });
 
   // -------------------------------------------------------------------------

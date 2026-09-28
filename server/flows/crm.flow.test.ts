@@ -9,6 +9,10 @@
  * mock also provides a tiny Drizzle look-alike (select/insert/update/delete
  * over the same in-memory tables) and swaps drizzle-orm's eq/and/desc for
  * plain predicates it can evaluate.
+ *
+ * Email sending (campaign send, sequence runner tick) goes through the real
+ * server/campaignSender.ts + server/sequenceRunner.ts with only the mailer
+ * (_core/email.sendEmail) mocked.
  */
 import { describe, expect, it, vi, beforeAll } from "vitest";
 import type { Table } from "./_harness";
@@ -24,6 +28,7 @@ interface State {
   tasks: Table<Row>;
   taskLogs: Table<Row>;
   campaigns: Table<Row>;
+  recipients: Table<Row>;
   videos: Table<Row>;
   posts: Table<Row>;
   credentials: Table<Row>;
@@ -59,6 +64,7 @@ vi.mock("../db", async () => {
     tasks: table<Row>(),
     taskLogs: table<Row>(),
     campaigns: table<Row>(),
+    recipients: table<Row>(),
     videos: table<Row>(),
     posts: table<Row>(),
     credentials: table<Row>(),
@@ -67,6 +73,7 @@ vi.mock("../db", async () => {
       email_sequence_steps: table<Row>(),
       brand_ambassadors: table<Row>(),
       brand_ambassador_activities: table<Row>(),
+      email_sequence_enrollments: table<Row>(),
     },
     auditLogs: [],
   };
@@ -75,6 +82,7 @@ vi.mock("../db", async () => {
     email_sequence_steps: { id: 0, delayDays: 1 },
     brand_ambassadors: { id: 0, stage: "prospect", priority: "medium", currency: "USD" },
     brand_ambassador_activities: { id: 0 },
+    email_sequence_enrollments: { id: 0, status: "active", currentStepOrder: 0, attempts: 0 },
   };
 
   // Strictly increasing clock so createdAt/updatedAt ordering is deterministic
@@ -147,6 +155,7 @@ vi.mock("../db", async () => {
   return {
     __state: state,
     getDb: vi.fn(async () => fakeDrizzle),
+    getUserEntityAccessCompanyIds: vi.fn(async () => []),
     createAuditLog: vi.fn(async (data: Row) => { state.auditLogs.push(data); }),
 
     // ---- contacts
@@ -289,6 +298,90 @@ vi.mock("../db", async () => {
       return state.campaigns.insert({ status: "draft", type: "custom", totalRecipients: 0, sentCount: 0, ...data, createdAt: now, updatedAt: now }).id;
     }),
     updateCrmEmailCampaign: vi.fn(async (id: number, data: Row) => { state.campaigns.update(id, data); }),
+    getCrmEmailCampaignById: vi.fn(async (id: number) => snap(state.campaigns.get(id))),
+    getCrmContactsByIds: vi.fn(async (ids: number[]) => state.contacts.filter((c) => ids.includes(c.id)).map((c) => ({ ...c }))),
+    getCrmContactsForSegment: vi.fn(async (seg: Row) =>
+      state.contacts
+        .filter((c) =>
+          !!c.email && c.status === "active" && !c.optedOutEmail &&
+          (!seg.contactTypes?.length || seg.contactTypes.includes(c.contactType)) &&
+          (!seg.pipelineStages?.length || seg.pipelineStages.includes(c.pipelineStage)) &&
+          (!seg.tagIds?.length) && // no tag assignments in this flow
+          (seg.companyIds == null || seg.companyIds.includes(c.companyId)))
+        .map((c) => ({ ...c }))),
+    getCrmCampaignRecipients: vi.fn(async (campaignId: number) =>
+      state.recipients.filter((r) => r.campaignId === campaignId).sort((a, b) => a.id - b.id).map((r) => ({ ...r }))),
+    addCrmCampaignRecipients: vi.fn(async (campaignId: number, rows: Row[]) => {
+      const seen = new Set(state.recipients.filter((r) => r.campaignId === campaignId).map((r) => r.contactId));
+      let added = 0;
+      for (const r of rows) {
+        if (seen.has(r.contactId)) continue;
+        seen.add(r.contactId);
+        state.recipients.insert({ campaignId, contactId: r.contactId, email: r.email, status: "pending", createdAt: tick() });
+        added++;
+      }
+      state.campaigns.update(campaignId, { totalRecipients: state.recipients.filter((r) => r.campaignId === campaignId).length });
+      return added;
+    }),
+    removeCrmCampaignRecipient: vi.fn(async (campaignId: number, recipientId: number) => {
+      const r = state.recipients.get(recipientId);
+      if (!r || r.campaignId !== campaignId || !["pending", "failed", "skipped"].includes(r.status)) return false;
+      state.recipients.remove(recipientId);
+      state.campaigns.update(campaignId, { totalRecipients: state.recipients.filter((x) => x.campaignId === campaignId).length });
+      return true;
+    }),
+    claimCrmEmailCampaignForSend: vi.fn(async (id: number, from: string[], staleBefore?: Date) => {
+      const c = state.campaigns.get(id);
+      const stale = c?.status === "sending" && !!staleBefore && c.updatedAt < staleBefore;
+      if (!c || !(from.includes(c.status) || stale)) return false;
+      state.campaigns.update(id, { status: "sending" });
+      return true;
+    }),
+    resetFailedCrmCampaignRecipients: vi.fn(async (campaignId: number) => {
+      for (const r of state.recipients.filter((x) => x.campaignId === campaignId && x.status === "failed")) Object.assign(r, { status: "pending", error: null });
+    }),
+    claimCrmCampaignRecipient: vi.fn(async (id: number) => {
+      const r = state.recipients.get(id);
+      if (!r || r.status !== "pending") return false;
+      r.status = "sending";
+      return true;
+    }),
+    updateCrmCampaignRecipient: vi.fn(async (id: number, data: Row) => { state.recipients.update(id, data); }),
+    getDueScheduledCrmEmailCampaigns: vi.fn(async (now: Date) =>
+      state.campaigns.filter((c) => c.status === "scheduled" && c.scheduledAt && c.scheduledAt <= now).map((c) => ({ ...c }))),
+
+    // ---- sequence enrollments (sequences/steps themselves live in state.raw)
+    getEmailSequenceById: vi.fn(async (id: number) => snap(state.raw.email_sequences.get(id))),
+    getEmailSequenceSteps: vi.fn(async (sequenceId: number) =>
+      state.raw.email_sequence_steps.filter((s) => s.sequenceId === sequenceId).sort((a, b) => a.stepOrder - b.stepOrder || a.id - b.id).map((s) => ({ ...s }))),
+    getEmailSequenceEnrollments: vi.fn(async (sequenceId: number) =>
+      state.raw.email_sequence_enrollments.filter((e) => e.sequenceId === sequenceId).sort(desc("createdAt"))
+        .map((e) => ({ ...e, contactName: state.contacts.get(e.contactId)?.fullName ?? null, contactEmail: state.contacts.get(e.contactId)?.email ?? null }))),
+    getEmailSequenceEnrollmentById: vi.fn(async (id: number) => snap(state.raw.email_sequence_enrollments.get(id))),
+    createEmailSequenceEnrollments: vi.fn(async (rows: Row[]) => {
+      const tbl = state.raw.email_sequence_enrollments;
+      const enrolled: number[] = [];
+      for (const r of rows) {
+        if (tbl.find((e) => e.sequenceId === r.sequenceId && e.contactId === r.contactId)) continue;
+        const now = tick();
+        tbl.insert({ attempts: 0, lastError: null, lastSentAt: null, stoppedReason: null, ...r, createdAt: now, updatedAt: now });
+        enrolled.push(r.contactId);
+      }
+      for (const seqId of new Set(rows.map((r) => r.sequenceId))) {
+        const seq = state.raw.email_sequences.get(seqId);
+        if (seq) seq.totalContacts = tbl.filter((e) => e.sequenceId === seqId).length;
+      }
+      return enrolled;
+    }),
+    updateEmailSequenceEnrollment: vi.fn(async (id: number, data: Row) => { state.raw.email_sequence_enrollments.update(id, data); }),
+    getDueEmailSequenceEnrollments: vi.fn(async (now: Date) =>
+      state.raw.email_sequence_enrollments.filter((e) => e.status === "active" && !!e.nextSendAt && e.nextSendAt <= now).map((e) => ({ ...e }))),
+    claimEmailSequenceEnrollment: vi.fn(async (id: number, now: Date, leaseUntil: Date) => {
+      const e = state.raw.email_sequence_enrollments.get(id);
+      if (!e || e.status !== "active" || !e.nextSendAt || e.nextSendAt > now) return false;
+      e.nextSendAt = leaseUntil;
+      return true;
+    }),
 
     // ---- marketing
     getMarketingVideos: vi.fn(async (f?: Row) => state.videos.filter((v) => !f?.companyId || v.companyId === f.companyId)),
@@ -313,6 +406,11 @@ vi.mock("../db", async () => {
   };
 });
 
+vi.mock("../_core/email", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../_core/email")>();
+  return { ...actual, sendEmail: vi.fn(async () => ({ success: true, messageId: "sg-1" })) };
+});
+
 vi.mock("../_core/socialPublisher", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../_core/socialPublisher")>();
   return { ...actual, publishToPlatform: vi.fn() };
@@ -320,7 +418,9 @@ vi.mock("../_core/socialPublisher", async (importOriginal) => {
 
 import * as db from "../db";
 import { publishToPlatform } from "../_core/socialPublisher";
+import { sendEmail } from "../_core/email";
 import { appRouter } from "../routers";
+import { runEmailOutreachTick } from "../sequenceRunner";
 
 const state = (db as unknown as { __state: State }).__state;
 
@@ -330,6 +430,10 @@ const admin = appRouter.createCaller(ctxFor("admin", { id: 1, name: "Admin User"
 const ops = appRouter.createCaller(ctxFor("ops", { id: 20, email: "ops@example.com" }));
 const otherSales = appRouter.createCaller(ctxFor("sales", { id: 11, email: "sales2@example.com" }));
 const investor = appRouter.createCaller(ctxFor("investor", { id: 30, email: "investor@example.com" }));
+// Same sales user, but confined to entity #2 (campaigns/contacts above belong to #1 or none).
+const salesEntity2 = appRouter.createCaller(ctxFor("sales", { id: SALES_ID, email: "sales@example.com", companyId: 2, regionScope: "entity" }));
+const DAY = 24 * 60 * 60 * 1000;
+const sentTo = () => vi.mocked(sendEmail).mock.calls.map((c) => [c[0].to, c[0].subject]);
 
 const ids = {
   contactId: 0,
@@ -486,50 +590,123 @@ describe("CRM process: contact → deal → outreach → marketing", () => {
     expect(await sales.crm.deals.list({ status: "open" })).toEqual([]);
   });
 
-  it("4a. an email sequence is built with ordered steps (no enroll procedure exists)", async () => {
+  it("4a. an email sequence is built, contacts are enrolled and the runner sends each step until completion", async () => {
     ids.sequenceId = (await sales.emailSequences.create({ name: "Wholesale nurture", description: "3-touch follow-up" })).id;
     expect(ids.sequenceId).toBeGreaterThan(0);
 
-    ids.stepIds.push((await sales.emailSequences.addStep({ sequenceId: ids.sequenceId, subject: "Thanks for meeting", body: "Great to meet you.", delayDays: 0 })).id);
+    ids.stepIds.push((await sales.emailSequences.addStep({ sequenceId: ids.sequenceId, subject: "Thanks for meeting, {{firstName}}", body: "Great to meet you at {{company}}.", delayDays: 0 })).id);
     ids.stepIds.push((await sales.emailSequences.addStep({ sequenceId: ids.sequenceId, subject: "Samples on the way", body: "Tracking inside.", delayDays: 3 })).id);
     ids.stepIds.push((await sales.emailSequences.addStep({ sequenceId: ids.sequenceId, subject: "Any questions?", body: "Happy to help.", delayDays: 7 })).id);
 
     const seq = await sales.emailSequences.get({ id: ids.sequenceId });
     expect(seq).toMatchObject({ id: ids.sequenceId, userId: SALES_ID, name: "Wholesale nurture", status: "draft", totalContacts: 0 });
     expect(seq.steps.map((s) => [s.stepOrder, s.subject, s.delayDays])).toEqual([
-      [1, "Thanks for meeting", 0], [2, "Samples on the way", 3], [3, "Any questions?", 7],
+      [1, "Thanks for meeting, {{firstName}}", 0], [2, "Samples on the way", 3], [3, "Any questions?", 7],
     ]);
-
-    await sales.emailSequences.updateStep({ stepId: ids.stepIds[1], delayDays: 2 });
-    await sales.emailSequences.update({ id: ids.sequenceId, status: "active" });
-    const list = await sales.emailSequences.list();
-    expect(list).toHaveLength(1);
-    expect(list[0]).toMatchObject({ id: ids.sequenceId, status: "active", stepCount: 3 });
-    expect(list[0].steps.find((s: Row) => s.id === ids.stepIds[1])).toMatchObject({ delayDays: 2 });
 
     // Sequences are private to their author.
     expect(await otherSales.emailSequences.list()).toEqual([]);
     await expect(otherSales.emailSequences.get({ id: ids.sequenceId })).rejects.toMatchObject({ code: "NOT_FOUND" });
     await expect(otherSales.emailSequences.updateStep({ stepId: ids.stepIds[0], subject: "hijack" })).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(otherSales.emailSequences.deleteStep({ stepId: ids.stepIds[0] })).rejects.toMatchObject({ code: "FORBIDDEN" });
-    expect(state.raw.email_sequence_steps.get(ids.stepIds[0])?.subject).toBe("Thanks for meeting");
+    expect(state.raw.email_sequence_steps.get(ids.stepIds[0])?.subject).toBe("Thanks for meeting, {{firstName}}");
 
-    // No enroll/contact-assignment procedure exists on emailSequences.
+    // A draft sequence does not accept contacts.
+    await expect(sales.emailSequences.enroll({ sequenceId: ids.sequenceId, contactIds: [ids.contactId] }))
+      .rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+
+    await sales.emailSequences.updateStep({ stepId: ids.stepIds[1], delayDays: 2 });
+    await sales.emailSequences.update({ id: ids.sequenceId, status: "active" });
+    const list = await sales.emailSequences.list();
+    expect(list[0]).toMatchObject({ id: ids.sequenceId, status: "active", stepCount: 3 });
+
+    // Enroll Jane, Bob, an opted-out contact and an unknown id.
+    const optedOut = state.contacts.insert({ firstName: "Otto", fullName: "Otto Out", email: "otto@x.com", status: "active", optedOutEmail: true, contactType: "prospect", pipelineStage: "new" }).id;
+    const bob = state.contacts.insert({ firstName: "Bob", fullName: "Bob Buyer", email: "bob@acme.com", organization: "Acme Foods", status: "active", optedOutEmail: false, contactType: "prospect", pipelineStage: "contacted" }).id;
+
+    // Only internal roles may enroll; only the author sees their sequence.
+    await expect(investor.emailSequences.enroll({ sequenceId: ids.sequenceId, contactIds: [ids.contactId] })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(otherSales.emailSequences.enroll({ sequenceId: ids.sequenceId, contactIds: [ids.contactId] })).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    const before = Date.now();
+    const res = await sales.emailSequences.enroll({ sequenceId: ids.sequenceId, contactIds: [ids.contactId, optedOut, bob, 9999] });
+    expect(res).toMatchObject({ enrolled: 2, enrolledContactIds: [ids.contactId, bob] });
+    expect(res.skipped).toEqual([
+      { contactId: optedOut, reason: "Contact opted out of email" },
+      { contactId: 9999, reason: "Contact not found" },
+    ]);
+    expect(res.nextSendAt.getTime()).toBeGreaterThanOrEqual(before); // step 1 has no delay
+
+    // Duplicates are skipped; an entity-2-scoped caller can neither enroll contacts outside
+    // entity 2 nor see enrollments of them.
+    expect((await sales.emailSequences.enroll({ sequenceId: ids.sequenceId, contactIds: [ids.contactId] })).skipped)
+      .toEqual([{ contactId: ids.contactId, reason: "Already enrolled" }]);
+    expect((await salesEntity2.emailSequences.enroll({ sequenceId: ids.sequenceId, contactIds: [bob] })).skipped)
+      .toEqual([{ contactId: bob, reason: "Contact not found" }]);
+    expect(await salesEntity2.emailSequences.enrollments({ sequenceId: ids.sequenceId })).toEqual([]);
+
+    let enrollments = await sales.emailSequences.enrollments({ sequenceId: ids.sequenceId });
+    expect(enrollments.map((e) => [e.contactId, e.contactName, e.status, e.currentStepOrder])).toEqual([
+      [bob, "Bob Buyer", "active", 0], [ids.contactId, "Jane Doe", "active", 0],
+    ]);
+    expect(state.raw.email_sequences.get(ids.sequenceId)?.totalContacts).toBe(2);
+    const bobEnrollment = enrollments.find((e) => e.contactId === bob)!.id;
+    const janeEnrollment = enrollments.find((e) => e.contactId === ids.contactId)!.id;
+
+    // Tick 1: step 1 goes to both, with merge fields rendered.
+    vi.mocked(sendEmail).mockClear();
+    let t = new Date(Date.now() + 1000);
+    let tick = await runEmailOutreachTick(t);
+    expect(tick.sequences).toMatchObject({ due: 2, claimed: 2, sent: 2 });
+    expect(sentTo().sort()).toEqual([["bob@acme.com", "Thanks for meeting, Bob"], ["jane@acme.com", "Thanks for meeting, Jane"]]);
+    expect(vi.mocked(sendEmail).mock.calls.find((c) => c[0].to === "jane@acme.com")![0].text).toBe("Great to meet you at Acme Foods.");
+    expect(state.raw.email_sequence_enrollments.get(janeEnrollment)).toMatchObject({ currentStepOrder: 1, lastSentAt: t, nextSendAt: new Date(t.getTime() + 2 * DAY) });
+
+    // Re-running the same tick sends nothing (rows already advanced).
+    vi.mocked(sendEmail).mockClear();
+    expect((await runEmailOutreachTick(t)).sequences).toMatchObject({ due: 0, sent: 0 });
+    expect(sendEmail).not.toHaveBeenCalled();
+
+    // Bob is paused before step 2; Jane gets step 2.
+    await sales.emailSequences.pause({ enrollmentId: bobEnrollment });
+    await expect(otherSales.emailSequences.pause({ enrollmentId: janeEnrollment })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    t = new Date(t.getTime() + 2 * DAY);
+    await runEmailOutreachTick(t);
+    expect(sentTo()).toEqual([["jane@acme.com", "Samples on the way"]]);
+
+    // Bob resumes (his overdue step goes out next tick); Jane is unenrolled instead of getting step 3.
+    await sales.emailSequences.resume({ enrollmentId: bobEnrollment });
+    await sales.emailSequences.unenroll({ enrollmentId: janeEnrollment });
+    vi.mocked(sendEmail).mockClear();
+    t = new Date(t.getTime() + 7 * DAY);
+    await runEmailOutreachTick(t);
+    expect(sentTo()).toEqual([["bob@acme.com", "Samples on the way"]]);
+    t = new Date(t.getTime() + 7 * DAY);
+    await runEmailOutreachTick(t);
+    expect(sentTo()).toEqual([["bob@acme.com", "Samples on the way"], ["bob@acme.com", "Any questions?"]]);
+
+    enrollments = await sales.emailSequences.enrollments({ sequenceId: ids.sequenceId });
+    expect(enrollments.map((e) => [e.contactId, e.status, e.currentStepOrder, e.stoppedReason ?? null])).toEqual([
+      [bob, "completed", 3, null], [ids.contactId, "stopped", 2, "Unenrolled"],
+    ]);
+    await expect(sales.emailSequences.resume({ enrollmentId: janeEnrollment })).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+
     expect(Object.keys(appRouter._def.procedures).filter((p) => p.startsWith("emailSequences.")).sort()).toEqual([
       "emailSequences.addStep", "emailSequences.create", "emailSequences.delete", "emailSequences.deleteStep",
-      "emailSequences.get", "emailSequences.list", "emailSequences.update", "emailSequences.updateStep",
+      "emailSequences.enroll", "emailSequences.enrollments", "emailSequences.get", "emailSequences.list",
+      "emailSequences.pause", "emailSequences.resume", "emailSequences.unenroll", "emailSequences.update", "emailSequences.updateStep",
     ]);
   });
 
-  it("4b. a campaign is created, targeted and scheduled (no recipient/send procedure exists)", async () => {
+  it("4b. a campaign gets recipients (explicit + segment), is test-sent, sent with per-recipient statuses and retried", async () => {
     ids.campaignId = (await sales.crm.campaigns.create({
-      name: "Fall wholesale launch", subject: "New fall SKUs", bodyHtml: "<p>Hi {{firstName}}</p>", bodyText: "Hi",
+      name: "Fall wholesale launch", subject: "New fall SKUs for {{company}}", bodyHtml: "<p>Hi {{firstName}}</p>", bodyText: "Hi {{firstName}}",
       type: "announcement", targetContactTypes: JSON.stringify(["prospect"]), targetPipelineStages: JSON.stringify(["new", "contacted"]),
     })).id;
 
     let [campaign] = await sales.crm.campaigns.list({ status: "draft" });
     expect(campaign).toMatchObject({
-      id: ids.campaignId, name: "Fall wholesale launch", subject: "New fall SKUs", type: "announcement", status: "draft",
+      id: ids.campaignId, name: "Fall wholesale launch", type: "announcement", status: "draft", companyId: 1,
       createdBy: SALES_ID, totalRecipients: 0, sentCount: 0, targetContactTypes: '["prospect"]',
     });
     expect(state.auditLogs.at(-1)).toMatchObject({ action: "create", entityType: "crm_campaign", entityId: ids.campaignId, entityName: "Fall wholesale launch" });
@@ -537,15 +714,84 @@ describe("CRM process: contact → deal → outreach → marketing", () => {
     const scheduledAt = new Date("2026-10-05T14:00:00.000Z");
     expect(await sales.crm.campaigns.update({ id: ids.campaignId, status: "scheduled", scheduledAt })).toEqual({ success: true });
     [campaign] = await sales.crm.campaigns.list({ status: "scheduled" });
-    expect(campaign).toMatchObject({ id: ids.campaignId, status: "scheduled" });
     expect(campaign.scheduledAt).toEqual(scheduledAt);
-    expect(await sales.crm.campaigns.list({ status: "draft" })).toEqual([]);
     expect((await sales.crm.campaigns.list({ type: "announcement" })).map((c) => c.id)).toEqual([ids.campaignId]);
 
-    // The router only exposes list/create/update: no recipients, no send, no per-recipient status.
-    expect(Object.keys(appRouter._def.procedures).filter((p) => p.startsWith("crm.campaigns.")).sort()).toEqual([
-      "crm.campaigns.create", "crm.campaigns.list", "crm.campaigns.update",
+    // Recipients: explicit ids (skips are reported) + the campaign's own targeting.
+    const [otto, bob] = ["Otto Out", "Bob Buyer"].map((n) => state.contacts.find((c) => c.fullName === n)!.id);
+    const noEmail = state.contacts.insert({ firstName: "Nia", fullName: "Nia NoMail", email: null, status: "active", contactType: "customer" }).id;
+    const added = await sales.crm.campaigns.addRecipients({ campaignId: ids.campaignId, contactIds: [ids.contactId, otto, noEmail, 9999], segment: { useCampaignTargeting: true } });
+    expect(added).toEqual({
+      added: 2, alreadyAdded: 0, totalRecipients: 2,
+      skipped: [
+        { contactId: otto, reason: "Contact opted out of email" },
+        { contactId: noEmail, reason: "Contact has no email address" },
+        { contactId: 9999, reason: "Contact not found" },
+      ],
+    });
+    let recipients = await sales.crm.campaigns.recipients({ campaignId: ids.campaignId });
+    expect(recipients.map((r) => [r.contactId, r.contactName, r.email, r.status])).toEqual([
+      [ids.contactId, "Jane Doe", "jane@acme.com", "pending"], [bob, "Bob Buyer", "bob@acme.com", "pending"],
     ]);
+
+    // Gating + scope: ops (internal, not CRM) cannot send; investors cannot read; another entity cannot see it.
+    await expect(ops.crm.campaigns.send({ campaignId: ids.campaignId })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(ops.crm.campaigns.sendTest({ campaignId: ids.campaignId, to: "ops@example.com" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(investor.crm.campaigns.recipients({ campaignId: ids.campaignId })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(salesEntity2.crm.campaigns.get({ id: ids.campaignId })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(salesEntity2.crm.campaigns.send({ campaignId: ids.campaignId })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(await salesEntity2.crm.campaigns.list()).toEqual([]);
+
+    // Test send: rendered with the first recipient, tagged [TEST], no recipient rows touched.
+    vi.mocked(sendEmail).mockClear();
+    expect(await sales.crm.campaigns.sendTest({ campaignId: ids.campaignId, to: "sales@example.com" })).toEqual({ success: true });
+    expect(sendEmail).toHaveBeenCalledWith({ to: "sales@example.com", subject: "[TEST] New fall SKUs for Acme Foods", html: "<p>Hi Jane</p>", text: "Hi Jane" });
+    expect((await sales.crm.campaigns.recipients({ campaignId: ids.campaignId })).every((r) => r.status === "pending")).toBe(true);
+
+    // Send now: Bob's mailbox rejects.
+    vi.mocked(sendEmail).mockClear();
+    vi.mocked(sendEmail).mockImplementation(async (o) => (o.to === "bob@acme.com" ? { success: false, error: "550 mailbox unavailable" } : { success: true, messageId: "sg-jane" }));
+    const first = await sales.crm.campaigns.send({ campaignId: ids.campaignId });
+    expect(first).toMatchObject({ claimed: true, status: "partially_failed", sent: 1, failed: 1, skipped: 0, sentCount: 1 });
+    recipients = await sales.crm.campaigns.recipients({ campaignId: ids.campaignId });
+    expect(recipients.map((r) => [r.email, r.status, r.messageId ?? null, r.error ?? null])).toEqual([
+      ["jane@acme.com", "sent", "sg-jane", null], ["bob@acme.com", "failed", null, "550 mailbox unavailable"],
+    ]);
+    expect(recipients[0].sentAt).toBeInstanceOf(Date);
+    expect(await sales.crm.campaigns.get({ id: ids.campaignId })).toMatchObject({ status: "partially_failed", sentCount: 1, totalRecipients: 2 });
+
+    // Re-send retries Bob only; Jane is never mailed twice.
+    vi.mocked(sendEmail).mockClear();
+    vi.mocked(sendEmail).mockImplementation(async () => ({ success: true, messageId: "sg-2" }));
+    expect(await sales.crm.campaigns.send({ campaignId: ids.campaignId })).toMatchObject({ status: "sent", sent: 1, sentCount: 2 });
+    expect(sentTo()).toEqual([["bob@acme.com", "New fall SKUs for Acme Foods"]]);
+    await expect(sales.crm.campaigns.send({ campaignId: ids.campaignId })).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+    await expect(sales.crm.campaigns.removeRecipient({ campaignId: ids.campaignId, recipientId: recipients[0].id })).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+    expect(state.auditLogs.at(-1)).toMatchObject({ action: "update", entityType: "crm_campaign", entityId: ids.campaignId, entityName: "sent: 1 ok, 0 failed, 0 skipped" });
+
+    // A scheduled campaign is sent by the outreach tick once its time passes.
+    const scheduled = (await sales.crm.campaigns.create({ name: "Reminder", subject: "Reminder", bodyHtml: "<p>{{firstName}}</p>", type: "newsletter" })).id;
+    await expect(sales.crm.campaigns.schedule({ campaignId: scheduled, scheduledAt: new Date(Date.now() + DAY) })).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+    await sales.crm.campaigns.addRecipients({ campaignId: scheduled, contactIds: [ids.contactId, bob] });
+    const removed = (await sales.crm.campaigns.recipients({ campaignId: scheduled })).find((r) => r.contactId === bob)!;
+    expect(await sales.crm.campaigns.removeRecipient({ campaignId: scheduled, recipientId: removed.id })).toEqual({ success: true });
+    const at = new Date(Date.now() + DAY);
+    expect(await sales.crm.campaigns.schedule({ campaignId: scheduled, scheduledAt: at })).toEqual({ success: true, scheduledAt: at });
+    vi.mocked(sendEmail).mockClear();
+    expect((await runEmailOutreachTick(new Date(at.getTime() - 1000))).campaigns).toEqual([]);
+    const tick = await runEmailOutreachTick(new Date(at.getTime() + 1000));
+    expect(tick.campaigns).toEqual([expect.objectContaining({ campaignId: scheduled, claimed: true, status: "sent", sent: 1 })]);
+    expect(sentTo()).toEqual([["jane@acme.com", "Reminder"]]);
+    expect((await runEmailOutreachTick(new Date(at.getTime() + 2000))).campaigns).toEqual([]);
+
+    expect(Object.keys(appRouter._def.procedures).filter((p) => p.startsWith("crm.campaigns.")).sort()).toEqual([
+      "crm.campaigns.addRecipients", "crm.campaigns.create", "crm.campaigns.get", "crm.campaigns.list", "crm.campaigns.recipients",
+      "crm.campaigns.removeRecipient", "crm.campaigns.schedule", "crm.campaigns.send", "crm.campaigns.sendTest",
+      "crm.campaigns.unschedule", "crm.campaigns.update",
+    ]);
+
+    // Leave the contact book as later steps expect it (Jane only).
+    for (const id of [otto, bob, noEmail]) state.contacts.remove(id);
   });
 
   it("5a. marketing: connected credentials never expose tokens; posts are planned per platform", async () => {

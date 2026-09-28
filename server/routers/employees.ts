@@ -1,8 +1,32 @@
 // appRouter.employees — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router } from "../_core/trpc";
 import * as db from "../db";
-import { adminProcedure, execProcedure, internalProcedure, createAuditLog, generateNumber } from "./_shared";
+import {
+  getLinkCandidates,
+  getLinkedUser,
+  linkEmployeeToUser,
+  unlinkEmployeeFromUser,
+  type LinkFailure,
+} from "../employeeLinkService";
+import { adminProcedure, execProcedure, internalProcedure, createAuditLog, generateNumber, resolveRequestScope, assertNonEmptyScope } from "./_shared";
+
+// Linking a login to an employee grants that login the employee's portal
+// (payslips, documents, PTO). There is no HR role, so it is admin-only, and
+// fenced to the admin's entity scope: an employee outside it reads as NOT_FOUND.
+const scopedAdminProcedure = adminProcedure.use(async ({ ctx, next }) => {
+  const scope = assertNonEmptyScope(await resolveRequestScope(ctx.user));
+  return next({ ctx: { ...ctx, scope } });
+});
+
+function isLinkFailure(v: unknown): v is LinkFailure {
+  return typeof v === "object" && v !== null && (v as { ok?: unknown }).ok === false;
+}
+
+function throwLinkFailure(f: LinkFailure): never {
+  throw new TRPCError({ code: f.code, message: f.message });
+}
 
 // ============================================
 // HR - EMPLOYEES
@@ -93,5 +117,35 @@ export const employeesRouter = router({
         await db.updateEmployee(input.employeeId, { salary: input.salary, salaryFrequency: input.salaryFrequency });
         await createAuditLog(ctx.user.id, 'create', 'compensation', result.id);
         return result;
+      }),
+
+    // ---- login account (employees.userId) ------------------------------
+    linkedUser: scopedAdminProcedure
+      .input(z.object({ employeeId: z.number() }))
+      .query(async ({ input, ctx }) => {
+        const res = await getLinkedUser(input.employeeId, ctx.scope);
+        if (isLinkFailure(res)) throwLinkFailure(res);
+        return res;
+      }),
+    linkCandidates: scopedAdminProcedure
+      .input(z.object({ employeeId: z.number() }))
+      .query(async ({ input, ctx }) => {
+        const res = await getLinkCandidates(input.employeeId, ctx.scope);
+        if (isLinkFailure(res)) throwLinkFailure(res);
+        return res;
+      }),
+    linkUser: scopedAdminProcedure
+      .input(z.object({ employeeId: z.number(), userId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const res = await linkEmployeeToUser({ ...input, actorUserId: ctx.user.id, scope: ctx.scope });
+        if (res.ok === false) throwLinkFailure(res);
+        return { success: true, changed: res.changed };
+      }),
+    unlinkUser: scopedAdminProcedure
+      .input(z.object({ employeeId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const res = await unlinkEmployeeFromUser({ employeeId: input.employeeId, actorUserId: ctx.user.id, scope: ctx.scope });
+        if (res.ok === false) throwLinkFailure(res);
+        return { success: true, changed: res.changed };
       }),
   });

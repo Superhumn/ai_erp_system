@@ -2851,6 +2851,38 @@ export async function deleteEmployee(id: number) {
   await db.delete(employees).where(eq(employees.id, id));
 }
 
+/** Employees whose work or personal email equals `email` (case-insensitive). */
+export async function getEmployeesByEmail(email: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return [];
+  return db.select().from(employees).where(or(
+    sql`LOWER(${employees.email}) = ${normalized}`,
+    sql`LOWER(${employees.personalEmail}) = ${normalized}`,
+  ));
+}
+
+/**
+ * Point employees.userId at `userId`, but only while the row is still unlinked
+ * or already holds that user. Returns false when another user got there first.
+ */
+export async function setEmployeeUserIdIfUnlinked(employeeId: number, userId: number): Promise<boolean> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.update(employees).set({ userId }).where(and(
+    eq(employees.id, employeeId),
+    or(isNull(employees.userId), eq(employees.userId, userId)),
+  ));
+  return (result[0]?.affectedRows ?? 0) > 0;
+}
+
+export async function clearEmployeeUserId(employeeId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(employees).set({ userId: null }).where(eq(employees.id, employeeId));
+}
+
 // ============================================
 // HR - COMPENSATION
 // ============================================
@@ -13597,6 +13629,294 @@ export async function updateCrmEmailCampaign(id: number, data: Partial<InsertCrm
   await db.update(crmEmailCampaigns).set(data).where(eq(crmEmailCampaigns.id, id));
 }
 
+// Kept next to their helpers (rather than in the top import list) so this
+// section can move out of db.ts as a unit.
+import type { SQL } from "drizzle-orm";
+import {
+  emailSequences, emailSequenceSteps, emailSequenceEnrollments,
+  type CrmContact, type CrmEmailCampaign, type CrmCampaignRecipient,
+  type EmailSequence, type EmailSequenceStep, type EmailSequenceEnrollment, type InsertEmailSequenceEnrollment,
+} from "../drizzle/schema";
+
+export async function getCrmEmailCampaignById(id: number): Promise<CrmEmailCampaign | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(crmEmailCampaigns).where(eq(crmEmailCampaigns.id, id)).limit(1);
+  return row;
+}
+
+export async function getCrmContactsByIds(ids: number[]): Promise<CrmContact[]> {
+  const db = await getDb();
+  if (!db || ids.length === 0) return [];
+  return db.select().from(crmContacts).where(inArray(crmContacts.id, ids));
+}
+
+/**
+ * Contacts matching a campaign segment. Only mailable contacts are returned:
+ * an email is present, status is active, and the contact has not opted out.
+ * `companyIds` null = unrestricted (global scope); [] = nothing.
+ */
+export async function getCrmContactsForSegment(segment: {
+  contactTypes?: string[];
+  pipelineStages?: string[];
+  tagIds?: number[];
+  companyIds: number[] | null;
+  limit?: number;
+}): Promise<CrmContact[]> {
+  const db = await getDb();
+  if (!db) return [];
+  if (segment.companyIds && segment.companyIds.length === 0) return [];
+  const conditions: SQL[] = [
+    sql`${crmContacts.email} IS NOT NULL AND ${crmContacts.email} <> ''`,
+    eq(crmContacts.status, "active"),
+    sql`(${crmContacts.optedOutEmail} IS NULL OR ${crmContacts.optedOutEmail} = false)`,
+  ];
+  if (segment.contactTypes?.length) {
+    conditions.push(inArray(crmContacts.contactType, segment.contactTypes as CrmContact["contactType"][]));
+  }
+  if (segment.pipelineStages?.length) {
+    conditions.push(inArray(crmContacts.pipelineStage, segment.pipelineStages as NonNullable<CrmContact["pipelineStage"]>[]));
+  }
+  if (segment.tagIds?.length) {
+    conditions.push(inArray(
+      crmContacts.id,
+      db.select({ id: crmContactTags.contactId }).from(crmContactTags).where(inArray(crmContactTags.tagId, segment.tagIds)),
+    ));
+  }
+  if (segment.companyIds) conditions.push(inArray(crmContacts.companyId, segment.companyIds));
+  return db.select().from(crmContacts).where(and(...conditions)).limit(segment.limit ?? 5000);
+}
+
+export async function getCrmCampaignRecipients(campaignId: number): Promise<CrmCampaignRecipient[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(crmCampaignRecipients)
+    .where(eq(crmCampaignRecipients.campaignId, campaignId))
+    .orderBy(asc(crmCampaignRecipients.id));
+}
+
+/** Adds recipients, skipping contacts already on the campaign. Returns the number inserted. */
+export async function addCrmCampaignRecipients(
+  campaignId: number,
+  rows: Array<{ contactId: number; email: string }>,
+): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (rows.length === 0) return 0;
+  const existing = await db.select({ contactId: crmCampaignRecipients.contactId })
+    .from(crmCampaignRecipients)
+    .where(eq(crmCampaignRecipients.campaignId, campaignId));
+  const seen = new Set(existing.map((r) => r.contactId));
+  const fresh: InsertCrmCampaignRecipient[] = [];
+  for (const r of rows) {
+    if (seen.has(r.contactId)) continue;
+    seen.add(r.contactId);
+    fresh.push({ campaignId, contactId: r.contactId, email: r.email, status: "pending" });
+  }
+  if (fresh.length) await db.insert(crmCampaignRecipients).values(fresh);
+  await refreshCrmCampaignRecipientCount(campaignId);
+  return fresh.length;
+}
+
+/** Removes a recipient that has not been sent to yet. Returns false if absent or already sent. */
+export async function removeCrmCampaignRecipient(campaignId: number, recipientId: number): Promise<boolean> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.delete(crmCampaignRecipients).where(and(
+    eq(crmCampaignRecipients.id, recipientId),
+    eq(crmCampaignRecipients.campaignId, campaignId),
+    inArray(crmCampaignRecipients.status, ["pending", "failed", "skipped"]),
+  ));
+  const removed = (result[0]?.affectedRows ?? 0) > 0;
+  if (removed) await refreshCrmCampaignRecipientCount(campaignId);
+  return removed;
+}
+
+export async function refreshCrmCampaignRecipientCount(campaignId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  const [row] = await db.select({ n: count() }).from(crmCampaignRecipients)
+    .where(eq(crmCampaignRecipients.campaignId, campaignId));
+  await db.update(crmEmailCampaigns).set({ totalRecipients: Number(row?.n ?? 0) })
+    .where(eq(crmEmailCampaigns.id, campaignId));
+}
+
+/**
+ * Atomically moves a campaign into `sending`. Succeeds only from one of
+ * `fromStatuses`, or from a `sending` row last touched before `staleBefore`
+ * (a sender that crashed mid-run). Returns false when someone else holds it.
+ */
+export async function claimCrmEmailCampaignForSend(
+  id: number,
+  fromStatuses: CrmEmailCampaign["status"][],
+  staleBefore?: Date,
+): Promise<boolean> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const statuses = fromStatuses.filter((s): s is NonNullable<CrmEmailCampaign["status"]> => s != null);
+  const claimable = staleBefore
+    ? or(inArray(crmEmailCampaigns.status, statuses), and(eq(crmEmailCampaigns.status, "sending"), lt(crmEmailCampaigns.updatedAt, staleBefore)))
+    : inArray(crmEmailCampaigns.status, statuses);
+  const result = await db.update(crmEmailCampaigns)
+    .set({ status: "sending", updatedAt: new Date() })
+    .where(and(eq(crmEmailCampaigns.id, id), claimable));
+  return (result[0]?.affectedRows ?? 0) > 0;
+}
+
+/** Failed recipients go back to pending so a re-send retries them. Sent ones are untouched. */
+export async function resetFailedCrmCampaignRecipients(campaignId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(crmCampaignRecipients).set({ status: "pending", error: null })
+    .where(and(eq(crmCampaignRecipients.campaignId, campaignId), eq(crmCampaignRecipients.status, "failed")));
+}
+
+/** pending → sending, guarded, so a recipient is only ever sent once. */
+export async function claimCrmCampaignRecipient(recipientId: number): Promise<boolean> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.update(crmCampaignRecipients).set({ status: "sending" })
+    .where(and(eq(crmCampaignRecipients.id, recipientId), eq(crmCampaignRecipients.status, "pending")));
+  return (result[0]?.affectedRows ?? 0) > 0;
+}
+
+export async function updateCrmCampaignRecipient(id: number, data: Partial<InsertCrmCampaignRecipient>): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(crmCampaignRecipients).set(data).where(eq(crmCampaignRecipients.id, id));
+}
+
+/** Campaigns due to go out: scheduled for now or earlier. */
+export async function getDueScheduledCrmEmailCampaigns(now: Date, limit = 20): Promise<CrmEmailCampaign[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(crmEmailCampaigns)
+    .where(and(eq(crmEmailCampaigns.status, "scheduled"), lte(crmEmailCampaigns.scheduledAt, now)))
+    .orderBy(asc(crmEmailCampaigns.scheduledAt))
+    .limit(limit);
+}
+
+// --- EMAIL SEQUENCE ENROLLMENTS ---
+// The emailSequences router reads sequences/steps through Drizzle directly;
+// enrollment + the runner (server/sequenceRunner.ts) go through these.
+
+export async function getEmailSequenceById(id: number): Promise<EmailSequence | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(emailSequences).where(eq(emailSequences.id, id)).limit(1);
+  return row;
+}
+
+/** Steps in send order. */
+export async function getEmailSequenceSteps(sequenceId: number): Promise<EmailSequenceStep[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailSequenceSteps)
+    .where(eq(emailSequenceSteps.sequenceId, sequenceId))
+    .orderBy(asc(emailSequenceSteps.stepOrder), asc(emailSequenceSteps.id));
+}
+
+export async function getEmailSequenceEnrollments(sequenceId: number): Promise<Array<EmailSequenceEnrollment & {
+  contactName: string | null;
+  contactEmail: string | null;
+}>> {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select({
+    enrollment: emailSequenceEnrollments,
+    contactName: crmContacts.fullName,
+    contactEmail: crmContacts.email,
+  })
+    .from(emailSequenceEnrollments)
+    .leftJoin(crmContacts, eq(crmContacts.id, emailSequenceEnrollments.contactId))
+    .where(eq(emailSequenceEnrollments.sequenceId, sequenceId))
+    .orderBy(desc(emailSequenceEnrollments.createdAt), desc(emailSequenceEnrollments.id));
+  return rows.map((r) => ({ ...r.enrollment, contactName: r.contactName ?? null, contactEmail: r.contactEmail ?? null }));
+}
+
+export async function getEmailSequenceEnrollmentById(id: number): Promise<EmailSequenceEnrollment | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(emailSequenceEnrollments).where(eq(emailSequenceEnrollments.id, id)).limit(1);
+  return row;
+}
+
+/**
+ * Inserts enrollments, skipping contacts already on the sequence (any status;
+ * the unique key backs this up). Returns the contact ids actually enrolled.
+ */
+export async function createEmailSequenceEnrollments(rows: InsertEmailSequenceEnrollment[]): Promise<number[]> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (rows.length === 0) return [];
+  const sequenceIds = Array.from(new Set(rows.map((r) => r.sequenceId)));
+  const existing = await db.select({ sequenceId: emailSequenceEnrollments.sequenceId, contactId: emailSequenceEnrollments.contactId })
+    .from(emailSequenceEnrollments)
+    .where(inArray(emailSequenceEnrollments.sequenceId, sequenceIds));
+  const seen = new Set(existing.map((r) => `${r.sequenceId}:${r.contactId}`));
+  const fresh: InsertEmailSequenceEnrollment[] = [];
+  for (const r of rows) {
+    const key = `${r.sequenceId}:${r.contactId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    fresh.push(r);
+  }
+  if (fresh.length) await db.insert(emailSequenceEnrollments).ignore().values(fresh);
+  for (const sequenceId of sequenceIds) await refreshEmailSequenceContactCount(sequenceId);
+  return fresh.map((r) => r.contactId);
+}
+
+export async function updateEmailSequenceEnrollment(id: number, data: Partial<InsertEmailSequenceEnrollment>): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(emailSequenceEnrollments).set(data).where(eq(emailSequenceEnrollments.id, id));
+}
+
+export async function deleteEmailSequenceEnrollment(id: number): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  const row = await getEmailSequenceEnrollmentById(id);
+  await db.delete(emailSequenceEnrollments).where(eq(emailSequenceEnrollments.id, id));
+  if (row) await refreshEmailSequenceContactCount(row.sequenceId);
+}
+
+export async function refreshEmailSequenceContactCount(sequenceId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  const [row] = await db.select({ n: count() }).from(emailSequenceEnrollments)
+    .where(eq(emailSequenceEnrollments.sequenceId, sequenceId));
+  await db.update(emailSequences).set({ totalContacts: Number(row?.n ?? 0) }).where(eq(emailSequences.id, sequenceId));
+}
+
+/** Active enrollments whose next step is due. */
+export async function getDueEmailSequenceEnrollments(now: Date, limit = 200): Promise<EmailSequenceEnrollment[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailSequenceEnrollments)
+    .where(and(eq(emailSequenceEnrollments.status, "active"), lte(emailSequenceEnrollments.nextSendAt, now)))
+    .orderBy(asc(emailSequenceEnrollments.nextSendAt))
+    .limit(limit);
+}
+
+/**
+ * Claims a due enrollment for this tick by pushing nextSendAt out to
+ * `leaseUntil` — guarded on it still being active and due, so of two
+ * overlapping runs only one gets affectedRows = 1. If the claimer dies the
+ * lease simply expires and the row is picked up again.
+ */
+export async function claimEmailSequenceEnrollment(id: number, now: Date, leaseUntil: Date): Promise<boolean> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.update(emailSequenceEnrollments)
+    .set({ nextSendAt: leaseUntil })
+    .where(and(
+      eq(emailSequenceEnrollments.id, id),
+      eq(emailSequenceEnrollments.status, "active"),
+      lte(emailSequenceEnrollments.nextSendAt, now),
+    ));
+  return (result[0]?.affectedRows ?? 0) > 0;
+}
+
 // --- HELPER FUNCTIONS ---
 
 function parseVCard(vcardData: string): Partial<InsertCrmContact> {
@@ -17422,6 +17742,152 @@ export async function updateBankTransaction(id: number, data: Partial<InsertBank
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(bankTransactions).set({ ...data, updatedAt: new Date() }).where(eq(bankTransactions.id, id));
+}
+
+// --- Bank-to-payment reconciliation (appRouter.banking.reconciliation; matcher in ./bankReconciliation) ---
+
+export async function getBankTransactionById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(bankTransactions).where(eq(bankTransactions.id, id)).limit(1);
+  return result[0];
+}
+
+/**
+ * Bank lines still awaiting reconciliation (status unreconciled or suggested), newest first.
+ * `companyIds` is the caller's entity allow-list (omit for global scope; `[]` → no rows).
+ */
+export async function getUnreconciledBankTransactions(filters: {
+  companyIds?: number[];
+  bankTransactionId?: number;
+  accountId?: string;
+  limit?: number;
+} = {}) {
+  const db = await getDb();
+  if (!db) return [];
+  if (filters.companyIds && filters.companyIds.length === 0) return [];
+  const conditions = [
+    or(
+      inArray(bankTransactions.reconciliationStatus, ["unreconciled", "suggested"]),
+      isNull(bankTransactions.reconciliationStatus),
+    ),
+  ];
+  if (filters.companyIds) conditions.push(inArray(bankTransactions.companyId, filters.companyIds));
+  if (filters.bankTransactionId) conditions.push(eq(bankTransactions.id, filters.bankTransactionId));
+  if (filters.accountId) conditions.push(eq(bankTransactions.accountId, filters.accountId));
+  return db
+    .select()
+    .from(bankTransactions)
+    .where(and(...conditions))
+    .orderBy(desc(bankTransactions.date), desc(bankTransactions.id))
+    .limit(filters.limit ?? 500);
+}
+
+/**
+ * Payments that could settle a bank line: same direction, same amount to the cent, dated inside
+ * [from, to], not failed / cancelled, and not already matched to another bank line.
+ */
+export async function getPaymentMatchCandidates(params: {
+  amount: number;
+  direction: "made" | "received";
+  from: Date;
+  to: Date;
+  companyIds?: number[];
+  /** A bank line whose own current match should not count as "taken". */
+  excludeBankTransactionId?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  if (params.companyIds && params.companyIds.length === 0) return [];
+  const conditions = [
+    eq(payments.type, params.direction),
+    eq(payments.amount, Math.abs(params.amount).toFixed(2)),
+    gte(payments.paymentDate, params.from),
+    lte(payments.paymentDate, params.to),
+    inArray(payments.status, ["pending", "completed"]),
+  ];
+  if (params.companyIds) conditions.push(inArray(payments.companyId, params.companyIds));
+  const rows = await db
+    .select({
+      id: payments.id,
+      companyId: payments.companyId,
+      paymentNumber: payments.paymentNumber,
+      type: payments.type,
+      amount: payments.amount,
+      currency: payments.currency,
+      paymentDate: payments.paymentDate,
+      paymentMethod: payments.paymentMethod,
+      referenceNumber: payments.referenceNumber,
+      status: payments.status,
+      vendorId: payments.vendorId,
+      customerId: payments.customerId,
+      invoiceId: payments.invoiceId,
+      vendorName: vendors.name,
+      customerName: customers.name,
+    })
+    .from(payments)
+    .leftJoin(vendors, eq(payments.vendorId, vendors.id))
+    .leftJoin(customers, eq(payments.customerId, customers.id))
+    .where(and(...conditions))
+    .orderBy(asc(payments.paymentDate), asc(payments.id));
+  if (rows.length === 0) return rows;
+
+  const taken = await db
+    .select({ id: bankTransactions.id, matchedPaymentId: bankTransactions.matchedPaymentId })
+    .from(bankTransactions)
+    .where(inArray(bankTransactions.matchedPaymentId, rows.map((r) => r.id)));
+  const takenIds = new Set(
+    taken.filter((t) => t.id !== params.excludeBankTransactionId).map((t) => t.matchedPaymentId),
+  );
+  return rows.filter((r) => !takenIds.has(r.id));
+}
+
+/** Bank lines currently matched to a payment (at most one while the unique index holds). */
+export async function getBankTransactionsMatchedToPayment(paymentId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(bankTransactions).where(eq(bankTransactions.matchedPaymentId, paymentId));
+}
+
+/**
+ * Set a bank line's reconciliation state. reconciledAt / reconciledBy are stamped for reconciled
+ * and excluded, and cleared otherwise; the payment link is kept only when reconciled.
+ */
+export async function setBankTransactionReconciliation(id: number, data: {
+  matchedPaymentId: number | null;
+  status: "unreconciled" | "suggested" | "reconciled" | "excluded";
+  userId: number | null;
+  notes?: string | null;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const closed = data.status === "reconciled" || data.status === "excluded";
+  const patch: Partial<InsertBankTransaction> = {
+    matchedPaymentId: data.status === "reconciled" ? data.matchedPaymentId : null,
+    reconciliationStatus: data.status,
+    reconciledAt: closed ? new Date() : null,
+    reconciledBy: closed ? data.userId : null,
+    updatedAt: new Date(),
+  };
+  if (data.notes !== undefined) patch.notes = data.notes;
+  await db.update(bankTransactions).set(patch).where(eq(bankTransactions.id, id));
+}
+
+/** Bank line counts and summed amounts grouped by (reconciliationStatus, type). */
+export async function getBankReconciliationSummary(filters: { companyIds?: number[] } = {}) {
+  const db = await getDb();
+  if (!db) return [];
+  if (filters.companyIds && filters.companyIds.length === 0) return [];
+  return db
+    .select({
+      status: bankTransactions.reconciliationStatus,
+      type: bankTransactions.type,
+      count: count(),
+      total: sum(bankTransactions.amount),
+    })
+    .from(bankTransactions)
+    .where(filters.companyIds ? inArray(bankTransactions.companyId, filters.companyIds) : undefined)
+    .groupBy(bankTransactions.reconciliationStatus, bankTransactions.type);
 }
 
 // ============================================

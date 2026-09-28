@@ -90,6 +90,19 @@ vi.mock("../db", async () => {
     getEmployeeByUserId: vi.fn(async (userId: number) => snap(state.employees.find((e) => e.userId === userId))),
     createEmployee: vi.fn(async (data: Row) => ({ id: state.employees.insert({ status: "active", salaryFrequency: "annual", ...data }).id })),
     updateEmployee: vi.fn(async (id: number, data: Row) => { state.employees.update(id, data); }),
+    getEmployeesByEmail: vi.fn(async (email: string) => {
+      const e = email.trim().toLowerCase();
+      return state.employees.filter((r) => String(r.email ?? "").toLowerCase() === e || String(r.personalEmail ?? "").toLowerCase() === e).map(snap);
+    }),
+    setEmployeeUserIdIfUnlinked: vi.fn(async (id: number, userId: number) => {
+      const row = state.employees.get(id);
+      if (!row || (row.userId != null && row.userId !== userId)) return false;
+      state.employees.update(id, { userId });
+      return true;
+    }),
+    clearEmployeeUserId: vi.fn(async (id: number) => { state.employees.update(id, { userId: null }); }),
+    getUserById: vi.fn(async (id: number) => snap(state.users.find((u) => u.id === id))),
+    getUserEntityAccessCompanyIds: vi.fn(async () => []),
 
     // ---- documents
     getDocuments: vi.fn(async (f?: { companyId?: number; type?: string; referenceType?: string; referenceId?: number }) =>
@@ -229,7 +242,7 @@ describe("People process: hire → onboard → track time → get paid", () => {
     expect(state.candidates.get(ids.candidateId)?.stage).toBe("hired");
   });
 
-  it("2a. an offer letter is generated for the candidate and marked sent", async () => {
+  it("2a. an offer letter is created for the candidate, emailed via offerLetters.send, and marked sent", async () => {
     const created = await admin.offerLetters.create({
       candidateName: "Dana Employee",
       candidateEmail: "dana@example.com",
@@ -248,14 +261,45 @@ describe("People process: hire → onboard → track time → get paid", () => {
     const stored = await admin.offerLetters.get({ id: ids.offerLetterId });
     expect(stored).toMatchObject({ status: "draft", salary: "85000", salaryPeriod: "annual" });
 
-    // There is no offerLetters.send procedure (and no email is sent by this
-    // router); "sending" is recorded by updating the status + sentAt.
-    const sentAt = "2026-09-28T10:00:00.000Z";
-    await admin.offerLetters.update({ id: ids.offerLetterId, status: "sent", sentAt });
+    // The preview is what the send dialog shows; nothing is mailed yet.
+    vi.mocked(sendEmail).mockClear();
+    const preview = await admin.offerLetters.preview({ id: ids.offerLetterId });
+    expect(preview.to).toBe("dana@example.com");
+    expect(sendEmail).not.toHaveBeenCalled();
+
+    // A mail-provider failure leaves the offer in draft.
+    vi.mocked(sendEmail).mockResolvedValueOnce({ success: false, error: "SendGrid API key not configured" });
+    await expect(admin.offerLetters.send({ id: ids.offerLetterId })).rejects.toMatchObject({ code: "INTERNAL_SERVER_ERROR" });
+    expect((await admin.offerLetters.get({ id: ids.offerLetterId }))?.status).toBe("draft");
+    expect((await admin.offerLetters.get({ id: ids.offerLetterId }))?.sentAt).toBeUndefined();
+
+    vi.mocked(sendEmail).mockClear();
+    const before = Date.now();
+    const res = await admin.offerLetters.send({ id: ids.offerLetterId, message: "We'd love to have you on the team." });
+    expect(res).toMatchObject({ success: true, status: "sent", to: "dana@example.com", messageId: "msg-1" });
+
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+    const mail = vi.mocked(sendEmail).mock.calls[0][0];
+    expect(mail).toMatchObject({ to: "dana@example.com", replyTo: "admin@example.com", subject: "Offer of employment: Operations Analyst" });
+    expect(mail.text).toContain("Dear Dana Employee,");
+    expect(mail.text).toContain("Department: Operations");
+    expect(mail.text).toContain("Reporting to: Morgan Manager");
+    expect(mail.text).toContain("Employment type: Full-time");
+    expect(mail.text).toContain("Start date: October 1, 2026");
+    expect(mail.text).toContain("Compensation: $85,000 per year");
+    expect(mail.text).toContain("We'd love to have you on the team.");
+    expect(mail.html).toContain("We&#39;d love to have you on the team.");
+    expect(mail.subject).toBe(preview.subject);
+
     const sent = await admin.offerLetters.get({ id: ids.offerLetterId });
     expect(sent?.status).toBe("sent");
-    expect(sent?.sentAt).toEqual(new Date(sentAt));
-    expect(sendEmail).not.toHaveBeenCalled();
+    expect(sent?.sentAt).toBeInstanceOf(Date);
+    expect((sent?.sentAt as Date).getTime()).toBeGreaterThanOrEqual(before);
+    expect(state.auditLogs.at(-1)).toMatchObject({
+      userId: 1, action: "update", entityType: "offer_letter", entityId: ids.offerLetterId, entityName: "Dana Employee",
+      oldValues: { status: "draft" },
+      newValues: { status: "sent", emailedTo: "dana@example.com", action: "send" },
+    });
 
     const sentList = await admin.offerLetters.list({ status: "sent" });
     expect(sentList.map((o) => o.id)).toEqual([ids.offerLetterId]);
@@ -264,6 +308,11 @@ describe("People process: hire → onboard → track time → get paid", () => {
     // Accepted by the candidate.
     await admin.offerLetters.update({ id: ids.offerLetterId, status: "accepted", respondedAt: "2026-09-29T09:00:00.000Z" });
     expect((await admin.offerLetters.get({ id: ids.offerLetterId }))?.status).toBe("accepted");
+
+    // An accepted offer cannot be emailed again.
+    vi.mocked(sendEmail).mockClear();
+    await expect(admin.offerLetters.send({ id: ids.offerLetterId })).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+    expect(sendEmail).not.toHaveBeenCalled();
   });
 
   it("2b. the hire is converted into an employee record and read back", async () => {
@@ -301,10 +350,39 @@ describe("People process: hire → onboard → track time → get paid", () => {
     const all = await admin.employees.list();
     expect(all.map((e) => e.lastName)).toEqual(["Employee", "Manager"]); // sorted by last name
 
-    // Link the employee to their login. No procedure exposes this link
-    // (employees.update has no userId field); it is set directly in the store.
+    // Link the employee to their login through employees.linkUser.
     expect(await employee.employeePortal.me()).toBeNull();
-    state.employees.update(ids.employeeId, { userId: EMPLOYEE_USER_ID });
+    expect(await admin.employees.linkedUser({ employeeId: ids.employeeId })).toBeNull();
+
+    // Candidates: the user whose email matches the employee comes first; the
+    // admin's own internal login is offered after it.
+    const candidates = await admin.employees.linkCandidates({ employeeId: ids.employeeId });
+    expect(candidates[0]).toMatchObject({ id: EMPLOYEE_USER_ID, email: "dana@example.com", match: "email" });
+    expect(candidates.map((c) => c.id)).toEqual([EMPLOYEE_USER_ID, 1, OTHER_USER_ID]);
+
+    // Only an admin may link a login (it grants the employee's portal).
+    await expect(employee.employees.linkUser({ employeeId: ids.employeeId, userId: EMPLOYEE_USER_ID })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(admin.employees.linkUser({ employeeId: 9999, userId: EMPLOYEE_USER_ID })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(admin.employees.linkUser({ employeeId: ids.employeeId, userId: 9999 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    expect(await admin.employees.linkUser({ employeeId: ids.employeeId, userId: EMPLOYEE_USER_ID })).toEqual({ success: true, changed: true });
+    expect(state.employees.get(ids.employeeId)?.userId).toBe(EMPLOYEE_USER_ID);
+    expect(state.auditLogs.at(-1)).toMatchObject({
+      userId: 1, action: "update", entityType: "employee", entityId: ids.employeeId, entityName: "Dana Employee",
+      oldValues: { userId: null }, newValues: { userId: EMPLOYEE_USER_ID },
+    });
+    expect(await admin.employees.linkedUser({ employeeId: ids.employeeId })).toEqual({
+      id: EMPLOYEE_USER_ID, name: "Dana Employee", email: "dana@example.com", role: "user",
+    });
+
+    // Same pair again is a no-op; a different login, or the same login on another employee, is a CONFLICT.
+    const auditCount = state.auditLogs.length;
+    expect(await admin.employees.linkUser({ employeeId: ids.employeeId, userId: EMPLOYEE_USER_ID })).toEqual({ success: true, changed: false });
+    expect(state.auditLogs).toHaveLength(auditCount);
+    await expect(admin.employees.linkUser({ employeeId: ids.employeeId, userId: OTHER_USER_ID })).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(admin.employees.linkUser({ employeeId: ids.managerId, userId: EMPLOYEE_USER_ID })).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(state.employees.get(ids.managerId)?.userId).toBeUndefined();
+    expect((await admin.employees.linkCandidates({ employeeId: ids.managerId })).map((c) => c.id)).not.toContain(EMPLOYEE_USER_ID);
   });
 
   it("3a. the employee sees their own profile in the portal", async () => {
@@ -352,7 +430,7 @@ describe("People process: hire → onboard → track time → get paid", () => {
     expect(await admin.documents.list({ type: "hr", referenceType: "employee", referenceId: ids.employeeId })).toHaveLength(1);
   });
 
-  it("3c. admin sends a team invite for the employee's login (email asserted); accept is not a tRPC step", async () => {
+  it("3c. admin sends a team invite (email asserted); an invite for the employee links their login on signup", async () => {
     vi.mocked(sendEmail).mockClear();
     const res = await admin.teamInvites.invite({ email: "Dana@Example.com", name: "Dana Employee", role: "user" });
     expect(res.success).toBe(true);
@@ -372,6 +450,23 @@ describe("People process: hire → onboard → track time → get paid", () => {
     // Acceptance happens in the HTTP signup handler (POST /api/auth/signup
     // with ?invite=token), not through tRPC; a non-admin cannot invite.
     await expect(employee.teamInvites.invite({ email: "x@example.com" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    // Invite-to-portal for an employee: refused while the employee is linked,
+    // or when the email is not the employee's (signup links by that email).
+    await expect(admin.teamInvites.invite({ email: "dana@example.com", employeeId: ids.employeeId })).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(await admin.employees.unlinkUser({ employeeId: ids.employeeId })).toEqual({ success: true, changed: true });
+    expect(await employee.employeePortal.me()).toBeNull();
+    await expect(admin.teamInvites.invite({ email: "someone@else.com", employeeId: ids.employeeId })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+    const portalInvite = await admin.teamInvites.invite({ email: "Dana@Example.com", name: "Dana Employee", role: "user", employeeId: ids.employeeId });
+    const accepted = state.teamInvites.find((i) => i.token === portalInvite.token)!;
+    expect(accepted).toMatchObject({ email: "dana@example.com", status: "pending" });
+
+    // Signup with that token runs this hook after creating the user
+    // (server/_core/localAuth.ts; the HTTP path is covered in auth.register.test.ts).
+    const { linkEmployeeForAcceptedInvite } = await import("../employeeLinkService");
+    expect(await linkEmployeeForAcceptedInvite(accepted.email, EMPLOYEE_USER_ID)).toEqual({ linked: true, employeeId: ids.employeeId });
+    expect(await employee.employeePortal.me()).toMatchObject({ id: ids.employeeId, firstName: "Dana" });
   });
 
   it("4a. the employee logs a week of time and only sees their own entries", async () => {

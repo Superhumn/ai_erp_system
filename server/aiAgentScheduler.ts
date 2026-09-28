@@ -713,6 +713,15 @@ export async function executeApprovedTasks(): Promise<{
         .set({ status: "failed", errorMessage: errorMsg })
         .where(eq(aiAgentTasks.id, task.id));
     }
+
+    // Project tasks handed to the agent pick up the result now, not on the
+    // next read of the project page. Never fails the scheduler run.
+    try {
+      const { syncAgentStatusToProjectTask } = await import("./taskAgentBridge");
+      await syncAgentStatusToProjectTask(task.id);
+    } catch (err) {
+      console.warn(`[AIAgentScheduler] project-task write-back failed for task ${task.id}:`, err);
+    }
   }
 
   return { executed, failed, errors };

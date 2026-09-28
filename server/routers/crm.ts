@@ -6,7 +6,47 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { invokeLLM } from "../_core/llm";
 import * as db from "../db";
 import { ENV } from "../_core/env";
-import { adminProcedure, internalProcedure, createAuditLog } from "./_shared";
+import { adminProcedure, internalProcedure, createAuditLog, resolveRequestScope } from "./_shared";
+import { scopeAllows, scopeCompanyIds, type Scope } from "../_core/scope";
+import { mailableSkipReason, sendCampaign, sendCampaignTest, type CampaignStatus } from "../campaignSender";
+
+// --- Email campaign helpers (used by crm.campaigns) ---
+
+// Sending mail to a contact list is limited to the CRM section's roles.
+const CAMPAIGN_SEND_ROLES = ["admin", "exec", "sales"];
+const campaignSendProcedure = internalProcedure.use(({ ctx, next }) => {
+  if (!CAMPAIGN_SEND_ROLES.includes(ctx.user.role)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Sending campaigns requires a sales, exec or admin role" });
+  }
+  return next({ ctx });
+});
+
+// Recipients can only be changed before the campaign goes out.
+const RECIPIENT_EDITABLE: CampaignStatus[] = ["draft", "scheduled", "paused", "partially_failed"];
+const SENDABLE: CampaignStatus[] = ["draft", "scheduled", "paused", "partially_failed"];
+
+const contactTypeEnum = z.enum(["lead", "prospect", "customer", "partner", "investor", "donor", "vendor", "other"]);
+const pipelineStageEnum = z.enum(["new", "contacted", "qualified", "proposal", "negotiation", "won", "lost"]);
+
+/** Campaign by id, treated as not found when outside the caller's entity scope. */
+async function loadScopedCampaign(id: number, scope: Scope) {
+  const campaign = await db.getCrmEmailCampaignById(id);
+  if (!campaign || !scopeAllows(scope, campaign.companyId)) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Campaign not found" });
+  }
+  return campaign;
+}
+
+/** Parses a JSON-array targeting column; tolerates null / malformed values. */
+function parseTargetList(raw: string | null | undefined): unknown[] {
+  if (!raw) return [];
+  try {
+    const v: unknown = JSON.parse(raw);
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
 
 // ============================================
 // CRM MODULE - Contacts, Messaging & Tracking
@@ -1158,7 +1198,15 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           type: z.string().optional(),
           limit: z.number().optional(),
         }).optional())
-        .query(({ input }) => db.getCrmEmailCampaigns(input)),
+        .query(async ({ input, ctx }) => {
+          const rows = await db.getCrmEmailCampaigns(input);
+          const scope = await resolveRequestScope(ctx.user);
+          return scope.companyIds === "all" ? rows : rows.filter((c) => scopeAllows(scope, c.companyId));
+        }),
+
+      get: internalProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input, ctx }) => loadScopedCampaign(input.id, await resolveRequestScope(ctx.user))),
 
       create: protectedProcedure
         .input(z.object({
@@ -1176,6 +1224,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         .mutation(async ({ input, ctx }) => {
           const id = await db.createCrmEmailCampaign({
             ...input,
+            companyId: ctx.user.companyId ?? null,
             createdBy: ctx.user.id,
           });
           await createAuditLog(ctx.user.id, 'create', 'crm_campaign', id, input.name);
@@ -1197,6 +1246,154 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           const { id, ...data } = input;
           await db.updateCrmEmailCampaign(id, data);
           await createAuditLog(ctx.user.id, 'update', 'crm_campaign', id);
+          return { success: true };
+        }),
+
+      recipients: internalProcedure
+        .input(z.object({ campaignId: z.number() }))
+        .query(async ({ input, ctx }) => {
+          await loadScopedCampaign(input.campaignId, await resolveRequestScope(ctx.user));
+          const rows = await db.getCrmCampaignRecipients(input.campaignId);
+          const contacts = new Map((await db.getCrmContactsByIds(Array.from(new Set(rows.map((r) => r.contactId))))).map((c) => [c.id, c]));
+          return rows.map((r) => ({ ...r, contactName: contacts.get(r.contactId)?.fullName ?? null }));
+        }),
+
+      // Adds explicit contacts and/or a segment (contact types, pipeline
+      // stages, tag ids — or the campaign's own target* fields). Contacts
+      // with no email, opted out, or outside the caller's entities are skipped.
+      addRecipients: internalProcedure
+        .input(z.object({
+          campaignId: z.number(),
+          contactIds: z.array(z.number().int().positive()).max(5000).optional(),
+          segment: z.object({
+            useCampaignTargeting: z.boolean().optional(),
+            contactTypes: z.array(contactTypeEnum).optional(),
+            pipelineStages: z.array(pipelineStageEnum).optional(),
+            tagIds: z.array(z.number().int().positive()).optional(),
+          }).optional(),
+        }).refine((v) => (v.contactIds?.length ?? 0) > 0 || !!v.segment, { message: "Provide contactIds or a segment" }))
+        .mutation(async ({ input, ctx }) => {
+          const scope = await resolveRequestScope(ctx.user);
+          const campaign = await loadScopedCampaign(input.campaignId, scope);
+          if (!RECIPIENT_EDITABLE.includes(campaign.status ?? "draft")) {
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Recipients cannot be changed while the campaign is ${campaign.status}` });
+          }
+
+          const skipped: Array<{ contactId: number; reason: string }> = [];
+          const candidates: Array<{ contactId: number; email: string }> = [];
+
+          if (input.contactIds?.length) {
+            const ids = Array.from(new Set(input.contactIds));
+            const found = new Map((await db.getCrmContactsByIds(ids)).map((c) => [c.id, c]));
+            for (const id of ids) {
+              const c = found.get(id);
+              if (!c || !scopeAllows(scope, c.companyId)) { skipped.push({ contactId: id, reason: "Contact not found" }); continue; }
+              const skip = mailableSkipReason(c);
+              if (skip || !c.email) { skipped.push({ contactId: id, reason: skip?.reason ?? "Contact has no email address" }); continue; }
+              candidates.push({ contactId: c.id, email: c.email.trim() });
+            }
+          }
+
+          if (input.segment) {
+            const seg = input.segment;
+            const contactTypes: string[] = [...(seg.contactTypes ?? [])];
+            const pipelineStages: string[] = [...(seg.pipelineStages ?? [])];
+            const tagIds: number[] = [...(seg.tagIds ?? [])];
+            if (seg.useCampaignTargeting) {
+              for (const v of parseTargetList(campaign.targetContactTypes)) if (contactTypeEnum.safeParse(v).success) contactTypes.push(String(v));
+              for (const v of parseTargetList(campaign.targetPipelineStages)) if (pipelineStageEnum.safeParse(v).success) pipelineStages.push(String(v));
+              for (const v of parseTargetList(campaign.targetTags)) { const n = Number(v); if (Number.isInteger(n) && n > 0) tagIds.push(n); }
+            }
+            if (!contactTypes.length && !pipelineStages.length && !tagIds.length) {
+              throw new TRPCError({ code: "BAD_REQUEST", message: "The segment has no criteria (set contact types, pipeline stages or tags)" });
+            }
+            const matches = await db.getCrmContactsForSegment({ contactTypes, pipelineStages, tagIds, companyIds: scopeCompanyIds(scope) });
+            for (const c of matches) {
+              if (c.email && !mailableSkipReason(c)) candidates.push({ contactId: c.id, email: c.email.trim() });
+            }
+          }
+
+          const added = await db.addCrmCampaignRecipients(input.campaignId, candidates);
+          await createAuditLog(ctx.user.id, 'update', 'crm_campaign', input.campaignId, `added ${added} recipients`);
+          const refreshed = await db.getCrmEmailCampaignById(input.campaignId);
+          return { added, alreadyAdded: new Set(candidates.map((c) => c.contactId)).size - added, skipped, totalRecipients: refreshed?.totalRecipients ?? 0 };
+        }),
+
+      removeRecipient: internalProcedure
+        .input(z.object({ campaignId: z.number(), recipientId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const campaign = await loadScopedCampaign(input.campaignId, await resolveRequestScope(ctx.user));
+          if (!RECIPIENT_EDITABLE.includes(campaign.status ?? "draft")) {
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Recipients cannot be changed while the campaign is ${campaign.status}` });
+          }
+          if (!(await db.removeCrmCampaignRecipient(input.campaignId, input.recipientId))) {
+            throw new TRPCError({ code: "CONFLICT", message: "Recipient not found or already sent" });
+          }
+          return { success: true };
+        }),
+
+      sendTest: campaignSendProcedure
+        .input(z.object({ campaignId: z.number(), to: z.string().email() }))
+        .mutation(async ({ input, ctx }) => {
+          const campaign = await loadScopedCampaign(input.campaignId, await resolveRequestScope(ctx.user));
+          // Preview with the first recipient's data when there is one.
+          const [first] = await db.getCrmCampaignRecipients(input.campaignId);
+          const sample = first ? await db.getCrmContactById(first.contactId) : undefined;
+          const [firstName, ...rest] = (ctx.user.name ?? "").split(" ");
+          const res = await sendCampaignTest(campaign, input.to, sample ?? { firstName, lastName: rest.join(" "), fullName: ctx.user.name ?? "", email: input.to });
+          if (!res.success) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: res.error ?? "Test email failed" });
+          return { success: true };
+        }),
+
+      // Sends now to every pending (and previously failed) recipient. Already
+      // sent recipients are never mailed again.
+      send: campaignSendProcedure
+        .input(z.object({ campaignId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const campaign = await loadScopedCampaign(input.campaignId, await resolveRequestScope(ctx.user));
+          if (!SENDABLE.includes(campaign.status ?? "draft") && campaign.status !== "sending") {
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Campaign is ${campaign.status}` });
+          }
+          const recipients = await db.getCrmCampaignRecipients(input.campaignId);
+          if (!recipients.some((r) => r.status === "pending" || r.status === "failed")) {
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: "No unsent recipients — add recipients first" });
+          }
+          const result = await sendCampaign(input.campaignId, { fromStatuses: SENDABLE });
+          if (!result.claimed) {
+            throw new TRPCError({ code: "CONFLICT", message: "Campaign is already being sent" });
+          }
+          await createAuditLog(ctx.user.id, 'update', 'crm_campaign', input.campaignId, `sent: ${result.sent} ok, ${result.failed} failed, ${result.skipped} skipped`);
+          return result;
+        }),
+
+      // Queues the campaign for the 5-minute outreach runner.
+      schedule: campaignSendProcedure
+        .input(z.object({ campaignId: z.number(), scheduledAt: z.date() }))
+        .mutation(async ({ input, ctx }) => {
+          const campaign = await loadScopedCampaign(input.campaignId, await resolveRequestScope(ctx.user));
+          if (!SENDABLE.includes(campaign.status ?? "draft")) {
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Campaign is ${campaign.status}` });
+          }
+          if (input.scheduledAt.getTime() < Date.now() - 60_000) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "Schedule time is in the past" });
+          }
+          const recipients = await db.getCrmCampaignRecipients(input.campaignId);
+          if (!recipients.some((r) => r.status === "pending" || r.status === "failed")) {
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: "No unsent recipients — add recipients first" });
+          }
+          await db.updateCrmEmailCampaign(input.campaignId, { status: "scheduled", scheduledAt: input.scheduledAt });
+          await createAuditLog(ctx.user.id, 'update', 'crm_campaign', input.campaignId, `scheduled for ${input.scheduledAt.toISOString()}`);
+          return { success: true, scheduledAt: input.scheduledAt };
+        }),
+
+      unschedule: campaignSendProcedure
+        .input(z.object({ campaignId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const campaign = await loadScopedCampaign(input.campaignId, await resolveRequestScope(ctx.user));
+          if (campaign.status !== "scheduled") {
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Campaign is not scheduled" });
+          }
+          await db.updateCrmEmailCampaign(input.campaignId, { status: "draft", scheduledAt: null });
           return { success: true };
         }),
     }),

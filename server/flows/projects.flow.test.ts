@@ -1,19 +1,32 @@
 /**
- * Flow test — projects (classic projects router + the PM market×function matrix).
+ * Flow test — projects (classic projects router + the PM market×function matrix
+ * + handing project tasks to the AI agent).
  *
- * Runs the real projects / pm / notifications routers over an in-memory store.
+ * Runs the real projects / pm / notifications / aiAgent routers, the real
+ * task-agent bridge and the real agent scheduler over one in-memory store. The
+ * bridge and scheduler talk to Drizzle directly, so the project / agent /
+ * notification tables live in the Drizzle-shaped engine from ./_fakeDrizzle and
+ * the db.ts helper mocks read and write the very same rows.
  */
 import { describe, it, expect, vi } from "vitest";
 import { ctxFor } from "./_harness";
 
 type Row = { id: number } & Record<string, any>;
 
-const store = await vi.hoisted(async () => {
+const { store, fakeDb } = await vi.hoisted(async () => {
   const { table } = await import("./_harness");
+  const { createFakeDrizzle } = await import("./_fakeDrizzle");
+  const schema = await import("../../drizzle/schema");
   type Row = { id: number } & Record<string, any>;
+  const fake = createFakeDrizzle();
+  const R = (tbl: object) => fake.store.rows(tbl);
   return {
-    projects: table<Row>(), milestones: table<Row>(), tasks: table<Row>(), auditLogs: table<Row>(), notifications: table<Row>(),
-    pmMarkets: table<Row>(), pmFunctions: table<Row>(), pmProjects: table<Row>(), pmTasks: table<Row>(), pmMilestones: table<Row>(), pmDependencies: table<Row>(),
+    fakeDb: fake.fakeDb,
+    store: {
+      projects: R(schema.projects), milestones: R(schema.projectMilestones), tasks: R(schema.projectTasks), auditLogs: R(schema.auditLogs), notifications: R(schema.notifications),
+      agentTasks: R(schema.aiAgentTasks), agentLogs: R(schema.aiAgentLogs),
+      pmMarkets: table<Row>(), pmFunctions: table<Row>(), pmProjects: table<Row>(), pmTasks: table<Row>(), pmMilestones: table<Row>(), pmDependencies: table<Row>(),
+    },
   };
 });
 
@@ -24,7 +37,7 @@ vi.mock("../db", () => {
     return [id, { done: rows.filter((t) => t.status === "done").length, total: rows.length }] as const;
   }));
   return {
-    getDb: vi.fn(async () => ({})),
+    getDb: vi.fn(async () => fakeDb),
     createAuditLog: vi.fn(async (d: Row) => { store.auditLogs.insert(d); }),
     createNotification: vi.fn(async (d: Row) => store.notifications.insert({ ...d, isRead: false }).id),
     getUserNotifications: vi.fn(async (userId: number) => byDesc(store.notifications.filter((n) => n.userId === userId))),
@@ -42,10 +55,15 @@ vi.mock("../db", () => {
     updateProject: vi.fn(async (id: number, d: Row) => { store.projects.update(id, d); }),
     createProjectMilestone: vi.fn(async (d: Row) => ({ id: store.milestones.insert({ status: "pending", ...d }).id })),
     updateProjectMilestone: vi.fn(async (id: number, d: Row) => { store.milestones.update(id, d); }),
-    createProjectTask: vi.fn(async (d: Row) => ({ id: store.tasks.insert({ status: "todo", assigneeType: "human", ...d }).id })),
+    createProjectTask: vi.fn(async (d: Row) => ({ id: store.tasks.insert({ status: "todo", assigneeType: "human", assigneeAgentTaskId: null, aiReasoning: null, ...d }).id })),
     updateProjectTask: vi.fn(async (id: number, d: Row) => { store.tasks.update(id, d); }),
     getProjectTasks: vi.fn(async (projectId: number) => byDesc(store.tasks.filter((t) => t.projectId === projectId))),
     getAllProjectTasks: vi.fn(async () => byDesc(store.tasks.all())),
+
+    // ---- AI agent (db.ts AI AGENT SYSTEM) ----
+    getAiAgentTaskById: vi.fn(async (id: number) => store.agentTasks.get(id) || null),
+    updateAiAgentTask: vi.fn(async (id: number, d: Row) => { store.agentTasks.update(id, d); }),
+    createAiAgentLog: vi.fn(async (d: Row) => ({ id: store.agentLogs.insert(d).id, ...d })),
 
     // ---- PM matrix (db.ts PROJECT MANAGEMENT MODULE) ----
     getPmMarkets: vi.fn(async () => store.pmMarkets.all()),
@@ -75,9 +93,15 @@ vi.mock("../pmWorkflows", () => ({
   onPmProjectCompleted: vi.fn(async () => undefined),
   onPmProjectBlocked: vi.fn(async () => undefined),
 }));
+// The errand executor replays the plan through the LLM agent loop; stub the
+// agent's run so the flow sees a real completion / failure result.
+vi.mock("../conciergeErrandService", () => ({ executeConciergeErrand: vi.fn() }));
+vi.mock("../_core/llm", () => ({ invokeLLM: vi.fn() }));
 
 import * as db from "../db";
 import { onPmProjectCompleted, onPmProjectBlocked } from "../pmWorkflows";
+import { executeConciergeErrand } from "../conciergeErrandService";
+import { executeApprovedTasks } from "../aiAgentScheduler";
 import { appRouter } from "../routers";
 
 const admin = appRouter.createCaller(ctxFor("admin", { id: 1, companyId: 1 }));
@@ -113,20 +137,56 @@ describe("projects flow", () => {
     expect(store.tasks.get(taskB)).toMatchObject({ projectId, name: "Translate product copy", status: "todo" });
     expect(store.tasks.get(taskB)!.assigneeId).toBeUndefined();
 
-    // There is no router procedure that hands a task to the AI agent
-    // (taskAgentBridge.assignProjectTaskToAgent has no caller), so the second
-    // task is assigned to a person as well. Assignment writes no notification
-    // row either — both are reported as NOT AVAILABLE.
+    // The second task belongs to a person, who hands it to the AI agent. ops is
+    // not an admin, so asking to skip approval is overridden: pending_approval.
     await admin.projects.updateTask({ id: taskB, assigneeId: 3 });
     expect(store.tasks.get(taskB)!.assigneeId).toBe(3);
-    expect(db.createNotification).not.toHaveBeenCalled();
+    const assigned = await ops.projects.assignTaskToAgent({ taskId: taskB, instructions: "Use the brand glossary for DE.", requiresApproval: false });
+    expect(assigned.agentStatus).toBe("pending_approval");
+    const agentTask = store.agentTasks.get(assigned.agentTaskId)!;
+    expect(agentTask).toMatchObject({ taskType: "concierge_errand", status: "pending_approval", requiresApproval: true, companyId: 1, relatedEntityType: "projectTask", relatedEntityId: taskB, priority: "medium" });
+    expect(JSON.parse(agentTask.taskData)).toMatchObject({
+      title: "Translate product copy", submittedByUserId: 2, userRole: "ops", companyId: 1, projectTaskId: taskB, projectId,
+      goal: expect.stringContaining("Use the brand glossary for DE."),
+    });
+    expect(assigned.task).toMatchObject({ id: taskB, assigneeType: "ai_agent", assigneeAgentTaskId: assigned.agentTaskId, assigneeId: 3, status: "review", agentStatus: "pending_approval" });
+    expect((await admin.projects.tasks({ projectId })).find((t) => t.id === taskB)!.agentStatus).toBe("pending_approval");
+    // Nothing runs before approval.
+    expect(await executeApprovedTasks()).toMatchObject({ executed: 0, failed: 0 });
+    expect(executeConciergeErrand).not.toHaveBeenCalled();
+
+    // Admin approves in the approval queue; the project task follows on the next read.
+    await admin.aiAgent.tasks.approve({ id: assigned.agentTaskId });
+    let listedB = (await admin.projects.tasks({ projectId })).find((t) => t.id === taskB)!;
+    expect(listedB).toMatchObject({ status: "in_progress", agentStatus: "approved", assigneeType: "ai_agent" });
+
+    // The scheduler runs the approved errand; the agent finishes it.
+    vi.mocked(executeConciergeErrand).mockResolvedValueOnce({ success: true, data: { summary: "Translated all 42 product descriptions into German.", actionsRun: 3 } });
+    expect(await executeApprovedTasks()).toMatchObject({ executed: 1, failed: 0 });
+    expect(vi.mocked(executeConciergeErrand).mock.calls[0][0]).toMatchObject({ id: assigned.agentTaskId, companyId: 1 });
+    expect(store.agentTasks.get(assigned.agentTaskId)!.status).toBe("completed");
+    // The scheduler writes the result back immediately: the project task is
+    // completed and the owner notified without waiting for a page read.
+    expect(store.tasks.get(taskB)!.status).toBe("completed");
+    expect(db.createNotification).toHaveBeenCalledTimes(1);
+
+    // Reading the tasks shows the result and does not notify a second time.
+    listedB = (await admin.projects.tasks({ projectId })).find((t) => t.id === taskB)!;
+    expect(listedB).toMatchObject({ status: "completed", agentStatus: "completed", assigneeType: "ai_agent", aiReasoning: "Translated all 42 product descriptions into German." });
+    expect(listedB.completedDate).toBeInstanceOf(Date);
+    expect(db.createNotification).toHaveBeenCalledTimes(1);
+    const ownerInbox = await admin.notifications.list();
+    expect(ownerInbox.filter((n) => n.entityType === "projectTask")).toEqual([
+      expect.objectContaining({ userId: 1, type: "success", entityId: taskB, title: "AI agent completed: Translate product copy", message: "Launch EU webshop: Translated all 42 product descriptions into German.", link: "/projects" }),
+    ]);
+    await admin.projects.listAllTasks();
+    expect(db.createNotification).toHaveBeenCalledTimes(1);
     expect(await appRouter.createCaller(ctxFor("user", { id: HUMAN_ASSIGNEE })).notifications.list()).toEqual([]);
 
-    // Work the tasks.
+    // Work the other task by hand.
     await admin.projects.updateTask({ id: taskA, status: "in_progress" });
     expect(store.tasks.get(taskA)!.status).toBe("in_progress");
     await admin.projects.updateTask({ id: taskA, status: "completed", completedDate: new Date("2026-10-18"), actualHours: "6.5" });
-    await admin.projects.updateTask({ id: taskB, status: "completed", completedDate: new Date("2026-10-25") });
     expect(store.tasks.get(taskA)).toMatchObject({ status: "completed", completedDate: new Date("2026-10-18"), actualHours: "6.5" });
     expect(store.auditLogs.filter((l) => l.entityType === "projectTask" && l.action === "update")).toHaveLength(4);
 
@@ -212,6 +272,8 @@ describe("projects flow", () => {
       await expect(ext.projects.addTask({ projectId, name: "Extra" })).rejects.toMatchObject(forbidden);
       await expect(ext.projects.updateTask({ id: taskA, status: "cancelled" })).rejects.toMatchObject(forbidden);
       await expect(ext.projects.assignTasks({ ids: [taskA], assigneeId: 77 })).rejects.toMatchObject(forbidden);
+      await expect(ext.projects.assignTaskToAgent({ taskId: taskA })).rejects.toMatchObject(forbidden);
+      await expect(ext.projects.unassignFromAgent({ taskId: taskB })).rejects.toMatchObject(forbidden);
       await expect(ext.projects.deleteTask({ id: taskA })).rejects.toMatchObject(forbidden);
       await expect(ext.projects.deleteTasks({ ids: [taskA, taskB] })).rejects.toMatchObject(forbidden);
       await expect(ext.projects.delete({ id: projectId })).rejects.toMatchObject(forbidden);
@@ -235,11 +297,43 @@ describe("projects flow", () => {
     expect(store.tasks.get(taskA)!.status).toBe("completed");
     expect(store.pmProjects.all()).toHaveLength(1);
     expect(store.pmProjects.get(1)!.status).toBe("complete");
+    expect(store.agentTasks.all()).toHaveLength(1);
 
     // Reads stay open to external accounts; internal roles keep write access.
     expect((await investor.projects.get({ id: projectId }))!.name).toBe("Launch EU webshop");
     expect(await vendor.pm.markets.list()).toHaveLength(1);
     expect(await ops.projects.updateTask({ id: taskB, priority: "low" })).toEqual({ success: true });
     expect(store.tasks.get(taskB)!.priority).toBe("low");
+  });
+
+  it("5. an admin may skip approval; when the agent fails the task goes back to its assignee with the agent's notes; a retry can be taken back", async () => {
+    vi.clearAllMocks();
+    const taskC = (await admin.projects.addTask({ projectId, name: "Book launch photographer", assigneeId: 3, priority: "critical" })).id;
+    const run = await admin.projects.assignTaskToAgent({ taskId: taskC, requiresApproval: false });
+    expect(run.agentStatus).toBe("approved");
+    expect(store.agentTasks.get(run.agentTaskId)).toMatchObject({ status: "approved", requiresApproval: false, priority: "urgent" });
+    expect(run.task).toMatchObject({ status: "in_progress", agentStatus: "approved" });
+    // Completed and in-flight tasks are refused.
+    await expect(admin.projects.assignTaskToAgent({ taskId: taskA })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(admin.projects.assignTaskToAgent({ taskId: taskC })).rejects.toMatchObject({ code: "CONFLICT" });
+
+    vi.mocked(executeConciergeErrand).mockResolvedValueOnce({ success: false, error: "No photographer vendors on file" });
+    expect(await executeApprovedTasks()).toMatchObject({ executed: 0, failed: 1 });
+    const back = (await ops.projects.tasks({ projectId })).find((t) => t.id === taskC)!;
+    expect(back).toMatchObject({
+      assigneeType: "human", assigneeId: 3, status: "todo", agentStatus: "failed", assigneeAgentTaskId: run.agentTaskId,
+      aiReasoning: "AI agent could not finish: No photographer vendors on file",
+    });
+    // Owner and assignee both hear about it.
+    expect(vi.mocked(db.createNotification).mock.calls.map(([n]) => [n.userId, n.type, n.entityId])).toEqual([[1, "warning", taskC], [3, "warning", taskC]]);
+
+    // Retry through approval, then take it back before anyone approves.
+    const retry = await ops.projects.assignTaskToAgent({ taskId: taskC, instructions: "Try the events agency list" });
+    expect(retry.agentStatus).toBe("pending_approval");
+    const taken = await ops.projects.unassignFromAgent({ taskId: taskC });
+    expect(taken.task).toMatchObject({ assigneeType: "human", assigneeId: 3, assigneeAgentTaskId: null, status: "todo", agentStatus: null });
+    expect(store.agentTasks.get(retry.agentTaskId)!.status).toBe("cancelled");
+    await expect(ops.projects.unassignFromAgent({ taskId: taskC })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(store.auditLogs.filter((l) => l.entityType === "projectTask" && l.entityId === taskC && l.action === "update")).toHaveLength(3);
   });
 });

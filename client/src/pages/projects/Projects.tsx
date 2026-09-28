@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import type { inferRouterOutputs } from "@trpc/server";
+import type { AppRouter } from "../../../../server/routers/index";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -59,6 +61,7 @@ import {
   ArchiveRestore,
   Flag,
   CalendarPlus,
+  Bot,
 } from "lucide-react";
 import { format } from "date-fns";
 import { parseDateInput } from "@/lib/dateInput";
@@ -80,6 +83,10 @@ type Project = {
   createdAt: Date;
 };
 
+type RouterOutputs = inferRouterOutputs<AppRouter>;
+/** Status of the aiAgentTasks row a project task is linked to (null = never assigned to the agent). */
+type AgentStatus = RouterOutputs["projects"]["listAllTasks"][number]["agentStatus"];
+
 type Task = {
   id: number;
   projectId: number;
@@ -87,6 +94,10 @@ type Task = {
   name: string;
   description: string | null;
   assigneeId: number | null;
+  assigneeType: "human" | "ai_agent";
+  assigneeAgentTaskId: number | null;
+  aiReasoning: string | null;
+  agentStatus: AgentStatus;
   status: "todo" | "in_progress" | "review" | "completed" | "cancelled";
   priority: "low" | "medium" | "high" | "critical";
   dueDate: string | Date | null;
@@ -155,6 +166,37 @@ const STATUS_META = {
     pulse: false,
   },
 } as const;
+
+// Badge for a task the AI agent holds (or held). Sourced from the fields the
+// task-agent bridge sets: assigneeAgentTaskId + the linked agent task status.
+const AGENT_BADGE: Record<NonNullable<AgentStatus>, { label: string; className: string }> = {
+  pending_approval: { label: "AI · pending approval", className: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300" },
+  approved: { label: "AI · running", className: "border-primary/30 bg-primary/10 text-primary" },
+  in_progress: { label: "AI · running", className: "border-primary/30 bg-primary/10 text-primary" },
+  completed: { label: "AI · done", className: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
+  failed: { label: "AI · failed", className: "border-destructive/40 bg-destructive/10 text-destructive" },
+  rejected: { label: "AI · rejected", className: "border-destructive/40 bg-destructive/10 text-destructive" },
+  cancelled: { label: "AI · cancelled", className: "border-muted-foreground/30 bg-muted text-muted-foreground" },
+};
+
+function agentBadgeFor(task: Pick<Task, "assigneeAgentTaskId" | "agentStatus">) {
+  if (task.assigneeAgentTaskId == null || task.agentStatus == null) return null;
+  return AGENT_BADGE[task.agentStatus];
+}
+
+function AgentBadge({ task }: { task: Pick<Task, "assigneeAgentTaskId" | "agentStatus"> }) {
+  const badge = agentBadgeFor(task);
+  if (!badge) return null;
+  return (
+    <span className={cn("flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium", badge.className)}>
+      <Bot className="h-3 w-3" />
+      {badge.label}
+    </span>
+  );
+}
+
+const canAssignToAgent = (task: Pick<Task, "assigneeType" | "status">) =>
+  task.assigneeType !== "ai_agent" && task.status !== "completed" && task.status !== "cancelled";
 
 const BOARD_COLUMNS = [
   { key: "todo", label: "To Do", headerColor: "bg-muted text-muted-foreground", dotColor: "bg-muted-foreground/40" },
@@ -256,6 +298,8 @@ export default function Projects() {
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<number>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [assignPopoverOpen, setAssignPopoverOpen] = useState(false);
+  const [agentDialogTask, setAgentDialogTask] = useState<Task | null>(null);
+  const [agentInstructions, setAgentInstructions] = useState("");
   const [hideCompleted, setHideCompleted] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
     const v = window.localStorage.getItem("projects.hideCompleted");
@@ -338,6 +382,34 @@ export default function Projects() {
   const assignTasksMany = (trpc.projects as any).assignTasks.useMutation({
     onError: (e: any) => toast.error(e.message),
   });
+
+  const assignToAgent = trpc.projects.assignTaskToAgent.useMutation({
+    onSuccess: (res) => {
+      toast.success(res.agentStatus === "pending_approval" ? "Sent to the AI agent — waiting for approval" : "AI agent is on it");
+      setAgentDialogTask(null);
+      setAgentInstructions("");
+      utils.projects.listAllTasks.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const takeBackFromAgent = trpc.projects.unassignFromAgent.useMutation({
+    onSuccess: () => {
+      toast.success("Task taken back from the AI agent");
+      utils.projects.listAllTasks.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  function openAgentDialog(task: Task) {
+    setAgentInstructions("");
+    setAgentDialogTask(task);
+  }
+
+  function submitAgentAssignment() {
+    if (!agentDialogTask) return;
+    const instructions = agentInstructions.trim();
+    assignToAgent.mutate({ taskId: agentDialogTask.id, ...(instructions ? { instructions } : {}) });
+  }
 
   async function runBulkAssign(assigneeId: number | null) {
     const ids = Array.from(selectedTaskIds);
@@ -1162,6 +1234,7 @@ export default function Projects() {
                                     {dueBadge.text}
                                   </span>
                                 )}
+                                <AgentBadge task={task} />
                                 {assignee && (
                                   <span className="flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px] text-muted-foreground">
                                     <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-primary/20 text-[8px] font-bold text-primary">
@@ -1186,12 +1259,33 @@ export default function Projects() {
                               {task.description && (
                                 <p className="mb-3 text-xs leading-relaxed text-muted-foreground">{task.description}</p>
                               )}
+                              {task.assigneeAgentTaskId != null && task.aiReasoning && (
+                                <p className="mb-3 flex items-start gap-1.5 rounded-lg border bg-background/60 p-2 text-xs leading-relaxed text-muted-foreground">
+                                  <Bot className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                  <span className="whitespace-pre-wrap">{task.aiReasoning}</span>
+                                </p>
+                              )}
                               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                                 <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                                   {task.estimatedHours && <span>Est: {task.estimatedHours}h</span>}
                                   {task.actualHours && <span>Actual: {task.actualHours}h</span>}
                                 </div>
                                 <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-1">
+                                  {task.assigneeType === "ai_agent" ? (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-8 text-xs"
+                                      disabled={takeBackFromAgent.isPending}
+                                      onClick={() => takeBackFromAgent.mutate({ taskId: task.id })}
+                                    >
+                                      <UserMinus className="mr-1 h-3.5 w-3.5" /> Take back
+                                    </Button>
+                                  ) : canAssignToAgent(task) ? (
+                                    <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => openAgentDialog(task)}>
+                                      <Sparkles className="mr-1 h-3.5 w-3.5" /> Assign to AI agent
+                                    </Button>
+                                  ) : null}
                                   <Select value={task.status} onValueChange={(next) => handleStatusUpdate(task.id, next as Task["status"])}>
                                     <SelectTrigger className="h-8 w-[160px] text-xs"><SelectValue /></SelectTrigger>
                                     <SelectContent>
@@ -1343,6 +1437,32 @@ export default function Projects() {
                             <p className="rounded-lg bg-muted/50 p-2 text-xs leading-relaxed text-muted-foreground animate-fade-in">
                               {task.description}
                             </p>
+                          )}
+
+                          <AgentBadge task={task} />
+                          {expanded && task.assigneeAgentTaskId != null && task.aiReasoning && (
+                            <p className="whitespace-pre-wrap rounded-lg border p-2 text-xs leading-relaxed text-muted-foreground animate-fade-in">
+                              {task.aiReasoning}
+                            </p>
+                          )}
+                          {expanded && (task.assigneeType === "ai_agent" || canAssignToAgent(task)) && (
+                            <div onClick={(e) => e.stopPropagation()}>
+                              {task.assigneeType === "ai_agent" ? (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 w-full text-[11px]"
+                                  disabled={takeBackFromAgent.isPending}
+                                  onClick={() => takeBackFromAgent.mutate({ taskId: task.id })}
+                                >
+                                  <UserMinus className="mr-1 h-3 w-3" /> Take back
+                                </Button>
+                              ) : (
+                                <Button variant="outline" size="sm" className="h-7 w-full text-[11px]" onClick={() => openAgentDialog(task)}>
+                                  <Sparkles className="mr-1 h-3 w-3" /> Assign to AI agent
+                                </Button>
+                              )}
+                            </div>
                           )}
 
                           <div className="flex flex-wrap items-center justify-between gap-1.5">
@@ -1527,6 +1647,41 @@ export default function Projects() {
             >
               {deleteProject.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Assign task to AI agent */}
+      <Dialog
+        open={agentDialogTask !== null}
+        onOpenChange={(open) => { if (!open) { setAgentDialogTask(null); setAgentInstructions(""); } }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Assign to AI agent</DialogTitle>
+            <DialogDescription>
+              The AI agent will work on <strong>{agentDialogTask?.name ?? "this task"}</strong> on your behalf. It
+              goes to the approval queue first; when the agent finishes, the task is completed and the project owner
+              is notified. If it cannot finish, the task comes back to its assignee with the agent's notes.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="agent-instructions">Instructions (optional)</Label>
+            <Textarea
+              id="agent-instructions"
+              value={agentInstructions}
+              onChange={(e) => setAgentInstructions(e.target.value)}
+              placeholder="Anything the agent should know: context, constraints, what done looks like…"
+              rows={4}
+              maxLength={4000}
+            />
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => { setAgentDialogTask(null); setAgentInstructions(""); }}>Cancel</Button>
+            <Button disabled={assignToAgent.isPending} onClick={submitAgentAssignment}>
+              {assignToAgent.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Bot className="mr-2 h-4 w-4" />}
+              Assign
             </Button>
           </DialogFooter>
         </DialogContent>

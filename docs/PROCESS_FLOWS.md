@@ -16,13 +16,13 @@ Run all flows: `pnpm test server/flows`
 | Procurement and inventory | `procurement.flow.test.ts` | 8 | all work |
 | Manufacturing | `manufacturing.flow.test.ts` | 7 | all work |
 | Logistics | `logistics.flow.test.ts` | 7 | all work |
-| Finance | `finance.flow.test.ts` | 9 | all work, no bank-to-payment reconciliation feature |
-| People (HR) | `people.flow.test.ts` | 6 | all work, offer letters are not emailed |
-| CRM and marketing | `crm.flow.test.ts` | 6 | all work, campaigns cannot be sent |
+| Finance | `finance.flow.test.ts` | 9 | all work, including bank-to-payment reconciliation |
+| People (HR) | `people.flow.test.ts` | 6 | all work, including emailed offer letters and login linking |
+| CRM and marketing | `crm.flow.test.ts` | 6 | all work, including campaign sending and sequence enrollment |
 | Document import | `documentImport.flow.test.ts` | 5 | all work |
-| AI agent | `aiAgent.flow.test.ts` | 5 | all work, no completion notification |
+| AI agent | `aiAgent.flow.test.ts` | 6 | all work |
 | Data rooms, investors, legal | `dataRoom.flow.test.ts` | 6 | all work |
-| Projects | `projects.flow.test.ts` | 3 | all work, tasks cannot be assigned to the AI agent |
+| Projects | `projects.flow.test.ts` | 5 | all work, including assigning tasks to the AI agent |
 
 ## Sales
 
@@ -72,7 +72,7 @@ Run all flows: `pnpm test server/flows`
 2. Vendor bill entered by ops, matched to its PO within tolerance, approved by finance, paid by ACH creating a payment record; aging drops to zero; paid bills cannot be cancelled or re-paid.
 3. Payment workflow auto-pays bills under the threshold and requests approval above it.
 4. Journal transactions are entity-scoped; posting to another entity is refused.
-5. Bank sync imports and de-duplicates transactions; AI categorization matches the vendor. No bank-to-payment reconciliation exists in the product.
+5. Bank sync imports and de-duplicates transactions; AI categorization matches the vendor. Each bank line is matched to its payment by amount, direction, date, and reference; high-confidence matches reconcile automatically, a payment can clear only one line, and lines can be unmatched or excluded.
 6. Profit and loss, balance sheet, and AP aging reflect the bills above.
 7. R&D tax credit honours a stored 0% rate on edits.
 8. KPI goals track actual against target.
@@ -81,7 +81,7 @@ Run all flows: `pnpm test server/flows`
 ## People (HR)
 
 1. Department created; candidate moves through recruiting stages to hired.
-2. Offer letter drafted, sent, accepted (status only, no email exists); candidate becomes an employee with an auto number.
+2. Offer letter drafted, previewed, emailed to the candidate, accepted; candidate becomes an employee with an auto number and is linked to their login.
 3. The employee sees their own portal profile and documents; team invites email a token.
 4. Time entries logged, submitted, approved by admin, invoiced, emailed to Accounts Payable, paid, and shown as a payslip.
 5. Another user cannot edit or submit someone else's entries.
@@ -92,7 +92,7 @@ Run all flows: `pnpm test server/flows`
 1. Contact created; duplicates merge by email; self-email rejected.
 2. Calls, emails, and meetings logged and listed newest first.
 3. A deal request goes to the approval queue, admin approves, the deal moves through stages to won, and pipeline stats update.
-4. Email sequences build and activate; campaigns draft and schedule. Neither can send to recipients yet.
+4. Contacts enroll in email sequences and receive each step on schedule; campaigns gain recipients, send a test, send or schedule, and track each recipient's delivery.
 5. Marketing plans and publishes a video per platform; brand ambassadors move through stages.
 6. Ops cannot wipe the CRM; investors cannot read contacts.
 
@@ -108,7 +108,7 @@ Run all flows: `pnpm test server/flows`
 
 1. Admin creates a low-stock rule.
 2. Evaluation creates one pending task and never a duplicate.
-3. Ops cannot approve; admin approves; execution creates a draft PO with the raw-material link and completes the task. No notification is sent on completion.
+3. Ops cannot approve; admin approves; execution creates a draft PO with the raw-material link, completes the task, and notifies the approver.
 4. Rejections record a reason; bulk delete is admin only.
 5. A natural-language order becomes a pending task, not a direct purchase.
 
@@ -123,16 +123,10 @@ Run all flows: `pnpm test server/flows`
 
 ## Projects
 
-1. Project, milestone, and tasks created, assigned, and completed; project closes at 100%.
+1. Project, milestone, and tasks created, assigned, and completed; one task is handed to the AI agent, approved, and its result written back with the owner notified; project closes at 100%.
 2. Investors and vendors cannot create projects.
 3. PM matrix markets, functions, and projects roll up task counts and fire the completion hook once.
 
-## Known gaps found by the flows (not yet fixed)
+## Gaps
 
-- Finished goods from a completed work order go to lots and balances but not the main inventory table, so they do not appear in the inventory list and cannot be transferred or scrapped.
-- Receiving a purchase order updates raw-material stock but not product-level stock, so product reorder alerts and cycle counts do not see receipts.
-- Invoice, payment, and recurring-invoice lookups by id skip entity scope.
-- Recurring invoices use a different numbering scheme and post no journal entry.
-- Financial reports accept a date range but ignore it.
-- Bills can be created with any status by ops, bypassing the approval gate.
-- No feature exists for: bank-to-payment reconciliation, emailing offer letters, enrolling contacts in sequences, sending campaigns, linking a login to an employee record via the API, or assigning a project task to the AI agent.
+All gaps found by the flows are fixed. Features added in response: bank-to-payment reconciliation, emailed offer letters, campaign sending, email sequence enrollment, linking a login to an employee record, and assigning project tasks to the AI agent.
