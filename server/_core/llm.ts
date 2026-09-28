@@ -291,6 +291,27 @@ function resolveCacheOptions(
     };
 }
 
+/**
+ * Split a `data:<media type>;base64,<payload>` URL into the parts the Messages
+ * API's base64 source expects. Returns null for anything that is not an inline
+ * base64 data URL (plain http(s) URLs pass through to a `url` source).
+ */
+export function parseDataUrl(url: string): { mediaType: string; data: string } | null {
+    if (typeof url !== "string" || !/^data:/i.test(url)) return null;
+    const comma = url.indexOf(",");
+    if (comma < 0) return null;
+    const header = url.slice(5, comma);
+    const params = header.split(";");
+    const mediaType = params[0]?.trim() || "application/octet-stream";
+    const isBase64 = params.some((p) => p.trim().toLowerCase() === "base64");
+    const body = url.slice(comma + 1);
+    // Percent-encoded text payloads are re-encoded so the API always gets base64.
+    const data = isBase64
+        ? body.replace(/\s+/g, "")
+        : Buffer.from(decodeURIComponent(body), "utf8").toString("base64");
+    return { mediaType, data };
+}
+
 function convertContentToAnthropic(content: MessageContent | MessageContent[]): unknown {
     const parts = ensureArray(content);
     if (parts.length === 1 && typeof parts[0] === "string") {
@@ -305,12 +326,33 @@ function convertContentToAnthropic(content: MessageContent | MessageContent[]): 
                 return { type: "text", text: part.text };
         }
         if (part.type === "image_url") {
+                // The Messages API only fetches http(s) URL sources. Inline
+                // data: URLs (what the document importer and OCR path produce)
+                // must be sent as base64 blocks or the request is rejected.
+                const inline = parseDataUrl(part.image_url.url);
+                if (inline) {
+                        return {
+                                  type: "image",
+                                  source: { type: "base64", media_type: inline.mediaType, data: inline.data },
+                        };
+                }
                 return {
                           type: "image",
                           source: { type: "url", url: part.image_url.url },
                 };
         }
         if (part.type === "file_url") {
+                const inline = parseDataUrl(part.file_url.url);
+                if (inline) {
+                        return {
+                                  type: "document",
+                                  source: {
+                                              type: "base64",
+                                              media_type: part.file_url.mime_type ?? inline.mediaType,
+                                              data: inline.data,
+                                  },
+                        };
+                }
                 return {
                           type: "document",
                           source: {

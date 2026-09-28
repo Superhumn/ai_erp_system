@@ -17,6 +17,10 @@ FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
+# Scanned-PDF OCR (server/documentImportService.ts) renders pages with
+# GraphicsMagick, which delegates PDF decoding to Ghostscript.
+RUN apk add --no-cache graphicsmagick ghostscript
+
 COPY package.json pnpm-lock.yaml ./
 COPY patches ./patches
 RUN pnpm install --prod --frozen-lockfile
