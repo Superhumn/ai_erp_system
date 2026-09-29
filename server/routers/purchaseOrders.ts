@@ -1,5 +1,5 @@
 // appRouter.purchaseOrders — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
-import { LEGACY_LIST_CAP, MAX_PAGE_LIMIT } from "../listPaging";
+import { LEGACY_LIST_CAP } from "../listPaging";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router } from "../_core/trpc";
