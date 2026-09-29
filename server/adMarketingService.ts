@@ -6,21 +6,26 @@
  *                           platform lead id).
  *  - syncSpendForPlatform() one platform's daily spend rows → ad_spend_daily.
  *  - runDailySpendSync()    every morning, yesterday's spend for each
- *                           connected platform; failed syncs are logged and
- *                           raise an alert.
+ *                           connected platform; each platform/day is claimed
+ *                           in ad_sync_logs first so it runs once; failed
+ *                           syncs are logged and raise an alert.
  *  - runLeadPoll()          platforms without webhooks (LinkedIn) are polled.
  *  - runAlertChecks()       cost per signup above target 3 days running,
  *                           budget reached, credit 14 days from expiry.
- *  - runWeeklySummary()     Monday: spend, signups, cost per signup by platform.
+ *  - runWeeklySummary()     Monday: spend, signups and cost per signup by
+ *                           platform, one summary per entity.
  *
  * Cost per signup is spend ÷ signups (shared/adMarketing.ts), never stored.
- * The scheduler (adMarketingScheduler.ts) decides when each runs; the tRPC
- * router lets an admin run any of them by hand.
+ * Notifications go to admin/exec/sales users who can see the entity the
+ * record belongs to. The scheduler (adMarketingScheduler.ts) decides when
+ * each runs; the tRPC router lets an admin run any of them by hand.
  */
 import * as db from "./db";
 import { sendEmail } from "./_core/email";
 import { encrypt, safeDecryptToken } from "./_core/crypto";
 import { createLogger } from "./_core/logger";
+import { resolveScopeFromAccess, scopeAllows, type Scope } from "./_core/scope";
+import { mailableSkipReason } from "./campaignSender";
 import type { AdCampaign, AdCredit, AdLead, AdPlatform, InsertCrmContact } from "../drizzle/schema";
 import {
   AD_PLATFORM_LABELS,
@@ -37,6 +42,7 @@ import {
   type SpendTotals,
 } from "../shared/adMarketing";
 import {
+  SPEND_SYNC_PLATFORMS,
   fetchDailySpend,
   fetchLeads,
   type DailySpendRow,
@@ -126,12 +132,48 @@ export function weeklySummaryText(from: string, to: string, lines: WeeklySummary
   return `Ads ${from} to ${to}\n${rows.join("\n")}`;
 }
 
+/**
+ * Signups for a day = the higher of what the platform reported and the leads
+ * we received ourselves. Platforms count their own lead forms; landing-page
+ * leads only exist on our side. Taking the max never double-counts.
+ */
+export function reconcileSignups(platformSignups: number, firstPartyLeads: number): number {
+  return Math.max(platformSignups || 0, firstPartyLeads || 0);
+}
+
 // ---------------------------------------------------------------------------
-// Notifications
+// Notifications — recipients are limited to users whose entity scope covers
+// the record's company. A record with no company reaches global users only.
 // ---------------------------------------------------------------------------
 
-async function notifyTeam(input: { title: string; message: string; severity?: "info" | "warning" | "critical"; entityType?: string; entityId?: number; link?: string; email?: boolean }) {
-  const users = await db.getUsersByRoles(ALERT_ROLES);
+type RecipientUser = { id: number; email: string | null; companyId: number | null; regionScope: "entity" | "region" | "global" };
+
+const scopeLookup = {
+  getCompanyRegionId: async (id: number) => (await db.getCompanyById(id))?.regionId ?? null,
+  getCompanyIdsInRegion: (regionId: number) => db.getCompanyIdsInRegion(regionId),
+  getEntityAndDescendants: (id: number) => db.getEntityAndDescendantCompanyIds(id),
+};
+
+export async function userScope(user: RecipientUser): Promise<Scope> {
+  if (user.regionScope === "global") return { mode: "global", companyIds: "all" };
+  const access = await db.getUserEntityAccessCompanyIds(user.id);
+  return resolveScopeFromAccess({ companyId: user.companyId, regionScope: user.regionScope }, access, scopeLookup);
+}
+
+/** Alert-role users allowed to see records of `companyId` (null → global users only). */
+export async function alertRecipients(companyId: number | null | undefined): Promise<RecipientUser[]> {
+  const users = (await db.getUsersByRoles(ALERT_ROLES)) as RecipientUser[];
+  const out: RecipientUser[] = [];
+  for (const u of users) {
+    if (u.regionScope === "global") { out.push(u); continue; }
+    if (companyId == null) continue;
+    if (scopeAllows(await userScope(u), companyId)) out.push(u);
+  }
+  return out;
+}
+
+async function notifyTeam(input: { companyId: number | null | undefined; title: string; message: string; severity?: "info" | "warning" | "critical"; entityType?: string; entityId?: number; link?: string; email?: boolean }) {
+  const users = await alertRecipients(input.companyId);
   const ids = users.map((u) => u.id);
   if (ids.length > 0) {
     await db.createNotificationsForAllUsers(
@@ -158,7 +200,7 @@ async function notifyTeam(input: { title: string; message: string; severity?: "i
 export interface IngestLeadInput {
   source: "meta" | "linkedin" | "reddit" | "google" | "tiktok" | "landing_page" | "manual" | "other";
   platformId?: number | null;
-  /** Resolve the campaign by internal id, platform id, or utm_campaign — first match wins. */
+  /** Resolve the campaign by internal id, platform id, utm_id, or a unique utm_campaign — first match wins. */
   campaignId?: number | null;
   externalCampaignId?: string | null;
   externalLeadId?: string | null;
@@ -169,7 +211,7 @@ export interface IngestLeadInput {
   phone?: string | null;
   organization?: string | null;
   jobTitle?: string | null;
-  utm?: { source?: string; medium?: string; campaign?: string; content?: string };
+  utm?: { source?: string; medium?: string; campaign?: string; content?: string; id?: string };
   answers?: Record<string, unknown>;
   receivedAt?: Date;
   companyId?: number | null;
@@ -184,9 +226,15 @@ export interface IngestLeadResult {
   duplicate: boolean;
   campaignId: number | null;
   welcomeSent: boolean;
+  welcomeSkipped?: string;
 }
 
-async function resolveCampaign(input: IngestLeadInput): Promise<AdCampaign | undefined> {
+/**
+ * Which campaign a lead belongs to. A utm_campaign slug is only trusted when
+ * exactly one campaign carries it — slugs are not unique across entities, so
+ * an ambiguous one leaves the lead unassigned rather than guessing.
+ */
+export async function resolveCampaign(input: IngestLeadInput): Promise<AdCampaign | undefined> {
   if (input.campaignId) {
     const c = await db.getAdCampaignById(input.campaignId);
     if (c) return c;
@@ -195,8 +243,37 @@ async function resolveCampaign(input: IngestLeadInput): Promise<AdCampaign | und
     const c = await db.getAdCampaignByExternalId(input.platformId, input.externalCampaignId);
     if (c) return c;
   }
-  if (input.utm?.campaign) return db.getAdCampaignByUtm(input.utm.campaign);
+  if (input.utm?.id && /^\d+$/.test(input.utm.id)) {
+    const c = await db.getAdCampaignById(Number(input.utm.id));
+    if (c) return c;
+  }
+  if (input.utm?.campaign) {
+    const matches = await db.getAdCampaignsByUtm(input.utm.campaign);
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) logger.warn("utm_campaign matches more than one campaign; lead left unassigned", { utmCampaign: input.utm.campaign, count: matches.length });
+  }
   return undefined;
+}
+
+/** Keep the day's signup count in step with the leads we hold for it. */
+async function bumpDailySignups(campaignId: number, receivedAt: Date) {
+  const date = toIsoDate(receivedAt);
+  const dayStart = new Date(`${date}T00:00:00.000Z`);
+  const dayEnd = new Date(`${date}T23:59:59.999Z`);
+  const counts = await db.countAdLeadsByCampaignAndDate(dayStart, dayEnd);
+  const firstParty = counts.find((c) => c.campaignId === campaignId)?.signups ?? 0;
+  const existing = await db.getAdSpendDailyRow(campaignId, date);
+  const signups = reconcileSignups(existing?.signups ?? 0, firstParty);
+  if (existing && existing.signups >= signups) return;
+  await db.upsertAdSpendDaily({
+    campaignId,
+    date,
+    spendUsd: existing?.spendUsd ?? "0",
+    impressions: existing?.impressions ?? 0,
+    clicks: existing?.clicks ?? 0,
+    signups,
+    source: existing?.source ?? "sync",
+  });
 }
 
 export async function ingestAdLead(input: IngestLeadInput): Promise<IngestLeadResult> {
@@ -211,8 +288,9 @@ export async function ingestAdLead(input: IngestLeadInput): Promise<IngestLeadRe
   const campaign = await resolveCampaign(input);
   const platformId = input.platformId ?? campaign?.platformId ?? null;
   const platform = platformId ? await db.getAdPlatformById(platformId) : undefined;
-  const platformKey = platform?.name ?? (input.source === "landing_page" || input.source === "manual" || input.source === "other" ? input.source : input.source);
-  const companyId = input.companyId ?? campaign?.companyId ?? platform?.companyId ?? null;
+  const platformKey = platform?.name ?? input.source;
+  // The lead lives with its campaign's entity; a campaign-less lead falls back to the platform's, then the caller's.
+  const companyId = campaign?.companyId ?? platform?.companyId ?? input.companyId ?? null;
   const name = splitName(input.fullName, input.firstName, input.lastName);
   const email = input.email?.trim().toLowerCase() || undefined;
   const tags = leadTags(platformKey, campaign?.name);
@@ -220,6 +298,7 @@ export async function ingestAdLead(input: IngestLeadInput): Promise<IngestLeadRe
   // CRM contact: create or match on email/phone, then make sure the ad tags are on it.
   let contactId: number | null = null;
   let contactCreated = false;
+  let contact: Awaited<ReturnType<typeof db.getCrmContactById>> | undefined;
   try {
     const contactData: InsertCrmContact = {
       companyId: companyId ?? undefined,
@@ -241,8 +320,8 @@ export async function ingestAdLead(input: IngestLeadInput): Promise<IngestLeadRe
     contactId = r.id;
     contactCreated = r.created;
     if (!r.created) {
-      const existing = await db.getCrmContactById(r.id);
-      await db.updateCrmContact(r.id, { tags: mergeTags(existing?.tags, tags) });
+      contact = await db.getCrmContactById(r.id);
+      await db.updateCrmContact(r.id, { tags: mergeTags(contact?.tags, tags) });
     }
   } catch (e) {
     // A lead is still recorded even when the CRM write fails; it shows up unlinked.
@@ -267,28 +346,45 @@ export async function ingestAdLead(input: IngestLeadInput): Promise<IngestLeadRe
     receivedAt,
   });
 
-  // Welcome email — only when the campaign has one configured and we have an address.
-  let welcomeSent = false;
-  if (!input.skipWelcome && email && campaign?.welcomeSubject && campaign?.welcomeBody) {
-    const vars = { firstName: name.firstName === "Unknown" ? "" : name.firstName, name: name.fullName, campaign: campaign.name };
+  if (campaign) {
     try {
-      const r = await sendEmail({
-        to: email,
-        subject: renderWelcome(campaign.welcomeSubject, vars),
-        text: renderWelcome(campaign.welcomeBody, vars),
-      });
-      if (r.success) {
-        welcomeSent = true;
-        await db.updateAdLead(leadId, { welcomeEmailSentAt: new Date() });
-      } else {
-        await db.updateAdLead(leadId, { welcomeEmailError: r.error ?? "Email not sent" });
-      }
+      await bumpDailySignups(campaign.id, receivedAt);
     } catch (e) {
-      await db.updateAdLead(leadId, { welcomeEmailError: e instanceof Error ? e.message : String(e) });
+      logger.warn("Could not update the day's signup count", { campaignId: campaign.id, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  // Welcome email — only when the campaign has one configured, we have an
+  // address, and a matched contact has not opted out / bounced.
+  let welcomeSent = false;
+  let welcomeSkipped: string | undefined;
+  if (!input.skipWelcome && email && campaign?.welcomeSubject && campaign?.welcomeBody) {
+    const skip = contact ? mailableSkipReason(contact) : null;
+    if (skip) {
+      welcomeSkipped = skip.reason;
+      await db.updateAdLead(leadId, { welcomeEmailError: `Skipped: ${skip.reason}` });
+    } else {
+      const vars = { firstName: name.firstName === "Unknown" ? "" : name.firstName, name: name.fullName, campaign: campaign.name };
+      try {
+        const r = await sendEmail({
+          to: email,
+          subject: renderWelcome(campaign.welcomeSubject, vars),
+          text: renderWelcome(campaign.welcomeBody, vars),
+        });
+        if (r.success) {
+          welcomeSent = true;
+          await db.updateAdLead(leadId, { welcomeEmailSentAt: new Date() });
+        } else {
+          await db.updateAdLead(leadId, { welcomeEmailError: r.error ?? "Email not sent" });
+        }
+      } catch (e) {
+        await db.updateAdLead(leadId, { welcomeEmailError: e instanceof Error ? e.message : String(e) });
+      }
     }
   }
 
   await notifyTeam({
+    companyId,
     title: "New ad lead",
     message: `${name.fullName}${email ? ` <${email}>` : ""} signed up via ${AD_PLATFORM_LABELS[platformKey as AdPlatformName] ?? platformKey}${campaign ? ` — ${campaign.name}` : ""}.`,
     entityType: "adLead",
@@ -296,7 +392,7 @@ export async function ingestAdLead(input: IngestLeadInput): Promise<IngestLeadRe
     link: contactId ? `/crm/contacts/${contactId}` : "/marketing/ads",
   });
 
-  return { leadId, contactId, contactCreated, duplicate: false, campaignId: campaign?.id ?? null, welcomeSent };
+  return { leadId, contactId, contactCreated, duplicate: false, campaignId: campaign?.id ?? null, welcomeSent, welcomeSkipped };
 }
 
 /** Ingest a lead fetched from a platform (webhook or poll). */
@@ -332,6 +428,10 @@ export function encryptToken(token: string): string {
   return encrypt(token);
 }
 
+export function supportsSpendSync(platform: Pick<AdPlatform, "name">): boolean {
+  return SPEND_SYNC_PLATFORMS.has(platform.name);
+}
+
 // ---------------------------------------------------------------------------
 // Spend sync
 // ---------------------------------------------------------------------------
@@ -344,11 +444,21 @@ export interface SpendSyncResult {
   error?: string;
 }
 
-/** Write platform rows into ad_spend_daily, creating a campaign row for any campaign id we have not seen. */
+/**
+ * Write platform rows into ad_spend_daily, creating a campaign row for any
+ * campaign id we have not seen. Signups are reconciled with the leads we
+ * received ourselves for the same campaign and day.
+ */
 export async function applySpendRows(platform: AdPlatform, rows: DailySpendRow[]): Promise<{ rows: number; campaignsCreated: number }> {
   let written = 0;
   let campaignsCreated = 0;
   const cache = new Map<string, number>();
+  const dates = rows.map((r) => r.date).sort();
+  const firstParty = new Map<string, number>();
+  if (dates.length > 0) {
+    const counts = await db.countAdLeadsByCampaignAndDate(new Date(`${dates[0]}T00:00:00.000Z`), new Date(`${dates[dates.length - 1]}T23:59:59.999Z`));
+    for (const c of counts) if (c.campaignId != null) firstParty.set(`${c.campaignId}:${c.date}`, c.signups);
+  }
   for (const r of rows) {
     let campaignId = cache.get(r.externalCampaignId);
     if (!campaignId) {
@@ -374,7 +484,7 @@ export async function applySpendRows(platform: AdPlatform, rows: DailySpendRow[]
       spendUsd: r.spendUsd.toFixed(2),
       impressions: r.impressions,
       clicks: r.clicks,
-      signups: r.signups,
+      signups: reconcileSignups(r.signups, firstParty.get(`${campaignId}:${r.date}`) ?? 0),
       source: "sync",
     });
     written++;
@@ -382,26 +492,41 @@ export async function applySpendRows(platform: AdPlatform, rows: DailySpendRow[]
   return { rows: written, campaignsCreated };
 }
 
-export async function syncSpendForPlatform(platform: AdPlatform, from: string, to: string, fetchImpl?: FetchFn): Promise<SpendSyncResult> {
-  const creds = platformCredentials(platform);
+/**
+ * Pull `from`..`to` for one platform. With `logId` (a claimed scheduled run)
+ * the outcome is written onto that row; otherwise a fresh log row is added
+ * (manual "Sync now").
+ */
+export async function syncSpendForPlatform(platform: AdPlatform, from: string, to: string, fetchImpl?: FetchFn, logId?: number | null): Promise<SpendSyncResult> {
   const base = { platformId: platform.id, platform: platform.name, rows: 0, campaignsCreated: 0 };
+  const log = async (status: "success" | "failed" | "skipped", rowsAffected: number, message: string) => {
+    if (logId) await db.finishAdSyncRun(logId, { status, rowsAffected, message });
+    else await db.createAdSyncLog({ platformId: platform.id, kind: "spend_sync", period: to, status, rowsAffected, message, finishedAt: new Date() });
+  };
+  if (!supportsSpendSync(platform)) {
+    const error = `Spend sync is not available for ${AD_PLATFORM_LABELS[platform.name]}. Record days by hand on the Campaigns tab.`;
+    await log("skipped", 0, error);
+    return { ...base, error };
+  }
+  const creds = platformCredentials(platform);
   if (!creds) {
     const error = "Not connected — add the account id and access token first";
-    await db.createAdSyncLog({ platformId: platform.id, kind: "spend_sync", period: to, status: "skipped", message: error });
+    await log("skipped", 0, error);
     return { ...base, error };
   }
   try {
     const rows = await fetchDailySpend(platform.name, creds, from, to, fetchImpl);
     const applied = await applySpendRows(platform, rows);
     await db.updateAdPlatform(platform.id, { connectionStatus: "connected", lastSyncAt: new Date(), lastSyncError: null });
-    await db.createAdSyncLog({ platformId: platform.id, kind: "spend_sync", period: to, status: "success", rowsAffected: applied.rows, message: `${applied.rows} rows, ${applied.campaignsCreated} new campaigns` });
+    await log("success", applied.rows, `${applied.rows} rows, ${applied.campaignsCreated} new campaigns`);
     return { ...base, ...applied };
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     logger.error("Spend sync failed", { platform: platform.name, error });
     await db.updateAdPlatform(platform.id, { connectionStatus: "error", lastSyncError: error });
-    await db.createAdSyncLog({ platformId: platform.id, kind: "spend_sync", period: to, status: "failed", message: error });
+    await log("failed", 0, error);
     await notifyTeam({
+      companyId: platform.companyId,
       title: `${AD_PLATFORM_LABELS[platform.name]} spend sync failed`,
       message: `${error}. Spend for ${to} was not recorded. Check the connection on the Platforms tab.`,
       severity: "warning",
@@ -412,14 +537,21 @@ export async function syncSpendForPlatform(platform: AdPlatform, from: string, t
   }
 }
 
-/** Yesterday's spend for every connected platform. `date` defaults to yesterday (UTC). */
+/**
+ * Yesterday's spend for every connected platform that supports sync. Each
+ * platform/day is claimed in ad_sync_logs before the request, so a second
+ * instance (or a restart) skips it; a failed day is retried on the next tick.
+ * `date` defaults to yesterday (UTC).
+ */
 export async function runDailySpendSync(date?: string, fetchImpl?: FetchFn): Promise<SpendSyncResult[]> {
   const day = date ?? addIsoDays(toIsoDate(new Date()), -1);
   const platforms = await db.getAdPlatforms(null);
   const results: SpendSyncResult[] = [];
   for (const p of platforms) {
-    if (p.connectionStatus === "disconnected" && !p.accessToken) continue;
-    results.push(await syncSpendForPlatform(p, day, day, fetchImpl));
+    if (!p.accessToken || !supportsSpendSync(p)) continue;
+    const logId = await db.claimAdSyncRun({ kind: "spend_sync", period: day, platformId: p.id });
+    if (!logId) continue;
+    results.push(await syncSpendForPlatform(p, day, day, fetchImpl, logId));
   }
   return results;
 }
@@ -443,13 +575,13 @@ export async function runLeadPoll(now: Date = new Date(), fetchImpl?: FetchFn): 
         const r = await ingestPlatformLead(p, l);
         if (!r.duplicate) fresh++;
       }
-      if (fresh > 0) await db.createAdSyncLog({ platformId: p.id, kind: "lead_sync", period: toIsoDate(now), status: "success", rowsAffected: fresh });
+      if (fresh > 0) await db.createAdSyncLog({ platformId: p.id, kind: "lead_sync", period: toIsoDate(now), status: "success", rowsAffected: fresh, finishedAt: new Date() });
       out.push({ platformId: p.id, leads: fresh });
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
       logger.error("Lead poll failed", { platform: p.name, error });
-      await db.createAdSyncLog({ platformId: p.id, kind: "lead_sync", period: toIsoDate(now), status: "failed", message: error });
-      await notifyTeam({ title: `${AD_PLATFORM_LABELS[p.name]} lead sync failed`, message: error, severity: "warning", entityType: "adPlatform", entityId: p.id });
+      await db.createAdSyncLog({ platformId: p.id, kind: "lead_sync", period: toIsoDate(now), status: "failed", message: error, finishedAt: new Date() });
+      await notifyTeam({ companyId: p.companyId, title: `${AD_PLATFORM_LABELS[p.name]} lead sync failed`, message: error, severity: "warning", entityType: "adPlatform", entityId: p.id });
       out.push({ platformId: p.id, leads: 0, error });
     }
   }
@@ -489,6 +621,7 @@ export async function runAlertChecks(now: Date = new Date()): Promise<AlertCheck
     if (cpsAboveTargetStreak(rows, target, yesterday) && cooledDown(c.cpsAlertAt, now)) {
       const last3 = sumSpend(rows.filter((r) => r.date > addIsoDays(yesterday, -3)));
       await notifyTeam({
+        companyId: c.companyId,
         title: `Cost per signup above target: ${c.name}`,
         message: `${platformLabel} — last 3 days: spend ${usd(last3.spendUsd)}, signups ${last3.signups}, cost per signup ${usd(last3.costPerSignup)} vs target ${usd(target)}.`,
         severity: "warning",
@@ -505,6 +638,7 @@ export async function runAlertChecks(now: Date = new Date()): Promise<AlertCheck
     const budget = budgetReached(c, spend);
     if (budget.reached && cooledDown(c.budgetAlertAt, now)) {
       await notifyTeam({
+        companyId: c.companyId,
         title: `Budget reached: ${c.name}`,
         message: `${platformLabel} — spend ${usd(spend)} has reached the budget of ${usd(budget.budgetUsd)}. Pause the campaign on the platform to avoid overspend.`,
         severity: "critical",
@@ -524,6 +658,7 @@ export async function runAlertChecks(now: Date = new Date()): Promise<AlertCheck
     const days = cr.expiresAt ? daysUntil(cr.expiresAt, now) : 0;
     const platformName = cr.platformId ? platforms.get(cr.platformId)?.name : undefined;
     await notifyTeam({
+      companyId: cr.companyId,
       title: `Ad credit expiring: ${cr.offer}`,
       message: `${platformName ? AD_PLATFORM_LABELS[platformName] + " — " : ""}${usd(remaining)} remaining, expires ${cr.expiresAt ? toIsoDate(cr.expiresAt) : "soon"} (${days <= 0 ? "today" : `${days} days`}).`,
       severity: days <= 3 ? "critical" : "warning",
@@ -541,10 +676,21 @@ export async function runAlertChecks(now: Date = new Date()): Promise<AlertCheck
 // Weekly summary
 // ---------------------------------------------------------------------------
 
-export async function buildWeeklySummary(now: Date = new Date()): Promise<{ from: string; to: string; lines: WeeklySummaryLine[]; text: string }> {
+export interface WeeklySummary {
+  from: string;
+  to: string;
+  lines: WeeklySummaryLine[];
+  text: string;
+}
+
+/** Last 7 full days, by platform, for the campaigns in `companyIds` (null = every campaign). */
+export async function buildWeeklySummary(now: Date = new Date(), companyIds: number[] | null = null): Promise<WeeklySummary> {
+  return buildWeeklySummaryFor(now, (await db.getAdCampaigns({ companyIds })) as AdCampaign[]);
+}
+
+async function buildWeeklySummaryFor(now: Date, campaigns: AdCampaign[]): Promise<WeeklySummary> {
   const to = addIsoDays(toIsoDate(now), -1);
   const from = addIsoDays(to, -6);
-  const campaigns = (await db.getAdCampaigns()) as AdCampaign[];
   const platforms = new Map((await db.getAdPlatforms(null)).map((p) => [p.id, p]));
   const rows = await db.getAdSpend({ campaignIds: campaigns.map((c) => c.id), from, to });
   const platformOf = new Map(campaigns.map((c) => [c.id, platforms.get(c.platformId)?.name ?? "other"]));
@@ -555,10 +701,23 @@ export async function buildWeeklySummary(now: Date = new Date()): Promise<{ from
   return { from, to, lines, text: weeklySummaryText(from, to, lines) };
 }
 
-export async function runWeeklySummary(now: Date = new Date()): Promise<{ text: string }> {
-  const s = await buildWeeklySummary(now);
-  await notifyTeam({ title: `Weekly ads summary ${s.from} to ${s.to}`, message: s.text, entityType: "adSummary", email: true });
-  return { text: s.text };
+/**
+ * One summary per entity, sent to the users who can see that entity.
+ * Campaigns with no company are summarised for global users only.
+ */
+export async function runWeeklySummary(now: Date = new Date()): Promise<Array<{ companyId: number | null; text: string }>> {
+  const campaigns = (await db.getAdCampaigns()) as AdCampaign[];
+  const companyIds = Array.from(new Set(campaigns.map((c) => c.companyId ?? null)));
+  const out: Array<{ companyId: number | null; text: string }> = [];
+  for (const companyId of companyIds) {
+    // null → campaigns with no company. getAdCampaigns({ companyIds: null }) means "all", so filter here.
+    const s = companyId == null
+      ? await buildWeeklySummaryFor(now, campaigns.filter((c) => c.companyId == null))
+      : await buildWeeklySummary(now, [companyId]);
+    await notifyTeam({ companyId, title: `Weekly ads summary ${s.from} to ${s.to}`, message: s.text, entityType: "adSummary", email: true });
+    out.push({ companyId, text: s.text });
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

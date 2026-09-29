@@ -130,11 +130,14 @@ CREATE TABLE IF NOT EXISTS `ad_sync_logs` (
   `platformId` int,
   `kind` enum('spend_sync','lead_sync','alert_check','weekly_summary') NOT NULL,
   `period` varchar(16) NOT NULL,
-  `status` enum('success','failed','skipped') NOT NULL,
+  `claimKey` varchar(64),
+  `status` enum('running','success','failed','skipped') NOT NULL,
   `rowsAffected` int NOT NULL DEFAULT 0,
   `message` text,
   `ranAt` timestamp NOT NULL DEFAULT (now()),
-  CONSTRAINT `ad_sync_logs_id` PRIMARY KEY(`id`)
+  `finishedAt` timestamp NULL,
+  CONSTRAINT `ad_sync_logs_id` PRIMARY KEY(`id`),
+  CONSTRAINT `ad_sync_logs_claim_uniq` UNIQUE(`claimKey`)
 );
 --> statement-breakpoint
 DROP PROCEDURE IF EXISTS `_migrate_0072_crm_contact_source`;

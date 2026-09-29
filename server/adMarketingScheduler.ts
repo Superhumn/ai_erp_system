@@ -6,11 +6,16 @@
  *  - once a day (after the sync):   cost-per-signup / budget / credit alerts
  *  - Mondays, once:                 weekly summary
  *
- * "Once" is enforced by ad_sync_logs (kind + period), so restarts and a
- * second server instance never repeat a run.
+ * "Once" is enforced by claiming a row in ad_sync_logs (unique claim key)
+ * before any work happens, so two instances or a restart never repeat a run.
+ * A failed run is reclaimable and so retried on a later tick.
+ *
+ * In multi-tenant mode the tick runs once per tenant inside that tenant's
+ * context (getDb() refuses tenantless access there).
  */
 import * as db from "./db";
 import { createLogger } from "./_core/logger";
+import { forEachTenant, isMultiTenant } from "./_core/tenancy";
 import { addIsoDays, toIsoDate } from "../shared/adMarketing";
 import { runAlertChecks, runDailySpendSync, runLeadPoll, runWeeklySummary } from "./adMarketingService";
 
@@ -31,30 +36,38 @@ export function isoWeek(d: Date): string {
 }
 
 export interface TickResult {
-  spendSynced: boolean;
+  spendSynced: number;
   leadsPolled: boolean;
   alertsChecked: boolean;
   weeklySent: boolean;
 }
 
+/** Claim a run, do it, record the outcome. Returns false when another instance holds it. */
+async function claimed(kind: "alert_check" | "weekly_summary", period: string, work: () => Promise<number>): Promise<boolean> {
+  const logId = await db.claimAdSyncRun({ kind, period });
+  if (!logId) return false;
+  try {
+    const rows = await work();
+    await db.finishAdSyncRun(logId, { status: "success", rowsAffected: rows });
+  } catch (e) {
+    await db.finishAdSyncRun(logId, { status: "failed", message: e instanceof Error ? e.message : String(e) });
+    throw e;
+  }
+  return true;
+}
+
 export async function adMarketingTick(now: Date = new Date()): Promise<TickResult> {
-  const result: TickResult = { spendSynced: false, leadsPolled: false, alertsChecked: false, weeklySent: false };
+  const result: TickResult = { spendSynced: 0, leadsPolled: false, alertsChecked: false, weeklySent: false };
   const today = toIsoDate(now);
   const yesterday = addIsoDays(today, -1);
+  const afterReports = now.getUTCHours() >= SPEND_SYNC_HOUR_UTC;
 
-  // Anything to do at all? No platforms and no campaigns → stay quiet.
   const platforms = await db.getAdPlatforms(null);
   const connected = platforms.filter((p) => p.accessToken);
 
-  if (now.getUTCHours() >= SPEND_SYNC_HOUR_UTC && connected.length > 0) {
-    const pending = [];
-    for (const p of connected) {
-      if (!(await db.hasAdSyncLog("spend_sync", yesterday, p.id))) pending.push(p);
-    }
-    if (pending.length > 0) {
-      await runDailySpendSync(yesterday);
-      result.spendSynced = true;
-    }
+  // Each platform/day is claimed inside runDailySpendSync; already-synced platforms are skipped there.
+  if (afterReports && connected.length > 0) {
+    result.spendSynced = (await runDailySpendSync(yesterday)).length;
   }
 
   if (connected.some((p) => p.name === "linkedin")) {
@@ -62,22 +75,32 @@ export async function adMarketingTick(now: Date = new Date()): Promise<TickResul
     result.leadsPolled = true;
   }
 
-  if (now.getUTCHours() >= SPEND_SYNC_HOUR_UTC && !(await db.hasAdSyncLog("alert_check", today))) {
-    const r = await runAlertChecks(now);
-    await db.createAdSyncLog({ kind: "alert_check", period: today, status: "success", rowsAffected: r.cpsAlerts + r.budgetAlerts + r.creditAlerts });
-    result.alertsChecked = true;
+  if (afterReports) {
+    result.alertsChecked = await claimed("alert_check", today, async () => {
+      const r = await runAlertChecks(now);
+      return r.cpsAlerts + r.budgetAlerts + r.creditAlerts;
+    });
   }
 
-  if (now.getUTCDay() === 1 && now.getUTCHours() >= SPEND_SYNC_HOUR_UTC) {
-    const week = isoWeek(now);
-    if (!(await db.hasAdSyncLog("weekly_summary", week))) {
-      await runWeeklySummary(now);
-      await db.createAdSyncLog({ kind: "weekly_summary", period: week, status: "success" });
-      result.weeklySent = true;
-    }
+  if (now.getUTCDay() === 1 && afterReports) {
+    result.weeklySent = await claimed("weekly_summary", isoWeek(now), async () => (await runWeeklySummary(now)).length);
   }
 
   return result;
+}
+
+/** One tick for every tenant (or just once when not multi-tenant). */
+export async function runTickForAllTenants(now: Date = new Date()): Promise<void> {
+  if (!isMultiTenant()) {
+    const r = await adMarketingTick(now);
+    if (r.spendSynced || r.alertsChecked || r.weeklySent) logger.info("Tick", { ...r });
+    return;
+  }
+  const failures = await forEachTenant(async (tenant) => {
+    const r = await adMarketingTick(now);
+    if (r.spendSynced || r.alertsChecked || r.weeklySent) logger.info("Tick", { tenant: tenant.slug, ...r });
+  });
+  for (const f of failures) logger.warn("Tick failed", { tenant: f.slug, error: f.error instanceof Error ? f.error.message : String(f.error) });
 }
 
 let timer: NodeJS.Timeout | null = null;
@@ -89,8 +112,7 @@ export function startAdMarketingScheduler(intervalMs: number = TICK_INTERVAL_MS)
     if (running) return;
     running = true;
     try {
-      const r = await adMarketingTick();
-      if (r.spendSynced || r.alertsChecked || r.weeklySent) logger.info("Tick", { ...r });
+      await runTickForAllTenants();
     } catch (e) {
       logger.warn("Tick failed", { error: e instanceof Error ? e.message : String(e) });
     } finally {

@@ -8548,11 +8548,18 @@ export const adSyncLogs = mysqlTable("ad_sync_logs", {
   kind: mysqlEnum("kind", ["spend_sync", "lead_sync", "alert_check", "weekly_summary"]).notNull(),
   // The period the run covered: a YYYY-MM-DD date for daily runs, ISO week (YYYY-Www) for the summary.
   period: varchar("period", { length: 16 }).notNull(),
-  status: mysqlEnum("status", ["success", "failed", "skipped"]).notNull(),
+  // Scheduled runs claim `<kind>:<platformId>:<period>` here before doing any
+  // work; the unique index makes a second instance's claim fail. Manual runs
+  // leave it NULL (NULLs never collide).
+  claimKey: varchar("claimKey", { length: 64 }),
+  status: mysqlEnum("status", ["running", "success", "failed", "skipped"]).notNull(),
   rowsAffected: int("rowsAffected").default(0).notNull(),
   message: text("message"),
   ranAt: timestamp("ranAt").defaultNow().notNull(),
-});
+  finishedAt: timestamp("finishedAt"),
+}, (t) => ({
+  claimUniq: uniqueIndex("ad_sync_logs_claim_uniq").on(t.claimKey),
+}));
 
 export type AdSyncLog = typeof adSyncLogs.$inferSelect;
 export type InsertAdSyncLog = typeof adSyncLogs.$inferInsert;

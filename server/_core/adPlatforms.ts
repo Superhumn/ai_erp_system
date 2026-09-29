@@ -295,15 +295,28 @@ export function parseLinkedInLeadResponses(payload: any): PlatformLead[] {
   }).filter((l) => l.externalLeadId);
 }
 
+export const LINKEDIN_LEAD_PAGE_SIZE = 100;
+
+/** All lead-form responses in the window. leadFormResponses is paginated with start/count. */
 export async function fetchLinkedInLeads(creds: PlatformCredentials, sinceMs: number, untilMs: number, fetchImpl: FetchFn = fetch): Promise<PlatformLead[]> {
   const account = assertAccountId("linkedin", creds.accountId);
-  const url =
+  const base =
     `https://api.linkedin.com/rest/leadFormResponses?q=owner` +
     `&owner=(sponsoredAccount:urn%3Ali%3AsponsoredAccount%3A${account})` +
     `&leadType=(leadType:SPONSORED)` +
     `&submittedAtTimeRange=(start:${Math.floor(sinceMs)},end:${Math.floor(untilMs)})`;
-  const res = await fetchImpl(url, { headers: liHeaders(creds.accessToken) });
-  return parseLinkedInLeadResponses(await readJson("linkedin", res));
+  const out: PlatformLead[] = [];
+  let start = 0;
+  for (let page = 0; page < 50; page++) {
+    const res = await fetchImpl(`${base}&start=${start}&count=${LINKEDIN_LEAD_PAGE_SIZE}`, { headers: liHeaders(creds.accessToken) });
+    const body = await readJson("linkedin", res);
+    const leads = parseLinkedInLeadResponses(body);
+    out.push(...leads);
+    const elements = Array.isArray(body?.elements) ? body.elements.length : 0;
+    if (elements < LINKEDIN_LEAD_PAGE_SIZE) break;
+    start += LINKEDIN_LEAD_PAGE_SIZE;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

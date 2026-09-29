@@ -55,11 +55,17 @@ and the verify token from `META_WEBHOOK_VERIFY_TOKEN`. Each event is fetched fro
 https://<your-erp-host>/webhooks/ads/leads
 ```
 
-with the header `x-webhook-secret: <AD_LEAD_WEBHOOK_SECRET>` (or `?secret=`). Body fields: `name` or `fullName`, `email`, `phone`, `company`, plus either `utm_source` / `utm_campaign` fields or `pageUrl` (the page's full address, which carries the UTM tags). Any other fields are kept as the lead's answers. The campaign is matched on `utm_campaign`, so use links from the Links tab.
+with the header `x-webhook-secret: <AD_LEAD_WEBHOOK_SECRET>` (or `Authorization: Bearer <secret>`). Never put the secret in the URL. Body fields: `name` or `fullName`, `email`, `phone`, `company`, plus either the `utm_*` fields or `pageUrl` (the page's full address, which carries the UTM tags). Any other fields are kept as the lead's answers.
+
+The campaign is matched on `utm_id` (our campaign id, added to every link built with a campaign selected on the Links tab). Without it, `utm_campaign` is used only when exactly one campaign has that slug.
 
 ## Campaign matching
 
-A synced spend row or an inbound lead is matched to a campaign by the **platform campaign id** (Campaigns tab → edit). Unknown ids create a new campaign automatically. Leads from the landing page match on **UTM campaign**.
+A synced spend row or an inbound lead is matched to a campaign by the **platform campaign id** (Campaigns tab → edit). Unknown ids create a new campaign automatically. Leads from the landing page match on **utm_id**, then on a unique **utm_campaign**.
+
+Signups for a day are the higher of what the platform reported and the leads the ERP received itself for that campaign and day, so landing-page leads count without double-counting platform lead forms.
+
+Notifications and the weekly summary go only to admin, exec and sales users whose entity scope covers the campaign's entity.
 
 ## Alerts you can tune
 

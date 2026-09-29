@@ -154,6 +154,8 @@ export interface UtmParams {
   campaign: string;
   content?: string;
   term?: string;
+  /** Our campaign id, carried as `utm_id` so a landing-page lead maps to exactly one campaign. */
+  id?: number | string | null;
 }
 
 /**
@@ -195,11 +197,16 @@ export function buildTrackingUrl(baseUrl: string, utm: UtmParams): string {
   else url.searchParams.delete("utm_content");
   if (utm.term && utmSlug(utm.term)) url.searchParams.set("utm_term", utmSlug(utm.term));
   else url.searchParams.delete("utm_term");
+  const id = utm.id != null && String(utm.id).trim() ? String(utm.id).trim() : "";
+  if (/^\d+$/.test(id)) url.searchParams.set("utm_id", id);
+  else url.searchParams.delete("utm_id");
   return url.toString();
 }
 
 /** Read UTM values back out of a landing-page URL or a form payload's page URL. */
-export function parseUtm(input: string | null | undefined): Partial<Record<"source" | "medium" | "campaign" | "content" | "term", string>> {
+export type ParsedUtm = Partial<Record<"source" | "medium" | "campaign" | "content" | "term" | "id", string>>;
+
+export function parseUtm(input: string | null | undefined): ParsedUtm {
   if (!input) return {};
   let params: URLSearchParams;
   try {
@@ -207,8 +214,8 @@ export function parseUtm(input: string | null | undefined): Partial<Record<"sour
   } catch {
     params = new URLSearchParams(input.startsWith("?") ? input.slice(1) : input);
   }
-  const out: Partial<Record<"source" | "medium" | "campaign" | "content" | "term", string>> = {};
-  for (const k of ["source", "medium", "campaign", "content", "term"] as const) {
+  const out: ParsedUtm = {};
+  for (const k of ["source", "medium", "campaign", "content", "term", "id"] as const) {
     const v = params.get(`utm_${k}`);
     if (v) out[k] = v;
   }

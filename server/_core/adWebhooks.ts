@@ -5,7 +5,9 @@
 //   POST /webhooks/ads/meta/leads   Meta leadgen events → fetch each lead by id
 //   POST /webhooks/ads/leads        Our own landing-page form (Reddit traffic,
 //                                   any page). JSON body; secret in the
-//                                   x-webhook-secret header or ?secret=.
+//                                   x-webhook-secret header (or Bearer token).
+//                                   Never in the query string — it would land
+//                                   in access logs.
 //
 // Both routes stay thin: verify, parse, hand off to adMarketingService.
 // ============================================================================
@@ -19,6 +21,20 @@ import * as db from "../db";
 import { extractMetaLeadgenIds, fetchMetaLead } from "./adPlatforms";
 import { ingestAdLead, ingestPlatformLead, platformCredentials } from "../adMarketingService";
 import { parseUtm } from "../../shared/adMarketing";
+import { createLogger } from "./logger";
+import type { AdPlatform } from "../../drizzle/schema";
+
+const logger = createLogger("AdWebhooks");
+
+/**
+ * Which Meta platform a leadgen event belongs to. Matched on the page id;
+ * an event without one is accepted only when a single Meta platform exists,
+ * so a lead can never be filed under another account's entity.
+ */
+export function pickMetaPlatform<T extends Pick<AdPlatform, "pageId">>(platforms: T[], pageId: string | undefined): T | undefined {
+  if (pageId) return platforms.find((p) => p.pageId === pageId);
+  return platforms.length === 1 ? platforms[0] : undefined;
+}
 
 /** Meta signs the raw body with the app secret: `sha256=<hex hmac>`. */
 export function verifyMetaSignature(rawBody: Buffer | string, header: string | undefined, appSecret: string): boolean {
@@ -43,10 +59,25 @@ const adWebhookLimiter = rateLimit({
   message: { error: "Too many webhook requests" },
 });
 
-function rawJson(req: Request): { body: any; raw: string } | null {
-  const raw = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : typeof req.body === "string" ? req.body : JSON.stringify(req.body ?? {});
+/**
+ * The exact request bytes. The app-level JSON parser runs first and stashes
+ * them on req.rawBody (index.ts); express.raw on the route covers bodies the
+ * global parser skipped. Signatures are checked over these bytes, never over
+ * a re-serialised object.
+ */
+export function rawBodyOf(req: Request): Buffer {
+  const stashed = (req as Request & { rawBody?: unknown }).rawBody;
+  if (Buffer.isBuffer(stashed)) return stashed;
+  if (Buffer.isBuffer(req.body)) return req.body;
+  if (typeof req.body === "string") return Buffer.from(req.body, "utf8");
+  return Buffer.from(JSON.stringify(req.body ?? {}), "utf8");
+}
+
+function rawJson(req: Request): { body: any; raw: Buffer } | null {
+  const raw = rawBodyOf(req);
   try {
-    const body = raw ? JSON.parse(raw) : {};
+    const text = raw.toString("utf8");
+    const body = text ? JSON.parse(text) : {};
     return body && typeof body === "object" && !Array.isArray(body) ? { body, raw } : null;
   } catch {
     return null;
@@ -63,6 +94,7 @@ export function landingPayloadToLead(body: Record<string, unknown>) {
     medium: str(body.utm_medium) ?? utmFromUrl.medium,
     campaign: str(body.utm_campaign) ?? utmFromUrl.campaign,
     content: str(body.utm_content) ?? utmFromUrl.content,
+    id: str(body.utm_id) ?? utmFromUrl.id,
   };
   const { email, name, fullName, firstName, lastName, phone, company, organization, jobTitle, ...rest } = body as Record<string, unknown>;
   return {
@@ -100,7 +132,7 @@ export function registerAdWebhooks(app: Express, reenterTenant: Middleware): voi
     if (!parsed) return res.status(400).json({ error: "Invalid JSON body" });
     if (!ENV.metaAppSecret) {
       if (ENV.isProduction) return res.status(403).json({ error: "META_APP_SECRET not configured" });
-    } else if (!verifyMetaSignature(Buffer.isBuffer(req.body) ? req.body : parsed.raw, req.headers["x-hub-signature-256"] as string | undefined, ENV.metaAppSecret)) {
+    } else if (!verifyMetaSignature(parsed.raw, req.headers["x-hub-signature-256"] as string | undefined, ENV.metaAppSecret)) {
       return res.status(401).json({ error: "Bad signature" });
     }
     // Meta retries unless it gets a 200 quickly; acknowledge first, then work.
@@ -110,14 +142,15 @@ export function registerAdWebhooks(app: Express, reenterTenant: Middleware): voi
     try {
       const platforms = await db.getAdPlatformsByName("meta");
       for (const ev of events) {
-        const platform = platforms.find((p) => ev.pageId && p.pageId === ev.pageId) ?? platforms[0];
+        const platform = pickMetaPlatform(platforms, ev.pageId);
         if (!platform) {
-          console.warn("[Ads Webhook] Meta lead received but no Meta platform is set up", ev);
+          logger.warn("Meta lead received for a page no platform is set up for; ignored", { leadgenId: ev.leadgenId, pageId: ev.pageId, platforms: platforms.length });
+          await db.createAdSyncLog({ kind: "lead_sync", period: new Date().toISOString().slice(0, 10), status: "failed", message: `Meta lead ${ev.leadgenId} for page ${ev.pageId ?? "?"} matched no platform (set the page id on the Platforms tab)`, finishedAt: new Date() }).catch(() => null);
           continue;
         }
         const creds = platformCredentials(platform);
         if (!creds) {
-          console.warn("[Ads Webhook] Meta platform has no token; lead recorded without form answers", ev.leadgenId);
+          logger.warn("Meta platform has no token; lead recorded without form answers", { leadgenId: ev.leadgenId });
           await ingestAdLead({ source: "meta", platformId: platform.id, externalLeadId: ev.leadgenId, answers: { formId: ev.formId, adId: ev.adId }, companyId: platform.companyId });
           continue;
         }
@@ -125,17 +158,17 @@ export function registerAdWebhooks(app: Express, reenterTenant: Middleware): voi
         await ingestPlatformLead(platform, lead);
       }
     } catch (e) {
-      console.error("[Ads Webhook] Meta lead processing failed:", e);
-      await db.createAdSyncLog({ kind: "lead_sync", period: new Date().toISOString().slice(0, 10), status: "failed", message: e instanceof Error ? e.message : String(e) }).catch(() => null);
+      logger.error("Meta lead processing failed", { error: e instanceof Error ? e.message : String(e) });
+      await db.createAdSyncLog({ kind: "lead_sync", period: new Date().toISOString().slice(0, 10), status: "failed", message: e instanceof Error ? e.message : String(e), finishedAt: new Date() }).catch(() => null);
     }
   });
 
   // ---- Landing page form ---------------------------------------------------
   app.use("/webhooks/ads/leads", adWebhookLimiter, (req, res, next) => {
+    // Header or Bearer only. A ?secret= would be copied into proxy/access logs.
     const provided =
       (req.headers["x-webhook-secret"] as string) ||
-      (req.headers["authorization"] as string)?.replace(/^Bearer\s+/i, "") ||
-      (req.query.secret as string);
+      (req.headers["authorization"] as string)?.replace(/^Bearer\s+/i, "");
     const expected = ENV.adLeadWebhookSecret;
     if (!expected) {
       if (ENV.isProduction) return res.status(403).json({ error: "AD_LEAD_WEBHOOK_SECRET not configured" });
@@ -158,7 +191,7 @@ export function registerAdWebhooks(app: Express, reenterTenant: Middleware): voi
       });
       res.status(200).json({ success: true, leadId: result.leadId, contactId: result.contactId, duplicate: result.duplicate });
     } catch (e) {
-      console.error("[Ads Webhook] Landing page lead failed:", e);
+      logger.error("Landing page lead failed", { error: e instanceof Error ? e.message : String(e) });
       res.status(500).json({ error: "Internal server error" });
     }
   });

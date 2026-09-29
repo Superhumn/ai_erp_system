@@ -20,10 +20,11 @@ All env access goes through `env.ts` → `ENV.<camelCase>`. Never read `process.
 | Storage (R2) | `../storage.ts`, `attachmentRoutes.ts`, `attachmentOcr.ts` | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_URL` |
 | API proxy (image, voice, maps, notifications, data API) | `imageGeneration.ts`, `voiceTranscription.ts`, `map.ts`, `notification.ts`, `dataApi.ts` | `API_PROXY_URL`, `API_PROXY_KEY` |
 | Misc | `airtable.ts`, `b2brocket.ts`, `fireflies.ts`, `socialPublisher.ts`, `youtube.ts` | `AIRTABLE_PERSONAL_ACCESS_TOKEN`, `B2BROCKET_WEBHOOK_SECRET`, `AYRSHARE_API_KEY` |
+| Paid ads (Meta, LinkedIn, Reddit) | `adPlatforms.ts` (spend + lead APIs), `adWebhooks.ts` (Meta leadgen + landing-page form) | `META_APP_SECRET`, `META_WEBHOOK_VERIFY_TOKEN`, `AD_LEAD_WEBHOOK_SECRET` |
 | Multi-tenant (DB per tenant) | `tenancy.ts`, `tenantDb.ts`, `tenantMiddleware.ts` | `MULTI_TENANT`, `TENANTS_JSON`, `TENANT_BASE_DOMAIN`. Plan: `docs/MULTI_TENANT_PLAN.md`. In this mode `getDb()` throws outside a tenant context; wrap tenantless work in `runWithTenant` / `forEachTenant`. |
 | Code module | `../codeService.ts` | `CODE_EXEC_ENABLED` — off outside dev/test unless forced; it is host-level RCE. |
 
-Setup docs per integration: `docs/QUICKBOOKS_SETUP.md`, `docs/SHOPIFY_SETUP.md`, `docs/SENDGRID_SETUP.md`, `docs/WHATSAPP_SETUP.md`, `docs/GOOGLE_DRIVE_SYNC.md`, `docs/B2BROCKET_SETUP.md`. Known-broken list: `docs/BROKEN_INTEGRATIONS.md`.
+Setup docs per integration: `docs/QUICKBOOKS_SETUP.md`, `docs/SHOPIFY_SETUP.md`, `docs/SENDGRID_SETUP.md`, `docs/WHATSAPP_SETUP.md`, `docs/GOOGLE_DRIVE_SYNC.md`, `docs/B2BROCKET_SETUP.md`, `docs/PAID_ADS_SETUP.md`. Known-broken list: `docs/BROKEN_INTEGRATIONS.md`.
 
 ## Rules
 

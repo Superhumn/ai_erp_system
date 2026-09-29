@@ -19011,16 +19011,16 @@ export async function deleteRecruitingCandidate(id: number) {
 // MARKETING — PAID ADS
 // ============================================
 // Platforms, campaigns, daily spend, leads, tracking links, credits and the
-// automation run log. `companyIds: null` means global scope (no filter);
-// rows with a NULL companyId stay visible to every scope, matching the
-// rest of the CRM. Logic lives in server/adMarketingService.ts.
+// automation run log. `companyIds: null` means global scope (no filter).
+// Rows with a NULL companyId are visible to global scope only, matching
+// scopeAllows(). Logic lives in server/adMarketingService.ts.
 
 type AdScope = number[] | null;
 
 function adScopeClause(col: any, companyIds: AdScope) {
   if (companyIds === null) return undefined;
   if (companyIds.length === 0) return sql`1 = 0`;
-  return or(inArray(col, companyIds), isNull(col));
+  return inArray(col, companyIds);
 }
 
 // --- Platforms ---
@@ -19067,10 +19067,27 @@ export async function updateAdPlatform(id: number, data: Partial<InsertAdPlatfor
   await db.update(adPlatforms).set(data).where(eq(adPlatforms.id, id));
 }
 
+/** Rows that still point at a platform. Delete is refused while campaigns or credits do. */
+export async function countAdPlatformDependents(id: number) {
+  const db = await getDb();
+  if (!db) return { campaigns: 0, credits: 0, leads: 0 };
+  const [[c], [cr], [l]] = await Promise.all([
+    db.select({ n: count() }).from(adCampaigns).where(eq(adCampaigns.platformId, id)),
+    db.select({ n: count() }).from(adCredits).where(eq(adCredits.platformId, id)),
+    db.select({ n: count() }).from(adLeads).where(eq(adLeads.platformId, id)),
+  ]);
+  return { campaigns: Number(c?.n ?? 0), credits: Number(cr?.n ?? 0), leads: Number(l?.n ?? 0) };
+}
+
+/** Delete a platform. Leads keep their `source` but lose the platform link; its run log goes with it. */
 export async function deleteAdPlatform(id: number) {
   const db = await getDb();
   if (!db) return;
-  await db.delete(adPlatforms).where(eq(adPlatforms.id, id));
+  await db.transaction(async (tx) => {
+    await tx.update(adLeads).set({ platformId: null }).where(eq(adLeads.platformId, id));
+    await tx.delete(adSyncLogs).where(eq(adSyncLogs.platformId, id));
+    await tx.delete(adPlatforms).where(eq(adPlatforms.id, id));
+  });
 }
 
 // --- Campaigns ---
@@ -19108,12 +19125,12 @@ export async function getAdCampaignByExternalId(platformId: number, externalId: 
   return rows[0];
 }
 
-export async function getAdCampaignByUtm(utmCampaign: string) {
+/** Every campaign with this utm_campaign slug. Slugs are not unique across entities; the caller decides what to do with more than one. */
+export async function getAdCampaignsByUtm(utmCampaign: string) {
   const db = await getDb();
-  if (!db) return undefined;
-  const rows = await db.select().from(adCampaigns)
-    .where(sql`LOWER(${adCampaigns.utmCampaign}) = ${utmCampaign.toLowerCase()}`).limit(1);
-  return rows[0];
+  if (!db) return [];
+  return db.select().from(adCampaigns)
+    .where(sql`LOWER(${adCampaigns.utmCampaign}) = ${utmCampaign.toLowerCase()}`).limit(10);
 }
 
 export async function createAdCampaign(data: InsertAdCampaign) {
@@ -19171,6 +19188,21 @@ export async function upsertAdSpendDaily(row: InsertAdSpendDaily) {
     },
   });
   return true;
+}
+
+export async function getAdSpendDailyById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select().from(adSpendDaily).where(eq(adSpendDaily.id, id)).limit(1);
+  return rows[0];
+}
+
+export async function getAdSpendDailyRow(campaignId: number, date: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select().from(adSpendDaily)
+    .where(and(eq(adSpendDaily.campaignId, campaignId), eq(adSpendDaily.date, date))).limit(1);
+  return rows[0];
 }
 
 export async function deleteAdSpendDaily(id: number) {
@@ -19345,22 +19377,62 @@ export async function createAdSyncLog(data: InsertAdSyncLog) {
   return r.insertId;
 }
 
-export async function getAdSyncLogs(filters?: { platformId?: number; kind?: string; limit?: number }) {
+/**
+ * Run log. `platformIds: null` = every platform; an array limits platform
+ * runs to those ids while runs with no platform (alert checks, summaries)
+ * are always included — they carry counts only.
+ */
+export async function getAdSyncLogs(filters?: { platformId?: number; platformIds?: number[] | null; kind?: string; limit?: number }) {
   const db = await getDb();
   if (!db) return [];
   const conditions: any[] = [];
   if (filters?.platformId) conditions.push(eq(adSyncLogs.platformId, filters.platformId));
+  else if (filters?.platformIds) {
+    conditions.push(filters.platformIds.length
+      ? or(inArray(adSyncLogs.platformId, filters.platformIds), isNull(adSyncLogs.platformId))
+      : isNull(adSyncLogs.platformId));
+  }
   if (filters?.kind) conditions.push(eq(adSyncLogs.kind, filters.kind as any));
   const q = db.select().from(adSyncLogs);
   return (conditions.length ? q.where(and(...conditions)) : q).orderBy(desc(adSyncLogs.ranAt)).limit(filters?.limit ?? 100);
 }
 
-/** Has a run of this kind already succeeded for this period (and platform, when given)? */
-export async function hasAdSyncLog(kind: string, period: string, platformId?: number | null) {
+export function adSyncClaimKey(kind: string, period: string, platformId?: number | null): string {
+  return `${kind}:${platformId ?? 0}:${period}`;
+}
+
+/**
+ * Claim a scheduled run before doing its work. Inserts a `running` row whose
+ * claimKey is unique, so a second instance's insert fails and it skips. A
+ * previous `failed` run for the same key can be reclaimed (retried); a
+ * `running` or `success` one cannot. Returns the log id, or null when the
+ * period is already taken.
+ */
+export async function claimAdSyncRun(input: { kind: "spend_sync" | "lead_sync" | "alert_check" | "weekly_summary"; period: string; platformId?: number | null }): Promise<number | null> {
   const db = await getDb();
-  if (!db) return false;
-  const conditions: any[] = [eq(adSyncLogs.kind, kind as any), eq(adSyncLogs.period, period), eq(adSyncLogs.status, "success")];
-  if (platformId != null) conditions.push(eq(adSyncLogs.platformId, platformId));
-  const rows = await db.select({ id: adSyncLogs.id }).from(adSyncLogs).where(and(...conditions)).limit(1);
-  return rows.length > 0;
+  if (!db) return null;
+  const claimKey = adSyncClaimKey(input.kind, input.period, input.platformId);
+  try {
+    const [r] = await db.insert(adSyncLogs).values({
+      kind: input.kind, period: input.period, platformId: input.platformId ?? null, claimKey, status: "running", ranAt: new Date(),
+    });
+    return r.insertId;
+  } catch (e: any) {
+    if (e?.code !== "ER_DUP_ENTRY" && !/duplicate/i.test(String(e?.message))) throw e;
+  }
+  // Someone holds the key. Take it over only if that run failed.
+  const [r] = await db.update(adSyncLogs)
+    .set({ status: "running", ranAt: new Date(), finishedAt: null, message: null, rowsAffected: 0 })
+    .where(and(eq(adSyncLogs.claimKey, claimKey), eq(adSyncLogs.status, "failed")));
+  if (!r.affectedRows) return null;
+  const rows = await db.select({ id: adSyncLogs.id }).from(adSyncLogs).where(eq(adSyncLogs.claimKey, claimKey)).limit(1);
+  return rows[0]?.id ?? null;
+}
+
+export async function finishAdSyncRun(id: number, result: { status: "success" | "failed" | "skipped"; rowsAffected?: number; message?: string | null }) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(adSyncLogs)
+    .set({ status: result.status, rowsAffected: result.rowsAffected ?? 0, message: result.message ?? null, finishedAt: new Date() })
+    .where(eq(adSyncLogs.id, id));
 }

@@ -219,11 +219,11 @@ function CostPerSignupTab() {
 type CampaignForm = {
   platformId: string; name: string; objective: string; dailyBudgetUsd: string; totalBudgetUsd: string; targetCostPerSignupUsd: string;
   startDate: string; endDate: string; status: (typeof AD_CAMPAIGN_STATUSES)[number]; externalId: string; utmCampaign: string;
-  welcomeSubject: string; welcomeBody: string; notes: string;
+  ownerUserId: string; welcomeSubject: string; welcomeBody: string; notes: string;
 };
 const emptyCampaign = (platformId = ""): CampaignForm => ({
   platformId, name: "", objective: "", dailyBudgetUsd: "", totalBudgetUsd: "", targetCostPerSignupUsd: "", startDate: "", endDate: "",
-  status: "planned", externalId: "", utmCampaign: "", welcomeSubject: "", welcomeBody: "", notes: "",
+  status: "planned", externalId: "", utmCampaign: "", ownerUserId: "", welcomeSubject: "", welcomeBody: "", notes: "",
 });
 const optMoney = (v: string) => (v.trim() ? v.trim() : null);
 const optStr = (v: string) => (v.trim() ? v.trim() : null);
@@ -231,13 +231,15 @@ const optDate = (v: string) => (v ? new Date(`${v}T00:00:00.000Z`) : null);
 
 function CampaignDialog({ open, onClose, initial, platforms }: { open: boolean; onClose: () => void; initial?: Campaign; platforms: Platform[] }) {
   const utils = trpc.useUtils();
+  const owners = trpc.adMarketing.owners.useQuery();
   const [f, setF] = useState<CampaignForm>(() =>
     initial
       ? {
           platformId: String(initial.platformId), name: initial.name, objective: initial.objective ?? "",
           dailyBudgetUsd: initial.dailyBudgetUsd ?? "", totalBudgetUsd: initial.totalBudgetUsd ?? "", targetCostPerSignupUsd: initial.targetCostPerSignupUsd ?? "",
           startDate: toInputDate(initial.startDate), endDate: toInputDate(initial.endDate), status: initial.status, externalId: initial.externalId ?? "",
-          utmCampaign: initial.utmCampaign ?? "", welcomeSubject: initial.welcomeSubject ?? "", welcomeBody: initial.welcomeBody ?? "", notes: initial.notes ?? "",
+          utmCampaign: initial.utmCampaign ?? "", ownerUserId: initial.ownerUserId ? String(initial.ownerUserId) : "",
+          welcomeSubject: initial.welcomeSubject ?? "", welcomeBody: initial.welcomeBody ?? "", notes: initial.notes ?? "",
         }
       : emptyCampaign(platforms[0] ? String(platforms[0].id) : ""),
   );
@@ -254,6 +256,7 @@ function CampaignDialog({ open, onClose, initial, platforms }: { open: boolean; 
       platformId: Number(f.platformId), name: f.name.trim(), objective: optStr(f.objective), externalId: optStr(f.externalId),
       dailyBudgetUsd: optMoney(f.dailyBudgetUsd), totalBudgetUsd: optMoney(f.totalBudgetUsd), targetCostPerSignupUsd: optMoney(f.targetCostPerSignupUsd),
       startDate: optDate(f.startDate), endDate: optDate(f.endDate), status: f.status, utmCampaign: optStr(f.utmCampaign),
+      ownerUserId: f.ownerUserId ? Number(f.ownerUserId) : null,
       welcomeSubject: optStr(f.welcomeSubject), welcomeBody: optStr(f.welcomeBody), notes: optStr(f.notes),
     };
     if (initial) update.mutate({ id: initial.id, ...payload });
@@ -296,6 +299,13 @@ function CampaignDialog({ open, onClose, initial, platforms }: { open: boolean; 
           <div>
             <Label>UTM campaign</Label>
             <Input value={f.utmCampaign} onChange={(e) => set("utmCampaign", e.target.value)} placeholder="Defaults to the name, lowercased" />
+          </div>
+          <div>
+            <Label>Owner</Label>
+            <Select value={f.ownerUserId} onValueChange={(v) => set("ownerUserId", v)}>
+              <SelectTrigger><SelectValue placeholder="You" /></SelectTrigger>
+              <SelectContent>{(owners.data ?? []).map((u) => <SelectItem key={u.id} value={String(u.id)}>{u.name}</SelectItem>)}</SelectContent>
+            </Select>
           </div>
           <div className="md:col-span-2 border-t pt-3">
             <div className="text-xs font-medium mb-2">Welcome email to each new lead (leave empty to send none)</div>
@@ -359,6 +369,8 @@ function CampaignsTab() {
     onError: (e) => toast.error(e.message),
   });
   const platformOf = useMemo(() => new Map((platforms.data ?? []).map((p) => [p.id, p])), [platforms.data]);
+  const owners = trpc.adMarketing.owners.useQuery();
+  const ownerName = useMemo(() => new Map((owners.data ?? []).map((u) => [u.id, u.name])), [owners.data]);
   const noPlatforms = platforms.data && platforms.data.length === 0;
 
   return (
@@ -376,6 +388,7 @@ function CampaignsTab() {
                 <TableHead>Campaign</TableHead>
                 <TableHead>Platform</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Owner</TableHead>
                 <TableHead>Dates</TableHead>
                 <TableHead className="text-right">Budget</TableHead>
                 <TableHead className="text-right">Spent</TableHead>
@@ -397,6 +410,7 @@ function CampaignsTab() {
                     </TableCell>
                     <TableCell>{platformOf.get(c.platformId)?.label || platformLabel(platformOf.get(c.platformId)?.name)}</TableCell>
                     <TableCell><Badge variant={c.status === "active" ? "default" : "outline"} className="text-[10px]">{c.status}</Badge></TableCell>
+                    <TableCell className="text-xs">{c.ownerUserId ? ownerName.get(c.ownerUserId) ?? `#${c.ownerUserId}` : "—"}</TableCell>
                     <TableCell className="text-xs">{dateStr(c.startDate)} → {dateStr(c.endDate)}</TableCell>
                     <TableCell className="text-right tabular-nums">{budget && !String(budget).includes("/day") ? money(budget) : budget ? `${money(c.dailyBudgetUsd)}/day` : "—"}</TableCell>
                     <TableCell className="text-right tabular-nums">{money(t?.spendUsd ?? 0)}</TableCell>
@@ -411,7 +425,7 @@ function CampaignsTab() {
                 );
               })}
               {campaigns.data && campaigns.data.length === 0 && (
-                <TableRow><TableCell colSpan={9} className="text-center text-xs text-muted-foreground py-6">No campaigns yet.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={10} className="text-center text-xs text-muted-foreground py-6">No campaigns yet.</TableCell></TableRow>
               )}
             </TableBody>
           </Table>
@@ -519,7 +533,7 @@ function LinksTab() {
   const [f, setF] = useState({ baseUrl: "", source: "instagram", medium: "paid_social", campaign: "", content: "", campaignId: "", label: "" });
   const preview = useMemo(() => {
     if (!f.baseUrl || !f.campaign) return { url: null as string | null, error: null as string | null };
-    try { return { url: buildTrackingUrl(f.baseUrl, f), error: null }; } catch (e) { return { url: null, error: e instanceof Error ? e.message : String(e) }; }
+    try { return { url: buildTrackingUrl(f.baseUrl, { ...f, id: f.campaignId || null }), error: null }; } catch (e) { return { url: null, error: e instanceof Error ? e.message : String(e) }; }
   }, [f]);
   const create = trpc.adMarketing.links.create.useMutation({
     onSuccess: (r) => { toast.success("Link saved"); navigator.clipboard?.writeText(r.fullUrl).catch(() => {}); utils.adMarketing.links.list.invalidate(); setF((s) => ({ ...s, content: "", label: "" })); },
@@ -541,7 +555,7 @@ function LinksTab() {
           <div>
             <Label>Campaign</Label>
             <Select value={f.campaignId} onValueChange={pickCampaign}>
-              <SelectTrigger><SelectValue placeholder="Pick or type below" /></SelectTrigger>
+              <SelectTrigger><SelectValue placeholder="Pick one so leads match it" /></SelectTrigger>
               <SelectContent>{(campaigns.data ?? []).map((c) => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}</SelectContent>
             </Select>
           </div>
