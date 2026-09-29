@@ -1,4 +1,5 @@
 // appRouter.investorPortal — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
+import { appUrlForLinks } from "../_core/tenancy";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
@@ -159,7 +160,7 @@ export const investorPortalRouter = router({
           linkedStakeholderId: stakeholder.id,
         });
 
-        const inviteUrl = `${ENV.publicAppUrl}/login?invite=${token}`;
+        const inviteUrl = `${appUrlForLinks(ENV.publicAppUrl)}/login?invite=${token}`;
         // Names come from admin-editable fields, so they can contain '<' / '&'
         // that would either break the email HTML or smuggle markup into the
         // investor's inbox. Escape before interpolation.

@@ -4,7 +4,12 @@ const env = vi.hoisted(() => ({ multiTenant: true, tenantsJson: "", tenantBaseDo
 vi.mock("./env", () => ({ ENV: env }));
 
 import {
+  appUrlForLinks,
   currentTenant,
+  databaseIdentity,
+  isSameTenantOrigin,
+  isTenantAvailable,
+  markTenantUnavailable,
   forEachTenant,
   getTenants,
   NoTenantContextError,
@@ -43,8 +48,27 @@ describe("parseTenantRegistry", () => {
       ]),
     ],
     ["bad status", JSON.stringify([{ slug: "a", databaseUrl: "mysql://x", status: "deleted" }])],
+    [
+      "two tenants on one database",
+      JSON.stringify([
+        { slug: "a", databaseUrl: "mysql://u1:p1@DB.host:3306/shared" },
+        { slug: "b", databaseUrl: "mysql://u2:p2@db.host/shared?ssl=true" },
+      ]),
+    ],
+    [
+      "a custom host under the base domain",
+      JSON.stringify([
+        { slug: "acme", databaseUrl: "mysql://h/acme" },
+        { slug: "globex", databaseUrl: "mysql://h/globex", hosts: ["acme.app.example.com"] },
+      ]),
+    ],
   ])("rejects %s", (_label, raw) => {
-    expect(() => parseTenantRegistry(raw)).toThrow(TenantConfigError);
+    expect(() => parseTenantRegistry(raw, "app.example.com")).toThrow(TenantConfigError);
+  });
+
+  it("treats different schemas on one server as different databases", () => {
+    expect(databaseIdentity("mysql://u@h:3306/a")).not.toBe(databaseIdentity("mysql://u@h:3306/b"));
+    expect(databaseIdentity("mysql://u:x@H/a")).toBe(databaseIdentity("mysql://v:y@h:3306/A"));
   });
 });
 
@@ -74,6 +98,23 @@ describe("resolveTenantFromHost", () => {
 
   it("ignores subdomains when no base domain is configured", () => {
     expect(resolveTenantFromHost("globex.app.example.com", tenants, "")).toBeNull();
+  });
+});
+
+describe("isSameTenantOrigin", () => {
+  const tenants = [acme, globex];
+  const base = "app.example.com";
+
+  it("accepts an origin on the same tenant, by subdomain or custom domain", () => {
+    expect(isSameTenantOrigin("acme.app.example.com", "acme.app.example.com", tenants, base)).toBe(true);
+    expect(isSameTenantOrigin("erp.acme.com", "acme.app.example.com", tenants, base)).toBe(true);
+  });
+
+  it.each([
+    ["another tenant", "globex.app.example.com"],
+    ["an unknown host", "evil.example.org"],
+  ])("rejects an origin on %s", (_label, origin) => {
+    expect(isSameTenantOrigin(origin, "acme.app.example.com", tenants, base)).toBe(false);
   });
 });
 
@@ -113,6 +154,21 @@ describe("tenant context", () => {
     });
     expect(visited).toEqual(["acme", "globex"]);
     expect(failures.map((f) => f.slug)).toEqual(["acme"]);
+  });
+
+  it("appUrlForLinks uses the current tenant's canonical URL", () => {
+    expect(runWithTenant(acme, () => appUrlForLinks("https://fallback"))).toBe("https://erp.acme.com");
+    expect(runWithTenant(globex, () => appUrlForLinks("https://fallback"))).toBe("https://globex.app.example.com");
+    expect(() => appUrlForLinks("https://fallback")).toThrow(NoTenantContextError);
+    env.multiTenant = false;
+    expect(appUrlForLinks("https://fallback")).toBe("https://fallback");
+    env.multiTenant = true;
+  });
+
+  it("tracks tenants that failed boot", () => {
+    expect(isTenantAvailable("acme")).toBe(true);
+    markTenantUnavailable("acme");
+    expect(isTenantAvailable("acme")).toBe(false);
   });
 
   it("getTenants parses the registry from ENV", () => {

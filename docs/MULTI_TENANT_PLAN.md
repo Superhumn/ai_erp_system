@@ -35,6 +35,10 @@ acme.app.example.com ──► tenant middleware ──► AsyncLocalStorage { t
 - [x] `tid` claim on sessions; cross-tenant cookie replay rejected.
 - [x] Per-tenant startup migrations and schema checks.
 - [x] Workers and env-wide integrations off in multi-tenant mode (they would mix data).
+- [x] Registry rejects two tenants on one database and custom hosts under the base domain.
+- [x] CSRF: Origin must be the same tenant as the request host.
+- [x] Verification, reset and invite links use the tenant's own URL.
+- [x] A tenant that fails boot checks returns 503; the others keep serving.
 
 ### Phase 1b — Tenant-aware workers
 - Run each worker inside `forEachTenant`. Remove module-level singletons.

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const env = vi.hoisted(() => ({ multiTenant: true, tenantsJson: "", tenantBaseDomain: "app.example.com" }));
 vi.mock("./env", () => ({ ENV: env }));
 
-import { currentTenant, resetTenantRegistryForTests } from "./tenancy";
+import { currentTenant, markTenantUnavailable, resetTenantRegistryForTests } from "./tenancy";
 import { reenterTenant, tenantMiddleware } from "./tenantMiddleware";
 
 function call(host: string, path = "/api/trpc/x", mw = tenantMiddleware, locals: Record<string, unknown> = {}) {
@@ -45,6 +45,13 @@ describe("tenantMiddleware", () => {
   it("403s a suspended tenant", () => {
     const { res, slugInNext } = call("frozen.app.example.com");
     expect(res.statusCode).toBe(403);
+    expect(slugInNext).toBeNull();
+  });
+
+  it("503s a tenant whose database failed boot checks", () => {
+    markTenantUnavailable("acme");
+    const { res, slugInNext } = call("acme.app.example.com");
+    expect(res.statusCode).toBe(503);
     expect(slugInNext).toBeNull();
   });
 

@@ -183,7 +183,7 @@ import { startScheduler } from "../aiAgentScheduler";
 import { createLogger } from "./logger";
 import { initErrorTracking, captureException } from "./errorTracking";
 import { secureCompare } from "./crypto";
-import { forEachTenant, getTenants, isMultiTenant } from "./tenancy";
+import { forEachTenant, getTenants, isMultiTenant, isSameTenantOrigin, markTenantUnavailable } from "./tenancy";
 import { reenterTenant, tenantMiddleware } from "./tenantMiddleware";
 
 const logger = createLogger("Server");
@@ -752,6 +752,7 @@ async function startServer() {
     logger.info("Multi-tenant mode", { tenants: tenants.length });
     const failures = await forEachTenant((t) => bootDatabase(t.databaseUrl));
     for (const f of failures) {
+      markTenantUnavailable(f.slug); // 503 for this tenant; the others keep serving
       logger.error("Tenant database boot failed", {
         tenant: f.slug,
         error: f.error instanceof Error ? f.error.message : String(f.error),
@@ -833,6 +834,21 @@ async function startServer() {
     const origin = req.headers.origin || req.headers.referer;
     if (!origin) {
       return res.status(403).json({ error: "Missing Origin header" });
+    }
+
+    // Multi-tenant: the Origin must be the same tenant as the host the request hit. Checked in
+    // every environment, since tenant hosts replace the single PUBLIC_APP_URL allowlist.
+    if (isMultiTenant()) {
+      let originHost: string;
+      try {
+        originHost = new URL(origin as string).host;
+      } catch {
+        return res.status(403).json({ error: "Invalid Origin header" });
+      }
+      if (!isSameTenantOrigin(originHost, req.hostname, getTenants(), ENV.tenantBaseDomain)) {
+        return res.status(403).json({ error: "Origin mismatch" });
+      }
+      return next();
     }
 
     // In production, validate origin matches our app URL (+ optional allowlist)

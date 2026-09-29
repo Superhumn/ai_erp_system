@@ -1,4 +1,5 @@
 // appRouter.dataRoom — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
+import { appUrlForLinks } from "../_core/tenancy";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { publicProcedure, protectedProcedure, router } from "../_core/trpc";
@@ -706,7 +707,7 @@ export const dataRoomRouter = router({
           try {
             if (isEmailConfigured()) {
               const dataRoom = await db.getDataRoomById(input.dataRoomId);
-              const inviteUrl = `${process.env.APP_URL || 'http://localhost:3000'}/share/${inviteCode}`;
+              const inviteUrl = `${appUrlForLinks(process.env.APP_URL || 'http://localhost:3000')}/share/${inviteCode}`;
               await sendEmail({
                 to: input.email,
                 subject: `You've been invited to a Data Room${dataRoom ? `: ${dataRoom.name}` : ''}`,
@@ -761,7 +762,7 @@ export const dataRoomRouter = router({
           }
           try {
             if (isEmailConfigured()) {
-              const inviteUrl = `${process.env.APP_URL || 'http://localhost:3000'}/share/${invitation.inviteCode}`;
+              const inviteUrl = `${appUrlForLinks(process.env.APP_URL || 'http://localhost:3000')}/share/${invitation.inviteCode}`;
               await sendEmail({
                 to: invitation.email,
                 subject: `Reminder: You've been invited to a Data Room${invitation.dataRoomName ? `: ${invitation.dataRoomName}` : ''}`,

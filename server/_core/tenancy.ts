@@ -26,8 +26,26 @@ const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export class TenantConfigError extends Error {}
 
-/** Parse and validate the `TENANTS_JSON` registry. Throws on any malformed or duplicate entry. */
-export function parseTenantRegistry(raw: string): Tenant[] {
+/**
+ * Identity of the database a URL points at (host, port, schema), so two spellings of one
+ * database collide. Credentials and query options are ignored.
+ */
+export function databaseIdentity(databaseUrl: string): string {
+  try {
+    const u = new URL(databaseUrl);
+    const db = decodeURIComponent(u.pathname.replace(/^\//, "")).toLowerCase();
+    return `${u.hostname.toLowerCase()}:${u.port || "3306"}/${db}`;
+  } catch {
+    return databaseUrl;
+  }
+}
+
+/**
+ * Parse and validate the `TENANTS_JSON` registry. Throws on any malformed or duplicate entry,
+ * any two tenants sharing one database, and any custom host that sits under `baseDomain`
+ * (those names belong to the subdomain routing and could shadow another tenant).
+ */
+export function parseTenantRegistry(raw: string, baseDomain = ""): Tenant[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -38,6 +56,8 @@ export function parseTenantRegistry(raw: string): Tenant[] {
 
   const slugs = new Set<string>();
   const hosts = new Set<string>();
+  const databases = new Set<string>();
+  const base = normalizeHost(baseDomain);
   return parsed.map((entry: unknown, i) => {
     if (typeof entry !== "object" || entry === null) {
       throw new TenantConfigError(`TENANTS_JSON[${i}] must be an object`);
@@ -52,6 +72,11 @@ export function parseTenantRegistry(raw: string): Tenant[] {
     if (!/^mysql:\/\//.test(databaseUrl)) {
       throw new TenantConfigError(`TENANTS_JSON[${i}] ("${slug}") needs a mysql:// databaseUrl`);
     }
+    const dbId = databaseIdentity(databaseUrl);
+    if (databases.has(dbId)) {
+      throw new TenantConfigError(`TENANTS_JSON[${i}] ("${slug}") shares a database with another tenant`);
+    }
+    databases.add(dbId);
 
     const rawHosts = e.hosts ?? [];
     if (!Array.isArray(rawHosts) || rawHosts.some((h) => typeof h !== "string")) {
@@ -59,6 +84,9 @@ export function parseTenantRegistry(raw: string): Tenant[] {
     }
     const tenantHosts = (rawHosts as string[]).map(normalizeHost).filter((h) => h.length > 0);
     for (const h of tenantHosts) {
+      if (base && (h === base || h.endsWith(`.${base}`))) {
+        throw new TenantConfigError(`TENANTS_JSON host "${h}" is under TENANT_BASE_DOMAIN; use the slug instead`);
+      }
       if (hosts.has(h)) throw new TenantConfigError(`TENANTS_JSON host "${h}" is claimed twice`);
       hosts.add(h);
     }
@@ -112,13 +140,56 @@ export function isMultiTenant(): boolean {
 
 /** The configured tenants. Parsed once; throws a TenantConfigError if the registry is invalid. */
 export function getTenants(): Tenant[] {
-  if (!registryCache) registryCache = parseTenantRegistry(ENV.tenantsJson || "[]");
+  if (!registryCache) registryCache = parseTenantRegistry(ENV.tenantsJson || "[]", ENV.tenantBaseDomain);
   return registryCache;
 }
 
 /** Test hook: forget the parsed registry so a changed ENV is re-read. */
 export function resetTenantRegistryForTests(): void {
   registryCache = null;
+  unavailable.clear();
+}
+
+/**
+ * CSRF check for multi-tenant mode: the Origin must belong to the same tenant as the host the
+ * request arrived on. A page on tenant A can never post into tenant B.
+ */
+export function isSameTenantOrigin(
+  originHost: string,
+  requestHost: string | undefined,
+  tenants: readonly Tenant[],
+  baseDomain: string,
+): boolean {
+  const from = resolveTenantFromHost(originHost, tenants, baseDomain);
+  const to = resolveTenantFromHost(requestHost, tenants, baseDomain);
+  return from !== null && to !== null && from.slug === to.slug;
+}
+
+/** Canonical https URL of a tenant: its first custom host, else `<slug>.<baseDomain>`. */
+export function tenantUrl(tenant: Tenant, baseDomain: string): string {
+  const host = tenant.hosts[0] ?? `${tenant.slug}.${normalizeHost(baseDomain)}`;
+  return `https://${host}`;
+}
+
+/**
+ * Base URL for links sent out of the app (verification, reset, invites). In multi-tenant
+ * mode it is the current tenant's URL; otherwise `fallback` (the single PUBLIC_APP_URL).
+ */
+export function appUrlForLinks(fallback: string): string {
+  if (!isMultiTenant()) return fallback;
+  return tenantUrl(requireTenant(), ENV.tenantBaseDomain);
+}
+
+// Tenants whose database failed boot checks. Routing returns 503 for them instead of
+// serving a half-migrated database.
+const unavailable = new Set<string>();
+
+export function markTenantUnavailable(slug: string): void {
+  unavailable.add(slug);
+}
+
+export function isTenantAvailable(slug: string): boolean {
+  return !unavailable.has(slug);
 }
 
 export function currentTenant(): Tenant | undefined {

@@ -1,13 +1,20 @@
 import type { NextFunction, Request, Response } from "express";
 import { ENV } from "./env";
-import { getTenants, isMultiTenant, resolveTenantFromHost, runWithTenant, type Tenant } from "./tenancy";
+import {
+  getTenants,
+  isMultiTenant,
+  isTenantAvailable,
+  resolveTenantFromHost,
+  runWithTenant,
+  type Tenant,
+} from "./tenancy";
 
 // Platform liveness probes hit the service host, not a tenant host.
 const TENANTLESS_PATHS = new Set(["/health", "/api/health"]);
 
 /**
  * Resolve the tenant from the Host header and run the rest of the request inside its context.
- * Unknown host → 404 (no hint whether a tenant exists). Suspended → 403.
+ * Unknown host → 404 (no hint whether a tenant exists). Suspended → 403. Failed boot checks → 503.
  * Mount after the global body parsers: a parser that reads the stream later calls `next`
  * from a socket callback, which drops the AsyncLocalStorage context.
  */
@@ -23,6 +30,10 @@ export function tenantMiddleware(req: Request, res: Response, next: NextFunction
   }
   if (tenant.status !== "active") {
     res.status(403).json({ error: "This workspace is suspended. Contact support." });
+    return;
+  }
+  if (!isTenantAvailable(tenant.slug)) {
+    res.status(503).json({ error: "This workspace is temporarily unavailable." });
     return;
   }
   res.locals.tenant = tenant;

@@ -141,3 +141,16 @@ describe("index.ts webhook rate limiting", () => {
     for (const m of routes) expect(m[1]).toBe("webhookLimiter");
   });
 });
+
+describe("index.ts multi-tenant guards", () => {
+  it("checks CSRF origins against the request's tenant before the single-host allowlist", () => {
+    const csrf = idx("// CSRF protection: validate Origin header");
+    const tenantCheck = idx("isSameTenantOrigin(originHost, req.hostname", csrf);
+    expect(tenantCheck).toBeLessThan(idx("if (ENV.isProduction && ENV.publicAppUrl)", csrf));
+  });
+
+  it("marks tenants that fail boot as unavailable", () => {
+    const loop = idx("for (const f of failures) {");
+    expect(src.slice(loop, loop + 120)).toContain("markTenantUnavailable(f.slug)");
+  });
+});
