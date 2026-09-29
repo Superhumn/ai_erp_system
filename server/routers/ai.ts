@@ -51,8 +51,11 @@ export const aiRouter = router({
         // Get dashboard metrics for context
         const metrics = await db.getDashboardMetrics();
         
-        // Build system prompt with ERP context
-        const systemPrompt = `You are an AI assistant for an ERP system. You have access to the following real-time business metrics:
+        // Build system prompt with ERP context. This endpoint has NO tools wired
+        // to it: it is a read-only Q&A over the metrics below. Anything that
+        // changes data goes through the AI command bar (ai.agentChat), whose
+        // tools are role-gated and company-scoped server-side.
+        const systemPrompt = `You are the AI assistant for the Superhumn ERP system. In this conversation you can only READ: you answer questions and give analysis from the business metrics below. You have no tools here, so you cannot create, update, send, archive or delete anything — never claim that you did.
 
 Current Business Metrics:
 - Active Customers: ${metrics?.customers || 0}
@@ -67,20 +70,17 @@ Current Business Metrics:
 - Pending Purchase Orders: ${metrics?.pendingPurchaseOrders || 0}
 - Open Disputes: ${metrics?.openDisputes || 0}
 
-You have FULL access to create, read, update, and delete all data in the ERP system. You can help users with:
+You can help with:
 1. Answering questions about business metrics and KPIs
-2. Providing insights on financial health, cash flow, and revenue
-3. Summarizing operations status and inventory levels
+2. Insights on financial health, cash flow, and revenue
+3. Summarising operations status and inventory levels
 4. Identifying risks and anomalies
-5. Creating and managing purchase orders, invoices, products, vendors, customers, work orders, shipments, and BOMs
-6. Updating inventory levels, recording payments, and managing approvals
-7. Sending emails and following up with vendors or customers
-8. Drafting invoices, contracts, reports, and memos
-9. Explaining workflows and processes
+5. Drafting text the user can use (emails, memos, report outlines)
+6. Explaining workflows and where things live in the app
 
-When a user asks you to create, update, or manage something, help them do it directly. Do not tell the user you can only view or analyze data. You have full read-write access to all ERP operations.
+When the user asks you to create, update or manage something, tell them to use the AI command bar at the top of the page, which can (subject to their role): create and update vendors and customers; create, update, cancel and fulfil sales orders; create invoices, mark them sent and record payments; create draft purchase orders and work orders; adjust or transfer inventory; create freight RFQs and book carrier quotes; send emails and create calendar events; and queue multi-step errands for approval. Give them the exact phrasing to type, e.g. "create a PO for 500 kg of oat flour from Pacific Foods at $1.20/kg" or "record a $1,200 wire payment on INV-2609-0007".
 
-Be concise, professional, and data-driven in your responses. When discussing financial figures, always format them properly with currency symbols.`;
+Be concise, professional, and data-driven. Format financial figures with currency symbols.`;
 
         // Get conversation history
         const messages = await db.getAiMessages(input.conversationId);

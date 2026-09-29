@@ -2,11 +2,11 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
-import { sendEmail, formatEmailHtml } from "../_core/email";
+import { sendEmail } from "../_core/email";
 import { processEmailReply, analyzeEmail, generateEmailReply } from "../emailReplyService";
 import * as db from "../db";
-import { createProjectTaskFromSource } from "../taskAgentBridge";
-import { adminProcedure, internalProcedure, createAuditLog, generateNumber } from "./_shared";
+import { claimAgentTask, executeAgentTask } from "../aiAgentTaskExecutor";
+import { adminProcedure, internalProcedure, createAuditLog } from "./_shared";
 
 // ============================================
 // AI AGENT SYSTEM
@@ -24,6 +24,75 @@ async function writeBackToProjectTask(agentTaskId: number): Promise<void> {
   } catch (err) {
     console.warn(`[aiAgent] project-task write-back failed for task ${agentTaskId}:`, err);
   }
+}
+
+/**
+ * Persist a successful execution: status, result, audit log, a notification
+ * to whoever approved (or requested) the task — the executing admin is the
+ * fallback — and the project-task write-back. The notification is best-effort
+ * so a notification hiccup never turns a completed task into a failed one.
+ */
+async function recordExecutionSuccess(
+  task: NonNullable<Awaited<ReturnType<typeof db.getAiAgentTaskById>>>,
+  result: Record<string, any>,
+  ctxUser: { id: number },
+  logMessage: string,
+): Promise<void> {
+  await db.updateAiAgentTask(task.id, {
+    status: 'completed',
+    executedAt: new Date(),
+    executionResult: JSON.stringify(result),
+  });
+  await db.createAiAgentLog({
+    taskId: task.id,
+    action: 'task_executed',
+    status: 'success',
+    message: logMessage,
+    details: JSON.stringify(result),
+  });
+
+  try {
+    let taskData: any = {};
+    try { taskData = JSON.parse(task.taskData || '{}'); } catch { taskData = {}; }
+    const notifyUserId = task.approvedBy ?? (Number(taskData?.createdBy ?? taskData?.requestedBy) || ctxUser.id);
+    const label = task.taskType.replace(/_/g, ' ');
+    await db.createNotification({
+      userId: notifyUserId,
+      type: 'success',
+      title: `AI task completed: ${label}`,
+      message: result?.poNumber
+        ? `Task #${task.id} created draft purchase order ${result.poNumber}.`
+        : `Task #${task.id} (${label}) executed successfully.`,
+      entityType: 'ai_agent_task',
+      entityId: task.id,
+      link: '/ai/approvals',
+      metadata: { taskType: task.taskType, result },
+    });
+  } catch (err) {
+    console.warn(`[aiAgent] completion notification failed for task ${task.id}:`, err);
+  }
+
+  await writeBackToProjectTask(task.id);
+}
+
+/** Persist a failed execution (status, retry count, audit log, write-back). */
+async function recordExecutionFailure(
+  task: NonNullable<Awaited<ReturnType<typeof db.getAiAgentTaskById>>>,
+  error: string,
+  logMessage: string,
+): Promise<void> {
+  await db.updateAiAgentTask(task.id, {
+    status: 'failed',
+    errorMessage: error,
+    retryCount: (task.retryCount || 0) + 1,
+  });
+  await db.createAiAgentLog({
+    taskId: task.id,
+    action: 'task_failed',
+    status: 'error',
+    message: logMessage,
+  });
+  await writeBackToProjectTask(task.id);
 }
 
 export const aiAgentRouter = router({
@@ -185,9 +254,9 @@ export const aiAgentRouter = router({
 
       // Inline approval for concierge errands: approve + run in a single step
       // straight from the AI chat, instead of parking the task in the Approval
-      // Queue. Transitions directly to in_progress (skipping the 'approved'
-      // state the background scheduler watches) so the errand can never be
-      // double-executed.
+      // Queue. The claim moves pending_approval -> in_progress atomically
+      // (never passing through the 'approved' state the background scheduler
+      // watches), so the errand can never be double-executed.
       approveAndExecute: adminProcedure
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input, ctx }) => {
@@ -200,11 +269,13 @@ export const aiAgentRouter = router({
             throw new TRPCError({ code: 'BAD_REQUEST', message: `Errand is not awaiting approval (status: ${task.status})` });
           }
 
-          await db.updateAiAgentTask(input.id, {
-            status: 'in_progress',
+          const claimed = await claimAgentTask(input.id, 'pending_approval', {
             approvedBy: ctx.user.id,
             approvedAt: new Date(),
           });
+          if (!claimed) {
+            throw new TRPCError({ code: 'CONFLICT', message: 'Errand was already approved or executed by someone else' });
+          }
           await db.createAiAgentLog({
             taskId: input.id,
             action: 'task_approved',
@@ -212,38 +283,13 @@ export const aiAgentRouter = router({
             message: `Errand approved inline by ${ctx.user.name}`,
           });
 
-          try {
-            const { executeConciergeErrand } = await import('../conciergeErrandService');
-            const r = await executeConciergeErrand(task);
-            if (!r.success) throw new Error(r.error || 'Errand execution failed');
-            await db.updateAiAgentTask(input.id, {
-              status: 'completed',
-              executedAt: new Date(),
-              executionResult: JSON.stringify(r.data),
-            });
-            await db.createAiAgentLog({
-              taskId: input.id,
-              action: 'task_executed',
-              status: 'success',
-              message: 'Errand executed successfully (inline approval)',
-              details: JSON.stringify(r.data),
-            });
-            await writeBackToProjectTask(input.id);
-            return { success: true, result: r.data };
-          } catch (error: any) {
-            await db.updateAiAgentTask(input.id, {
-              status: 'failed',
-              errorMessage: error.message,
-            });
-            await db.createAiAgentLog({
-              taskId: input.id,
-              action: 'task_failed',
-              status: 'error',
-              message: `Errand execution failed: ${error.message}`,
-            });
-            await writeBackToProjectTask(input.id);
-            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
+          const outcome = await executeAgentTask(task, { executedBy: ctx.user.id, executedByName: ctx.user.name ?? undefined });
+          if (outcome.success === false) {
+            await recordExecutionFailure(task, outcome.error, `Errand execution failed: ${outcome.error}`);
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: outcome.error });
           }
+          await recordExecutionSuccess(task, outcome.data, ctx.user, 'Errand executed successfully (inline approval)');
+          return { success: true, result: outcome.data };
         }),
 
       update: adminProcedure
@@ -323,529 +369,21 @@ export const aiAgentRouter = router({
           if (task.status !== 'approved') {
             throw new TRPCError({ code: 'BAD_REQUEST', message: 'Task must be approved before execution' });
           }
-          
-          await db.updateAiAgentTask(input.id, { status: 'in_progress' });
-          
-          try {
-            // Execute based on task type
-            const taskData = JSON.parse(task.taskData);
-            let result: any = {};
-            
-            switch (task.taskType) {
-              case 'generate_po': {
-                // Create PO with line items for raw materials
-                const poNumber = generateNumber('PO');
-                
-                // Resolve material by ID or name
-                let material = null;
-                if (taskData.rawMaterialId) {
-                  material = await db.getRawMaterialById(taskData.rawMaterialId);
-                } else if (taskData.rawMaterialName) {
-                  const allMaterials = await db.getRawMaterials();
-                  material = allMaterials.find(m =>
-                    m.name?.toLowerCase().includes(taskData.rawMaterialName.toLowerCase()) ||
-                    m.sku?.toLowerCase() === taskData.rawMaterialName.toLowerCase()
-                  ) || null;
-                }
-                
-                // Resolve vendor - use provided ID, material's preferred vendor, or create draft without vendor
-                let vendor = null;
-                let vendorId = taskData.vendorId;
-                
-                if (vendorId) {
-                  vendor = await db.getVendorById(vendorId);
-                } else if (material?.preferredVendorId) {
-                  vendor = await db.getVendorById(material.preferredVendorId);
-                  vendorId = material.preferredVendorId;
-                }
-                
-                // If no vendor found, return needs_vendor status
-                if (!vendorId) {
-                  await db.updateAiAgentTask(task.id, {
-                    status: 'needs_vendor',
-                    executedAt: new Date(),
-                  });
-                  await db.createAiAgentLog({
-                    taskId: task.id,
-                    action: 'execution_needs_input',
-                    status: 'warning',
-                    message: `PO generation requires vendor selection for ${material?.name || taskData.rawMaterialName || 'material'}`,
-                    details: JSON.stringify({ materialId: material?.id, materialName: material?.name || taskData.rawMaterialName }),
-                  });
-                  return { success: false, status: 'needs_vendor', message: 'Please select a vendor for this PO' };
-                }
-                
-                // Calculate expected date based on vendor lead time
-                const leadDays = vendor?.defaultLeadTimeDays || material?.leadTimeDays || 14;
-                const expectedDate = new Date();
-                expectedDate.setDate(expectedDate.getDate() + leadDays);
-                
-                const unitCost = parseFloat(taskData.unitCost || material?.unitCost || '0');
-                const quantity = parseFloat(taskData.quantity || '0');
-                const subtotal = unitCost * quantity;
-                const totalAmount = subtotal; // Could add tax/shipping later
-                
-                const po = await db.createPurchaseOrder({
-                  poNumber,
-                  vendorId: vendorId,
-                  orderDate: new Date(),
-                  expectedDate,
-                  notes: taskData.notes || `AI-generated PO for ${material?.name || 'materials'}`,
-                  subtotal: subtotal.toFixed(2),
-                  totalAmount: totalAmount.toFixed(2),
-                  status: 'draft',
-                });
-                
-                // Create PO line item for the raw material. `material.id` is a
-                // rawMaterials id (purchaseOrderItems.productId references
-                // products), so the line carries no productId and is linked to
-                // the material through purchaseOrderRawMaterials — the same
-                // shape the scheduler path and purchaseOrders.create produce.
-                if (material) {
-                  const poItem = await db.createPurchaseOrderItem({
-                    purchaseOrderId: po.id,
-                    description: material.name,
-                    quantity: quantity.toString(),
-                    unitPrice: unitCost.toFixed(2),
-                    totalAmount: subtotal.toFixed(2),
-                  });
-                  await db.createPurchaseOrderRawMaterialLink({
-                    purchaseOrderItemId: poItem.id,
-                    rawMaterialId: material.id,
-                    orderedQuantity: quantity.toString(),
-                    unit: material.unit || 'EA',
-                  });
-                  
-                  // Update raw material with on-order quantity
-                  await db.updateRawMaterial(material.id, {
-                    quantityOnOrder: ((parseFloat(material.quantityOnOrder?.toString() || '0')) + quantity).toString(),
-                    receivingStatus: 'ordered',
-                    expectedDeliveryDate: expectedDate,
-                    lastPoId: po.id,
-                  });
-                }
-                
-                result = { purchaseOrderId: po.id, poNumber, expectedDate: expectedDate.toISOString(), totalAmount: totalAmount.toFixed(2) };
-                break;
-              }
-              
-              case 'send_rfq': {
-                // Create RFQ and send emails to vendors
-                const material = taskData.rawMaterialId ? await db.getRawMaterialById(taskData.rawMaterialId) : null;
-                const vendorIds = taskData.vendorIds || [];
-                const emailsSent: string[] = [];
 
-                // Batch load all vendors instead of N+1
-                const vendorsForRfq = vendorIds.length > 0
-                  ? await db.getVendorsByIds(vendorIds)
-                  : [];
-
-                // Send emails in parallel
-                const emailPromises = vendorsForRfq
-                  .filter(vendor => vendor.email)
-                  .map(vendor => sendEmail({
-                    to: vendor.email!,
-                    subject: `Request for Quote: ${material?.name || 'Materials'}`,
-                    html: `
-                      <p>Dear ${vendor.contactName || vendor.name},</p>
-                      <p>We are requesting a quote for the following:</p>
-                      <ul>
-                        <li><strong>Material:</strong> ${material?.name || 'Various materials'}</li>
-                        <li><strong>SKU:</strong> ${material?.sku || 'N/A'}</li>
-                        <li><strong>Quantity:</strong> ${taskData.quantity} ${material?.unit || 'units'}</li>
-                        <li><strong>Required By:</strong> ${taskData.requiredDate || 'ASAP'}</li>
-                      </ul>
-                      <p>Please reply with your best price and lead time.</p>
-                      <p>Best regards,<br/>Procurement Team</p>
-                    `,
-                  }).then(r => r.success ? vendor.email! : null));
-
-                const results = await Promise.all(emailPromises);
-                emailsSent.push(...results.filter((e): e is string => e !== null));
-
-                result = { rfqSent: true, vendorCount: vendorIds.length, emailsSent };
-                break;
-              }
-              
-              case 'send_email': {
-                // Send general email
-                const emailResult = await sendEmail({
-                  to: taskData.to,
-                  subject: taskData.subject,
-                  html: taskData.body || taskData.content,
-                });
-                result = { emailSent: emailResult.success, messageId: emailResult.messageId };
-                break;
-              }
-              
-              case 'vendor_followup': {
-                // Send follow-up email to vendor
-                const vendor = await db.getVendorById(taskData.vendorId);
-                if (vendor && vendor.email) {
-                  const emailResult = await sendEmail({
-                    to: vendor.email,
-                    subject: taskData.subject || `Follow-up: ${taskData.poNumber || 'Order Status'}`,
-                    html: taskData.body || `
-                      <p>Dear ${vendor.contactName || vendor.name},</p>
-                      <p>We are following up on ${taskData.poNumber ? `PO ${taskData.poNumber}` : 'our recent order'}.</p>
-                      <p>Could you please provide an update on the status and expected delivery date?</p>
-                      <p>Best regards,<br/>Procurement Team</p>
-                    `,
-                  });
-                  result = { emailSent: emailResult.success, vendorEmail: vendor.email };
-                } else {
-                  result = { emailSent: false, error: 'Vendor email not found' };
-                }
-                break;
-              }
-              
-              case 'reorder_materials': {
-                // Create work order from BOM (reorder_materials type handles work orders)
-                const bom = taskData.bomId ? await db.getBomById(taskData.bomId) : null;
-                if (!bom) throw new Error('BOM not found');
-                
-                const workOrder = await db.createWorkOrder({
-                  bomId: bom.id,
-                  productId: bom.productId,
-                  quantity: taskData.quantity?.toString() || '1',
-                  status: 'draft',
-                  priority: taskData.priority || 'medium',
-                  notes: taskData.notes || `AI-generated work order for ${bom.name}`,
-                });
-                
-                // Create work order materials from BOM components
-                const components = await db.getBomComponents(bom.id);
-                for (const comp of components) {
-                  const requiredQty = parseFloat(comp.quantity?.toString() || '0') * parseFloat(taskData.quantity || '1');
-                  await db.createWorkOrderMaterial({
-                    workOrderId: workOrder.id,
-                    rawMaterialId: comp.rawMaterialId || undefined,
-                    productId: comp.productId || undefined,
-                    name: comp.name,
-                    requiredQuantity: requiredQty.toString(),
-                    unit: comp.unit || 'EA',
-                    status: 'pending',
-                  });
-                }
-                
-                result = { workOrderId: workOrder.id, workOrderNumber: workOrder.workOrderNumber, materialsCount: components.length };
-                break;
-              }
-              
-              case 'update_inventory': {
-                // Update inventory levels
-                if (taskData.rawMaterialId) {
-                  await db.upsertRawMaterialInventory(taskData.rawMaterialId, taskData.warehouseId || 1, {
-                    quantity: taskData.quantity?.toString(),
-                  });
-                }
-                result = { updated: true };
-                break;
-              }
-              
-              case 'reply_email': {
-                // AI-generated email reply with LLM
-                if (taskData.generateWithAI !== false) {
-                  // Use AI to generate the reply
-                  const emailReplyResult = await processEmailReply({
-                    originalEmail: {
-                      from: taskData.to, // The recipient is who we're replying to
-                      subject: taskData.originalSubject || 'Your inquiry',
-                      body: taskData.originalBody || '',
-                      emailId: taskData.emailId,
-                    },
-                    autoSend: true,
-                    companyName: taskData.companyName || 'Our Company',
-                    senderName: taskData.senderName || ctx.user.name,
-                    senderTitle: taskData.senderTitle,
-                  });
-                  result = {
-                    emailSent: emailReplyResult.emailSent,
-                    messageId: emailReplyResult.messageId,
-                    to: taskData.to,
-                    generatedReply: emailReplyResult.generatedReply,
-                    aiGenerated: true,
-                  };
-                } else {
-                  // Send pre-written reply
-                  const replyResult = await sendEmail({
-                    to: taskData.to,
-                    subject: taskData.subject || `Re: ${taskData.originalSubject || 'Your inquiry'}`,
-                    html: formatEmailHtml(taskData.body || taskData.content || ''),
-                  });
-                  result = { emailSent: replyResult.success, messageId: replyResult.messageId, to: taskData.to, aiGenerated: false };
-                }
-                break;
-              }
-              
-              case 'approve_po': {
-                // Auto-approve PO
-                const po = await db.getPurchaseOrderById(taskData.purchaseOrderId);
-                if (!po) throw new Error('Purchase order not found');
-                await db.updatePurchaseOrder(taskData.purchaseOrderId, {
-                  status: 'confirmed',
-                });
-                result = { approved: true, poId: taskData.purchaseOrderId, poNumber: po.poNumber };
-                break;
-              }
-              
-              case 'approve_invoice': {
-                // Auto-approve invoice
-                const invoice = await db.getInvoiceById(taskData.invoiceId);
-                if (!invoice) throw new Error('Invoice not found');
-                await db.updateInvoice(taskData.invoiceId, {
-                  status: 'sent',
-                });
-                result = { approved: true, invoiceId: taskData.invoiceId, invoiceNumber: invoice.invoiceNumber };
-                break;
-              }
-              
-              case 'create_vendor': {
-                // Create new vendor
-                const vendor = await db.createVendor({
-                  name: taskData.name,
-                  email: taskData.email || undefined,
-                  phone: taskData.phone || undefined,
-                  address: taskData.address || undefined,
-                  defaultLeadTimeDays: taskData.leadTimeDays || undefined,
-                  status: 'active',
-                });
-                result = { created: true, vendorId: vendor.id, vendorName: taskData.name };
-                break;
-              }
-              
-              case 'create_material': {
-                // Create new raw material
-                const material = await db.createRawMaterial({
-                  name: taskData.name,
-                  sku: taskData.sku || undefined,
-                  unit: taskData.unit || 'units',
-                  category: taskData.category || undefined,
-                  unitCost: taskData.unitCost || undefined,
-                  description: taskData.description || undefined,
-                });
-                result = { created: true, materialId: material.id, materialName: taskData.name };
-                break;
-              }
-              
-              case 'create_product': {
-                // Create new product
-                const product = await db.createProduct({
-                  name: taskData.name,
-                  // products.sku is NOT NULL — generate one when the task didn't supply it
-                  sku: taskData.sku || generateNumber('PROD'),
-                  category: taskData.category || undefined,
-                  unitPrice: taskData.price || taskData.unitPrice || undefined,
-                  description: taskData.description || undefined,
-                });
-                result = { created: true, productId: product.id, productName: taskData.name };
-                break;
-              }
-              
-              case 'create_bom': {
-                // Create new BOM
-                const bom = await db.createBom({
-                  productId: taskData.productId,
-                  name: taskData.name,
-                  batchSize: taskData.batchSize || undefined,
-                  batchUnit: taskData.batchUnit || undefined,
-                  notes: taskData.notes || undefined,
-                });
-                result = { created: true, bomId: bom.id, bomName: taskData.name };
-                break;
-              }
-              
-              case 'create_customer': {
-                // Create new customer
-                const customer = await db.createCustomer({
-                  name: taskData.name,
-                  email: taskData.email || undefined,
-                  phone: taskData.phone || undefined,
-                  address: taskData.address || undefined,
-                  type: taskData.type || 'business',
-                });
-                result = { created: true, customerId: customer.id, customerName: taskData.name };
-                break;
-              }
-
-              case 'create_crm_deal': {
-                // Resolve company name from contact's organization (the deal's title).
-                const contact = taskData.contactId ? await db.getCrmContactById(taskData.contactId) : null;
-                if (!contact) throw new Error('Contact not found for CRM deal');
-                const company = (contact.organization || '').trim();
-                if (!company) {
-                  throw new Error(`Cannot create deal: contact "${contact.fullName}" has no company set`);
-                }
-
-                // Re-check duplicates at execution time in case another deal was approved
-                // for the same company while this one was waiting.
-                const existing = await db.findCrmDealByCompany(company);
-                if (existing) {
-                  throw new Error(`A deal already exists for company "${company}" (deal #${existing.id})`);
-                }
-
-                if (!taskData.pipelineId) throw new Error('Pipeline required to create CRM deal');
-
-                const dealId = await db.createCrmDeal({
-                  pipelineId: taskData.pipelineId,
-                  contactId: taskData.contactId,
-                  name: company,
-                  stage: taskData.stage || 'discovery',
-                  amount: taskData.amount || undefined,
-                  source: taskData.source || undefined,
-                  notes: taskData.notes || undefined,
-                  assignedTo: taskData.assignedTo || undefined,
-                });
-                result = { created: true, dealId, dealName: company };
-                break;
-              }
-
-              case 'create_work_order': {
-                // Create work order from BOM
-                const bom = taskData.bomId ? await db.getBomById(taskData.bomId) : null;
-                if (!bom) throw new Error('BOM not found');
-                
-                const workOrder = await db.createWorkOrder({
-                  bomId: bom.id,
-                  productId: bom.productId,
-                  quantity: taskData.quantity?.toString() || '1',
-                  status: 'draft',
-                  priority: taskData.priority || 'medium',
-                  notes: taskData.notes || `AI-generated work order for ${bom.name}`,
-                });
-                
-                result = { created: true, workOrderId: workOrder.id, workOrderNumber: workOrder.workOrderNumber };
-                break;
-              }
-
-              case 'concierge_errand': {
-                // Replay the approved plan through the main AI agent loop.
-                const { executeConciergeErrand } = await import('../conciergeErrandService');
-                const errandResult = await executeConciergeErrand(task);
-                if (!errandResult.success) throw new Error(errandResult.error || 'Errand execution failed');
-                result = errandResult.data;
-                break;
-              }
-
-              case 'query': {
-                // Generic "query" tasks can carry a structured action. The
-                // meeting extractor uses action=create_project_task to route a
-                // Fireflies action item through the Approval Queue; executing
-                // the approved suggestion creates the real project task here,
-                // preserving the meeting source so it keeps its "Meeting" badge.
-                if (taskData.action === 'create_project_task') {
-                  // taskData is untrusted JSON — validate every field before use.
-                  const toPositiveInt = (v: unknown): number | undefined => {
-                    const n = Number(v);
-                    return Number.isInteger(n) && n > 0 ? n : undefined;
-                  };
-                  const projectId = toPositiveInt(taskData.projectId);
-                  const name = taskData.name ? String(taskData.name).trim() : '';
-                  if (!projectId || !name) {
-                    throw new Error('Project task suggestion missing or invalid projectId or name');
-                  }
-                  const assigneeId = toPositiveInt(taskData.assigneeId);
-                  // Keep the source ref pair consistent: both derive from meetingId
-                  // (an undefined id must not leave a dangling refType).
-                  const meetingRefId = toPositiveInt(taskData.sourceMeeting?.meetingId);
-                  // Validate priority against the allowed set and only accept a
-                  // genuinely parseable dueDate so a malformed value can't insert
-                  // an Invalid Date.
-                  const priority = (['low', 'medium', 'high', 'critical'] as const).includes(taskData.priority)
-                    ? taskData.priority
-                    : 'medium';
-                  let dueDate: Date | undefined;
-                  if (taskData.dueDate) {
-                    const parsed = new Date(taskData.dueDate);
-                    if (!Number.isNaN(parsed.getTime())) dueDate = parsed;
-                  }
-                  // Carry the suggestion's AI reasoning/confidence onto the
-                  // created task so it stays as traceable as a directly
-                  // extracted meeting task.
-                  const aiConfidenceNum = task.aiConfidence != null && Number.isFinite(Number(task.aiConfidence))
-                    ? Number(task.aiConfidence)
-                    : undefined;
-                  const created = await createProjectTaskFromSource({
-                    projectId,
-                    name,
-                    description: taskData.description ? String(taskData.description) : undefined,
-                    assigneeId,
-                    priority,
-                    dueDate,
-                    sourceType: 'meeting',
-                    sourceRefType: meetingRefId ? 'firefliesMeeting' : undefined,
-                    sourceRefId: meetingRefId,
-                    sourceExternalId: taskData.sourceExternalId ? String(taskData.sourceExternalId) : undefined,
-                    aiReasoning: task.aiReasoning ?? undefined,
-                    aiConfidence: aiConfidenceNum,
-                    createdBy: ctx.user.id,
-                  });
-                  result = {
-                    created: true,
-                    action: 'create_project_task',
-                    projectTaskId: created.id,
-                    projectId,
-                    assigneeId: assigneeId ?? null,
-                  };
-                  break;
-                }
-                result = { executed: true, taskType: task.taskType };
-                break;
-              }
-
-              default:
-                result = { executed: true, taskType: task.taskType };
-            }
-            
-            await db.updateAiAgentTask(input.id, {
-              status: 'completed',
-              executedAt: new Date(),
-              executionResult: JSON.stringify(result),
-            });
-            
-            await db.createAiAgentLog({
-              taskId: input.id,
-              action: 'task_executed',
-              status: 'success',
-              message: `Task executed successfully`,
-              details: JSON.stringify(result),
-            });
-
-            // Tell whoever approved (or requested) the task that it ran; the
-            // executing admin is the fallback. Nobody used to be told.
-            const notifyUserId = task.approvedBy ?? (Number(taskData.createdBy ?? taskData.requestedBy) || ctx.user.id);
-            await db.createNotification({
-              userId: notifyUserId,
-              type: 'success',
-              title: `AI task completed: ${task.taskType.replace(/_/g, ' ')}`,
-              message: result?.poNumber
-                ? `Task #${task.id} created draft purchase order ${result.poNumber}.`
-                : `Task #${task.id} (${task.taskType.replace(/_/g, ' ')}) executed successfully.`,
-              entityType: 'ai_agent_task',
-              entityId: task.id,
-              link: '/ai/approvals',
-              metadata: { taskType: task.taskType, result },
-            });
-            
-            await writeBackToProjectTask(input.id);
-            return { success: true, result };
-          } catch (error: any) {
-            await db.updateAiAgentTask(input.id, {
-              status: 'failed',
-              errorMessage: error.message,
-              retryCount: (task.retryCount || 0) + 1,
-            });
-            
-            await db.createAiAgentLog({
-              taskId: input.id,
-              action: 'task_failed',
-              status: 'error',
-              message: `Task execution failed: ${error.message}`,
-            });
-            await writeBackToProjectTask(input.id);
-            
-            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
+          // Compare-and-set approved -> in_progress so this click and the
+          // background scheduler (or a second click) cannot both run the task.
+          const claimed = await claimAgentTask(input.id, 'approved');
+          if (!claimed) {
+            throw new TRPCError({ code: 'CONFLICT', message: 'Task is already being executed' });
           }
+
+          const outcome = await executeAgentTask(task, { executedBy: ctx.user.id, executedByName: ctx.user.name ?? undefined });
+          if (outcome.success === false) {
+            await recordExecutionFailure(task, outcome.error, `Task execution failed: ${outcome.error}`);
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: outcome.error });
+          }
+          await recordExecutionSuccess(task, outcome.data, ctx.user, 'Task executed successfully');
+          return { success: true, result: outcome.data };
         }),
     }),
     

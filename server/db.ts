@@ -1370,6 +1370,107 @@ export async function createOrderItem(data: typeof orderItems.$inferInsert) {
   return { id: result[0].insertId };
 }
 
+/**
+ * Fulfil (ship) a sales order the same way the orderFulfillment workflow processor does:
+ * allocate each line against the location with the most available stock (quantity −
+ * reservedQuantity), reserve it, raise an outbound shipment, mark the order "shipped", and
+ * run the order→invoice cascade that `orders.update` applies (draft invoice → sent).
+ *
+ * Fails before writing anything when any line cannot be covered, so a short order is never
+ * left half-reserved. Throws for a missing order, an order already shipped/delivered/cancelled,
+ * or an order with no lines.
+ */
+export async function fulfillOrder(orderId: number, opts: { performedBy?: number } = {}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const [order] = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
+  if (!order) throw new Error(`Order ${orderId} not found`);
+  if (["shipped", "delivered", "cancelled", "refunded"].includes(order.status)) {
+    throw new Error(`Order ${order.orderNumber} is already ${order.status} and cannot be fulfilled`);
+  }
+
+  const items = await db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
+  if (items.length === 0) throw new Error(`Order ${order.orderNumber} has no line items to fulfil`);
+
+  // Plan every allocation first; the order is only touched once all lines are covered.
+  const allocations: Array<{ inventoryId: number; warehouseId: number | null; productId: number; quantity: number }> = [];
+  const shortages: Array<{ productId: number | null; required: number; available: number }> = [];
+  for (const item of items) {
+    const requiredQty = parseFloat(item.quantity);
+    if (item.productId == null) {
+      shortages.push({ productId: null, required: requiredQty, available: 0 });
+      continue;
+    }
+    const [inv] = await db
+      .select({
+        id: inventory.id,
+        availableQty: sql<number>`CAST(${inventory.quantity} AS DECIMAL) - CAST(${inventory.reservedQuantity} AS DECIMAL)`,
+        warehouseId: inventory.warehouseId,
+      })
+      .from(inventory)
+      .where(eq(inventory.productId, item.productId))
+      .orderBy(desc(sql`CAST(${inventory.quantity} AS DECIMAL) - CAST(${inventory.reservedQuantity} AS DECIMAL)`))
+      .limit(1);
+    const available = inv ? Number(inv.availableQty) : 0;
+    if (!inv || available < requiredQty) {
+      shortages.push({ productId: item.productId, required: requiredQty, available });
+      continue;
+    }
+    allocations.push({ inventoryId: inv.id, warehouseId: inv.warehouseId, productId: item.productId, quantity: requiredQty });
+  }
+  if (shortages.length > 0) {
+    const detail = shortages
+      .map((s) => `product ${s.productId ?? "(no product)"}: need ${s.required}, have ${s.available}`)
+      .join("; ");
+    throw new Error(`Cannot fulfil order ${order.orderNumber} — insufficient stock (${detail})`);
+  }
+
+  for (const alloc of allocations) {
+    await db
+      .update(inventory)
+      .set({ reservedQuantity: sql`CAST(${inventory.reservedQuantity} AS DECIMAL) + ${alloc.quantity}` })
+      .where(eq(inventory.id, alloc.inventoryId));
+  }
+
+  const shipmentNumber = `SHP-${Date.now().toString(36).toUpperCase()}`;
+  const [shipment] = await db
+    .insert(shipments)
+    .values({
+      companyId: order.companyId,
+      shipmentNumber,
+      type: "outbound",
+      orderId: order.id,
+      status: "pending",
+      toAddress: order.shippingAddress,
+      shipDate: new Date(),
+    })
+    .$returningId();
+
+  await db.update(orders).set({ status: "shipped" }).where(eq(orders.id, order.id));
+
+  // Cascade #16a (orders.update): order shipped → linked draft invoice becomes "sent".
+  let invoiceMarkedSent = false;
+  if (order.invoiceId) {
+    const [invoice] = await db.select().from(invoices).where(eq(invoices.id, order.invoiceId)).limit(1);
+    if (invoice && invoice.status === "draft") {
+      await db.update(invoices).set({ status: "sent" }).where(eq(invoices.id, order.invoiceId));
+      invoiceMarkedSent = true;
+    }
+  }
+
+  return {
+    orderId: order.id,
+    orderNumber: order.orderNumber,
+    status: "shipped" as const,
+    shipmentId: shipment.id,
+    shipmentNumber,
+    allocations,
+    invoiceMarkedSent,
+    performedBy: opts.performedBy ?? null,
+  };
+}
+
 // ============================================
 // OPERATIONS - INVENTORY
 // ============================================
@@ -5226,6 +5327,7 @@ export async function createPurchaseOrderRawMaterialLink(data: {
   rawMaterialId: number;
   orderedQuantity: string;
   unit: string;
+  unitCost?: string;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -5236,6 +5338,7 @@ export async function createPurchaseOrderRawMaterialLink(data: {
     orderedQuantity: data.orderedQuantity,
     receivedQuantity: '0',
     unit: data.unit,
+    ...(data.unitCost !== undefined ? { unitCost: data.unitCost } : {}),
     status: 'ordered',
   }).$returningId();
 
@@ -5488,9 +5591,13 @@ export async function syncRecipeToBom(
 // WORK ORDERS
 // ============================================
 
-export async function getWorkOrders(filters?: { status?: string; warehouseId?: number }) {
+export async function getWorkOrders(filters?: { status?: string; warehouseId?: number; companyId?: number }) {
   const db = await getDb();
   if (!db) return [];
+  // companyId is the entity filter the AI chat (and any scoped caller) passes; status/warehouseId
+  // are accepted for API compatibility but were never applied here.
+  const workOrderConditions = [];
+  if (filters?.companyId) workOrderConditions.push(eq(workOrders.companyId, filters.companyId));
   const result = await db.select({
     id: workOrders.id,
     companyId: workOrders.companyId,
@@ -5517,6 +5624,7 @@ export async function getWorkOrders(filters?: { status?: string; warehouseId?: n
   })
     .from(workOrders)
     .leftJoin(products, eq(workOrders.productId, products.id))
+    .where(workOrderConditions.length > 0 ? and(...workOrderConditions) : undefined)
     .orderBy(desc(workOrders.createdAt));
   
   // Transform to include nested product object for compatibility
@@ -10267,12 +10375,15 @@ export async function createDataRoom(data: InsertDataRoom) {
   return { id: result[0].insertId };
 }
 
-export async function getDataRooms(ownerId?: number) {
+export async function getDataRooms(ownerId?: number, companyId?: number) {
   const db = await getDb();
   if (!db) return [];
   
-  if (ownerId) {
-    return db.select().from(dataRooms).where(eq(dataRooms.ownerId, ownerId)).orderBy(desc(dataRooms.createdAt));
+  const conditions = [];
+  if (ownerId) conditions.push(eq(dataRooms.ownerId, ownerId));
+  if (companyId) conditions.push(eq(dataRooms.companyId, companyId));
+  if (conditions.length > 0) {
+    return db.select().from(dataRooms).where(and(...conditions)).orderBy(desc(dataRooms.createdAt));
   }
   return db.select().from(dataRooms).orderBy(desc(dataRooms.createdAt));
 }
@@ -12128,6 +12239,12 @@ export async function getAiAgentTaskById(id: number) {
   return result[0] || null;
 }
 
+/**
+ * Update an AI agent task. With `opts.onlyIfStatus` the update is a compare-
+ * and-set (`WHERE id = ? AND status = ?`), which is how a task is claimed for
+ * execution atomically: two executors racing for the same task see 1 and 0
+ * affected rows respectively. Returns the number of rows updated.
+ */
 export async function updateAiAgentTask(id: number, data: Partial<{
   status: string;
   approvedBy: number;
@@ -12141,10 +12258,14 @@ export async function updateAiAgentTask(id: number, data: Partial<{
   retryCount: number;
   taskData: string;
   aiReasoning: string;
-}>) {
+}>, opts?: { onlyIfStatus?: string }): Promise<number> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(aiAgentTasks).set(data as any).where(eq(aiAgentTasks.id, id));
+  const where = opts?.onlyIfStatus
+    ? and(eq(aiAgentTasks.id, id), eq(aiAgentTasks.status, opts.onlyIfStatus as any))
+    : eq(aiAgentTasks.id, id);
+  const result: any = await db.update(aiAgentTasks).set(data as any).where(where);
+  return result?.[0]?.affectedRows ?? result?.affectedRows ?? 0;
 }
 
 export async function bulkDeleteAiAgentTasks(filters?: { taskType?: string; status?: string }) {
@@ -12648,11 +12769,15 @@ export async function getCrmContacts(filters?: {
   excludeEmail?: string;
   limit?: number;
   offset?: number;
+  companyId?: number;
 }) {
   const db = await getDb();
   if (!db) return [];
 
   const conditions = [];
+  if (filters?.companyId) {
+    conditions.push(eq(crmContacts.companyId, filters.companyId));
+  }
   if (filters?.contactType) {
     conditions.push(eq(crmContacts.contactType, filters.contactType as any));
   }
@@ -13176,11 +13301,15 @@ export async function getCrmDeals(filters?: {
   assignedTo?: number;
   limit?: number;
   offset?: number;
+  companyId?: number;
 }) {
   const db = await getDb();
   if (!db) return [];
 
   const conditions = [];
+  if (filters?.companyId) {
+    conditions.push(eq(crmDeals.companyId, filters.companyId));
+  }
   if (filters?.pipelineId) {
     conditions.push(eq(crmDeals.pipelineId, filters.pipelineId));
   }
@@ -16878,6 +17007,19 @@ export async function createInvestor(data: InsertInvestor) {
   return { id: result[0].insertId };
 }
 
+export async function getInvestorById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(investors).where(eq(investors.id, id)).limit(1);
+  return row;
+}
+
+export async function updateInvestor(id: number, data: Partial<InsertInvestor>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(investors).set(data).where(eq(investors.id, id));
+}
+
 export async function getFundraisingCampaigns(companyId?: number) {
   const db = await getDb();
   if (!db) return [];
@@ -17733,10 +17875,12 @@ export async function getBankTransactions(filters?: {
   accountId?: string;
   startDate?: string;
   endDate?: string;
+  companyId?: number;
 }) {
   const db = await getDb();
   if (!db) return [];
   const conditions = [];
+  if (filters?.companyId) conditions.push(eq(bankTransactions.companyId, filters.companyId));
   if (filters?.categorizationStatus) conditions.push(eq(bankTransactions.categorizationStatus, filters.categorizationStatus as any));
   if (filters?.status) conditions.push(eq(bankTransactions.status, filters.status));
   if (filters?.accountId) conditions.push(eq(bankTransactions.accountId, filters.accountId));
