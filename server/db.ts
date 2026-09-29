@@ -1045,7 +1045,7 @@ export async function updateAccount(id: number, data: Partial<InsertAccount>) {
 
 // Pass `ctx.scope` to restrict to the caller's visible entities. `filters` are non-security
 // refinements (status/customerId, and companyId for trusted internal callers).
-export async function getInvoices(scope?: Scope, filters?: { companyId?: number; status?: string; customerId?: number }) {
+export async function getInvoices(scope?: Scope, filters?: { companyId?: number; status?: string; statuses?: readonly string[]; customerId?: number }) {
   const db = await getDb();
   if (!db) return [];
 
@@ -1058,6 +1058,7 @@ export async function getInvoices(scope?: Scope, filters?: { companyId?: number;
   }
   if (filters?.companyId) conditions.push(eq(invoices.companyId, filters.companyId));
   if (filters?.status) conditions.push(eq(invoices.status, filters.status as any));
+  if (filters?.statuses && filters.statuses.length > 0) conditions.push(inArray(invoices.status, [...filters.statuses] as any));
   if (filters?.customerId) conditions.push(eq(invoices.customerId, filters.customerId));
   
   const baseQuery = db.select({
@@ -1594,6 +1595,29 @@ export async function getPurchaseOrders(filters?: { companyId?: number; status?:
   // Flatten PO columns to the top level (backward compatible) and nest the
   // joined vendor so the UI can render `row.vendor?.name`.
   const rows = await query;
+  return rows.map((r) => ({ ...r.po, vendor: r.vendor }));
+}
+
+/**
+ * Committed-but-unreceived POs visible to `scope`, for the cash forecast.
+ * Status and entity filters run in SQL so the read stays bounded to open
+ * commitments rather than every PO ever raised.
+ */
+export async function getOpenPurchaseOrdersForForecast(scope: Scope, statuses: readonly string[]) {
+  const db = await getDb();
+  if (!db || statuses.length === 0) return [];
+  const conditions = [inArray(purchaseOrders.status, [...statuses] as any)];
+  const ids = scopeCompanyIds(scope);
+  if (ids) {
+    if (ids.length === 0) return [];
+    conditions.push(inArray(purchaseOrders.companyId, ids));
+  }
+  const rows = await db
+    .select({ po: purchaseOrders, vendor: vendors })
+    .from(purchaseOrders)
+    .leftJoin(vendors, eq(purchaseOrders.vendorId, vendors.id))
+    .where(and(...conditions))
+    .orderBy(asc(purchaseOrders.expectedDate));
   return rows.map((r) => ({ ...r.po, vendor: r.vendor }));
 }
 

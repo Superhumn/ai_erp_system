@@ -11,6 +11,7 @@ import {
   YAxis,
 } from "recharts";
 import { trpc } from "@/lib/trpc";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -43,19 +44,40 @@ const OUT_ROWS = [
   ["adjustment_out", "Manual outflows"],
 ] as const;
 
-const STORAGE_KEY = "cashForecast13w.v1";
+// Mirrors the server's adjustment schema so stale or edited storage can never
+// produce a request that fails validation.
+const MAX_ADJUSTMENTS = 100;
+const MAX_LABEL = 200;
+const MAX_AMOUNT = 1e12;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-function loadSaved(): { startingCash: string; adjustments: Adjustment[] } {
+/** Saved state is keyed by user and home entity so one browser never leaks one person's assumptions to the next. */
+const storageKey = (userId: number, companyId: number | null) => `cashForecast13w.v2.u${userId}.c${companyId ?? "none"}`;
+
+function sanitizeAdjustment(raw: unknown): Adjustment | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const label = typeof r.label === "string" ? r.label.trim().slice(0, MAX_LABEL) : "";
+  const amount = typeof r.amount === "number" ? r.amount : Number(r.amount);
+  const direction = r.direction === "in" || r.direction === "out" ? r.direction : null;
+  const date = typeof r.date === "string" && DATE_RE.test(r.date) ? r.date : null;
+  if (!label || !direction || !date || !Number.isFinite(amount) || amount <= 0 || amount > MAX_AMOUNT) return null;
+  return { label, amount, direction, date };
+}
+
+function loadSaved(key: string): { startingCash: string; adjustments: Adjustment[] } {
+  const empty = { startingCash: "", adjustments: [] as Adjustment[] };
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { startingCash: "", adjustments: [] };
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return empty;
     const parsed = JSON.parse(raw);
+    const list = Array.isArray(parsed?.adjustments) ? parsed.adjustments : [];
     return {
-      startingCash: typeof parsed.startingCash === "string" ? parsed.startingCash : "",
-      adjustments: Array.isArray(parsed.adjustments) ? parsed.adjustments : [],
+      startingCash: typeof parsed?.startingCash === "string" ? parsed.startingCash : "",
+      adjustments: list.map(sanitizeAdjustment).filter((a: Adjustment | null): a is Adjustment => a !== null).slice(0, MAX_ADJUSTMENTS),
     };
   } catch {
-    return { startingCash: "", adjustments: [] };
+    return empty;
   }
 }
 
@@ -69,7 +91,13 @@ const shortDate = (iso: string) => {
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
 export default function CashForecast13Week() {
-  const saved = useMemo(loadSaved, []);
+  const { user } = useAuth();
+  if (!user) return null;
+  return <CashForecastPanel storageKey={storageKey(user.id, user.companyId ?? null)} />;
+}
+
+function CashForecastPanel({ storageKey }: { storageKey: string }) {
+  const saved = useMemo(() => loadSaved(storageKey), [storageKey]);
   const [startingCashText, setStartingCashText] = useState(saved.startingCash);
   const [adjustments, setAdjustments] = useState<Adjustment[]>(saved.adjustments);
   const [draft, setDraft] = useState<Adjustment>({ label: "", amount: 0, direction: "out", date: todayIso() });
@@ -77,11 +105,21 @@ export default function CashForecast13Week() {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ startingCash: startingCashText, adjustments }));
+      window.localStorage.setItem(storageKey, JSON.stringify({ startingCash: startingCashText, adjustments }));
     } catch {
       /* storage unavailable — keep in memory only */
     }
-  }, [startingCashText, adjustments]);
+  }, [storageKey, startingCashText, adjustments]);
+
+  const resetSaved = () => {
+    setStartingCashText("");
+    setAdjustments([]);
+    try {
+      window.localStorage.removeItem(storageKey);
+    } catch {
+      /* nothing to clear */
+    }
+  };
 
   const override = startingCashText.trim() === "" ? null : Number(startingCashText.replace(/[$,\s]/g, ""));
   const input = {
@@ -96,12 +134,86 @@ export default function CashForecast13Week() {
   );
 
   const addAdjustment = () => {
-    if (!draft.label.trim() || !(draft.amount > 0) || !draft.date) return;
-    setAdjustments((a) => [...a, { ...draft, label: draft.label.trim() }]);
+    const next = sanitizeAdjustment(draft);
+    if (!next || adjustments.length >= MAX_ADJUSTMENTS) return;
+    setAdjustments((a) => [...a, next]);
     setDraft({ label: "", amount: 0, direction: draft.direction, date: draft.date });
   };
 
   const week = data && selectedWeek ? data.weeks[selectedWeek - 1] : null;
+
+  const manualItemsCard = (
+    <Card>
+      <CardContent className="pt-4 space-y-3">
+        <div>
+          <div className="text-sm font-semibold">Manual items</div>
+          <p className="text-xs text-muted-foreground">
+            Add cash the system can't see: legal reserves, funding closes, one-off costs. Saved in this browser.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-end gap-2">
+          <Input
+            className="h-8 w-56 text-sm"
+            placeholder="Description"
+            value={draft.label}
+            onChange={(e) => setDraft({ ...draft, label: e.target.value })}
+          />
+          <Input
+            className="h-8 w-32 text-sm"
+            placeholder="Amount"
+            type="number"
+            min={0}
+            value={draft.amount || ""}
+            onChange={(e) => setDraft({ ...draft, amount: Number(e.target.value) })}
+          />
+          <Select value={draft.direction} onValueChange={(v) => setDraft({ ...draft, direction: v as Direction })}>
+            <SelectTrigger className="h-8 w-28 text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="out">Money out</SelectItem>
+              <SelectItem value="in">Money in</SelectItem>
+            </SelectContent>
+          </Select>
+          <Input
+            className="h-8 w-40 text-sm"
+            type="date"
+            value={draft.date}
+            onChange={(e) => setDraft({ ...draft, date: e.target.value })}
+          />
+          <Button size="sm" onClick={addAdjustment}>
+            <Plus className="h-3.5 w-3.5 mr-1" />
+            Add
+          </Button>
+        </div>
+        {adjustments.length > 0 && (
+          <table className="w-full text-xs tabular-nums">
+            <tbody>
+              {adjustments.map((a, i) => (
+                <tr key={i} className="border-b border-border/40 last:border-0">
+                  <td className="py-1 pr-2 whitespace-nowrap">{a.date}</td>
+                  <td className="py-1 pr-2">{a.label}</td>
+                  <td className={`py-1 pr-2 text-right ${a.direction === "in" ? "text-emerald-600" : "text-destructive"}`}>
+                    {a.direction === "in" ? "+" : "−"}
+                    {money(a.amount)}
+                  </td>
+                  <td className="py-1 w-8 text-right">
+                    <button
+                      aria-label="Remove"
+                      className="text-muted-foreground hover:text-destructive"
+                      onClick={() => setAdjustments(adjustments.filter((_, j) => j !== i))}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </CardContent>
+    </Card>
+  );
 
   return (
     <div className="space-y-4">
@@ -128,7 +240,14 @@ export default function CashForecast13Week() {
       </div>
 
       {isLoading && <p className="text-sm text-muted-foreground">Loading forecast…</p>}
-      {error && <p className="text-sm text-destructive">Could not load forecast: {error.message}</p>}
+      {error && (
+        <div className="flex flex-wrap items-center gap-2 text-sm text-destructive">
+          <span>Could not load forecast: {error.message}</span>
+          <Button variant="outline" size="sm" onClick={resetSaved}>
+            Clear saved inputs
+          </Button>
+        </div>
+      )}
 
       {data && (
         <>
@@ -237,77 +356,7 @@ export default function CashForecast13Week() {
             </Card>
           )}
 
-          {/* Manual items */}
-          <Card>
-            <CardContent className="pt-4 space-y-3">
-              <div>
-                <div className="text-sm font-semibold">Manual items</div>
-                <p className="text-xs text-muted-foreground">
-                  Add cash the system can't see: legal reserves, funding closes, one-off costs. Saved in this browser.
-                </p>
-              </div>
-              <div className="flex flex-wrap items-end gap-2">
-                <Input
-                  className="h-8 w-56 text-sm"
-                  placeholder="Description"
-                  value={draft.label}
-                  onChange={(e) => setDraft({ ...draft, label: e.target.value })}
-                />
-                <Input
-                  className="h-8 w-32 text-sm"
-                  placeholder="Amount"
-                  type="number"
-                  min={0}
-                  value={draft.amount || ""}
-                  onChange={(e) => setDraft({ ...draft, amount: Number(e.target.value) })}
-                />
-                <Select value={draft.direction} onValueChange={(v) => setDraft({ ...draft, direction: v as Direction })}>
-                  <SelectTrigger className="h-8 w-28 text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="out">Money out</SelectItem>
-                    <SelectItem value="in">Money in</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Input
-                  className="h-8 w-40 text-sm"
-                  type="date"
-                  value={draft.date}
-                  onChange={(e) => setDraft({ ...draft, date: e.target.value })}
-                />
-                <Button size="sm" onClick={addAdjustment}>
-                  <Plus className="h-3.5 w-3.5 mr-1" />
-                  Add
-                </Button>
-              </div>
-              {adjustments.length > 0 && (
-                <table className="w-full text-xs tabular-nums">
-                  <tbody>
-                    {adjustments.map((a, i) => (
-                      <tr key={i} className="border-b border-border/40 last:border-0">
-                        <td className="py-1 pr-2 whitespace-nowrap">{a.date}</td>
-                        <td className="py-1 pr-2">{a.label}</td>
-                        <td className={`py-1 pr-2 text-right ${a.direction === "in" ? "text-emerald-600" : "text-destructive"}`}>
-                          {a.direction === "in" ? "+" : "−"}
-                          {money(a.amount)}
-                        </td>
-                        <td className="py-1 w-8 text-right">
-                          <button
-                            aria-label="Remove"
-                            className="text-muted-foreground hover:text-destructive"
-                            onClick={() => setAdjustments(adjustments.filter((_, j) => j !== i))}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </CardContent>
-          </Card>
+          {manualItemsCard}
 
           {data.notes.length > 0 && (
             <ul className="text-xs text-muted-foreground list-disc pl-5 space-y-0.5">
@@ -318,6 +367,7 @@ export default function CashForecast13Week() {
           )}
         </>
       )}
+      {error && manualItemsCard}
     </div>
   );
 }

@@ -107,6 +107,11 @@ export function addDays(d: Date, days: number): Date {
   return new Date(d.getTime() + days * DAY_MS);
 }
 
+/** Midnight UTC of the calendar day of `d`. */
+export function startOfDay(d: Date): Date {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+}
+
 /** Midnight UTC of the Monday on or before `d`. */
 export function startOfWeek(d: Date): Date {
   const day = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
@@ -130,6 +135,7 @@ export function buildCashForecast(params: {
   const weekCount = params.weeks ?? DEFAULT_FORECAST_WEEKS;
   const firstWeek = startOfWeek(params.asOf);
   const horizonEnd = addDays(firstWeek, weekCount * 7); // exclusive
+  const today = startOfDay(params.asOf);
 
   const weeks: ForecastWeek[] = [];
   for (let i = 0; i < weekCount; i++) {
@@ -155,8 +161,10 @@ export function buildCashForecast(params: {
   for (const e of params.events) {
     if (!(e.amount > 0)) continue;
     if (e.date.getTime() >= horizonEnd.getTime()) continue;
-    const overdue = e.date.getTime() < firstWeek.getTime();
-    const idx = overdue ? 0 : Math.floor((e.date.getTime() - firstWeek.getTime()) / (7 * DAY_MS));
+    // Overdue is judged against the as-of calendar date; anything before the
+    // first week's Monday is clamped into week 1 whether or not it is overdue.
+    const overdue = e.date.getTime() < today.getTime();
+    const idx = e.date.getTime() < firstWeek.getTime() ? 0 : Math.floor((e.date.getTime() - firstWeek.getTime()) / (7 * DAY_MS));
     const w = weeks[idx];
     const bucket = e.direction === "in" ? w.inflows : w.outflows;
     bucket[e.category] = (bucket[e.category] ?? 0) + e.amount;
@@ -165,7 +173,7 @@ export function buildCashForecast(params: {
       else overdueOut += e.amount;
     }
     w.events.push({
-      date: isoDate(overdue ? firstWeek : e.date),
+      date: isoDate(e.date),
       amount: round2(e.amount),
       direction: e.direction,
       category: e.category,
@@ -218,9 +226,18 @@ export function buildCashForecast(params: {
 
 // ── row → event converters ──────────────────────────────────────
 
-const OPEN_INVOICE_STATUSES = new Set(["sent", "partial", "overdue"]);
-const OPEN_BILL_STATUSES = new Set(["pending_approval", "approved", "scheduled", "partially_paid", "overdue"]);
-const OPEN_PO_STATUSES = new Set(["sent", "confirmed", "partial"]);
+export const OPEN_INVOICE_STATUS_LIST = ["sent", "partial", "overdue"] as const;
+export const OPEN_BILL_STATUS_LIST = ["pending_approval", "approved", "scheduled", "partially_paid", "overdue"] as const;
+export const OPEN_PO_STATUS_LIST = ["sent", "confirmed", "partial"] as const;
+/**
+ * Bill states that mean a PO's spend is already represented elsewhere: open
+ * bills are forecast as bills, paid ones have left the bank. A draft, disputed
+ * or cancelled bill does not settle the PO, so the PO is still forecast.
+ */
+export const PO_SUPPRESSING_BILL_STATUS_LIST = [...OPEN_BILL_STATUS_LIST, "paid"] as const;
+const OPEN_INVOICE_STATUSES = new Set<string>(OPEN_INVOICE_STATUS_LIST);
+const OPEN_BILL_STATUSES = new Set<string>(OPEN_BILL_STATUS_LIST);
+const OPEN_PO_STATUSES = new Set<string>(OPEN_PO_STATUS_LIST);
 
 export interface InvoiceLike {
   id: number;
@@ -335,6 +352,7 @@ export interface RecurringInvoiceLike {
   id: number;
   templateName?: string | null;
   frequency: string;
+  dayOfMonth?: number | null;
   nextGenerationDate: Date | string | null;
   endDate?: Date | string | null;
   totalAmount: string | number | null;
@@ -344,22 +362,31 @@ export interface RecurringInvoiceLike {
   customer?: { name?: string | null } | null;
 }
 
-export function nextOccurrence(d: Date, frequency: string): Date | null {
-  const n = new Date(d.getTime());
+/**
+ * Same day-of-month `months` later, clamped to the target month's last day
+ * (Jan 31 + 1 month = Feb 28/29, not Mar 3). `anchorDay` is the template's
+ * scheduled day so a clamped date springs back to it in longer months.
+ */
+export function addMonthsClamped(d: Date, months: number, anchorDay?: number | null): Date {
+  const y = d.getUTCFullYear();
+  const m = d.getUTCMonth() + months;
+  const day = anchorDay && anchorDay >= 1 && anchorDay <= 31 ? anchorDay : d.getUTCDate();
+  const lastDay = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(y, m, Math.min(day, lastDay)));
+}
+
+export function nextOccurrence(d: Date, frequency: string, anchorDay?: number | null): Date | null {
   switch (frequency) {
     case "weekly":
       return addDays(d, 7);
     case "biweekly":
       return addDays(d, 14);
     case "monthly":
-      n.setUTCMonth(n.getUTCMonth() + 1);
-      return n;
+      return addMonthsClamped(d, 1, anchorDay);
     case "quarterly":
-      n.setUTCMonth(n.getUTCMonth() + 3);
-      return n;
+      return addMonthsClamped(d, 3, anchorDay);
     case "annually":
-      n.setUTCFullYear(n.getUTCFullYear() + 1);
-      return n;
+      return addMonthsClamped(d, 12, anchorDay);
     default:
       return null;
   }
@@ -389,7 +416,7 @@ export function recurringToEvents(rows: RecurringInvoiceLike[], horizonEnd: Date
         ref: `recurring:${r.id}:${isoDate(gen)}`,
         currency: r.currency ?? "USD",
       });
-      gen = nextOccurrence(gen, r.frequency);
+      gen = nextOccurrence(gen, r.frequency, r.dayOfMonth);
     }
   }
   return out;

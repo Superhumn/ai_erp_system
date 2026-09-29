@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  addMonthsClamped,
   adjustmentsToEvents,
   billsToEvents,
   buildCashForecast,
@@ -47,18 +48,24 @@ describe("buildCashForecast", () => {
     expect(f.totalOut).toBe(2000);
   });
 
-  it("puts past-due items in week 1 and flags them", () => {
+  it("puts past-due items in week 1 and flags them against the as-of date", () => {
     const f = buildCashForecast({
-      asOf,
+      asOf, // Wednesday 2026-09-30
       startingCash: 0,
       events: [
         { date: d("2026-08-01"), amount: 300, direction: "in", category: "customer_receipts", label: "late" },
         { date: d("2026-09-01"), amount: 100, direction: "out", category: "vendor_bills", label: "late bill" },
+        { date: d("2026-09-29"), amount: 50, direction: "in", category: "customer_receipts", label: "due Tuesday" },
+        { date: d("2026-09-30"), amount: 25, direction: "in", category: "customer_receipts", label: "due today" },
       ],
     });
-    expect(f.weeks[0].inflows.customer_receipts).toBe(300);
-    expect(f.weeks[0].events.every((e) => e.overdue)).toBe(true);
-    expect(f.overdueIn).toBe(300);
+    expect(f.weeks[0].inflows.customer_receipts).toBe(375);
+    const byLabel = Object.fromEntries(f.weeks[0].events.map((e) => [e.label, e]));
+    expect(byLabel["late"].overdue).toBe(true);
+    expect(byLabel["late"].date).toBe("2026-08-01");
+    expect(byLabel["due Tuesday"].overdue).toBe(true); // this week, but before as-of
+    expect(byLabel["due today"].overdue).toBe(false);
+    expect(f.overdueIn).toBe(350);
     expect(f.overdueOut).toBe(100);
   });
 
@@ -127,6 +134,18 @@ describe("converters", () => {
     const weekly = ev.filter((e) => e.ref?.startsWith("recurring:2:"));
     expect(monthly.map((e) => isoDate(e.date))).toEqual(["2026-10-31", "2026-12-01"]);
     expect(weekly).toHaveLength(3); // Oct 1, 8, 15
+  });
+
+  it("month arithmetic clamps to the target month's last day", () => {
+    expect(isoDate(addMonthsClamped(d("2026-01-31"), 1))).toBe("2026-02-28");
+    expect(isoDate(addMonthsClamped(d("2028-01-31"), 1))).toBe("2028-02-29");
+    expect(isoDate(addMonthsClamped(d("2026-02-28"), 1, 31))).toBe("2026-03-31"); // springs back to anchor day
+    expect(isoDate(addMonthsClamped(d("2028-02-29"), 12))).toBe("2029-02-28");
+    const ev = recurringToEvents(
+      [{ id: 1, frequency: "monthly", dayOfMonth: 31, nextGenerationDate: d("2026-10-31"), totalAmount: "100", daysUntilDue: 0, isActive: true }],
+      d("2027-01-15"),
+    );
+    expect(ev.map((e) => isoDate(e.date))).toEqual(["2026-10-31", "2026-11-30", "2026-12-31"]);
   });
 
   it("payroll uses only pending payments", () => {
