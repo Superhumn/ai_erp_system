@@ -12830,13 +12830,23 @@ export async function getCrmContacts(filters?: {
   assignedTo?: number;
   search?: string;
   excludeEmail?: string;
+  accountId?: number;
+  /** Entity allow-list: null/undefined = unrestricted, [] = no rows. */
+  companyIds?: number[] | null;
   limit?: number;
   offset?: number;
 }) {
   const db = await getDb();
   if (!db) return [];
+  if (Array.isArray(filters?.companyIds) && filters.companyIds.length === 0) return [];
 
   const conditions = [];
+  if (Array.isArray(filters?.companyIds)) {
+    conditions.push(inArray(crmContacts.companyId, filters.companyIds));
+  }
+  if (filters?.accountId) {
+    conditions.push(eq(crmContacts.accountId, filters.accountId));
+  }
   if (filters?.contactType) {
     conditions.push(eq(crmContacts.contactType, filters.contactType as any));
   }
@@ -13110,14 +13120,25 @@ export async function getCrmContactStats() {
 
 // --- CRM TAGS ---
 
-export async function getCrmTags(category?: string) {
+export async function getCrmTags(category?: string, companyIds?: number[] | null) {
   const db = await getDb();
   if (!db) return [];
-  let query = db.select().from(crmTags);
-  if (category) {
-    query = query.where(eq(crmTags.category, category as any)) as any;
+  const conditions = [];
+  if (category) conditions.push(eq(crmTags.category, category as any));
+  // Tags with no companyId are shared across entities.
+  if (Array.isArray(companyIds)) {
+    conditions.push(companyIds.length ? or(isNull(crmTags.companyId), inArray(crmTags.companyId, companyIds))! : isNull(crmTags.companyId));
   }
+  let query = db.select().from(crmTags);
+  if (conditions.length) query = query.where(and(...conditions)) as any;
   return query.orderBy(crmTags.name);
+}
+
+export async function getCrmTagById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(crmTags).where(eq(crmTags.id, id)).limit(1);
+  return row;
 }
 
 export async function createCrmTag(data: InsertCrmTag) {
@@ -13263,15 +13284,28 @@ export async function updateWhatsappMessageStatus(
 export async function getCrmInteractions(filters?: {
   contactId?: number;
   channel?: string;
+  relatedDealId?: number;
+  /** Entity allow-list resolved through the owning contact: null = unrestricted, [] = no rows. */
+  companyIds?: number[] | null;
   limit?: number;
   offset?: number;
 }) {
   const db = await getDb();
   if (!db) return [];
+  if (Array.isArray(filters?.companyIds) && filters.companyIds.length === 0) return [];
 
   const conditions = [];
+  if (Array.isArray(filters?.companyIds)) {
+    conditions.push(inArray(
+      crmInteractions.contactId,
+      db.select({ id: crmContacts.id }).from(crmContacts).where(inArray(crmContacts.companyId, filters.companyIds)),
+    ));
+  }
   if (filters?.contactId) {
     conditions.push(eq(crmInteractions.contactId, filters.contactId));
+  }
+  if (filters?.relatedDealId) {
+    conditions.push(eq(crmInteractions.relatedDealId, filters.relatedDealId));
   }
   if (filters?.channel) {
     conditions.push(eq(crmInteractions.channel, filters.channel as any));
@@ -13292,6 +13326,10 @@ export async function createCrmInteraction(data: InsertCrmInteraction) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
+  if (data.companyId === undefined) {
+    const [owner] = await db.select({ companyId: crmContacts.companyId }).from(crmContacts).where(eq(crmContacts.id, data.contactId)).limit(1);
+    data = { ...data, companyId: owner?.companyId ?? null };
+  }
   const result = await db.insert(crmInteractions).values(data);
 
   // Update contact's interaction count and last contacted timestamp
@@ -13320,12 +13358,16 @@ export async function getContactTimeline(contactId: number, limit: number = 50) 
 
 // --- CRM PIPELINES ---
 
-export async function getCrmPipelines(type?: string) {
+export async function getCrmPipelines(type?: string, companyIds?: number[] | null) {
   const db = await getDb();
   if (!db) return [];
 
   const conditions = [eq(crmPipelines.isActive, true)];
   if (type) conditions.push(eq(crmPipelines.type, type as any));
+  // Pipelines with no companyId are shared across entities.
+  if (Array.isArray(companyIds)) {
+    conditions.push(companyIds.length ? or(isNull(crmPipelines.companyId), inArray(crmPipelines.companyId, companyIds))! : isNull(crmPipelines.companyId));
+  }
 
   return db.select().from(crmPipelines).where(and(...conditions)).orderBy(crmPipelines.name);
 }
@@ -13355,16 +13397,26 @@ export async function updateCrmPipeline(id: number, data: Partial<InsertCrmPipel
 export async function getCrmDeals(filters?: {
   pipelineId?: number;
   contactId?: number;
+  accountId?: number;
   stage?: string;
   status?: string;
   assignedTo?: number;
+  /** Entity allow-list: null/undefined = unrestricted, [] = no rows. */
+  companyIds?: number[] | null;
   limit?: number;
   offset?: number;
 }) {
   const db = await getDb();
   if (!db) return [];
+  if (Array.isArray(filters?.companyIds) && filters.companyIds.length === 0) return [];
 
   const conditions = [];
+  if (Array.isArray(filters?.companyIds)) {
+    conditions.push(inArray(crmDeals.companyId, filters.companyIds));
+  }
+  if (filters?.accountId) {
+    conditions.push(eq(crmDeals.accountId, filters.accountId));
+  }
   if (filters?.pipelineId) {
     conditions.push(eq(crmDeals.pipelineId, filters.pipelineId));
   }
@@ -13581,11 +13633,18 @@ export async function cleanupLegacyMeetingDeals() {
   return { renamed, merged, groupsMerged };
 }
 
-export async function getCrmDealStats(pipelineId?: number) {
+export async function getCrmDealStats(pipelineId?: number, companyIds?: number[] | null) {
   const db = await getDb();
   if (!db) return null;
+  if (Array.isArray(companyIds) && companyIds.length === 0) {
+    return { total: 0, open: 0, openValue: 0, won: 0, wonValue: 0, lost: 0 };
+  }
 
-  const baseCondition = pipelineId ? eq(crmDeals.pipelineId, pipelineId) : undefined;
+  const scopeParts = [
+    ...(pipelineId ? [eq(crmDeals.pipelineId, pipelineId)] : []),
+    ...(Array.isArray(companyIds) ? [inArray(crmDeals.companyId, companyIds)] : []),
+  ];
+  const baseCondition = scopeParts.length ? and(...scopeParts) : undefined;
 
   const [totalDeals] = await db.select({ count: count() }).from(crmDeals).where(baseCondition);
   const [openDeals] = await db.select({ count: count(), totalValue: sum(crmDeals.amount) })
@@ -13614,13 +13673,19 @@ export async function getContactCaptures(filters?: {
   status?: string;
   captureMethod?: string;
   capturedBy?: number;
+  /** Entity allow-list: null/undefined = unrestricted, [] = no rows. */
+  companyIds?: number[] | null;
   limit?: number;
   offset?: number;
 }) {
   const db = await getDb();
   if (!db) return [];
+  if (Array.isArray(filters?.companyIds) && filters.companyIds.length === 0) return [];
 
   const conditions = [];
+  if (Array.isArray(filters?.companyIds)) {
+    conditions.push(inArray(contactCaptures.companyId, filters.companyIds));
+  }
   if (filters?.status) {
     conditions.push(eq(contactCaptures.status, filters.status as any));
   }

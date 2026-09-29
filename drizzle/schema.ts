@@ -4739,6 +4739,7 @@ export const crmContacts = mysqlTable("crm_contacts", {
 
   // Organization info
   organization: varchar("organization", { length: 255 }),
+  accountId: int("accountId"), // crm_accounts.id — the structured replacement for `organization`
   jobTitle: varchar("jobTitle", { length: 255 }),
   department: varchar("department", { length: 128 }),
 
@@ -4809,6 +4810,7 @@ export type InsertCrmContact = typeof crmContacts.$inferInsert;
 // CRM Contact Tags for categorization
 export const crmTags = mysqlTable("crm_tags", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"), // null = shared across entities
   name: varchar("name", { length: 64 }).notNull(),
   color: varchar("color", { length: 7 }).default("#3B82F6"), // Hex color
   category: mysqlEnum("category", ["contact", "deal", "general"]).default("general"),
@@ -4879,6 +4881,7 @@ export type InsertWhatsappMessage = typeof whatsappMessages.$inferInsert;
 // CRM Interactions - Unified activity log across all channels
 export const crmInteractions = mysqlTable("crm_interactions", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"), // copied from the contact at insert; reads scope via the contact join
   contactId: int("contactId").notNull().references(() => crmContacts.id),
 
   // Interaction type
@@ -4927,6 +4930,7 @@ export type InsertCrmInteraction = typeof crmInteractions.$inferInsert;
 // CRM Pipelines - For sales and fundraising
 export const crmPipelines = mysqlTable("crm_pipelines", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"), // null = shared across entities
   name: varchar("name", { length: 128 }).notNull(),
   type: mysqlEnum("type", ["sales", "fundraising", "partnerships", "other"]).default("sales").notNull(),
   stages: text("stages").notNull(), // JSON array of stage names and order
@@ -4945,6 +4949,7 @@ export const crmDeals = mysqlTable("crm_deals", {
   companyId: int("companyId").references(() => companies.id),
   pipelineId: int("pipelineId").notNull().references(() => crmPipelines.id),
   contactId: int("contactId").notNull().references(() => crmContacts.id),
+  accountId: int("accountId"), // crm_accounts.id
 
   // Deal info
   name: varchar("name", { length: 255 }).notNull(),
@@ -4982,6 +4987,7 @@ export type InsertCrmDeal = typeof crmDeals.$inferInsert;
 // Contact Captures - Track how contacts were captured
 export const contactCaptures = mysqlTable("contact_captures", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
   contactId: int("contactId"),
 
   // Capture method

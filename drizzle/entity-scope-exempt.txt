@@ -25,7 +25,6 @@ cogsTransactions
 companies
 companyWebSources
 compensationHistory
-contactCaptures
 contractKeyDates
 contractorFolderGrants
 copackerInventoryUpdateItems
@@ -33,9 +32,6 @@ copackerInvoiceItems
 copackerShippingDocuments
 crmCampaignRecipients
 crmContactTags
-crmInteractions
-crmPipelines
-crmTags
 currencyRates
 customsDocuments
 cycleCountLines
