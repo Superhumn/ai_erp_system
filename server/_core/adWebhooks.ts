@@ -73,8 +73,13 @@ export function registerAdWebhooks(app: Express, webhookLimiter: Middleware, ree
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
-    if (mode === "subscribe" && ENV.metaWebhookVerifyToken && typeof token === "string" && secureCompare(token, ENV.metaWebhookVerifyToken)) {
-      return res.status(200).send(String(challenge ?? ""));
+    // Meta's challenge is an opaque numeric string. Echo it back as plain text
+    // only after the verify token matched and it looks like one — never as HTML.
+    if (
+      mode === "subscribe" && ENV.metaWebhookVerifyToken && typeof token === "string" && secureCompare(token, ENV.metaWebhookVerifyToken) &&
+      typeof challenge === "string" && /^[0-9A-Za-z_-]{1,128}$/.test(challenge)
+    ) {
+      return res.status(200).type("text/plain").send(challenge);
     }
     return res.status(403).json({ error: "Verification failed" });
   });
@@ -115,7 +120,7 @@ export function registerAdWebhooks(app: Express, webhookLimiter: Middleware, ree
   });
 
   // ---- Landing page form ---------------------------------------------------
-  app.use("/webhooks/ads/leads", (req, res, next) => {
+  app.use("/webhooks/ads/leads", webhookLimiter, (req, res, next) => {
     const provided =
       (req.headers["x-webhook-secret"] as string) ||
       (req.headers["authorization"] as string)?.replace(/^Bearer\s+/i, "") ||
@@ -129,7 +134,7 @@ export function registerAdWebhooks(app: Express, webhookLimiter: Middleware, ree
     next();
   });
 
-  app.post("/webhooks/ads/leads", webhookLimiter, express.raw({ type: ["application/json", "text/plain", "*/*"] }), reenterTenant, async (req, res) => {
+  app.post("/webhooks/ads/leads", express.raw({ type: ["application/json", "text/plain", "*/*"] }), reenterTenant, async (req, res) => {
     const parsed = rawJson(req);
     if (!parsed) return res.status(400).json({ error: "Invalid JSON body" });
     const lead = landingPayloadToLead(parsed.body);
