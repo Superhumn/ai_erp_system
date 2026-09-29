@@ -61,6 +61,13 @@ function TransactionSummaryBody({ tx }: { tx: any }) {
   );
 }
 
+// Table column → transactions.listPaged sortBy. Sorting runs on the server across every
+// page, so only indexed columns are sortable.
+const TRANSACTION_SORT_KEYS: Record<string, "date" | "totalAmount"> = {
+  date: "date",
+  totalAmount: "totalAmount",
+};
+
 export default function Transactions() {
   const [cogsOnly, setCogsOnly] = useState(false);
   const [selectedTx, setSelectedTx] = useState<any | null>(null);
@@ -75,12 +82,15 @@ export default function Transactions() {
     type: typeFilter,
     status: statusFilter,
     cogsOnly: cogsOnly || undefined,
+    ...(paging.sort && TRANSACTION_SORT_KEYS[paging.sort.key]
+      ? { sortBy: TRANSACTION_SORT_KEYS[paging.sort.key], sortDir: paging.sort.dir }
+      : {}),
   });
   const filteredTransactions = txPage?.rows ?? [];
   useEffect(() => paging.clampTo(txPage?.total), [txPage?.total]);
 
   const columns: Column<any>[] = [
-    { key: "transactionNumber", header: "Transaction #", type: "text", sortable: true },
+    { key: "transactionNumber", header: "Transaction #", type: "text" },
     { key: "date", header: "Date", type: "date", sortable: true },
     {
       key: "description",
@@ -143,8 +153,11 @@ export default function Transactions() {
             showExport
             searchValue={paging.searchInput}
             onSearchChange={paging.setSearchInput}
+            searchPlaceholder="Search #, description or reference…"
             filterValues={tableFilters}
             onFiltersChange={setTableFilters}
+            sort={paging.sort ?? { key: null, dir: "asc" }}
+            onSortChange={paging.setSort}
             onRowClick={(row) => setSelectedTx(row)}
             expandedRowId={selectedTx?.id ?? null}
             compact

@@ -546,6 +546,7 @@ export const transactions = mysqlTable("transactions", {
   dateIdx: index("idx_transactions_date").on(t.date),
   companyDateIdx: index("idx_transactions_company_date").on(t.companyId, t.date),
   typeDateIdx: index("idx_transactions_type_date").on(t.type, t.date),
+  totalIdx: index("idx_transactions_total").on(t.totalAmount),
 }));
 
 export const transactionLines = mysqlTable("transaction_lines", {
@@ -594,6 +595,8 @@ export const orders = mysqlTable("orders", {
   companyCreatedIdx: index("idx_orders_company_created").on(t.companyId, t.createdAt),
   customerCreatedIdx: index("idx_orders_customer_created").on(t.customerId, t.createdAt),
   statusCreatedIdx: index("idx_orders_status_created").on(t.status, t.createdAt),
+  orderDateIdx: index("idx_orders_order_date").on(t.orderDate),
+  totalIdx: index("idx_orders_total").on(t.totalAmount),
 }));
 
 export const orderItems = mysqlTable("order_items", {

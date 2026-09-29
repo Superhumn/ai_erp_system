@@ -121,6 +121,13 @@ function OrderSummaryBody({ order }: { order: any }) {
   );
 }
 
+// Table column → orders.listPaged sortBy. Sorting runs on the server across every page,
+// so only indexed columns are sortable.
+const ORDER_SORT_KEYS: Record<string, "orderDate" | "totalAmount"> = {
+  orderDate: "orderDate",
+  totalAmount: "totalAmount",
+};
+
 export default function Orders() {
   const [isOpen, setIsOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
@@ -156,7 +163,12 @@ export default function Orders() {
   const { data: ordersPage, isLoading } = trpc.orders.listPaged.useQuery({
     ...paging.query,
     status: statusFilter === "all" ? undefined : statusFilter,
+    ...(paging.sort && ORDER_SORT_KEYS[paging.sort.key]
+      ? { sortBy: ORDER_SORT_KEYS[paging.sort.key], sortDir: paging.sort.dir }
+      : {}),
   });
+  // A selection only covers the rows on screen; drop it when the rows change.
+  useEffect(() => setSelectedOrders(new Set()), [paging.query, statusFilter, paging.sort]);
   const orders = ordersPage?.rows;
   const totalOrders = ordersPage?.total ?? 0;
   useEffect(() => paging.clampTo(ordersPage?.total), [ordersPage?.total]);
@@ -217,12 +229,12 @@ export default function Orders() {
 
   // Dense column set: most fields visible at a glance.
   const columns: Column<any>[] = [
-    { key: "orderNumber", header: "Order #", type: "text", sortable: true },
-    { key: "_customerName", header: "Customer", type: "text", sortable: true },
+    { key: "orderNumber", header: "Order #", type: "text" },
+    { key: "_customerName", header: "Customer", type: "text" },
     { key: "orderDate", header: "Date", type: "date", sortable: true },
     { key: "status", header: "Status", type: "status", options: orderStatusOptions, editable: true, filterable: true },
-    { key: "_itemCount", header: "Items", type: "number", sortable: true },
-    { key: "subtotal", header: "Subtotal", type: "currency", sortable: true },
+    { key: "_itemCount", header: "Items", type: "number" },
+    { key: "subtotal", header: "Subtotal", type: "currency" },
     { key: "taxAmount", header: "Tax", type: "currency" },
     { key: "shippingAmount", header: "Shipping", type: "currency" },
     { key: "discountAmount", header: "Discount", type: "currency" },
@@ -476,8 +488,11 @@ export default function Orders() {
             showExport
             searchValue={paging.searchInput}
             onSearchChange={paging.setSearchInput}
+            searchPlaceholder="Search order # or customer…"
             filterValues={{ status: statusFilter }}
             onFiltersChange={(f) => setStatusFilter(f.status || "all")}
+            sort={paging.sort ?? { key: null, dir: "asc" }}
+            onSortChange={paging.setSort}
             onRowClick={(row) => setSelectedOrder(row)}
             expandedRowId={selectedOrder?.id ?? null}
             selectedRows={selectedOrders}

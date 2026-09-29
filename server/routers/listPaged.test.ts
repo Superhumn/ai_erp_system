@@ -1,14 +1,13 @@
 /**
- * Paged list endpoints (orders, customers, invoices, transactions) and the cap on the
- * legacy `list` endpoints. The db layer is mocked; these tests pin what the routers
- * pass down: the caller's entity scope, clamped paging input, and the list cap.
+ * Paged list endpoints (orders, customers, invoices, transactions). The db layer is
+ * mocked; these tests pin what the routers pass down: the caller's entity scope and the
+ * validated paging input.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ctxFor } from "../flows/_harness";
 
 vi.mock("../db", () => {
   const page = vi.fn(async () => ({ rows: [], total: 0 }));
-  const list = vi.fn(async () => []);
   return {
     getDb: vi.fn().mockResolvedValue({}),
     createAuditLog: vi.fn(),
@@ -20,22 +19,16 @@ vi.mock("../db", () => {
     getCustomersPaged: page,
     getInvoicesPaged: page,
     getTransactionsPaged: page,
-    getOrders: list,
-    getCustomers: list,
-    getInvoices: list,
-    getTransactions: list,
-    getPurchaseOrders: list,
   };
 });
 
 import * as db from "../db";
 import { appRouter } from "./index";
-import { LEGACY_LIST_CAP, MAX_PAGE_LIMIT } from "../listPaging";
+import { MAX_PAGE_LIMIT } from "../listPaging";
 
 const entity1 = { mode: "entity", companyIds: [1] };
 const sales = appRouter.createCaller(ctxFor("sales", { id: 1, companyId: 1, regionScope: "entity" }));
 const finance = appRouter.createCaller(ctxFor("finance", { id: 2, companyId: 1, regionScope: "entity" }));
-const ops = appRouter.createCaller(ctxFor("ops", { id: 3, companyId: 1, regionScope: "entity" }));
 const vendor = appRouter.createCaller(ctxFor("vendor", { id: 4, companyId: 1, regionScope: "entity" }));
 
 beforeEach(() => vi.clearAllMocks());
@@ -62,24 +55,18 @@ describe("listPaged endpoints", () => {
     expect(db.getInvoicesPaged).not.toHaveBeenCalled();
   });
 
+  it("accept only whitelisted sort columns", async () => {
+    await sales.orders.listPaged({ sortBy: "totalAmount", sortDir: "asc" });
+    expect(db.getOrdersPaged).toHaveBeenCalledWith(entity1, { sortBy: "totalAmount", sortDir: "asc" });
+    // Unindexed columns are not sortable at this scale.
+    await expect(sales.orders.listPaged({ sortBy: "customerName" as any })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(sales.orders.listPaged({ sortBy: "id; DROP TABLE orders" as any })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(finance.transactions.listPaged({ sortBy: "createdAt" as any })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
   it("keep the role gates of the list they page", async () => {
     await expect(vendor.orders.listPaged()).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(sales.invoices.listPaged()).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(sales.transactions.listPaged()).rejects.toMatchObject({ code: "FORBIDDEN" });
-  });
-});
-
-describe("legacy list endpoints", () => {
-  it("return at most LEGACY_LIST_CAP rows", async () => {
-    await sales.orders.list();
-    expect(db.getOrders).toHaveBeenCalledWith(entity1, expect.objectContaining({ limit: LEGACY_LIST_CAP }));
-    await sales.customers.list();
-    expect(db.getCustomers).toHaveBeenCalledWith(entity1, { limit: LEGACY_LIST_CAP });
-    await finance.invoices.list();
-    expect(db.getInvoices).toHaveBeenCalledWith(entity1, expect.objectContaining({ limit: LEGACY_LIST_CAP }));
-    await finance.transactions.list();
-    expect(db.getTransactions).toHaveBeenCalledWith(entity1, expect.objectContaining({ limit: LEGACY_LIST_CAP }));
-    await ops.purchaseOrders.list();
-    expect(db.getPurchaseOrders).toHaveBeenCalledWith(expect.objectContaining({ limit: LEGACY_LIST_CAP }));
   });
 });

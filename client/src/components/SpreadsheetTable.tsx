@@ -99,8 +99,13 @@ export interface SpreadsheetTableProps<T extends { id: number | string }> {
   // report to it and `data` is shown as-is (the server already applied them).
   searchValue?: string;
   onSearchChange?: (value: string) => void;
+  /** Says what the search box matches, e.g. "Search order # or customer…". */
+  searchPlaceholder?: string;
   filterValues?: Record<string, string>;
   onFiltersChange?: (filters: Record<string, string>) => void;
+  // Server-side sort: header clicks report here and `data` keeps the server's order.
+  sort?: { key: string | null; dir: "asc" | "desc" };
+  onSortChange?: (sort: { key: string; dir: "asc" | "desc" }) => void;
 }
 
 function formatDate(value: string | Date | null | undefined): string {
@@ -144,15 +149,21 @@ export function SpreadsheetTable<T extends { id: number | string }>({
   inlineCreatePlaceholder = "Click to add...",
   searchValue,
   onSearchChange,
+  searchPlaceholder = "Search...",
   filterValues,
   onFiltersChange,
+  sort,
+  onSortChange,
 }: SpreadsheetTableProps<T>) {
   const [localSearch, setLocalSearch] = useState("");
   const serverSearch = onSearchChange !== undefined;
   const search = serverSearch ? searchValue ?? "" : localSearch;
   const setSearch = serverSearch ? onSearchChange : setLocalSearch;
-  const [sortKey, setSortKey] = useState<string | null>(null);
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [localSortKey, setSortKey] = useState<string | null>(null);
+  const [localSortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const serverSort = onSortChange !== undefined;
+  const sortKey = serverSort ? sort?.key ?? null : localSortKey;
+  const sortDir = serverSort ? sort?.dir ?? "asc" : localSortDir;
   const [localFilters, setLocalFilters] = useState<Record<string, string>>({});
   const serverFilters = onFiltersChange !== undefined;
   const filters = serverFilters ? filterValues ?? {} : localFilters;
@@ -168,13 +179,17 @@ export function SpreadsheetTable<T extends { id: number | string }>({
   const setExpandedId = onExpandChange || setInternalExpandedId;
 
   const handleSort = useCallback((key: string) => {
+    if (onSortChange) {
+      onSortChange({ key, dir: sortKey === key && sortDir === "asc" ? "desc" : "asc" });
+      return;
+    }
     if (sortKey === key) {
       setSortDir(sortDir === "asc" ? "desc" : "asc");
     } else {
       setSortKey(key);
       setSortDir("asc");
     }
-  }, [sortKey, sortDir]);
+  }, [sortKey, sortDir, onSortChange]);
 
   const filteredData = useMemo(() => {
     let result = [...data];
@@ -197,8 +212,8 @@ export function SpreadsheetTable<T extends { id: number | string }>({
       }
     });
 
-    // Apply sort
-    if (sortKey) {
+    // Apply sort (skipped when the server already sorted)
+    if (sortKey && !serverSort) {
       result.sort((a, b) => {
         const aVal = (a as any)[sortKey];
         const bVal = (b as any)[sortKey];
@@ -211,7 +226,7 @@ export function SpreadsheetTable<T extends { id: number | string }>({
     }
 
     return result;
-  }, [data, search, filters, sortKey, sortDir, columns, serverSearch, serverFilters]);
+  }, [data, search, filters, sortKey, sortDir, columns, serverSearch, serverFilters, serverSort]);
 
   const startEdit = (rowId: number | string, key: string, currentValue: any) => {
     setEditingCell({ rowId, key });
@@ -516,7 +531,7 @@ export function SpreadsheetTable<T extends { id: number | string }>({
           <div className="relative flex-1 min-w-[200px] max-w-[300px]">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
             <input
-              placeholder="Search..."
+              placeholder={searchPlaceholder}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="h-8 w-full rounded-lg border border-border bg-background pl-8 pr-3 text-sm outline-none placeholder:text-muted-foreground/60 focus:border-ring focus:ring-2 focus:ring-ring/20 transition-colors"

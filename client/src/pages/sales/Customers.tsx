@@ -104,6 +104,13 @@ function CustomerSummaryBody({ customer }: { customer: any }) {
   );
 }
 
+// Table column → customers.listPaged sortBy. Sorting runs on the server across every page.
+const CUSTOMER_SORT_KEYS: Record<string, "name" | "email" | "lastSyncedAt"> = {
+  name: "name",
+  email: "email",
+  lastSyncedAt: "lastSyncedAt",
+};
+
 export default function Customers() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
@@ -138,6 +145,9 @@ export default function Customers() {
     ...paging.query,
     status: statusFilter,
     source: sourceFilter,
+    ...(paging.sort && CUSTOMER_SORT_KEYS[paging.sort.key]
+      ? { sortBy: CUSTOMER_SORT_KEYS[paging.sort.key], sortDir: paging.sort.dir }
+      : {}),
   });
   const customers = customersPage?.rows;
   useEffect(() => paging.clampTo(customersPage?.total), [customersPage?.total]);
@@ -516,8 +526,11 @@ export default function Customers() {
             showExport
             searchValue={paging.searchInput}
             onSearchChange={paging.setSearchInput}
+            searchPlaceholder="Search name, email, phone or location…"
             filterValues={tableFilters}
             onFiltersChange={setTableFilters}
+            sort={paging.sort ?? { key: null, dir: "asc" }}
+            onSortChange={paging.setSort}
             onRowClick={(row) => setSelectedCustomer(row)}
             onCellEdit={(rowId, key, value) => {
               if (key === "status") {

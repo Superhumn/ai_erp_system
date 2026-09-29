@@ -1,7 +1,7 @@
 -- 0072_list_indexes
 --
 -- Indexes behind the high-volume list screens (orders, invoices, transactions,
--- customers, purchase orders). Without them every list, filter and customer
+-- customers, purchase orders) and their sortable columns. Without them every list, filter and customer
 -- lookup scans the whole table: ~1 s per lookup at 1M orders.
 --
 -- Backed by drizzle/schema.ts. Re-runnable: each index is created only when
@@ -32,6 +32,10 @@ CALL `_migrate_0072_add_index`('orders', 'idx_orders_customer_created', '`custom
 --> statement-breakpoint
 CALL `_migrate_0072_add_index`('orders', 'idx_orders_status_created', '`status`, `createdAt`');
 --> statement-breakpoint
+CALL `_migrate_0072_add_index`('orders', 'idx_orders_order_date', '`orderDate`');
+--> statement-breakpoint
+CALL `_migrate_0072_add_index`('orders', 'idx_orders_total', '`totalAmount`');
+--> statement-breakpoint
 CALL `_migrate_0072_add_index`('invoices', 'idx_invoices_created', '`createdAt`');
 --> statement-breakpoint
 CALL `_migrate_0072_add_index`('invoices', 'idx_invoices_company_created', '`companyId`, `createdAt`');
@@ -45,6 +49,8 @@ CALL `_migrate_0072_add_index`('transactions', 'idx_transactions_date', '`date`'
 CALL `_migrate_0072_add_index`('transactions', 'idx_transactions_company_date', '`companyId`, `date`');
 --> statement-breakpoint
 CALL `_migrate_0072_add_index`('transactions', 'idx_transactions_type_date', '`type`, `date`');
+--> statement-breakpoint
+CALL `_migrate_0072_add_index`('transactions', 'idx_transactions_total', '`totalAmount`');
 --> statement-breakpoint
 CALL `_migrate_0072_add_index`('purchase_orders', 'idx_po_created', '`createdAt`');
 --> statement-breakpoint

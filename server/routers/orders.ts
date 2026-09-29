@@ -1,5 +1,5 @@
 // appRouter.orders — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
-import { LEGACY_LIST_CAP, MAX_PAGE_LIMIT } from "../listPaging";
+import { MAX_PAGE_LIMIT, ORDER_SORTS } from "../listPaging";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router } from "../_core/trpc";
@@ -20,13 +20,14 @@ export const ordersRouter = router({
         status: z.string().optional(),
         customerId: z.number().optional(),
       }).optional())
-      // Newest LEGACY_LIST_CAP rows; the Orders screen pages through `listPaged` instead.
-      .query(({ input, ctx }) => db.getOrders(ctx.scope, { status: input?.status, customerId: input?.customerId, limit: LEGACY_LIST_CAP })),
+      .query(({ input, ctx }) => db.getOrders(ctx.scope, { status: input?.status, customerId: input?.customerId })),
     // One page (newest first) plus the total for the same filters.
     listPaged: scopedInternalProcedure
       .input(z.object({
         status: z.string().optional(),
         customerId: z.number().optional(),
+        sortBy: z.enum(ORDER_SORTS).optional(),
+        sortDir: z.enum(["asc", "desc"]).optional(),
         search: z.string().max(200).optional(),
         limit: z.number().int().min(1).max(MAX_PAGE_LIMIT).optional(),
         offset: z.number().int().min(0).optional(),

@@ -1,5 +1,5 @@
 // appRouter.customers — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
-import { LEGACY_LIST_CAP, MAX_PAGE_LIMIT } from "../listPaging";
+import { CUSTOMER_SORTS, MAX_PAGE_LIMIT } from "../listPaging";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
@@ -12,14 +12,15 @@ import { adminProcedure, scopedProcedure, createAuditLog } from "./_shared";
 // ============================================
 export const customersRouter = router({
     // Scope is derived server-side from the caller's identity (ctx.scope), never from client input.
-    // Newest LEGACY_LIST_CAP rows; the Customers screen pages through `listPaged` instead.
     list: scopedProcedure
-      .query(({ ctx }) => db.getCustomers(ctx.scope, { limit: LEGACY_LIST_CAP })),
+      .query(({ ctx }) => db.getCustomers(ctx.scope)),
     // One page (newest first) plus the total for the same filters.
     listPaged: scopedProcedure
       .input(z.object({
         status: z.string().optional(),
         source: z.enum(["shopify", "manual"]).optional(),
+        sortBy: z.enum(CUSTOMER_SORTS).optional(),
+        sortDir: z.enum(["asc", "desc"]).optional(),
         search: z.string().max(200).optional(),
         limit: z.number().int().min(1).max(MAX_PAGE_LIMIT).optional(),
         offset: z.number().int().min(0).optional(),

@@ -1,5 +1,5 @@
 import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray, ne, sum, notExists } from "drizzle-orm";
-import { containsPattern, resolvePage, type PageRequest } from "./listPaging";
+import { containsPattern, resolvePage, type PageRequest, type CUSTOMER_SORTS, type ORDER_SORTS, type TRANSACTION_SORTS } from "./listPaging";
 import type { Customer, Order, Transaction } from "../drizzle/schema";
 import { COGS_KEYWORDS, COGS_REFERENCE_TYPES } from "../shared/cogs";
 import { drizzle } from "drizzle-orm/mysql2";
@@ -767,25 +767,24 @@ export async function getCompanyStructure() {
 
 // Pass a request's `ctx.scope` to restrict results to the caller's visible entities.
 // Omit `scope` for trusted internal/system callers that need full access.
-// `limit` keeps the newest N rows; screens pass LEGACY_LIST_CAP, internal callers omit it.
-export async function getCustomers(scope?: Scope, opts?: { limit?: number }) {
+export async function getCustomers(scope?: Scope) {
   const db = await getDb();
   if (!db) return [];
   const ids = scope ? scopeCompanyIds(scope) : null;
-  if (ids && ids.length === 0) return []; // scoped user with no visible entities
-  const query = db.select().from(customers)
-    .where(ids ? inArray(customers.companyId, ids) : undefined)
-    .orderBy(desc(customers.createdAt));
-  return opts?.limit ? query.limit(opts.limit) : query;
+  if (ids) {
+    if (ids.length === 0) return []; // scoped user with no visible entities
+    return db.select().from(customers).where(inArray(customers.companyId, ids)).orderBy(desc(customers.createdAt));
+  }
+  return db.select().from(customers).orderBy(desc(customers.createdAt));
 }
 
 /**
  * One page of customers, newest first, plus the total matching the same filters.
- * `search` matches name or email. Entity scope narrows before any filter.
+ * `search` matches name, email, phone, city, state or country. Entity scope narrows first.
  */
 export async function getCustomersPaged(
   scope: Scope | undefined,
-  filters: PageRequest & { search?: string; status?: string; source?: "shopify" | "manual" } = {},
+  filters: PageRequest & { search?: string; status?: string; source?: "shopify" | "manual"; sortBy?: (typeof CUSTOMER_SORTS)[number] } = {},
 ) {
   const db = await getDb();
   if (!db) return { rows: [] as Customer[], total: 0 };
@@ -800,11 +799,20 @@ export async function getCustomersPaged(
   if (filters.source === "shopify") conditions.push(sql`${customers.shopifyCustomerId} IS NOT NULL`);
   if (filters.source === "manual") conditions.push(isNull(customers.shopifyCustomerId));
   const pattern = containsPattern(filters.search);
-  if (pattern) conditions.push(or(like(customers.name, pattern), like(customers.email, pattern))!);
+  if (pattern) {
+    conditions.push(or(
+      like(customers.name, pattern), like(customers.email, pattern), like(customers.phone, pattern),
+      like(customers.city, pattern), like(customers.state, pattern), like(customers.country, pattern),
+    )!);
+  }
   const where = conditions.length > 0 ? and(...conditions) : undefined;
   const { limit, offset } = resolvePage(filters);
+  const sortCol = { name: customers.name, email: customers.email, lastSyncedAt: customers.lastSyncedAt, createdAt: customers.createdAt }[filters.sortBy ?? "createdAt"] ?? customers.createdAt;
+  const dir = filters.sortBy && filters.sortDir === "asc" ? asc : desc;
   const [rows, [{ value: total }]] = await Promise.all([
-    db.select().from(customers).where(where).orderBy(desc(customers.createdAt), desc(customers.id)).limit(limit).offset(offset),
+    // id is the tiebreak so rows can't shuffle between pages when the sort column ties; it
+    // runs in the same direction so MySQL can walk the (sortCol, id) index instead of sorting.
+    db.select().from(customers).where(where).orderBy(dir(sortCol), dir(customers.id)).limit(limit).offset(offset),
     db.select({ value: count() }).from(customers).where(where),
   ]);
   return { rows, total: Number(total) };
@@ -1085,8 +1093,7 @@ export async function updateAccount(id: number, data: Partial<InsertAccount>) {
 
 // Pass `ctx.scope` to restrict to the caller's visible entities. `filters` are non-security
 // refinements (status/customerId, and companyId for trusted internal callers).
-// `limit` keeps the newest N rows; screens pass LEGACY_LIST_CAP, internal callers omit it.
-export async function getInvoices(scope?: Scope, filters?: { companyId?: number; status?: string; customerId?: number; limit?: number }) {
+export async function getInvoices(scope?: Scope, filters?: { companyId?: number; status?: string; customerId?: number }) {
   const db = await getDb();
   if (!db) return [];
 
@@ -1125,11 +1132,11 @@ export async function getInvoices(scope?: Scope, filters?: { companyId?: number;
       email: customers.email,
     },
   }).from(invoices).leftJoin(customers, eq(invoices.customerId, customers.id));
-
-  const query = baseQuery
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(desc(invoices.createdAt));
-  return filters?.limit ? query.limit(filters.limit) : query;
+  
+  if (conditions.length > 0) {
+    return baseQuery.where(and(...conditions)).orderBy(desc(invoices.createdAt));
+  }
+  return baseQuery.orderBy(desc(invoices.createdAt));
 }
 
 /**
@@ -1322,8 +1329,7 @@ export async function updatePayment(id: number, data: Partial<InsertPayment>) {
 // FINANCE - TRANSACTIONS
 // ============================================
 
-// `limit` keeps the newest N rows; screens pass LEGACY_LIST_CAP, internal callers omit it.
-export async function getTransactions(scope?: Scope, filters?: { companyId?: number; type?: string; status?: string; limit?: number }) {
+export async function getTransactions(scope?: Scope, filters?: { companyId?: number; type?: string; status?: string }) {
   const db = await getDb();
   if (!db) return [];
 
@@ -1337,19 +1343,19 @@ export async function getTransactions(scope?: Scope, filters?: { companyId?: num
   if (filters?.type) conditions.push(eq(transactions.type, filters.type as any));
   if (filters?.status) conditions.push(eq(transactions.status, filters.status as any));
   
-  const query = db.select().from(transactions)
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(desc(transactions.date));
-  return filters?.limit ? query.limit(filters.limit) : query;
+  if (conditions.length > 0) {
+    return db.select().from(transactions).where(and(...conditions)).orderBy(desc(transactions.date));
+  }
+  return db.select().from(transactions).orderBy(desc(transactions.date));
 }
 
 /**
  * One page of transactions, most recent date first, plus the total matching the same
- * filters. `search` matches transaction number or description.
+ * filters. `search` matches transaction number, description or reference type.
  */
 export async function getTransactionsPaged(
   scope: Scope | undefined,
-  filters: PageRequest & { search?: string; type?: string; status?: string; cogsOnly?: boolean } = {},
+  filters: PageRequest & { search?: string; type?: string; status?: string; cogsOnly?: boolean; sortBy?: (typeof TRANSACTION_SORTS)[number] } = {},
 ) {
   const db = await getDb();
   if (!db) return { rows: [] as Transaction[], total: 0 };
@@ -1369,11 +1375,17 @@ export async function getTransactionsPaged(
     )!);
   }
   const pattern = containsPattern(filters.search);
-  if (pattern) conditions.push(or(like(transactions.transactionNumber, pattern), like(transactions.description, pattern))!);
+  if (pattern) {
+    conditions.push(or(
+      like(transactions.transactionNumber, pattern), like(transactions.description, pattern), like(transactions.referenceType, pattern),
+    )!);
+  }
   const where = conditions.length > 0 ? and(...conditions) : undefined;
   const { limit, offset } = resolvePage(filters);
+  const sortCol = { date: transactions.date, totalAmount: transactions.totalAmount }[filters.sortBy ?? "date"] ?? transactions.date;
+  const dir = filters.sortBy && filters.sortDir === "asc" ? asc : desc;
   const [rows, [{ value: total }]] = await Promise.all([
-    db.select().from(transactions).where(where).orderBy(desc(transactions.date), desc(transactions.id)).limit(limit).offset(offset),
+    db.select().from(transactions).where(where).orderBy(dir(sortCol), dir(transactions.id)).limit(limit).offset(offset),
     db.select({ value: count() }).from(transactions).where(where),
   ]);
   return { rows, total: Number(total) };
@@ -1423,8 +1435,7 @@ export async function getAccountByName(name: string, companyId?: number) {
 
 // Pass a request's `ctx.scope` to restrict to the caller's visible entities. `filters` are
 // non-security refinements (status/customerId, and companyId for trusted internal callers).
-// `limit` keeps the newest N rows; screens pass LEGACY_LIST_CAP, internal callers omit it.
-export async function getOrders(scope?: Scope, filters?: { companyId?: number; status?: string; customerId?: number; limit?: number }) {
+export async function getOrders(scope?: Scope, filters?: { companyId?: number; status?: string; customerId?: number }) {
   const db = await getDb();
   if (!db) return [];
 
@@ -1438,10 +1449,10 @@ export async function getOrders(scope?: Scope, filters?: { companyId?: number; s
   if (filters?.status) conditions.push(eq(orders.status, filters.status as any));
   if (filters?.customerId) conditions.push(eq(orders.customerId, filters.customerId));
 
-  const query = db.select().from(orders)
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(desc(orders.createdAt));
-  return filters?.limit ? query.limit(filters.limit) : query;
+  if (conditions.length > 0) {
+    return db.select().from(orders).where(and(...conditions)).orderBy(desc(orders.createdAt));
+  }
+  return db.select().from(orders).orderBy(desc(orders.createdAt));
 }
 
 /**
@@ -1450,7 +1461,7 @@ export async function getOrders(scope?: Scope, filters?: { companyId?: number; s
  */
 export async function getOrdersPaged(
   scope: Scope | undefined,
-  filters: PageRequest & { search?: string; status?: string; customerId?: number } = {},
+  filters: PageRequest & { search?: string; status?: string; customerId?: number; sortBy?: (typeof ORDER_SORTS)[number] } = {},
 ) {
   const db = await getDb();
   const empty = { rows: [] as (Order & { customerName: string | null })[], total: 0 };
@@ -1467,12 +1478,14 @@ export async function getOrdersPaged(
   if (pattern) conditions.push(or(like(orders.orderNumber, pattern), like(customers.name, pattern))!);
   const where = conditions.length > 0 ? and(...conditions) : undefined;
   const { limit, offset } = resolvePage(filters);
+  const sortCol = { createdAt: orders.createdAt, orderDate: orders.orderDate, totalAmount: orders.totalAmount }[filters.sortBy ?? "createdAt"] ?? orders.createdAt;
+  const dir = filters.sortBy && filters.sortDir === "asc" ? asc : desc;
   const [rows, [{ value: total }]] = await Promise.all([
     db.select({ order: orders, customerName: customers.name })
       .from(orders)
       .leftJoin(customers, eq(orders.customerId, customers.id))
       .where(where)
-      .orderBy(desc(orders.createdAt), desc(orders.id))
+      .orderBy(dir(sortCol), dir(orders.id))
       .limit(limit)
       .offset(offset),
     // The customer join is only needed to match a search on customer name; without it

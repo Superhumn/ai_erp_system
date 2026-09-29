@@ -4,22 +4,24 @@ import { lastPage } from "@/lib/paging";
 const SEARCH_DEBOUNCE_MS = 300;
 
 /**
- * Page, page size and debounced search for a server-paged list. Changing the search or
- * any value in `filterKey` returns to the first page. Pass the returned `limit`/`offset`/
- * `search` straight to a `listPaged` query, then call `clampTo(total)` with its result.
+ * Page, page size, sort and debounced search for a server-paged list. Changing the search,
+ * the sort or any value in `filterKey` returns to the first page. Pass `query` (plus the
+ * page's own sortBy mapping of `sort.key`) to a `listPaged` query, then call
+ * `clampTo(total)` with its result.
  */
 export function usePagedList(filterKey = "", initialPageSize = 50) {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSizeState] = useState(initialPageSize);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setSearch(searchInput.trim()), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  useEffect(() => setPage(0), [search, filterKey]);
+  useEffect(() => setPage(0), [search, filterKey, sort]);
 
   const setPageSize = (n: number) => {
     setPageSizeState(n);
@@ -38,5 +40,5 @@ export function usePagedList(filterKey = "", initialPageSize = 50) {
     [page, pageSize, search],
   );
 
-  return { page, setPage, pageSize, setPageSize, searchInput, setSearchInput, query, clampTo };
+  return { page, setPage, pageSize, setPageSize, searchInput, setSearchInput, sort, setSort, query, clampTo };
 }

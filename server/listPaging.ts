@@ -5,14 +5,17 @@
 export const DEFAULT_PAGE_LIMIT = 50;
 /** Largest page a caller may request. */
 export const MAX_PAGE_LIMIT = 200;
-/**
- * Most rows the legacy `list` endpoints return. Those endpoints loaded whole tables; at
- * 1M orders the response exceeded V8's string limit and 20 concurrent loads exhausted an
- * 8 GB heap. The cap keeps the newest rows so existing screens keep working.
- */
-export const LEGACY_LIST_CAP = 10_000;
 
-export type PageRequest = { limit?: number; offset?: number };
+export type PageRequest = { limit?: number; offset?: number; sortDir?: "asc" | "desc" };
+
+/**
+ * Sortable columns per paged list. Order and transaction sorts are limited to indexed
+ * columns (migration 0072): an unindexed sort over 1M rows took 4–9 s. Customers are
+ * orders of magnitude fewer, so any displayed column is cheap to sort.
+ */
+export const ORDER_SORTS = ["createdAt", "orderDate", "totalAmount"] as const;
+export const CUSTOMER_SORTS = ["createdAt", "name", "email", "lastSyncedAt"] as const;
+export const TRANSACTION_SORTS = ["date", "totalAmount"] as const;
 
 /** Clamp a requested page to sane bounds. */
 export function resolvePage(req: PageRequest = {}): { limit: number; offset: number } {
