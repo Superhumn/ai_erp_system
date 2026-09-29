@@ -477,7 +477,8 @@ describe("finance flow", () => {
     // A global admin books one for entity 2; the entity-scoped finance user never sees it.
     await admin.transactions.create({ companyId: 2, type: "adjustment", date: today, totalAmount: "999.00" });
     const mine = await finance.transactions.list();
-    expect(db.getTransactions).toHaveBeenLastCalledWith({ mode: "entity", companyIds: [1] }, { type: undefined, status: undefined });
+    // The screen list is capped at LEGACY_LIST_CAP rows (10,000).
+    expect(db.getTransactions).toHaveBeenLastCalledWith({ mode: "entity", companyIds: [1] }, { type: undefined, status: undefined, limit: 10_000 });
     expect(mine.map((t) => [t.id, t.companyId, t.type, t.totalAmount, t.status])).toEqual([[ids.txn, 1, "journal", "125.50", "draft"]]);
     expect(await finance.transactions.list({ type: "adjustment" })).toEqual([]);
     expect(await admin.transactions.list()).toHaveLength(2);

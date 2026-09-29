@@ -1,4 +1,7 @@
 import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray, ne, sum, notExists } from "drizzle-orm";
+import { containsPattern, resolvePage, type PageRequest } from "./listPaging";
+import type { Customer, Order, Transaction } from "../drizzle/schema";
+import { COGS_KEYWORDS, COGS_REFERENCE_TYPES } from "../shared/cogs";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2";
 import { scopeAllows, scopeCompanyIds, partitionIdsByVisibility, type Scope } from "./_core/scope";
@@ -764,15 +767,47 @@ export async function getCompanyStructure() {
 
 // Pass a request's `ctx.scope` to restrict results to the caller's visible entities.
 // Omit `scope` for trusted internal/system callers that need full access.
-export async function getCustomers(scope?: Scope) {
+// `limit` keeps the newest N rows; screens pass LEGACY_LIST_CAP, internal callers omit it.
+export async function getCustomers(scope?: Scope, opts?: { limit?: number }) {
   const db = await getDb();
   if (!db) return [];
   const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids && ids.length === 0) return []; // scoped user with no visible entities
+  const query = db.select().from(customers)
+    .where(ids ? inArray(customers.companyId, ids) : undefined)
+    .orderBy(desc(customers.createdAt));
+  return opts?.limit ? query.limit(opts.limit) : query;
+}
+
+/**
+ * One page of customers, newest first, plus the total matching the same filters.
+ * `search` matches name or email. Entity scope narrows before any filter.
+ */
+export async function getCustomersPaged(
+  scope: Scope | undefined,
+  filters: PageRequest & { search?: string; status?: string; source?: "shopify" | "manual" } = {},
+) {
+  const db = await getDb();
+  if (!db) return { rows: [] as Customer[], total: 0 };
+  const conditions = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
   if (ids) {
-    if (ids.length === 0) return []; // scoped user with no visible entities
-    return db.select().from(customers).where(inArray(customers.companyId, ids)).orderBy(desc(customers.createdAt));
+    if (ids.length === 0) return { rows: [] as Customer[], total: 0 };
+    conditions.push(inArray(customers.companyId, ids));
   }
-  return db.select().from(customers).orderBy(desc(customers.createdAt));
+  if (filters.status) conditions.push(eq(customers.status, filters.status as any));
+  // Same rule as the screen's Source column: a Shopify id means it came from Shopify.
+  if (filters.source === "shopify") conditions.push(sql`${customers.shopifyCustomerId} IS NOT NULL`);
+  if (filters.source === "manual") conditions.push(isNull(customers.shopifyCustomerId));
+  const pattern = containsPattern(filters.search);
+  if (pattern) conditions.push(or(like(customers.name, pattern), like(customers.email, pattern))!);
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const { limit, offset } = resolvePage(filters);
+  const [rows, [{ value: total }]] = await Promise.all([
+    db.select().from(customers).where(where).orderBy(desc(customers.createdAt), desc(customers.id)).limit(limit).offset(offset),
+    db.select({ value: count() }).from(customers).where(where),
+  ]);
+  return { rows, total: Number(total) };
 }
 
 // Pass a request's `ctx.scope` to enforce entity visibility: a customer outside the caller's
@@ -1050,7 +1085,8 @@ export async function updateAccount(id: number, data: Partial<InsertAccount>) {
 
 // Pass `ctx.scope` to restrict to the caller's visible entities. `filters` are non-security
 // refinements (status/customerId, and companyId for trusted internal callers).
-export async function getInvoices(scope?: Scope, filters?: { companyId?: number; status?: string; customerId?: number }) {
+// `limit` keeps the newest N rows; screens pass LEGACY_LIST_CAP, internal callers omit it.
+export async function getInvoices(scope?: Scope, filters?: { companyId?: number; status?: string; customerId?: number; limit?: number }) {
   const db = await getDb();
   if (!db) return [];
 
@@ -1089,11 +1125,68 @@ export async function getInvoices(scope?: Scope, filters?: { companyId?: number;
       email: customers.email,
     },
   }).from(invoices).leftJoin(customers, eq(invoices.customerId, customers.id));
-  
-  if (conditions.length > 0) {
-    return baseQuery.where(and(...conditions)).orderBy(desc(invoices.createdAt));
+
+  const query = baseQuery
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(invoices.createdAt));
+  return filters?.limit ? query.limit(filters.limit) : query;
+}
+
+/**
+ * One page of invoices, newest first, in the same row shape as getInvoices, plus the
+ * total matching the same filters. `search` matches invoice number or customer name.
+ */
+export async function getInvoicesPaged(
+  scope: Scope | undefined,
+  filters: PageRequest & { search?: string; status?: string; customerId?: number } = {},
+) {
+  const db = await getDb();
+  if (!db) return { rows: [], total: 0 };
+  const conditions = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return { rows: [], total: 0 };
+    conditions.push(inArray(invoices.companyId, ids));
   }
-  return baseQuery.orderBy(desc(invoices.createdAt));
+  if (filters.status) conditions.push(eq(invoices.status, filters.status as any));
+  if (filters.customerId) conditions.push(eq(invoices.customerId, filters.customerId));
+  const pattern = containsPattern(filters.search);
+  if (pattern) conditions.push(or(like(invoices.invoiceNumber, pattern), like(customers.name, pattern))!);
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const { limit, offset } = resolvePage(filters);
+  const [rows, [{ value: total }]] = await Promise.all([
+    db.select({
+      id: invoices.id,
+      companyId: invoices.companyId,
+      invoiceNumber: invoices.invoiceNumber,
+      customerId: invoices.customerId,
+      type: invoices.type,
+      status: invoices.status,
+      issueDate: invoices.issueDate,
+      dueDate: invoices.dueDate,
+      subtotal: invoices.subtotal,
+      taxAmount: invoices.taxAmount,
+      discountAmount: invoices.discountAmount,
+      totalAmount: invoices.totalAmount,
+      paidAmount: invoices.paidAmount,
+      currency: invoices.currency,
+      notes: invoices.notes,
+      terms: invoices.terms,
+      createdAt: invoices.createdAt,
+      customer: { id: customers.id, name: customers.name, email: customers.email },
+    })
+      .from(invoices)
+      .leftJoin(customers, eq(invoices.customerId, customers.id))
+      .where(where)
+      .orderBy(desc(invoices.createdAt), desc(invoices.id))
+      .limit(limit)
+      .offset(offset),
+    // The customer join is only needed to match a search on customer name.
+    pattern
+      ? db.select({ value: count() }).from(invoices).leftJoin(customers, eq(invoices.customerId, customers.id)).where(where)
+      : db.select({ value: count() }).from(invoices).where(where),
+  ]);
+  return { rows, total: Number(total) };
 }
 
 export async function getInvoiceById(id: number) {
@@ -1229,7 +1322,8 @@ export async function updatePayment(id: number, data: Partial<InsertPayment>) {
 // FINANCE - TRANSACTIONS
 // ============================================
 
-export async function getTransactions(scope?: Scope, filters?: { companyId?: number; type?: string; status?: string }) {
+// `limit` keeps the newest N rows; screens pass LEGACY_LIST_CAP, internal callers omit it.
+export async function getTransactions(scope?: Scope, filters?: { companyId?: number; type?: string; status?: string; limit?: number }) {
   const db = await getDb();
   if (!db) return [];
 
@@ -1243,10 +1337,46 @@ export async function getTransactions(scope?: Scope, filters?: { companyId?: num
   if (filters?.type) conditions.push(eq(transactions.type, filters.type as any));
   if (filters?.status) conditions.push(eq(transactions.status, filters.status as any));
   
-  if (conditions.length > 0) {
-    return db.select().from(transactions).where(and(...conditions)).orderBy(desc(transactions.date));
+  const query = db.select().from(transactions)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(transactions.date));
+  return filters?.limit ? query.limit(filters.limit) : query;
+}
+
+/**
+ * One page of transactions, most recent date first, plus the total matching the same
+ * filters. `search` matches transaction number or description.
+ */
+export async function getTransactionsPaged(
+  scope: Scope | undefined,
+  filters: PageRequest & { search?: string; type?: string; status?: string; cogsOnly?: boolean } = {},
+) {
+  const db = await getDb();
+  if (!db) return { rows: [] as Transaction[], total: 0 };
+  const conditions = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return { rows: [] as Transaction[], total: 0 };
+    conditions.push(inArray(transactions.companyId, ids));
   }
-  return db.select().from(transactions).orderBy(desc(transactions.date));
+  if (filters.type) conditions.push(eq(transactions.type, filters.type as any));
+  if (filters.status) conditions.push(eq(transactions.status, filters.status as any));
+  if (filters.cogsOnly) {
+    // Same rule as shared/cogs.ts isCOGSTransaction (column collation is case-insensitive).
+    conditions.push(or(
+      ...COGS_KEYWORDS.map((kw) => like(transactions.description, `%${kw}%`)),
+      inArray(transactions.referenceType, [...COGS_REFERENCE_TYPES]),
+    )!);
+  }
+  const pattern = containsPattern(filters.search);
+  if (pattern) conditions.push(or(like(transactions.transactionNumber, pattern), like(transactions.description, pattern))!);
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const { limit, offset } = resolvePage(filters);
+  const [rows, [{ value: total }]] = await Promise.all([
+    db.select().from(transactions).where(where).orderBy(desc(transactions.date), desc(transactions.id)).limit(limit).offset(offset),
+    db.select({ value: count() }).from(transactions).where(where),
+  ]);
+  return { rows, total: Number(total) };
 }
 
 export async function createTransaction(data: InsertTransaction) {
@@ -1293,7 +1423,8 @@ export async function getAccountByName(name: string, companyId?: number) {
 
 // Pass a request's `ctx.scope` to restrict to the caller's visible entities. `filters` are
 // non-security refinements (status/customerId, and companyId for trusted internal callers).
-export async function getOrders(scope?: Scope, filters?: { companyId?: number; status?: string; customerId?: number }) {
+// `limit` keeps the newest N rows; screens pass LEGACY_LIST_CAP, internal callers omit it.
+export async function getOrders(scope?: Scope, filters?: { companyId?: number; status?: string; customerId?: number; limit?: number }) {
   const db = await getDb();
   if (!db) return [];
 
@@ -1307,10 +1438,50 @@ export async function getOrders(scope?: Scope, filters?: { companyId?: number; s
   if (filters?.status) conditions.push(eq(orders.status, filters.status as any));
   if (filters?.customerId) conditions.push(eq(orders.customerId, filters.customerId));
 
-  if (conditions.length > 0) {
-    return db.select().from(orders).where(and(...conditions)).orderBy(desc(orders.createdAt));
+  const query = db.select().from(orders)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(orders.createdAt));
+  return filters?.limit ? query.limit(filters.limit) : query;
+}
+
+/**
+ * One page of orders, newest first, with the customer name joined in, plus the total
+ * matching the same filters. `search` matches order number or customer name.
+ */
+export async function getOrdersPaged(
+  scope: Scope | undefined,
+  filters: PageRequest & { search?: string; status?: string; customerId?: number } = {},
+) {
+  const db = await getDb();
+  const empty = { rows: [] as (Order & { customerName: string | null })[], total: 0 };
+  if (!db) return empty;
+  const conditions = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return empty;
+    conditions.push(inArray(orders.companyId, ids));
   }
-  return db.select().from(orders).orderBy(desc(orders.createdAt));
+  if (filters.status) conditions.push(eq(orders.status, filters.status as any));
+  if (filters.customerId) conditions.push(eq(orders.customerId, filters.customerId));
+  const pattern = containsPattern(filters.search);
+  if (pattern) conditions.push(or(like(orders.orderNumber, pattern), like(customers.name, pattern))!);
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const { limit, offset } = resolvePage(filters);
+  const [rows, [{ value: total }]] = await Promise.all([
+    db.select({ order: orders, customerName: customers.name })
+      .from(orders)
+      .leftJoin(customers, eq(orders.customerId, customers.id))
+      .where(where)
+      .orderBy(desc(orders.createdAt), desc(orders.id))
+      .limit(limit)
+      .offset(offset),
+    // The customer join is only needed to match a search on customer name; without it
+    // the count reads an index instead of joining every order.
+    pattern
+      ? db.select({ value: count() }).from(orders).leftJoin(customers, eq(orders.customerId, customers.id)).where(where)
+      : db.select({ value: count() }).from(orders).where(where),
+  ]);
+  return { rows: rows.map((r) => ({ ...r.order, customerName: r.customerName })), total: Number(total) };
 }
 
 // Pass `ctx.scope` to enforce entity visibility: an order outside the caller's scope is reported

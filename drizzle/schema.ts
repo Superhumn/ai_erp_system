@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean, json, bigint, uniqueIndex, serial, type AnyMySqlColumn } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean, json, bigint, index, uniqueIndex, serial, type AnyMySqlColumn } from "drizzle-orm/mysql-core";
 import { relations } from "drizzle-orm";
 import type { NoteParseResult, NoteAppliedItem } from "../shared/notes";
 
@@ -357,7 +357,11 @@ export const customers = mysqlTable("customers", {
   hubspotData: text("hubspotData"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (t) => ({
+  // Migration 0072: list screens sort by createdAt and filter by these columns.
+  createdIdx: index("idx_customers_created").on(t.createdAt),
+  companyCreatedIdx: index("idx_customers_company_created").on(t.companyId, t.createdAt),
+}));
 
 export const vendors = mysqlTable("vendors", {
   id: int("id").autoincrement().primaryKey(),
@@ -467,7 +471,13 @@ export const invoices = mysqlTable("invoices", {
   approvedAt: timestamp("approvedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (t) => ({
+  // Migration 0072: list screens sort by createdAt and filter by these columns.
+  createdIdx: index("idx_invoices_created").on(t.createdAt),
+  companyCreatedIdx: index("idx_invoices_company_created").on(t.companyId, t.createdAt),
+  customerCreatedIdx: index("idx_invoices_customer_created").on(t.customerId, t.createdAt),
+  statusCreatedIdx: index("idx_invoices_status_created").on(t.status, t.createdAt),
+}));
 
 export const invoiceItems = mysqlTable("invoice_items", {
   id: int("id").autoincrement().primaryKey(),
@@ -531,7 +541,12 @@ export const transactions = mysqlTable("transactions", {
   postedAt: timestamp("postedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (t) => ({
+  // Migration 0072: the transactions list sorts by date and filters by these columns.
+  dateIdx: index("idx_transactions_date").on(t.date),
+  companyDateIdx: index("idx_transactions_company_date").on(t.companyId, t.date),
+  typeDateIdx: index("idx_transactions_type_date").on(t.type, t.date),
+}));
 
 export const transactionLines = mysqlTable("transaction_lines", {
   id: int("id").autoincrement().primaryKey(),
@@ -573,7 +588,13 @@ export const orders = mysqlTable("orders", {
   createdBy: int("createdBy").references(() => users.id),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (t) => ({
+  // Migration 0072: list screens sort by createdAt and filter by these columns.
+  createdIdx: index("idx_orders_created").on(t.createdAt),
+  companyCreatedIdx: index("idx_orders_company_created").on(t.companyId, t.createdAt),
+  customerCreatedIdx: index("idx_orders_customer_created").on(t.customerId, t.createdAt),
+  statusCreatedIdx: index("idx_orders_status_created").on(t.status, t.createdAt),
+}));
 
 export const orderItems = mysqlTable("order_items", {
   id: int("id").autoincrement().primaryKey(),
@@ -721,7 +742,13 @@ export const purchaseOrders = mysqlTable("purchase_orders", {
   approvedAt: timestamp("approvedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (t) => ({
+  // Migration 0072: list screens sort by createdAt and filter by these columns.
+  createdIdx: index("idx_po_created").on(t.createdAt),
+  companyCreatedIdx: index("idx_po_company_created").on(t.companyId, t.createdAt),
+  vendorCreatedIdx: index("idx_po_vendor_created").on(t.vendorId, t.createdAt),
+  statusCreatedIdx: index("idx_po_status_created").on(t.status, t.createdAt),
+}));
 
 export const purchaseOrderItems = mysqlTable("purchase_order_items", {
   id: int("id").autoincrement().primaryKey(),

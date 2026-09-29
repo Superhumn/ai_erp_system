@@ -1,4 +1,5 @@
 // appRouter.invoices — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
+import { LEGACY_LIST_CAP, MAX_PAGE_LIMIT } from "../listPaging";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router } from "../_core/trpc";
@@ -40,7 +41,20 @@ export const invoicesRouter = router({
         customerId: z.number().optional(),
       }).optional())
       .query(async ({ input, ctx }) =>
-        db.getInvoices(assertNonEmptyScope(await resolveRequestScope(ctx.user)), { status: input?.status, customerId: input?.customerId }),
+        // Newest LEGACY_LIST_CAP rows; the Invoices screen pages through `listPaged` instead.
+        db.getInvoices(assertNonEmptyScope(await resolveRequestScope(ctx.user)), { status: input?.status, customerId: input?.customerId, limit: LEGACY_LIST_CAP }),
+      ),
+    // One page (newest first) plus the total for the same filters.
+    listPaged: financeProcedure
+      .input(z.object({
+        status: z.string().optional(),
+        customerId: z.number().optional(),
+        search: z.string().max(200).optional(),
+        limit: z.number().int().min(1).max(MAX_PAGE_LIMIT).optional(),
+        offset: z.number().int().min(0).optional(),
+      }).optional())
+      .query(async ({ input, ctx }) =>
+        db.getInvoicesPaged(assertNonEmptyScope(await resolveRequestScope(ctx.user)), input ?? {}),
       ),
     get: scopedFinanceProcedure
       .input(z.object({ id: z.number() }))

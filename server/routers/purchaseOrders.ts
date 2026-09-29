@@ -1,4 +1,5 @@
 // appRouter.purchaseOrders — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
+import { LEGACY_LIST_CAP, MAX_PAGE_LIMIT } from "../listPaging";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router } from "../_core/trpc";
@@ -21,7 +22,8 @@ export const purchaseOrdersRouter = router({
         status: z.string().optional(),
         vendorId: z.number().optional(),
       }).optional())
-      .query(({ input }) => db.getPurchaseOrders(input)),
+      // Newest LEGACY_LIST_CAP rows; the PO screen pages through `listPaged` instead.
+      .query(({ input }) => db.getPurchaseOrders({ ...input, limit: LEGACY_LIST_CAP })),
     // Entity-scoped like listPaged: a PO outside the caller's scope reads as
     // not found so cross-entity existence isn't leaked through a by-id lookup.
     get: scopedOpsProcedure

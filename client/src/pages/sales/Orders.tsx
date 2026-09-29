@@ -1,5 +1,7 @@
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
+import { ListPager } from "@/components/ListPager";
+import { usePagedList } from "@/hooks/usePagedList";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -148,7 +150,16 @@ export default function Orders() {
     applyLineItems(lineItems.map((line, i) => (i === index ? { ...line, ...patch } : line)));
 
   const utils = trpc.useUtils();
-  const { data: orders, isLoading } = trpc.orders.list.useQuery();
+  // Paged on the server: a full-table load failed outright at ~1M orders.
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const paging = usePagedList(statusFilter);
+  const { data: ordersPage, isLoading } = trpc.orders.listPaged.useQuery({
+    ...paging.query,
+    status: statusFilter === "all" ? undefined : statusFilter,
+  });
+  const orders = ordersPage?.rows;
+  const totalOrders = ordersPage?.total ?? 0;
+  useEffect(() => paging.clampTo(ordersPage?.total), [ordersPage?.total]);
   const { data: customers } = trpc.customers.list.useQuery();
   const createCustomer = trpc.customers.create.useMutation();
 
@@ -156,7 +167,7 @@ export default function Orders() {
     onSuccess: (data) => {
       toast.success(`Deleted ${data.deleted} order(s)`);
       setSelectedOrders(new Set());
-      utils.orders.list.invalidate();
+      utils.orders.invalidate();
     },
     onError: (err: any) => toast.error(err.message),
   });
@@ -168,7 +179,7 @@ export default function Orders() {
       setFormData({ customerId: 0, subtotal: "", tax: "", total: "" });
       setLineItems([]);
       setNewCustomerName("");
-      utils.orders.list.invalidate();
+      utils.orders.invalidate();
       utils.customers.list.invalidate();
     },
     onError: (err: any) => toast.error(err.message),
@@ -176,7 +187,7 @@ export default function Orders() {
 
   const updateOrder = trpc.orders.update.useMutation({
     onSuccess: () => {
-      utils.orders.list.invalidate();
+      utils.orders.invalidate();
     },
     onError: (err: any) => toast.error(err.message),
   });
@@ -186,28 +197,22 @@ export default function Orders() {
       toast.success("Order deleted");
       setOrderToDelete(null);
       setSelectedOrder(null);
-      utils.orders.list.invalidate();
+      utils.orders.invalidate();
     },
     onError: (err: any) => toast.error(err.message),
   });
 
-  // Enrich orders for dense display: resolve customer name and item count.
-  const customerById = useMemo(() => {
-    const map = new Map<number, string>();
-    (customers || []).forEach((c: any) => map.set(c.id, c.name));
-    return map;
-  }, [customers]);
-
+  // Enrich orders for dense display: the server joins the customer name in.
   const enrichedOrders = useMemo(
     () =>
       (orders || []).map((o: any) => ({
         ...o,
         _customerName: o.customerId
-          ? customerById.get(o.customerId) || `Customer #${o.customerId}`
+          ? o.customerName || `Customer #${o.customerId}`
           : "—",
         _itemCount: o.items?.length ?? o.itemCount ?? null,
       })),
-    [orders, customerById],
+    [orders],
   );
 
   // Dense column set: most fields visible at a glance.
@@ -469,6 +474,10 @@ export default function Orders() {
             showSearch
             showFilters
             showExport
+            searchValue={paging.searchInput}
+            onSearchChange={paging.setSearchInput}
+            filterValues={{ status: statusFilter }}
+            onFiltersChange={(f) => setStatusFilter(f.status || "all")}
             onRowClick={(row) => setSelectedOrder(row)}
             expandedRowId={selectedOrder?.id ?? null}
             selectedRows={selectedOrders}
@@ -481,6 +490,13 @@ export default function Orders() {
               }
             }}
             compact
+          />
+          <ListPager
+            page={paging.page}
+            pageSize={paging.pageSize}
+            total={totalOrders}
+            onPageChange={paging.setPage}
+            onPageSizeChange={paging.setPageSize}
           />
         </CardContent>
       </Card>

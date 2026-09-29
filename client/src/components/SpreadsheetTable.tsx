@@ -95,6 +95,12 @@ export interface SpreadsheetTableProps<T extends { id: number | string }> {
   enableInlineCreate?: boolean;
   onInlineCreate?: (rowData: Partial<T>) => void | Promise<void>;
   inlineCreatePlaceholder?: string;
+  // Server-side search/filters: when a handler is given, the box and filter dropdowns
+  // report to it and `data` is shown as-is (the server already applied them).
+  searchValue?: string;
+  onSearchChange?: (value: string) => void;
+  filterValues?: Record<string, string>;
+  onFiltersChange?: (filters: Record<string, string>) => void;
 }
 
 function formatDate(value: string | Date | null | undefined): string {
@@ -136,11 +142,21 @@ export function SpreadsheetTable<T extends { id: number | string }>({
   enableInlineCreate = false,
   onInlineCreate,
   inlineCreatePlaceholder = "Click to add...",
+  searchValue,
+  onSearchChange,
+  filterValues,
+  onFiltersChange,
 }: SpreadsheetTableProps<T>) {
-  const [search, setSearch] = useState("");
+  const [localSearch, setLocalSearch] = useState("");
+  const serverSearch = onSearchChange !== undefined;
+  const search = serverSearch ? searchValue ?? "" : localSearch;
+  const setSearch = serverSearch ? onSearchChange : setLocalSearch;
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-  const [filters, setFilters] = useState<Record<string, string>>({});
+  const [localFilters, setLocalFilters] = useState<Record<string, string>>({});
+  const serverFilters = onFiltersChange !== undefined;
+  const filters = serverFilters ? filterValues ?? {} : localFilters;
+  const setFilters = serverFilters ? onFiltersChange : setLocalFilters;
   const [editingCell, setEditingCell] = useState<{ rowId: number | string; key: string } | null>(null);
   const [editValue, setEditValue] = useState("");
   const [internalExpandedId, setInternalExpandedId] = useState<number | string | null>(null);
@@ -163,8 +179,8 @@ export function SpreadsheetTable<T extends { id: number | string }>({
   const filteredData = useMemo(() => {
     let result = [...data];
 
-    // Apply search
-    if (search) {
+    // Apply search (skipped when the server already searched)
+    if (search && !serverSearch) {
       const searchLower = search.toLowerCase();
       result = result.filter((row) =>
         columns.some((col) => {
@@ -174,8 +190,8 @@ export function SpreadsheetTable<T extends { id: number | string }>({
       );
     }
 
-    // Apply filters
-    Object.entries(filters).forEach(([key, value]) => {
+    // Apply filters (skipped when the server already filtered)
+    if (!serverFilters) Object.entries(filters).forEach(([key, value]) => {
       if (value && value !== "all") {
         result = result.filter((row) => (row as any)[key] === value);
       }
@@ -195,7 +211,7 @@ export function SpreadsheetTable<T extends { id: number | string }>({
     }
 
     return result;
-  }, [data, search, filters, sortKey, sortDir, columns]);
+  }, [data, search, filters, sortKey, sortDir, columns, serverSearch, serverFilters]);
 
   const startEdit = (rowId: number | string, key: string, currentValue: any) => {
     setEditingCell({ rowId, key });

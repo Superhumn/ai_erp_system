@@ -1,5 +1,7 @@
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
+import { ListPager } from "@/components/ListPager";
+import { usePagedList } from "@/hooks/usePagedList";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -127,7 +129,18 @@ export default function Customers() {
   });
 
   const utils = trpc.useUtils();
-  const { data: customers, isLoading } = trpc.customers.list.useQuery();
+  // Paged on the server: a full-table load grows without bound with the customer base.
+  const [tableFilters, setTableFilters] = useState<Record<string, string>>({});
+  const statusFilter = tableFilters.status && tableFilters.status !== "all" ? tableFilters.status : undefined;
+  const sourceFilter = tableFilters._source === "shopify" || tableFilters._source === "manual" ? tableFilters._source : undefined;
+  const paging = usePagedList(`${statusFilter ?? ""}|${sourceFilter ?? ""}`);
+  const { data: customersPage, isLoading } = trpc.customers.listPaged.useQuery({
+    ...paging.query,
+    status: statusFilter,
+    source: sourceFilter,
+  });
+  const customers = customersPage?.rows;
+  useEffect(() => paging.clampTo(customersPage?.total), [customersPage?.total]);
   const { data: syncStatus } = trpc.customers.getSyncStatus.useQuery();
 
   const createCustomer = trpc.customers.create.useMutation({
@@ -138,7 +151,7 @@ export default function Customers() {
         name: "", email: "", phone: "", type: "business",
         address: "", city: "", state: "", country: "", postalCode: "", notes: "",
       });
-      utils.customers.list.invalidate();
+      utils.customers.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -150,7 +163,7 @@ export default function Customers() {
       toast.success("Customer deleted");
       setCustomerToDelete(null);
       setSelectedCustomer(null);
-      utils.customers.list.invalidate();
+      utils.customers.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -158,7 +171,7 @@ export default function Customers() {
   const updateCustomer = trpc.customers.update.useMutation({
     onSuccess: () => {
       toast.success("Customer updated");
-      utils.customers.list.invalidate();
+      utils.customers.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -167,7 +180,7 @@ export default function Customers() {
     onSuccess: (result) => {
       toast.success(`Shopify sync complete: ${result.imported} imported, ${result.updated} updated`);
       setIsSyncOpen(false);
-      utils.customers.list.invalidate();
+      utils.customers.invalidate();
     },
     onError: (error) => {
       toast.error(`Shopify sync failed: ${error.message}`);
@@ -501,6 +514,10 @@ export default function Customers() {
             showSearch
             showFilters
             showExport
+            searchValue={paging.searchInput}
+            onSearchChange={paging.setSearchInput}
+            filterValues={tableFilters}
+            onFiltersChange={setTableFilters}
             onRowClick={(row) => setSelectedCustomer(row)}
             onCellEdit={(rowId, key, value) => {
               if (key === "status") {
@@ -509,6 +526,13 @@ export default function Customers() {
             }}
             expandedRowId={selectedCustomer?.id ?? null}
             compact
+          />
+          <ListPager
+            page={paging.page}
+            pageSize={paging.pageSize}
+            total={customersPage?.total ?? 0}
+            onPageChange={paging.setPage}
+            onPageSizeChange={paging.setPageSize}
           />
         </CardContent>
       </Card>
