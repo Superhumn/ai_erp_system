@@ -497,5 +497,29 @@ export const firefliesRouter = router({
       getStats: protectedProcedure.query(async () => {
         return db.getFirefliesMeetingStats();
       }),
+      // Mark meetings "skipped" without creating contacts, tasks or projects.
+      // Sync never re-imports an existing firefliesId, so a skip sticks.
+      // unskip=true moves skipped meetings back to "pending".
+      setSkipped: protectedProcedure
+        .input(z.object({
+          meetingIds: z.array(z.number().int().positive()).min(1).max(500),
+          unskip: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const from = input.unskip ? 'skipped' : 'pending';
+          const to = input.unskip ? 'pending' : 'skipped';
+          let updated = 0;
+          for (const id of Array.from(new Set(input.meetingIds))) {
+            const meeting = await db.getFirefliesMeetingById(id);
+            if (!meeting || meeting.processingStatus !== from) continue;
+            await db.updateFirefliesMeeting(id, {
+              processingStatus: to,
+              processedAt: input.unskip ? null : new Date(),
+              processedBy: input.unskip ? null : ctx.user.id,
+            });
+            updated++;
+          }
+          return { updated };
+        }),
     }),
   });

@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -27,6 +28,8 @@ import {
   X,
   ChevronDown,
   ChevronRight,
+  EyeOff,
+  Undo2,
 } from "lucide-react";
 
 export default function Meetings() {
@@ -38,6 +41,7 @@ export default function Meetings() {
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [showProcessDialog, setShowProcessDialog] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [selectedMeetingId, setSelectedMeetingId] = useState<number | null>(null);
   const [processCreateContacts, setProcessCreateContacts] = useState(true);
   const [processCreateTasks, setProcessCreateTasks] = useState(true);
@@ -157,6 +161,33 @@ export default function Meetings() {
     onError: (error) => toast.error(error.message),
   });
 
+  const skipMutation = trpc.fireflies.meetings.setSkipped.useMutation({
+    onSuccess: (data, rawVars) => {
+      const vars = rawVars as { meetingIds: number[]; unskip?: boolean };
+      const n = data.updated;
+      toast.success(vars.unskip ? `Restored ${n} meeting${n === 1 ? "" : "s"}` : `Skipped ${n} meeting${n === 1 ? "" : "s"}`);
+      setSelectedIds(new Set());
+      if (panelMeeting && vars.meetingIds.includes(panelMeeting.id)) {
+        if (vars.unskip) setPanelMeeting({ ...panelMeeting, processingStatus: "pending" });
+        else closePanel();
+      }
+      refetch();
+      refetchStats();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const skipMeetings = (meetingIds: number[]) => skipMutation.mutate({ meetingIds });
+  const unskipMeetings = (meetingIds: number[]) => skipMutation.mutate({ meetingIds, unskip: true });
+
+  const toggleSelected = (id: number) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
   const parseSafe = (json: string | null | undefined) => {
     if (!json) return null;
     try {
@@ -234,7 +265,8 @@ export default function Meetings() {
 
   const filtered = meetingsWithParsed
     .filter((m: any) => {
-      if (statusFilter !== "all" && m.processingStatus !== statusFilter) return false;
+      // "All" hides skipped meetings; pick the Skipped filter to see them.
+      if (statusFilter === "all" ? m.processingStatus === "skipped" : m.processingStatus !== statusFilter) return false;
       if (!search) return true;
       const q = search.toLowerCase();
       const title = (m.title || "").toLowerCase();
@@ -550,6 +582,43 @@ export default function Meetings() {
         </div>
       )}
 
+      {/* ── Bulk actions for selected pending meetings ── */}
+      {(() => {
+        const pendingVisible = filtered.filter((m: any) => m.processingStatus === "pending").map((m: any) => m.id as number);
+        if (pendingVisible.length === 0) return null;
+        const selectedVisible = pendingVisible.filter((id) => selectedIds.has(id));
+        const allSelected = selectedVisible.length === pendingVisible.length;
+        return (
+          <div className="flex items-center gap-2 text-xs">
+            <Checkbox
+              checked={allSelected ? true : selectedVisible.length > 0 ? "indeterminate" : false}
+              onCheckedChange={() => setSelectedIds(allSelected ? new Set() : new Set(pendingVisible))}
+              aria-label="Select all pending meetings"
+            />
+            <span className="text-muted-foreground">
+              {selectedVisible.length > 0 ? `${selectedVisible.length} selected` : "Select pending"}
+            </span>
+            {selectedVisible.length > 0 && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs"
+                  disabled={skipMutation.isPending}
+                  onClick={() => skipMeetings(selectedVisible)}
+                >
+                  {skipMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <EyeOff className="h-3 w-3 mr-1" />}
+                  Skip {selectedVisible.length}
+                </Button>
+                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setSelectedIds(new Set())}>
+                  Clear
+                </Button>
+              </>
+            )}
+          </div>
+        );
+      })()}
+
       {/* ── Dense meeting list ── */}
       {isLoading ? (
         <div className="flex items-center justify-center py-8">
@@ -582,6 +651,15 @@ export default function Meetings() {
               >
                 {/* ── Main row ── */}
                 <div className="flex items-start gap-2 px-3 py-2">
+                  {meeting.processingStatus === "pending" && (
+                    <div className="pt-0.5" onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={selectedIds.has(meeting.id)}
+                        onCheckedChange={() => toggleSelected(meeting.id)}
+                        aria-label={`Select ${meeting.title || "meeting"}`}
+                      />
+                    </div>
+                  )}
                   {/* Content */}
                   <div className="min-w-0 flex-1">
                     {/* Title row */}
@@ -607,6 +685,21 @@ export default function Meetings() {
                         >
                           <Zap className="h-2.5 w-2.5 mr-0.5" />
                           Process
+                        </Button>
+                      )}
+                      {meeting.processingStatus === "pending" && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-5 px-2 text-[10px] shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                          disabled={skipMutation.isPending}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            skipMeetings([meeting.id]);
+                          }}
+                        >
+                          <EyeOff className="h-2.5 w-2.5 mr-0.5" />
+                          Skip
                         </Button>
                       )}
                       {meeting.transcriptUrl && (
@@ -871,8 +964,32 @@ export default function Meetings() {
                   )}
                   {m.processingStatus === "pending" && (
                     <Button
+                      variant="outline"
                       size="sm"
                       className="ml-auto text-xs"
+                      disabled={skipMutation.isPending}
+                      onClick={() => skipMeetings([m.id])}
+                    >
+                      <EyeOff className="mr-1.5 h-3.5 w-3.5" />
+                      Skip
+                    </Button>
+                  )}
+                  {m.processingStatus === "skipped" && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="ml-auto text-xs"
+                      disabled={skipMutation.isPending}
+                      onClick={() => unskipMeetings([m.id])}
+                    >
+                      <Undo2 className="mr-1.5 h-3.5 w-3.5" />
+                      Restore to Pending
+                    </Button>
+                  )}
+                  {m.processingStatus === "pending" && (
+                    <Button
+                      size="sm"
+                      className="text-xs"
                       onClick={() => openProcessDialog(m)}
                     >
                       <Zap className="mr-1.5 h-3.5 w-3.5" />
