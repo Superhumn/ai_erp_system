@@ -5,6 +5,7 @@ import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { listAllTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "../_core/fireflies";
 import { queueFirefliesActionItemsForApproval } from "../firefliesSyncService";
+import { internalProcedure } from "./_shared";
 
 // ============================================
 // FIREFLIES INTEGRATION
@@ -497,5 +498,20 @@ export const firefliesRouter = router({
       getStats: protectedProcedure.query(async () => {
         return db.getFirefliesMeetingStats();
       }),
+      // Mark meetings "skipped" without creating contacts, tasks or projects.
+      // Sync never re-imports an existing firefliesId, so a skip sticks.
+      // unskip=true moves skipped meetings back to "pending".
+      setSkipped: internalProcedure
+        .input(z.object({
+          meetingIds: z.array(z.number().int().positive()).min(1).max(500),
+          unskip: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const ids = Array.from(new Set(input.meetingIds));
+          const updated = input.unskip
+            ? await db.transitionFirefliesMeetingStatus(ids, 'skipped', { processingStatus: 'pending', processedAt: null, processedBy: null })
+            : await db.transitionFirefliesMeetingStatus(ids, 'pending', { processingStatus: 'skipped', processedAt: new Date(), processedBy: ctx.user.id });
+          return { updated };
+        }),
     }),
   });
