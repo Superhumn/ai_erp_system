@@ -109,6 +109,7 @@ const GlobalStructure = lazy(() => import("./pages/structure/GlobalStructure"));
 // Marketing
 const ContentHub = lazy(() => import("./pages/marketing/ContentHub"));
 const MarketingHub = lazy(() => import("./pages/marketing/MarketingHub"));
+const PaidAds = lazy(() => import("./pages/marketing/PaidAds"));
 
 // Recruiting
 const Recruiting = lazy(() => import("./pages/hr/Recruiting"));
@@ -342,6 +343,7 @@ function Router() {
           {/* Marketing */}
           <Route path="/marketing" component={MarketingHub} />
           <Route path="/marketing/content" component={ContentHub} />
+          <Route path="/marketing/ads" component={PaidAds} />
 
           {/* Recruiting */}
           <Route path="/hr/recruiting" component={Recruiting} />

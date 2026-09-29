@@ -122,6 +122,7 @@ import { kpiGoalsRouter } from "./kpiGoals";
 import { legalCasesRouter } from "./legalCases";
 import { financialReportsRouter } from "./financialReports";
 import { marketingRouter } from "./marketing";
+import { adMarketingRouter } from "./adMarketing";
 import { notesRouter } from "./notes";
 import { emailSequencesRouter } from "./emailSequences";
 import { emailCannedResponsesRouter } from "./emailCannedResponses";
@@ -563,6 +564,7 @@ export const appRouter = router({
   // MARKETING — VIDEO ASSETS & SOCIAL POSTING
   // ============================================
   marketing: marketingRouter,
+  adMarketing: adMarketingRouter,
   // ============================================
   // QUICK NOTES — Apple-Notes-style capture + LLM routing
   // ============================================

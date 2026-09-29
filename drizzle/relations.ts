@@ -69,6 +69,12 @@ import {
   ediTradingPartners,
   ediTransactions,
   ediTransactionItems,
+  adPlatforms,
+  adCampaigns,
+  adSpendDaily,
+  adLeads,
+  adTrackingLinks,
+  adCredits,
 } from "./schema";
 
 // ============================================
@@ -486,4 +492,41 @@ export const quickbooksAccountMappingsRelations = relations(quickbooksAccountMap
 export const quickbooksItemsRelations = relations(quickbooksItems, ({ one }) => ({
   company: one(companies, { fields: [quickbooksItems.companyId], references: [companies.id] }),
   product: one(products, { fields: [quickbooksItems.productId], references: [products.id] }),
+}));
+
+// ============================================
+// MARKETING — PAID ADS
+// ============================================
+
+export const adPlatformsRelations = relations(adPlatforms, ({ one, many }) => ({
+  company: one(companies, { fields: [adPlatforms.companyId], references: [companies.id] }),
+  campaigns: many(adCampaigns),
+  credits: many(adCredits),
+}));
+
+export const adCampaignsRelations = relations(adCampaigns, ({ one, many }) => ({
+  company: one(companies, { fields: [adCampaigns.companyId], references: [companies.id] }),
+  platform: one(adPlatforms, { fields: [adCampaigns.platformId], references: [adPlatforms.id] }),
+  owner: one(users, { fields: [adCampaigns.ownerUserId], references: [users.id] }),
+  spend: many(adSpendDaily),
+  leads: many(adLeads),
+  trackingLinks: many(adTrackingLinks),
+}));
+
+export const adSpendDailyRelations = relations(adSpendDaily, ({ one }) => ({
+  campaign: one(adCampaigns, { fields: [adSpendDaily.campaignId], references: [adCampaigns.id] }),
+}));
+
+export const adLeadsRelations = relations(adLeads, ({ one }) => ({
+  campaign: one(adCampaigns, { fields: [adLeads.campaignId], references: [adCampaigns.id] }),
+  platform: one(adPlatforms, { fields: [adLeads.platformId], references: [adPlatforms.id] }),
+  contact: one(crmContacts, { fields: [adLeads.contactId], references: [crmContacts.id] }),
+}));
+
+export const adTrackingLinksRelations = relations(adTrackingLinks, ({ one }) => ({
+  campaign: one(adCampaigns, { fields: [adTrackingLinks.campaignId], references: [adCampaigns.id] }),
+}));
+
+export const adCreditsRelations = relations(adCredits, ({ one }) => ({
+  platform: one(adPlatforms, { fields: [adCredits.platformId], references: [adPlatforms.id] }),
 }));

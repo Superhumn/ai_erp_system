@@ -41,6 +41,11 @@ export const ENV = {
     // B2B Rocket lead-intake webhook (via Zapier "New Lead" trigger)
     b2brocketWebhookSecret: process.env.B2BROCKET_WEBHOOK_SECRET ?? "", // Shared secret sent by Zapier as ?secret= or x-webhook-secret header
 
+    // Paid-ads lead intake (server/adMarketingService.ts)
+    metaAppSecret: process.env.META_APP_SECRET ?? "",           // Verifies X-Hub-Signature-256 on Meta lead webhooks
+    metaWebhookVerifyToken: process.env.META_WEBHOOK_VERIFY_TOKEN ?? "", // Echoed back on Meta's webhook subscription handshake
+    adLeadWebhookSecret: process.env.AD_LEAD_WEBHOOK_SECRET ?? "", // Shared secret for /webhooks/ads/leads (landing page form)
+
     // Public app URL for email links
     publicAppUrl: process.env.PUBLIC_APP_URL ?? process.env.APP_URL ?? "http://localhost:3000",
 
