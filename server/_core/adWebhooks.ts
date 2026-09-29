@@ -11,6 +11,7 @@
 // ============================================================================
 import type { Express, Request, Response } from "express";
 import express from "express";
+import rateLimit from "express-rate-limit";
 import { createHmac, timingSafeEqual } from "crypto";
 import { ENV } from "./env";
 import { secureCompare } from "./crypto";
@@ -31,6 +32,16 @@ export function verifyMetaSignature(rawBody: Buffer | string, header: string | u
 }
 
 type Middleware = (req: Request, res: Response, next: () => void) => void;
+
+// Same shape as the webhook limiter in index.ts, declared here so the limiter
+// is visibly attached to every ads webhook route (Meta retries in bursts).
+const adWebhookLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 600,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many webhook requests" },
+});
 
 function rawJson(req: Request): { body: any; raw: string } | null {
   const raw = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : typeof req.body === "string" ? req.body : JSON.stringify(req.body ?? {});
@@ -67,9 +78,9 @@ export function landingPayloadToLead(body: Record<string, unknown>) {
   };
 }
 
-export function registerAdWebhooks(app: Express, webhookLimiter: Middleware, reenterTenant: Middleware): void {
+export function registerAdWebhooks(app: Express, reenterTenant: Middleware): void {
   // ---- Meta lead ads ------------------------------------------------------
-  app.get("/webhooks/ads/meta/leads", webhookLimiter, (req, res) => {
+  app.get("/webhooks/ads/meta/leads", adWebhookLimiter, (req, res) => {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
@@ -84,7 +95,7 @@ export function registerAdWebhooks(app: Express, webhookLimiter: Middleware, ree
     return res.status(403).json({ error: "Verification failed" });
   });
 
-  app.post("/webhooks/ads/meta/leads", webhookLimiter, express.raw({ type: ["application/json", "*/*"] }), reenterTenant, async (req, res) => {
+  app.post("/webhooks/ads/meta/leads", adWebhookLimiter, express.raw({ type: ["application/json", "*/*"] }), reenterTenant, async (req, res) => {
     const parsed = rawJson(req);
     if (!parsed) return res.status(400).json({ error: "Invalid JSON body" });
     if (!ENV.metaAppSecret) {
@@ -120,7 +131,7 @@ export function registerAdWebhooks(app: Express, webhookLimiter: Middleware, ree
   });
 
   // ---- Landing page form ---------------------------------------------------
-  app.use("/webhooks/ads/leads", webhookLimiter, (req, res, next) => {
+  app.use("/webhooks/ads/leads", adWebhookLimiter, (req, res, next) => {
     const provided =
       (req.headers["x-webhook-secret"] as string) ||
       (req.headers["authorization"] as string)?.replace(/^Bearer\s+/i, "") ||
@@ -134,7 +145,7 @@ export function registerAdWebhooks(app: Express, webhookLimiter: Middleware, ree
     next();
   });
 
-  app.post("/webhooks/ads/leads", express.raw({ type: ["application/json", "text/plain", "*/*"] }), reenterTenant, async (req, res) => {
+  app.post("/webhooks/ads/leads", adWebhookLimiter, express.raw({ type: ["application/json", "text/plain", "*/*"] }), reenterTenant, async (req, res) => {
     const parsed = rawJson(req);
     if (!parsed) return res.status(400).json({ error: "Invalid JSON body" });
     const lead = landingPayloadToLead(parsed.body);

@@ -1140,7 +1140,7 @@ async function startServer() {
   registerTwilioWebhooks(app);
 
   // Paid-ads lead intake: Meta lead-form webhook + our landing-page form.
-  registerAdWebhooks(app, webhookLimiter, reenterTenant);
+  registerAdWebhooks(app, reenterTenant);
 
   // Shared handler for Google OAuth callbacks.
   // `selfRedirectUri` must exactly match the redirect_uri used when the auth URL was generated.
