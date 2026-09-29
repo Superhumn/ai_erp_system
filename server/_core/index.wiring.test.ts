@@ -107,3 +107,29 @@ describe("IMAP poll loop", () => {
     expect(src.slice(dedupe, dedupe + 120)).toMatch(/if \(alreadySaved\) continue;/);
   });
 });
+
+describe("index.ts tenant routing", () => {
+  it("mounts tenantMiddleware after the body parsers and before every route", () => {
+    const tenant = idx("app.use(tenantMiddleware);");
+    expect(idx("express.json({")).toBeLessThan(tenant);
+    expect(idx("app.use(express.urlencoded(")).toBeLessThan(tenant);
+    expect(tenant).toBeLessThan(idx("registerOAuthRoutes(app);"));
+    expect(tenant).toBeLessThan(idx("app.post('/webhooks/sendgrid/events'"));
+    expect(tenant).toBeLessThan(idx('app.use("/api/trpc"'));
+  });
+
+  it("re-enters the tenant after every per-route express.raw parser", () => {
+    const raws = [...src.matchAll(/express\.raw\(\{[^}]*\}\),/g)];
+    expect(raws.length).toBeGreaterThan(0);
+    for (const m of raws) {
+      const after = src.slice(m.index! + m[0].length, m.index! + m[0].length + 40);
+      expect(after.trimStart().startsWith("reenterTenant,")).toBe(true);
+    }
+  });
+
+  it("keeps background workers off in multi-tenant mode", () => {
+    const listen = idx('server.listen(port, "0.0.0.0"');
+    const guard = idx("if (isMultiTenant()) {", listen);
+    expect(guard).toBeLessThan(idx("startEmailQueueWorker();", listen));
+  });
+});

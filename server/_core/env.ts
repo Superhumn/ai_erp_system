@@ -21,6 +21,11 @@ export const ENV = {
     ownerOpenId: process.env.OWNER_OPEN_ID ?? "",
     isProduction: process.env.NODE_ENV === "production",
 
+    // Multi-tenant mode (docs/MULTI_TENANT_PLAN.md). Off = the single DATABASE_URL deployment.
+    multiTenant: process.env.MULTI_TENANT === "1" || process.env.MULTI_TENANT === "true",
+    tenantsJson: process.env.TENANTS_JSON ?? "",            // JSON array of { slug, databaseUrl, hosts, status }
+    tenantBaseDomain: process.env.TENANT_BASE_DOMAIN ?? "", // acme.<this> routes to tenant "acme"
+
     // LLM Configuration (Anthropic Claude)
     llmProvider: process.env.LLM_PROVIDER ?? "anthropic",
     llmApiUrl: process.env.LLM_API_URL ?? "",
@@ -223,7 +228,12 @@ export function validateRequiredSecrets(): void {
 
   const missing: string[] = [];
   if (!ENV.cookieSecret) missing.push("JWT_SECRET");
-  if (!ENV.databaseUrl) missing.push("DATABASE_URL");
+  // In multi-tenant mode each tenant carries its own database URL in TENANTS_JSON.
+  if (ENV.multiTenant) {
+    if (!ENV.tenantsJson) missing.push("TENANTS_JSON");
+  } else if (!ENV.databaseUrl) {
+    missing.push("DATABASE_URL");
+  }
 
   if (missing.length > 0) {
     throw new Error(

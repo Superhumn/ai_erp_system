@@ -228,6 +228,8 @@ import {
   savedReports, InsertSavedReport,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
+import { isMultiTenant, requireTenant } from './_core/tenancy';
+import { getTenantDb } from './_core/tenantDb';
 import { bucketBillsAging, nextStatusAfterPayment, OPEN_BILL_STATUSES } from "./billsLogic";
 import {
   SAMPLE_MATERIAL_SUPPLY,
@@ -242,6 +244,8 @@ let _pool: mysql.Pool | null = null;
 let _db: ReturnType<typeof drizzle> | null = null;
 
 export async function getDb() {
+  // Multi-tenant: the request's tenant picks the database. No tenant → throw, never a default.
+  if (isMultiTenant()) return getTenantDb(requireTenant());
   if (!_db && process.env.DATABASE_URL) {
     try {
       // Use an explicit connection pool rather than passing the URL string to
@@ -311,7 +315,8 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     if (user.role !== undefined) {
       values.role = user.role;
       updateSet.role = user.role;
-    } else if (user.openId === ENV.ownerOpenId) {
+    } else if (!isMultiTenant() && user.openId === ENV.ownerOpenId) {
+      // The platform owner is a single-tenant concept; never auto-admin inside a customer's tenant.
       values.role = 'admin';
       updateSet.role = 'admin';
     }
