@@ -12,6 +12,7 @@ import { secureCompare } from "./crypto";
 import { sdk } from "./sdk";
 import { ENV } from "./env";
 import { isEmailConfigured, sendEmail } from "./email";
+import { linkEmployeeForAcceptedInvite } from "../employeeLinkService";
 import {
   SALT_LENGTH,
   generateSalt,
@@ -193,6 +194,22 @@ export function registerLocalAuthRoutes(app: Express) {
         });
       }
 
+      // An invite grants a role (and may link a cap-table stakeholder or an
+      // employee record), so it may only be redeemed by the address it was
+      // sent to. Refuse before creating anything.
+      if (req.body.invite) {
+        const pendingInvite = await db.getTeamInviteByToken(req.body.invite);
+        if (
+          pendingInvite &&
+          pendingInvite.status === "pending" &&
+          String(pendingInvite.email ?? "").trim().toLowerCase() !== normalizedEmail
+        ) {
+          return res.status(403).json({
+            error: "This invitation was sent to a different email address. Sign up with the invited email.",
+          });
+        }
+      }
+
       // Generate salt and hash password
       const salt = generateSalt();
       const passwordHash = await hashPassword(password, salt);
@@ -241,7 +258,12 @@ export function registerLocalAuthRoutes(app: Express) {
       if (req.body.invite && newUser) {
         try {
           const invite = await db.getTeamInviteByToken(req.body.invite);
-          if (invite && invite.status === "pending" && new Date(invite.expiresAt) > new Date()) {
+          if (
+            invite &&
+            invite.status === "pending" &&
+            new Date(invite.expiresAt) > new Date() &&
+            String(invite.email ?? "").trim().toLowerCase() === normalizedEmail
+          ) {
             await db.updateUserRole(newUser.id, invite.role as any);
             await db.updateTeamInvite(invite.id, { status: "accepted", acceptedAt: new Date() });
             // Investor-portal flow: when the invite carries a linked stakeholder,
@@ -254,6 +276,10 @@ export function registerLocalAuthRoutes(app: Express) {
                 console.warn("[Local Auth] Failed to link stakeholder on invite accept:", linkErr);
               }
             }
+            // Employee-portal flow: link the new login to the unlinked employee
+            // whose work/personal email is the invite email. Never throws — a
+            // link problem is logged and left for HR, not turned into a failed signup.
+            await linkEmployeeForAcceptedInvite(invite.email, newUser.id);
             inviteAccepted = true;
           }
         } catch (inviteErr) {

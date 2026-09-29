@@ -5007,7 +5007,7 @@ export const crmEmailCampaigns = mysqlTable("crm_email_campaigns", {
   type: mysqlEnum("type", ["newsletter", "drip", "announcement", "follow_up", "custom"]).default("custom"),
 
   // Status
-  status: mysqlEnum("status", ["draft", "scheduled", "sending", "sent", "paused", "cancelled"]).default("draft"),
+  status: mysqlEnum("status", ["draft", "scheduled", "sending", "sent", "partially_failed", "paused", "cancelled"]).default("draft"),
   scheduledAt: timestamp("scheduledAt"),
   sentAt: timestamp("sentAt"),
 
@@ -5040,13 +5040,16 @@ export const crmCampaignRecipients = mysqlTable("crm_campaign_recipients", {
   contactId: int("contactId").notNull(),
   email: varchar("email", { length: 320 }).notNull(),
 
-  status: mysqlEnum("status", ["pending", "sent", "delivered", "opened", "clicked", "bounced", "unsubscribed"]).default("pending"),
+  // sending = claimed by server/campaignSender.ts (never re-sent); skipped =
+  // contact had no email / bounced / was removed at send time.
+  status: mysqlEnum("status", ["pending", "sending", "sent", "delivered", "opened", "clicked", "bounced", "unsubscribed", "failed", "skipped"]).default("pending"),
   sentAt: timestamp("sentAt"),
   deliveredAt: timestamp("deliveredAt"),
   openedAt: timestamp("openedAt"),
   clickedAt: timestamp("clickedAt"),
 
   messageId: varchar("messageId", { length: 255 }),
+  error: text("error"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
@@ -6779,13 +6782,22 @@ export const bankTransactions = mysqlTable("bank_transactions", {
   matchedPurchaseOrderId: int("matchedPurchaseOrderId"),
   matchedVendorId: int("matchedVendorId"),
   matchedCustomerId: int("matchedCustomerId"),
+  // Bank-to-payment reconciliation (appRouter.banking.reconciliation). One bank line clears at
+  // most one payment and vice versa (unique below). Migration 0070 also adds a plain index on
+  // reconciliationStatus.
+  matchedPaymentId: int("matchedPaymentId"),
+  reconciliationStatus: mysqlEnum("reconciliationStatus", ["unreconciled", "suggested", "reconciled", "excluded"]).default("unreconciled").notNull(),
+  reconciledAt: timestamp("reconciledAt"),
+  reconciledBy: int("reconciledBy"),
   // Sync
   syncedToQuickbooks: boolean("syncedToQuickbooks").default(false),
   source: mysqlEnum("source", ["mercury", "quickbooks", "manual"]).default("mercury"),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
-});
+}, (t) => ({
+  matchedPaymentUnique: uniqueIndex("uq_bank_transactions_matched_payment").on(t.matchedPaymentId),
+}));
 
 export type BankTransaction = typeof bankTransactions.$inferSelect;
 export type InsertBankTransaction = typeof bankTransactions.$inferInsert;
@@ -7559,6 +7571,33 @@ export const emailSequenceSteps = mysqlTable("email_sequence_steps", {
 
 export type EmailSequenceStep = typeof emailSequenceSteps.$inferSelect;
 export type InsertEmailSequenceStep = typeof emailSequenceSteps.$inferInsert;
+
+// One CRM contact's progress through an email sequence. companyId is the
+// contact's entity. server/sequenceRunner.ts claims due rows (status active,
+// nextSendAt <= now) with a guarded UPDATE before sending, so overlapping
+// ticks never double-send. currentStepOrder = the stepOrder last sent (0 =
+// nothing sent yet).
+export const emailSequenceEnrollments = mysqlTable("email_sequence_enrollments", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  sequenceId: int("sequenceId").notNull(),
+  contactId: int("contactId").notNull(),
+  status: mysqlEnum("status", ["active", "paused", "completed", "stopped", "failed"]).default("active").notNull(),
+  currentStepOrder: int("currentStepOrder").default(0).notNull(),
+  nextSendAt: timestamp("nextSendAt"),
+  lastSentAt: timestamp("lastSentAt"),
+  attempts: int("attempts").default(0).notNull(),
+  lastError: text("lastError"),
+  enrolledBy: int("enrolledBy"),
+  stoppedReason: varchar("stoppedReason", { length: 255 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  sequenceContactUnique: uniqueIndex("uq_email_sequence_enrollments_seq_contact").on(t.sequenceId, t.contactId),
+}));
+
+export type EmailSequenceEnrollment = typeof emailSequenceEnrollments.$inferSelect;
+export type InsertEmailSequenceEnrollment = typeof emailSequenceEnrollments.$inferInsert;
 
 // ─── EMAIL CANNED RESPONSES ───────────────────────────────────────────────────
 

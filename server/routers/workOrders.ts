@@ -17,7 +17,9 @@ export const workOrdersRouter = router({
       .query(async ({ input }) => {
         return db.getWorkOrderById(input.id);
       }),
-    create: protectedProcedure
+    // Work orders commit raw-material stock, so creating one is an Operations
+    // action (admin/ops/exec), not something any signed-in role may do.
+    create: opsProcedure
       .input(z.object({
         bomId: z.number().optional(),
         recipeId: z.number().optional(),
@@ -94,39 +96,88 @@ export const workOrdersRouter = router({
     startProduction: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input }) => {
-        await db.updateWorkOrder(input.id, { status: 'in_progress', actualStartDate: new Date() });
+        const workOrder = await db.getWorkOrderById(input.id);
+        if (!workOrder) throw new TRPCError({ code: "NOT_FOUND", message: "Work order not found" });
 
         // ── Automation #8: Reserve raw materials when production starts ──
-        try {
-          const materials = await db.getWorkOrderMaterials(input.id);
-          for (const mat of materials) {
-            if (!mat.rawMaterialId) continue;
-            const reqQty = parseFloat(mat.requiredQuantity?.toString() || "0");
-            const consumedQty = parseFloat(mat.consumedQuantity?.toString() || "0");
-            let remaining = Math.max(0, reqQty - consumedQty);
-            if (remaining <= 0) continue;
+        // Plan every line first so a shortfall on any material leaves nothing
+        // reserved and the work order untouched (it used to be flipped to
+        // in_progress and the failure only logged).
+        type Allocation = { warehouseId: number; quantity: number; availableBefore: number };
+        const materials = await db.getWorkOrderMaterials(input.id);
+        const plan: Array<{ mat: (typeof materials)[number]; allocations: Allocation[] }> = [];
+        const shortfalls: string[] = [];
+        for (const mat of materials) {
+          if (!mat.rawMaterialId) continue;
+          const reqQty = parseFloat(mat.requiredQuantity?.toString() || "0");
+          const consumedQty = parseFloat(mat.consumedQuantity?.toString() || "0");
+          let remaining = Math.max(0, reqQty - consumedQty);
+          if (remaining <= 0) continue;
 
-            const inventoryRecords = await db.getRawMaterialInventory({ rawMaterialId: mat.rawMaterialId });
-            for (const inv of inventoryRecords) {
-              const totalQty = parseFloat(inv.quantity?.toString() || "0");
-              const availableQty = parseFloat(inv.availableQuantity?.toString() || totalQty.toString());
-              const toReserve = Math.min(remaining, availableQty);
-              if (toReserve > 0) {
-                await db.upsertRawMaterialInventory(mat.rawMaterialId, inv.warehouseId, {
-                  availableQuantity: (availableQty - toReserve).toFixed(4),
-                });
-                // Only the still-unreserved balance carries over to the next warehouse.
-                remaining -= toReserve;
-                if (remaining <= 0) break;
-              }
+          // The work order's own warehouse is drawn first; the rest in stock order.
+          const inventoryRecords = (await db.getRawMaterialInventory({ rawMaterialId: mat.rawMaterialId }))
+            .slice()
+            .sort((a, b) => Number(b.warehouseId === workOrder.warehouseId) - Number(a.warehouseId === workOrder.warehouseId));
+          const allocations: Allocation[] = [];
+          for (const inv of inventoryRecords) {
+            const totalQty = parseFloat(inv.quantity?.toString() || "0");
+            const availableQty = parseFloat(inv.availableQuantity?.toString() || totalQty.toString());
+            const toReserve = Math.min(remaining, availableQty);
+            if (toReserve > 0) {
+              allocations.push({ warehouseId: inv.warehouseId, quantity: toReserve, availableBefore: availableQty });
+              // Only the still-unreserved balance carries over to the next warehouse.
+              remaining -= toReserve;
+              if (remaining <= 0) break;
             }
-            await db.updateWorkOrderMaterial(mat.id, { status: "reserved" as any });
           }
-          console.log(`[WorkOrder→Reserve] Reserved raw materials for WO ${input.id}`);
-        } catch (e) {
-          console.warn("[WorkOrder→Reserve] Material reservation failed:", e);
+          if (remaining > 0) {
+            const available = allocations.reduce((sum, a) => sum + a.quantity, 0);
+            shortfalls.push(`${mat.name}: short ${remaining.toFixed(4)} ${mat.unit} (required ${(reqQty - consumedQty).toFixed(4)}, available ${available.toFixed(4)})`);
+          }
+          plan.push({ mat, allocations });
+        }
+        if (shortfalls.length > 0) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: `Insufficient raw material stock to start production — ${shortfalls.join("; ")}`,
+          });
         }
 
+        for (const { mat, allocations } of plan) {
+          for (const alloc of allocations) {
+            await db.upsertRawMaterialInventory(mat.rawMaterialId!, alloc.warehouseId, {
+              availableQuantity: (alloc.availableBefore - alloc.quantity).toFixed(4),
+            });
+          }
+          // Persist where the reservation was taken so consumeWorkOrderMaterials
+          // draws from (and releases) the same stock. A requirement that spans
+          // warehouses becomes one line per warehouse; the sum is unchanged.
+          const [first, ...rest] = allocations;
+          const consumedQty = parseFloat(mat.consumedQuantity?.toString() || "0");
+          await db.updateWorkOrderMaterial(mat.id, {
+            status: "reserved",
+            warehouseId: first.warehouseId,
+            reservedQuantity: first.quantity.toFixed(4),
+            ...(rest.length > 0 ? { requiredQuantity: (consumedQty + first.quantity).toFixed(4) } : {}),
+          });
+          for (const alloc of rest) {
+            await db.createWorkOrderMaterial({
+              workOrderId: input.id,
+              rawMaterialId: mat.rawMaterialId,
+              productId: mat.productId,
+              name: mat.name,
+              requiredQuantity: alloc.quantity.toFixed(4),
+              reservedQuantity: alloc.quantity.toFixed(4),
+              consumedQuantity: "0.0000",
+              unit: mat.unit,
+              status: "reserved",
+              warehouseId: alloc.warehouseId,
+            });
+          }
+        }
+        console.log(`[WorkOrder→Reserve] Reserved raw materials for WO ${input.id}`);
+
+        await db.updateWorkOrder(input.id, { status: 'in_progress', actualStartDate: new Date() });
         return { success: true };
       }),
     completeProduction: protectedProcedure

@@ -170,7 +170,7 @@ export default function DocumentImport() {
   
   // Google Drive queries
   const googleConnectionQuery = trpc.sheetsImport.getConnectionStatus.useQuery();
-  const googleAuthUrlQuery = trpc.sheetsImport.getAuthUrl.useQuery();
+  const googleAuthUrlQuery = trpc.sheetsImport.getAuthUrl.useQuery({ returnTo: "/operations/document-import" });
   const driveFoldersQuery = trpc.documentImport.listDriveFolders.useQuery(
     { parentFolderId: currentFolderId || undefined },
     { enabled: googleConnectionQuery.data?.connected && activeTab === "drive" }

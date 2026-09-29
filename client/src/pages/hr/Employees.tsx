@@ -1831,6 +1831,117 @@ export default function PeopleAndEquity() {
 }
 
 // ── Full Employee Detail Panel (all sections in one view) ──
+// ── Login account: the users row linked to this employee (employees.userId) ──
+function EmployeeLoginSection({ employeeId, employeeName, inviteEmail }: { employeeId: number; employeeName: string; inviteEmail: string | null }) {
+  const utils = trpc.useUtils();
+  const { data: linkedUser, isLoading } = trpc.employees.linkedUser.useQuery({ employeeId });
+  const isUnlinked = !isLoading && linkedUser === null;
+  const { data: candidates } = trpc.employees.linkCandidates.useQuery({ employeeId }, { enabled: isUnlinked });
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const [confirmUnlink, setConfirmUnlink] = useState(false);
+
+  const refresh = () => {
+    utils.employees.linkedUser.invalidate({ employeeId });
+    utils.employees.linkCandidates.invalidate({ employeeId });
+    utils.employees.get.invalidate({ id: employeeId });
+    utils.employees.list.invalidate();
+  };
+  const linkUser = trpc.employees.linkUser.useMutation({
+    onSuccess: () => {
+      toast.success("Login linked");
+      setSelectedUserId("");
+      refresh();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const unlinkUser = trpc.employees.unlinkUser.useMutation({
+    onSuccess: () => {
+      toast.success("Login unlinked");
+      setConfirmUnlink(false);
+      refresh();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const invite = trpc.teamInvites.invite.useMutation({
+    onSuccess: () => {
+      toast.success(`Portal invite sent to ${inviteEmail}. The account links to ${employeeName} on signup.`);
+      utils.teamInvites.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  return (
+    <div>
+      <h4 className="text-sm font-semibold text-muted-foreground mb-2">Login account</h4>
+      {isLoading ? (
+        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+      ) : linkedUser ? (
+        <div className="flex items-center justify-between gap-3 text-sm">
+          <div className="min-w-0">
+            <div className="font-medium truncate">{linkedUser.name || "-"}</div>
+            <div className="text-muted-foreground truncate">{linkedUser.email || "-"}</div>
+          </div>
+          <Button size="sm" variant="outline" onClick={() => setConfirmUnlink(true)} disabled={unlinkUser.isPending}>
+            Unlink
+          </Button>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <p className="text-sm text-muted-foreground">No login linked. The employee portal needs one.</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Select value={selectedUserId} onValueChange={setSelectedUserId}>
+              <SelectTrigger className="h-8 w-64 text-xs">
+                <SelectValue placeholder={candidates && candidates.length === 0 ? "No matching users" : "Select a user"} />
+              </SelectTrigger>
+              <SelectContent>
+                {(candidates ?? []).map((c) => (
+                  <SelectItem key={c.id} value={String(c.id)}>
+                    {c.name || c.email || `User #${c.id}`}
+                    {c.email && c.name ? ` (${c.email})` : ""}
+                    {c.match === "email" ? " · email match" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              size="sm"
+              disabled={!selectedUserId || linkUser.isPending}
+              onClick={() => linkUser.mutate({ employeeId, userId: Number(selectedUserId) })}
+            >
+              {linkUser.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+              Link
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!inviteEmail || invite.isPending}
+              title={inviteEmail ? `Invite ${inviteEmail} to the employee portal` : "Add an email to the employee first"}
+              onClick={() => inviteEmail && invite.mutate({ email: inviteEmail, name: employeeName, role: "user", employeeId })}
+            >
+              {invite.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+              Invite to portal
+            </Button>
+          </div>
+        </div>
+      )}
+      <AlertDialog open={confirmUnlink} onOpenChange={setConfirmUnlink}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unlink login?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {linkedUser?.email || "This user"} will lose access to {employeeName}'s employee portal. The login itself is not deleted.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => unlinkUser.mutate({ employeeId })}>Unlink</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
 function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedRow; personGrants: any[]; scMap: Map<number, string> }) {
   const { data: compHistory } = trpc.employees.compensationHistory.useQuery(
     { employeeId: person.employeeId! },
@@ -1856,6 +1967,8 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
   const utils = trpc.useUtils();
   const { user } = useAuth();
   const canEditEmployee = !!user && ["admin", "exec"].includes(user.role) && !!person.employeeId;
+  // Linking a login grants portal access to this employee's pay and documents: admin-only server-side too.
+  const canManageLogin = !!user && user.role === "admin" && !!person.employeeId;
   const [compOpen, setCompOpen] = useState(false);
   const [compForm, setCompForm] = useState({
     effectiveDate: "",
@@ -2114,6 +2227,14 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
                       </DialogContent>
                     </Dialog>
                   </div>
+
+                  {canManageLogin && person.employeeId && (
+                    <EmployeeLoginSection
+                      employeeId={person.employeeId}
+                      employeeName={person.name}
+                      inviteEmail={employeeSource?.email || employeeSource?.personalEmail || null}
+                    />
+                  )}
 
                   {/* Compensation History */}
                   {person.employeeId && (

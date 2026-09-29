@@ -320,3 +320,44 @@ describe('invokeLLM prompt caching', () => {
     expect(result.usage?.total_tokens).toBe(1015);
   });
 });
+
+describe('invokeLLM inline data URLs', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('sends a data: image as a base64 image block, not a url source', async () => {
+    const { captured } = mockFetch();
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64');
+    await invokeLLM({
+      messages: [
+        { role: 'user', content: [
+          { type: 'text', text: 'What is this?' },
+          { type: 'image_url', image_url: { url: `data:image/png;base64,${png}`, detail: 'high' } },
+        ] },
+      ],
+    });
+    const content = captured[0].body.messages[0].content;
+    expect(content[1]).toEqual({
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: png },
+    });
+  });
+
+  it('keeps http(s) images as url sources and inlines data: documents as base64', async () => {
+    const { captured } = mockFetch();
+    const pdf = Buffer.from('%PDF-1.4').toString('base64');
+    await invokeLLM({
+      messages: [
+        { role: 'user', content: [
+          { type: 'image_url', image_url: { url: 'https://files.example.com/a.png' } },
+          { type: 'file_url', file_url: { url: `data:application/pdf;base64,${pdf}`, mime_type: 'application/pdf' } },
+        ] },
+      ],
+    });
+    const content = captured[0].body.messages[0].content;
+    expect(content[0]).toEqual({ type: 'image', source: { type: 'url', url: 'https://files.example.com/a.png' } });
+    expect(content[1]).toEqual({
+      type: 'document',
+      source: { type: 'base64', media_type: 'application/pdf', data: pdf },
+    });
+  });
+});

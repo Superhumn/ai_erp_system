@@ -110,6 +110,8 @@ export const timeTrackingRouter = router({
       approve: adminProcedure
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input, ctx }) => {
+          // Admin passes the ownership check; this is the existence check.
+          await loadOwnedTimeEntry(input.id, ctx.user);
           await db.updateTimeEntry(input.id, { status: "approved", approvedBy: ctx.user.id, approvedAt: new Date() } as any);
           return { success: true };
         }),

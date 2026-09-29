@@ -18,7 +18,9 @@ vi.mock("./db", () => ({
   getRdExpenseById: vi.fn(),
   updateRdExpense: vi.fn().mockResolvedValue(undefined),
   // workOrders.startProduction
+  getWorkOrderById: vi.fn(),
   updateWorkOrder: vi.fn().mockResolvedValue(undefined),
+  createWorkOrderMaterial: vi.fn().mockResolvedValue({ id: 2 }),
   getWorkOrderMaterials: vi.fn(),
   getRawMaterialInventory: vi.fn(),
   upsertRawMaterialInventory: vi.fn().mockResolvedValue(undefined),
@@ -66,7 +68,7 @@ describe("purchaseOrders.sendToSupplier persists the portal session", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("stores the emailed token in supplierPortalSessions so getSession can resolve it", async () => {
-    (db.getPurchaseOrderWithItems as any).mockResolvedValue({ id: 11, vendorId: 7, poNumber: "PO-1", items: [] });
+    (db.getPurchaseOrderWithItems as any).mockResolvedValue({ id: 11, vendorId: 7, poNumber: "PO-1", status: "draft", items: [] });
     (db.getVendorById as any).mockResolvedValue({ id: 7, name: "Acme", email: "acme@example.com" });
 
     const caller = purchaseOrdersRouter.createCaller(ctxFor({ role: "ops" }));
@@ -77,6 +79,25 @@ describe("purchaseOrders.sendToSupplier persists the portal session", () => {
     expect(session).toMatchObject({ token: result.portalToken, purchaseOrderId: 11, vendorId: 7, vendorEmail: "acme@example.com" });
     expect(session.token).toHaveLength(32);
     expect(session.expiresAt.getTime()).toBeGreaterThan(Date.now() + 29 * 24 * 60 * 60 * 1000);
+  });
+
+  it("allows a re-send of a PO that is already 'sent', but refuses confirmed / received / cancelled ones without opening a session", async () => {
+    (db.getVendorById as any).mockResolvedValue({ id: 7, name: "Acme", email: "acme@example.com" });
+    const caller = purchaseOrdersRouter.createCaller(ctxFor({ role: "ops" }));
+
+    (db.getPurchaseOrderWithItems as any).mockResolvedValue({ id: 12, vendorId: 7, poNumber: "PO-2", status: "sent", items: [] });
+    await expect(caller.sendToSupplier({ poId: 12 })).resolves.toMatchObject({ success: true });
+    expect(db.createSupplierPortalSession).toHaveBeenCalledTimes(1);
+
+    for (const status of ["confirmed", "partial", "received", "cancelled"]) {
+      vi.clearAllMocks();
+      (db.getPurchaseOrderWithItems as any).mockResolvedValue({ id: 13, vendorId: 7, poNumber: "PO-3", status, items: [] });
+      await expect(caller.sendToSupplier({ poId: 13 })).rejects.toMatchObject({
+        code: "PRECONDITION_FAILED", message: `Purchase order PO-3 is ${status} and cannot be sent to the supplier.`,
+      });
+      expect(db.createSupplierPortalSession).not.toHaveBeenCalled();
+      expect(db.updatePurchaseOrder).not.toHaveBeenCalled();
+    }
   });
 });
 
@@ -118,8 +139,9 @@ describe("workOrders.startProduction reserves only the outstanding balance per w
   beforeEach(() => vi.clearAllMocks());
 
   it("decrements the remaining requirement across warehouses and stops once covered", async () => {
+    (db.getWorkOrderById as any).mockResolvedValue({ id: 99, warehouseId: 1, status: "scheduled" });
     (db.getWorkOrderMaterials as any).mockResolvedValue([
-      { id: 1, rawMaterialId: 50, requiredQuantity: "10", consumedQuantity: "0" },
+      { id: 1, rawMaterialId: 50, name: "Flour", unit: "kg", requiredQuantity: "10", consumedQuantity: "0" },
     ]);
     (db.getRawMaterialInventory as any).mockResolvedValue([
       { rawMaterialId: 50, warehouseId: 1, quantity: "6", availableQuantity: "6" },
@@ -135,7 +157,35 @@ describe("workOrders.startProduction reserves only the outstanding balance per w
     expect(calls).toHaveLength(2);
     expect(calls[0]).toEqual([50, 1, { availableQuantity: "0.0000" }]);
     expect(calls[1]).toEqual([50, 2, { availableQuantity: "2.0000" }]);
-    expect(db.updateWorkOrderMaterial).toHaveBeenCalledWith(1, { status: "reserved" });
+    // The split is persisted: the line keeps warehouse 1's 6, a second line holds warehouse 2's 4.
+    expect(db.updateWorkOrderMaterial).toHaveBeenCalledWith(1, { status: "reserved", warehouseId: 1, reservedQuantity: "6.0000", requiredQuantity: "6.0000" });
+    expect(db.createWorkOrderMaterial).toHaveBeenCalledWith(expect.objectContaining({
+      workOrderId: 99, rawMaterialId: 50, name: "Flour", unit: "kg", warehouseId: 2, requiredQuantity: "4.0000", reservedQuantity: "4.0000", consumedQuantity: "0.0000", status: "reserved",
+    }));
+    expect(db.updateWorkOrder).toHaveBeenCalledWith(99, expect.objectContaining({ status: "in_progress" }));
+  });
+
+  it("refuses to start when stock cannot cover a material: PRECONDITION_FAILED naming the shortfall, nothing reserved, status untouched", async () => {
+    (db.getWorkOrderById as any).mockResolvedValue({ id: 99, warehouseId: 1, status: "scheduled" });
+    (db.getWorkOrderMaterials as any).mockResolvedValue([
+      { id: 1, rawMaterialId: 50, name: "Flour", unit: "kg", requiredQuantity: "10", consumedQuantity: "0" },
+      { id: 2, rawMaterialId: 51, name: "Sugar", unit: "kg", requiredQuantity: "3", consumedQuantity: "1" },
+    ]);
+    (db.getRawMaterialInventory as any).mockImplementation(async ({ rawMaterialId }: { rawMaterialId: number }) =>
+      rawMaterialId === 50
+        ? [{ rawMaterialId: 50, warehouseId: 1, quantity: "6", availableQuantity: "6" }]
+        : [{ rawMaterialId: 51, warehouseId: 1, quantity: "5", availableQuantity: "5" }]);
+
+    const caller = workOrdersRouter.createCaller(ctxFor());
+    await expect(caller.startProduction({ id: 99 })).rejects.toMatchObject({
+      code: "PRECONDITION_FAILED",
+      message: "Insufficient raw material stock to start production — Flour: short 4.0000 kg (required 10.0000, available 6.0000)",
+    });
+    // Previously the work order was flipped to in_progress and the failure only logged.
+    expect(db.updateWorkOrder).not.toHaveBeenCalled();
+    expect(db.upsertRawMaterialInventory).not.toHaveBeenCalled();
+    expect(db.updateWorkOrderMaterial).not.toHaveBeenCalled();
+    expect(db.createWorkOrderMaterial).not.toHaveBeenCalled();
   });
 });
 

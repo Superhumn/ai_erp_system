@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Plus, FileText, Edit, Trash2, Sparkles, Loader2 } from "lucide-react";
+import { Plus, FileText, Edit, Trash2, Sparkles, Loader2, Send } from "lucide-react";
 
 type FormData = {
   candidateName: string;
@@ -58,11 +58,152 @@ const emptyForm: FormData = {
 
 const STATUS_VALUES = ["draft", "sent", "viewed", "accepted", "declined", "expired"] as const;
 
+/** Statuses the server refuses to email (offerLetters.send → PRECONDITION_FAILED). */
+const UNSENDABLE_STATUSES: ReadonlySet<string> = new Set(["accepted", "declined", "withdrawn", "expired"]);
+
+type SendTarget = { id: number; candidateName: string; candidateEmail: string | null; status: string | null };
+
+/** "a@x.com, b@y.com; c@z.com" → ["a@x.com", "b@y.com", "c@z.com"] */
+function parseEmailList(value: string): string[] {
+  return value.split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean);
+}
+
+function useDebounced<T>(value: T, ms: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return debounced;
+}
+
+function SendOfferDialog({ target, onClose }: { target: SendTarget | null; onClose: () => void }) {
+  const [to, setTo] = useState("");
+  const [cc, setCc] = useState("");
+  const [message, setMessage] = useState("");
+  const debouncedMessage = useDebounced(message, 400);
+
+  useEffect(() => {
+    setTo(target?.candidateEmail ?? "");
+    setCc("");
+    setMessage("");
+  }, [target]);
+
+  const utils = trpc.useUtils();
+  const preview = trpc.offerLetters.preview.useQuery(
+    { id: target?.id ?? 0, message: debouncedMessage.trim() || undefined },
+    { enabled: target !== null },
+  );
+
+  const sendMutation = trpc.offerLetters.send.useMutation({
+    onSuccess: (res) => {
+      toast.success(`Offer emailed to ${res.to}`);
+      if (res.ccFailed.length > 0) toast.error(`Copy not delivered to: ${res.ccFailed.join(", ")}`);
+      utils.offerLetters.list.invalidate();
+      utils.offerLetters.get.invalidate({ id: res.id });
+      onClose();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const handleSend = () => {
+    if (!target) return;
+    const recipient = to.trim();
+    if (!recipient) {
+      toast.error("Recipient email is required");
+      return;
+    }
+    const ccList = parseEmailList(cc);
+    sendMutation.mutate({
+      id: target.id,
+      to: recipient,
+      cc: ccList.length > 0 ? ccList : undefined,
+      message: message.trim() || undefined,
+    });
+  };
+
+  const alreadySent = target?.status === "sent" || target?.status === "viewed";
+
+  return (
+    <Dialog open={target !== null} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{alreadySent ? "Resend offer" : "Send offer"}</DialogTitle>
+          <DialogDescription>
+            Email the offer to {target?.candidateName ?? "the candidate"}. It is marked sent once the email goes out.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4 py-2">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="offer-send-to">To *</Label>
+              <Input
+                id="offer-send-to"
+                type="email"
+                placeholder="candidate@example.com"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="offer-send-cc">Cc</Label>
+              <Input
+                id="offer-send-cc"
+                placeholder="manager@example.com, hr@example.com"
+                value={cc}
+                onChange={(e) => setCc(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="offer-send-message">Personal note (optional)</Label>
+            <Textarea
+              id="offer-send-message"
+              placeholder="Added above the offer terms"
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Preview</Label>
+            {preview.isLoading ? (
+              <div className="text-sm text-muted-foreground py-6 text-center">Rendering preview...</div>
+            ) : preview.error ? (
+              <div className="text-sm text-destructive">{preview.error.message}</div>
+            ) : preview.data ? (
+              <div className="rounded-md border">
+                <div className="border-b px-3 py-2 text-sm">
+                  <span className="text-muted-foreground">Subject: </span>
+                  <span data-testid="offer-preview-subject">{preview.data.subject}</span>
+                </div>
+                <iframe
+                  title="Offer email preview"
+                  sandbox=""
+                  srcDoc={preview.data.html}
+                  className="w-full h-80 bg-white"
+                />
+              </div>
+            ) : null}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={handleSend} disabled={sendMutation.isPending || !target}>
+            {sendMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+            {alreadySent ? "Resend offer" : "Send offer"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function OfferLetters() {
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [formData, setFormData] = useState<FormData>(emptyForm);
+  const [sendTarget, setSendTarget] = useState<SendTarget | null>(null);
 
   const utils = trpc.useUtils();
   const { data: offers, isLoading } = trpc.offerLetters.list.useQuery(
@@ -492,7 +633,7 @@ export default function OfferLetters() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {offers.map((offer: any) => (
+                {offers.map((offer) => (
                   <TableRow key={offer.id}>
                     <TableCell>
                       <div className="flex items-center gap-2">
@@ -508,7 +649,7 @@ export default function OfferLetters() {
                     <TableCell>{offer.position}</TableCell>
                     <TableCell>{offer.department || "—"}</TableCell>
                     <TableCell>
-                      <Badge className={getStatusColor(offer.status)}>
+                      <Badge className={getStatusColor(offer.status ?? "draft")}>
                         {offer.status ? capitalize(offer.status) : "Draft"}
                       </Badge>
                     </TableCell>
@@ -519,6 +660,21 @@ export default function OfferLetters() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title={offer.status === "sent" || offer.status === "viewed" ? "Resend offer" : "Send offer"}
+                          aria-label={`Send offer to ${offer.candidateName}`}
+                          disabled={UNSENDABLE_STATUSES.has(offer.status ?? "draft")}
+                          onClick={() => setSendTarget({
+                            id: offer.id,
+                            candidateName: offer.candidateName,
+                            candidateEmail: offer.candidateEmail ?? null,
+                            status: offer.status ?? null,
+                          })}
+                        >
+                          <Send className="h-4 w-4" />
+                        </Button>
                         <Button variant="ghost" size="icon" onClick={() => handleEdit(offer)}>
                           <Edit className="h-4 w-4" />
                         </Button>
@@ -542,6 +698,8 @@ export default function OfferLetters() {
           )}
         </CardContent>
       </Card>
+
+      <SendOfferDialog target={sendTarget} onClose={() => setSendTarget(null)} />
     </div>
   );
 }

@@ -4,8 +4,46 @@ import { z } from "zod";
 import { eq, and, inArray } from "drizzle-orm";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
-import { reassignProjectTaskToHuman } from "../taskAgentBridge";
-import { createAuditLog, generateNumber } from "./_shared";
+import {
+  assignProjectTaskToAgent,
+  buildProjectTaskErrand,
+  getAgentStatuses,
+  getProjectTaskWithProject,
+  OPEN_AGENT_STATUSES,
+  reassignProjectTaskToHuman,
+  reconcileAgentLinkedTasks,
+  withAgentStatus,
+} from "../taskAgentBridge";
+import type { User } from "../../drizzle/schema";
+import { createAuditLog, generateNumber, internalProcedure } from "./_shared";
+
+// Bring AI-owned tasks up to date with their agent task (completion write-back,
+// owner notification) before a read. A read never fails because of it.
+async function reconcileQuietly(projectId?: number) {
+  try {
+    await reconcileAgentLinkedTasks(projectId != null ? { projectId } : {});
+  } catch (err) {
+    console.warn("[projects] AI agent reconcile failed:", err);
+  }
+}
+
+// Load a project task for an AI-assignment write, scoped to the caller's company.
+async function loadTaskForAgentWrite(taskId: number, user: User) {
+  const found = await getProjectTaskWithProject(taskId);
+  if (!found) throw new TRPCError({ code: 'NOT_FOUND', message: 'Task not found' });
+  const projectCompanyId = found.project?.companyId ?? null;
+  if (user.companyId != null && projectCompanyId != null && projectCompanyId !== user.companyId) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Task does not belong to your company' });
+  }
+  return found;
+}
+
+async function reloadTaskWithAgentStatus(taskId: number) {
+  const found = await getProjectTaskWithProject(taskId);
+  if (!found) throw new TRPCError({ code: 'NOT_FOUND', message: 'Task not found' });
+  const [task] = await withAgentStatus([found.task]);
+  return task;
+}
 
 // ============================================
 // PROJECTS
@@ -21,8 +59,16 @@ export const projectsRouter = router({
       .query(({ input }) => db.getProjects(input)),
     get: protectedProcedure
       .input(z.object({ id: z.number() }))
-      .query(({ input }) => db.getProjectWithDetails(input.id)),
-    create: protectedProcedure
+      .query(async ({ input }) => {
+        await reconcileQuietly(input.id);
+        const project = await db.getProjectWithDetails(input.id);
+        if (!project) return project;
+        return { ...project, tasks: await withAgentStatus(project.tasks) };
+      }),
+    // Projects are internal work; external accounts (investor, vendor,
+    // copacker, contractor) can read what they are shown but never create,
+    // change, assign or delete anything — every write below is internalProcedure.
+    create: internalProcedure
       .input(z.object({
         name: z.string().min(1),
         companyId: z.number().optional(),
@@ -43,7 +89,7 @@ export const projectsRouter = router({
         await createAuditLog(ctx.user.id, 'create', 'project', result.id, input.name);
         return result;
       }),
-    update: protectedProcedure
+    update: internalProcedure
       .input(z.object({
         id: z.number(),
         name: z.string().optional(),
@@ -65,7 +111,7 @@ export const projectsRouter = router({
         await createAuditLog(ctx.user.id, 'update', 'project', id);
         return { success: true };
       }),
-    addMilestone: protectedProcedure
+    addMilestone: internalProcedure
       .input(z.object({
         projectId: z.number(),
         name: z.string().min(1),
@@ -77,7 +123,7 @@ export const projectsRouter = router({
         await createAuditLog(ctx.user.id, 'create', 'projectMilestone', result.id, input.name);
         return result;
       }),
-    updateMilestone: protectedProcedure
+    updateMilestone: internalProcedure
       .input(z.object({
         id: z.number(),
         name: z.string().optional(),
@@ -92,7 +138,7 @@ export const projectsRouter = router({
         await createAuditLog(ctx.user.id, 'update', 'projectMilestone', id);
         return { success: true };
       }),
-    addTask: protectedProcedure
+    addTask: internalProcedure
       .input(z.object({
         projectId: z.number(),
         milestoneId: z.number().optional(),
@@ -108,7 +154,7 @@ export const projectsRouter = router({
         await createAuditLog(ctx.user.id, 'create', 'projectTask', result.id, input.name);
         return result;
       }),
-    updateTask: protectedProcedure
+    updateTask: internalProcedure
       .input(z.object({
         id: z.number(),
         name: z.string().optional(),
@@ -127,14 +173,14 @@ export const projectsRouter = router({
         await createAuditLog(ctx.user.id, 'update', 'projectTask', id);
         return { success: true };
       }),
-    delete: protectedProcedure
+    delete: internalProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input, ctx }) => {
         await db.deleteProject(input.id);
         await createAuditLog(ctx.user.id, 'delete', 'project', input.id);
         return { success: true };
       }),
-    deleteMany: protectedProcedure
+    deleteMany: internalProcedure
       .input(z.object({ ids: z.array(z.number()).min(1) }))
       .mutation(async ({ input, ctx }) => {
         await db.deleteProjects(input.ids);
@@ -143,14 +189,14 @@ export const projectsRouter = router({
         }
         return { success: true, count: input.ids.length };
       }),
-    deleteTask: protectedProcedure
+    deleteTask: internalProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input, ctx }) => {
         await db.deleteProjectTask(input.id);
         await createAuditLog(ctx.user.id, 'delete', 'projectTask', input.id);
         return { success: true };
       }),
-    deleteTasks: protectedProcedure
+    deleteTasks: internalProcedure
       .input(z.object({ ids: z.array(z.number()).min(1) }))
       .mutation(async ({ input, ctx }) => {
         await db.deleteProjectTasks(input.ids);
@@ -159,7 +205,7 @@ export const projectsRouter = router({
         }
         return { success: true, count: input.ids.length };
       }),
-    assignTasks: protectedProcedure
+    assignTasks: internalProcedure
       .input(z.object({
         ids: z.array(z.number()).min(1),
         assigneeId: z.number().nullable(),
@@ -190,9 +236,74 @@ export const projectsRouter = router({
         );
         return { success: true, count: allowedIds.length };
       }),
+    // Hand a task to the AI agent: creates a concierge_errand aiAgentTasks row
+    // that runs under the caller's identity. Only admins may skip the approval
+    // queue; everyone else lands in pending_approval (aiAgentService's
+    // executeCreateTask gate, tightened to the role that can approve).
+    assignTaskToAgent: internalProcedure
+      .input(z.object({
+        taskId: z.number().int().positive(),
+        instructions: z.string().max(4000).optional(),
+        requiresApproval: z.boolean().default(true),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { task, project } = await loadTaskForAgentWrite(input.taskId, ctx.user);
+        if (task.status === 'completed' || task.status === 'cancelled') {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: `Task is ${task.status}; reopen it before assigning it to the AI agent` });
+        }
+        if (task.assigneeType === 'ai_agent' && task.assigneeAgentTaskId != null) {
+          const current = (await getAgentStatuses([task.assigneeAgentTaskId])).get(task.assigneeAgentTaskId);
+          if (current && OPEN_AGENT_STATUSES.includes(current)) {
+            throw new TRPCError({ code: 'CONFLICT', message: 'Task is already assigned to the AI agent' });
+          }
+        }
+        const requiresApproval = input.requiresApproval || ctx.user.role !== 'admin';
+        const instructions = input.instructions?.trim() || undefined;
+        const companyId = project?.companyId ?? ctx.user.companyId ?? null;
+        const { agentTaskId, agentStatus } = await assignProjectTaskToAgent({
+          projectTaskId: task.id,
+          agentTaskType: 'concierge_errand',
+          taskData: buildProjectTaskErrand({ task, project, instructions, user: ctx.user, companyId }),
+          reasoning: instructions ?? `Assigned to the AI agent by ${ctx.user.name || `user ${ctx.user.id}`}`,
+          priority: task.priority === 'critical' ? 'urgent' : task.priority,
+          requiresApproval,
+          actorUserId: ctx.user.id,
+          companyId,
+        });
+        await createAuditLog(ctx.user.id, 'update', 'projectTask', task.id, task.name, undefined, { assigneeType: 'ai_agent', agentTaskId, agentStatus });
+        return { agentTaskId, agentStatus, task: await reloadTaskWithAgentStatus(task.id) };
+      }),
+    // Take a task back from the AI agent. Cancels the open agent task; the
+    // task goes to `userId` if given (null = unassigned), else its previous
+    // human assignee.
+    unassignFromAgent: internalProcedure
+      .input(z.object({
+        taskId: z.number().int().positive(),
+        userId: z.number().int().positive().nullable().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { task } = await loadTaskForAgentWrite(input.taskId, ctx.user);
+        if (task.assigneeType !== 'ai_agent') {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Task is not assigned to the AI agent' });
+        }
+        const humanId = input.userId !== undefined ? input.userId : task.assigneeId;
+        await reassignProjectTaskToHuman(task.id, humanId, ctx.user.id);
+        await createAuditLog(ctx.user.id, 'update', 'projectTask', task.id, task.name, undefined, { assigneeType: 'human', assigneeId: humanId });
+        return { task: await reloadTaskWithAgentStatus(task.id) };
+      }),
     tasks: protectedProcedure
       .input(z.object({ projectId: z.number() }))
-      .query(({ input }) => input.projectId === 0 ? db.getAllProjectTasks() : db.getProjectTasks(input.projectId)),
+      .query(async ({ input }) => {
+        if (input.projectId === 0) {
+          await reconcileQuietly();
+          return withAgentStatus(await db.getAllProjectTasks());
+        }
+        await reconcileQuietly(input.projectId);
+        return withAgentStatus(await db.getProjectTasks(input.projectId));
+      }),
     listAllTasks: protectedProcedure
-      .query(() => db.getAllProjectTasks()),
+      .query(async () => {
+        await reconcileQuietly();
+        return withAgentStatus(await db.getAllProjectTasks());
+      }),
   });

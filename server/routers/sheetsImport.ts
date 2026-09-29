@@ -59,7 +59,9 @@ export const sheetsImportRouter = router({
     }),
 
     // Get Google OAuth URL for connecting account
-    getAuthUrl: protectedProcedure.query(async ({ ctx }) => {
+    getAuthUrl: protectedProcedure
+      .input(z.object({ returnTo: z.string().max(512).optional() }).optional())
+      .query(async ({ ctx, input }) => {
       const clientId = process.env.GOOGLE_CLIENT_ID;
       if (!clientId) {
         return { url: null, error: 'Google OAuth not configured' };
@@ -73,10 +75,20 @@ export const sheetsImportRouter = router({
       const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${process.env.VITE_APP_URL || process.env.APP_URL || 'http://localhost:3000'}/api/oauth/google/callback`;
       const scope = encodeURIComponent('https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets.readonly');
       const { createSignedOAuthState } = await import('../_core/crypto');
-      const state = createSignedOAuthState({ userId: ctx.user.id, provider: 'google' });
+      // returnTo is echoed back by the callback so the user lands on the page
+      // that started the connection (Document Import, not always /import).
+      // The callback sanitizes it to a same-origin path.
+      const statePayload: Record<string, unknown> = { userId: ctx.user.id, provider: 'google' };
+      if (input?.returnTo && input.returnTo.startsWith('/') && !input.returnTo.startsWith('//')) {
+        statePayload.returnTo = input.returnTo;
+      }
+      const state = createSignedOAuthState(statePayload);
 
-      const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent&state=${encodeURIComponent(state)}`;
-      
+      // include_granted_scopes: incremental authorization, so connecting here
+      // keeps any Gmail/Docs/Calendar scopes the user already granted from the
+      // Settings page instead of replacing the stored token with a narrower one.
+      const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent&include_granted_scopes=true&state=${encodeURIComponent(state)}`;
+
       return { url, error: null };
     }),
     
