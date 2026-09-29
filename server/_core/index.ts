@@ -206,6 +206,16 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
   }
   throw new Error(`No available port found starting from ${startPort}`);
 }
+// Webhooks sit outside /api/ so apiLimiter misses them. Generous: SendGrid and Shopify
+// deliver in bursts, and a provider retry storm must not lock out the real events.
+const webhookLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 600,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many webhook requests" },
+});
+
 const oauthCallbackLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
@@ -906,7 +916,7 @@ async function startServer() {
   // ============================================
   // SENDGRID WEBHOOK ENDPOINT
   // ============================================
-  app.post('/webhooks/sendgrid/events', express.raw({ type: 'application/json' }), reenterTenant, async (req, res) => {
+  app.post('/webhooks/sendgrid/events', webhookLimiter, express.raw({ type: 'application/json' }), reenterTenant, async (req, res) => {
     try {
       const rawBody = getRawBody(req).toString('utf8');
       if (ENV.sendgridWebhookSecret) {
@@ -984,11 +994,11 @@ async function startServer() {
     }
   };
 
-  app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), reenterTenant, (req, res) =>
+  app.post('/webhooks/shopify/orders', webhookLimiter, express.raw({ type: 'application/json' }), reenterTenant, (req, res) =>
     handleShopifyWebhook(req, res)
   );
 
-  app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), reenterTenant, (req, res) =>
+  app.post('/webhooks/shopify/inventory', webhookLimiter, express.raw({ type: 'application/json' }), reenterTenant, (req, res) =>
     handleShopifyWebhook(req, res)
   );
 
@@ -1016,7 +1026,7 @@ async function startServer() {
     next();
   });
 
-  app.post('/webhooks/edi/inbound', express.raw({ type: ['application/edi-x12', 'text/plain', 'application/octet-stream'] }), reenterTenant, async (req, res) => {
+  app.post('/webhooks/edi/inbound', webhookLimiter, express.raw({ type: ['application/edi-x12', 'text/plain', 'application/octet-stream'] }), reenterTenant, async (req, res) => {
     try {
       const { handleEdiWebhook } = await import('../ediTransportService');
       const rawContent = req.body.toString();
@@ -1077,6 +1087,7 @@ async function startServer() {
 
   app.post(
     "/webhooks/b2brocket/leads",
+    webhookLimiter,
     express.raw({ type: ["application/json", "text/plain", "*/*"] }),
     reenterTenant,
     async (req, res) => {

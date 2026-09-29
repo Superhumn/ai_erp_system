@@ -133,3 +133,11 @@ describe("index.ts tenant routing", () => {
     expect(guard).toBeLessThan(idx("startEmailQueueWorker();", listen));
   });
 });
+
+describe("index.ts webhook rate limiting", () => {
+  it("rate-limits every /webhooks POST route", () => {
+    const routes = [...src.matchAll(/app\.post\(\s*['"]\/webhooks\/[^'"]+['"],\s*(\w+)/g)];
+    expect(routes.length).toBeGreaterThanOrEqual(5);
+    for (const m of routes) expect(m[1]).toBe("webhookLimiter");
+  });
+});
