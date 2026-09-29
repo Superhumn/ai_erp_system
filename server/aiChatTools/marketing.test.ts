@@ -75,6 +75,11 @@ describe("create_campaign_draft", () => {
     expect(m.createAuditLog).toHaveBeenCalledWith(expect.objectContaining({ entityType: "crm_campaign", entityId: 33 }));
   });
 
+  it("escapes plain text before turning it into HTML", async () => {
+    await run({ action: "create_campaign_draft", name: "x", subject: "y", bodyText: "a <b>&</b>\nc" }, ctx("user"));
+    expect(m.createCrmEmailCampaign.mock.calls[0][0]).toMatchObject({ bodyHtml: "<p>a &lt;b&gt;&amp;&lt;/b&gt;<br/>c</p>" });
+  });
+
   it("requires a body", async () => {
     await expect(run({ action: "create_campaign_draft", name: "x", subject: "y" }, ctx("user"))).rejects.toThrow(/bodyHtml or bodyText/);
   });

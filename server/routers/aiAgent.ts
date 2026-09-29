@@ -2,7 +2,6 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
-import { sendEmail } from "../_core/email";
 import { processEmailReply, analyzeEmail, generateEmailReply } from "../emailReplyService";
 import * as db from "../db";
 import { claimAgentTask, executeAgentTask } from "../aiAgentTaskExecutor";

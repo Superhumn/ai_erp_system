@@ -7,6 +7,7 @@
  * `assertRole` / `assertCanMutate` landing in aiAgentService first. Once those
  * exports exist, swap the bodies of `requireRole` / `requireInternal` for them.
  */
+import { randomInt } from "node:crypto";
 import type { Tool } from "../_core/llm";
 import type { AIAgentContext } from "../aiAgentService";
 
@@ -137,7 +138,7 @@ export function daysFromNow(days: number, now: Date = new Date()): Date {
 export function makeNumber(prefix: string, now: Date = new Date()): string {
   const year = now.getFullYear().toString().slice(-2);
   const month = (now.getMonth() + 1).toString().padStart(2, "0");
-  const random = Math.floor(Math.random() * 10000).toString().padStart(4, "0");
+  const random = randomInt(10000).toString().padStart(4, "0");
   return `${prefix}-${year}${month}-${random}`;
 }
 
