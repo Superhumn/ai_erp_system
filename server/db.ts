@@ -14996,6 +14996,25 @@ export async function getFirefliesMeetingByFirefliesId(firefliesId: string) {
   return result[0] || null;
 }
 
+/**
+ * Move meetings from one processingStatus to another in a single conditional
+ * UPDATE, so a meeting processed concurrently is never overwritten.
+ * Returns the number of rows changed.
+ */
+export async function transitionFirefliesMeetingStatus(
+  ids: number[],
+  from: (typeof firefliesMeetings.$inferSelect)["processingStatus"],
+  data: Partial<typeof firefliesMeetings.$inferInsert> & { processingStatus: (typeof firefliesMeetings.$inferSelect)["processingStatus"] },
+): Promise<number> {
+  const db = await getDb();
+  if (!db || ids.length === 0) return 0;
+  const result = await db
+    .update(firefliesMeetings)
+    .set(data)
+    .where(and(inArray(firefliesMeetings.id, ids), eq(firefliesMeetings.processingStatus, from)));
+  return (result as any)[0]?.affectedRows ?? 0;
+}
+
 export async function getFirefliesMeetingStats() {
   const db = await getDb();
   if (!db) return { total: 0, pending: 0, processed: 0, thisWeek: 0 };

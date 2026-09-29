@@ -177,8 +177,30 @@ export default function Meetings() {
     onError: (error) => toast.error(error.message),
   });
 
-  const skipMeetings = (meetingIds: number[]) => skipMutation.mutate({ meetingIds });
   const unskipMeetings = (meetingIds: number[]) => skipMutation.mutate({ meetingIds, unskip: true });
+
+  // The API takes at most 500 ids per call; larger selections go in batches.
+  const SKIP_BATCH = 500;
+  const [bulkSkipping, setBulkSkipping] = useState(false);
+  const skipMeetings = async (meetingIds: number[]) => {
+    if (meetingIds.length <= SKIP_BATCH) {
+      skipMutation.mutate({ meetingIds });
+      return;
+    }
+    setBulkSkipping(true);
+    let total = 0;
+    try {
+      for (let i = 0; i < meetingIds.length; i += SKIP_BATCH) {
+        const res = await skipMutation.mutateAsync({ meetingIds: meetingIds.slice(i, i + SKIP_BATCH) });
+        total += res.updated;
+      }
+    } catch {
+      // onError already toasted; report what landed before the failure.
+    } finally {
+      setBulkSkipping(false);
+      if (total > 0) toast.success(`Skipped ${total} meetings in total`);
+    }
+  };
 
   const toggleSelected = (id: number) =>
     setSelectedIds((prev) => {
@@ -604,10 +626,10 @@ export default function Meetings() {
                   variant="outline"
                   size="sm"
                   className="h-7 text-xs"
-                  disabled={skipMutation.isPending}
-                  onClick={() => skipMeetings(selectedVisible)}
+                  disabled={(skipMutation.isPending || bulkSkipping)}
+                  onClick={() => void skipMeetings(selectedVisible)}
                 >
-                  {skipMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <EyeOff className="h-3 w-3 mr-1" />}
+                  {(skipMutation.isPending || bulkSkipping) ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <EyeOff className="h-3 w-3 mr-1" />}
                   Skip {selectedVisible.length}
                 </Button>
                 <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setSelectedIds(new Set())}>
@@ -692,10 +714,10 @@ export default function Meetings() {
                           size="sm"
                           variant="outline"
                           className="h-5 px-2 text-[10px] shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                          disabled={skipMutation.isPending}
+                          disabled={(skipMutation.isPending || bulkSkipping)}
                           onClick={(e) => {
                             e.stopPropagation();
-                            skipMeetings([meeting.id]);
+                            void skipMeetings([meeting.id]);
                           }}
                         >
                           <EyeOff className="h-2.5 w-2.5 mr-0.5" />
@@ -967,8 +989,8 @@ export default function Meetings() {
                       variant="outline"
                       size="sm"
                       className="ml-auto text-xs"
-                      disabled={skipMutation.isPending}
-                      onClick={() => skipMeetings([m.id])}
+                      disabled={(skipMutation.isPending || bulkSkipping)}
+                      onClick={() => void skipMeetings([m.id])}
                     >
                       <EyeOff className="mr-1.5 h-3.5 w-3.5" />
                       Skip
@@ -979,7 +1001,7 @@ export default function Meetings() {
                       variant="outline"
                       size="sm"
                       className="ml-auto text-xs"
-                      disabled={skipMutation.isPending}
+                      disabled={(skipMutation.isPending || bulkSkipping)}
                       onClick={() => unskipMeetings([m.id])}
                     >
                       <Undo2 className="mr-1.5 h-3.5 w-3.5" />
