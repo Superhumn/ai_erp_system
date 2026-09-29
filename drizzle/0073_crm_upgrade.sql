@@ -10,6 +10,26 @@
 -- and column additions run inside a guarded procedure (MySQL 8 has no
 -- ADD COLUMN IF NOT EXISTS).
 
+CREATE TABLE IF NOT EXISTS `crm_accounts` (
+  `id` int AUTO_INCREMENT NOT NULL,
+  `companyId` int,
+  `name` varchar(255) NOT NULL,
+  `type` enum('district','school','distributor','operator','gpo','other') NOT NULL DEFAULT 'other',
+  `parentAccountId` int,
+  `region` varchar(128),
+  `mealCount` int,
+  `externalId` varchar(128),
+  `customerId` int,
+  `website` varchar(512),
+  `notes` text,
+  `assignedTo` int,
+  `createdAt` timestamp NOT NULL DEFAULT (now()),
+  `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT `crm_accounts_id` PRIMARY KEY(`id`),
+  INDEX `idx_crm_accounts_company` (`companyId`),
+  INDEX `idx_crm_accounts_parent` (`parentAccountId`)
+);
+--> statement-breakpoint
 DROP PROCEDURE IF EXISTS `_migrate_0073_crm_upgrade`;
 --> statement-breakpoint
 CREATE PROCEDURE `_migrate_0073_crm_upgrade`()

@@ -52,6 +52,8 @@ const CustomerSupport = lazy(() => import("./pages/cx/CustomerSupport"));
 
 // CRM
 const CRMHub = lazy(() => import("./pages/crm/CRMHub"));
+const CRMAccounts = lazy(() => import("./pages/crm/Accounts"));
+const CRMAdmin = lazy(() => import("./pages/crm/CRMAdmin"));
 
 // Operations
 const EmailInbox = lazy(() => import("./pages/operations/EmailInbox"));
@@ -307,6 +309,8 @@ function Router() {
 
           {/* CRM — /crm/hub is canonical (sidebar-locked); /crm is a legacy alias */}
           <Route path="/crm/hub" component={CRMHub} />
+          <Route path="/crm/accounts" component={CRMAccounts} />
+          <Route path="/crm/admin" component={CRMAdmin} />
           <Route path="/crm/dashboard" component={CRMDashboard} />
           <Route path="/crm"><Redirect to="/crm/hub" /></Route>
 

@@ -3,6 +3,7 @@ import { containsPattern, resolvePage, type PageRequest, type CUSTOMER_SORTS, ty
 import type { Customer, Order, Transaction } from "../drizzle/schema";
 import { COGS_KEYWORDS, COGS_REFERENCE_TYPES } from "../shared/cogs";
 import { drizzle } from "drizzle-orm/mysql2";
+import { alias } from "drizzle-orm/mysql-core";
 import mysql from "mysql2";
 import { scopeAllows, scopeCompanyIds, partitionIdsByVisibility, type Scope } from "./_core/scope";
 import {
@@ -132,6 +133,7 @@ import {
   marketingEngagements, influencers, subsidiaryFundraisingInvestors, brandAmbassadors,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
   InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
+  crmAccounts, InsertCrmAccount,
   // Copacker portal
   copackerInventoryUpdates, copackerInventoryUpdateItems, copackerInvoices, copackerInvoiceItems, copackerShippingDocuments,
   InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
@@ -13665,6 +13667,150 @@ export async function getCrmDealStats(pipelineId?: number, companyIds?: number[]
     wonValue: wonDeals?.totalValue || 0,
     lost: lostDeals?.count || 0,
   };
+}
+
+// --- CRM ACCOUNTS ---
+
+export async function getCrmAccounts(filters?: {
+  type?: string;
+  parentAccountId?: number | null;
+  search?: string;
+  assignedTo?: number;
+  /** Entity allow-list: null/undefined = unrestricted, [] = no rows. */
+  companyIds?: number[] | null;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  if (Array.isArray(filters?.companyIds) && filters.companyIds.length === 0) return [];
+
+  const parent = alias(crmAccounts, "parent");
+  const conditions = [];
+  if (Array.isArray(filters?.companyIds)) conditions.push(inArray(crmAccounts.companyId, filters.companyIds));
+  if (filters?.type) conditions.push(eq(crmAccounts.type, filters.type as any));
+  if (filters?.parentAccountId === null) conditions.push(isNull(crmAccounts.parentAccountId));
+  else if (filters?.parentAccountId) conditions.push(eq(crmAccounts.parentAccountId, filters.parentAccountId));
+  if (filters?.assignedTo) conditions.push(eq(crmAccounts.assignedTo, filters.assignedTo));
+  if (filters?.search) {
+    const escaped = filters.search.replace(/[_%\\]/g, '\\$&');
+    conditions.push(or(like(crmAccounts.name, `%${escaped}%`), like(crmAccounts.region, `%${escaped}%`), like(crmAccounts.externalId, `%${escaped}%`))!);
+  }
+
+  const childCount = sql<number>`(SELECT COUNT(*) FROM ${crmAccounts} c WHERE c.parentAccountId = ${crmAccounts.id})`;
+  const contactCount = sql<number>`(SELECT COUNT(*) FROM ${crmContacts} k WHERE k.accountId = ${crmAccounts.id})`;
+  const openDealCount = sql<number>`(SELECT COUNT(*) FROM ${crmDeals} d WHERE d.accountId = ${crmAccounts.id} AND d.status = 'open')`;
+
+  let query = db
+    .select({
+      account: crmAccounts,
+      parentName: parent.name,
+      childCount,
+      contactCount,
+      openDealCount,
+    })
+    .from(crmAccounts)
+    .leftJoin(parent, eq(parent.id, crmAccounts.parentAccountId));
+  if (conditions.length) query = query.where(and(...conditions)) as any;
+  const rows = await query.orderBy(crmAccounts.name).limit(filters?.limit || 200).offset(filters?.offset || 0);
+  return rows.map((r) => ({
+    ...r.account,
+    parentName: r.parentName ?? null,
+    childCount: Number(r.childCount ?? 0),
+    contactCount: Number(r.contactCount ?? 0),
+    openDealCount: Number(r.openDealCount ?? 0),
+  }));
+}
+
+export async function getCrmAccountById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(crmAccounts).where(eq(crmAccounts.id, id)).limit(1);
+  return row;
+}
+
+export async function getCrmAccountsByIds(ids: number[]) {
+  const db = await getDb();
+  if (!db || ids.length === 0) return [];
+  return db.select().from(crmAccounts).where(inArray(crmAccounts.id, ids));
+}
+
+export async function createCrmAccount(data: InsertCrmAccount) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(crmAccounts).values(data);
+  return result[0].insertId;
+}
+
+export async function updateCrmAccount(id: number, data: Partial<InsertCrmAccount>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(crmAccounts).set(data).where(eq(crmAccounts.id, id));
+}
+
+export async function getCrmAccountChildren(accountId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(crmAccounts).where(eq(crmAccounts.parentAccountId, accountId)).orderBy(crmAccounts.name);
+}
+
+/** Distinct non-empty `organization` values on contacts that have no account yet. */
+export async function getUnlinkedContactOrganizations(companyIds?: number[] | null) {
+  const db = await getDb();
+  if (!db) return [];
+  if (Array.isArray(companyIds) && companyIds.length === 0) return [];
+  const conditions = [isNull(crmContacts.accountId), sql`${crmContacts.organization} IS NOT NULL AND TRIM(${crmContacts.organization}) <> ''`];
+  if (Array.isArray(companyIds)) conditions.push(inArray(crmContacts.companyId, companyIds));
+  const rows = await db
+    .select({ organization: crmContacts.organization, companyId: crmContacts.companyId })
+    .from(crmContacts)
+    .where(and(...conditions))
+    .groupBy(crmContacts.organization, crmContacts.companyId);
+  return rows.map((r) => ({ organization: (r.organization ?? "").trim(), companyId: r.companyId ?? null })).filter((r) => r.organization);
+}
+
+/**
+ * Creates one account per distinct contact `organization` (case-insensitive,
+ * per entity) and links contacts and their deals to it. Re-runnable: existing
+ * accounts with the same name are reused, already-linked rows are untouched.
+ */
+export async function backfillAccountsFromOrganization(companyIds?: number[] | null) {
+  const db = await getDb();
+  if (!db) return { accountsCreated: 0, contactsLinked: 0, dealsLinked: 0 };
+  const orgs = await getUnlinkedContactOrganizations(companyIds);
+  let accountsCreated = 0;
+  let contactsLinked = 0;
+  let dealsLinked = 0;
+  for (const { organization, companyId } of orgs) {
+    const existing = await db
+      .select({ id: crmAccounts.id })
+      .from(crmAccounts)
+      .where(and(
+        sql`LOWER(${crmAccounts.name}) = ${organization.toLowerCase()}`,
+        companyId == null ? isNull(crmAccounts.companyId) : eq(crmAccounts.companyId, companyId),
+      ))
+      .limit(1);
+    let accountId = existing[0]?.id;
+    if (!accountId) {
+      accountId = await createCrmAccount({ name: organization, companyId, type: "other" });
+      accountsCreated++;
+    }
+    const contactWhere = and(
+      isNull(crmContacts.accountId),
+      sql`LOWER(TRIM(${crmContacts.organization})) = ${organization.toLowerCase()}`,
+      companyId == null ? isNull(crmContacts.companyId) : eq(crmContacts.companyId, companyId),
+    );
+    const linked = await db.select({ id: crmContacts.id }).from(crmContacts).where(contactWhere);
+    if (linked.length === 0) continue;
+    await db.update(crmContacts).set({ accountId }).where(contactWhere);
+    contactsLinked += linked.length;
+    const dealRes = await db
+      .update(crmDeals)
+      .set({ accountId })
+      .where(and(isNull(crmDeals.accountId), inArray(crmDeals.contactId, linked.map((c) => c.id))));
+    dealsLinked += Number((dealRes as any)[0]?.affectedRows ?? 0);
+  }
+  return { accountsCreated, contactsLinked, dealsLinked };
 }
 
 // --- CONTACT CAPTURES ---

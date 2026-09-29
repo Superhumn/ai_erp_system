@@ -10,6 +10,9 @@ import { adminProcedure, internalProcedure, createAuditLog, resolveRequestScope 
 import { scopeAllows, scopeCompanyIds, type Scope } from "../_core/scope";
 import { mailableSkipReason, sendCampaign, sendCampaignTest, type CampaignStatus } from "../campaignSender";
 import {
+  assertValidParentAccount,
+  getAccountDetail,
+  loadScopedAccount,
   loadScopedCapture,
   loadScopedContact,
   loadScopedContactByEmail,
@@ -46,6 +49,7 @@ const SENDABLE: CampaignStatus[] = ["draft", "scheduled", "paused", "partially_f
 
 const contactTypeEnum = z.enum(["lead", "prospect", "customer", "partner", "investor", "donor", "vendor", "other"]);
 const pipelineStageEnum = z.enum(["new", "contacted", "qualified", "proposal", "negotiation", "won", "lost"]);
+const accountTypeEnum = z.enum(["district", "school", "distributor", "operator", "gpo", "other"]);
 
 /** Campaign by id, treated as not found when outside the caller's entity scope. */
 async function loadScopedCampaign(id: number, scope: Scope) {
@@ -164,9 +168,11 @@ export const crmRouter = router({
           notes: z.string().optional(),
           tags: z.string().optional(),
           assignedTo: z.number().optional(),
+          accountId: z.number().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
           const fullName = input.fullName || `${input.firstName} ${input.lastName || ""}`.trim();
+          if (input.accountId) await loadScopedAccount(input.accountId, ctx.scope);
 
           // Skip self: don't let the logged-in user create a contact for themselves.
           const ownEmail = ctx.user.email?.trim().toLowerCase();
@@ -775,6 +781,7 @@ export const crmRouter = router({
         .input(z.object({
           pipelineId: z.number(),
           contactId: z.number(),
+          accountId: z.number().optional(),
           name: z.string().min(1).optional(), // Ignored — deal title is always the contact's company.
           description: z.string().optional(),
           stage: z.string(),
@@ -993,6 +1000,84 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             return { steps: [{ action: "Follow up with contact", priority: "high", reasoning: "Keep the conversation going", suggestedDate: "this week" }] };
           }
         }),
+    }),
+
+    // --- ACCOUNTS ---
+    // Customer organisations (districts, schools, distributors…) with a
+    // parent/child hierarchy. Contacts and deals hang off an account.
+    accounts: router({
+      list: scopedInternalProcedure
+        .input(z.object({
+          type: accountTypeEnum.optional(),
+          parentAccountId: z.number().nullable().optional(),
+          search: z.string().optional(),
+          assignedTo: z.number().optional(),
+          limit: z.number().optional(),
+          offset: z.number().optional(),
+        }).optional())
+        .query(({ input, ctx }) => db.getCrmAccounts({ ...input, companyIds: scopeIds(ctx.scope) })),
+
+      get: scopedInternalProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input, ctx }) => getAccountDetail(input.id, ctx.scope)),
+
+      children: scopedInternalProcedure
+        .input(z.object({ accountId: z.number() }))
+        .query(async ({ input, ctx }) => {
+          await loadScopedAccount(input.accountId, ctx.scope);
+          return db.getCrmAccountChildren(input.accountId);
+        }),
+
+      create: scopedInternalProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          type: accountTypeEnum.optional(),
+          parentAccountId: z.number().nullable().optional(),
+          region: z.string().optional(),
+          mealCount: z.number().int().nonnegative().nullable().optional(),
+          externalId: z.string().optional(),
+          customerId: z.number().nullable().optional(),
+          website: z.string().optional(),
+          notes: z.string().optional(),
+          assignedTo: z.number().nullable().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          if (input.parentAccountId) await assertValidParentAccount(null, input.parentAccountId, ctx.scope);
+          const id = await db.createCrmAccount({ ...input, companyId: ctx.user.companyId ?? null });
+          await createAuditLog(ctx.user.id, 'create', 'crm_account', id, input.name);
+          return { id };
+        }),
+
+      update: scopedInternalProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().min(1).optional(),
+          type: accountTypeEnum.optional(),
+          parentAccountId: z.number().nullable().optional(),
+          region: z.string().nullable().optional(),
+          mealCount: z.number().int().nonnegative().nullable().optional(),
+          externalId: z.string().nullable().optional(),
+          customerId: z.number().nullable().optional(),
+          website: z.string().nullable().optional(),
+          notes: z.string().nullable().optional(),
+          assignedTo: z.number().nullable().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          const existing = await loadScopedAccount(id, ctx.scope);
+          if (data.parentAccountId) await assertValidParentAccount(id, data.parentAccountId, ctx.scope);
+          await db.updateCrmAccount(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'crm_account', id, existing.name, existing, data);
+          return { success: true };
+        }),
+
+      // One account per distinct contact `organization`; links contacts and
+      // their deals. Re-runnable.
+      backfill: scopedAdminProcedure.mutation(async ({ ctx }) => {
+        const result = await db.backfillAccountsFromOrganization(scopeIds(ctx.scope));
+        await createAuditLog(ctx.user.id, 'update', 'crm_account', 0, `backfill: ${result.accountsCreated} accounts, ${result.contactsLinked} contacts, ${result.dealsLinked} deals`);
+        return result;
+      }),
     }),
 
     // --- CONTACT CAPTURES ---

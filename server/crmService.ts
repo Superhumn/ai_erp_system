@@ -57,6 +57,52 @@ export async function loadScopedCapture(id: number, scope: Scope) {
   return row;
 }
 
+export async function loadScopedAccount(id: number, scope: Scope) {
+  const row = await db.getCrmAccountById(id);
+  if (!row || !crmRowVisible(scope, row.companyId)) notFound("Account");
+  return row;
+}
+
+/**
+ * Validates a parent assignment: the parent must be visible, must not be the
+ * account itself, and must not be one of its descendants (no cycles).
+ */
+export async function assertValidParentAccount(accountId: number | null, parentAccountId: number, scope: Scope): Promise<void> {
+  if (accountId != null && parentAccountId === accountId) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "An account cannot be its own parent" });
+  }
+  let cursor: number | null = parentAccountId;
+  const seen = new Set<number>();
+  while (cursor != null) {
+    if (seen.has(cursor)) break;
+    seen.add(cursor);
+    const parent = await loadScopedAccount(cursor, scope);
+    if (accountId != null && parent.parentAccountId === accountId) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "That parent is a child of this account" });
+    }
+    cursor = parent.parentAccountId ?? null;
+  }
+}
+
+/** Account detail: the row plus parent, children, contacts, deals and a merged timeline. */
+export async function getAccountDetail(id: number, scope: Scope) {
+  const account = await loadScopedAccount(id, scope);
+  const companyIds = crmScopeCompanyIds(scope);
+  const [parent, children, contacts, deals] = await Promise.all([
+    account.parentAccountId ? db.getCrmAccountById(account.parentAccountId) : Promise.resolve(undefined),
+    db.getCrmAccountChildren(id),
+    db.getCrmContacts({ accountId: id, companyIds, limit: 500 }),
+    db.getCrmDeals({ accountId: id, companyIds, limit: 500 }),
+  ]);
+  const timeline = contacts.length
+    ? (await Promise.all(contacts.map((c) => db.getCrmInteractions({ contactId: c.id, limit: 20 }))))
+        .flat()
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .slice(0, 50)
+    : [];
+  return { ...account, parent: parent && crmRowVisible(scope, parent.companyId) ? parent : null, children, contacts, deals, timeline };
+}
+
 /** Allow-list for list helpers (`null` = unrestricted). */
 export function scopeIds(scope: Scope): number[] | null {
   return crmScopeCompanyIds(scope);

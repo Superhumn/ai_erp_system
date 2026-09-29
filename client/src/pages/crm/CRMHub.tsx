@@ -644,6 +644,12 @@ export default function CRMHub() {
           <div><span className="text-muted-foreground">Contacts</span> <span className="font-bold">{contacts?.length || 0}</span></div>
         </div>
         <div className="flex gap-2">
+          <Link href="/crm/accounts">
+            <Button variant="outline" size="sm">
+              <Building2 className="h-4 w-4 mr-2" />
+              Accounts
+            </Button>
+          </Link>
           <Button
             variant="outline"
             size="sm"

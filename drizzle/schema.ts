@@ -5030,6 +5030,30 @@ export const contactCaptures = mysqlTable("contact_captures", {
 export type ContactCapture = typeof contactCaptures.$inferSelect;
 export type InsertContactCapture = typeof contactCaptures.$inferInsert;
 
+// CRM Accounts — the customer organisation (district, school, distributor…)
+// that contacts and deals belong to. Replaces the free-text
+// crm_contacts.organization with a real record and a parent/child hierarchy
+// (district → schools, GPO → operators).
+export const crmAccounts = mysqlTable("crm_accounts", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  type: mysqlEnum("type", ["district", "school", "distributor", "operator", "gpo", "other"]).default("other").notNull(),
+  parentAccountId: int("parentAccountId"),
+  region: varchar("region", { length: 128 }),
+  mealCount: int("mealCount"), // meals served per day — the K-12 sizing signal
+  externalId: varchar("externalId", { length: 128 }), // NCES id, distributor account #, …
+  customerId: int("customerId"), // customers.id once they buy
+  website: varchar("website", { length: 512 }),
+  notes: text("notes"),
+  assignedTo: int("assignedTo"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CrmAccount = typeof crmAccounts.$inferSelect;
+export type InsertCrmAccount = typeof crmAccounts.$inferInsert;
+
 // Email Campaigns for CRM
 export const crmEmailCampaigns = mysqlTable("crm_email_campaigns", {
   id: int("id").autoincrement().primaryKey(),
