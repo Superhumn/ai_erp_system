@@ -102,6 +102,7 @@ import { vendorNegotiationsRouter } from "./vendorNegotiations";
 import { ediRouter } from "./edi";
 import { inventoryManagementRouter } from "./inventoryManagement";
 import { financeAiRouter } from "./financeAi";
+import { cashForecastRouter } from "./cashForecast";
 import { firefliesRouter } from "./fireflies";
 import { hrAiRouter } from "./hrAi";
 import { manufacturingAiRouter } from "./manufacturingAi";
@@ -481,6 +482,8 @@ export const appRouter = router({
   // AI-POWERED FINANCE ANALYTICS
   // ============================================
   financeAi: financeAiRouter,
+  // Rolling 13-week cash forecast
+  cashForecast: cashForecastRouter,
   // ============================================
   // FIREFLIES INTEGRATION
   // ============================================

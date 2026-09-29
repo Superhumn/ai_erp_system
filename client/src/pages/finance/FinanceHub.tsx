@@ -8,6 +8,8 @@ import {
 
 // ── 1 · CFO Dashboard (command center — always first) ──────────
 const CFODashboard = lazy(() => import("./CFODashboard"));
+// ── 1b · Rolling 13-week cash forecast ─────────────────────────
+const CashForecast13Week = lazy(() => import("./CashForecast13Week"));
 // ── 2 · Model vs Actual ────────────────────────────────────────
 const ModelVsActual = lazy(() =>
   import("./FinancialReports").then((m) => ({ default: m.ModelVsActual })),
@@ -95,6 +97,17 @@ export default function FinanceHub() {
 
       {/* 1 · CFO Dashboard — the reason a finance user visits this page */}
       <Suspense fallback={fallback}><CFODashboard /></Suspense>
+
+      {divider}
+
+      {/* 1b · 13-week cash forecast — week-by-week cash in, cash out, and balance */}
+      <CollapsibleSection
+        title="13-Week Cash Forecast"
+        subtitle="Week-by-week cash in, cash out, and ending balance"
+        defaultOpen
+      >
+        <CashForecast13Week />
+      </CollapsibleSection>
 
       {divider}
 
