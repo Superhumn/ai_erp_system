@@ -3,6 +3,7 @@
  * Provides email/password authentication as a replacement for manus.ai OAuth
  */
 
+import { appUrlForLinks } from "./tenancy";
 import { randomBytes } from "crypto";
 import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import type { Express, Request, Response } from "express";
@@ -316,7 +317,7 @@ export function registerLocalAuthRoutes(app: Express) {
         });
 
         // Send verification email if SendGrid is configured, otherwise log to console
-        const verifyUrl = `${ENV.publicAppUrl}/api/auth/verify-email?token=${verificationToken}`;
+        const verifyUrl = `${appUrlForLinks(ENV.publicAppUrl)}/api/auth/verify-email?token=${verificationToken}`;
         if (isEmailConfigured()) {
           sendEmail({
             to: normalizedEmail,
@@ -608,7 +609,7 @@ export function registerLocalAuthRoutes(app: Express) {
           expiresAt: new Date(Date.now() + 60 * 60 * 1000), // 1 hour
         });
 
-        const resetUrl = `${ENV.publicAppUrl}/reset-password?token=${token}`;
+        const resetUrl = `${appUrlForLinks(ENV.publicAppUrl)}/reset-password?token=${token}`;
 
         if (isEmailConfigured()) {
           sendEmail({

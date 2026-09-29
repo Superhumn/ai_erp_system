@@ -9,6 +9,7 @@ import {
 } from "../../drizzle/schema";
 import { getDb } from "./connection";
 import { ENV } from '../_core/env';
+import { isMultiTenant } from '../_core/tenancy';
 
 // ============================================
 // USER MANAGEMENT
@@ -51,7 +52,8 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     if (user.role !== undefined) {
       values.role = user.role;
       updateSet.role = user.role;
-    } else if (user.openId === ENV.ownerOpenId) {
+    } else if (!isMultiTenant() && user.openId === ENV.ownerOpenId) {
+      // The platform owner is a single-tenant concept; never auto-admin inside a customer's tenant.
       values.role = 'admin';
       updateSet.role = 'admin';
     }

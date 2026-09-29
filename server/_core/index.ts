@@ -47,8 +47,7 @@ function serveStatic(app: import("express").Express) {
   });
 }
 
-async function runMigrationsAtStartup() {
-  const url = process.env.DATABASE_URL;
+async function runMigrationsAtStartup(url = process.env.DATABASE_URL) {
   if (!url) {
     // In production validateRequiredSecrets() already throws; this guard only
     // applies to local dev where DATABASE_URL may legitimately be absent.
@@ -184,6 +183,8 @@ import { startScheduler } from "../aiAgentScheduler";
 import { createLogger } from "./logger";
 import { initErrorTracking, captureException } from "./errorTracking";
 import { secureCompare } from "./crypto";
+import { forEachTenant, getTenants, isMultiTenant, isSameTenantOrigin, markTenantUnavailable } from "./tenancy";
+import { reenterTenant, tenantMiddleware } from "./tenantMiddleware";
 
 const logger = createLogger("Server");
 
@@ -205,6 +206,16 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
   }
   throw new Error(`No available port found starting from ${startPort}`);
 }
+// Webhooks sit outside /api/ so apiLimiter misses them. Generous: SendGrid and Shopify
+// deliver in bursts, and a provider retry storm must not lock out the real events.
+const webhookLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 600,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many webhook requests" },
+});
+
 const oauthCallbackLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
@@ -725,20 +736,37 @@ async function startServer() {
   validateRequiredSecrets();
   validateCriticalConfig();
 
-  // Merge CRM duplicates BEFORE migrations so migration 0035's UNIQUE
-  // index creation doesn't fail with ER_DUP_ENTRY on existing rows.
-  await autoMergeCrmContacts();
+  // Per-database boot: CRM dedup BEFORE migrations (migration 0035's UNIQUE index would
+  // fail with ER_DUP_ENTRY on existing duplicates), then auth columns/tables before readiness +
+  // listen — login/signup SELECTs every users column; missing emailVerified/companyId/
+  // regionScope 500s auth. Multi-tenant mode repeats this for every tenant database.
+  const bootDatabase = async (url?: string) => {
+    await autoMergeCrmContacts();
+    await runMigrationsAtStartup(url);
+    await ensureAuthSchema();
+    await verifyDatabaseReadiness();
+  };
 
-  await runMigrationsAtStartup();
-  // Auth columns/tables before readiness + listen — login/signup SELECTs every
-  // users column; missing emailVerified/companyId/regionScope 500s auth.
-  await ensureAuthSchema();
-  await verifyDatabaseReadiness();
+  if (isMultiTenant()) {
+    const tenants = getTenants(); // throws on a malformed TENANTS_JSON: refuse to boot
+    logger.info("Multi-tenant mode", { tenants: tenants.length });
+    const failures = await forEachTenant((t) => bootDatabase(t.databaseUrl));
+    for (const f of failures) {
+      markTenantUnavailable(f.slug); // 503 for this tenant; the others keep serving
+      logger.error("Tenant database boot failed", {
+        tenant: f.slug,
+        error: f.error instanceof Error ? f.error.message : String(f.error),
+      });
+    }
+    void forEachTenant(() => ensureTables().then(() => cleanupPlaceholders()));
+  } else {
+    await bootDatabase();
 
-  // Ensure critical tables exist + cleanup placeholders
-  ensureTables()
-    .then(() => cleanupPlaceholders())
-    .catch(console.warn);
+    // Ensure critical tables exist + cleanup placeholders
+    ensureTables()
+      .then(() => cleanupPlaceholders())
+      .catch(console.warn);
+  }
 
   const emailConfigValidation = validateEmailConfig();
   if (!emailConfigValidation.valid) {
@@ -808,6 +836,21 @@ async function startServer() {
       return res.status(403).json({ error: "Missing Origin header" });
     }
 
+    // Multi-tenant: the Origin must be the same tenant as the host the request hit. Checked in
+    // every environment, since tenant hosts replace the single PUBLIC_APP_URL allowlist.
+    if (isMultiTenant()) {
+      let originHost: string;
+      try {
+        originHost = new URL(origin as string).host;
+      } catch {
+        return res.status(403).json({ error: "Invalid Origin header" });
+      }
+      if (!isSameTenantOrigin(originHost, req.hostname, getTenants(), ENV.tenantBaseDomain)) {
+        return res.status(403).json({ error: "Origin mismatch" });
+      }
+      return next();
+    }
+
     // In production, validate origin matches our app URL (+ optional allowlist)
     if (ENV.isProduction && ENV.publicAppUrl) {
       try {
@@ -861,6 +904,8 @@ async function startServer() {
     })
   );
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  // Tenant routing (no-op in single-tenant mode). After the body parsers, before any route.
+  app.use(tenantMiddleware);
   // Auth routes (login, register)
   registerOAuthRoutes(app);
   registerLocalAuthRoutes(app);
@@ -887,7 +932,7 @@ async function startServer() {
   // ============================================
   // SENDGRID WEBHOOK ENDPOINT
   // ============================================
-  app.post('/webhooks/sendgrid/events', express.raw({ type: 'application/json' }), async (req, res) => {
+  app.post('/webhooks/sendgrid/events', webhookLimiter, express.raw({ type: 'application/json' }), reenterTenant, async (req, res) => {
     try {
       const rawBody = getRawBody(req).toString('utf8');
       if (ENV.sendgridWebhookSecret) {
@@ -965,11 +1010,11 @@ async function startServer() {
     }
   };
 
-  app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), (req, res) =>
+  app.post('/webhooks/shopify/orders', webhookLimiter, express.raw({ type: 'application/json' }), reenterTenant, (req, res) =>
     handleShopifyWebhook(req, res)
   );
 
-  app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), (req, res) =>
+  app.post('/webhooks/shopify/inventory', webhookLimiter, express.raw({ type: 'application/json' }), reenterTenant, (req, res) =>
     handleShopifyWebhook(req, res)
   );
 
@@ -997,7 +1042,7 @@ async function startServer() {
     next();
   });
 
-  app.post('/webhooks/edi/inbound', express.raw({ type: ['application/edi-x12', 'text/plain', 'application/octet-stream'] }), async (req, res) => {
+  app.post('/webhooks/edi/inbound', webhookLimiter, express.raw({ type: ['application/edi-x12', 'text/plain', 'application/octet-stream'] }), reenterTenant, async (req, res) => {
     try {
       const { handleEdiWebhook } = await import('../ediTransportService');
       const rawContent = req.body.toString();
@@ -1058,7 +1103,9 @@ async function startServer() {
 
   app.post(
     "/webhooks/b2brocket/leads",
+    webhookLimiter,
     express.raw({ type: ["application/json", "text/plain", "*/*"] }),
+    reenterTenant,
     async (req, res) => {
       try {
         const rawBody = Buffer.isBuffer(req.body) ? req.body.toString() : JSON.stringify(req.body);
@@ -1471,6 +1518,14 @@ async function startServer() {
 
   server.listen(port, "0.0.0.0", () => {
     logger.info("Server started", { url: `http://0.0.0.0:${port}/`, port });
+
+    // The workers below poll one database and read env-wide credentials (IMAP, Mercury,
+    // Shopify). Across tenants they would mix customers' data, so they stay off until each
+    // is made tenant-aware (docs/MULTI_TENANT_PLAN.md, Phase 1b).
+    if (isMultiTenant()) {
+      logger.warn("Multi-tenant mode: background workers are disabled until tenant-aware");
+      return;
+    }
 
     // Start the email queue worker
     startEmailQueueWorker();
