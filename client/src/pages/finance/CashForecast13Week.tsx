@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Plus, Trash2, RefreshCw } from "lucide-react";
+import { AlertTriangle, Camera, Download, Plus, Trash2, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
+import { downloadExport } from "@/lib/downloadExport";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ScenariosPanel, type ScenarioKnobs } from "./cashForecast/Scenarios";
+import { RecurringExpensesPanel } from "./cashForecast/RecurringExpenses";
+import { AccuracyPanel } from "./cashForecast/Accuracy";
+import { CollectionsPanel } from "./cashForecast/Collections";
+import { CashSettingsPanel } from "./cashForecast/Settings";
 import {
   CartesianGrid,
   Line,
@@ -41,6 +49,7 @@ const OUT_ROWS = [
   ["vendor_bills", "Vendor bills"],
   ["purchase_orders", "Open purchase orders"],
   ["payroll", "Payroll"],
+  ["recurring_expenses", "Recurring expenses"],
   ["adjustment_out", "Manual outflows"],
 ] as const;
 
@@ -92,11 +101,43 @@ const todayIso = () => new Date().toISOString().slice(0, 10);
 
 export default function CashForecast13Week() {
   const { user } = useAuth();
+  const [scenarioId, setScenarioId] = useState<number | null>(null);
+  const [knobs, setKnobs] = useState<ScenarioKnobs>({});
   if (!user) return null;
-  return <CashForecastPanel storageKey={storageKey(user.id, user.companyId ?? null)} />;
+  const isAdmin = user.role === "admin";
+  return (
+    <Tabs defaultValue="forecast" className="space-y-3">
+      <TabsList className="flex-wrap h-auto">
+        <TabsTrigger value="forecast">Forecast</TabsTrigger>
+        <TabsTrigger value="scenarios">Scenarios</TabsTrigger>
+        <TabsTrigger value="expenses">Recurring expenses</TabsTrigger>
+        <TabsTrigger value="accuracy">Accuracy</TabsTrigger>
+        <TabsTrigger value="collections">Collections</TabsTrigger>
+        <TabsTrigger value="settings">Alerts &amp; banks</TabsTrigger>
+      </TabsList>
+      <TabsContent value="forecast">
+        <CashForecastPanel storageKey={storageKey(user.id, user.companyId ?? null)} scenarioId={scenarioId} knobs={knobs} />
+      </TabsContent>
+      <TabsContent value="scenarios">
+        <ScenariosPanel scenarioId={scenarioId} onSelect={setScenarioId} knobs={knobs} onKnobs={setKnobs} />
+      </TabsContent>
+      <TabsContent value="expenses">
+        <RecurringExpensesPanel />
+      </TabsContent>
+      <TabsContent value="accuracy">
+        <AccuracyPanel />
+      </TabsContent>
+      <TabsContent value="collections">
+        <CollectionsPanel />
+      </TabsContent>
+      <TabsContent value="settings">
+        <CashSettingsPanel isAdmin={isAdmin} />
+      </TabsContent>
+    </Tabs>
+  );
 }
 
-function CashForecastPanel({ storageKey }: { storageKey: string }) {
+function CashForecastPanel({ storageKey, scenarioId, knobs }: { storageKey: string; scenarioId: number | null; knobs: ScenarioKnobs }) {
   const saved = useMemo(() => loadSaved(storageKey), [storageKey]);
   const [startingCashText, setStartingCashText] = useState(saved.startingCash);
   const [adjustments, setAdjustments] = useState<Adjustment[]>(saved.adjustments);
@@ -122,11 +163,26 @@ function CashForecastPanel({ storageKey }: { storageKey: string }) {
   };
 
   const override = startingCashText.trim() === "" ? null : Number(startingCashText.replace(/[$,\s]/g, ""));
+  const hasKnobs = Object.values(knobs).some((v) => (Array.isArray(v) ? v.length > 0 : v !== undefined && v !== 0));
   const input = {
     startingCashOverride: override !== null && Number.isFinite(override) ? override : null,
     adjustments,
+    scenarioId: scenarioId ?? undefined,
+    knobs: hasKnobs ? knobs : undefined,
   };
   const { data, isLoading, error, refetch, isFetching } = trpc.cashForecast.get.useQuery(input);
+  const utils = trpc.useUtils();
+  const exportMut = trpc.cashForecast.export.useMutation({
+    onSuccess: (res) => downloadExport(res),
+    onError: (e) => toast.error(e.message),
+  });
+  const snapshotMut = trpc.cashForecast.snapshot.useMutation({
+    onSuccess: (r) => {
+      toast.success(r.updated ? "This week's snapshot updated" : "Snapshot saved");
+      utils.cashForecast.accuracy.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   const chartData = useMemo(
     () => (data?.weeks ?? []).map((w) => ({ week: `W${w.index}`, label: shortDate(w.start), cash: w.closingCash })),
@@ -148,7 +204,7 @@ function CashForecastPanel({ storageKey }: { storageKey: string }) {
         <div>
           <div className="text-sm font-semibold">Manual items</div>
           <p className="text-xs text-muted-foreground">
-            Add cash the system can't see: legal reserves, funding closes, one-off costs. Saved in this browser.
+            Quick one-offs for this session, saved in this browser. To keep them, save them into a scenario.
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-2">
@@ -232,11 +288,21 @@ function CashForecastPanel({ storageKey }: { storageKey: string }) {
           <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${isFetching ? "animate-spin" : ""}`} />
           Refresh
         </Button>
+        <Button variant="outline" size="sm" onClick={() => exportMut.mutate(input)} disabled={exportMut.isPending || !data}>
+          <Download className="h-3.5 w-3.5 mr-1.5" />
+          Excel
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => snapshotMut.mutate()} disabled={snapshotMut.isPending} title="Freeze this week's base forecast so it can be graded against the bank later">
+          <Camera className="h-3.5 w-3.5 mr-1.5" />
+          Snapshot
+        </Button>
         {data && (
           <Badge variant="secondary" className="text-xs">
             {data.cashSource === "mercury" ? "Bank balance: Mercury" : data.cashSource === "manual" ? "Starting cash: manual" : "No bank balance"}
           </Badge>
         )}
+        {scenarioId && <Badge className="text-xs">Scenario applied</Badge>}
+        {hasKnobs && <Badge variant="outline" className="text-xs">What-if knobs on</Badge>}
       </div>
 
       {isLoading && <p className="text-sm text-muted-foreground">Loading forecast…</p>}

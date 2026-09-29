@@ -505,6 +505,13 @@
 			"when": 1787700600000,
 			"tag": "0071_email_sequence_enrollments",
 			"breakpoints": true
+		},
+		{
+			"idx": 72,
+			"version": "5",
+			"when": 1787787000000,
+			"tag": "0072_cash_forecast",
+			"breakpoints": true
 		}
 	]
 }
