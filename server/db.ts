@@ -19114,20 +19114,18 @@ export async function deleteCashForecastScenario(id: number) {
 
 // ── Snapshots ───────────────────────────────────────────────────
 
-export async function upsertCashForecastSnapshot(data: InsertCashForecastSnapshot) {
+/** The first snapshot of a week is the frozen baseline; later calls in the same week leave it untouched. */
+export async function insertCashForecastSnapshotIfAbsent(data: InsertCashForecastSnapshot) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const existing = await db
-    .select({ id: cashForecastSnapshots.id })
+    .select({ id: cashForecastSnapshots.id, asOf: cashForecastSnapshots.asOf })
     .from(cashForecastSnapshots)
     .where(and(eq(cashForecastSnapshots.scopeKey, data.scopeKey ?? "global"), eq(cashForecastSnapshots.weekStart, data.weekStart)))
     .limit(1);
-  if (existing.length) {
-    await db.update(cashForecastSnapshots).set(data).where(eq(cashForecastSnapshots.id, existing[0].id));
-    return { id: existing[0].id, updated: true };
-  }
+  if (existing.length) return { id: existing[0].id, created: false, existingAsOf: existing[0].asOf };
   const result = await db.insert(cashForecastSnapshots).values(data);
-  return { id: result[0].insertId, updated: false };
+  return { id: result[0].insertId, created: true, existingAsOf: null };
 }
 
 export async function getCashForecastSnapshots(scopeKey: string, limit = 26) {
@@ -19212,15 +19210,37 @@ export async function upsertCashForecastAlertSettings(input: { scopeKey: string;
   return { id: result[0].insertId };
 }
 
-export async function markCashForecastAlertSent(id: number, lowestCash: string) {
+/**
+ * Atomically claim an alert send: only one caller wins when the row's
+ * lastAlertedAt still matches what it read. Returns false when another
+ * process already claimed it.
+ */
+export async function claimCashForecastAlert(id: number, expectedLastAlertedAt: Date | null, now: Date, lowestCash: string): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  const guard = expectedLastAlertedAt
+    ? eq(cashForecastAlertSettings.lastAlertedAt, expectedLastAlertedAt)
+    : isNull(cashForecastAlertSettings.lastAlertedAt);
+  const result = await db
+    .update(cashForecastAlertSettings)
+    .set({ lastAlertedAt: now, lastAlertLowestCash: lowestCash })
+    .where(and(eq(cashForecastAlertSettings.id, id), guard));
+  return ((result as any)[0]?.affectedRows ?? 0) > 0;
+}
+
+/** Give a claim back when every send failed, so the next run retries. */
+export async function releaseCashForecastAlert(id: number, previousLastAlertedAt: Date | null, previousLowestCash: string | null) {
   const db = await getDb();
   if (!db) return;
-  await db.update(cashForecastAlertSettings).set({ lastAlertedAt: new Date(), lastAlertLowestCash: lowestCash }).where(eq(cashForecastAlertSettings.id, id));
+  await db
+    .update(cashForecastAlertSettings)
+    .set({ lastAlertedAt: previousLastAlertedAt, lastAlertLowestCash: previousLowestCash })
+    .where(eq(cashForecastAlertSettings.id, id));
 }
 
 // ── Payment behaviour ───────────────────────────────────────────
 
-/** Completed customer payments joined to their invoice's issue date, for days-to-pay stats. */
+/** Completed payments on fully paid invoices, with the invoice's issue date, for days-to-pay stats. One invoice can appear several times (partial payments); the caller keeps the last. */
 export async function getInvoicePaymentHistory(scope: Scope, sinceDate: Date) {
   const db = await getDb();
   if (!db) return [];
@@ -19229,11 +19249,13 @@ export async function getInvoicePaymentHistory(scope: Scope, sinceDate: Date) {
   const conditions = [
     eq(payments.type, "received"),
     eq(payments.status, "completed"),
+    eq(invoices.status, "paid"),
     gte(payments.paymentDate, sinceDate),
   ];
   if (sc.cond) conditions.push(sc.cond);
   return db
     .select({
+      invoiceId: invoices.id,
       customerId: invoices.customerId,
       issueDate: invoices.issueDate,
       dueDate: invoices.dueDate,

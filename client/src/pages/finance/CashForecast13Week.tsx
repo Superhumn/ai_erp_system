@@ -3,7 +3,7 @@ import { AlertTriangle, Camera, Download, Plus, Trash2, RefreshCw } from "lucide
 import { toast } from "sonner";
 import { downloadExport } from "@/lib/downloadExport";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ScenariosPanel, type ScenarioKnobs } from "./cashForecast/Scenarios";
+import { ScenariosPanel, type ScenarioKnobs, type ScenarioDraft } from "./cashForecast/Scenarios";
 import { RecurringExpensesPanel } from "./cashForecast/RecurringExpenses";
 import { AccuracyPanel } from "./cashForecast/Accuracy";
 import { CollectionsPanel } from "./cashForecast/Collections";
@@ -103,6 +103,7 @@ export default function CashForecast13Week() {
   const { user } = useAuth();
   const [scenarioId, setScenarioId] = useState<number | null>(null);
   const [knobs, setKnobs] = useState<ScenarioKnobs>({});
+  const [scenarioDraft, setScenarioDraft] = useState<ScenarioDraft>({ startingCash: "", adjustments: [] });
   if (!user) return null;
   const isAdmin = user.role === "admin";
   return (
@@ -116,10 +117,10 @@ export default function CashForecast13Week() {
         <TabsTrigger value="settings">Alerts &amp; banks</TabsTrigger>
       </TabsList>
       <TabsContent value="forecast">
-        <CashForecastPanel storageKey={storageKey(user.id, user.companyId ?? null)} scenarioId={scenarioId} knobs={knobs} />
+        <CashForecastPanel storageKey={storageKey(user.id, user.companyId ?? null)} scenarioId={scenarioId} knobs={knobs} scenarioDraft={scenarioDraft} />
       </TabsContent>
       <TabsContent value="scenarios">
-        <ScenariosPanel scenarioId={scenarioId} onSelect={setScenarioId} knobs={knobs} onKnobs={setKnobs} />
+        <ScenariosPanel scenarioId={scenarioId} onSelect={setScenarioId} knobs={knobs} onKnobs={setKnobs} draft={scenarioDraft} onDraft={setScenarioDraft} />
       </TabsContent>
       <TabsContent value="expenses">
         <RecurringExpensesPanel />
@@ -137,7 +138,7 @@ export default function CashForecast13Week() {
   );
 }
 
-function CashForecastPanel({ storageKey, scenarioId, knobs }: { storageKey: string; scenarioId: number | null; knobs: ScenarioKnobs }) {
+function CashForecastPanel({ storageKey, scenarioId, knobs, scenarioDraft }: { storageKey: string; scenarioId: number | null; knobs: ScenarioKnobs; scenarioDraft: ScenarioDraft }) {
   const saved = useMemo(() => loadSaved(storageKey), [storageKey]);
   const [startingCashText, setStartingCashText] = useState(saved.startingCash);
   const [adjustments, setAdjustments] = useState<Adjustment[]>(saved.adjustments);
@@ -162,13 +163,19 @@ function CashForecastPanel({ storageKey, scenarioId, knobs }: { storageKey: stri
     }
   };
 
-  const override = startingCashText.trim() === "" ? null : Number(startingCashText.replace(/[$,\s]/g, ""));
+  // Starting cash: this panel's box wins, then the Scenarios tab's live draft, then the bank.
+  const parseCash = (t: string) => {
+    const n = t.trim() === "" ? null : Number(t.replace(/[$,\s]/g, ""));
+    return n !== null && Number.isFinite(n) ? n : null;
+  };
+  const override = parseCash(startingCashText) ?? parseCash(scenarioDraft.startingCash);
   const hasKnobs = Object.values(knobs).some((v) => (Array.isArray(v) ? v.length > 0 : v !== undefined && v !== 0));
+  // With a saved scenario selected, knobs are always sent (including 0 / []) so a live edit can clear a saved value.
   const input = {
-    startingCashOverride: override !== null && Number.isFinite(override) ? override : null,
-    adjustments,
+    startingCashOverride: override,
+    adjustments: [...scenarioDraft.adjustments, ...adjustments],
     scenarioId: scenarioId ?? undefined,
-    knobs: hasKnobs ? knobs : undefined,
+    knobs: scenarioId != null || hasKnobs ? { arSlipDays: knobs.arSlipDays ?? 0, arHaircutPct: knobs.arHaircutPct ?? 0, apSlipDays: knobs.apSlipDays ?? 0, excludeCustomerIds: knobs.excludeCustomerIds ?? [] } : undefined,
   };
   const { data, isLoading, error, refetch, isFetching } = trpc.cashForecast.get.useQuery(input);
   const utils = trpc.useUtils();
@@ -178,7 +185,8 @@ function CashForecastPanel({ storageKey, scenarioId, knobs }: { storageKey: stri
   });
   const snapshotMut = trpc.cashForecast.snapshot.useMutation({
     onSuccess: (r) => {
-      toast.success(r.updated ? "This week's snapshot updated" : "Snapshot saved");
+      if (r.created) toast.success("Snapshot saved. It will be graded once the week is over.");
+      else toast.info(`This week is already frozen (taken ${String(r.existingAsOf ?? "").slice(0, 10)}). Next snapshot opens Monday.`);
       utils.cashForecast.accuracy.invalidate();
     },
     onError: (e) => toast.error(e.message),

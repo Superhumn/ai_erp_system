@@ -148,6 +148,22 @@ describe("converters", () => {
     expect(ev.map((e) => isoDate(e.date))).toEqual(["2026-10-31", "2026-11-30", "2026-12-31"]);
   });
 
+  it("stale recurring anchors roll forward instead of replaying history", () => {
+    const from = startOfWeek(asOf); // 2026-09-28
+    const inv = recurringToEvents(
+      [{ id: 1, frequency: "monthly", dayOfMonth: 1, nextGenerationDate: d("2026-03-01"), totalAmount: "100", daysUntilDue: 0, isActive: true }],
+      d("2026-12-28"),
+      from,
+    );
+    expect(inv.map((e) => isoDate(e.date))).toEqual(["2026-10-01", "2026-11-01", "2026-12-01"]);
+    const exp = recurringExpensesToEvents(
+      [{ id: 1, name: "Rent", frequency: "weekly", nextDate: d("2025-01-06"), amount: "10", isActive: true }],
+      d("2026-10-19"),
+      from,
+    );
+    expect(exp.map((e) => isoDate(e.date))).toEqual(["2026-09-28", "2026-10-05", "2026-10-12"]);
+  });
+
   it("payroll uses only pending payments", () => {
     const ev = payrollToEvents([
       { id: 1, status: "pending", paymentDate: d("2026-10-15"), amount: "3000" },
@@ -196,16 +212,19 @@ describe("recurring expenses", () => {
 });
 
 describe("payment behaviour", () => {
-  it("returns the median days-to-pay for customers with enough history", () => {
+  it("returns the median days-to-pay for customers with enough history, one sample per invoice", () => {
     const b = computePayBehaviour([
-      { customerId: 1, issueDate: d("2026-01-01"), paymentDate: d("2026-02-15") }, // 45
-      { customerId: 1, issueDate: d("2026-02-01"), paymentDate: d("2026-04-02") }, // 60
-      { customerId: 1, issueDate: d("2026-03-01"), paymentDate: d("2026-04-20") }, // 50
-      { customerId: 2, issueDate: d("2026-03-01"), paymentDate: d("2026-03-10") },
-      { customerId: 3, issueDate: d("2026-03-01"), paymentDate: d("2025-03-10") }, // negative, ignored
+      { invoiceId: 1, customerId: 1, issueDate: d("2026-01-01"), paymentDate: d("2026-02-15") }, // 45
+      { invoiceId: 2, customerId: 1, issueDate: d("2026-02-01"), paymentDate: d("2026-03-03") }, // partial
+      { invoiceId: 2, customerId: 1, issueDate: d("2026-02-01"), paymentDate: d("2026-04-02") }, // settles: 60
+      { invoiceId: 3, customerId: 1, issueDate: d("2026-03-01"), paymentDate: d("2026-04-20") }, // 50
+      { invoiceId: 4, customerId: 2, issueDate: d("2026-03-01"), paymentDate: d("2026-03-10") },
+      { invoiceId: 5, customerId: 2, issueDate: d("2026-03-01"), paymentDate: d("2026-03-11") },
+      { invoiceId: 5, customerId: 2, issueDate: d("2026-03-01"), paymentDate: d("2026-03-12") }, // same invoice
+      { invoiceId: 6, customerId: 3, issueDate: d("2026-03-01"), paymentDate: d("2025-03-10") }, // negative, ignored
     ]);
     expect(b.get(1)).toEqual({ samples: 3, medianDaysToPay: 50 });
-    expect(b.has(2)).toBe(false);
+    expect(b.has(2)).toBe(false); // two invoices, not three
     expect(b.has(3)).toBe(false);
   });
 
@@ -290,8 +309,16 @@ describe("accuracy", () => {
     expect(rows[1]).toMatchObject({ actualIn: 500, actualOut: 0 });
     const s = summarizeAccuracy(rows);
     expect(s.weeks).toBe(2);
-    expect(s.inMape).toBe(10); // (20% + 0%) / 2
-    expect(s.outMape).toBe(56.25); // (12.5% + 100%) / 2
+    expect(s.inMape).toBe(12.5); // |800-1000|/800 = 25%, |500-500|/500 = 0% → 12.5%
+    expect(s.outMape).toBe(55.56); // |450-400|/450 = 11.11%, actual 0 with forecast 500 → 100%
+  });
+
+  it("uses actuals as the denominator and never hides a missed movement", () => {
+    const s = summarizeAccuracy([
+      { start: "a", forecastIn: 0, actualIn: 1000, forecastOut: 0, actualOut: 0, inError: 1000, outError: 0, netError: 1000 },
+    ]);
+    expect(s.inMape).toBe(100); // forecast nothing, got 1000
+    expect(s.outMape).toBeNull(); // neither side moved
   });
   it("summarizes nothing when nothing is graded", () => {
     expect(summarizeAccuracy([])).toEqual({ weeks: 0, inMape: null, outMape: null });

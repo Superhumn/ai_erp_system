@@ -22,6 +22,11 @@ interface Adj {
   date: string;
 }
 
+export interface ScenarioDraft {
+  startingCash: string;
+  adjustments: Adj[];
+}
+
 type ScenarioParams = ScenarioKnobs & { startingCashOverride?: number | null; adjustments?: Adj[] };
 const paramsOf = (p: unknown): ScenarioParams => (p && typeof p === "object" ? (p as ScenarioParams) : {});
 
@@ -44,11 +49,15 @@ export function ScenariosPanel({
   onSelect,
   knobs,
   onKnobs,
+  draft: liveDraft,
+  onDraft,
 }: {
   scenarioId: number | null;
   onSelect: (id: number | null) => void;
   knobs: ScenarioKnobs;
   onKnobs: (k: ScenarioKnobs) => void;
+  draft: ScenarioDraft;
+  onDraft: (d: ScenarioDraft) => void;
 }) {
   const utils = trpc.useUtils();
   const { data: scenarios } = trpc.cashForecast.scenarios.list.useQuery();
@@ -62,8 +71,10 @@ export function ScenariosPanel({
   const remove = trpc.cashForecast.scenarios.delete.useMutation({ onSuccess: () => { invalidate(); toast.success("Scenario deleted"); }, onError: (e) => toast.error(e.message) });
 
   const [name, setName] = useState("");
-  const [startingCash, setStartingCash] = useState("");
-  const [adjs, setAdjs] = useState<Adj[]>([]);
+  const startingCash = liveDraft.startingCash;
+  const adjs = liveDraft.adjustments;
+  const setStartingCash = (v: string) => onDraft({ ...liveDraft, startingCash: v });
+  const setAdjs = (v: Adj[]) => onDraft({ ...liveDraft, adjustments: v });
   const [draft, setDraft] = useState<Adj>({ label: "", amount: 0, direction: "out", date: todayIso() });
   const [excluded, setExcluded] = useState<number[]>(knobs.excludeCustomerIds ?? []);
 
@@ -122,7 +133,7 @@ export function ScenariosPanel({
         <CardContent className="pt-4 space-y-4">
           <div>
             <div className="text-sm font-semibold">What-if knobs</div>
-            <p className="text-xs text-muted-foreground">Applied live to the Forecast tab. Save as a scenario to keep them.</p>
+            <p className="text-xs text-muted-foreground">Everything here applies live to the Forecast tab, including starting cash and manual items. Save as a scenario to keep them.</p>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Field label="Customers pay later by (days)">

@@ -394,8 +394,17 @@ export function nextOccurrence(d: Date, frequency: string, anchorDay?: number | 
   }
 }
 
+/** Move a schedule forward past every occurrence before `from`, so a stale anchor never replays history. */
+export function rollForward(date: Date | null, from: Date | undefined, frequency: string, anchorDay?: number | null): Date | null {
+  if (!date || !from) return date;
+  let d: Date | null = date;
+  let guard = 0;
+  while (d && d.getTime() < from.getTime() && guard++ < 600) d = nextOccurrence(d, frequency, anchorDay);
+  return d;
+}
+
 /** Active recurring invoice templates → each future invoice's receipt (generation date + days until due). */
-export function recurringToEvents(rows: RecurringInvoiceLike[], horizonEnd: Date): CashEvent[] {
+export function recurringToEvents(rows: RecurringInvoiceLike[], horizonEnd: Date, from?: Date): CashEvent[] {
   const out: CashEvent[] = [];
   for (const r of rows) {
     if (!r.isActive) continue;
@@ -403,7 +412,7 @@ export function recurringToEvents(rows: RecurringInvoiceLike[], horizonEnd: Date
     if (amount <= 0) continue;
     const end = toDate(r.endDate);
     const terms = r.daysUntilDue ?? DEFAULT_TERMS_DAYS;
-    let gen = toDate(r.nextGenerationDate);
+    let gen = rollForward(toDate(r.nextGenerationDate), from, r.frequency, r.dayOfMonth);
     let guard = 0;
     while (gen && guard++ < 60) {
       if (end && gen.getTime() > end.getTime()) break;
@@ -501,14 +510,14 @@ export interface RecurringExpenseLike {
 }
 
 /** Fixed costs on a schedule → one outflow per occurrence until the horizon. */
-export function recurringExpensesToEvents(rows: RecurringExpenseLike[], horizonEnd: Date): CashEvent[] {
+export function recurringExpensesToEvents(rows: RecurringExpenseLike[], horizonEnd: Date, from?: Date): CashEvent[] {
   const out: CashEvent[] = [];
   for (const r of rows) {
     if (!r.isActive) continue;
     const amount = toAmount(r.amount);
     if (amount <= 0) continue;
     const end = toDate(r.endDate);
-    let next = toDate(r.nextDate);
+    let next = rollForward(toDate(r.nextDate), from, r.frequency, r.dayOfMonth);
     let guard = 0;
     while (next && guard++ < 60) {
       if (end && next.getTime() > end.getTime()) break;
@@ -531,6 +540,7 @@ export function recurringExpensesToEvents(rows: RecurringExpenseLike[], horizonE
 // ── v2: payment behaviour ───────────────────────────────────────
 
 export interface PaymentHistoryRow {
+  invoiceId?: number | null;
   customerId: number | null;
   issueDate: Date | string | null;
   paymentDate: Date | string | null;
@@ -546,8 +556,17 @@ export const MIN_PAY_SAMPLES = 3;
 
 /** Median days-to-pay per customer. Only customers with enough history are returned. */
 export function computePayBehaviour(rows: PaymentHistoryRow[], minSamples = MIN_PAY_SAMPLES): Map<number, CustomerPayBehaviour> {
+  // One sample per invoice: a partially paid invoice settles on its last payment.
+  const byInvoice = new Map<string, PaymentHistoryRow>();
+  rows.forEach((r, i) => {
+    const key = r.invoiceId != null ? `i:${r.invoiceId}` : `row:${i}`;
+    const prev = byInvoice.get(key);
+    const paid = toDate(r.paymentDate);
+    const prevPaid = prev ? toDate(prev.paymentDate) : null;
+    if (!prev || (paid && (!prevPaid || paid.getTime() > prevPaid.getTime()))) byInvoice.set(key, r);
+  });
   const byCustomer = new Map<number, number[]>();
-  for (const r of rows) {
+  for (const r of byInvoice.values()) {
     if (r.customerId == null) continue;
     const issued = toDate(r.issueDate);
     const paid = toDate(r.paymentDate);
@@ -705,13 +724,19 @@ export function gradeSnapshot(weeks: SnapshotWeek[], movements: BankMovement[], 
   return out;
 }
 
-/** Mean absolute percentage error across graded weeks, per side. 0 = perfect. null when nothing to grade. */
+/**
+ * Mean absolute percentage error across graded weeks, per side, with the
+ * actual as denominator. A week with no actual movement but a forecast counts
+ * as a 100% miss; a week with neither is skipped. 0 = perfect. null when
+ * nothing to grade.
+ */
 export function summarizeAccuracy(rows: WeekAccuracy[]): { weeks: number; inMape: number | null; outMape: number | null } {
   if (rows.length === 0) return { weeks: 0, inMape: null, outMape: null };
   const mape = (pairs: [number, number][]) => {
-    const valid = pairs.filter(([f]) => f > 0);
+    const valid = pairs.filter(([f, a]) => f > 0 || a > 0);
     if (!valid.length) return null;
-    return round2((valid.reduce((s, [f, a]) => s + Math.abs(a - f) / f, 0) / valid.length) * 100);
+    const total = valid.reduce((s, [f, a]) => s + (a > 0 ? Math.abs(a - f) / a : 1), 0);
+    return round2((total / valid.length) * 100);
   };
   return {
     weeks: rows.length,

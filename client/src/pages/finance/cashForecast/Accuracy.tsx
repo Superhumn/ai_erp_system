@@ -38,8 +38,12 @@ export function AccuracyPanel() {
               </thead>
               <tbody>
                 {data.snapshots.map((s) => (
-                  <tr key={s.id} className={`border-b border-border/40 last:border-0 cursor-pointer hover:bg-muted/40 ${snap?.id === s.id ? "bg-muted/40" : ""}`} onClick={() => setSelected(s.id)}>
-                    <td className="py-1.5">{s.asOf}</td>
+                  <tr key={s.id} className={`border-b border-border/40 last:border-0 hover:bg-muted/40 ${snap?.id === s.id ? "bg-muted/40" : ""}`}>
+                    <td className="py-1.5">
+                      <button type="button" className="underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm" aria-pressed={snap?.id === s.id} onClick={() => setSelected(s.id)}>
+                        {s.asOf}
+                      </button>
+                    </td>
                     <td className="py-1.5"><Badge variant="outline" className="text-[10px]">{s.source}</Badge></td>
                     <td className="py-1.5 text-right">{money(s.startingCash)}</td>
                     <td className={`py-1.5 text-right ${s.lowestCash < 0 ? "text-destructive" : ""}`}>{money(s.lowestCash)}</td>

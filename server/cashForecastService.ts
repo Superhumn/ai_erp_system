@@ -106,18 +106,20 @@ export async function loadBankCashForScope(scope: Scope): Promise<{
   error?: string;
   unmapped: number;
 }> {
-  const bank = await loadMercuryAccounts();
-  if (bank.error || !bank.configured) return { total: 0, accounts: [], accountIds: null, configured: bank.configured, error: bank.error, unmapped: 0 };
   const ids = scopeCompanyIds(scope);
-  if (ids === null) {
+  // Entity scope: the visible account list comes from the mapping table, so it
+  // stays closed even when the bank API is down (null would mean "all").
+  const mineIds = ids === null ? null : [...new Set((await db.getBankAccountEntityMap()).filter((m) => ids.includes(m.companyId)).map((m) => m.externalAccountId))];
+  const bank = await loadMercuryAccounts();
+  if (bank.error || !bank.configured) return { total: 0, accounts: [], accountIds: mineIds, configured: bank.configured, error: bank.error, unmapped: 0 };
+  if (mineIds === null) {
     return { total: bank.accounts.reduce((s, a) => s + a.balance, 0), accounts: bank.accounts, accountIds: null, configured: true, unmapped: 0 };
   }
-  const map = await db.getBankAccountEntityMap();
-  const mine = new Set(map.filter((m) => ids.includes(m.companyId)).map((m) => m.externalAccountId));
-  const mapped = new Set(map.map((m) => m.externalAccountId));
+  const mine = new Set(mineIds);
+  const mapped = new Set((await db.getBankAccountEntityMap()).map((m) => m.externalAccountId));
   const accounts = bank.accounts.filter((a) => mine.has(a.id));
   const unmapped = bank.accounts.filter((a) => !mapped.has(a.id)).length;
-  return { total: accounts.reduce((s, a) => s + a.balance, 0), accounts, accountIds: accounts.map((a) => a.id), configured: true, unmapped };
+  return { total: accounts.reduce((s, a) => s + a.balance, 0), accounts, accountIds: mineIds, configured: true, unmapped };
 }
 
 async function fxRatesFor(events: CashEvent[], asOf: Date): Promise<Map<string, number>> {
@@ -135,7 +137,8 @@ async function fxRatesFor(events: CashEvent[], asOf: Date): Promise<Map<string, 
 export async function getCashForecast(params: ForecastOptions): Promise<CashForecastResult> {
   const asOf = params.asOf ?? new Date();
   const weeks = params.weeks ?? DEFAULT_FORECAST_WEEKS;
-  const horizonEnd = addDays(startOfWeek(asOf), weeks * 7);
+  const weekStart = startOfWeek(asOf);
+  const horizonEnd = addDays(weekStart, weeks * 7);
   const scopeIds = params.scope.companyIds === "all" ? undefined : params.scope.companyIds;
   const visible = (companyId: number | null | undefined) => scopeAllows(params.scope, companyId);
 
@@ -162,11 +165,11 @@ export async function getCashForecast(params: ForecastOptions): Promise<CashFore
 
   let events: CashEvent[] = [
     ...receivablesToEventsWithBehaviour(invoices as any, behaviour),
-    ...recurringToEvents(recurring.filter((r) => visible(r.companyId)) as any, horizonEnd),
+    ...recurringToEvents(recurring.filter((r) => visible(r.companyId)) as any, horizonEnd, weekStart),
     ...billsToEvents(openBills as any),
     ...purchaseOrdersToEvents(pos as any, billedPoIds),
     ...payrollToEvents(payroll.filter((p) => visible(p.companyId)) as any),
-    ...recurringExpensesToEvents(expenses as any, horizonEnd),
+    ...recurringExpensesToEvents(expenses as any, horizonEnd, weekStart),
   ];
 
   // Recurring refs carry a date suffix; map them to the template's customer.
@@ -221,7 +224,7 @@ export async function snapshotForecast(scope: Scope, source: "scheduled" | "manu
   const forecast = await getCashForecast({ scope });
   const ids = scopeCompanyIds(scope);
   const weekStart = startOfWeek(new Date(forecast.asOf));
-  return db.upsertCashForecastSnapshot({
+  return db.insertCashForecastSnapshotIfAbsent({
     companyId: ids && ids.length === 1 ? ids[0] : null,
     scopeKey: scopeKeyFor(scope),
     asOf: new Date(forecast.asOf),
@@ -285,11 +288,22 @@ export async function runCashForecastAlerts(now = new Date()): Promise<{ checked
       skipped++;
       continue;
     }
-    const lastAt = s.lastAlertedAt ? new Date(s.lastAlertedAt).getTime() : 0;
+    const prevAt = s.lastAlertedAt ? new Date(s.lastAlertedAt) : null;
     const lastLow = s.lastAlertLowestCash != null ? toAmount(s.lastAlertLowestCash) : null;
-    const withinWeek = now.getTime() - lastAt < 7 * 86_400_000;
+    const withinWeek = prevAt ? now.getTime() - prevAt.getTime() < 7 * 86_400_000 : false;
     const worsened = lastLow == null || forecast.lowestCash < lastLow - Math.abs(lastLow) * 0.1;
     if (withinWeek && !worsened) {
+      skipped++;
+      continue;
+    }
+    if (!isEmailConfigured()) {
+      console.warn("[CashAlert] Email not configured; alert not sent for", s.scopeKey);
+      skipped++;
+      continue;
+    }
+    // Claim before sending so a concurrent run (scheduler + runNow, or two replicas) can't double-send.
+    const claimed = await db.claimCashForecastAlert(s.id, prevAt, now, String(forecast.lowestCash));
+    if (!claimed) {
       skipped++;
       continue;
     }
@@ -301,24 +315,24 @@ export async function runCashForecastAlerts(now = new Date()): Promise<{ checked
       forecast.firstNegativeWeek ? `Cash goes negative in week ${forecast.firstNegativeWeek}.` : "",
       "",
       "Biggest outflows in the low week:",
-      ...(lowWeek?.events.filter((e) => e.direction === "out").slice(0, 8).map((e) => `  - ${e.date} ${e.label}: ${fmtUsd(e.amount)}`) ?? []),
+      ...(lowWeek?.events
+        .filter((e) => e.direction === "out")
+        .sort((a, b) => b.amount - a.amount)
+        .slice(0, 8)
+        .map((e) => `  - ${e.date} ${e.label}: ${fmtUsd(e.amount)}`) ?? []),
     ].filter((l) => l !== undefined);
     const text = lines.join("\n");
     const html = `<pre style="font-family:ui-monospace,Menlo,monospace;font-size:13px">${text.replace(/</g, "&lt;")}</pre>`;
-    if (!isEmailConfigured()) {
-      console.warn("[CashAlert] Email not configured; alert not sent:", text.split("\n")[0]);
-      skipped++;
-      continue;
-    }
     let anySent = false;
     for (const to of s.recipients) {
       const res = await sendEmail({ to, subject: `Low cash warning: ${fmtUsd(forecast.lowestCash)} in week ${forecast.lowestWeek}`, text, html });
       if (res.success) anySent = true;
     }
-    if (anySent) {
-      await db.markCashForecastAlertSent(s.id, String(forecast.lowestCash));
-      sent++;
-    } else skipped++;
+    if (anySent) sent++;
+    else {
+      await db.releaseCashForecastAlert(s.id, prevAt, s.lastAlertLowestCash ?? null);
+      skipped++;
+    }
   }
   return { checked: settings.length, sent, skipped };
 }
@@ -415,10 +429,15 @@ export async function getCollectionsQueue(scope: Scope, today = new Date()): Pro
 export async function sendCollectionReminder(scope: Scope, invoiceId: number, opts?: { fromName?: string; replyTo?: string }): Promise<{ success: boolean; error?: string }> {
   const inv = await db.getInvoiceById(invoiceId);
   if (!inv || !scopeAllows(scope, inv.companyId)) return { success: false, error: "Invoice not found" };
+  // Same rules as the queue: only an open, overdue invoice with money still owed gets a reminder.
+  const openStatuses = new Set<string>(OPEN_INVOICE_STATUS_LIST);
+  if ((inv.type ?? "invoice") !== "invoice" || !openStatuses.has(inv.status)) return { success: false, error: "Invoice is not open" };
+  const outstanding = round2(toAmount(inv.totalAmount) - toAmount(inv.paidAmount));
+  if (outstanding <= 0.005) return { success: false, error: "Nothing outstanding on this invoice" };
+  if (!inv.dueDate || new Date(inv.dueDate).getTime() >= Date.now()) return { success: false, error: "Invoice is not overdue yet" };
   if (!inv.customerId) return { success: false, error: "Invoice has no customer" };
   const customer = await db.getCustomerById(inv.customerId);
   if (!customer?.email) return { success: false, error: "Customer has no email" };
-  const outstanding = round2(toAmount(inv.totalAmount) - toAmount(inv.paidAmount));
   const due = inv.dueDate ? isoDate(new Date(inv.dueDate)) : "on receipt";
   const amount = `${inv.currency ?? "USD"} ${outstanding.toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
   const text = [
