@@ -10,8 +10,17 @@ import { adminProcedure, internalProcedure, createAuditLog, resolveRequestScope 
 import { scopeAllows, scopeCompanyIds, type Scope } from "../_core/scope";
 import { mailableSkipReason, sendCampaign, sendCampaignTest, type CampaignStatus } from "../campaignSender";
 import {
+  annotateDealActivity,
   assertValidParentAccount,
+  createPipelineStage,
+  dealForecast,
+  deletePipelineStage,
   getAccountDetail,
+  listPipelineStages,
+  moveDealStage,
+  reorderPipelineStages,
+  syncStagesFromJson,
+  updatePipelineStage,
   loadScopedAccount,
   loadScopedCapture,
   loadScopedContact,
@@ -21,7 +30,7 @@ import {
   loadScopedTag,
   scopeIds,
 } from "../crmService";
-import { crmRowVisible } from "../crmLogic";
+import { crmRowVisible, parseStageNames } from "../crmLogic";
 
 // Every CRM procedure resolves the caller's entity scope up front. Reads filter
 // by it; by-id reads answer NOT_FOUND for rows outside it.
@@ -736,7 +745,9 @@ export const crmRouter = router({
           isDefault: z.boolean().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const id = await db.createCrmPipeline({ ...input, companyId: ctx.user.companyId ?? null });
+          const companyId = ctx.user.companyId ?? null;
+          const id = await db.createCrmPipeline({ ...input, companyId });
+          await syncStagesFromJson({ id, companyId }, parseStageNames(input.stages));
           await createAuditLog(ctx.user.id, 'create', 'crm_pipeline', id, input.name);
           return { id };
         }),
@@ -751,11 +762,66 @@ export const crmRouter = router({
         }))
         .mutation(async ({ input, ctx }) => {
           const { id, ...data } = input;
-          await loadScopedPipeline(id, ctx.scope);
+          const pipeline = await loadScopedPipeline(id, ctx.scope);
           await db.updateCrmPipeline(id, data);
+          if (data.stages !== undefined) await syncStagesFromJson(pipeline, parseStageNames(data.stages));
           await createAuditLog(ctx.user.id, 'update', 'crm_pipeline', id);
           return { success: true };
         }),
+
+      // Typed stages (crm_pipeline_stages). A pipeline without rows is seeded
+      // from its JSON `stages` on first read.
+      stages: router({
+        list: scopedProcedure
+          .input(z.object({ pipelineId: z.number() }))
+          .query(({ input, ctx }) => listPipelineStages(input.pipelineId, ctx.scope)),
+
+        create: scopedProcedure
+          .input(z.object({
+            pipelineId: z.number(),
+            name: z.string().min(1).max(128),
+            defaultProbability: z.number().int().min(0).max(100).optional(),
+            isWon: z.boolean().optional(),
+            isLost: z.boolean().optional(),
+            rottingDays: z.number().int().positive().nullable().optional(),
+          }))
+          .mutation(async ({ input, ctx }) => {
+            const id = await createPipelineStage(input, ctx.scope);
+            await createAuditLog(ctx.user.id, 'create', 'crm_pipeline_stage', id, input.name);
+            return { id };
+          }),
+
+        update: scopedProcedure
+          .input(z.object({
+            id: z.number(),
+            name: z.string().min(1).max(128).optional(),
+            defaultProbability: z.number().int().min(0).max(100).optional(),
+            isWon: z.boolean().optional(),
+            isLost: z.boolean().optional(),
+            rottingDays: z.number().int().positive().nullable().optional(),
+          }))
+          .mutation(async ({ input, ctx }) => {
+            const { id, ...data } = input;
+            const before = await updatePipelineStage(id, data, ctx.scope);
+            await createAuditLog(ctx.user.id, 'update', 'crm_pipeline_stage', id, before.name, before, data);
+            return { success: true };
+          }),
+
+        reorder: scopedProcedure
+          .input(z.object({ pipelineId: z.number(), orderedIds: z.array(z.number()).min(1) }))
+          .mutation(async ({ input, ctx }) => {
+            await reorderPipelineStages(input.pipelineId, input.orderedIds, ctx.scope);
+            return { success: true };
+          }),
+
+        delete: scopedProcedure
+          .input(z.object({ id: z.number() }))
+          .mutation(async ({ input, ctx }) => {
+            await deletePipelineStage(input.id, ctx.scope);
+            await createAuditLog(ctx.user.id, 'delete', 'crm_pipeline_stage', input.id);
+            return { success: true };
+          }),
+      }),
     }),
 
     // --- DEALS ---
@@ -949,13 +1015,30 @@ export const crmRouter = router({
           probability: z.number().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const existing = await loadScopedDeal(input.id, ctx.scope);
-          await db.updateCrmDeal(input.id, {
-            stage: input.stage,
-            probability: input.probability,
-          });
-          await createAuditLog(ctx.user.id, 'update', 'crm_deal', input.id, existing.name, { stage: existing.stage }, { stage: input.stage });
-          return { success: true };
+          const r = await moveDealStage(input, ctx.scope, ctx.user.id);
+          await createAuditLog(ctx.user.id, 'update', 'crm_deal', input.id, r.deal.name, { stage: r.deal.stage }, { stage: r.stage, probability: r.probability });
+          return { success: true, stage: r.stage, probability: r.probability, status: r.status };
+        }),
+
+      stageHistory: scopedProcedure
+        .input(z.object({ dealId: z.number() }))
+        .query(async ({ input, ctx }) => {
+          await loadScopedDeal(input.dealId, ctx.scope);
+          return db.getCrmDealStageHistory(input.dealId);
+        }),
+
+      // Weighted pipeline (amount × probability) by expected-close month and by stage.
+      forecast: scopedProcedure
+        .input(z.object({ pipelineId: z.number().optional() }).optional())
+        .query(({ input, ctx }) => dealForecast(ctx.scope, input?.pipelineId)),
+
+      // Open deals with their stage's rotting threshold and last activity — the
+      // kanban uses this for the "rotting" badge.
+      activity: scopedProcedure
+        .input(z.object({ pipelineId: z.number().optional() }).optional())
+        .query(async ({ input, ctx }) => {
+          const deals = await db.getCrmDeals({ status: "open", pipelineId: input?.pipelineId, companyIds: scopeIds(ctx.scope), limit: 5000 });
+          return (await annotateDealActivity(deals)).map((d) => ({ id: d.id, rottingDays: d.rottingDays, lastActivityAt: d.lastActivityAt }));
         }),
 
       getNextSteps: scopedProcedure

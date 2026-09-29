@@ -30,6 +30,34 @@ CREATE TABLE IF NOT EXISTS `crm_accounts` (
   INDEX `idx_crm_accounts_parent` (`parentAccountId`)
 );
 --> statement-breakpoint
+CREATE TABLE IF NOT EXISTS `crm_pipeline_stages` (
+  `id` int AUTO_INCREMENT NOT NULL,
+  `companyId` int,
+  `pipelineId` int NOT NULL,
+  `name` varchar(128) NOT NULL,
+  `sortOrder` int NOT NULL DEFAULT 0,
+  `defaultProbability` int NOT NULL DEFAULT 10,
+  `isWon` boolean NOT NULL DEFAULT false,
+  `isLost` boolean NOT NULL DEFAULT false,
+  `rottingDays` int,
+  `createdAt` timestamp NOT NULL DEFAULT (now()),
+  `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT `crm_pipeline_stages_id` PRIMARY KEY(`id`),
+  INDEX `idx_crm_pipeline_stages_pipeline` (`pipelineId`,`sortOrder`)
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS `crm_deal_stage_history` (
+  `id` int AUTO_INCREMENT NOT NULL,
+  `companyId` int,
+  `dealId` int NOT NULL,
+  `fromStage` varchar(64),
+  `toStage` varchar(64) NOT NULL,
+  `changedAt` timestamp NOT NULL DEFAULT (now()),
+  `changedBy` int,
+  CONSTRAINT `crm_deal_stage_history_id` PRIMARY KEY(`id`),
+  INDEX `idx_crm_deal_stage_history_deal` (`dealId`,`changedAt`)
+);
+--> statement-breakpoint
 DROP PROCEDURE IF EXISTS `_migrate_0073_crm_upgrade`;
 --> statement-breakpoint
 CREATE PROCEDURE `_migrate_0073_crm_upgrade`()
@@ -65,3 +93,39 @@ END;
 CALL `_migrate_0073_crm_upgrade`();
 --> statement-breakpoint
 DROP PROCEDURE IF EXISTS `_migrate_0073_crm_upgrade`;
+--> statement-breakpoint
+DROP PROCEDURE IF EXISTS `_migrate_0073_crm_stage_backfill`;
+--> statement-breakpoint
+CREATE PROCEDURE `_migrate_0073_crm_stage_backfill`()
+BEGIN
+  -- One crm_pipeline_stages row per name in each pipeline's JSON `stages`
+  -- array (pipelines that already have stage rows are skipped). Probabilities:
+  -- first regular stage 10, then evenly up to 90; a stage whose name contains
+  -- "won" gets 100, "lost" gets 0. A malformed JSON column must not break boot,
+  -- so failures are swallowed — server/crmService.ts re-seeds lazily anyway.
+  DECLARE CONTINUE HANDLER FOR SQLEXCEPTION BEGIN END;
+  INSERT INTO `crm_pipeline_stages` (`companyId`, `pipelineId`, `name`, `sortOrder`, `defaultProbability`, `isWon`, `isLost`)
+  SELECT x.companyId, x.pipelineId, x.name, x.sortOrder,
+    CASE
+      WHEN x.isWon THEN 100
+      WHEN x.isLost THEN 0
+      WHEN x.regularCount <= 1 THEN 10
+      ELSE ROUND(10 + 80 * (x.regularIdx - 1) / (x.regularCount - 1))
+    END,
+    x.isWon, x.isLost
+  FROM (
+    SELECT p.companyId, p.id AS pipelineId, jt.name, jt.ord - 1 AS sortOrder,
+      (LOWER(jt.name) LIKE '%won%') AS isWon,
+      (LOWER(jt.name) LIKE '%lost%' AND LOWER(jt.name) NOT LIKE '%won%') AS isLost,
+      SUM(CASE WHEN LOWER(jt.name) LIKE '%won%' OR LOWER(jt.name) LIKE '%lost%' THEN 0 ELSE 1 END) OVER (PARTITION BY p.id) AS regularCount,
+      SUM(CASE WHEN LOWER(jt.name) LIKE '%won%' OR LOWER(jt.name) LIKE '%lost%' THEN 0 ELSE 1 END) OVER (PARTITION BY p.id ORDER BY jt.ord) AS regularIdx
+    FROM (SELECT * FROM `crm_pipelines` WHERE JSON_VALID(`stages`) AND JSON_TYPE(`stages`) = 'ARRAY') p
+    JOIN JSON_TABLE(p.stages, '$[*]' COLUMNS (`ord` FOR ORDINALITY, `name` VARCHAR(128) PATH '$')) jt
+    WHERE jt.name IS NOT NULL AND jt.name <> ''
+  ) x
+  WHERE NOT EXISTS (SELECT 1 FROM `crm_pipeline_stages` s WHERE s.`pipelineId` = x.pipelineId);
+END;
+--> statement-breakpoint
+CALL `_migrate_0073_crm_stage_backfill`();
+--> statement-breakpoint
+DROP PROCEDURE IF EXISTS `_migrate_0073_crm_stage_backfill`;

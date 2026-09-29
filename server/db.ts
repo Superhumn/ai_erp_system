@@ -134,6 +134,7 @@ import {
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
   InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
   crmAccounts, InsertCrmAccount,
+  crmPipelineStages, InsertCrmPipelineStage, crmDealStageHistory, InsertCrmDealStageHistory,
   // Copacker portal
   copackerInventoryUpdates, copackerInventoryUpdateItems, copackerInvoices, copackerInvoiceItems, copackerShippingDocuments,
   InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
@@ -13392,6 +13393,111 @@ export async function updateCrmPipeline(id: number, data: Partial<InsertCrmPipel
   const db = await getDb();
   if (!db) return;
   await db.update(crmPipelines).set(data).where(eq(crmPipelines.id, id));
+}
+
+// --- CRM PIPELINE STAGES ---
+
+export async function getCrmPipelineStages(pipelineId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(crmPipelineStages).where(eq(crmPipelineStages.pipelineId, pipelineId)).orderBy(crmPipelineStages.sortOrder, crmPipelineStages.id);
+}
+
+export async function getCrmPipelineStagesForPipelines(pipelineIds: number[]) {
+  const db = await getDb();
+  if (!db || pipelineIds.length === 0) return [];
+  return db.select().from(crmPipelineStages).where(inArray(crmPipelineStages.pipelineId, pipelineIds)).orderBy(crmPipelineStages.pipelineId, crmPipelineStages.sortOrder, crmPipelineStages.id);
+}
+
+export async function getCrmPipelineStageById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(crmPipelineStages).where(eq(crmPipelineStages.id, id)).limit(1);
+  return row;
+}
+
+export async function createCrmPipelineStage(data: InsertCrmPipelineStage) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(crmPipelineStages).values(data);
+  return result[0].insertId;
+}
+
+export async function createCrmPipelineStages(rows: InsertCrmPipelineStage[]) {
+  const db = await getDb();
+  if (!db || rows.length === 0) return;
+  await db.insert(crmPipelineStages).values(rows);
+}
+
+export async function updateCrmPipelineStage(id: number, data: Partial<InsertCrmPipelineStage>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(crmPipelineStages).set(data).where(eq(crmPipelineStages.id, id));
+}
+
+export async function deleteCrmPipelineStage(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(crmPipelineStages).where(eq(crmPipelineStages.id, id));
+}
+
+/** Rewrites sortOrder so `orderedIds` are 0..n-1 in that order. */
+export async function reorderCrmPipelineStages(pipelineId: number, orderedIds: number[]) {
+  const db = await getDb();
+  if (!db) return;
+  for (let i = 0; i < orderedIds.length; i++) {
+    await db.update(crmPipelineStages).set({ sortOrder: i }).where(and(eq(crmPipelineStages.id, orderedIds[i]), eq(crmPipelineStages.pipelineId, pipelineId)));
+  }
+}
+
+/** Number of deals currently sitting in a stage (by name) of a pipeline. */
+export async function countCrmDealsInStage(pipelineId: number, stageName: string) {
+  const db = await getDb();
+  if (!db) return 0;
+  const [row] = await db.select({ n: count() }).from(crmDeals).where(and(eq(crmDeals.pipelineId, pipelineId), eq(crmDeals.stage, stageName)));
+  return row?.n ?? 0;
+}
+
+// --- CRM DEAL STAGE HISTORY ---
+
+export async function createCrmDealStageHistory(data: InsertCrmDealStageHistory) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(crmDealStageHistory).values(data);
+  return result[0].insertId;
+}
+
+export async function getCrmDealStageHistory(dealId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(crmDealStageHistory).where(eq(crmDealStageHistory.dealId, dealId)).orderBy(crmDealStageHistory.changedAt, crmDealStageHistory.id);
+}
+
+export async function getCrmDealStageHistoryForDeals(dealIds: number[]) {
+  const db = await getDb();
+  if (!db || dealIds.length === 0) return [];
+  return db.select().from(crmDealStageHistory).where(inArray(crmDealStageHistory.dealId, dealIds)).orderBy(crmDealStageHistory.changedAt, crmDealStageHistory.id);
+}
+
+/** Most recent interaction time per deal: interactions linked to the deal, or to its contact. */
+export async function getCrmDealLastActivity(dealIds: number[]): Promise<Map<number, Date>> {
+  const db = await getDb();
+  const out = new Map<number, Date>();
+  if (!db || dealIds.length === 0) return out;
+  const rows = await db
+    .select({
+      dealId: crmDeals.id,
+      last: sql<Date | string | null>`(SELECT MAX(i.createdAt) FROM ${crmInteractions} i WHERE i.relatedDealId = ${crmDeals.id} OR i.contactId = ${crmDeals.contactId})`,
+    })
+    .from(crmDeals)
+    .where(inArray(crmDeals.id, dealIds));
+  for (const r of rows) {
+    if (r.last) {
+      const d = new Date(r.last);
+      if (Number.isFinite(d.getTime())) out.set(r.dealId, d);
+    }
+  }
+  return out;
 }
 
 // --- CRM DEALS ---

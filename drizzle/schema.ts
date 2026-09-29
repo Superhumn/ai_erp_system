@@ -5054,6 +5054,41 @@ export const crmAccounts = mysqlTable("crm_accounts", {
 export type CrmAccount = typeof crmAccounts.$inferSelect;
 export type InsertCrmAccount = typeof crmAccounts.$inferInsert;
 
+// CRM Pipeline Stages — typed rows replacing crm_pipelines.stages (JSON array
+// of names). Each stage carries a default probability, won/lost flags and the
+// number of idle days after which a deal in it is "rotting".
+export const crmPipelineStages = mysqlTable("crm_pipeline_stages", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  pipelineId: int("pipelineId").notNull(),
+  name: varchar("name", { length: 128 }).notNull(),
+  sortOrder: int("sortOrder").default(0).notNull(),
+  defaultProbability: int("defaultProbability").default(10).notNull(), // 0-100
+  isWon: boolean("isWon").default(false).notNull(),
+  isLost: boolean("isLost").default(false).notNull(),
+  rottingDays: int("rottingDays"), // null = pipeline default (21)
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CrmPipelineStage = typeof crmPipelineStages.$inferSelect;
+export type InsertCrmPipelineStage = typeof crmPipelineStages.$inferInsert;
+
+// CRM Deal Stage History — one row per stage move; feeds cycle-time and
+// stage-conversion reporting.
+export const crmDealStageHistory = mysqlTable("crm_deal_stage_history", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  dealId: int("dealId").notNull(),
+  fromStage: varchar("fromStage", { length: 64 }),
+  toStage: varchar("toStage", { length: 64 }).notNull(),
+  changedAt: timestamp("changedAt").defaultNow().notNull(),
+  changedBy: int("changedBy"),
+});
+
+export type CrmDealStageHistory = typeof crmDealStageHistory.$inferSelect;
+export type InsertCrmDealStageHistory = typeof crmDealStageHistory.$inferInsert;
+
 // Email Campaigns for CRM
 export const crmEmailCampaigns = mysqlTable("crm_email_campaigns", {
   id: int("id").autoincrement().primaryKey(),
