@@ -1479,6 +1479,12 @@ export default function CRMHub() {
                   </div>
                 )}
               </div>
+              <DealExtras
+                deal={deal}
+                salesContacts={salesContacts}
+                stageByName={stageByName}
+                onChanged={() => { refetchDeals(); utils.crm.deals.forecast.invalidate(); }}
+              />
               <div className="border-t pt-3">
                 <div className="flex items-center gap-2 mb-3">
                   <Sparkles className="h-4 w-4 text-primary" />
@@ -1796,9 +1802,9 @@ export default function CRMHub() {
                   return;
                 }
               }
-              // Auto-name deal from contact's company or name
+              // Deal name: what was typed, else the contact's company / name
               const selectedC = (contacts as any[])?.find((c: any) => c.id === contactId);
-              const autoName = selectedC?.organization || selectedC?.fullName || dealForm.contactName || "New Deal";
+              const autoName = dealForm.name.trim() || selectedC?.organization || selectedC?.fullName || dealForm.contactName || "New Deal";
               const activePipelineId = activePipeline?.id;
               if (!activePipelineId) {
                 toast.error("No sales pipeline found. Please set up a pipeline first.");
@@ -2233,6 +2239,219 @@ function PipelineStageEditor({ pipelineId }: { pipelineId: number }) {
           <Plus className="h-3 w-3 mr-1" /> Add
         </Button>
       </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
+// Deal extras — buying committee, line items and close won/lost,
+// shown inside the deal detail sheet.
+// ──────────────────────────────────────────────────────────────
+const DEAL_ROLES = [
+  { value: "decision_maker", label: "Decision maker" },
+  { value: "champion", label: "Champion" },
+  { value: "procurement", label: "Procurement" },
+  { value: "influencer", label: "Influencer" },
+  { value: "blocker", label: "Blocker" },
+  { value: "other", label: "Other" },
+] as const;
+type DealRole = (typeof DEAL_ROLES)[number]["value"];
+
+function DealExtras({ deal, salesContacts, stageByName, onChanged }: {
+  deal: any;
+  salesContacts: any[];
+  stageByName: Record<string, any>;
+  onChanged: () => void;
+}) {
+  const utils = trpc.useUtils();
+  const dealId = deal.id as number;
+  const { data: dealContacts } = trpc.crm.deals.contacts.list.useQuery({ dealId });
+  const { data: items } = trpc.crm.deals.items.list.useQuery({ dealId });
+  const { data: lossReasons } = trpc.crm.deals.lossReasons.list.useQuery();
+  const { data: history } = trpc.crm.deals.stageHistory.useQuery({ dealId });
+  const [addContactId, setAddContactId] = useState<string>("");
+  const [addRole, setAddRole] = useState<DealRole>("influencer");
+  const [item, setItem] = useState({ description: "", quantity: "1", unit: "case", unitPrice: "", annualVolume: "" });
+  const [closing, setClosing] = useState<"won" | "lost" | null>(null);
+  const [lossReasonId, setLossReasonId] = useState<string>("");
+  const [closeNote, setCloseNote] = useState("");
+
+  const onError = (e: any) => toast.error(e.message);
+  const refreshContacts = () => utils.crm.deals.contacts.list.invalidate({ dealId });
+  const refreshItems = () => { utils.crm.deals.items.list.invalidate({ dealId }); onChanged(); };
+  const addContact = trpc.crm.deals.contacts.add.useMutation({ onSuccess: () => { setAddContactId(""); refreshContacts(); }, onError });
+  const removeContact = trpc.crm.deals.contacts.remove.useMutation({ onSuccess: refreshContacts, onError });
+  const addItem = trpc.crm.deals.items.add.useMutation({ onSuccess: () => { setItem({ description: "", quantity: "1", unit: "case", unitPrice: "", annualVolume: "" }); refreshItems(); }, onError });
+  const removeItem = trpc.crm.deals.items.remove.useMutation({ onSuccess: refreshItems, onError });
+  const closeDeal = trpc.crm.deals.close.useMutation({
+    onSuccess: (r) => { toast.success(r.status === "won" ? "Deal marked won" : "Deal marked lost"); setClosing(null); setCloseNote(""); setLossReasonId(""); onChanged(); },
+    onError,
+  });
+
+  const linkedIds = new Set((dealContacts ?? []).map((c: any) => c.contactId));
+  const candidates = salesContacts.filter((c) => !linkedIds.has(c.id));
+  const itemsTotal = (items ?? []).reduce((sum: number, it: any) => sum + Number(it.total || 0), 0);
+  const stageMeta = stageByName[(deal.stage ?? "").toLowerCase()];
+  const isOpen = deal.status === "open" || deal.status === "stalled";
+
+  return (
+    <div className="space-y-4">
+      {/* Close won / lost */}
+      <div className="border-t pt-3 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <h4 className="font-medium text-sm flex-1">Outcome</h4>
+          {isOpen ? (
+            <>
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setClosing("won")}>Mark won</Button>
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setClosing("lost")}>Mark lost</Button>
+            </>
+          ) : (
+            <Badge variant={deal.status === "won" ? "default" : "secondary"} className="capitalize">{deal.status}</Badge>
+          )}
+        </div>
+        {closing && (
+          <div className="rounded-md border p-2 space-y-2 text-xs">
+            {closing === "lost" && (
+              <div className="space-y-1">
+                <Label className="text-xs">Loss reason</Label>
+                <Select value={lossReasonId} onValueChange={setLossReasonId}>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Pick a reason" /></SelectTrigger>
+                  <SelectContent>
+                    {(lossReasons ?? []).map((r: any) => <SelectItem key={r.id} value={String(r.id)}>{r.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div className="space-y-1">
+              <Label className="text-xs">Note</Label>
+              <Textarea rows={2} value={closeNote} onChange={(e) => setCloseNote(e.target.value)} placeholder={closing === "won" ? "What sealed it?" : "What happened?"} />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setClosing(null)}>Cancel</Button>
+              <Button
+                size="sm"
+                className="h-7 text-xs"
+                disabled={closeDeal.isPending || (closing === "lost" && !lossReasonId)}
+                onClick={() => closeDeal.mutate({ dealId, outcome: closing, lossReasonId: closing === "lost" && lossReasonId ? Number(lossReasonId) : null, note: closeNote || null })}
+              >
+                {closeDeal.isPending ? "Saving…" : closing === "won" ? "Confirm won" : "Confirm lost"}
+              </Button>
+            </div>
+          </div>
+        )}
+        {deal.status === "lost" && (deal.lostReason || deal.lossReasonId) && (
+          <p className="text-xs text-muted-foreground">
+            Lost{deal.lossReasonId ? `: ${(lossReasons ?? []).find((r: any) => r.id === deal.lossReasonId)?.name ?? ""}` : ""}{deal.lostReason ? ` — ${deal.lostReason}` : ""}
+          </p>
+        )}
+      </div>
+
+      {/* Buying committee */}
+      <div className="border-t pt-3 space-y-2">
+        <h4 className="font-medium text-sm">Buying committee</h4>
+        {(dealContacts ?? []).length === 0 ? (
+          <p className="text-xs text-muted-foreground italic">No contacts linked yet.</p>
+        ) : (
+          <div className="space-y-1">
+            {(dealContacts ?? []).map((c: any) => (
+              <div key={c.id} className="flex items-center gap-2 text-xs border rounded p-1.5">
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium truncate">{c.contactName}</div>
+                  <div className="text-muted-foreground truncate">{[c.contactTitle, c.contactEmail].filter(Boolean).join(" · ") || "—"}</div>
+                </div>
+                <Badge variant="outline" className="text-[10px] capitalize">{String(c.role).replace(/_/g, " ")}</Badge>
+                {c.contactId !== deal.contactId && (
+                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeContact.mutate({ dealId, contactId: c.contactId })} title="Remove">
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="flex flex-col sm:flex-row gap-2">
+          <Select value={addContactId} onValueChange={setAddContactId}>
+            <SelectTrigger className="h-8 text-xs flex-1"><SelectValue placeholder="Add a contact" /></SelectTrigger>
+            <SelectContent>
+              {candidates.map((c) => <SelectItem key={c.id} value={String(c.id)}>{c.fullName || c.email}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={addRole} onValueChange={(v) => setAddRole(v as DealRole)}>
+            <SelectTrigger className="h-8 text-xs sm:w-[150px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {DEAL_ROLES.map((r) => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Button size="sm" className="h-8 text-xs" disabled={!addContactId || addContact.isPending} onClick={() => addContact.mutate({ dealId, contactId: Number(addContactId), role: addRole })}>
+            <Plus className="h-3 w-3 mr-1" /> Add
+          </Button>
+        </div>
+      </div>
+
+      {/* Line items */}
+      <div className="border-t pt-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <h4 className="font-medium text-sm">Line items</h4>
+          {(items ?? []).length > 0 && <span className="text-xs text-muted-foreground">Total ${itemsTotal.toLocaleString()} (sets the deal value)</span>}
+        </div>
+        {(items ?? []).length === 0 ? (
+          <p className="text-xs text-muted-foreground italic">No items — the deal value is entered manually.</p>
+        ) : (
+          <div className="space-y-1">
+            {(items ?? []).map((it: any) => (
+              <div key={it.id} className="flex items-center gap-2 text-xs border rounded p-1.5">
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium truncate">{it.description}</div>
+                  <div className="text-muted-foreground">
+                    {Number(it.quantity).toLocaleString()} {it.unit} × ${Number(it.unitPrice).toLocaleString()}
+                    {it.annualVolume ? ` · ${Number(it.annualVolume).toLocaleString()} ${it.unit}/yr` : ""}
+                  </div>
+                </div>
+                <span className="font-semibold tabular-nums">${Number(it.total).toLocaleString()}</span>
+                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeItem.mutate({ id: it.id })} title="Remove">
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="grid grid-cols-2 sm:grid-cols-6 gap-1.5">
+          <Input className="h-8 text-xs col-span-2" placeholder="Description" value={item.description} onChange={(e) => setItem({ ...item, description: e.target.value })} />
+          <Input className="h-8 text-xs" type="number" min={0} placeholder="Qty" value={item.quantity} onChange={(e) => setItem({ ...item, quantity: e.target.value })} />
+          <Input className="h-8 text-xs" placeholder="Unit" value={item.unit} onChange={(e) => setItem({ ...item, unit: e.target.value })} />
+          <Input className="h-8 text-xs" type="number" min={0} placeholder="Unit price" value={item.unitPrice} onChange={(e) => setItem({ ...item, unitPrice: e.target.value })} />
+          <Button
+            size="sm" className="h-8 text-xs"
+            disabled={!item.description.trim() || item.unitPrice === "" || addItem.isPending}
+            onClick={() => addItem.mutate({
+              dealId,
+              description: item.description.trim(),
+              quantity: Number(item.quantity) || 0,
+              unit: item.unit || "case",
+              unitPrice: Number(item.unitPrice) || 0,
+              annualVolume: item.annualVolume ? Number(item.annualVolume) : null,
+            })}
+          >
+            <Plus className="h-3 w-3 mr-1" /> Add
+          </Button>
+        </div>
+      </div>
+
+      {/* Stage history */}
+      {(history ?? []).length > 0 && (
+        <div className="border-t pt-3 space-y-1">
+          <h4 className="font-medium text-sm">Stage history</h4>
+          <div className="text-xs text-muted-foreground space-y-0.5">
+            {(history ?? []).map((h: any) => (
+              <div key={h.id} className="flex items-center gap-2">
+                <span className="tabular-nums">{format(new Date(h.changedAt), "MMM d, yyyy")}</span>
+                <span className="capitalize">{h.fromStage ? `${h.fromStage.replace(/_/g, " ")} → ` : ""}{h.toStage.replace(/_/g, " ")}</span>
+              </div>
+            ))}
+            {stageMeta && <div className="text-[10px]">Current stage default probability: {stageMeta.defaultProbability}%</div>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

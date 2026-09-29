@@ -217,3 +217,46 @@ export function computeForecast(deals: ForecastDeal[], stages: StageLike[] = [])
     byStage: [...byStage.values()].map(round).sort((a, b) => (stageOrder.get(a.key.toLowerCase()) ?? 999) - (stageOrder.get(b.key.toLowerCase()) ?? 999)),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Deals: items, close
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_LOSS_REASONS = ["Price", "Timing/Budget cycle", "Chose incumbent", "No decision", "Product fit", "Lost bid", "Other"];
+
+/** Line total = quantity × unitPrice, rounded to cents. */
+export function dealItemTotal(quantity: string | number | null | undefined, unitPrice: string | number | null | undefined): number {
+  const q = Number(quantity ?? 0);
+  const p = Number(unitPrice ?? 0);
+  if (!Number.isFinite(q) || !Number.isFinite(p)) return 0;
+  return Math.round(q * p * 100) / 100;
+}
+
+/**
+ * Deal amount implied by its items: the sum of line totals when there is at
+ * least one item, otherwise `undefined` (leave the manually entered amount).
+ */
+export function dealAmountFromItems(items: Array<{ total: string | number | null }>): number | undefined {
+  if (items.length === 0) return undefined;
+  const sum = items.reduce((acc, it) => acc + (Number(it.total ?? 0) || 0), 0);
+  return Math.round(sum * 100) / 100;
+}
+
+/** Deal patch for closing it as won or lost. */
+export function closeDealPatch(
+  outcome: "won" | "lost",
+  opts: { lossReasonId?: number | null; note?: string | null; wonStage?: string; lostStage?: string },
+  now: Date = new Date(),
+): { status: "won" | "lost"; probability: number; wonAt?: Date; lostAt?: Date; lossReasonId?: number | null; lostReason?: string | null; stage?: string } {
+  if (outcome === "won") {
+    return { status: "won", probability: 100, wonAt: now, lossReasonId: null, lostReason: null, ...(opts.wonStage ? { stage: opts.wonStage } : {}) };
+  }
+  return {
+    status: "lost",
+    probability: 0,
+    lostAt: now,
+    lossReasonId: opts.lossReasonId ?? null,
+    lostReason: opts.note?.trim() ? opts.note.trim().slice(0, 255) : null,
+    ...(opts.lostStage ? { stage: opts.lostStage } : {}),
+  };
+}

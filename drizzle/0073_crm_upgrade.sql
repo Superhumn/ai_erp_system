@@ -5,6 +5,10 @@
 --    crm_pipelines, crm_interactions, contact_captures)
 --  * crm_accounts (customer organisations with hierarchy) + accountId on
 --    crm_contacts / crm_deals
+--  * crm_pipeline_stages (typed stages replacing the JSON array, backfilled
+--    below) and crm_deal_stage_history
+--  * crm_deal_contacts, crm_deal_items, crm_loss_reasons (seeded) and
+--    lossReasonId on crm_deals
 --
 -- Backed by drizzle/schema.ts. Re-runnable: tables use CREATE IF NOT EXISTS
 -- and column additions run inside a guarded procedure (MySQL 8 has no
@@ -58,6 +62,56 @@ CREATE TABLE IF NOT EXISTS `crm_deal_stage_history` (
   INDEX `idx_crm_deal_stage_history_deal` (`dealId`,`changedAt`)
 );
 --> statement-breakpoint
+CREATE TABLE IF NOT EXISTS `crm_deal_contacts` (
+  `id` int AUTO_INCREMENT NOT NULL,
+  `companyId` int,
+  `dealId` int NOT NULL,
+  `contactId` int NOT NULL,
+  `role` enum('decision_maker','champion','procurement','influencer','blocker','other') NOT NULL DEFAULT 'other',
+  `createdAt` timestamp NOT NULL DEFAULT (now()),
+  CONSTRAINT `crm_deal_contacts_id` PRIMARY KEY(`id`),
+  CONSTRAINT `crm_deal_contacts_deal_contact_uniq` UNIQUE(`dealId`,`contactId`)
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS `crm_deal_items` (
+  `id` int AUTO_INCREMENT NOT NULL,
+  `companyId` int,
+  `dealId` int NOT NULL,
+  `productId` int,
+  `description` varchar(255) NOT NULL,
+  `quantity` decimal(15,3) NOT NULL DEFAULT '1',
+  `unit` varchar(32) DEFAULT 'case',
+  `unitPrice` decimal(15,4) NOT NULL DEFAULT '0',
+  `annualVolume` decimal(15,3),
+  `total` decimal(15,2) NOT NULL DEFAULT '0',
+  `createdAt` timestamp NOT NULL DEFAULT (now()),
+  `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT `crm_deal_items_id` PRIMARY KEY(`id`),
+  INDEX `idx_crm_deal_items_deal` (`dealId`)
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS `crm_loss_reasons` (
+  `id` int AUTO_INCREMENT NOT NULL,
+  `companyId` int,
+  `name` varchar(128) NOT NULL,
+  `sortOrder` int NOT NULL DEFAULT 0,
+  `isActive` boolean NOT NULL DEFAULT true,
+  `createdAt` timestamp NOT NULL DEFAULT (now()),
+  CONSTRAINT `crm_loss_reasons_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+INSERT INTO `crm_loss_reasons` (`companyId`, `name`, `sortOrder`)
+SELECT NULL, v.name, v.ord FROM (
+  SELECT 'Price' AS name, 0 AS ord UNION ALL
+  SELECT 'Timing/Budget cycle', 1 UNION ALL
+  SELECT 'Chose incumbent', 2 UNION ALL
+  SELECT 'No decision', 3 UNION ALL
+  SELECT 'Product fit', 4 UNION ALL
+  SELECT 'Lost bid', 5 UNION ALL
+  SELECT 'Other', 6
+) v
+WHERE NOT EXISTS (SELECT 1 FROM `crm_loss_reasons` r WHERE r.`companyId` IS NULL AND r.`name` = v.name);
+--> statement-breakpoint
 DROP PROCEDURE IF EXISTS `_migrate_0073_crm_upgrade`;
 --> statement-breakpoint
 CREATE PROCEDURE `_migrate_0073_crm_upgrade`()
@@ -87,6 +141,10 @@ BEGIN
   IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'crm_deals')
      AND NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'crm_deals' AND COLUMN_NAME = 'accountId') THEN
     ALTER TABLE `crm_deals` ADD COLUMN `accountId` int AFTER `contactId`;
+  END IF;
+  IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'crm_deals')
+     AND NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'crm_deals' AND COLUMN_NAME = 'lossReasonId') THEN
+    ALTER TABLE `crm_deals` ADD COLUMN `lossReasonId` int AFTER `lostReason`;
   END IF;
 END;
 --> statement-breakpoint

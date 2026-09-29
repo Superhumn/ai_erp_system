@@ -10,8 +10,12 @@ import { TRPCError } from "@trpc/server";
 import * as db from "./db";
 import type { Scope } from "./_core/scope";
 import {
+  DEFAULT_LOSS_REASONS,
   DEFAULT_ROTTING_DAYS,
+  closeDealPatch,
   computeForecast,
+  dealAmountFromItems,
+  dealItemTotal,
   crmRowVisible,
   crmScopeCompanyIds,
   findStage,
@@ -277,6 +281,202 @@ export async function moveDealStage(input: { id: number; stage: string; probabil
     });
   }
   return { deal, stage: stageName, probability, status };
+}
+
+export interface CreateDealInput {
+  pipelineId: number;
+  contactId: number;
+  accountId?: number;
+  name?: string;
+  description?: string;
+  stage: string;
+  amount?: string;
+  currency?: string;
+  probability?: number;
+  expectedCloseDate?: Date;
+  source?: string;
+  campaign?: string;
+  notes?: string;
+  assignedTo?: number;
+}
+
+/**
+ * Creates a deal directly. The name defaults to the contact's account /
+ * organization (a contact may now have any number of deals); probability
+ * defaults to the stage's value; the initial stage is recorded in history.
+ */
+export async function createDeal(input: CreateDealInput, scope: Scope, user: { id: number; companyId: number | null }) {
+  const contact = await loadScopedContact(input.contactId, scope);
+  const pipeline = await loadScopedPipeline(input.pipelineId, scope);
+  const stages = await getOrSeedPipelineStages(pipeline);
+  const stage = findStage(stages, input.stage);
+  let accountId = input.accountId ?? contact.accountId ?? null;
+  let accountName: string | null = null;
+  if (accountId) {
+    const account = await loadScopedAccount(accountId, scope);
+    accountName = account.name;
+  }
+  const name = input.name?.trim() || accountName || (contact.organization ?? "").trim() || contact.fullName;
+  const companyId = contact.companyId ?? user.companyId ?? null;
+  const id = await db.createCrmDeal({
+    companyId,
+    pipelineId: pipeline.id,
+    contactId: contact.id,
+    accountId,
+    name,
+    description: input.description,
+    stage: stage?.name ?? input.stage,
+    amount: input.amount,
+    currency: input.currency ?? "USD",
+    probability: resolveMoveProbability(input.probability, stage) ?? 0,
+    expectedCloseDate: input.expectedCloseDate,
+    status: statusForStage(stage) ?? "open",
+    source: input.source,
+    campaign: input.campaign,
+    notes: input.notes,
+    assignedTo: input.assignedTo ?? user.id,
+  });
+  await db.createCrmDealStageHistory({ companyId, dealId: id, fromStage: null, toStage: stage?.name ?? input.stage, changedAt: new Date(), changedBy: user.id });
+  await db.upsertCrmDealContact({ companyId, dealId: id, contactId: contact.id, role: "decision_maker" });
+  return { id, name };
+}
+
+// --- Deal contacts ---
+
+export async function listDealContacts(dealId: number, scope: Scope) {
+  await loadScopedDeal(dealId, scope);
+  return db.getCrmDealContacts(dealId);
+}
+
+export async function addDealContact(input: { dealId: number; contactId: number; role?: DealContactRole }, scope: Scope) {
+  const deal = await loadScopedDeal(input.dealId, scope);
+  await loadScopedContact(input.contactId, scope);
+  return db.upsertCrmDealContact({ companyId: deal.companyId ?? null, dealId: deal.id, contactId: input.contactId, role: input.role ?? "other" });
+}
+
+export async function removeDealContact(input: { dealId: number; contactId: number }, scope: Scope) {
+  const deal = await loadScopedDeal(input.dealId, scope);
+  if (deal.contactId === input.contactId) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "The primary contact cannot be removed; change the deal's contact instead" });
+  }
+  await db.removeCrmDealContact(deal.id, input.contactId);
+}
+
+export type DealContactRole = "decision_maker" | "champion" | "procurement" | "influencer" | "blocker" | "other";
+
+// --- Deal items ---
+
+/** Recomputes the deal amount from its items (only when it has any). */
+export async function recomputeDealAmount(dealId: number) {
+  const items = await db.getCrmDealItems(dealId);
+  const amount = dealAmountFromItems(items);
+  if (amount !== undefined) await db.updateCrmDeal(dealId, { amount: amount.toFixed(2) });
+  return amount;
+}
+
+export async function listDealItems(dealId: number, scope: Scope) {
+  await loadScopedDeal(dealId, scope);
+  return db.getCrmDealItems(dealId);
+}
+
+export interface DealItemInput {
+  productId?: number | null;
+  description: string;
+  quantity: number;
+  unit?: string;
+  unitPrice: number;
+  annualVolume?: number | null;
+}
+
+export async function addDealItem(dealId: number, input: DealItemInput, scope: Scope) {
+  const deal = await loadScopedDeal(dealId, scope);
+  const id = await db.createCrmDealItem({
+    companyId: deal.companyId ?? null,
+    dealId: deal.id,
+    productId: input.productId ?? null,
+    description: input.description.trim(),
+    quantity: String(input.quantity),
+    unit: input.unit ?? "case",
+    unitPrice: String(input.unitPrice),
+    annualVolume: input.annualVolume != null ? String(input.annualVolume) : null,
+    total: dealItemTotal(input.quantity, input.unitPrice).toFixed(2),
+  });
+  const amount = await recomputeDealAmount(deal.id);
+  return { id, amount };
+}
+
+export async function updateDealItem(id: number, patch: Partial<DealItemInput>, scope: Scope) {
+  const item = await db.getCrmDealItemById(id);
+  if (!item) notFound("Deal item");
+  await loadScopedDeal(item.dealId, scope);
+  const quantity = patch.quantity ?? Number(item.quantity);
+  const unitPrice = patch.unitPrice ?? Number(item.unitPrice);
+  await db.updateCrmDealItem(id, {
+    ...(patch.productId !== undefined ? { productId: patch.productId } : {}),
+    ...(patch.description !== undefined ? { description: patch.description.trim() } : {}),
+    ...(patch.unit !== undefined ? { unit: patch.unit } : {}),
+    ...(patch.annualVolume !== undefined ? { annualVolume: patch.annualVolume != null ? String(patch.annualVolume) : null } : {}),
+    quantity: String(quantity),
+    unitPrice: String(unitPrice),
+    total: dealItemTotal(quantity, unitPrice).toFixed(2),
+  });
+  const amount = await recomputeDealAmount(item.dealId);
+  return { amount };
+}
+
+export async function removeDealItem(id: number, scope: Scope) {
+  const item = await db.getCrmDealItemById(id);
+  if (!item) notFound("Deal item");
+  await loadScopedDeal(item.dealId, scope);
+  await db.deleteCrmDealItem(id);
+  const amount = await recomputeDealAmount(item.dealId);
+  return { amount };
+}
+
+// --- Loss reasons / close ---
+
+export async function listLossReasons(scope: Scope) {
+  let rows = await db.getCrmLossReasons(crmScopeCompanyIds(scope));
+  if (rows.length === 0) {
+    // Fresh database where the migration seed did not run (e.g. ensure-tables bootstrap).
+    await db.createCrmLossReasons(DEFAULT_LOSS_REASONS.map((name, sortOrder) => ({ companyId: null, name, sortOrder })));
+    rows = await db.getCrmLossReasons(crmScopeCompanyIds(scope));
+  }
+  return rows;
+}
+
+export async function closeDeal(
+  input: { dealId: number; outcome: "won" | "lost"; lossReasonId?: number | null; note?: string | null },
+  scope: Scope,
+  userId: number,
+) {
+  const deal = await loadScopedDeal(input.dealId, scope);
+  if (input.outcome === "lost" && input.lossReasonId) {
+    const reason = await db.getCrmLossReasonById(input.lossReasonId);
+    if (!reason || !crmRowVisible(scope, reason.companyId, { sharedWhenNull: true })) notFound("Loss reason");
+  }
+  const pipeline = await db.getCrmPipelineById(deal.pipelineId);
+  const stages = pipeline ? await getOrSeedPipelineStages(pipeline) : [];
+  const wonStage = stages.find((s) => s.isWon)?.name;
+  const lostStage = stages.find((s) => s.isLost)?.name;
+  const patch = closeDealPatch(input.outcome, { lossReasonId: input.lossReasonId, note: input.note, wonStage, lostStage });
+  await db.updateCrmDeal(deal.id, patch);
+  if (patch.stage && patch.stage !== deal.stage) {
+    await db.createCrmDealStageHistory({ companyId: deal.companyId ?? null, dealId: deal.id, fromStage: deal.stage, toStage: patch.stage, changedAt: new Date(), changedBy: userId });
+  }
+  if (input.note?.trim()) {
+    await db.createCrmInteraction({
+      contactId: deal.contactId,
+      companyId: deal.companyId ?? null,
+      relatedDealId: deal.id,
+      channel: "note",
+      interactionType: "note_added",
+      subject: input.outcome === "won" ? "Deal won" : "Deal lost",
+      content: input.note.trim(),
+      performedBy: userId,
+    });
+  }
+  return { deal, patch };
 }
 
 /** Weighted pipeline for the caller's scope (optionally one pipeline). */

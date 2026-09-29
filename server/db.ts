@@ -135,6 +135,7 @@ import {
   InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
   crmAccounts, InsertCrmAccount,
   crmPipelineStages, InsertCrmPipelineStage, crmDealStageHistory, InsertCrmDealStageHistory,
+  crmDealContacts, InsertCrmDealContact, crmDealItems, InsertCrmDealItem, crmLossReasons, InsertCrmLossReason,
   // Copacker portal
   copackerInventoryUpdates, copackerInventoryUpdateItems, copackerInvoices, copackerInvoiceItems, copackerShippingDocuments,
   InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
@@ -13498,6 +13499,127 @@ export async function getCrmDealLastActivity(dealIds: number[]): Promise<Map<num
     }
   }
   return out;
+}
+
+// --- CRM DEAL CONTACTS ---
+
+export async function getCrmDealContacts(dealId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select({ link: crmDealContacts, contact: crmContacts })
+    .from(crmDealContacts)
+    .innerJoin(crmContacts, eq(crmContacts.id, crmDealContacts.contactId))
+    .where(eq(crmDealContacts.dealId, dealId))
+    .orderBy(crmDealContacts.id);
+  return rows.map((r) => ({
+    ...r.link,
+    contactName: r.contact.fullName,
+    contactEmail: r.contact.email,
+    contactTitle: r.contact.jobTitle,
+    contactOrganization: r.contact.organization,
+  }));
+}
+
+export async function getCrmDealContactsForDeals(dealIds: number[]) {
+  const db = await getDb();
+  if (!db || dealIds.length === 0) return [];
+  return db.select().from(crmDealContacts).where(inArray(crmDealContacts.dealId, dealIds));
+}
+
+/** Insert-or-update the role of a contact on a deal. Returns the link id. */
+export async function upsertCrmDealContact(data: InsertCrmDealContact) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [existing] = await db.select().from(crmDealContacts)
+    .where(and(eq(crmDealContacts.dealId, data.dealId), eq(crmDealContacts.contactId, data.contactId))).limit(1);
+  if (existing) {
+    await db.update(crmDealContacts).set({ role: data.role ?? existing.role }).where(eq(crmDealContacts.id, existing.id));
+    return existing.id;
+  }
+  const result = await db.insert(crmDealContacts).values(data);
+  return result[0].insertId;
+}
+
+export async function removeCrmDealContact(dealId: number, contactId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(crmDealContacts).where(and(eq(crmDealContacts.dealId, dealId), eq(crmDealContacts.contactId, contactId)));
+}
+
+// --- CRM DEAL ITEMS ---
+
+export async function getCrmDealItems(dealId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(crmDealItems).where(eq(crmDealItems.dealId, dealId)).orderBy(crmDealItems.id);
+}
+
+export async function getCrmDealItemById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(crmDealItems).where(eq(crmDealItems.id, id)).limit(1);
+  return row;
+}
+
+export async function createCrmDealItem(data: InsertCrmDealItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(crmDealItems).values(data);
+  return result[0].insertId;
+}
+
+export async function updateCrmDealItem(id: number, data: Partial<InsertCrmDealItem>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(crmDealItems).set(data).where(eq(crmDealItems.id, id));
+}
+
+export async function deleteCrmDealItem(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(crmDealItems).where(eq(crmDealItems.id, id));
+}
+
+// --- CRM LOSS REASONS ---
+
+export async function getCrmLossReasons(companyIds?: number[] | null, includeInactive = false) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (!includeInactive) conditions.push(eq(crmLossReasons.isActive, true));
+  if (Array.isArray(companyIds)) {
+    conditions.push(companyIds.length ? or(isNull(crmLossReasons.companyId), inArray(crmLossReasons.companyId, companyIds))! : isNull(crmLossReasons.companyId));
+  }
+  let query = db.select().from(crmLossReasons);
+  if (conditions.length) query = query.where(and(...conditions)) as any;
+  return query.orderBy(crmLossReasons.sortOrder, crmLossReasons.id);
+}
+
+export async function getCrmLossReasonById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(crmLossReasons).where(eq(crmLossReasons.id, id)).limit(1);
+  return row;
+}
+
+export async function createCrmLossReason(data: InsertCrmLossReason) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(crmLossReasons).values(data);
+  return result[0].insertId;
+}
+
+export async function createCrmLossReasons(rows: InsertCrmLossReason[]) {
+  const db = await getDb();
+  if (!db || rows.length === 0) return;
+  await db.insert(crmLossReasons).values(rows);
+}
+
+export async function updateCrmLossReason(id: number, data: Partial<InsertCrmLossReason>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(crmLossReasons).set(data).where(eq(crmLossReasons.id, id));
 }
 
 // --- CRM DEALS ---

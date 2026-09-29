@@ -1,9 +1,25 @@
 import { describe, expect, it } from "vitest";
 import type { Scope } from "./_core/scope";
 import {
-  computeForecast, crmRowVisible, crmScopeCompanyIds, dealIsRotting, filterCrmRows, findStage, monthKey, parseStageNames,
-  resolveMoveProbability, scopeIsEmpty, seedStagesFromNames, statusForStage,
+  closeDealPatch, computeForecast, crmRowVisible, crmScopeCompanyIds, dealAmountFromItems, dealIsRotting, dealItemTotal, filterCrmRows,
+  findStage, monthKey, parseStageNames, resolveMoveProbability, scopeIsEmpty, seedStagesFromNames, statusForStage,
 } from "./crmLogic";
+
+describe("deal items / close", () => {
+  it("computes line totals and the deal amount from items", () => {
+    expect(dealItemTotal("3", "2.505")).toBe(7.52);
+    expect(dealItemTotal(null, 5)).toBe(0);
+    expect(dealItemTotal("x", 5)).toBe(0);
+    expect(dealAmountFromItems([])).toBeUndefined();
+    expect(dealAmountFromItems([{ total: "10.10" }, { total: 5 }, { total: null }])).toBe(15.1);
+  });
+  it("builds the won / lost patch", () => {
+    const now = new Date("2026-09-29T00:00:00Z");
+    expect(closeDealPatch("won", { wonStage: "closed_won" }, now)).toEqual({ status: "won", probability: 100, wonAt: now, lossReasonId: null, lostReason: null, stage: "closed_won" });
+    expect(closeDealPatch("lost", { lossReasonId: 3, note: "  too pricey " }, now)).toEqual({ status: "lost", probability: 0, lostAt: now, lossReasonId: 3, lostReason: "too pricey" });
+    expect(closeDealPatch("lost", {}, now).stage).toBeUndefined();
+  });
+});
 
 const global: Scope = { mode: "global", companyIds: "all" };
 const entity: Scope = { mode: "entity", companyIds: [2, 3] };

@@ -10,13 +10,23 @@ import { adminProcedure, internalProcedure, createAuditLog, resolveRequestScope 
 import { scopeAllows, scopeCompanyIds, type Scope } from "../_core/scope";
 import { mailableSkipReason, sendCampaign, sendCampaignTest, type CampaignStatus } from "../campaignSender";
 import {
+  addDealContact,
+  addDealItem,
   annotateDealActivity,
   assertValidParentAccount,
+  closeDeal,
+  createDeal,
   createPipelineStage,
   dealForecast,
   deletePipelineStage,
   getAccountDetail,
+  listDealContacts,
+  listDealItems,
+  listLossReasons,
   listPipelineStages,
+  removeDealContact,
+  removeDealItem,
+  updateDealItem,
   moveDealStage,
   reorderPipelineStages,
   syncStagesFromJson,
@@ -59,6 +69,15 @@ const SENDABLE: CampaignStatus[] = ["draft", "scheduled", "paused", "partially_f
 const contactTypeEnum = z.enum(["lead", "prospect", "customer", "partner", "investor", "donor", "vendor", "other"]);
 const pipelineStageEnum = z.enum(["new", "contacted", "qualified", "proposal", "negotiation", "won", "lost"]);
 const accountTypeEnum = z.enum(["district", "school", "distributor", "operator", "gpo", "other"]);
+const dealContactRoleEnum = z.enum(["decision_maker", "champion", "procurement", "influencer", "blocker", "other"]);
+const dealItemInput = z.object({
+  productId: z.number().nullable().optional(),
+  description: z.string().min(1).max(255),
+  quantity: z.number().nonnegative(),
+  unit: z.string().max(32).optional(),
+  unitPrice: z.number().nonnegative(),
+  annualVolume: z.number().nonnegative().nullable().optional(),
+});
 
 /** Campaign by id, treated as not found when outside the caller's entity scope. */
 async function loadScopedCampaign(id: number, scope: Scope) {
@@ -843,12 +862,16 @@ export const crmRouter = router({
         .input(z.object({ id: z.number() }))
         .query(({ input, ctx }) => loadScopedDeal(input.id, ctx.scope)),
 
+      // Creates the deal directly. A contact/company may have any number of
+      // deals and the name is free (defaults to the account / organization).
+      // `requireApproval: true` keeps the old behaviour: queue an approval task
+      // for the AI agent to create the deal instead of inserting now.
       create: scopedProcedure
         .input(z.object({
           pipelineId: z.number(),
           contactId: z.number(),
           accountId: z.number().optional(),
-          name: z.string().min(1).optional(), // Ignored — deal title is always the contact's company.
+          name: z.string().min(1).optional(),
           description: z.string().optional(),
           stage: z.string(),
           amount: z.string().optional(),
@@ -859,39 +882,27 @@ export const crmRouter = router({
           campaign: z.string().optional(),
           notes: z.string().optional(),
           assignedTo: z.number().optional(),
+          requireApproval: z.boolean().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          // Deal title must be the contact's client company name.
+          const { requireApproval, ...dealInput } = input;
+          if (!requireApproval) {
+            const { id, name } = await createDeal(dealInput, ctx.scope, ctx.user);
+            await createAuditLog(ctx.user.id, 'create', 'crm_deal', id, name);
+            return { id, name, pendingApproval: false as const };
+          }
+
+          // Legacy approval path.
           const contact = await loadScopedContact(input.contactId, ctx.scope);
-          const company = (contact.organization || '').trim();
-          if (!company) {
-            throw new TRPCError({
-              code: 'BAD_REQUEST',
-              message: `Cannot create deal: contact "${contact.fullName}" has no company. Add a company to the contact first.`,
-            });
-          }
-
-          // Reject duplicates up front — same company can't have two deals.
-          const existing = await db.findCrmDealByCompany(company);
-          if (existing) {
-            throw new TRPCError({
-              code: 'CONFLICT',
-              message: `A deal already exists for "${company}" (deal #${existing.id}).`,
-            });
-          }
-
-          // Block if another approval task is already queued for this company.
+          const company = (contact.organization || '').trim() || contact.fullName;
           if (await db.hasPendingDealApprovalForCompany(company)) {
-            throw new TRPCError({
-              code: 'CONFLICT',
-              message: `An approval is already pending for "${company}".`,
-            });
+            throw new TRPCError({ code: 'CONFLICT', message: `An approval is already pending for "${company}".` });
           }
-
           const taskData = {
             pipelineId: input.pipelineId,
             contactId: input.contactId,
             company,
+            name: input.name || company,
             stage: input.stage,
             amount: input.amount,
             source: input.source,
@@ -914,7 +925,7 @@ export const crmRouter = router({
             details: JSON.stringify(taskData),
           });
           await createAuditLog(ctx.user.id, 'create', 'crm_deal_request', task.id, company);
-          return { taskId: task.id, pendingApproval: true, company };
+          return { taskId: task.id, pendingApproval: true as const, company };
         }),
 
       update: scopedProcedure
@@ -925,15 +936,20 @@ export const crmRouter = router({
           stage: z.string().optional(),
           amount: z.string().optional(),
           probability: z.number().optional(),
-          expectedCloseDate: z.date().optional(),
           status: z.enum(["open", "won", "lost", "stalled"]).optional(),
           lostReason: z.string().optional(),
+          lossReasonId: z.number().nullable().optional(),
+          accountId: z.number().nullable().optional(),
+          contactId: z.number().optional(),
+          expectedCloseDate: z.date().nullable().optional(),
           notes: z.string().optional(),
           assignedTo: z.number().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
           const { id, ...data } = input;
           const existing = await loadScopedDeal(id, ctx.scope);
+          if (data.accountId) await loadScopedAccount(data.accountId, ctx.scope);
+          if (data.contactId) await loadScopedContact(data.contactId, ctx.scope);
           await db.updateCrmDeal(id, data);
           await createAuditLog(ctx.user.id, 'update', 'crm_deal', id, existing.name, existing, data);
           return { success: true };
@@ -1040,6 +1056,65 @@ export const crmRouter = router({
           const deals = await db.getCrmDeals({ status: "open", pipelineId: input?.pipelineId, companyIds: scopeIds(ctx.scope), limit: 5000 });
           return (await annotateDealActivity(deals)).map((d) => ({ id: d.id, rottingDays: d.rottingDays, lastActivityAt: d.lastActivityAt }));
         }),
+
+      // Closes a deal won or lost (lost takes a lookup reason + optional note).
+      close: scopedProcedure
+        .input(z.object({
+          dealId: z.number(),
+          outcome: z.enum(["won", "lost"]),
+          lossReasonId: z.number().nullable().optional(),
+          note: z.string().max(2000).nullable().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const r = await closeDeal(input, ctx.scope, ctx.user.id);
+          await createAuditLog(ctx.user.id, 'update', 'crm_deal', input.dealId, r.deal.name, { status: r.deal.status }, r.patch);
+          return { success: true, status: r.patch.status, stage: r.patch.stage ?? r.deal.stage };
+        }),
+
+      lossReasons: router({
+        list: scopedProcedure.query(({ ctx }) => listLossReasons(ctx.scope)),
+        create: scopedAdminProcedure
+          .input(z.object({ name: z.string().min(1).max(128), sortOrder: z.number().int().optional() }))
+          .mutation(async ({ input, ctx }) => ({ id: await db.createCrmLossReason({ ...input, companyId: ctx.user.companyId ?? null }) })),
+        update: scopedAdminProcedure
+          .input(z.object({ id: z.number(), name: z.string().min(1).max(128).optional(), sortOrder: z.number().int().optional(), isActive: z.boolean().optional() }))
+          .mutation(async ({ input, ctx }) => {
+            const { id, ...data } = input;
+            const reason = await db.getCrmLossReasonById(id);
+            if (!reason || !crmRowVisible(ctx.scope, reason.companyId, { sharedWhenNull: true })) throw new TRPCError({ code: "NOT_FOUND", message: "Loss reason not found" });
+            await db.updateCrmLossReason(id, data);
+            return { success: true };
+          }),
+      }),
+
+      // Buying committee on a deal.
+      contacts: router({
+        list: scopedProcedure
+          .input(z.object({ dealId: z.number() }))
+          .query(({ input, ctx }) => listDealContacts(input.dealId, ctx.scope)),
+        add: scopedProcedure
+          .input(z.object({ dealId: z.number(), contactId: z.number(), role: dealContactRoleEnum.optional() }))
+          .mutation(async ({ input, ctx }) => ({ id: await addDealContact(input, ctx.scope) })),
+        remove: scopedProcedure
+          .input(z.object({ dealId: z.number(), contactId: z.number() }))
+          .mutation(async ({ input, ctx }) => { await removeDealContact(input, ctx.scope); return { success: true }; }),
+      }),
+
+      // Line items; the deal amount is the sum of item totals while any exist.
+      items: router({
+        list: scopedProcedure
+          .input(z.object({ dealId: z.number() }))
+          .query(({ input, ctx }) => listDealItems(input.dealId, ctx.scope)),
+        add: scopedProcedure
+          .input(z.object({ dealId: z.number() }).merge(dealItemInput))
+          .mutation(({ input, ctx }) => { const { dealId, ...item } = input; return addDealItem(dealId, item, ctx.scope); }),
+        update: scopedProcedure
+          .input(z.object({ id: z.number() }).merge(dealItemInput.partial()))
+          .mutation(({ input, ctx }) => { const { id, ...patch } = input; return updateDealItem(id, patch, ctx.scope); }),
+        remove: scopedProcedure
+          .input(z.object({ id: z.number() }))
+          .mutation(({ input, ctx }) => removeDealItem(input.id, ctx.scope)),
+      }),
 
       getNextSteps: scopedProcedure
         .input(z.object({ dealId: z.number() }))

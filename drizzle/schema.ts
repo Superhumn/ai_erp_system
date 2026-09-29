@@ -4965,6 +4965,7 @@ export const crmDeals = mysqlTable("crm_deals", {
   // Status
   status: mysqlEnum("status", ["open", "won", "lost", "stalled"]).default("open").notNull(),
   lostReason: varchar("lostReason", { length: 255 }),
+  lossReasonId: int("lossReasonId"), // crm_loss_reasons.id (lostReason keeps the free-text note)
   wonAt: timestamp("wonAt"),
   lostAt: timestamp("lostAt"),
 
@@ -5088,6 +5089,56 @@ export const crmDealStageHistory = mysqlTable("crm_deal_stage_history", {
 
 export type CrmDealStageHistory = typeof crmDealStageHistory.$inferSelect;
 export type InsertCrmDealStageHistory = typeof crmDealStageHistory.$inferInsert;
+
+// CRM Deal Contacts — the buying committee on a deal (beyond the primary
+// crm_deals.contactId).
+export const crmDealContacts = mysqlTable("crm_deal_contacts", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  dealId: int("dealId").notNull(),
+  contactId: int("contactId").notNull(),
+  role: mysqlEnum("role", ["decision_maker", "champion", "procurement", "influencer", "blocker", "other"]).default("other").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({
+  dealContactUniq: uniqueIndex("crm_deal_contacts_deal_contact_uniq").on(table.dealId, table.contactId),
+}));
+
+export type CrmDealContact = typeof crmDealContacts.$inferSelect;
+export type InsertCrmDealContact = typeof crmDealContacts.$inferInsert;
+
+// CRM Deal Items — the products / volumes a deal is for. When a deal has
+// items its amount is the sum of their totals.
+export const crmDealItems = mysqlTable("crm_deal_items", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  dealId: int("dealId").notNull(),
+  productId: int("productId").references(() => products.id),
+  description: varchar("description", { length: 255 }).notNull(),
+  quantity: decimal("quantity", { precision: 15, scale: 3 }).default("1").notNull(),
+  unit: varchar("unit", { length: 32 }).default("case"),
+  unitPrice: decimal("unitPrice", { precision: 15, scale: 4 }).default("0").notNull(),
+  annualVolume: decimal("annualVolume", { precision: 15, scale: 3 }),
+  total: decimal("total", { precision: 15, scale: 2 }).default("0").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CrmDealItem = typeof crmDealItems.$inferSelect;
+export type InsertCrmDealItem = typeof crmDealItems.$inferInsert;
+
+// CRM Loss Reasons — lookup for deals.close; rows with a NULL companyId are
+// the shared defaults.
+export const crmLossReasons = mysqlTable("crm_loss_reasons", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 128 }).notNull(),
+  sortOrder: int("sortOrder").default(0).notNull(),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CrmLossReason = typeof crmLossReasons.$inferSelect;
+export type InsertCrmLossReason = typeof crmLossReasons.$inferInsert;
 
 // Email Campaigns for CRM
 export const crmEmailCampaigns = mysqlTable("crm_email_campaigns", {
