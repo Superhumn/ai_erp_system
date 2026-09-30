@@ -20,6 +20,7 @@ export const CASH_CATEGORIES = [
   "vendor_bills",
   "purchase_orders",
   "payroll",
+  "recurring_expenses",
   "adjustment_in",
   "adjustment_out",
 ] as const;
@@ -31,6 +32,7 @@ export const CATEGORY_LABELS: Record<CashCategory, string> = {
   vendor_bills: "Vendor bills",
   purchase_orders: "Open purchase orders",
   payroll: "Payroll",
+  recurring_expenses: "Recurring expenses",
   adjustment_in: "Manual inflows",
   adjustment_out: "Manual outflows",
 };
@@ -392,8 +394,17 @@ export function nextOccurrence(d: Date, frequency: string, anchorDay?: number | 
   }
 }
 
+/** Move a schedule forward past every occurrence before `from`, so a stale anchor never replays history. */
+export function rollForward(date: Date | null, from: Date | undefined, frequency: string, anchorDay?: number | null): Date | null {
+  if (!date || !from) return date;
+  let d: Date | null = date;
+  let guard = 0;
+  while (d && d.getTime() < from.getTime() && guard++ < 600) d = nextOccurrence(d, frequency, anchorDay);
+  return d;
+}
+
 /** Active recurring invoice templates → each future invoice's receipt (generation date + days until due). */
-export function recurringToEvents(rows: RecurringInvoiceLike[], horizonEnd: Date): CashEvent[] {
+export function recurringToEvents(rows: RecurringInvoiceLike[], horizonEnd: Date, from?: Date): CashEvent[] {
   const out: CashEvent[] = [];
   for (const r of rows) {
     if (!r.isActive) continue;
@@ -401,7 +412,7 @@ export function recurringToEvents(rows: RecurringInvoiceLike[], horizonEnd: Date
     if (amount <= 0) continue;
     const end = toDate(r.endDate);
     const terms = r.daysUntilDue ?? DEFAULT_TERMS_DAYS;
-    let gen = toDate(r.nextGenerationDate);
+    let gen = rollForward(toDate(r.nextGenerationDate), from, r.frequency, r.dayOfMonth);
     let guard = 0;
     while (gen && guard++ < 60) {
       if (end && gen.getTime() > end.getTime()) break;
@@ -481,4 +492,255 @@ export function adjustmentsToEvents(rows: ManualAdjustment[]): CashEvent[] {
 /** Items not in USD are summed as-is; surface them so nobody reads the total as pure USD. */
 export function nonUsdCount(events: CashEvent[]): number {
   return events.filter((e) => e.currency && e.currency.toUpperCase() !== "USD").length;
+}
+
+// ── v2: recurring expenses ──────────────────────────────────────
+
+export interface RecurringExpenseLike {
+  id: number;
+  name: string;
+  category?: string | null;
+  frequency: string;
+  dayOfMonth?: number | null;
+  nextDate: Date | string | null;
+  endDate?: Date | string | null;
+  amount: string | number | null;
+  currency?: string | null;
+  isActive: boolean;
+}
+
+/** Fixed costs on a schedule → one outflow per occurrence until the horizon. */
+export function recurringExpensesToEvents(rows: RecurringExpenseLike[], horizonEnd: Date, from?: Date): CashEvent[] {
+  const out: CashEvent[] = [];
+  for (const r of rows) {
+    if (!r.isActive) continue;
+    const amount = toAmount(r.amount);
+    if (amount <= 0) continue;
+    const end = toDate(r.endDate);
+    let next = rollForward(toDate(r.nextDate), from, r.frequency, r.dayOfMonth);
+    let guard = 0;
+    while (next && guard++ < 60) {
+      if (end && next.getTime() > end.getTime()) break;
+      if (next.getTime() >= horizonEnd.getTime()) break;
+      out.push({
+        date: next,
+        amount,
+        direction: "out",
+        category: "recurring_expenses",
+        label: `${r.name}${r.category && r.category !== "other" ? ` · ${r.category}` : ""}`,
+        ref: `recurring_expense:${r.id}:${isoDate(next)}`,
+        currency: r.currency ?? "USD",
+      });
+      next = nextOccurrence(next, r.frequency, r.dayOfMonth);
+    }
+  }
+  return out;
+}
+
+// ── v2: payment behaviour ───────────────────────────────────────
+
+export interface PaymentHistoryRow {
+  invoiceId?: number | null;
+  customerId: number | null;
+  issueDate: Date | string | null;
+  paymentDate: Date | string | null;
+}
+
+export interface CustomerPayBehaviour {
+  samples: number;
+  /** Median days from invoice issue to cash received. */
+  medianDaysToPay: number;
+}
+
+export const MIN_PAY_SAMPLES = 3;
+
+/** Median days-to-pay per customer. Only customers with enough history are returned. */
+export function computePayBehaviour(rows: PaymentHistoryRow[], minSamples = MIN_PAY_SAMPLES): Map<number, CustomerPayBehaviour> {
+  // One sample per invoice: a partially paid invoice settles on its last payment.
+  const byInvoice = new Map<string, PaymentHistoryRow>();
+  rows.forEach((r, i) => {
+    const key = r.invoiceId != null ? `i:${r.invoiceId}` : `row:${i}`;
+    const prev = byInvoice.get(key);
+    const paid = toDate(r.paymentDate);
+    const prevPaid = prev ? toDate(prev.paymentDate) : null;
+    if (!prev || (paid && (!prevPaid || paid.getTime() > prevPaid.getTime()))) byInvoice.set(key, r);
+  });
+  const byCustomer = new Map<number, number[]>();
+  for (const r of byInvoice.values()) {
+    if (r.customerId == null) continue;
+    const issued = toDate(r.issueDate);
+    const paid = toDate(r.paymentDate);
+    if (!issued || !paid) continue;
+    const days = Math.round((paid.getTime() - issued.getTime()) / DAY_MS);
+    if (days < 0 || days > 365) continue;
+    const list = byCustomer.get(r.customerId) ?? [];
+    list.push(days);
+    byCustomer.set(r.customerId, list);
+  }
+  const out = new Map<number, CustomerPayBehaviour>();
+  for (const [customerId, days] of byCustomer) {
+    if (days.length < minSamples) continue;
+    const sorted = [...days].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const median = sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+    out.set(customerId, { samples: days.length, medianDaysToPay: median });
+  }
+  return out;
+}
+
+export interface InvoiceWithCustomerId extends InvoiceLike {
+  customerId?: number | null;
+}
+
+/**
+ * Like receivablesToEvents, but a customer with real payment history is
+ * expected on issue date + their median days-to-pay, never earlier than the
+ * due date already passed.
+ */
+export function receivablesToEventsWithBehaviour(rows: InvoiceWithCustomerId[], behaviour: Map<number, CustomerPayBehaviour>): CashEvent[] {
+  const base = receivablesToEvents(rows);
+  const byRef = new Map<string, InvoiceWithCustomerId>(rows.map((r) => [`invoice:${r.id}`, r]));
+  return base.map((e) => {
+    const inv = e.ref ? byRef.get(e.ref) : undefined;
+    const b = inv?.customerId != null ? behaviour.get(inv.customerId) : undefined;
+    const issued = inv ? toDate(inv.issueDate) : null;
+    if (!b || !issued) return e;
+    const behavioural = addDays(issued, b.medianDaysToPay);
+    // Never pull a receipt earlier than the contractual due date.
+    const date = behavioural.getTime() > e.date.getTime() ? behavioural : e.date;
+    return { ...e, date, label: `${e.label} · pays ~${b.medianDaysToPay}d` };
+  });
+}
+
+// ── v2: scenarios ───────────────────────────────────────────────
+
+export interface ScenarioKnobs {
+  arSlipDays?: number;
+  arHaircutPct?: number;
+  apSlipDays?: number;
+  excludeCustomerIds?: number[];
+}
+
+const AR_CATEGORIES = new Set<CashCategory>(["customer_receipts", "recurring_billing"]);
+const AP_CATEGORIES = new Set<CashCategory>(["vendor_bills", "purchase_orders", "recurring_expenses"]);
+
+/** Apply what-if knobs to a base event list. `customerIdByRef` maps invoice refs to customer ids for exclusions. */
+export function applyScenario(events: CashEvent[], knobs: ScenarioKnobs, customerIdByRef: Map<string, number> = new Map()): CashEvent[] {
+  const slipAr = knobs.arSlipDays ?? 0;
+  const slipAp = knobs.apSlipDays ?? 0;
+  const haircut = Math.min(100, Math.max(0, knobs.arHaircutPct ?? 0));
+  const excluded = new Set(knobs.excludeCustomerIds ?? []);
+  const out: CashEvent[] = [];
+  for (const e of events) {
+    if (AR_CATEGORIES.has(e.category)) {
+      const cid = e.ref ? customerIdByRef.get(e.ref) : undefined;
+      if (cid != null && excluded.has(cid)) continue;
+      const amount = haircut > 0 ? e.amount * (1 - haircut / 100) : e.amount;
+      out.push({ ...e, amount, date: slipAr ? addDays(e.date, slipAr) : e.date });
+    } else if (AP_CATEGORIES.has(e.category)) {
+      out.push({ ...e, date: slipAp ? addDays(e.date, slipAp) : e.date });
+    } else {
+      out.push(e);
+    }
+  }
+  return out;
+}
+
+// ── v2: FX ──────────────────────────────────────────────────────
+
+/** Convert non-USD events using `rates` (currency → USD multiplier). Events with no rate stay at face value and are counted. */
+export function convertEventsToUsd(events: CashEvent[], rates: Map<string, number>): { events: CashEvent[]; unconverted: number } {
+  let unconverted = 0;
+  const out = events.map((e) => {
+    const ccy = (e.currency ?? "USD").toUpperCase();
+    if (ccy === "USD") return e;
+    const rate = rates.get(ccy);
+    if (!rate) {
+      unconverted++;
+      return e;
+    }
+    return { ...e, amount: round2(e.amount * rate), currency: "USD", label: `${e.label} (${ccy})` };
+  });
+  return { events: out, unconverted };
+}
+
+// ── v2: accuracy ────────────────────────────────────────────────
+
+export interface SnapshotWeek {
+  start: string;
+  end: string;
+  totalIn: number;
+  totalOut: number;
+  closingCash: number;
+}
+
+export interface BankMovement {
+  date: Date | string;
+  amount: string | number;
+  type: "debit" | "credit" | string;
+}
+
+export interface WeekAccuracy {
+  start: string;
+  forecastIn: number;
+  actualIn: number;
+  forecastOut: number;
+  actualOut: number;
+  inError: number; // actual - forecast
+  outError: number;
+  netError: number;
+}
+
+/** Grade a snapshot's weeks against bank movements that have already happened (weeks fully in the past only). */
+export function gradeSnapshot(weeks: SnapshotWeek[], movements: BankMovement[], today: Date): WeekAccuracy[] {
+  const inByWeek = new Map<string, number>();
+  const outByWeek = new Map<string, number>();
+  for (const m of movements) {
+    const d = toDate(m.date);
+    if (!d) continue;
+    const key = isoDate(startOfWeek(d));
+    const amt = Math.abs(toAmount(m.amount));
+    if (m.type === "credit") inByWeek.set(key, (inByWeek.get(key) ?? 0) + amt);
+    else outByWeek.set(key, (outByWeek.get(key) ?? 0) + amt);
+  }
+  const cutoff = startOfWeek(today).getTime();
+  const out: WeekAccuracy[] = [];
+  for (const w of weeks) {
+    const start = toDate(w.start);
+    if (!start || start.getTime() >= cutoff) continue; // week not finished yet
+    const actualIn = round2(inByWeek.get(w.start) ?? 0);
+    const actualOut = round2(outByWeek.get(w.start) ?? 0);
+    out.push({
+      start: w.start,
+      forecastIn: round2(w.totalIn),
+      actualIn,
+      forecastOut: round2(w.totalOut),
+      actualOut,
+      inError: round2(actualIn - w.totalIn),
+      outError: round2(actualOut - w.totalOut),
+      netError: round2(actualIn - actualOut - (w.totalIn - w.totalOut)),
+    });
+  }
+  return out;
+}
+
+/**
+ * Mean absolute percentage error across graded weeks, per side, with the
+ * actual as denominator. A week with no actual movement but a forecast counts
+ * as a 100% miss; a week with neither is skipped. 0 = perfect. null when
+ * nothing to grade.
+ */
+export function summarizeAccuracy(rows: WeekAccuracy[]): { weeks: number; inMape: number | null; outMape: number | null } {
+  if (rows.length === 0) return { weeks: 0, inMape: null, outMape: null };
+  const mape = (pairs: [number, number][]) => {
+    const valid = pairs.filter(([f, a]) => f > 0 || a > 0);
+    if (!valid.length) return null;
+    const total = valid.reduce((s, [f, a]) => s + (a > 0 ? Math.abs(a - f) / a : 1), 0);
+    return round2((total / valid.length) * 100);
+  };
+  return {
+    weeks: rows.length,
+    inMape: mape(rows.map((r) => [r.forecastIn, r.actualIn])),
+    outMape: mape(rows.map((r) => [r.forecastOut, r.actualOut])),
+  };
 }

@@ -8422,3 +8422,121 @@ export type SerialNumber = typeof serialNumbers.$inferSelect;
 export type InsertSerialNumber = typeof serialNumbers.$inferInsert;
 export type SerialNumberEvent = typeof serialNumberEvents.$inferSelect;
 export type InsertSerialNumberEvent = typeof serialNumberEvents.$inferInsert;
+
+// ============================================
+// CASH FORECAST (13-week) — recurring expenses, scenarios, snapshots,
+// bank-account entity mapping and low-cash alert settings.
+// ============================================
+
+export const cashForecastFrequency = mysqlEnum("cashForecastFrequency", [
+  "weekly",
+  "biweekly",
+  "monthly",
+  "quarterly",
+  "annually",
+]);
+
+/** Fixed outflows the ledger can't see yet: rent, SaaS, insurance, retainers, loan payments. */
+export const recurringExpenses = mysqlTable("recurring_expenses", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  category: varchar("category", { length: 64 }).default("other").notNull(),
+  vendorId: int("vendorId"),
+  amount: decimal("amount", { precision: 15, scale: 2 }).notNull(),
+  currency: varchar("currency", { length: 3 }).default("USD").notNull(),
+  frequency: cashForecastFrequency.notNull(),
+  dayOfMonth: int("dayOfMonth"),
+  nextDate: timestamp("nextDate").notNull(),
+  endDate: timestamp("endDate"),
+  isActive: boolean("isActive").default(true).notNull(),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type RecurringExpense = typeof recurringExpenses.$inferSelect;
+export type InsertRecurringExpense = typeof recurringExpenses.$inferInsert;
+
+export type CashForecastScenarioParams = {
+  startingCashOverride?: number | null;
+  /** Shift every customer receipt by this many days (positive = later). */
+  arSlipDays?: number;
+  /** Drop this percentage of every customer receipt (0-100). */
+  arHaircutPct?: number;
+  /** Shift every vendor payment by this many days (negative = earlier). */
+  apSlipDays?: number;
+  /** Customer ids whose receipts are removed entirely. */
+  excludeCustomerIds?: number[];
+  adjustments?: { label: string; amount: number; direction: "in" | "out"; date: string }[];
+};
+
+/** Saved what-if cases: base / bear / bull, a lost customer, a slipped raise. */
+export const cashForecastScenarios = mysqlTable("cash_forecast_scenarios", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 120 }).notNull(),
+  description: text("description"),
+  params: json("params").$type<CashForecastScenarioParams>().notNull(),
+  isDefault: boolean("isDefault").default(false).notNull(),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type CashForecastScenario = typeof cashForecastScenarios.$inferSelect;
+export type InsertCashForecastScenario = typeof cashForecastScenarios.$inferInsert;
+
+/** One forecast frozen per week so it can later be graded against what hit the bank. */
+export const cashForecastSnapshots = mysqlTable("cash_forecast_snapshots", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  /** null = whole organisation (global scope) */
+  scopeKey: varchar("scopeKey", { length: 64 }).default("global").notNull(),
+  asOf: timestamp("asOf").notNull(),
+  weekStart: timestamp("weekStart").notNull(),
+  startingCash: decimal("startingCash", { precision: 15, scale: 2 }).notNull(),
+  weeks: json("weeks").$type<{ start: string; end: string; totalIn: number; totalOut: number; closingCash: number }[]>().notNull(),
+  totalIn: decimal("totalIn", { precision: 15, scale: 2 }).notNull(),
+  totalOut: decimal("totalOut", { precision: 15, scale: 2 }).notNull(),
+  endingCash: decimal("endingCash", { precision: 15, scale: 2 }).notNull(),
+  lowestCash: decimal("lowestCash", { precision: 15, scale: 2 }).notNull(),
+  source: mysqlEnum("source", ["scheduled", "manual"]).default("scheduled").notNull(),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (t) => ({
+  weekUnique: uniqueIndex("uq_cash_forecast_snapshots_scope_week").on(t.scopeKey, t.weekStart),
+}));
+export type CashForecastSnapshot = typeof cashForecastSnapshots.$inferSelect;
+export type InsertCashForecastSnapshot = typeof cashForecastSnapshots.$inferInsert;
+
+/** Which entity each bank account belongs to, so entity-scoped users see their own cash. */
+export const bankAccountEntityMap = mysqlTable("bank_account_entity_map", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull(),
+  provider: varchar("provider", { length: 32 }).default("mercury").notNull(),
+  externalAccountId: varchar("externalAccountId", { length: 128 }).notNull(),
+  accountName: varchar("accountName", { length: 256 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  accountUnique: uniqueIndex("uq_bank_account_entity_map_account").on(t.provider, t.externalAccountId),
+}));
+export type BankAccountEntityMap = typeof bankAccountEntityMap.$inferSelect;
+
+/** Low-cash alert: who to email when the 13-week low point drops under the floor. */
+export const cashForecastAlertSettings = mysqlTable("cash_forecast_alert_settings", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  scopeKey: varchar("scopeKey", { length: 64 }).default("global").notNull(),
+  thresholdAmount: decimal("thresholdAmount", { precision: 15, scale: 2 }).notNull(),
+  recipients: json("recipients").$type<string[]>().notNull(),
+  isActive: boolean("isActive").default(true).notNull(),
+  lastAlertedAt: timestamp("lastAlertedAt"),
+  lastAlertLowestCash: decimal("lastAlertLowestCash", { precision: 15, scale: 2 }),
+  updatedBy: int("updatedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  scopeUnique: uniqueIndex("uq_cash_forecast_alert_settings_scope").on(t.scopeKey),
+}));
+export type CashForecastAlertSettings = typeof cashForecastAlertSettings.$inferSelect;

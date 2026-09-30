@@ -1997,6 +1997,43 @@ async function startServer() {
       }
     })();
 
+    // ── Cash forecast: weekly snapshot (Monday) + daily low-cash alert check ──
+    (async () => {
+      try {
+        const CASH_FORECAST_INTERVAL = 24 * 60 * 60 * 1000; // Daily
+        console.log("[Cash Forecast] Starting daily snapshot/alert scheduler");
+        const tick = async () => {
+          const { runCashForecastAlerts, snapshotForecast } = await import("../cashForecastService");
+          // One frozen forecast per week so it can be graded against the bank later.
+          if (new Date().getUTCDay() === 1) {
+            try {
+              await snapshotForecast({ mode: "global", companyIds: "all" }, "scheduled");
+              console.log("[Cash Forecast] Weekly snapshot saved");
+            } catch (e) {
+              console.warn("[Cash Forecast] Snapshot failed:", e);
+            }
+          }
+          const result = await runCashForecastAlerts();
+          if (result.sent > 0) console.log(`[Cash Forecast] Sent ${result.sent} low-cash alert(s)`);
+        };
+        setInterval(async () => {
+          try {
+            await tick();
+          } catch (e) {
+            console.warn("[Cash Forecast] Failed:", e);
+          }
+        }, CASH_FORECAST_INTERVAL);
+        // Initial run after 15 minutes
+        setTimeout(async () => {
+          try {
+            await tick();
+          } catch {}
+        }, 15 * 60 * 1000);
+      } catch (e) {
+        console.warn("[Cash Forecast] Could not initialize:", e);
+      }
+    })();
+
     // ── Automation #8: Mercury transaction sync (every 15 minutes) ──
     if (process.env.MERCURY_API_TOKEN) {
       (async () => {

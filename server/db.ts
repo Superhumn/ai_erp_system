@@ -230,6 +230,11 @@ import {
   automationRules, InsertAutomationRule,
   automationRuns, InsertAutomationRun,
   savedReports, InsertSavedReport,
+  recurringExpenses, InsertRecurringExpense,
+  cashForecastScenarios, InsertCashForecastScenario,
+  cashForecastSnapshots, InsertCashForecastSnapshot,
+  bankAccountEntityMap,
+  cashForecastAlertSettings,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { isMultiTenant, requireTenant } from './_core/tenancy';
@@ -19483,4 +19488,247 @@ export async function deleteRecruitingCandidate(id: number) {
   const db = await getDb();
   if (!db) return;
   await db.delete(recruitingCandidates).where(eq(recruitingCandidates.id, id));
+}
+
+
+// ============================================
+// CASH FORECAST (13-week)
+// ============================================
+
+function scopeCondition<T extends { companyId: any }>(table: T, scope: Scope) {
+  const ids = scopeCompanyIds(scope);
+  if (ids === null) return { skip: false as const, cond: undefined };
+  if (ids.length === 0) return { skip: true as const, cond: undefined };
+  return { skip: false as const, cond: inArray(table.companyId, ids) };
+}
+
+// ── Recurring expenses ──────────────────────────────────────────
+
+export async function getRecurringExpenses(scope: Scope, filters?: { isActive?: boolean }) {
+  const db = await getDb();
+  if (!db) return [];
+  const sc = scopeCondition(recurringExpenses, scope);
+  if (sc.skip) return [];
+  const conditions = [];
+  if (sc.cond) conditions.push(sc.cond);
+  if (filters?.isActive !== undefined) conditions.push(eq(recurringExpenses.isActive, filters.isActive));
+  const q = db.select().from(recurringExpenses);
+  return conditions.length ? q.where(and(...conditions)).orderBy(asc(recurringExpenses.nextDate)) : q.orderBy(asc(recurringExpenses.nextDate));
+}
+
+export async function getRecurringExpenseById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db.select().from(recurringExpenses).where(eq(recurringExpenses.id, id)).limit(1);
+  return row ?? null;
+}
+
+export async function createRecurringExpense(data: InsertRecurringExpense) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(recurringExpenses).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateRecurringExpense(id: number, data: Partial<InsertRecurringExpense>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(recurringExpenses).set(data).where(eq(recurringExpenses.id, id));
+}
+
+export async function deleteRecurringExpense(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(recurringExpenses).where(eq(recurringExpenses.id, id));
+}
+
+// ── Scenarios ───────────────────────────────────────────────────
+
+export async function getCashForecastScenarios(scope: Scope) {
+  const db = await getDb();
+  if (!db) return [];
+  const sc = scopeCondition(cashForecastScenarios, scope);
+  if (sc.skip) return [];
+  const q = db.select().from(cashForecastScenarios);
+  return sc.cond ? q.where(sc.cond).orderBy(asc(cashForecastScenarios.name)) : q.orderBy(asc(cashForecastScenarios.name));
+}
+
+export async function getCashForecastScenarioById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db.select().from(cashForecastScenarios).where(eq(cashForecastScenarios.id, id)).limit(1);
+  return row ?? null;
+}
+
+export async function createCashForecastScenario(data: InsertCashForecastScenario) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(cashForecastScenarios).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateCashForecastScenario(id: number, data: Partial<InsertCashForecastScenario>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(cashForecastScenarios).set(data).where(eq(cashForecastScenarios.id, id));
+}
+
+export async function deleteCashForecastScenario(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(cashForecastScenarios).where(eq(cashForecastScenarios.id, id));
+}
+
+// ── Snapshots ───────────────────────────────────────────────────
+
+/** The first snapshot of a week is the frozen baseline; later calls in the same week leave it untouched. */
+export async function insertCashForecastSnapshotIfAbsent(data: InsertCashForecastSnapshot) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const existing = await db
+    .select({ id: cashForecastSnapshots.id, asOf: cashForecastSnapshots.asOf })
+    .from(cashForecastSnapshots)
+    .where(and(eq(cashForecastSnapshots.scopeKey, data.scopeKey ?? "global"), eq(cashForecastSnapshots.weekStart, data.weekStart)))
+    .limit(1);
+  if (existing.length) return { id: existing[0].id, created: false, existingAsOf: existing[0].asOf };
+  const result = await db.insert(cashForecastSnapshots).values(data);
+  return { id: result[0].insertId, created: true, existingAsOf: null };
+}
+
+export async function getCashForecastSnapshots(scopeKey: string, limit = 26) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(cashForecastSnapshots)
+    .where(eq(cashForecastSnapshots.scopeKey, scopeKey))
+    .orderBy(desc(cashForecastSnapshots.weekStart))
+    .limit(limit);
+}
+
+/** Bank credits/debits summed per calendar week for the accounts given (all accounts when `accountIds` is null). */
+export async function getBankCashByWeek(from: Date, to: Date, accountIds: string[] | null) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [gte(bankTransactions.date, from), lt(bankTransactions.date, to)];
+  if (accountIds) {
+    if (accountIds.length === 0) return [];
+    conditions.push(inArray(bankTransactions.accountId, accountIds));
+  }
+  return db
+    .select({
+      date: bankTransactions.date,
+      amount: bankTransactions.amount,
+      type: bankTransactions.type,
+    })
+    .from(bankTransactions)
+    .where(and(...conditions));
+}
+
+// ── Bank account → entity mapping ───────────────────────────────
+
+export async function getBankAccountEntityMap() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(bankAccountEntityMap).orderBy(asc(bankAccountEntityMap.accountName));
+}
+
+export async function setBankAccountEntity(input: { provider?: string; externalAccountId: string; accountName?: string | null; companyId: number | null }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const provider = input.provider ?? "mercury";
+  const where = and(eq(bankAccountEntityMap.provider, provider), eq(bankAccountEntityMap.externalAccountId, input.externalAccountId));
+  if (input.companyId === null) {
+    await db.delete(bankAccountEntityMap).where(where);
+    return;
+  }
+  const existing = await db.select({ id: bankAccountEntityMap.id }).from(bankAccountEntityMap).where(where).limit(1);
+  if (existing.length) {
+    await db.update(bankAccountEntityMap).set({ companyId: input.companyId, accountName: input.accountName ?? undefined }).where(eq(bankAccountEntityMap.id, existing[0].id));
+  } else {
+    await db.insert(bankAccountEntityMap).values({ provider, externalAccountId: input.externalAccountId, accountName: input.accountName ?? null, companyId: input.companyId });
+  }
+}
+
+// ── Alert settings ──────────────────────────────────────────────
+
+export async function getCashForecastAlertSettings(scopeKey: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db.select().from(cashForecastAlertSettings).where(eq(cashForecastAlertSettings.scopeKey, scopeKey)).limit(1);
+  return row ?? null;
+}
+
+export async function getAllActiveCashForecastAlertSettings() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(cashForecastAlertSettings).where(eq(cashForecastAlertSettings.isActive, true));
+}
+
+export async function upsertCashForecastAlertSettings(input: { scopeKey: string; companyId: number | null; thresholdAmount: string; recipients: string[]; isActive: boolean; updatedBy?: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const existing = await db.select({ id: cashForecastAlertSettings.id }).from(cashForecastAlertSettings).where(eq(cashForecastAlertSettings.scopeKey, input.scopeKey)).limit(1);
+  if (existing.length) {
+    await db.update(cashForecastAlertSettings).set(input).where(eq(cashForecastAlertSettings.id, existing[0].id));
+    return { id: existing[0].id };
+  }
+  const result = await db.insert(cashForecastAlertSettings).values(input);
+  return { id: result[0].insertId };
+}
+
+/**
+ * Atomically claim an alert send: only one caller wins when the row's
+ * lastAlertedAt still matches what it read. Returns false when another
+ * process already claimed it.
+ */
+export async function claimCashForecastAlert(id: number, expectedLastAlertedAt: Date | null, now: Date, lowestCash: string): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  const guard = expectedLastAlertedAt
+    ? eq(cashForecastAlertSettings.lastAlertedAt, expectedLastAlertedAt)
+    : isNull(cashForecastAlertSettings.lastAlertedAt);
+  const result = await db
+    .update(cashForecastAlertSettings)
+    .set({ lastAlertedAt: now, lastAlertLowestCash: lowestCash })
+    .where(and(eq(cashForecastAlertSettings.id, id), guard));
+  return ((result as any)[0]?.affectedRows ?? 0) > 0;
+}
+
+/** Give a claim back when every send failed, so the next run retries. */
+export async function releaseCashForecastAlert(id: number, previousLastAlertedAt: Date | null, previousLowestCash: string | null) {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .update(cashForecastAlertSettings)
+    .set({ lastAlertedAt: previousLastAlertedAt, lastAlertLowestCash: previousLowestCash })
+    .where(eq(cashForecastAlertSettings.id, id));
+}
+
+// ── Payment behaviour ───────────────────────────────────────────
+
+/** Completed payments on fully paid invoices, with the invoice's issue date, for days-to-pay stats. One invoice can appear several times (partial payments); the caller keeps the last. */
+export async function getInvoicePaymentHistory(scope: Scope, sinceDate: Date) {
+  const db = await getDb();
+  if (!db) return [];
+  const sc = scopeCondition(invoices, scope);
+  if (sc.skip) return [];
+  const conditions = [
+    eq(payments.type, "received"),
+    eq(payments.status, "completed"),
+    eq(invoices.status, "paid"),
+    gte(payments.paymentDate, sinceDate),
+  ];
+  if (sc.cond) conditions.push(sc.cond);
+  return db
+    .select({
+      invoiceId: invoices.id,
+      customerId: invoices.customerId,
+      issueDate: invoices.issueDate,
+      dueDate: invoices.dueDate,
+      paymentDate: payments.paymentDate,
+    })
+    .from(payments)
+    .innerJoin(invoices, eq(payments.invoiceId, invoices.id))
+    .where(and(...conditions));
 }
