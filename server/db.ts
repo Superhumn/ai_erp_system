@@ -1633,6 +1633,163 @@ export async function createOrderItem(data: typeof orderItems.$inferInsert) {
   return { id: result[0].insertId };
 }
 
+/**
+ * Fulfil (ship) a sales order the same way the orderFulfillment workflow processor does:
+ * allocate each line against the location with the most available stock (quantity −
+ * reservedQuantity), reserve it, raise an outbound shipment, mark the order "shipped", and
+ * run the order→invoice cascade that `orders.update` applies (draft invoice → sent).
+ *
+ * Only a `confirmed` order may enter fulfilment — the same gate the workflow processor
+ * applies (`pending`/`draft` have not been confirmed; `processing` is the processor's own
+ * in-flight marker, so accepting it here would reserve the stock a second time).
+ *
+ * Every read, check and write runs in one transaction: the order row and the product's
+ * inventory rows are locked FOR UPDATE, lines for the same product are aggregated against
+ * one running balance per inventory row, and the status change is a compare-and-set on
+ * `status = 'confirmed'`. Any failure (a short line, a racing status change, a failed
+ * shipment insert) rolls back, so no reservation is ever left behind. Throws for a missing
+ * order, a non-confirmed order, or an order with no lines.
+ */
+export async function fulfillOrder(orderId: number, opts: { performedBy?: number } = {}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  return db.transaction(async (tx) => {
+    // Lock the order so a concurrent fulfil / workflow run for the same order waits here
+    // and then fails the status check instead of reserving twice.
+    const [order] = await tx.select().from(orders).where(eq(orders.id, orderId)).limit(1).for("update");
+    if (!order) throw new Error(`Order ${orderId} not found`);
+    if (order.status !== "confirmed") {
+      throw new Error(`Order ${order.orderNumber} is ${order.status}; only a confirmed order can be fulfilled`);
+    }
+
+    const items = await tx.select().from(orderItems).where(eq(orderItems.orderId, orderId));
+    if (items.length === 0) throw new Error(`Order ${order.orderNumber} has no line items to fulfil`);
+
+    // Plan every allocation first; the order is only touched once all lines are covered.
+    // Inventory rows for a product are read (and locked) once and carry a running `planned`
+    // balance, so a second line for the same product sees what earlier lines already took.
+    type InvRow = { id: number; warehouseId: number | null; available: number; planned: number };
+    const invByProduct = new Map<number, InvRow[]>();
+    const loadInventory = async (productId: number): Promise<InvRow[]> => {
+      let rows = invByProduct.get(productId);
+      if (!rows) {
+        const found = await tx
+          .select({
+            id: inventory.id,
+            warehouseId: inventory.warehouseId,
+            quantity: inventory.quantity,
+            reservedQuantity: inventory.reservedQuantity,
+          })
+          .from(inventory)
+          .where(eq(inventory.productId, productId))
+          .for("update");
+        rows = found.map((r) => ({
+          id: r.id,
+          warehouseId: r.warehouseId,
+          available: toNumber(r.quantity) - toNumber(r.reservedQuantity),
+          planned: 0,
+        }));
+        invByProduct.set(productId, rows);
+      }
+      return rows;
+    };
+
+    const allocations: Array<{ inventoryId: number; warehouseId: number | null; productId: number; quantity: number }> = [];
+    const shortages = new Map<number | null, { required: number; available: number }>();
+    const requiredByProduct = new Map<number | null, number>();
+    for (const item of items) {
+      const requiredQty = toNumber(item.quantity);
+      requiredByProduct.set(item.productId, (requiredByProduct.get(item.productId) ?? 0) + requiredQty);
+      if (item.productId == null) {
+        shortages.set(null, { required: requiredByProduct.get(null)!, available: 0 });
+        continue;
+      }
+      const rows = await loadInventory(item.productId);
+      // Location with the most stock still unplanned after the lines already accepted.
+      const best = rows.reduce<InvRow | undefined>(
+        (acc, r) => (acc == null || r.available - r.planned > acc.available - acc.planned ? r : acc),
+        undefined,
+      );
+      const remaining = best ? best.available - best.planned : 0;
+      if (!best || remaining < requiredQty) {
+        const totalAvailable = rows.reduce((s, r) => s + r.available, 0);
+        shortages.set(item.productId, { required: requiredByProduct.get(item.productId)!, available: totalAvailable });
+        continue;
+      }
+      best.planned += requiredQty;
+      allocations.push({ inventoryId: best.id, warehouseId: best.warehouseId, productId: item.productId, quantity: requiredQty });
+    }
+    if (shortages.size > 0) {
+      const detail = Array.from(shortages.entries())
+        .map(([productId, s]) => `product ${productId ?? "(no product)"}: need ${s.required}, have ${s.available}`)
+        .join("; ");
+      throw new Error(`Cannot fulfil order ${order.orderNumber} — insufficient stock (${detail})`);
+    }
+
+    // Compare-and-set on the status: if anything moved the order off `confirmed` between our
+    // read and here, zero rows match and the whole transaction rolls back.
+    const cas = await tx
+      .update(orders)
+      .set({ status: "shipped" })
+      .where(and(eq(orders.id, order.id), eq(orders.status, "confirmed")));
+    const affectedRows = (cas as any)[0]?.affectedRows ?? (cas as any).rowsAffected ?? 0;
+    if (affectedRows === 0) {
+      throw new Error(`Order ${order.orderNumber} is no longer confirmed; fulfilment aborted and nothing was reserved`);
+    }
+
+    // One reservation write per inventory row, for the sum of every line planned against it.
+    // The rows are locked above, so the absolute value is safe and keeps decimal precision.
+    for (const rows of invByProduct.values()) {
+      for (const row of rows) {
+        if (row.planned <= 0) continue;
+        const [current] = await tx
+          .select({ reservedQuantity: inventory.reservedQuantity })
+          .from(inventory)
+          .where(eq(inventory.id, row.id))
+          .limit(1);
+        const reserved = toNumber(current?.reservedQuantity) + row.planned;
+        await tx.update(inventory).set({ reservedQuantity: reserved.toFixed(4) }).where(eq(inventory.id, row.id));
+      }
+    }
+
+    const shipmentNumber = `SHP-${Date.now().toString(36).toUpperCase()}`;
+    const [shipment] = await tx
+      .insert(shipments)
+      .values({
+        companyId: order.companyId,
+        shipmentNumber,
+        type: "outbound",
+        orderId: order.id,
+        status: "pending",
+        toAddress: order.shippingAddress,
+        shipDate: new Date(),
+      })
+      .$returningId();
+
+    // Cascade #16a (orders.update): order shipped → linked draft invoice becomes "sent".
+    let invoiceMarkedSent = false;
+    if (order.invoiceId) {
+      const [invoice] = await tx.select().from(invoices).where(eq(invoices.id, order.invoiceId)).limit(1);
+      if (invoice && invoice.status === "draft") {
+        await tx.update(invoices).set({ status: "sent" }).where(eq(invoices.id, order.invoiceId));
+        invoiceMarkedSent = true;
+      }
+    }
+
+    return {
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      status: "shipped" as const,
+      shipmentId: shipment.id,
+      shipmentNumber,
+      allocations,
+      invoiceMarkedSent,
+      performedBy: opts.performedBy ?? null,
+    };
+  });
+}
+
 // ============================================
 // OPERATIONS - INVENTORY
 // ============================================
@@ -5696,6 +5853,7 @@ export async function createPurchaseOrderRawMaterialLink(data: {
   rawMaterialId: number;
   orderedQuantity: string;
   unit: string;
+  unitCost?: string;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -5706,6 +5864,7 @@ export async function createPurchaseOrderRawMaterialLink(data: {
     orderedQuantity: data.orderedQuantity,
     receivedQuantity: '0',
     unit: data.unit,
+    ...(data.unitCost !== undefined ? { unitCost: data.unitCost } : {}),
     status: 'ordered',
   }).$returningId();
 
@@ -5958,9 +6117,13 @@ export async function syncRecipeToBom(
 // WORK ORDERS
 // ============================================
 
-export async function getWorkOrders(filters?: { status?: string; warehouseId?: number }) {
+export async function getWorkOrders(filters?: { status?: string; warehouseId?: number; companyId?: number }) {
   const db = await getDb();
   if (!db) return [];
+  // companyId is the entity filter the AI chat (and any scoped caller) passes; status/warehouseId
+  // are accepted for API compatibility but were never applied here.
+  const workOrderConditions = [];
+  if (filters?.companyId) workOrderConditions.push(eq(workOrders.companyId, filters.companyId));
   const result = await db.select({
     id: workOrders.id,
     companyId: workOrders.companyId,
@@ -5987,6 +6150,7 @@ export async function getWorkOrders(filters?: { status?: string; warehouseId?: n
   })
     .from(workOrders)
     .leftJoin(products, eq(workOrders.productId, products.id))
+    .where(workOrderConditions.length > 0 ? and(...workOrderConditions) : undefined)
     .orderBy(desc(workOrders.createdAt));
   
   // Transform to include nested product object for compatibility
@@ -10737,12 +10901,15 @@ export async function createDataRoom(data: InsertDataRoom) {
   return { id: result[0].insertId };
 }
 
-export async function getDataRooms(ownerId?: number) {
+export async function getDataRooms(ownerId?: number, companyId?: number) {
   const db = await getDb();
   if (!db) return [];
   
-  if (ownerId) {
-    return db.select().from(dataRooms).where(eq(dataRooms.ownerId, ownerId)).orderBy(desc(dataRooms.createdAt));
+  const conditions = [];
+  if (ownerId) conditions.push(eq(dataRooms.ownerId, ownerId));
+  if (companyId) conditions.push(eq(dataRooms.companyId, companyId));
+  if (conditions.length > 0) {
+    return db.select().from(dataRooms).where(and(...conditions)).orderBy(desc(dataRooms.createdAt));
   }
   return db.select().from(dataRooms).orderBy(desc(dataRooms.createdAt));
 }
@@ -12598,6 +12765,12 @@ export async function getAiAgentTaskById(id: number) {
   return result[0] || null;
 }
 
+/**
+ * Update an AI agent task. With `opts.onlyIfStatus` the update is a compare-
+ * and-set (`WHERE id = ? AND status = ?`), which is how a task is claimed for
+ * execution atomically: two executors racing for the same task see 1 and 0
+ * affected rows respectively. Returns the number of rows updated.
+ */
 export async function updateAiAgentTask(id: number, data: Partial<{
   status: string;
   approvedBy: number;
@@ -12611,10 +12784,14 @@ export async function updateAiAgentTask(id: number, data: Partial<{
   retryCount: number;
   taskData: string;
   aiReasoning: string;
-}>) {
+}>, opts?: { onlyIfStatus?: string }): Promise<number> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(aiAgentTasks).set(data as any).where(eq(aiAgentTasks.id, id));
+  const where = opts?.onlyIfStatus
+    ? and(eq(aiAgentTasks.id, id), eq(aiAgentTasks.status, opts.onlyIfStatus as any))
+    : eq(aiAgentTasks.id, id);
+  const result: any = await db.update(aiAgentTasks).set(data as any).where(where);
+  return result?.[0]?.affectedRows ?? result?.affectedRows ?? 0;
 }
 
 export async function bulkDeleteAiAgentTasks(filters?: { taskType?: string; status?: string }) {
@@ -13118,11 +13295,15 @@ export async function getCrmContacts(filters?: {
   excludeEmail?: string;
   limit?: number;
   offset?: number;
+  companyId?: number;
 }) {
   const db = await getDb();
   if (!db) return [];
 
   const conditions = [];
+  if (filters?.companyId) {
+    conditions.push(eq(crmContacts.companyId, filters.companyId));
+  }
   if (filters?.contactType) {
     conditions.push(eq(crmContacts.contactType, filters.contactType as any));
   }
@@ -13646,11 +13827,15 @@ export async function getCrmDeals(filters?: {
   assignedTo?: number;
   limit?: number;
   offset?: number;
+  companyId?: number;
 }) {
   const db = await getDb();
   if (!db) return [];
 
   const conditions = [];
+  if (filters?.companyId) {
+    conditions.push(eq(crmDeals.companyId, filters.companyId));
+  }
   if (filters?.pipelineId) {
     conditions.push(eq(crmDeals.pipelineId, filters.pipelineId));
   }
@@ -17348,6 +17533,19 @@ export async function createInvestor(data: InsertInvestor) {
   return { id: result[0].insertId };
 }
 
+export async function getInvestorById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(investors).where(eq(investors.id, id)).limit(1);
+  return row;
+}
+
+export async function updateInvestor(id: number, data: Partial<InsertInvestor>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(investors).set(data).where(eq(investors.id, id));
+}
+
 export async function getFundraisingCampaigns(companyId?: number) {
   const db = await getDb();
   if (!db) return [];
@@ -18203,10 +18401,12 @@ export async function getBankTransactions(filters?: {
   accountId?: string;
   startDate?: string;
   endDate?: string;
+  companyId?: number;
 }) {
   const db = await getDb();
   if (!db) return [];
   const conditions = [];
+  if (filters?.companyId) conditions.push(eq(bankTransactions.companyId, filters.companyId));
   if (filters?.categorizationStatus) conditions.push(eq(bankTransactions.categorizationStatus, filters.categorizationStatus as any));
   if (filters?.status) conditions.push(eq(bankTransactions.status, filters.status));
   if (filters?.accountId) conditions.push(eq(bankTransactions.accountId, filters.accountId));

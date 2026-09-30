@@ -16,9 +16,8 @@ import {
   users,
 } from "../drizzle/schema";
 import { eq, and, desc, sql, inArray, like } from "drizzle-orm";
-import { sendEmail } from "./_core/email";
-import * as ingredientQuoteService from "./ingredientQuoteService";
 import * as manufacturingDb from "./db/manufacturing";
+import { claimAgentTask, executeAgentTask } from "./aiAgentTaskExecutor";
 
 // ============================================
 // AI AGENT SCHEDULER - Autonomous Task System
@@ -663,27 +662,24 @@ export async function executeApprovedTasks(): Promise<{
     .limit(defaultConfig.maxConcurrentTasks);
 
   for (const task of approvedTasks) {
+    // Compare-and-set approved -> in_progress. An admin clicking Execute in
+    // the Approval Queue races this loop for the same row; whoever loses the
+    // claim skips the task instead of running it a second time.
+    let claimed = false;
     try {
-      // Mark as in progress
-      await db
-        .update(aiAgentTasks)
-        .set({ status: "in_progress", executedAt: new Date() })
-        .where(eq(aiAgentTasks.id, task.id));
+      claimed = await claimAgentTask(task.id, "approved");
+    } catch (err) {
+      failed++;
+      errors.push(`Exception claiming task ${task.id}: ${err}`);
+      continue;
+    }
+    if (!claimed) continue;
 
+    try {
       // Execute based on task type
-      const result = await executeTask(task);
+      const result = await executeAgentTask(task, { executedBy: task.approvedBy ?? undefined });
 
-      if (result.success) {
-        await db
-          .update(aiAgentTasks)
-          .set({
-            status: "completed",
-            executionResult: JSON.stringify(result.data),
-          })
-          .where(eq(aiAgentTasks.id, task.id));
-        executed++;
-        await notifyTaskCompleted(db, task, result.data);
-      } else {
+      if (result.success === false) {
         await db
           .update(aiAgentTasks)
           .set({
@@ -693,6 +689,16 @@ export async function executeApprovedTasks(): Promise<{
           .where(eq(aiAgentTasks.id, task.id));
         failed++;
         errors.push(`Task ${task.id} failed: ${result.error}`);
+      } else {
+        await db
+          .update(aiAgentTasks)
+          .set({
+            status: "completed",
+            executionResult: JSON.stringify(result.data),
+          })
+          .where(eq(aiAgentTasks.id, task.id));
+        executed++;
+        await notifyTaskCompleted(db, task, result.data);
       }
 
       // Log execution
@@ -700,7 +706,7 @@ export async function executeApprovedTasks(): Promise<{
         taskId: task.id,
         action: "task_executed",
         status: result.success ? "success" : "error",
-        message: result.success ? "Task completed successfully" : (result.error || "Unknown error"),
+        message: result.success === false ? (result.error || "Unknown error") : "Task completed successfully",
         details: JSON.stringify(result),
       });
     } catch (err) {
@@ -767,228 +773,6 @@ async function notifyTaskCompleted(
     })));
   } catch (err) {
     console.warn(`[AIAgentScheduler] Could not notify completion of task ${task.id}:`, err);
-  }
-}
-
-async function executeTask(task: typeof aiAgentTasks.$inferSelect): Promise<{
-  success: boolean;
-  data?: any;
-  error?: string;
-}> {
-  switch (task.taskType) {
-    case "generate_po":
-      return await executePOGeneration(task);
-    case "send_rfq":
-      return await executeRFQSend(task);
-    case "vendor_followup":
-      return await executeVendorFollowup(task);
-    case "reply_email":
-      return await executeEmailReply(task);
-    case "ingredient_rfq":
-      return await executeIngredientRfq(task);
-    case "invoice_price_review":
-      return await executeIngredientRfq(task);
-    case "concierge_errand": {
-      const { executeConciergeErrand } = await import("./conciergeErrandService");
-      return await executeConciergeErrand(task);
-    }
-    default:
-      return { success: false, error: `Unknown task type: ${task.taskType}` };
-  }
-}
-
-async function executeIngredientRfq(task: typeof aiAgentTasks.$inferSelect): Promise<{
-  success: boolean;
-  data?: any;
-  error?: string;
-}> {
-  try {
-    const inputData = JSON.parse(task.taskData || "{}");
-    const result = await ingredientQuoteService.monitorIngredientCosts({
-      priceSpikePct: inputData.thresholdPct || 15,
-    });
-
-    // For each created quote request, send the RFQ
-    const requests = await manufacturingDb.getIngredientQuoteRequests({ status: "pending" });
-    let rfqsSent = 0;
-    for (const qr of requests) {
-      try {
-        await ingredientQuoteService.sendIngredientRfqToVendors(qr.id);
-        rfqsSent++;
-      } catch {
-        // Individual RFQ failures are non-fatal
-      }
-    }
-
-    return {
-      success: true,
-      data: { ...result, rfqsSent },
-    };
-  } catch (err) {
-    return { success: false, error: `Failed to execute ingredient RFQ: ${err}` };
-  }
-}
-
-async function executePOGeneration(task: typeof aiAgentTasks.$inferSelect): Promise<{
-  success: boolean;
-  data?: any;
-  error?: string;
-}> {
-  const db = await getDb();
-  if (!db) return { success: false, error: "Database not available" };
-
-  try {
-    const inputData = JSON.parse(task.taskData || "{}");
-    const { materials, totalValue } = inputData;
-    // A task without a vendor cannot be turned into an order for anyone: fail
-    // it so a person picks the vendor, instead of quietly buying from vendor 1.
-    const vendorId = Number(inputData.vendorId) || null;
-    if (!vendorId) {
-      return { success: false, error: "PO generation task has no vendorId — select a vendor for this task before approving it" };
-    }
-
-    // Generate PO number
-    const poNumber = `PO-${Date.now().toString(36).toUpperCase()}`;
-
-    // Create purchase order
-    const [po] = await db
-      .insert(purchaseOrders)
-      .values({
-        poNumber,
-        vendorId,
-        status: "draft",
-        orderDate: new Date(),
-        subtotal: totalValue?.toString() || "0",
-        totalAmount: totalValue?.toString() || "0",
-        currency: "USD",
-        notes: `Auto-generated by AI Agent. Task ID: ${task.id}`,
-      })
-      .$returningId();
-
-    // Create line items. `material.id` is a rawMaterials id, and
-    // purchaseOrderItems.productId references products, so the line is created
-    // without a productId and linked to the raw material through the
-    // purchaseOrderRawMaterials junction table (same shape as the PO router).
-    for (const material of materials || []) {
-      const qty = parseFloat(material.quantity || "1") || 1;
-      const price = parseFloat(material.unitCost || "0") || 0;
-      const [item] = await db
-        .insert(purchaseOrderItems)
-        .values({
-          purchaseOrderId: po.id,
-          productId: null,
-          description: material.name,
-          quantity: qty.toString(),
-          unitPrice: price.toString(),
-          totalAmount: (qty * price).toString(),
-        })
-        .$returningId();
-
-      if (material.id) {
-        await db.insert(purchaseOrderRawMaterials).values({
-          purchaseOrderItemId: item.id,
-          rawMaterialId: material.id,
-          orderedQuantity: qty.toString(),
-          receivedQuantity: "0",
-          unit: material.unit || "EA",
-          unitCost: price.toString(),
-          status: "ordered",
-        });
-      }
-    }
-
-    return {
-      success: true,
-      data: { poId: po.id, poNumber },
-    };
-  } catch (err) {
-    return { success: false, error: `Failed to generate PO: ${err}` };
-  }
-}
-
-async function executeRFQSend(task: typeof aiAgentTasks.$inferSelect): Promise<{
-  success: boolean;
-  data?: any;
-  error?: string;
-}> {
-  const db = await getDb();
-  if (!db) return { success: false, error: "Database not available" };
-
-  try {
-    const inputData = JSON.parse(task.taskData || "{}");
-    const { rfqId } = inputData;
-
-    // Update RFQ status
-    await db
-      .update(freightRfqs)
-      .set({ status: "sent" })
-      .where(eq(freightRfqs.id, rfqId));
-
-    return {
-      success: true,
-      data: { rfqId, status: "sent" },
-    };
-  } catch (err) {
-    return { success: false, error: `Failed to send RFQ: ${err}` };
-  }
-}
-
-async function executeVendorFollowup(task: typeof aiAgentTasks.$inferSelect): Promise<{
-  success: boolean;
-  data?: any;
-  error?: string;
-}> {
-  try {
-    const inputData = JSON.parse(task.taskData || "{}");
-    const { vendorEmail, emailSubject, emailBody } = inputData;
-
-    if (!vendorEmail) {
-      return { success: false, error: "No vendor email address" };
-    }
-
-    // Send email via SendGrid
-    const emailResult = await sendEmail({
-      to: vendorEmail,
-      subject: emailSubject,
-      text: emailBody,
-    });
-
-    return {
-      success: emailResult.success,
-      data: { emailSent: true, messageId: emailResult.messageId },
-      error: emailResult.error,
-    };
-  } catch (err) {
-    return { success: false, error: `Failed to send follow-up email: ${err}` };
-  }
-}
-
-async function executeEmailReply(task: typeof aiAgentTasks.$inferSelect): Promise<{
-  success: boolean;
-  data?: any;
-  error?: string;
-}> {
-  try {
-    const inputData = JSON.parse(task.taskData || "{}");
-    const { recipientEmail, subject, body } = inputData;
-
-    if (!recipientEmail) {
-      return { success: false, error: "No recipient email address" };
-    }
-
-    const emailResult = await sendEmail({
-      to: recipientEmail,
-      subject,
-      text: body,
-    });
-
-    return {
-      success: emailResult.success,
-      data: { emailSent: true, messageId: emailResult.messageId },
-      error: emailResult.error,
-    };
-  } catch (err) {
-    return { success: false, error: `Failed to send email reply: ${err}` };
   }
 }
 
