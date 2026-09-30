@@ -1,4 +1,5 @@
 // appRouter.invoices — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
+import { MAX_PAGE_LIMIT } from "../listPaging";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router } from "../_core/trpc";
@@ -41,6 +42,30 @@ export const invoicesRouter = router({
       }).optional())
       .query(async ({ input, ctx }) =>
         db.getInvoices(assertNonEmptyScope(await resolveRequestScope(ctx.user)), { status: input?.status, customerId: input?.customerId }),
+      ),
+    // Sales hub: invoice number/status and payments received for the invoices of one page of orders.
+    billingByIds: financeProcedure
+      .input(z.object({ invoiceIds: z.array(z.number().int()).max(500) }))
+      .query(async ({ input, ctx }) =>
+        db.getInvoiceBillingByIds(assertNonEmptyScope(await resolveRequestScope(ctx.user)), input.invoiceIds),
+      ),
+    // Home dashboard: open AR and payments received this month (browser's calendar month).
+    homeSummary: financeProcedure
+      .input(z.object({ monthStartMs: z.number(), monthEndMs: z.number() }).refine((w) => w.monthEndMs > w.monthStartMs))
+      .query(async ({ input, ctx }) =>
+        db.getHomeInvoiceSummary(assertNonEmptyScope(await resolveRequestScope(ctx.user)), input.monthStartMs, input.monthEndMs),
+      ),
+    // One page (newest first) plus the total for the same filters.
+    listPaged: financeProcedure
+      .input(z.object({
+        status: z.string().optional(),
+        customerId: z.number().optional(),
+        search: z.string().max(200).optional(),
+        limit: z.number().int().min(1).max(MAX_PAGE_LIMIT).optional(),
+        offset: z.number().int().min(0).optional(),
+      }).optional())
+      .query(async ({ input, ctx }) =>
+        db.getInvoicesPaged(assertNonEmptyScope(await resolveRequestScope(ctx.user)), input ?? {}),
       ),
     get: scopedFinanceProcedure
       .input(z.object({ id: z.number() }))

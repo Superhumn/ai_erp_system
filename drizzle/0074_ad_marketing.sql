@@ -1,4 +1,4 @@
--- 0072_ad_marketing
+-- 0074_ad_marketing
 --
 -- Paid-ads marketing module: platform connections, campaigns, daily spend,
 -- inbound leads, tracking links, ad credits and the automation run log.
@@ -140,15 +140,15 @@ CREATE TABLE IF NOT EXISTS `ad_sync_logs` (
   CONSTRAINT `ad_sync_logs_claim_uniq` UNIQUE(`claimKey`)
 );
 --> statement-breakpoint
-DROP PROCEDURE IF EXISTS `_migrate_0072_crm_contact_source`;
+DROP PROCEDURE IF EXISTS `_migrate_0074_crm_contact_source`;
 --> statement-breakpoint
-CREATE PROCEDURE `_migrate_0072_crm_contact_source`()
+CREATE PROCEDURE `_migrate_0074_crm_contact_source`()
 BEGIN
   IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'crm_contacts') THEN
     ALTER TABLE `crm_contacts` MODIFY COLUMN `source` enum('iphone_bump','whatsapp','linkedin_scan','business_card','website','referral','event','cold_outreach','import','manual','fireflies','b2brocket','paid_ad') NOT NULL DEFAULT 'manual';
   END IF;
 END;
 --> statement-breakpoint
-CALL `_migrate_0072_crm_contact_source`();
+CALL `_migrate_0074_crm_contact_source`();
 --> statement-breakpoint
-DROP PROCEDURE IF EXISTS `_migrate_0072_crm_contact_source`;
+DROP PROCEDURE IF EXISTS `_migrate_0074_crm_contact_source`;

@@ -38,7 +38,10 @@ export default function OrderDetail() {
   const { data: order, isLoading } = trpc.orders.get.useQuery({ id: orderId });
   const { data: orderItems } = trpc.orderItems.list.useQuery({ orderId });
   const { data: products } = trpc.products.list.useQuery();
-  const { data: customers } = trpc.customers.list.useQuery();
+  const { data: customer } = trpc.customers.get.useQuery(
+    { id: order?.customerId ?? 0 },
+    { enabled: !!order?.customerId },
+  );
 
   const updateOrderTrpc = trpc.orders.update.useMutation({
     onSuccess: () => {
@@ -122,7 +125,7 @@ export default function OrderDetail() {
           {updateStatus.isPending && (
             <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
           )}
-          <Link href={`/cx/support?order=${order.orderNumber}&customer=${encodeURIComponent(customers?.find((c: any) => c.id === order.customerId)?.name || "")}&email=${encodeURIComponent(customers?.find((c: any) => c.id === order.customerId)?.email || "")}`}>
+          <Link href={`/cx/support?order=${order.orderNumber}&customer=${encodeURIComponent(customer?.name || "")}&email=${encodeURIComponent(customer?.email || "")}`}>
             <Button variant="outline" size="sm">
               Contact Support
             </Button>
