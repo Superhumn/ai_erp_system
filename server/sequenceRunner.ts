@@ -38,6 +38,25 @@ export function nextStep(steps: EmailSequenceStep[], currentStepOrder: number): 
   return [...steps].sort((a, b) => a.stepOrder - b.stepOrder || a.id - b.id).find((s) => s.stepOrder > currentStepOrder);
 }
 
+/**
+ * Why an enrollment must stop before its next send, or null to keep going:
+ * the contact opted out of email, or replied after being enrolled (a reply
+ * means a human takes over the conversation).
+ */
+export function enrollmentStopReason(
+  contact: { optedOutEmail?: boolean | null; lastRepliedAt?: Date | string | null } | null | undefined,
+  enrollment: { createdAt?: Date | string | null },
+): string | null {
+  if (!contact) return null;
+  if (contact.optedOutEmail) return "Contact opted out of email";
+  if (contact.lastRepliedAt && enrollment.createdAt) {
+    const replied = new Date(contact.lastRepliedAt).getTime();
+    const enrolled = new Date(enrollment.createdAt).getTime();
+    if (Number.isFinite(replied) && Number.isFinite(enrolled) && replied > enrolled) return "Contact replied";
+  }
+  return null;
+}
+
 /** When a newly enrolled contact receives the first step. */
 export function firstSendAt(steps: EmailSequenceStep[], now: Date): Date | null {
   const first = nextStep(steps, 0);
@@ -115,6 +134,8 @@ async function processEnrollment(
   }
 
   const contact = await db.getCrmContactById(enrollment.contactId);
+  const stopReason = enrollmentStopReason(contact, enrollment);
+  if (stopReason) return stop(stopReason);
   const skip = mailableSkipReason(contact);
   if (skip || !contact?.email) return stop(skip?.reason ?? "Contact has no email address");
 
