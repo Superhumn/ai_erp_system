@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -19,6 +19,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Link, useLocation } from "wouter";
+import { ListPager } from "@/components/ListPager";
+import { usePagedList } from "@/hooks/usePagedList";
 
 // ── Status badge config ──
 
@@ -73,31 +75,51 @@ function fmtDate(v: string | Date | null | undefined): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-// ── Sorting ──
-type SortDir = "asc" | "desc";
-type SortKey = string;
+// Table column → orders.listPaged sortBy. Sorting runs on the server across every page,
+// so only indexed columns are sortable.
+const SORT_KEYS: Record<string, "orderDate" | "totalAmount"> = { orderDate: "orderDate", total: "totalAmount" };
 
 export default function SalesHub() {
   const [, navigate] = useLocation();
   const [isSyncing, setIsSyncing] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [sortKey, setSortKey] = useState<SortKey>("orderDate");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   // ── Data queries ──
-  const { data: products } = trpc.products.list.useQuery();
-  const { data: orders, isLoading: ordersLoading, refetch: refetchOrders } = trpc.orders.list.useQuery();
-  const { data: invoices } = trpc.invoices.list.useQuery();
-  const { data: customers } = trpc.customers.list.useQuery();
-  const { data: payments } = trpc.payments.list.useQuery();
-  const { data: shipments } = trpc.shipments.list.useQuery();
+  // Paged on the server: loading every order, invoice, payment and shipment failed at ~1M orders.
+  const paging = usePagedList("", 50);
+  const sort = paging.sort ?? { key: "orderDate", dir: "desc" as const };
+  const utils = trpc.useUtils();
+  const { data: ordersPage, isLoading: ordersLoading } = trpc.orders.listPaged.useQuery({
+    ...paging.query,
+    sortBy: SORT_KEYS[sort.key] ?? "orderDate",
+    sortDir: sort.dir,
+  });
+  const orders = ordersPage?.rows;
+  useEffect(() => paging.clampTo(ordersPage?.total), [ordersPage?.total]);
+  // Billing and shipping details only for the orders on screen.
+  const invoiceIds = useMemo(
+    () => Array.from(new Set((orders ?? []).map((o) => o.invoiceId).filter((id): id is number => id != null))),
+    [orders],
+  );
+  const orderIds = useMemo(() => (orders ?? []).map((o) => o.id), [orders]);
+  const { data: billing } = trpc.invoices.billingByIds.useQuery({ invoiceIds }, { enabled: invoiceIds.length > 0 });
+  const { data: shipments } = trpc.shipments.latestForOrders.useQuery({ orderIds }, { enabled: orderIds.length > 0 });
+  const { data: orderSummary } = trpc.orders.summary.useQuery();
+  const { data: customersPage } = trpc.customers.listPaged.useQuery({ limit: 1 });
+  const monthWindow = useMemo(() => {
+    const now = new Date();
+    return {
+      monthStartMs: new Date(now.getFullYear(), now.getMonth(), 1).getTime(),
+      monthEndMs: new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime(),
+    };
+  }, []);
+  const { data: invoiceSummary } = trpc.invoices.homeSummary.useQuery(monthWindow);
 
   // Integration status
   const { data: integrationStatus } = trpc.integrations.getStatus.useQuery();
 
   // ── Mutations ──
   const syncShopifyOrders = trpc.shopify.sync.orders.useMutation({
-    onSuccess: (data) => { toast.success(`Synced ${data.imported} new orders, updated ${data.updated}`); refetchOrders(); setIsSyncing(false); },
+    onSuccess: (data) => { toast.success(`Synced ${data.imported} new orders, updated ${data.updated}`); utils.orders.invalidate(); setIsSyncing(false); },
     onError: (err: any) => { toast.error(err.message); setIsSyncing(false); },
   });
   const syncShopifyProducts = trpc.shopify.sync.products.useMutation({
@@ -118,48 +140,13 @@ export default function SalesHub() {
     syncShopifyCustomers.mutate({});
   };
 
-  // ── Client-side lookups ──
+  // ── Lookups for the visible page ──
 
-  const customerMap = useMemo(() => {
-    const m: Record<number, { name: string; email: string | null }> = {};
-    (customers as any[] | undefined)?.forEach((c: any) => {
-      m[c.id] = { name: c.name, email: c.email ?? null };
-    });
-    return m;
-  }, [customers]);
-
-  // Invoice lookup by invoice id (orders store invoiceId)
-  const invoiceById = useMemo(() => {
-    const m: Record<number, any> = {};
-    (invoices as any[] | undefined)?.forEach((inv: any) => {
-      m[inv.id] = inv;
-    });
-    return m;
-  }, [invoices]);
-
-  // Payments grouped by invoiceId
-  const paymentsByInvoice = useMemo(() => {
-    const m: Record<number, any[]> = {};
-    (payments as any[] | undefined)?.forEach((p: any) => {
-      if (p.invoiceId) {
-        if (!m[p.invoiceId]) m[p.invoiceId] = [];
-        m[p.invoiceId].push(p);
-      }
-    });
-    return m;
-  }, [payments]);
-
-  // Shipments grouped by orderId
-  const shipmentsByOrder = useMemo(() => {
-    const m: Record<number, any[]> = {};
-    (shipments as any[] | undefined)?.forEach((s: any) => {
-      if (s.orderId) {
-        if (!m[s.orderId]) m[s.orderId] = [];
-        m[s.orderId].push(s);
-      }
-    });
-    return m;
-  }, [shipments]);
+  const invoiceById = useMemo(() => new Map((billing ?? []).map((b) => [b.id, b])), [billing]);
+  const shipmentByOrder = useMemo(
+    () => new Map((shipments ?? []).map((sh) => [sh.orderId as number, sh])),
+    [shipments],
+  );
 
   // ── Enriched rows ──
 
@@ -187,23 +174,12 @@ export default function SalesHub() {
   }
 
   const enrichedOrders: EnrichedOrder[] = useMemo(() => {
-    return (orders as any[] | undefined || []).map((order: any) => {
-      const cust = order.customerId ? customerMap[order.customerId] : null;
-      const invoice = order.invoiceId ? invoiceById[order.invoiceId] : null;
-      const invPayments = invoice ? (paymentsByInvoice[invoice.id] || []) : [];
-      const totalPaid = invPayments.reduce((sum: number, p: any) => sum + parseFloat(p.amount || "0"), 0);
+    return (orders ?? []).map((order) => {
+      const invoice = order.invoiceId ? invoiceById.get(order.invoiceId) : undefined;
+      const totalPaid = invoice?.amountPaid ?? 0;
       const orderTotal = parseFloat(order.totalAmount || "0");
       const balanceDue = Math.max(0, orderTotal - totalPaid);
-
-      // Most recent payment date
-      const latestPayment = invPayments.length > 0
-        ? invPayments.sort((a: any, b: any) => new Date(b.paymentDate).getTime() - new Date(a.paymentDate).getTime())[0]
-        : null;
-
-      // Shipment data (use first/primary shipment for this order)
-      const orderShipments = shipmentsByOrder[order.id] || [];
-      const primaryShipment = orderShipments[0] || null;
-
+      const primaryShipment = shipmentByOrder.get(order.id);
       const channel = order.shopifyOrderId ? "Shopify" : "Manual";
 
       return {
@@ -211,9 +187,9 @@ export default function SalesHub() {
         orderNumber: order.orderNumber || "\u2014",
         orderDate: order.orderDate,
         customerId: order.customerId ?? null,
-        customerName: cust?.name || "\u2014",
-        customerEmail: cust?.email || "\u2014",
-        itemCount: order.items?.length || order.lineItems?.length || "\u2014",
+        customerName: order.customerName || "\u2014",
+        customerEmail: order.customerEmail || "\u2014",
+        itemCount: "\u2014",
         subtotal: order.subtotal || "0",
         tax: order.taxAmount || "0",
         total: order.totalAmount || "0",
@@ -222,110 +198,56 @@ export default function SalesHub() {
         invoiceStatus: invoice?.status || "\u2014",
         amountPaid: totalPaid > 0 ? totalPaid.toFixed(2) : "\u2014",
         balanceDue: invoice ? balanceDue.toFixed(2) : "\u2014",
-        paymentDate: latestPayment?.paymentDate || null,
+        paymentDate: invoice?.lastPaymentDate ?? null,
         shipStatus: primaryShipment?.status || "\u2014",
         trackingNumber: primaryShipment?.trackingNumber || "\u2014",
         carrier: primaryShipment?.carrier || "\u2014",
         channel,
       } satisfies EnrichedOrder;
     });
-  }, [orders, customerMap, invoiceById, paymentsByInvoice, shipmentsByOrder]);
-
-  // ── Search filter ──
-  const filteredOrders = useMemo(() => {
-    if (!searchQuery.trim()) return enrichedOrders;
-    const q = searchQuery.toLowerCase();
-    return enrichedOrders.filter((r) =>
-      r.orderNumber.toLowerCase().includes(q) ||
-      r.customerName.toLowerCase().includes(q) ||
-      r.customerEmail.toLowerCase().includes(q) ||
-      r.invoiceNumber.toLowerCase().includes(q) ||
-      r.trackingNumber.toLowerCase().includes(q) ||
-      r.carrier.toLowerCase().includes(q) ||
-      r.status.toLowerCase().includes(q) ||
-      r.channel.toLowerCase().includes(q)
-    );
-  }, [enrichedOrders, searchQuery]);
-
-  // ── Sorting ──
-  const sortedOrders = useMemo(() => {
-    const sorted = [...filteredOrders];
-    sorted.sort((a, b) => {
-      const av = (a as any)[sortKey];
-      const bv = (b as any)[sortKey];
-      if (av == null && bv == null) return 0;
-      if (av == null) return 1;
-      if (bv == null) return -1;
-
-      // Dates
-      if (sortKey === "orderDate" || sortKey === "paymentDate") {
-        const da = new Date(av).getTime();
-        const db = new Date(bv).getTime();
-        return sortDir === "asc" ? da - db : db - da;
-      }
-      // Numbers
-      if (["subtotal", "tax", "total", "amountPaid", "balanceDue", "itemCount"].includes(sortKey)) {
-        const na = parseFloat(av) || 0;
-        const nb = parseFloat(bv) || 0;
-        return sortDir === "asc" ? na - nb : nb - na;
-      }
-      // Strings
-      const sa = String(av).toLowerCase();
-      const sb = String(bv).toLowerCase();
-      return sortDir === "asc" ? sa.localeCompare(sb) : sb.localeCompare(sa);
-    });
-    return sorted;
-  }, [filteredOrders, sortKey, sortDir]);
+  }, [orders, invoiceById, shipmentByOrder]);
 
   function toggleSort(key: string) {
-    if (sortKey === key) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setSortDir("asc");
-    }
+    if (!SORT_KEYS[key]) return;
+    paging.setSort(sort.key === key ? { key, dir: sort.dir === "asc" ? "desc" : "asc" } : { key, dir: "desc" });
   }
 
   function SortIcon({ col }: { col: string }) {
-    if (sortKey !== col) return <ArrowUpDown className="inline h-3 w-3 ml-1 opacity-30" />;
-    return sortDir === "asc"
+    if (sort.key !== col) return <ArrowUpDown className="inline h-3 w-3 ml-1 opacity-30" />;
+    return sort.dir === "asc"
       ? <ChevronUp className="inline h-3 w-3 ml-1" />
       : <ChevronDown className="inline h-3 w-3 ml-1" />;
   }
 
-  // ── KPI stats ──
-  const stats = useMemo(() => {
-    const totalRevenue = (orders as any[] | undefined || []).reduce((sum: number, o: any) => sum + parseFloat(o.totalAmount || "0"), 0);
-    return {
-      totalProducts: (products as any[] | undefined)?.length || 0,
-      totalOrders: (orders as any[] | undefined)?.length || 0,
-      pendingOrders: (orders as any[] | undefined)?.filter((o: any) => o.status === "pending").length || 0,
-      unpaidInvoices: (invoices as any[] | undefined)?.filter((i: any) => i.status !== "paid").length || 0,
-      totalCustomers: (customers as any[] | undefined)?.length || 0,
-      totalRevenue,
-    };
-  }, [products, orders, invoices, customers]);
+  // ── KPI stats (whole order book, not the page) ──
+  const stats = {
+    totalOrders: orderSummary?.count ?? 0,
+    pendingOrders: orderSummary?.pending ?? 0,
+    unpaidInvoices: invoiceSummary?.unpaidInvoices ?? 0,
+    totalCustomers: customersPage?.total ?? 0,
+    totalRevenue: orderSummary?.totalValue ?? 0,
+  };
 
   // ── Column definitions for the table header ──
   const columns: { key: string; label: string; align?: "right" | "left" | "center"; sortable?: boolean }[] = [
-    { key: "orderNumber", label: "Order#", sortable: true },
+    { key: "orderNumber", label: "Order#" },
     { key: "orderDate", label: "Date", sortable: true },
-    { key: "customerName", label: "Customer", sortable: true },
-    { key: "customerEmail", label: "Email", sortable: true },
-    { key: "itemCount", label: "Items", align: "right", sortable: true },
-    { key: "subtotal", label: "Subtotal", align: "right", sortable: true },
-    { key: "tax", label: "Tax", align: "right", sortable: true },
+    { key: "customerName", label: "Customer" },
+    { key: "customerEmail", label: "Email" },
+    { key: "itemCount", label: "Items", align: "right" },
+    { key: "subtotal", label: "Subtotal", align: "right" },
+    { key: "tax", label: "Tax", align: "right" },
     { key: "total", label: "Total", align: "right", sortable: true },
-    { key: "status", label: "Status", sortable: true },
-    { key: "invoiceNumber", label: "Invoice#", sortable: true },
-    { key: "invoiceStatus", label: "Invoice Status", sortable: true },
-    { key: "amountPaid", label: "Amount Paid", align: "right", sortable: true },
-    { key: "balanceDue", label: "Balance Due", align: "right", sortable: true },
-    { key: "paymentDate", label: "Payment Date", sortable: true },
-    { key: "shipStatus", label: "Ship Status", sortable: true },
-    { key: "trackingNumber", label: "Tracking#", sortable: true },
-    { key: "carrier", label: "Carrier", sortable: true },
-    { key: "channel", label: "Channel", sortable: true },
+    { key: "status", label: "Status" },
+    { key: "invoiceNumber", label: "Invoice#" },
+    { key: "invoiceStatus", label: "Invoice Status" },
+    { key: "amountPaid", label: "Amount Paid", align: "right" },
+    { key: "balanceDue", label: "Balance Due", align: "right" },
+    { key: "paymentDate", label: "Payment Date" },
+    { key: "shipStatus", label: "Ship Status" },
+    { key: "trackingNumber", label: "Tracking#" },
+    { key: "carrier", label: "Carrier" },
+    { key: "channel", label: "Channel" },
   ];
 
   // ── Channel badge colors ──
@@ -395,13 +317,13 @@ export default function SalesHub() {
           <div className="h-4 w-px bg-border" />
           <div><span className="text-muted-foreground">Revenue</span> <span className="font-display font-bold tabular-nums text-foreground">${stats.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
           <div className="h-4 w-px bg-border" />
-          <div><span className="text-muted-foreground">Orders</span> <span className="font-bold">{stats.totalOrders}</span></div>
+          <div><span className="text-muted-foreground">Orders</span> <span className="font-bold">{stats.totalOrders.toLocaleString()}</span></div>
           <div className="h-4 w-px bg-border" />
           <div><span className="text-muted-foreground">Pending</span> <span className="font-bold tabular-nums text-foreground">{stats.pendingOrders}</span></div>
           <div className="h-4 w-px bg-border" />
           <div><span className="text-muted-foreground">Unpaid</span> <span className="font-bold tabular-nums text-foreground">{stats.unpaidInvoices}</span></div>
           <div className="h-4 w-px bg-border" />
-          <div><span className="text-muted-foreground">Customers</span> <span className="font-bold">{stats.totalCustomers}</span></div>
+          <div><span className="text-muted-foreground">Customers</span> <span className="font-bold">{stats.totalCustomers.toLocaleString()}</span></div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -501,13 +423,13 @@ export default function SalesHub() {
             <div className="relative flex-1 max-w-sm">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search orders, customers, invoices..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search order # or customer..."
+                value={paging.searchInput}
+                onChange={(e) => paging.setSearchInput(e.target.value)}
                 className="pl-9 h-9 text-sm"
               />
             </div>
-            <span className="text-xs text-muted-foreground">{sortedOrders.length} orders</span>
+            <span className="text-xs text-muted-foreground">{(ordersPage?.total ?? 0).toLocaleString()} orders</span>
           </div>
 
           {/* Scrollable table */}
@@ -537,14 +459,14 @@ export default function SalesHub() {
                       Loading orders...
                     </td>
                   </tr>
-                ) : sortedOrders.length === 0 ? (
+                ) : enrichedOrders.length === 0 ? (
                   <tr>
                     <td colSpan={columns.length} className="py-12 text-center text-muted-foreground">
                       No orders found
                     </td>
                   </tr>
                 ) : (
-                  sortedOrders.map((row) => (
+                  enrichedOrders.map((row) => (
                     <tr
                       key={row.id}
                       className="border-b last:border-b-0 hover:bg-muted/30 transition-colors"
@@ -565,6 +487,13 @@ export default function SalesHub() {
               </tbody>
             </table>
           </div>
+          <ListPager
+            page={paging.page}
+            pageSize={paging.pageSize}
+            total={ordersPage?.total ?? 0}
+            onPageChange={paging.setPage}
+            onPageSizeChange={paging.setPageSize}
+          />
         </CardContent>
       </Card>
     </div>

@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
+import { CustomerPicker } from "@/components/CustomerPicker";
 import { ListPager } from "@/components/ListPager";
 import { usePagedList } from "@/hooks/usePagedList";
 import { Button } from "@/components/ui/button";
@@ -172,7 +173,9 @@ export default function Orders() {
   const orders = ordersPage?.rows;
   const totalOrders = ordersPage?.total ?? 0;
   useEffect(() => paging.clampTo(ordersPage?.total), [ordersPage?.total]);
-  const { data: customers } = trpc.customers.list.useQuery();
+  // Only "are there any customers?" — the picker searches the server itself.
+  const { data: anyCustomer } = trpc.customers.listPaged.useQuery({ limit: 1 });
+  const hasCustomers = (anyCustomer?.total ?? 0) > 0;
   const createCustomer = trpc.customers.create.useMutation();
 
   const bulkDeleteOrders = trpc.orders.bulkDelete.useMutation({
@@ -192,7 +195,7 @@ export default function Orders() {
       setLineItems([]);
       setNewCustomerName("");
       utils.orders.invalidate();
-      utils.customers.list.invalidate();
+      utils.customers.invalidate();
     },
     onError: (err: any) => toast.error(err.message),
   });
@@ -321,22 +324,11 @@ export default function Orders() {
               <div className="grid gap-4 py-4">
                 <div className="space-y-2">
                   <Label htmlFor="customer">Customer</Label>
-                  {customers && customers.length > 0 ? (
-                    <Select
-                      value={formData.customerId.toString()}
-                      onValueChange={(value) => setFormData({ ...formData, customerId: parseInt(value) })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select customer" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {customers.map((customer) => (
-                          <SelectItem key={customer.id} value={customer.id.toString()}>
-                            {customer.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                  {hasCustomers ? (
+                    <CustomerPicker
+                      value={formData.customerId}
+                      onChange={(id) => setFormData({ ...formData, customerId: id })}
+                    />
                   ) : (
                     <div className="space-y-2">
                       <Input
