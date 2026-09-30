@@ -5,8 +5,11 @@ import type { AIAgentResponse, AIAgentAction, AgentStreamEvent } from "@shared/a
 // shared/ so the client can type streamed responses without importing this module.
 export type { AIAgentResponse, AIAgentAction, AgentStreamEvent } from "@shared/aiChat";
 import { getDb, createWorkOrder, createFreightRfq } from "./db";
+import * as dbHelpers from "./db";
 import { sendEmail, formatEmailHtml } from "./_core/email";
 import { getValidGoogleToken } from "./routers/middleware";
+import { scopeAllows, type Scope } from "./_core/scope";
+import { postInvoiceJournalEntry } from "./invoicePosting";
 import {
   vendors,
   customers,
@@ -31,18 +34,8 @@ import {
   sentEmails,
   inboundEmails,
 } from "../drizzle/schema";
-import { eq, and, like, desc, sql, gte, lte, or, isNull, isNotNull, count, sum, lt, inArray } from "drizzle-orm";
-
-// Roles allowed to have the agent MUTATE ERP data (create POs, change inventory,
-// send email, etc.) — mirrors opsProcedure. Reads/Q&A stay open to all roles.
-// Because the chat's mode is client-controlled, this server-side check is what
-// actually prevents a non-ops user (or scripted client) from driving writes.
-const MUTATION_ROLES = ["admin", "ops", "exec"];
-function assertCanMutate(ctx: AIAgentContext, action: string): void {
-  if (!MUTATION_ROLES.includes(ctx.userRole)) {
-    throw new Error(`Not authorized: "${action}" requires an operations, admin, or executive role.`);
-  }
-}
+import type { MySqlColumn } from "drizzle-orm/mysql-core";
+import { eq, and, like, desc, sql, gte, lte, or, isNull, isNotNull, count, sum, lt, inArray, type SQL } from "drizzle-orm";
 
 // ============================================
 // AI AGENT SERVICE - Comprehensive ERP Integration
@@ -56,6 +49,129 @@ export interface AIAgentContext {
   // Set when the agent is replaying an already-approved concierge errand, so it
   // executes the plan directly instead of planning (and queuing) a new errand.
   executingErrand?: boolean;
+}
+
+// ============================================
+// ROLE GATES
+// ============================================
+
+// Roles allowed to have the agent MUTATE ERP data (create POs, change inventory,
+// send email, etc.) — mirrors opsProcedure. Reads/Q&A stay open to all roles.
+// Because the chat's mode is client-controlled, this server-side check is what
+// actually prevents a non-ops user (or scripted client) from driving writes.
+export const MUTATION_ROLES: readonly string[] = ["admin", "ops", "exec"];
+// Mirrors financeProcedure: invoices and payments.
+export const FINANCE_ROLES: readonly string[] = ["admin", "exec", "finance"];
+// Archive / soft-delete of master data is admin-only, whatever the module's UI allows.
+export const ADMIN_ROLES: readonly string[] = ["admin"];
+
+/**
+ * Generic role gate for chat tools. `action` is a short human phrase ("create order")
+ * used in the error the model relays to the user. Sibling modules registering tools via
+ * `registerChatTools` should use this (or the specific gates below) for every write.
+ */
+export function assertRole(ctx: AIAgentContext, roles: readonly string[], action: string): void {
+  if (!roles.includes(ctx.userRole)) {
+    throw new Error(`Not authorized: "${action}" requires one of these roles: ${roles.join(", ")}.`);
+  }
+}
+
+export function assertCanMutate(ctx: AIAgentContext, action: string): void {
+  if (!MUTATION_ROLES.includes(ctx.userRole)) {
+    throw new Error(`Not authorized: "${action}" requires an operations, admin, or executive role.`);
+  }
+}
+
+export function assertCanMutateFinance(ctx: AIAgentContext, action: string): void {
+  if (!FINANCE_ROLES.includes(ctx.userRole)) {
+    throw new Error(`Not authorized: "${action}" requires a finance, admin, or executive role.`);
+  }
+}
+
+export function assertAdmin(ctx: AIAgentContext, action: string): void {
+  if (!ADMIN_ROLES.includes(ctx.userRole)) {
+    throw new Error(`Not authorized: "${action}" requires an admin role.`);
+  }
+}
+
+// ============================================
+// COMPANY SCOPING
+// ============================================
+//
+// Every read and write in this file is confined to the caller's company entity when
+// `ctx.companyId` is set. When it is undefined the caller is a global/superuser and the
+// legacy unscoped behaviour is preserved. Writes always stamp `ctx.companyId`.
+
+/** Entity `Scope` for db helpers that accept one (`getCustomers(scope)`, …); undefined = global. */
+export function chatScope(ctx: AIAgentContext): Scope | undefined {
+  return ctx.companyId != null ? { mode: "entity", companyIds: [ctx.companyId] } : undefined;
+}
+
+/** `{ companyId }` filter object for db helpers that take a filters bag; undefined = global. */
+function companyFilter(ctx: AIAgentContext): { companyId: number } | undefined {
+  return ctx.companyId != null ? { companyId: ctx.companyId } : undefined;
+}
+
+/** `eq(table.companyId, ctx.companyId)` or undefined for a global caller. */
+function companyWhere(table: { companyId: MySqlColumn }, ctx: AIAgentContext): SQL | undefined {
+  return ctx.companyId != null ? eq(table.companyId, ctx.companyId) : undefined;
+}
+
+/** AND of the company predicate and any extra conditions (undefined entries are dropped). */
+function scopedWhere(ctx: AIAgentContext, table: { companyId: MySqlColumn }, ...conds: Array<SQL | undefined>): SQL | undefined {
+  return and(companyWhere(table, ctx), ...conds);
+}
+
+/**
+ * By-id reads: a row outside the caller's entity is reported as "not found" (never
+ * "forbidden") so cross-entity existence isn't leaked. Global callers see everything.
+ */
+function assertInScope<T extends { companyId?: number | null }>(
+  ctx: AIAgentContext,
+  row: T | undefined | null,
+  label: string,
+): asserts row is T {
+  const scope = chatScope(ctx);
+  if (!row || (scope && !scopeAllows(scope, row.companyId))) {
+    throw new Error(`${label} not found`);
+  }
+}
+
+// Number helpers shared by the write tools — the model can pass junk.
+function toPositiveNumber(value: unknown, label: string): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) throw new Error(`${label} must be a positive number`);
+  return n;
+}
+function toNonNegativeNumber(value: unknown, label: string, fallback = 0): number {
+  if (value == null || value === "") return fallback;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) throw new Error(`${label} must be a non-negative number`);
+  return n;
+}
+function parseDateOr(value: unknown, fallback: Date): Date {
+  if (value == null || value === "") return fallback;
+  const d = new Date(String(value));
+  return isNaN(d.getTime()) ? fallback : d;
+}
+function pickFields<T extends Record<string, any>>(data: Record<string, any> | undefined, allowed: readonly string[]): Partial<T> {
+  const out: Record<string, any> = {};
+  for (const key of allowed) {
+    if (data && data[key] !== undefined) out[key] = data[key];
+  }
+  return out as Partial<T>;
+}
+async function docNumber(prefix: string): Promise<string> {
+  // Same generator the UI routers use, so AI-raised documents number identically.
+  const { generateNumber } = await import("./routers/_shared");
+  return generateNumber(prefix);
+}
+async function audit(ctx: AIAgentContext, action: "create" | "update" | "delete" | "approve", entityType: string, entityId: number, entityName?: string) {
+  try {
+    await dbHelpers.createAuditLog({ userId: ctx.userId, action, entityType, entityId, entityName });
+  } catch (e) {
+    console.warn(`[aiAgent] audit log failed for ${entityType} ${entityId}:`, e);
+  }
 }
 
 // AIAgentResponse and AIAgentAction are defined in shared/aiChat.ts (imported +
@@ -243,13 +359,13 @@ const AI_TOOLS: Tool[] = [
     type: "function",
     function: {
       name: "manage_vendor",
-      description: "Create, update, or get information about vendors/suppliers",
+      description: "Vendors/suppliers. Reads (list, get, search, performance) are open to all roles. create/update need an ops, admin or exec role. archive (admin only) sets the vendor to inactive — vendors are never permanently deleted because purchase orders reference them.",
       parameters: {
         type: "object",
         properties: {
           action: {
             type: "string",
-            enum: ["create", "update", "get", "list", "search", "performance"],
+            enum: ["create", "update", "get", "list", "search", "performance", "archive"],
             description: "Action to perform",
           },
           vendorId: { type: "number", description: "Vendor ID for update/get operations" },
@@ -261,8 +377,16 @@ const AI_TOOLS: Tool[] = [
               email: { type: "string" },
               phone: { type: "string" },
               contactName: { type: "string" },
-              category: { type: "string" },
-              status: { type: "string" },
+              address: { type: "string" },
+              city: { type: "string" },
+              state: { type: "string" },
+              country: { type: "string" },
+              postalCode: { type: "string" },
+              website: { type: "string" },
+              type: { type: "string", enum: ["supplier", "contractor", "service"] },
+              status: { type: "string", enum: ["active", "inactive", "pending"] },
+              paymentTerms: { type: "number", description: "Payment terms in days" },
+              notes: { type: "string" },
             },
           },
           searchQuery: { type: "string", description: "Search query for finding vendors" },
@@ -337,19 +461,34 @@ const AI_TOOLS: Tool[] = [
     type: "function",
     function: {
       name: "manage_customer",
-      description: "Create, update, or get information about customers",
+      description: "Customers. Reads (list, get, search, order_history) are open to all roles. create/update need an ops, admin or exec role. archive (admin only) sets the customer to inactive — customers are never permanently deleted because orders and invoices reference them.",
       parameters: {
         type: "object",
         properties: {
           action: {
             type: "string",
-            enum: ["create", "update", "get", "list", "search", "order_history"],
+            enum: ["create", "update", "get", "list", "search", "order_history", "archive"],
             description: "Action to perform",
           },
           customerId: { type: "number", description: "Customer ID" },
           data: {
             type: "object",
             description: "Customer data for create/update operations",
+            properties: {
+              name: { type: "string" },
+              email: { type: "string" },
+              phone: { type: "string" },
+              address: { type: "string" },
+              city: { type: "string" },
+              state: { type: "string" },
+              country: { type: "string" },
+              postalCode: { type: "string" },
+              type: { type: "string", enum: ["individual", "business"] },
+              status: { type: "string", enum: ["active", "inactive", "prospect"] },
+              creditLimit: { type: "number" },
+              paymentTerms: { type: "number", description: "Payment terms in days" },
+              notes: { type: "string" },
+            },
           },
           searchQuery: { type: "string", description: "Search query" },
         },
@@ -362,19 +501,97 @@ const AI_TOOLS: Tool[] = [
     type: "function",
     function: {
       name: "manage_order",
-      description: "Create, update, or track sales orders",
+      description: "Sales orders. Reads (list, get) are open to all roles. create/update/cancel/fulfill need an ops, admin or exec role. create takes line items (productId, sku or product name + quantity; unitPrice defaults to the product's list price). update changes status/notes/addresses (not to 'shipped' — use fulfill). fulfill allocates and reserves stock, raises an outbound shipment and marks the order shipped, exactly like the order-fulfillment workflow. archive (admin only) cancels the order and keeps its history — orders are never permanently deleted.",
       parameters: {
         type: "object",
         properties: {
           action: {
             type: "string",
-            enum: ["create", "update", "get", "list", "cancel", "fulfill"],
+            enum: ["create", "update", "get", "list", "cancel", "fulfill", "archive"],
             description: "Action to perform",
           },
-          orderId: { type: "number", description: "Order ID" },
+          orderId: { type: "number", description: "Order ID (update/get/cancel/fulfill/archive)" },
           data: {
             type: "object",
-            description: "Order data",
+            description: "Order data. For create: customerId or customerName, items[], optional orderDate, shippingAddress, billingAddress, taxAmount, shippingAmount, discountAmount, currency, notes. For update: status, notes, shippingAddress, billingAddress. For cancel: optional reason.",
+            properties: {
+              customerId: { type: "number" },
+              customerName: { type: "string", description: "Used to look the customer up when customerId is unknown" },
+              items: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    productId: { type: "number" },
+                    sku: { type: "string" },
+                    productName: { type: "string" },
+                    quantity: { type: "number" },
+                    unitPrice: { type: "number", description: "Defaults to the product's unit price" },
+                  },
+                },
+              },
+              orderDate: { type: "string" },
+              shippingAddress: { type: "string" },
+              billingAddress: { type: "string" },
+              taxAmount: { type: "number" },
+              shippingAmount: { type: "number" },
+              discountAmount: { type: "number" },
+              currency: { type: "string" },
+              notes: { type: "string" },
+              status: { type: "string", enum: ["pending", "confirmed", "processing", "delivered", "cancelled", "refunded"], description: "For update" },
+              reason: { type: "string", description: "For cancel" },
+            },
+          },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  // Invoice / Payment Tools (finance roles)
+  {
+    type: "function",
+    function: {
+      name: "manage_invoice",
+      description: "Customer invoices and payments. Reads (list, get) are open to all roles. create/send/record_payment need a finance, admin or exec role. create builds a draft invoice either from an existing order (orderId — same customer, lines and totals; the order is linked to the invoice) or from explicit line items with a customerId; the AR/Revenue journal entry is posted automatically. send marks a draft invoice as sent/approved (to email it to the customer, call send_email afterwards). record_payment records a received payment against the invoice, updates its paid amount/status, marks the linked order delivered when fully paid, and posts the Cash/AR journal entry.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["create", "send", "record_payment", "get", "list"],
+            description: "Action to perform",
+          },
+          invoiceId: { type: "number", description: "Invoice ID (send/record_payment/get)" },
+          orderId: { type: "number", description: "Order to invoice (create)" },
+          data: {
+            type: "object",
+            description: "create: customerId, items[] ({description|productId|productName, quantity, unitPrice}), dueDate, taxAmount, discountAmount, notes, terms. record_payment: amount, date, method, reference, notes. list: status.",
+            properties: {
+              customerId: { type: "number" },
+              items: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    description: { type: "string" },
+                    productId: { type: "number" },
+                    productName: { type: "string" },
+                    quantity: { type: "number" },
+                    unitPrice: { type: "number" },
+                  },
+                },
+              },
+              dueDate: { type: "string", description: "ISO date; defaults to issue date + the customer's payment terms" },
+              taxAmount: { type: "number" },
+              discountAmount: { type: "number" },
+              notes: { type: "string" },
+              terms: { type: "string" },
+              amount: { type: "number", description: "Payment amount (record_payment)" },
+              date: { type: "string", description: "Payment date, ISO (record_payment); defaults to today" },
+              method: { type: "string", enum: ["cash", "check", "bank_transfer", "credit_card", "ach", "wire", "other"], description: "Payment method (record_payment)" },
+              reference: { type: "string", description: "Payment reference / check number (record_payment)" },
+              status: { type: "string", description: "Status filter (list)" },
+            },
           },
         },
         required: ["action"],
@@ -386,7 +603,7 @@ const AI_TOOLS: Tool[] = [
     type: "function",
     function: {
       name: "manage_freight",
-      description: "Create RFQs, get quotes, book shipments, and track freight",
+      description: "Freight. Reads (get_quotes, track, list_carriers) are open to all roles. create_rfq and book_shipment need an ops, admin or exec role. book_shipment accepts a carrier quote (quoteId from get_quotes): the quote is accepted, sibling quotes rejected, a booking created and the RFQ awarded — the same steps as accepting a quote in the Logistics page.",
       parameters: {
         type: "object",
         properties: {
@@ -397,10 +614,16 @@ const AI_TOOLS: Tool[] = [
           },
           rfqData: {
             type: "object",
-            description: "RFQ details",
+            description: "RFQ details (create_rfq): title, originCity, originCountry, destinationCity, destinationCountry, cargoDescription, totalWeight, totalVolume, preferredMode, requiredDeliveryDate, notes",
           },
-          bookingId: { type: "number" },
-          carrierId: { type: "number" },
+          rfqId: { type: "number", description: "Limit get_quotes to one RFQ" },
+          quoteId: { type: "number", description: "Quote to accept (book_shipment)" },
+          bookingId: { type: "number", description: "Booking to track" },
+          bookingData: {
+            type: "object",
+            description: "Optional booking notes (book_shipment)",
+            properties: { notes: { type: "string" } },
+          },
         },
         required: ["action"],
       },
@@ -411,7 +634,7 @@ const AI_TOOLS: Tool[] = [
     type: "function",
     function: {
       name: "generate_report",
-      description: "Generate business reports and summaries",
+      description: "Generate a business report (read-only, scoped to the user's company): sales_summary, inventory_status, vendor_performance, customer_analysis (revenue and orders per customer, new customers), financial_overview, production_status (work orders by status, overdue), order_fulfillment (orders by status, fulfilment rate, outbound shipments, oldest open orders). dateRange defaults to the last 30 days.",
       parameters: {
         type: "object",
         properties: {
@@ -466,7 +689,7 @@ const AI_TOOLS: Tool[] = [
     type: "function",
     function: {
       name: "plan_errand",
-      description: "Delegate a multi-step chore/errand the user wants DONE (not a question to answer). Use this when the user asks you to carry out a task that takes several actions or has real-world consequences — e.g. 'chase the overdue invoice from Acme', 'onboard this new vendor and email them the forms', 'follow up with everyone who didn't reply'. Produce a short title, restate the goal, list the concrete steps you'll take, and set a risk level. Low-risk errands run automatically; medium/high-risk errands are sent to the user's approval queue and only run after they approve the plan. Do NOT use this for simple questions or a single trivial action — answer or do those directly.",
+      description: "Delegate a multi-step chore/errand the user wants DONE (not a question to answer). Use this when the user asks you to carry out a task that takes several actions or has real-world consequences — e.g. 'chase the overdue invoice from Acme', 'onboard this new vendor and email them the forms', 'follow up with everyone who didn't reply'. Produce a short title, restate the goal, list the concrete steps you'll take, and set a risk level. Low-risk errands run automatically when the user has an ops, admin or exec role; for every other role, and for all medium/high-risk errands, the plan is sent to the approval queue and only runs after an authorised user approves it. Do NOT use this for simple questions or a single trivial action — answer or do those directly.",
       parameters: {
         type: "object",
         properties: {
@@ -492,7 +715,7 @@ const AI_TOOLS: Tool[] = [
     type: "function",
     function: {
       name: "manage_calendar",
-      description: "View upcoming calendar events or create new ones. Use to check availability, schedule meetings, or add reminders.",
+      description: "View upcoming Google Calendar events (any role) or create a new event (ops, admin or exec role; invites go to attendees). Use to check availability, schedule meetings, or add reminders.",
       parameters: {
         type: "object",
         properties: {
@@ -575,6 +798,11 @@ const AI_TOOLS: Tool[] = [
 // TOOL EXECUTION FUNCTIONS
 // ============================================
 
+/** Escape a value for a Drive `q` string literal: backslashes first, then quotes. */
+export function escapeDriveQueryValue(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
 async function executeSearchGoogleDrive(params: any, ctx: AIAgentContext): Promise<any> {
   try {
     const { accessToken, error: tokenErr } = await getValidGoogleToken(ctx.userId);
@@ -582,7 +810,7 @@ async function executeSearchGoogleDrive(params: any, ctx: AIAgentContext): Promi
       return { error: "Google Drive not connected. Go to Settings → Integrations to connect." };
     }
 
-    let query = `fullText contains '${params.query.replace(/'/g, "\\'")}'`;
+    let query = `fullText contains '${escapeDriveQueryValue(String(params.query ?? ""))}'`;
     if (params.fileType && params.fileType !== "all") {
       const mimeMap: Record<string, string> = {
         spreadsheet: "application/vnd.google-apps.spreadsheet",
@@ -632,7 +860,7 @@ async function executeAnalyzeData(params: any, ctx: AIAgentContext): Promise<any
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const { dataType, timeRange = "month", filters } = params;
+  const { dataType, timeRange = "month" } = params;
 
   // Calculate date range
   const now = new Date();
@@ -656,12 +884,11 @@ async function executeAnalyzeData(params: any, ctx: AIAgentContext): Promise<any
     default:
       startDate = new Date(0);
   }
+  const inPeriod = (col: MySqlColumn) => (timeRange !== "all" ? gte(col, startDate) : undefined);
 
   switch (dataType) {
     case "sales": {
-      const allOrders = await db.select().from(orders).where(
-        timeRange !== "all" ? gte(orders.createdAt, startDate) : undefined
-      );
+      const allOrders = await db.select().from(orders).where(scopedWhere(ctx, orders, inPeriod(orders.createdAt)));
       const totalRevenue = allOrders.reduce((sum, o) => sum + parseFloat(o.totalAmount || "0"), 0);
       const orderCount = allOrders.length;
       const avgOrderValue = orderCount > 0 ? totalRevenue / orderCount : 0;
@@ -676,7 +903,7 @@ async function executeAnalyzeData(params: any, ctx: AIAgentContext): Promise<any
     }
 
     case "inventory": {
-      const allInventory = await db.select().from(inventory);
+      const allInventory = await db.select().from(inventory).where(companyWhere(inventory, ctx));
       const lowStockItems = allInventory.filter(i => parseFloat(i.quantity?.toString() || "0") < 10);
       const totalValue = allInventory.reduce((sum, i) => {
         return sum + (parseFloat(i.quantity?.toString() || "0") * parseFloat((i as any).unitCost?.toString() || "0"));
@@ -692,11 +919,9 @@ async function executeAnalyzeData(params: any, ctx: AIAgentContext): Promise<any
     }
 
     case "vendors": {
-      const allVendors = await db.select().from(vendors);
+      const allVendors = await db.select().from(vendors).where(companyWhere(vendors, ctx));
       const activeVendors = allVendors.filter(v => v.status === "active");
-      const allPOs = await db.select().from(purchaseOrders).where(
-        timeRange !== "all" ? gte(purchaseOrders.createdAt, startDate) : undefined
-      );
+      const allPOs = await db.select().from(purchaseOrders).where(scopedWhere(ctx, purchaseOrders, inPeriod(purchaseOrders.createdAt)));
 
       return {
         summary: "Vendor analysis",
@@ -708,11 +933,9 @@ async function executeAnalyzeData(params: any, ctx: AIAgentContext): Promise<any
     }
 
     case "customers": {
-      const allCustomers = await db.select().from(customers);
+      const allCustomers = await db.select().from(customers).where(companyWhere(customers, ctx));
       const activeCustomers = allCustomers.filter(c => c.status === "active");
-      const allOrders = await db.select().from(orders).where(
-        timeRange !== "all" ? gte(orders.createdAt, startDate) : undefined
-      );
+      const allOrders = await db.select().from(orders).where(scopedWhere(ctx, orders, inPeriod(orders.createdAt)));
 
       return {
         summary: "Customer analysis",
@@ -724,9 +947,7 @@ async function executeAnalyzeData(params: any, ctx: AIAgentContext): Promise<any
     }
 
     case "finances": {
-      const allInvoices = await db.select().from(invoices).where(
-        timeRange !== "all" ? gte(invoices.createdAt, startDate) : undefined
-      );
+      const allInvoices = await db.select().from(invoices).where(scopedWhere(ctx, invoices, inPeriod(invoices.createdAt)));
       const paidInvoices = allInvoices.filter(i => i.status === "paid");
       const pendingInvoices = allInvoices.filter(i => i.status === "draft" || i.status === "sent");
       const overdueInvoices = allInvoices.filter(i =>
@@ -750,9 +971,7 @@ async function executeAnalyzeData(params: any, ctx: AIAgentContext): Promise<any
     }
 
     case "orders": {
-      const allOrders = await db.select().from(orders).where(
-        timeRange !== "all" ? gte(orders.createdAt, startDate) : undefined
-      );
+      const allOrders = await db.select().from(orders).where(scopedWhere(ctx, orders, inPeriod(orders.createdAt)));
       const pendingOrders = allOrders.filter(o => (o.status as string) === "pending");
       const completedOrders = allOrders.filter(o => (o.status as string) === "completed" || o.status === "delivered");
 
@@ -766,9 +985,7 @@ async function executeAnalyzeData(params: any, ctx: AIAgentContext): Promise<any
     }
 
     case "procurement": {
-      const allPOs = await db.select().from(purchaseOrders).where(
-        timeRange !== "all" ? gte(purchaseOrders.createdAt, startDate) : undefined
-      );
+      const allPOs = await db.select().from(purchaseOrders).where(scopedWhere(ctx, purchaseOrders, inPeriod(purchaseOrders.createdAt)));
       const pendingPOs = allPOs.filter(po => (po.status as string) === "pending" || po.status === "sent");
       const totalSpent = allPOs.reduce((sum, po) => sum + parseFloat(po.totalAmount || "0"), 0);
 
@@ -782,9 +999,7 @@ async function executeAnalyzeData(params: any, ctx: AIAgentContext): Promise<any
     }
 
     case "production": {
-      const allWorkOrders = await db.select().from(workOrders).where(
-        timeRange !== "all" ? gte(workOrders.createdAt, startDate) : undefined
-      );
+      const allWorkOrders = await db.select().from(workOrders).where(scopedWhere(ctx, workOrders, inPeriod(workOrders.createdAt)));
       const inProgressWOs = allWorkOrders.filter(wo => wo.status === "in_progress");
       const completedWOs = allWorkOrders.filter(wo => wo.status === "completed");
 
@@ -810,11 +1025,11 @@ async function executeSendEmail(params: any, ctx: AIAgentContext): Promise<any> 
   let toEmail = params.to;
   let recipientName = "Recipient";
 
-  // Resolve email from entity if provided
+  // Resolve email from entity if provided (scoped: another entity's vendor/customer is invisible).
   if (params.entityType && params.entityId) {
     switch (params.entityType) {
       case "vendor": {
-        const vendor = await db.select().from(vendors).where(eq(vendors.id, params.entityId)).limit(1);
+        const vendor = await db.select().from(vendors).where(scopedWhere(ctx, vendors, eq(vendors.id, params.entityId))).limit(1);
         if (vendor[0]?.email) {
           toEmail = vendor[0].email;
           recipientName = vendor[0].contactName || vendor[0].name || "Vendor";
@@ -822,7 +1037,7 @@ async function executeSendEmail(params: any, ctx: AIAgentContext): Promise<any> 
         break;
       }
       case "customer": {
-        const customer = await db.select().from(customers).where(eq(customers.id, params.entityId)).limit(1);
+        const customer = await db.select().from(customers).where(scopedWhere(ctx, customers, eq(customers.id, params.entityId))).limit(1);
         if (customer[0]?.email) {
           toEmail = customer[0].email;
           recipientName = (customer[0] as any).contactName || customer[0].name || "Customer";
@@ -914,11 +1129,11 @@ export function formatInboundSummary(email: Partial<InboundEmailRow>): {
   };
 }
 
-async function executeSearchInbox(params: any, _ctx: AIAgentContext): Promise<any> {
+async function executeSearchInbox(params: any, ctx: AIAgentContext): Promise<any> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const conditions: any[] = [];
+  const conditions: Array<SQL | undefined> = [companyWhere(inboundEmails, ctx)];
   if (typeof params.query === "string" && params.query.trim()) {
     const q = `%${params.query.trim()}%`;
     conditions.push(
@@ -939,9 +1154,9 @@ async function executeSearchInbox(params: any, _ctx: AIAgentContext): Promise<an
   }
 
   const limit = Math.min(Math.max(Number(params.limit) || 20, 1), 50);
-  let q = db.select().from(inboundEmails);
-  if (conditions.length) q = q.where(and(...conditions)) as any;
-  const rows = await q.orderBy(desc(inboundEmails.receivedAt)).limit(limit);
+  const rows = await db.select().from(inboundEmails)
+    .where(and(...conditions))
+    .orderBy(desc(inboundEmails.receivedAt)).limit(limit);
 
   return {
     count: rows.length,
@@ -950,14 +1165,14 @@ async function executeSearchInbox(params: any, _ctx: AIAgentContext): Promise<an
   };
 }
 
-async function executeReadEmail(params: any, _ctx: AIAgentContext): Promise<any> {
+async function executeReadEmail(params: any, ctx: AIAgentContext): Promise<any> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
   const emailId = Number(params.emailId);
   if (!Number.isFinite(emailId)) return { error: "A numeric emailId is required (get it from search_inbox)." };
 
-  const rows = await db.select().from(inboundEmails).where(eq(inboundEmails.id, emailId)).limit(1);
+  const rows = await db.select().from(inboundEmails).where(scopedWhere(ctx, inboundEmails, eq(inboundEmails.id, emailId))).limit(1);
   const email = rows[0];
   if (!email) return { error: `No inbound email found with id ${emailId}.` };
 
@@ -983,67 +1198,67 @@ async function executeTrackItems(params: any, ctx: AIAgentContext): Promise<any>
     case "inventory": {
       if (identifier) {
         // Query only matching items instead of loading entire table
-        const filtered = await db.select().from(inventory).where(
+        const filtered = await db.select().from(inventory).where(scopedWhere(ctx, inventory,
           or(eq(inventory.id, parseInt(identifier) || 0), eq(inventory.productId, parseInt(identifier) || 0))
-        );
+        ));
         return { type: "inventory", items: filtered, action };
       }
-      const [totalCount] = await db.select({ count: count() }).from(inventory);
-      const items = await db.select().from(inventory).limit(20);
+      const [totalCount] = await db.select({ count: count() }).from(inventory).where(companyWhere(inventory, ctx));
+      const items = await db.select().from(inventory).where(companyWhere(inventory, ctx)).limit(20);
       return { type: "inventory", totalItems: totalCount?.count || 0, items, action };
     }
 
     case "order": {
       if (identifier) {
-        const [order] = await db.select().from(orders).where(
+        const [order] = await db.select().from(orders).where(scopedWhere(ctx, orders,
           or(eq(orders.id, parseInt(identifier) || 0), eq(orders.orderNumber, identifier))
-        ).limit(1);
+        )).limit(1);
         if (order) {
           const items = await db.select().from(orderItems).where(eq(orderItems.orderId, order.id));
           return { type: "order", order, items, action };
         }
       }
-      const [totalCount] = await db.select({ count: count() }).from(orders);
-      const recentOrders = await db.select().from(orders).orderBy(desc(orders.createdAt)).limit(20);
+      const [totalCount] = await db.select({ count: count() }).from(orders).where(companyWhere(orders, ctx));
+      const recentOrders = await db.select().from(orders).where(companyWhere(orders, ctx)).orderBy(desc(orders.createdAt)).limit(20);
       return { type: "orders", totalOrders: totalCount?.count || 0, orders: recentOrders, action };
     }
 
     case "shipment": {
       if (identifier) {
-        const [shipment] = await db.select().from(shipments).where(
+        const [shipment] = await db.select().from(shipments).where(scopedWhere(ctx, shipments,
           or(eq(shipments.id, parseInt(identifier) || 0), eq(shipments.trackingNumber, identifier))
-        ).limit(1);
+        )).limit(1);
         return { type: "shipment", shipment, action };
       }
-      const [totalCount] = await db.select({ count: count() }).from(shipments);
-      const recentShipments = await db.select().from(shipments).limit(20);
+      const [totalCount] = await db.select({ count: count() }).from(shipments).where(companyWhere(shipments, ctx));
+      const recentShipments = await db.select().from(shipments).where(companyWhere(shipments, ctx)).limit(20);
       return { type: "shipments", totalShipments: totalCount?.count || 0, shipments: recentShipments, action };
     }
 
     case "purchase_order": {
       if (identifier) {
-        const [po] = await db.select().from(purchaseOrders).where(
+        const [po] = await db.select().from(purchaseOrders).where(scopedWhere(ctx, purchaseOrders,
           or(eq(purchaseOrders.id, parseInt(identifier) || 0), eq(purchaseOrders.poNumber, identifier))
-        ).limit(1);
+        )).limit(1);
         if (po) {
           const items = await db.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, po.id));
           return { type: "purchase_order", purchaseOrder: po, items, action };
         }
       }
-      const [totalCount] = await db.select({ count: count() }).from(purchaseOrders);
-      const recentPOs = await db.select().from(purchaseOrders).limit(20);
+      const [totalCount] = await db.select({ count: count() }).from(purchaseOrders).where(companyWhere(purchaseOrders, ctx));
+      const recentPOs = await db.select().from(purchaseOrders).where(companyWhere(purchaseOrders, ctx)).limit(20);
       return { type: "purchase_orders", totalPOs: totalCount?.count || 0, purchaseOrders: recentPOs, action };
     }
 
     case "work_order": {
       if (identifier) {
-        const [wo] = await db.select().from(workOrders).where(
+        const [wo] = await db.select().from(workOrders).where(scopedWhere(ctx, workOrders,
           or(eq(workOrders.id, parseInt(identifier) || 0), eq(workOrders.workOrderNumber, identifier))
-        ).limit(1);
+        )).limit(1);
         return { type: "work_order", workOrder: wo, action };
       }
-      const [totalCount] = await db.select({ count: count() }).from(workOrders);
-      const recentWOs = await db.select().from(workOrders).limit(20);
+      const [totalCount] = await db.select({ count: count() }).from(workOrders).where(companyWhere(workOrders, ctx));
+      const recentWOs = await db.select().from(workOrders).where(companyWhere(workOrders, ctx)).limit(20);
       return { type: "work_orders", totalWOs: totalCount?.count || 0, workOrders: recentWOs, action };
     }
 
@@ -1068,21 +1283,21 @@ async function executeUpdateInventory(params: any, ctx: AIAgentContext): Promise
   if (!Number.isFinite(qty) || qty <= 0) throw new Error("A positive numeric quantity is required");
 
   // Apply a signed delta to one (product, warehouse) cell within a transaction.
-  // Rejects any move that would drop a location below zero on-hand.
+  // Rejects any move that would drop a location below zero on-hand. The cell is
+  // looked up within the caller's entity, so another company's stock is never touched.
   const applyDelta = async (tx: any, product: number, warehouse: number, change: number) => {
+    const cell = scopedWhere(ctx, inventory, eq(inventory.productId, product), eq(inventory.warehouseId, warehouse));
     // Lock the (product, warehouse) row for the duration of the transaction so
     // concurrent adjustments can't both read the same value and lose an update
     // (or slip past the non-negative check).
-    const existing = await tx.select().from(inventory)
-      .where(and(eq(inventory.productId, product), eq(inventory.warehouseId, warehouse))).limit(1).for("update");
+    const existing = await tx.select().from(inventory).where(cell).limit(1).for("update");
     if (existing.length > 0) {
       const current = parseFloat(existing[0].quantity as string) || 0;
       const next = current + change;
       if (next < 0) {
         throw new Error(`Insufficient stock: product ${product} at warehouse ${warehouse} has ${current}, cannot apply ${change}`);
       }
-      await tx.update(inventory).set({ quantity: next.toString() })
-        .where(and(eq(inventory.productId, product), eq(inventory.warehouseId, warehouse)));
+      await tx.update(inventory).set({ quantity: next.toString() }).where(cell);
     } else {
       if (change < 0) {
         throw new Error(`No stock of product ${product} at warehouse ${warehouse} to remove`);
@@ -1126,34 +1341,46 @@ async function executeUpdateInventory(params: any, ctx: AIAgentContext): Promise
   };
 }
 
+// ============================================
+// VENDORS
+// ============================================
+
+const VENDOR_WRITE_FIELDS = [
+  "name", "contactName", "email", "phone", "address", "city", "state", "country", "postalCode",
+  "type", "status", "paymentTerms", "notes", "website", "whatsappNumber", "defaultLeadTimeDays",
+] as const;
+
 async function executeManageVendor(params: any, ctx: AIAgentContext): Promise<any> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
   const { action, vendorId, data, searchQuery } = params;
+  const vId = vendorId != null ? Number(vendorId) : NaN;
 
   switch (action) {
     case "list": {
-      const allVendors = await db.select().from(vendors);
+      const allVendors = await db.select().from(vendors).where(companyWhere(vendors, ctx));
       return { vendors: allVendors, total: allVendors.length };
     }
 
     case "get": {
-      if (!vendorId) throw new Error("Vendor ID required");
-      const vendor = await db.select().from(vendors).where(eq(vendors.id, vendorId)).limit(1);
+      if (!Number.isFinite(vId)) throw new Error("Vendor ID required");
+      const [vendor] = await db.select().from(vendors).where(scopedWhere(ctx, vendors, eq(vendors.id, vId))).limit(1);
+      if (!vendor) throw new Error("Vendor not found");
 
       // Get vendor's PO history
-      const vendorPOs = await db.select().from(purchaseOrders).where(eq(purchaseOrders.vendorId, vendorId));
+      const vendorPOs = await db.select().from(purchaseOrders).where(scopedWhere(ctx, purchaseOrders, eq(purchaseOrders.vendorId, vId)));
 
-      return { vendor: vendor[0], purchaseOrders: vendorPOs };
+      return { vendor, purchaseOrders: vendorPOs };
     }
 
     case "search": {
-      const allVendors = await db.select().from(vendors);
+      const allVendors = await db.select().from(vendors).where(companyWhere(vendors, ctx));
+      const q = (searchQuery || "").toLowerCase();
       const filtered = allVendors.filter(v =>
-        v.name?.toLowerCase().includes(searchQuery?.toLowerCase() || "") ||
-        v.email?.toLowerCase().includes(searchQuery?.toLowerCase() || "") ||
-        v.contactName?.toLowerCase().includes(searchQuery?.toLowerCase() || "")
+        v.name?.toLowerCase().includes(q) ||
+        v.email?.toLowerCase().includes(q) ||
+        v.contactName?.toLowerCase().includes(q)
       );
       return { vendors: filtered, total: filtered.length, query: searchQuery };
     }
@@ -1161,26 +1388,53 @@ async function executeManageVendor(params: any, ctx: AIAgentContext): Promise<an
     case "create": {
       assertCanMutate(ctx, "create vendor");
       if (!data?.name) throw new Error("Vendor name required");
+      const fields = pickFields<Record<string, any>>(data, VENDOR_WRITE_FIELDS);
       const newVendor = await db.insert(vendors).values({
+        ...fields,
         name: data.name,
-        email: data.email,
-        phone: data.phone,
-        contactName: data.contactName,
         status: data.status || "active",
+        companyId: ctx.companyId ?? null,
       } as any).$returningId();
-      return { created: true, vendorId: newVendor[0].id };
+      await audit(ctx, "create", "vendor", newVendor[0].id, data.name);
+      return { created: true, vendorId: newVendor[0].id, message: `Created vendor "${data.name}".` };
     }
 
     case "update": {
       assertCanMutate(ctx, "update vendor");
-      if (!vendorId) throw new Error("Vendor ID required");
-      await db.update(vendors).set(data).where(eq(vendors.id, vendorId));
-      return { updated: true, vendorId };
+      if (!Number.isFinite(vId)) throw new Error("Vendor ID required");
+      const [existing] = await db.select().from(vendors).where(scopedWhere(ctx, vendors, eq(vendors.id, vId))).limit(1);
+      if (!existing) throw new Error("Vendor not found");
+      const fields = pickFields<Record<string, any>>(data, VENDOR_WRITE_FIELDS);
+      if (Object.keys(fields).length === 0) throw new Error("No updatable vendor fields provided");
+      await db.update(vendors).set(fields as any).where(scopedWhere(ctx, vendors, eq(vendors.id, vId)));
+      await audit(ctx, "update", "vendor", vId, existing.name);
+      return { updated: true, vendorId: vId, fields: Object.keys(fields) };
+    }
+
+    case "archive":
+    case "delete": {
+      // Vendors are referenced by purchase orders, RFQs and invoices, so the record is
+      // never hard-deleted: it is archived by setting status = inactive.
+      assertAdmin(ctx, "archive vendor");
+      if (!Number.isFinite(vId)) throw new Error("Vendor ID required");
+      const [existing] = await db.select().from(vendors).where(scopedWhere(ctx, vendors, eq(vendors.id, vId))).limit(1);
+      if (!existing) throw new Error("Vendor not found");
+      if (existing.status === "inactive") {
+        return { archived: false, vendorId: vId, message: `Vendor "${existing.name}" is already archived (inactive).` };
+      }
+      const [poCount] = await db.select({ count: count() }).from(purchaseOrders).where(scopedWhere(ctx, purchaseOrders, eq(purchaseOrders.vendorId, vId)));
+      await db.update(vendors).set({ status: "inactive" }).where(scopedWhere(ctx, vendors, eq(vendors.id, vId)));
+      await audit(ctx, "delete", "vendor", vId, existing.name);
+      return {
+        archived: true,
+        vendorId: vId,
+        message: `Archived vendor "${existing.name}" (status set to inactive). ${poCount?.count || 0} purchase order(s) were kept for history; nothing was permanently deleted.`,
+      };
     }
 
     case "performance": {
-      const allVendors = await db.select().from(vendors);
-      const allPOs = await db.select().from(purchaseOrders);
+      const allVendors = await db.select().from(vendors).where(companyWhere(vendors, ctx));
+      const allPOs = await db.select().from(purchaseOrders).where(companyWhere(purchaseOrders, ctx));
 
       const vendorPerformance = allVendors.map(v => {
         const vendorPOs = allPOs.filter(po => po.vendorId === v.id);
@@ -1211,8 +1465,8 @@ async function executeCreatePurchaseOrder(params: any, ctx: AIAgentContext): Pro
 
   const { vendorId, items, notes, expectedDate } = params;
 
-  // Validate vendor
-  const vendor = await db.select().from(vendors).where(eq(vendors.id, vendorId)).limit(1);
+  // Validate vendor (within the caller's entity)
+  const vendor = await db.select().from(vendors).where(scopedWhere(ctx, vendors, eq(vendors.id, vendorId))).limit(1);
   if (!vendor[0]) throw new Error("Vendor not found");
 
   // Normalize + validate line items before writing anything — the model can
@@ -1294,7 +1548,7 @@ async function executeManageCopacker(params: any, ctx: AIAgentContext): Promise<
 
   switch (action) {
     case "list": {
-      const allVendors = await db.select().from(vendors);
+      const allVendors = await db.select().from(vendors).where(companyWhere(vendors, ctx));
       const copackers = allVendors.filter(v =>
         v.type === "contractor" || v.type === "service"
       );
@@ -1303,8 +1557,9 @@ async function executeManageCopacker(params: any, ctx: AIAgentContext): Promise<
 
     case "get": {
       if (!copackerId) throw new Error("Copacker ID required");
-      const copacker = await db.select().from(vendors).where(eq(vendors.id, copackerId)).limit(1);
-      const copackerWOs = await db.select().from(workOrders);
+      const copacker = await db.select().from(vendors).where(scopedWhere(ctx, vendors, eq(vendors.id, copackerId))).limit(1);
+      if (!copacker[0]) throw new Error("Copacker not found");
+      const copackerWOs = await db.select().from(workOrders).where(companyWhere(workOrders, ctx));
       // Filter work orders that might be associated with this copacker
       return { copacker: copacker[0], workOrders: copackerWOs.slice(0, 10) };
     }
@@ -1349,7 +1604,7 @@ async function executeManageCopacker(params: any, ctx: AIAgentContext): Promise<
     }
 
     case "track_production": {
-      const allWOs = await db.select().from(workOrders);
+      const allWOs = await db.select().from(workOrders).where(companyWhere(workOrders, ctx));
       const inProgress = allWOs.filter(wo => wo.status === "in_progress");
       return {
         totalWorkOrders: allWOs.length,
@@ -1359,7 +1614,7 @@ async function executeManageCopacker(params: any, ctx: AIAgentContext): Promise<
     }
 
     case "performance": {
-      const allVendors = await db.select().from(vendors);
+      const allVendors = await db.select().from(vendors).where(companyWhere(vendors, ctx));
       const copackers = allVendors.filter(v =>
         (v as any).category === "copacker" ||
         (v as any).category === "manufacturer"
@@ -1380,38 +1635,102 @@ async function executeManageCopacker(params: any, ctx: AIAgentContext): Promise<
   }
 }
 
+// ============================================
+// CUSTOMERS
+// ============================================
+
+const CUSTOMER_WRITE_FIELDS = [
+  "name", "email", "phone", "address", "city", "state", "country", "postalCode",
+  "type", "status", "creditLimit", "paymentTerms", "notes",
+] as const;
+
 async function executeManageCustomer(params: any, ctx: AIAgentContext): Promise<any> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
   const { action, customerId, data, searchQuery } = params;
+  const cId = customerId != null ? Number(customerId) : NaN;
+  const scope = chatScope(ctx);
 
   switch (action) {
     case "list": {
-      const allCustomers = await db.select().from(customers);
+      const allCustomers = await db.select().from(customers).where(companyWhere(customers, ctx));
       return { customers: allCustomers, total: allCustomers.length };
     }
 
     case "get": {
-      if (!customerId) throw new Error("Customer ID required");
-      const customer = await db.select().from(customers).where(eq(customers.id, customerId)).limit(1);
-      const customerOrders = await db.select().from(orders).where(eq(orders.customerId, customerId));
-      return { customer: customer[0], orders: customerOrders };
+      if (!Number.isFinite(cId)) throw new Error("Customer ID required");
+      const [customer] = await db.select().from(customers).where(scopedWhere(ctx, customers, eq(customers.id, cId))).limit(1);
+      if (!customer) throw new Error("Customer not found");
+      const customerOrders = await db.select().from(orders).where(scopedWhere(ctx, orders, eq(orders.customerId, cId)));
+      return { customer, orders: customerOrders };
     }
 
     case "search": {
-      const allCustomers = await db.select().from(customers);
+      const allCustomers = await db.select().from(customers).where(companyWhere(customers, ctx));
+      const q = (searchQuery || "").toLowerCase();
       const filtered = allCustomers.filter(c =>
-        c.name?.toLowerCase().includes(searchQuery?.toLowerCase() || "") ||
-        c.email?.toLowerCase().includes(searchQuery?.toLowerCase() || "")
+        c.name?.toLowerCase().includes(q) ||
+        c.email?.toLowerCase().includes(q)
       );
       return { customers: filtered, total: filtered.length };
     }
 
     case "order_history": {
-      if (!customerId) throw new Error("Customer ID required");
-      const customerOrders = await db.select().from(orders).where(eq(orders.customerId, customerId));
+      if (!Number.isFinite(cId)) throw new Error("Customer ID required");
+      const customerOrders = await db.select().from(orders).where(scopedWhere(ctx, orders, eq(orders.customerId, cId)));
       return { orders: customerOrders, total: customerOrders.length };
+    }
+
+    case "create": {
+      assertCanMutate(ctx, "create customer");
+      if (!data?.name) throw new Error("Customer name required");
+      const fields = pickFields<Record<string, any>>(data, CUSTOMER_WRITE_FIELDS);
+      if (fields.creditLimit != null) fields.creditLimit = String(fields.creditLimit);
+      // Same helper + companyId default as customers.create in the UI.
+      const result = await dbHelpers.createCustomer({
+        ...(fields as any),
+        name: data.name,
+        type: data.type || "business",
+        status: data.status || "active",
+        companyId: ctx.companyId ?? null,
+      });
+      await audit(ctx, "create", "customer", result.id, data.name);
+      return { created: true, customerId: result.id, message: `Created customer "${data.name}".` };
+    }
+
+    case "update": {
+      assertCanMutate(ctx, "update customer");
+      if (!Number.isFinite(cId)) throw new Error("Customer ID required");
+      const existing = await dbHelpers.getCustomerById(cId, scope);
+      if (!existing) throw new Error("Customer not found");
+      const fields = pickFields<Record<string, any>>(data, CUSTOMER_WRITE_FIELDS);
+      if (fields.creditLimit != null) fields.creditLimit = String(fields.creditLimit);
+      if (Object.keys(fields).length === 0) throw new Error("No updatable customer fields provided");
+      await dbHelpers.updateCustomer(cId, fields as any);
+      await audit(ctx, "update", "customer", cId, existing.name);
+      return { updated: true, customerId: cId, fields: Object.keys(fields) };
+    }
+
+    case "archive":
+    case "delete": {
+      // Customers are referenced by orders and invoices, so the record is never
+      // hard-deleted: it is archived by setting status = inactive.
+      assertAdmin(ctx, "archive customer");
+      if (!Number.isFinite(cId)) throw new Error("Customer ID required");
+      const existing = await dbHelpers.getCustomerById(cId, scope);
+      if (!existing) throw new Error("Customer not found");
+      if (existing.status === "inactive") {
+        return { archived: false, customerId: cId, message: `Customer "${existing.name}" is already archived (inactive).` };
+      }
+      const [orderCount] = await db.select({ count: count() }).from(orders).where(scopedWhere(ctx, orders, eq(orders.customerId, cId)));
+      await dbHelpers.updateCustomer(cId, { status: "inactive" });
+      await audit(ctx, "delete", "customer", cId, existing.name);
+      return {
+        archived: true,
+        customerId: cId,
+        message: `Archived customer "${existing.name}" (status set to inactive). ${orderCount?.count || 0} order(s) were kept for history; nothing was permanently deleted.`,
+      };
     }
 
     default:
@@ -1419,23 +1738,233 @@ async function executeManageCustomer(params: any, ctx: AIAgentContext): Promise<
   }
 }
 
+// ============================================
+// SALES ORDERS
+// ============================================
+
+const ORDER_STATUSES = ["pending", "confirmed", "processing", "shipped", "delivered", "cancelled", "refunded"] as const;
+type OrderStatus = (typeof ORDER_STATUSES)[number];
+
+/** Resolve a product for an order/invoice line by id, SKU or (partial) name, within the caller's entity. */
+async function resolveProduct(db: any, ctx: AIAgentContext, line: any): Promise<typeof products.$inferSelect | undefined> {
+  if (line.productId != null && Number.isFinite(Number(line.productId))) {
+    const [p] = await db.select().from(products).where(scopedWhere(ctx, products, eq(products.id, Number(line.productId)))).limit(1);
+    return p;
+  }
+  const sku = typeof line.sku === "string" && line.sku.trim();
+  if (sku) {
+    const [p] = await db.select().from(products).where(scopedWhere(ctx, products, eq(products.sku, sku))).limit(1);
+    if (p) return p;
+  }
+  const name = typeof (line.productName ?? line.name) === "string" && String(line.productName ?? line.name).trim();
+  if (name) {
+    const [exact] = await db.select().from(products).where(scopedWhere(ctx, products, eq(products.name, name))).limit(1);
+    if (exact) return exact;
+    const [partial] = await db.select().from(products).where(scopedWhere(ctx, products, like(products.name, `%${name}%`))).limit(1);
+    return partial;
+  }
+  return undefined;
+}
+
+/** Order → invoice cascade from orders.update: a shipped/delivered order marks its draft invoice as sent. */
+async function cascadeOrderStatusToInvoice(orderId: number, status: string): Promise<boolean> {
+  if (status !== "shipped" && status !== "delivered") return false;
+  try {
+    const order = await dbHelpers.getOrderById(orderId);
+    if (order?.invoiceId) {
+      const invoice = await dbHelpers.getInvoiceById(order.invoiceId);
+      if (invoice && invoice.status === "draft") {
+        await dbHelpers.updateInvoice(order.invoiceId, { status: "sent" });
+        return true;
+      }
+    }
+  } catch (e) {
+    console.warn("[aiAgent] Order→Invoice status cascade failed:", e);
+  }
+  return false;
+}
+
 async function executeManageOrder(params: any, ctx: AIAgentContext): Promise<any> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
   const { action, orderId, data } = params;
+  const oId = orderId != null ? Number(orderId) : NaN;
+  const scope = chatScope(ctx);
 
   switch (action) {
     case "list": {
-      const allOrders = await db.select().from(orders).orderBy(desc(orders.createdAt)).limit(50);
+      const allOrders = await db.select().from(orders).where(companyWhere(orders, ctx)).orderBy(desc(orders.createdAt)).limit(50);
       return { orders: allOrders, total: allOrders.length };
     }
 
     case "get": {
-      if (!orderId) throw new Error("Order ID required");
-      const order = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
-      const items = await db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
-      return { order: order[0], items };
+      if (!Number.isFinite(oId)) throw new Error("Order ID required");
+      const order = await dbHelpers.getOrderById(oId, scope);
+      if (!order) throw new Error("Order not found");
+      const items = await db.select().from(orderItems).where(eq(orderItems.orderId, oId));
+      return { order, items };
+    }
+
+    case "create": {
+      assertCanMutate(ctx, "create order");
+      const d = data || {};
+
+      // Customer: by id (scoped) or by name within the caller's entity. Optional — walk-in orders exist.
+      let customer: typeof customers.$inferSelect | undefined;
+      if (d.customerId != null) {
+        customer = await dbHelpers.getCustomerById(Number(d.customerId), scope);
+        if (!customer) throw new Error("Customer not found");
+      } else if (typeof d.customerName === "string" && d.customerName.trim()) {
+        const [byName] = await db.select().from(customers)
+          .where(scopedWhere(ctx, customers, like(customers.name, `%${d.customerName.trim()}%`))).limit(1);
+        if (!byName) throw new Error(`No customer matching "${d.customerName}" — create the customer first with manage_customer.`);
+        customer = byName;
+      }
+
+      // Line items: product by id / SKU / name; unit price defaults to the product's list price.
+      const rawItems = Array.isArray(d.items) ? d.items : [];
+      if (rawItems.length === 0) throw new Error("An order needs at least one line item (productId or product name, quantity)");
+      const lines: Array<{ productId: number | null; sku: string | null; name: string; qty: number; price: number; total: number }> = [];
+      for (let idx = 0; idx < rawItems.length; idx++) {
+        const item = rawItems[idx];
+        const product = await resolveProduct(db, ctx, item);
+        const qty = toPositiveNumber(item.quantity, `Line ${idx + 1} quantity`);
+        const rawPrice = item.unitPrice ?? product?.unitPrice;
+        if (rawPrice == null) {
+          throw new Error(`Line ${idx + 1}: no product matched${item.productName || item.name ? ` "${item.productName || item.name}"` : ""} and no unitPrice was given`);
+        }
+        const price = toNonNegativeNumber(rawPrice, `Line ${idx + 1} unit price`);
+        const name = product?.name || item.productName || item.name;
+        if (!name) throw new Error(`Line ${idx + 1} needs a productId, sku, or product name`);
+        lines.push({ productId: product?.id ?? null, sku: product?.sku ?? item.sku ?? null, name, qty, price, total: qty * price });
+      }
+
+      const subtotal = lines.reduce((s, l) => s + l.total, 0);
+      const taxAmount = toNonNegativeNumber(d.taxAmount, "taxAmount");
+      const shippingAmount = toNonNegativeNumber(d.shippingAmount, "shippingAmount");
+      const discountAmount = toNonNegativeNumber(d.discountAmount, "discountAmount");
+      const totalAmount = subtotal + taxAmount + shippingAmount - discountAmount;
+      if (totalAmount < 0) throw new Error("Discount exceeds the order total");
+
+      const orderNumber = await docNumber("ORD");
+      // Same helpers as orders.create in the UI, with the caller's entity stamped on the header.
+      const result = await dbHelpers.createOrder({
+        companyId: ctx.companyId,
+        orderNumber,
+        customerId: customer?.id,
+        type: "sales",
+        status: "pending",
+        orderDate: parseDateOr(d.orderDate, new Date()),
+        shippingAddress: d.shippingAddress || customer?.address || undefined,
+        billingAddress: d.billingAddress || customer?.address || undefined,
+        subtotal: subtotal.toFixed(2),
+        taxAmount: taxAmount.toFixed(2),
+        shippingAmount: shippingAmount.toFixed(2),
+        discountAmount: discountAmount.toFixed(2),
+        totalAmount: totalAmount.toFixed(2),
+        currency: d.currency || "USD",
+        notes: d.notes || "Created by AI assistant",
+        createdBy: ctx.userId,
+      });
+      for (const l of lines) {
+        await dbHelpers.createOrderItem({
+          orderId: result.id,
+          productId: l.productId,
+          sku: l.sku,
+          name: l.name,
+          quantity: l.qty.toString(),
+          unitPrice: l.price.toFixed(2),
+          totalAmount: l.total.toFixed(2),
+        });
+      }
+      await audit(ctx, "create", "order", result.id, orderNumber);
+
+      return {
+        created: true,
+        orderId: result.id,
+        orderNumber,
+        customerName: customer?.name ?? null,
+        itemCount: lines.length,
+        subtotal: subtotal.toFixed(2),
+        totalAmount: totalAmount.toFixed(2),
+        status: "pending",
+        message: `Created order ${orderNumber}${customer ? ` for ${customer.name}` : ""} — ${lines.length} line(s), $${totalAmount.toFixed(2)} (pending).`,
+      };
+    }
+
+    case "update": {
+      assertCanMutate(ctx, "update order");
+      if (!Number.isFinite(oId)) throw new Error("Order ID required");
+      const existing = await dbHelpers.getOrderById(oId, scope);
+      if (!existing) throw new Error("Order not found");
+      const d = data || {};
+      const patch: Record<string, any> = {};
+      if (d.status != null) {
+        if (!ORDER_STATUSES.includes(d.status)) throw new Error(`Invalid order status "${d.status}" (expected one of ${ORDER_STATUSES.join(", ")})`);
+        if (d.status === "shipped") throw new Error("Use the fulfill action to ship an order — it allocates stock and raises the shipment.");
+        patch.status = d.status as OrderStatus;
+      }
+      for (const key of ["notes", "shippingAddress", "billingAddress"]) {
+        if (d[key] !== undefined) patch[key] = d[key];
+      }
+      if (Object.keys(patch).length === 0) throw new Error("No updatable order fields provided (status, notes, shippingAddress, billingAddress)");
+      await dbHelpers.updateOrder(oId, patch);
+      await audit(ctx, "update", "order", oId, existing.orderNumber);
+      const invoiceMarkedSent = patch.status ? await cascadeOrderStatusToInvoice(oId, patch.status) : false;
+      return { updated: true, orderId: oId, orderNumber: existing.orderNumber, fields: Object.keys(patch), invoiceMarkedSent };
+    }
+
+    case "cancel": {
+      assertCanMutate(ctx, "cancel order");
+      if (!Number.isFinite(oId)) throw new Error("Order ID required");
+      const existing = await dbHelpers.getOrderById(oId, scope);
+      if (!existing) throw new Error("Order not found");
+      if (existing.status === "cancelled") return { cancelled: false, orderId: oId, message: `Order ${existing.orderNumber} is already cancelled.` };
+      if (existing.status === "delivered" || existing.status === "refunded") {
+        throw new Error(`Order ${existing.orderNumber} is ${existing.status} and cannot be cancelled — use a return/refund instead.`);
+      }
+      await dbHelpers.updateOrder(oId, { status: "cancelled", ...(data?.reason ? { notes: `${existing.notes ? existing.notes + "\n" : ""}Cancelled: ${data.reason}` } : {}) });
+      await audit(ctx, "update", "order", oId, existing.orderNumber);
+      return { cancelled: true, orderId: oId, orderNumber: existing.orderNumber, message: `Cancelled order ${existing.orderNumber}.` };
+    }
+
+    case "fulfill": {
+      assertCanMutate(ctx, "fulfill order");
+      if (!Number.isFinite(oId)) throw new Error("Order ID required");
+      const existing = await dbHelpers.getOrderById(oId, scope);
+      if (!existing) throw new Error("Order not found");
+      // Same path as the orderFulfillment workflow: allocate + reserve stock, raise the
+      // outbound shipment, mark shipped, cascade the draft invoice to sent.
+      const result = await dbHelpers.fulfillOrder(oId, { performedBy: ctx.userId });
+      await audit(ctx, "update", "order", oId, existing.orderNumber);
+      return {
+        fulfilled: true,
+        ...result,
+        message: `Fulfilled order ${result.orderNumber}: reserved ${result.allocations.length} line(s), raised shipment ${result.shipmentNumber}, status shipped${result.invoiceMarkedSent ? ", linked invoice marked sent" : ""}.`,
+      };
+    }
+
+    case "archive":
+    case "delete": {
+      // Orders own line items and are referenced by shipments/invoices; the UI's hard delete
+      // is not exposed here. Archiving cancels the order and keeps the history.
+      assertAdmin(ctx, "archive order");
+      if (!Number.isFinite(oId)) throw new Error("Order ID required");
+      const existing = await dbHelpers.getOrderById(oId, scope);
+      if (!existing) throw new Error("Order not found");
+      if (existing.status === "cancelled") {
+        return { archived: false, orderId: oId, message: `Order ${existing.orderNumber} is already cancelled/archived.` };
+      }
+      const [lineCount] = await db.select({ count: count() }).from(orderItems).where(eq(orderItems.orderId, oId));
+      await dbHelpers.updateOrder(oId, { status: "cancelled" });
+      await audit(ctx, "delete", "order", oId, existing.orderNumber);
+      return {
+        archived: true,
+        orderId: oId,
+        orderNumber: existing.orderNumber,
+        message: `Archived order ${existing.orderNumber} (status set to cancelled). ${lineCount?.count || 0} line item(s) were kept for history; nothing was permanently deleted.`,
+      };
     }
 
     default:
@@ -1443,14 +1972,284 @@ async function executeManageOrder(params: any, ctx: AIAgentContext): Promise<any
   }
 }
 
+// ============================================
+// INVOICES & PAYMENTS (finance roles)
+// ============================================
+
+const PAYMENT_METHODS = ["cash", "check", "bank_transfer", "credit_card", "ach", "wire", "other"] as const;
+type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+/** Journal entry for a received payment, exactly as invoices.recordPayment posts it: Debit Cash (1000) / Credit AR (1200). */
+async function postPaymentJournalEntry(input: { paymentId: number; invoiceNumber: string; companyId: number | null | undefined; amount: string; userId: number; date: Date }) {
+  try {
+    const paymentNumber = `PAY-${input.paymentId}`;
+    const txn = await dbHelpers.createTransaction({
+      companyId: input.companyId || 1,
+      transactionNumber: `JE-PAY-${paymentNumber}`,
+      type: "payment",
+      referenceType: "payment",
+      referenceId: input.paymentId,
+      date: input.date,
+      description: `Journal entry for payment on Invoice ${input.invoiceNumber}`,
+      totalAmount: input.amount,
+      status: "posted",
+      createdBy: input.userId,
+      postedBy: input.userId,
+      postedAt: input.date,
+    });
+    const cid = input.companyId ?? undefined;
+    const cashAccount = (await dbHelpers.getAccountByCode("1000", cid)) || (await dbHelpers.getAccountByName("Cash", cid));
+    const arAccount = (await dbHelpers.getAccountByCode("1200", cid)) || (await dbHelpers.getAccountByName("Accounts Receivable", cid));
+    if (cashAccount) {
+      await dbHelpers.createTransactionLine({ transactionId: txn.id, accountId: cashAccount.id, debit: input.amount, credit: "0", description: `Cash received - Invoice ${input.invoiceNumber}` });
+    }
+    if (arAccount) {
+      await dbHelpers.createTransactionLine({ transactionId: txn.id, accountId: arAccount.id, debit: "0", credit: input.amount, description: `AR reduced - Invoice ${input.invoiceNumber}` });
+    }
+    return txn.id;
+  } catch (e) {
+    console.warn("[aiAgent] Journal entry for payment failed:", e);
+    return null;
+  }
+}
+
+async function executeManageInvoice(params: any, ctx: AIAgentContext): Promise<any> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const { action, invoiceId, orderId, data } = params;
+  const iId = invoiceId != null ? Number(invoiceId) : NaN;
+  const scope = chatScope(ctx);
+
+  const loadInvoice = async (id: number) => {
+    const inv = await dbHelpers.getInvoiceById(id);
+    assertInScope(ctx, inv, "Invoice");
+    return inv;
+  };
+
+  switch (action) {
+    case "list": {
+      const rows = await dbHelpers.getInvoices(scope, data?.status ? { status: data.status } : undefined);
+      return { invoices: rows.slice(0, 50), total: rows.length };
+    }
+
+    case "get": {
+      if (!Number.isFinite(iId)) throw new Error("Invoice ID required");
+      const inv = await dbHelpers.getInvoiceWithItems(iId);
+      assertInScope(ctx, inv, "Invoice");
+      return { invoice: inv };
+    }
+
+    case "create": {
+      assertCanMutateFinance(ctx, "create invoice");
+      const d = data || {};
+      const now = new Date();
+      const oId = orderId != null ? Number(orderId) : (d.orderId != null ? Number(d.orderId) : NaN);
+
+      let customer: typeof customers.$inferSelect | undefined;
+      let lines: Array<{ productId: number | null; description: string; qty: number; price: number; total: number }> = [];
+      let subtotal: number;
+      let taxAmount: number;
+      let discountAmount: number;
+      let totalAmount: number;
+      let currency = d.currency || "USD";
+      let sourceOrder: typeof orders.$inferSelect | undefined;
+
+      if (Number.isFinite(oId)) {
+        // From an order: same customer, same lines and totals; the order is then linked to the invoice.
+        sourceOrder = await dbHelpers.getOrderById(oId, scope);
+        if (!sourceOrder) throw new Error("Order not found");
+        if (sourceOrder.invoiceId) throw new Error(`Order ${sourceOrder.orderNumber} already has invoice #${sourceOrder.invoiceId}`);
+        if (sourceOrder.status === "cancelled" || sourceOrder.status === "refunded") throw new Error(`Order ${sourceOrder.orderNumber} is ${sourceOrder.status} and cannot be invoiced`);
+        const items = await dbHelpers.getOrderItems(oId);
+        if (items.length === 0) throw new Error(`Order ${sourceOrder.orderNumber} has no line items to invoice`);
+        lines = items.map((it) => {
+          const qty = parseFloat(it.quantity);
+          const price = parseFloat(it.unitPrice);
+          return { productId: it.productId ?? null, description: it.name, qty, price, total: parseFloat(it.totalAmount) || qty * price };
+        });
+        if (sourceOrder.customerId) customer = await dbHelpers.getCustomerById(sourceOrder.customerId, scope);
+        subtotal = parseFloat(sourceOrder.subtotal);
+        taxAmount = parseFloat(sourceOrder.taxAmount || "0");
+        discountAmount = parseFloat(sourceOrder.discountAmount || "0");
+        totalAmount = parseFloat(sourceOrder.totalAmount);
+        currency = sourceOrder.currency || currency;
+      } else {
+        // Explicit lines: customer required.
+        if (d.customerId == null) throw new Error("An invoice needs a customerId (or an orderId to invoice from)");
+        customer = await dbHelpers.getCustomerById(Number(d.customerId), scope);
+        if (!customer) throw new Error("Customer not found");
+        const rawItems = Array.isArray(d.items) ? d.items : [];
+        if (rawItems.length === 0) throw new Error("An invoice needs at least one line item (description, quantity, unitPrice)");
+        for (let idx = 0; idx < rawItems.length; idx++) {
+          const item = rawItems[idx];
+          const product = await resolveProduct(db, ctx, item);
+          const qty = toPositiveNumber(item.quantity, `Line ${idx + 1} quantity`);
+          const rawPrice = item.unitPrice ?? product?.unitPrice;
+          if (rawPrice == null) throw new Error(`Line ${idx + 1} needs a unitPrice (or a product it can be read from)`);
+          const price = toNonNegativeNumber(rawPrice, `Line ${idx + 1} unit price`);
+          const description = item.description || product?.name || item.productName || item.name;
+          if (!description) throw new Error(`Line ${idx + 1} needs a description`);
+          lines.push({ productId: product?.id ?? null, description, qty, price, total: qty * price });
+        }
+        subtotal = lines.reduce((s, l) => s + l.total, 0);
+        taxAmount = toNonNegativeNumber(d.taxAmount, "taxAmount");
+        discountAmount = toNonNegativeNumber(d.discountAmount, "discountAmount");
+        totalAmount = subtotal + taxAmount - discountAmount;
+        if (totalAmount < 0) throw new Error("Discount exceeds the invoice total");
+      }
+
+      const termsDays = Number(customer?.paymentTerms ?? 30) || 30;
+      const dueDate = parseDateOr(d.dueDate, new Date(now.getTime() + termsDays * 24 * 60 * 60 * 1000));
+      const invoiceNumber = await docNumber("INV");
+      const companyId = sourceOrder?.companyId ?? ctx.companyId ?? undefined;
+
+      // Same helpers + ledger posting as invoices.create in the UI.
+      const result = await dbHelpers.createInvoice({
+        companyId,
+        invoiceNumber,
+        customerId: customer?.id,
+        type: "invoice",
+        status: "draft",
+        issueDate: now,
+        dueDate,
+        subtotal: subtotal.toFixed(2),
+        taxAmount: taxAmount.toFixed(2),
+        discountAmount: discountAmount.toFixed(2),
+        totalAmount: totalAmount.toFixed(2),
+        currency,
+        notes: d.notes || (sourceOrder ? `Invoice for order ${sourceOrder.orderNumber}` : "Created by AI assistant"),
+        terms: d.terms || undefined,
+        createdBy: ctx.userId,
+      });
+      for (const l of lines) {
+        await dbHelpers.createInvoiceItem({
+          invoiceId: result.id,
+          productId: l.productId,
+          description: l.description,
+          quantity: l.qty.toString(),
+          unitPrice: l.price.toFixed(2),
+          totalAmount: l.total.toFixed(2),
+        });
+      }
+      if (sourceOrder) await dbHelpers.updateOrder(sourceOrder.id, { invoiceId: result.id });
+      await audit(ctx, "create", "invoice", result.id, invoiceNumber);
+      const posting = await postInvoiceJournalEntry({ invoiceId: result.id, invoiceNumber, companyId, totalAmount: totalAmount.toFixed(2), userId: ctx.userId, date: now });
+
+      return {
+        created: true,
+        invoiceId: result.id,
+        invoiceNumber,
+        customerName: customer?.name ?? null,
+        orderNumber: sourceOrder?.orderNumber ?? null,
+        itemCount: lines.length,
+        totalAmount: totalAmount.toFixed(2),
+        dueDate: dueDate.toISOString(),
+        status: "draft",
+        journalTransactionId: posting?.transactionId ?? null,
+        message: `Created draft invoice ${invoiceNumber}${customer ? ` for ${customer.name}` : ""}${sourceOrder ? ` from order ${sourceOrder.orderNumber}` : ""} — $${totalAmount.toFixed(2)}, due ${dueDate.toISOString().slice(0, 10)}.`,
+      };
+    }
+
+    case "send": {
+      // Mark sent (same as invoices.approve). Emailing the customer is a separate step: send_email.
+      assertCanMutateFinance(ctx, "send invoice");
+      if (!Number.isFinite(iId)) throw new Error("Invoice ID required");
+      const inv = await loadInvoice(iId);
+      if (inv.status !== "draft") {
+        return { sent: false, invoiceId: iId, invoiceNumber: inv.invoiceNumber, status: inv.status, message: `Invoice ${inv.invoiceNumber} is already ${inv.status}.` };
+      }
+      await dbHelpers.updateInvoice(iId, { status: "sent", approvedBy: ctx.userId, approvedAt: new Date() });
+      await audit(ctx, "approve", "invoice", iId, inv.invoiceNumber);
+      return { sent: true, invoiceId: iId, invoiceNumber: inv.invoiceNumber, status: "sent", message: `Marked invoice ${inv.invoiceNumber} as sent. Use send_email to deliver it to the customer.` };
+    }
+
+    case "record_payment": {
+      // Mirrors invoices.recordPayment: payment row, invoice paid amount/status, order cascade, journal entry.
+      assertCanMutateFinance(ctx, "record payment");
+      if (!Number.isFinite(iId)) throw new Error("Invoice ID required");
+      const d = data || {};
+      const inv = await loadInvoice(iId);
+      if (inv.status === "cancelled") throw new Error(`Invoice ${inv.invoiceNumber} is cancelled`);
+      const amount = toPositiveNumber(d.amount, "Payment amount");
+      const method: PaymentMethod = PAYMENT_METHODS.includes(d.method) ? d.method : (PAYMENT_METHODS.includes(d.paymentMethod) ? d.paymentMethod : "bank_transfer");
+      const paymentDate = parseDateOr(d.date ?? d.paymentDate, new Date());
+      const amountStr = amount.toFixed(2);
+
+      const paymentResult = await dbHelpers.createPayment({
+        companyId: inv.companyId,
+        type: "received",
+        status: "completed",
+        amount: amountStr,
+        currency: inv.currency || "USD",
+        paymentMethod: method,
+        paymentNumber: `PAY-${Date.now()}`,
+        paymentDate,
+        invoiceId: iId,
+        customerId: inv.customerId ?? undefined,
+        referenceNumber: d.reference || d.referenceNumber || undefined,
+        notes: d.notes || `Payment received for invoice ${inv.invoiceNumber}`,
+        createdBy: ctx.userId,
+      });
+
+      const totalPaid = parseFloat(inv.paidAmount || "0") + amount;
+      const totalDue = parseFloat(inv.totalAmount);
+      const newStatus = totalPaid >= totalDue ? "paid" : "partial";
+      await dbHelpers.updateInvoice(iId, { paidAmount: totalPaid.toFixed(2), status: newStatus });
+      await audit(ctx, "update", "invoice", iId, `Payment recorded: ${amountStr}`);
+
+      // Cascade #16b: invoice fully paid → linked order delivered.
+      let orderMarkedDelivered: number | null = null;
+      if (newStatus === "paid") {
+        try {
+          const linked = (await dbHelpers.getOrders(scope)).find((o: any) => o.invoiceId === iId);
+          if (linked && linked.status !== "delivered" && linked.status !== "cancelled") {
+            await dbHelpers.updateOrder(linked.id, { status: "delivered" });
+            orderMarkedDelivered = linked.id;
+          }
+        } catch (e) {
+          console.warn("[aiAgent] Invoice paid→Order delivered cascade failed:", e);
+        }
+      }
+
+      const journalTransactionId = await postPaymentJournalEntry({
+        paymentId: paymentResult.id, invoiceNumber: inv.invoiceNumber, companyId: inv.companyId, amount: amountStr, userId: ctx.userId, date: paymentDate,
+      });
+
+      return {
+        recorded: true,
+        paymentId: paymentResult.id,
+        invoiceId: iId,
+        invoiceNumber: inv.invoiceNumber,
+        amount: amountStr,
+        method,
+        newStatus,
+        totalPaid: totalPaid.toFixed(2),
+        balance: Math.max(totalDue - totalPaid, 0).toFixed(2),
+        orderMarkedDelivered,
+        journalTransactionId,
+        message: `Recorded $${amountStr} ${method.replace(/_/g, " ")} payment on invoice ${inv.invoiceNumber} — now ${newStatus} (${totalPaid.toFixed(2)} of ${totalDue.toFixed(2)}).`,
+      };
+    }
+
+    default:
+      throw new Error(`Unknown invoice action: ${action}`);
+  }
+}
+
+// ============================================
+// FREIGHT
+// ============================================
+
 async function executeManageFreight(params: any, ctx: AIAgentContext): Promise<any> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const { action, rfqData, bookingId, carrierId } = params;
+  const { action, rfqData, bookingId, rfqId, quoteId } = params;
 
   switch (action) {
     case "list_carriers": {
+      // Carriers are a shared directory (no entity column).
       const carriers = await db.select().from(freightCarriers);
       return { carriers, total: carriers.length };
     }
@@ -1459,7 +2258,7 @@ async function executeManageFreight(params: any, ctx: AIAgentContext): Promise<a
       assertCanMutate(ctx, "create freight RFQ");
       if (!rfqData?.title) throw new Error("Freight RFQ requires a title");
       // Create the RFQ for real (draft). Live approval is Plan-first mode.
-      const rfq = await createFreightRfq({ ...rfqData, status: rfqData.status || "draft", createdById: ctx.userId });
+      const rfq = await createFreightRfq({ ...rfqData, companyId: ctx.companyId, status: rfqData.status || "draft", createdById: ctx.userId });
       return {
         created: true,
         freightRfqId: rfq.id,
@@ -1469,16 +2268,74 @@ async function executeManageFreight(params: any, ctx: AIAgentContext): Promise<a
     }
 
     case "get_quotes": {
-      const quotes = await db.select().from(freightQuotes);
+      // Quotes carry no entity column; they are scoped through their RFQ.
+      if (rfqId != null) {
+        const rfq = await dbHelpers.getFreightRfqById(Number(rfqId));
+        assertInScope(ctx, rfq, "Freight RFQ");
+        const quotes = await dbHelpers.getFreightQuotes(rfq.id);
+        return { rfqNumber: rfq.rfqNumber, quotes, total: quotes.length };
+      }
+      const rows = await db.select({ quote: freightQuotes, rfqNumber: freightRfqs.rfqNumber })
+        .from(freightQuotes)
+        .innerJoin(freightRfqs, eq(freightQuotes.rfqId, freightRfqs.id))
+        .where(companyWhere(freightRfqs, ctx));
+      const quotes = rows.map((r) => ({ ...r.quote, rfqNumber: r.rfqNumber }));
       return { quotes, total: quotes.length };
+    }
+
+    case "book_shipment": {
+      // Same steps as freight.quotes.accept in the UI: accept the quote, reject the
+      // siblings, create the booking, award the RFQ.
+      assertCanMutate(ctx, "book freight shipment");
+      const qId = Number(quoteId ?? params.bookingData?.quoteId);
+      if (!Number.isFinite(qId)) throw new Error("A quoteId is required to book a shipment (see get_quotes)");
+      const quote = await dbHelpers.getFreightQuoteById(qId);
+      if (!quote) throw new Error("Freight quote not found");
+      const rfq = await dbHelpers.getFreightRfqById(quote.rfqId);
+      assertInScope(ctx, rfq, "Freight RFQ");
+      if (quote.status === "accepted") throw new Error(`Quote ${quote.quoteNumber || qId} is already accepted and booked`);
+      if (quote.status === "rejected" || quote.status === "expired") throw new Error(`Quote ${quote.quoteNumber || qId} is ${quote.status} and cannot be booked`);
+
+      await dbHelpers.updateFreightQuote(qId, { status: "accepted" });
+      const otherQuotes = await dbHelpers.getFreightQuotes(quote.rfqId);
+      for (const q of otherQuotes) {
+        if (q.id !== qId && q.status !== "rejected") {
+          await dbHelpers.updateFreightQuote(q.id, { status: "rejected" });
+        }
+      }
+      const booking = await dbHelpers.createFreightBooking({
+        companyId: rfq.companyId ?? ctx.companyId ?? null,
+        quoteId: qId,
+        rfqId: quote.rfqId,
+        carrierId: quote.carrierId,
+        status: "pending",
+        agreedCost: quote.totalCost,
+        currency: quote.currency || "USD",
+        bookingDate: new Date(),
+        notes: params.bookingData?.notes || undefined,
+      });
+      await dbHelpers.updateFreightRfq(quote.rfqId, { status: "awarded" });
+      await audit(ctx, "approve", "freight_quote", qId, `Booking ${booking.bookingNumber} created`);
+
+      return {
+        booked: true,
+        bookingId: booking.id,
+        bookingNumber: booking.bookingNumber,
+        rfqNumber: rfq.rfqNumber,
+        carrierId: quote.carrierId,
+        agreedCost: quote.totalCost,
+        currency: quote.currency || "USD",
+        message: `Booked shipment ${booking.bookingNumber} on RFQ ${rfq.rfqNumber} with carrier #${quote.carrierId} for ${quote.currency || "USD"} ${quote.totalCost ?? "n/a"} (pending confirmation).`,
+      };
     }
 
     case "track": {
       if (!bookingId) {
-        const bookings = await db.select().from(freightBookings);
+        const bookings = await db.select().from(freightBookings).where(companyWhere(freightBookings, ctx));
         return { bookings, total: bookings.length };
       }
-      const booking = await db.select().from(freightBookings).where(eq(freightBookings.id, bookingId)).limit(1);
+      const booking = await db.select().from(freightBookings).where(scopedWhere(ctx, freightBookings, eq(freightBookings.id, Number(bookingId)))).limit(1);
+      if (!booking[0]) throw new Error("Freight booking not found");
       return { booking: booking[0] };
     }
 
@@ -1486,6 +2343,10 @@ async function executeManageFreight(params: any, ctx: AIAgentContext): Promise<a
       throw new Error(`Unknown freight action: ${action}`);
   }
 }
+
+// ============================================
+// REPORTS
+// ============================================
 
 async function executeGenerateReport(params: any, ctx: AIAgentContext): Promise<any> {
   const db = await getDb();
@@ -1495,18 +2356,19 @@ async function executeGenerateReport(params: any, ctx: AIAgentContext): Promise<
 
   const startDate = dateRange?.startDate ? new Date(dateRange.startDate) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   const endDate = dateRange?.endDate ? new Date(dateRange.endDate) : new Date();
+  const period = { startDate: startDate.toISOString(), endDate: endDate.toISOString() };
 
   switch (reportType) {
     case "sales_summary": {
       // Use database WHERE clause instead of loading all orders into memory
       const filteredOrders = await db.select().from(orders)
-        .where(and(gte(orders.createdAt, startDate), lte(orders.createdAt, endDate)));
+        .where(scopedWhere(ctx, orders, gte(orders.createdAt, startDate), lte(orders.createdAt, endDate)));
 
       const totalRevenue = filteredOrders.reduce((sum, o) => sum + parseFloat(o.totalAmount || "0"), 0);
 
       return {
         reportType: "sales_summary",
-        period: { startDate: startDate.toISOString(), endDate: endDate.toISOString() },
+        period,
         totalOrders: filteredOrders.length,
         totalRevenue: totalRevenue.toFixed(2),
         avgOrderValue: filteredOrders.length > 0 ? (totalRevenue / filteredOrders.length).toFixed(2) : "0.00",
@@ -1515,12 +2377,12 @@ async function executeGenerateReport(params: any, ctx: AIAgentContext): Promise<
 
     case "inventory_status": {
       // Use DB aggregation instead of loading entire table
-      const [totalCount] = await db.select({ count: count() }).from(inventory);
+      const [totalCount] = await db.select({ count: count() }).from(inventory).where(companyWhere(inventory, ctx));
       const [lowStockCount] = await db.select({ count: count() }).from(inventory)
-        .where(lt(sql`CAST(${inventory.quantity} AS DECIMAL)`, 10));
+        .where(scopedWhere(ctx, inventory, lt(sql`CAST(${inventory.quantity} AS DECIMAL)`, 10)));
       const items = format === "detailed"
-        ? await db.select().from(inventory)
-        : await db.select().from(inventory).limit(10);
+        ? await db.select().from(inventory).where(companyWhere(inventory, ctx))
+        : await db.select().from(inventory).where(companyWhere(inventory, ctx)).limit(10);
 
       return {
         reportType: "inventory_status",
@@ -1537,11 +2399,12 @@ async function executeGenerateReport(params: any, ctx: AIAgentContext): Promise<
         totalPOs: count(),
         totalSpent: sum(purchaseOrders.totalAmount),
       }).from(purchaseOrders)
+        .where(companyWhere(purchaseOrders, ctx))
         .groupBy(purchaseOrders.vendorId);
 
       const vendorIds = vendorPOStats.map(s => s.vendorId).filter((id): id is number => id != null);
       const vendorList = vendorIds.length > 0
-        ? await db.select().from(vendors).where(inArray(vendors.id, vendorIds))
+        ? await db.select().from(vendors).where(scopedWhere(ctx, vendors, inArray(vendors.id, vendorIds)))
         : [];
       const vendorMap = new Map(vendorList.map(v => [v.id, v]));
 
@@ -1561,8 +2424,136 @@ async function executeGenerateReport(params: any, ctx: AIAgentContext): Promise<
       };
     }
 
+    case "customer_analysis": {
+      // Revenue and order count per customer in the period, plus new-customer growth.
+      const stats = await db.select({
+        customerId: orders.customerId,
+        orderCount: count(),
+        revenue: sum(orders.totalAmount),
+      }).from(orders)
+        .where(scopedWhere(ctx, orders, gte(orders.createdAt, startDate), lte(orders.createdAt, endDate)))
+        .groupBy(orders.customerId);
+
+      const customerIds = stats.map(s => s.customerId).filter((id): id is number => id != null);
+      const customerList = customerIds.length > 0
+        ? await db.select().from(customers).where(scopedWhere(ctx, customers, inArray(customers.id, customerIds)))
+        : [];
+      const customerMap = new Map(customerList.map(c => [c.id, c]));
+
+      const ranked = stats
+        .map(s => ({
+          customerId: s.customerId,
+          customerName: s.customerId != null ? (customerMap.get(s.customerId)?.name || "Unknown") : "(no customer)",
+          orderCount: Number(s.orderCount),
+          revenue: parseFloat(s.revenue || "0"),
+        }))
+        .sort((a, b) => b.revenue - a.revenue);
+
+      const totalRevenue = ranked.reduce((s, r) => s + r.revenue, 0);
+      const [totalCustomers] = await db.select({ count: count() }).from(customers).where(companyWhere(customers, ctx));
+      const [activeCustomers] = await db.select({ count: count() }).from(customers).where(scopedWhere(ctx, customers, eq(customers.status, "active")));
+      const [newCustomers] = await db.select({ count: count() }).from(customers)
+        .where(scopedWhere(ctx, customers, gte(customers.createdAt, startDate), lte(customers.createdAt, endDate)));
+
+      return {
+        reportType: "customer_analysis",
+        period,
+        totalCustomers: totalCustomers?.count || 0,
+        activeCustomers: activeCustomers?.count || 0,
+        newCustomersInPeriod: newCustomers?.count || 0,
+        customersWithOrders: ranked.filter(r => r.customerId != null).length,
+        totalRevenue: totalRevenue.toFixed(2),
+        topCustomers: (format === "detailed" ? ranked : ranked.slice(0, 10)).map(r => ({
+          ...r,
+          revenue: r.revenue.toFixed(2),
+          revenueShare: totalRevenue > 0 ? `${((r.revenue / totalRevenue) * 100).toFixed(1)}%` : "0%",
+        })),
+      };
+    }
+
+    case "production_status": {
+      const byStatus = await db.select({
+        status: workOrders.status,
+        count: count(),
+        quantity: sum(workOrders.quantity),
+        completedQuantity: sum(workOrders.completedQuantity),
+      }).from(workOrders)
+        .where(companyWhere(workOrders, ctx))
+        .groupBy(workOrders.status);
+
+      const now = new Date();
+      const overdue = await db.select().from(workOrders)
+        .where(scopedWhere(ctx, workOrders,
+          inArray(workOrders.status, ["scheduled", "in_progress"]),
+          lt(workOrders.scheduledEndDate, now),
+        ));
+      const recent = await db.select().from(workOrders)
+        .where(scopedWhere(ctx, workOrders, gte(workOrders.createdAt, startDate), lte(workOrders.createdAt, endDate)))
+        .orderBy(desc(workOrders.createdAt))
+        .limit(format === "detailed" ? 100 : 10);
+
+      const statusMap: Record<string, { count: number; quantity: string; completedQuantity: string }> = {};
+      let total = 0;
+      for (const row of byStatus) {
+        const n = Number(row.count);
+        total += n;
+        statusMap[row.status] = { count: n, quantity: parseFloat(row.quantity || "0").toFixed(2), completedQuantity: parseFloat(row.completedQuantity || "0").toFixed(2) };
+      }
+
+      return {
+        reportType: "production_status",
+        period,
+        totalWorkOrders: total,
+        byStatus: statusMap,
+        inProgress: statusMap["in_progress"]?.count || 0,
+        completed: statusMap["completed"]?.count || 0,
+        overdueCount: overdue.length,
+        overdueWorkOrders: overdue.slice(0, 10).map(wo => ({ id: wo.id, workOrderNumber: wo.workOrderNumber, status: wo.status, scheduledEndDate: wo.scheduledEndDate, quantity: wo.quantity })),
+        recentWorkOrders: recent,
+      };
+    }
+
+    case "order_fulfillment": {
+      const byStatus = await db.select({ status: orders.status, count: count(), value: sum(orders.totalAmount) })
+        .from(orders)
+        .where(scopedWhere(ctx, orders, gte(orders.createdAt, startDate), lte(orders.createdAt, endDate)))
+        .groupBy(orders.status);
+      const shipmentStats = await db.select({ status: shipments.status, count: count() })
+        .from(shipments)
+        .where(scopedWhere(ctx, shipments, eq(shipments.type, "outbound"), gte(shipments.createdAt, startDate), lte(shipments.createdAt, endDate)))
+        .groupBy(shipments.status);
+      const openOrders = await db.select().from(orders)
+        .where(scopedWhere(ctx, orders, inArray(orders.status, ["pending", "confirmed", "processing"])))
+        .orderBy(orders.createdAt)
+        .limit(format === "detailed" ? 100 : 10);
+
+      const statusMap: Record<string, { count: number; value: string }> = {};
+      let total = 0;
+      for (const row of byStatus) {
+        const n = Number(row.count);
+        total += n;
+        statusMap[row.status] = { count: n, value: parseFloat(row.value || "0").toFixed(2) };
+      }
+      const fulfilled = (statusMap["shipped"]?.count || 0) + (statusMap["delivered"]?.count || 0);
+      const cancelled = (statusMap["cancelled"]?.count || 0) + (statusMap["refunded"]?.count || 0);
+      const fulfillable = total - cancelled;
+
+      return {
+        reportType: "order_fulfillment",
+        period,
+        totalOrders: total,
+        byStatus: statusMap,
+        fulfilledOrders: fulfilled,
+        openOrders: fulfillable - fulfilled,
+        cancelledOrders: cancelled,
+        fulfillmentRate: fulfillable > 0 ? `${((fulfilled / fulfillable) * 100).toFixed(1)}%` : "n/a",
+        outboundShipments: Object.fromEntries(shipmentStats.map(s => [s.status, Number(s.count)])),
+        oldestOpenOrders: openOrders.map(o => ({ id: o.id, orderNumber: o.orderNumber, status: o.status, totalAmount: o.totalAmount, orderDate: o.orderDate, customerId: o.customerId })),
+      };
+    }
+
     case "financial_overview": {
-      const allInvoices = await db.select().from(invoices);
+      const allInvoices = await db.select().from(invoices).where(companyWhere(invoices, ctx));
       const paidInvoices = allInvoices.filter(i => i.status === "paid");
       const pendingInvoices = allInvoices.filter(i => (i.status as string) === "pending" || i.status === "sent");
 
@@ -1597,6 +2588,7 @@ async function executeCreateTask(params: any, ctx: AIAgentContext): Promise<any>
   const requiresApproval = params.requiresApproval === false && MUTATION_ROLES.includes(ctx.userRole) ? false : true;
 
   const task = await db.insert(aiAgentTasks).values({
+    companyId: ctx.companyId ?? null,
     taskType,
     status: requiresApproval ? "pending_approval" : "approved",
     priority,
@@ -1628,8 +2620,10 @@ async function executeCreateTask(params: any, ctx: AIAgentContext): Promise<any>
 // ============================================
 
 // Turn a user chore into a tracked, plan-based errand. Low-risk errands are
-// auto-approved (the background scheduler runs them); medium/high-risk errands
-// land in the Approval Queue as a plan the user reviews before anything runs.
+// auto-approved (the background scheduler runs them) — but only for mutation
+// roles; every other role can queue an errand, and it always waits for approval.
+// Medium/high-risk errands land in the Approval Queue as a plan the user reviews
+// before anything runs.
 async function executePlanErrand(params: any, ctx: AIAgentContext): Promise<any> {
   if (ctx.executingErrand) {
     return {
@@ -1660,8 +2654,12 @@ async function executePlanErrand(params: any, ctx: AIAgentContext): Promise<any>
   const HIGH_RISK_INDICATORS = /\b(e-?mail|send|reply|message|call|text|refund|pay|payment|wire|transfer|deposit|withdraw|charge|invoic|delet|remov|cancel|terminat|fire|bulk|everyone|all customers|all vendors|purchase order)\b/i;
   const riskText = `${title} ${goal} ${steps.join(" ")}`;
   const riskLevel = selfRatedRisk === "low" && HIGH_RISK_INDICATORS.test(riskText) ? "medium" : selfRatedRisk;
-  // Low-risk errands run automatically; medium/high-risk wait for plan approval.
-  const requiresApproval = riskLevel !== "low";
+  // Low-risk errands run automatically for mutation roles only. The executor
+  // replays the errand with the submitter's role, so a non-mutation user's
+  // errand must always go through the approval queue (an approver with the
+  // right role owns the side effects).
+  const canAutoApprove = MUTATION_ROLES.includes(ctx.userRole);
+  const requiresApproval = riskLevel !== "low" || !canAutoApprove;
   const priority = riskLevel === "high" ? "high" : riskLevel === "low" ? "low" : "medium";
 
   const taskData = {
@@ -1704,7 +2702,9 @@ async function executePlanErrand(params: any, ctx: AIAgentContext): Promise<any>
     requiresApproval,
     status: requiresApproval ? "pending_approval" : "approved",
     message: requiresApproval
-      ? "Plan ready for your approval — review the steps and approve to run it now."
+      ? (riskLevel === "low" && !canAutoApprove
+          ? "Plan queued for approval — your role cannot auto-run errands, so an ops/admin/exec user must approve it before it runs."
+          : "Plan ready for your approval — review the steps and approve to run it now.")
       : "Low-risk errand — approved automatically and running now.",
   };
 }
@@ -1714,6 +2714,10 @@ async function executePlanErrand(params: any, ctx: AIAgentContext): Promise<any>
 // ============================================
 
 async function executeManageCalendar(params: any, ctx: AIAgentContext): Promise<any> {
+  // Gate before touching the token: creating events is a write on the user's
+  // calendar with attendee side effects (invites go out).
+  if (params.action === "create_event") assertCanMutate(ctx, "create calendar event");
+
   const { accessToken, error: tokenErr } = await getValidGoogleToken(ctx.userId);
   if (tokenErr || !accessToken) return { error: "Google Calendar not connected" };
 
@@ -1748,14 +2752,13 @@ async function executeManageCalendar(params: any, ctx: AIAgentContext): Promise<
   return { error: "Unknown calendar action" };
 }
 
-async function executeQueryCrm(params: any, _ctx: AIAgentContext): Promise<any> {
-  const dbModule = await import("./db");
-
-  // Gather all CRM data
+async function executeQueryCrm(params: any, ctx: AIAgentContext): Promise<any> {
+  // Gather CRM data for the caller's entity (pipelines are a shared config table).
+  const cid = ctx.companyId;
   const [contacts, deals, pipelines] = await Promise.all([
-    dbModule.getCrmContacts?.() || [],
-    dbModule.getCrmDeals?.() || [],
-    dbModule.getCrmPipelines?.() || [],
+    dbHelpers.getCrmContacts(cid != null ? { companyId: cid } : undefined),
+    dbHelpers.getCrmDeals(cid != null ? { companyId: cid } : undefined),
+    dbHelpers.getCrmPipelines(),
   ]);
 
   // Use AI to answer the question based on CRM data
@@ -1789,143 +2792,142 @@ Answer the user's question based on this data. If specific data isn't available,
   };
 }
 
+/**
+ * Gather the context lines for one query_system module, confined to the caller's
+ * entity. Exported so tests can assert the scoping without going through the LLM.
+ */
+export async function gatherQuerySystemContext(module: string, ctx: AIAgentContext): Promise<string> {
+  const scope = chatScope(ctx);
+  const cid = ctx.companyId;
+  const filter = companyFilter(ctx);
+  // Rows from helpers with no entity filter of their own are filtered here.
+  const inScope = <T extends { companyId?: number | null }>(rows: T[]): T[] =>
+    cid == null ? rows : rows.filter((r) => r.companyId === cid);
+
+  switch (module) {
+    case "inventory": {
+      const inventoryRows = await dbHelpers.getInventory(scope);
+      const warehouses = await dbHelpers.getWarehouses(filter);
+      return `Inventory (${inventoryRows.length} items):\n${inventoryRows.slice(0, 50).map((i: any) => `- ${i.product?.name || i.sku || 'Item'}: Qty=${i.quantity}, Reserved=${i.reservedQuantity || 0}, Location=${i.warehouse?.name || 'N/A'}`).join('\n')}\n\nWarehouses: ${warehouses.map((w: any) => w.name).join(', ')}`;
+    }
+    case "work_orders":
+    case "manufacturing": {
+      const wos = await dbHelpers.getWorkOrders(filter);
+      return `Work Orders (${wos.length}):\n${wos.slice(0, 30).map((wo: any) => `- ${wo.workOrderNumber}: ${wo.product?.name || 'Product'} | Status=${wo.status} | Qty=${wo.quantity} | Due=${wo.scheduledEndDate || 'N/A'}`).join('\n')}`;
+    }
+    case "purchase_orders": {
+      const pos = await dbHelpers.getPurchaseOrders(filter);
+      return `Purchase Orders (${pos.length}):\n${pos.slice(0, 30).map((po: any) => `- ${po.poNumber}: Vendor=${po.vendor?.name || 'N/A'} | Total=$${po.totalAmount} | Status=${po.status} | Date=${po.orderDate}`).join('\n')}`;
+    }
+    case "vendors": {
+      const vendorRows = await dbHelpers.getVendors(scope);
+      return `Vendors (${vendorRows.length}):\n${vendorRows.slice(0, 30).map((v: any) => `- ${v.name}: Email=${v.email || 'N/A'} | Type=${v.type || 'supplier'} | Terms=${v.paymentTerms || 'N/A'} days`).join('\n')}`;
+    }
+    case "customers": {
+      const customerRows = await dbHelpers.getCustomers(scope);
+      return `Customers (${customerRows.length}):\n${customerRows.slice(0, 30).map((c: any) => `- ${c.name}: Email=${c.email || 'N/A'} | Phone=${c.phone || 'N/A'}`).join('\n')}`;
+    }
+    case "orders": {
+      const orderRows = await dbHelpers.getOrders(scope);
+      return `Orders (${orderRows.length}):\n${orderRows.slice(0, 30).map((o: any) => `- ${o.orderNumber}: Customer=${o.customer?.name || 'N/A'} | Total=$${o.totalAmount} | Status=${o.status}`).join('\n')}`;
+    }
+    case "invoices": {
+      const invoiceRows = await dbHelpers.getInvoices(scope);
+      return `Invoices (${invoiceRows.length}):\n${invoiceRows.slice(0, 30).map((i: any) => `- ${i.invoiceNumber}: $${i.totalAmount} | Status=${i.status} | Due=${i.dueDate || 'N/A'}`).join('\n')}`;
+    }
+    case "payments": {
+      const payments = await dbHelpers.getPayments(scope);
+      return `Payments (${payments.length}):\n${payments.slice(0, 30).map((p: any) => `- $${p.amount} | Method=${p.paymentMethod || 'N/A'} | Date=${p.paymentDate || 'N/A'}`).join('\n')}`;
+    }
+    case "shipments": {
+      const shipmentRows = await dbHelpers.getShipments(filter);
+      return `Shipments (${shipmentRows.length}):\n${shipmentRows.slice(0, 30).map((s: any) => `- ${s.trackingNumber || 'No tracking'}: Status=${s.status} | Carrier=${s.carrier || 'N/A'}`).join('\n')}`;
+    }
+    case "cap_table":
+    case "equity": {
+      const stakeholders = await dbHelpers.getStakeholders(cid);
+      const grants = await dbHelpers.getEquityGrants(cid);
+      const shareClasses = await dbHelpers.getShareClasses(cid);
+      return `Share Classes: ${shareClasses.map((sc: any) => `${sc.name} (${sc.type})`).join(', ')}\n\nStakeholders (${stakeholders.length}):\n${stakeholders.slice(0, 30).map((s: any) => `- ${s.name}: Type=${s.type} | Email=${s.email || 'N/A'}`).join('\n')}\n\nGrants (${grants.length}):\n${grants.slice(0, 30).map((g: any) => `- Stakeholder=${g.stakeholderId} | Shares=${g.shares} | Type=${g.grantType} | Status=${g.status} | Vested=${g.sharesVested || 0}`).join('\n')}`;
+    }
+    case "data_room": {
+      const rooms = await dbHelpers.getDataRooms(undefined, cid);
+      let out = `Data Rooms (${rooms.length}):\n${rooms.map((r: any) => `- ${r.name}: Status=${r.status} | Visitors=${r.visitorCount || 0}`).join('\n')}`;
+      // Also get visitors (only for rooms already confirmed in scope)
+      try {
+        for (const room of rooms.slice(0, 3)) {
+          const visitors = await dbHelpers.getDataRoomVisitors(room.id);
+          if (visitors.length > 0) {
+            out += `\n\nVisitors for "${room.name}": ${visitors.slice(0, 10).map((v: any) => `${v.name || v.email} (${v.lastViewedAt || v.createdAt})`).join(', ')}`;
+          }
+        }
+      } catch {}
+      return out;
+    }
+    case "projects":
+    case "tasks": {
+      const projects = await dbHelpers.getProjects(filter);
+      let out = `Projects (${projects.length}):\n${projects.slice(0, 20).map((p: any) => `- ${p.name}: Status=${p.status} | Priority=${p.priority || 'N/A'}`).join('\n')}`;
+      // Tasks carry no entity column: keep only tasks of the projects visible above.
+      try {
+        const visibleProjectIds = new Set(projects.map((p: any) => p.id));
+        const allTasks = await dbHelpers.getAllProjectTasks();
+        const tasks = cid == null ? allTasks : allTasks.filter((t: any) => visibleProjectIds.has(t.projectId));
+        out += `\n\nTasks (${tasks.length}):\n${tasks.slice(0, 30).map((t: any) => `- ${t.name}: Status=${t.status} | Priority=${t.priority || 'N/A'} | Due=${t.dueDate || 'N/A'} | Project=${t.projectId}`).join('\n')}`;
+      } catch {}
+      return out;
+    }
+    case "banking": {
+      const transactions = await dbHelpers.getBankTransactions(filter);
+      return `Bank Transactions (${transactions.length}):\n${transactions.slice(0, 30).map((t: any) => `- ${t.date}: ${t.type} $${t.amount} | ${t.counterpartyName || t.description} | Category=${t.category || 'uncategorized'}`).join('\n')}`;
+    }
+    case "copacker": {
+      try {
+        const copackerInvoices = inScope(await dbHelpers.getCopackerInvoices());
+        const updates = inScope(await dbHelpers.getCopackerInventoryUpdates());
+        let out = `Copacker Invoices: ${copackerInvoices.length}\nInventory Updates: ${updates.length}`;
+        if (copackerInvoices.length) {
+          out += `\n${copackerInvoices.slice(0, 10).map((i: any) => `- Invoice ${i.invoiceNumber}: $${i.totalAmount} | Status=${i.status}`).join('\n')}`;
+        }
+        return out;
+      } catch { return "Copacker data not available"; }
+    }
+    case "employees": {
+      const employees = await dbHelpers.getEmployees(filter);
+      return `Employees (${employees.length}):\n${employees.slice(0, 30).map((e: any) => `- ${e.firstName} ${e.lastName}: ${e.jobTitle || 'N/A'} | Dept=${e.departmentId || 'N/A'} | Status=${e.status || 'active'}`).join('\n')}`;
+    }
+    case "contracts": {
+      const contracts = await dbHelpers.getContracts(filter);
+      return `Contracts (${contracts.length}):\n${contracts.slice(0, 20).map((c: any) => `- ${c.title}: Type=${c.type} | Status=${c.status} | Value=$${c.value || 'N/A'}`).join('\n')}`;
+    }
+    case "reports":
+    default: {
+      // General query - gather summary data from multiple modules
+      const [orderRows, invoiceRows, customerRows, vendorRows, employees, inventoryRows, pos] = await Promise.all([
+        dbHelpers.getOrders(scope), dbHelpers.getInvoices(scope), dbHelpers.getCustomers(scope),
+        dbHelpers.getVendors(scope), dbHelpers.getEmployees(filter), dbHelpers.getInventory(scope),
+        dbHelpers.getPurchaseOrders(filter),
+      ]);
+      return `System Summary:
+- Orders: ${orderRows.length}
+- Invoices: ${invoiceRows.length} (Paid: ${invoiceRows.filter((i: any) => i.status === 'paid').length}, Overdue: ${invoiceRows.filter((i: any) => i.status === 'overdue').length})
+- Customers: ${customerRows.length}
+- Vendors: ${vendorRows.length}
+- Employees: ${employees.length}
+- Inventory items: ${inventoryRows.length}
+- Purchase Orders: ${pos.length} (Open: ${pos.filter((p: any) => ['draft','sent','confirmed'].includes(p.status)).length})
+- Total Revenue: $${invoiceRows.filter((i: any) => i.status === 'paid').reduce((s: number, i: any) => s + parseFloat(i.totalAmount || '0'), 0).toLocaleString()}`;
+    }
+  }
+}
+
 async function executeQuerySystem(params: any, ctx: AIAgentContext): Promise<any> {
-  const dbModule = await import("./db");
   const module = params.module || "general";
 
-  // Gather data based on module
+  // Gather data based on module (scoped to the caller's entity)
   let contextData = "";
-
   try {
-    switch (module) {
-      case "inventory": {
-        const inventory = await dbModule.getInventory();
-        const warehouses = await dbModule.getWarehouses();
-        contextData = `Inventory (${inventory.length} items):\n${inventory.slice(0, 50).map((i: any) => `- ${i.product?.name || i.sku || 'Item'}: Qty=${i.quantity}, Reserved=${i.reservedQuantity || 0}, Location=${i.warehouse?.name || 'N/A'}`).join('\n')}\n\nWarehouses: ${warehouses.map((w: any) => w.name).join(', ')}`;
-        break;
-      }
-      case "work_orders":
-      case "manufacturing": {
-        const workOrders = await dbModule.getWorkOrders();
-        contextData = `Work Orders (${workOrders.length}):\n${workOrders.slice(0, 30).map((wo: any) => `- ${wo.workOrderNumber}: ${wo.product?.name || 'Product'} | Status=${wo.status} | Qty=${wo.quantity} | Due=${wo.scheduledEndDate || 'N/A'}`).join('\n')}`;
-        break;
-      }
-      case "purchase_orders": {
-        const pos = await dbModule.getPurchaseOrders();
-        contextData = `Purchase Orders (${pos.length}):\n${pos.slice(0, 30).map((po: any) => `- ${po.poNumber}: Vendor=${po.vendor?.name || 'N/A'} | Total=$${po.totalAmount} | Status=${po.status} | Date=${po.orderDate}`).join('\n')}`;
-        break;
-      }
-      case "vendors": {
-        const vendors = await dbModule.getVendors();
-        contextData = `Vendors (${vendors.length}):\n${vendors.slice(0, 30).map((v: any) => `- ${v.name}: Email=${v.email || 'N/A'} | Type=${v.type || 'supplier'} | Terms=${v.paymentTerms || 'N/A'} days`).join('\n')}`;
-        break;
-      }
-      case "customers": {
-        const customers = await dbModule.getCustomers();
-        contextData = `Customers (${customers.length}):\n${customers.slice(0, 30).map((c: any) => `- ${c.name}: Email=${c.email || 'N/A'} | Phone=${c.phone || 'N/A'}`).join('\n')}`;
-        break;
-      }
-      case "orders": {
-        const orders = await dbModule.getOrders();
-        contextData = `Orders (${orders.length}):\n${orders.slice(0, 30).map((o: any) => `- ${o.orderNumber}: Customer=${o.customer?.name || 'N/A'} | Total=$${o.totalAmount} | Status=${o.status}`).join('\n')}`;
-        break;
-      }
-      case "invoices": {
-        const invoices = await dbModule.getInvoices();
-        contextData = `Invoices (${invoices.length}):\n${invoices.slice(0, 30).map((i: any) => `- ${i.invoiceNumber}: $${i.totalAmount} | Status=${i.status} | Due=${i.dueDate || 'N/A'}`).join('\n')}`;
-        break;
-      }
-      case "payments": {
-        const payments = await dbModule.getPayments();
-        contextData = `Payments (${payments.length}):\n${payments.slice(0, 30).map((p: any) => `- $${p.amount} | Method=${p.paymentMethod || 'N/A'} | Date=${p.paymentDate || 'N/A'}`).join('\n')}`;
-        break;
-      }
-      case "shipments": {
-        const shipments = await dbModule.getShipments();
-        contextData = `Shipments (${shipments.length}):\n${shipments.slice(0, 30).map((s: any) => `- ${s.trackingNumber || 'No tracking'}: Status=${s.status} | Carrier=${s.carrier || 'N/A'}`).join('\n')}`;
-        break;
-      }
-      case "cap_table":
-      case "equity": {
-        const stakeholders = await (dbModule as any).getStakeholders?.() || [];
-        const grants = await (dbModule as any).getEquityGrants?.() || [];
-        const shareClasses = await (dbModule as any).getShareClasses?.() || [];
-        contextData = `Share Classes: ${shareClasses.map((sc: any) => `${sc.name} (${sc.type})`).join(', ')}\n\nStakeholders (${stakeholders.length}):\n${stakeholders.slice(0, 30).map((s: any) => `- ${s.name}: Type=${s.type} | Email=${s.email || 'N/A'}`).join('\n')}\n\nGrants (${grants.length}):\n${grants.slice(0, 30).map((g: any) => `- Stakeholder=${g.stakeholderId} | Shares=${g.shares} | Type=${g.grantType} | Status=${g.status} | Vested=${g.sharesVested || 0}`).join('\n')}`;
-        break;
-      }
-      case "data_room": {
-        const rooms = await dbModule.getDataRooms();
-        contextData = `Data Rooms (${rooms.length}):\n${rooms.map((r: any) => `- ${r.name}: Status=${r.status} | Visitors=${r.visitorCount || 0}`).join('\n')}`;
-        // Also get visitors
-        try {
-          for (const room of rooms.slice(0, 3)) {
-            const visitors = await dbModule.getDataRoomVisitors(room.id);
-            if (visitors.length > 0) {
-              contextData += `\n\nVisitors for "${room.name}": ${visitors.slice(0, 10).map((v: any) => `${v.name || v.email} (${v.lastViewedAt || v.createdAt})`).join(', ')}`;
-            }
-          }
-        } catch {}
-        break;
-      }
-      case "projects":
-      case "tasks": {
-        const projects = await dbModule.getProjects();
-        contextData = `Projects (${projects.length}):\n${projects.slice(0, 20).map((p: any) => `- ${p.name}: Status=${p.status} | Priority=${p.priority || 'N/A'}`).join('\n')}`;
-        // Get tasks
-        try {
-          const tasks = await dbModule.getAllProjectTasks?.();
-          if (tasks) {
-            contextData += `\n\nTasks (${tasks.length}):\n${tasks.slice(0, 30).map((t: any) => `- ${t.name}: Status=${t.status} | Priority=${t.priority || 'N/A'} | Due=${t.dueDate || 'N/A'} | Project=${t.projectId}`).join('\n')}`;
-          }
-        } catch {}
-        break;
-      }
-      case "banking": {
-        const transactions = await (dbModule as any).getBankTransactions?.() || [];
-        contextData = `Bank Transactions (${transactions.length}):\n${transactions.slice(0, 30).map((t: any) => `- ${t.date}: ${t.type} $${t.amount} | ${t.counterpartyName || t.description} | Category=${t.category || 'uncategorized'}`).join('\n')}`;
-        break;
-      }
-      case "copacker": {
-        try {
-          const invoices = await (dbModule as any).getCopackerInvoices?.() || [];
-          const updates = await (dbModule as any).getCopackerInventoryUpdates?.() || [];
-          contextData = `Copacker Invoices: ${invoices.length}\nInventory Updates: ${updates.length}`;
-          if (invoices.length) {
-            contextData += `\n${invoices.slice(0, 10).map((i: any) => `- Invoice ${i.invoiceNumber}: $${i.totalAmount} | Status=${i.status}`).join('\n')}`;
-          }
-        } catch { contextData = "Copacker data not available"; }
-        break;
-      }
-      case "employees": {
-        const employees = await dbModule.getEmployees();
-        contextData = `Employees (${employees.length}):\n${employees.slice(0, 30).map((e: any) => `- ${e.firstName} ${e.lastName}: ${e.jobTitle || 'N/A'} | Dept=${e.departmentId || 'N/A'} | Status=${e.status || 'active'}`).join('\n')}`;
-        break;
-      }
-      case "contracts": {
-        const contracts = await dbModule.getContracts();
-        contextData = `Contracts (${contracts.length}):\n${contracts.slice(0, 20).map((c: any) => `- ${c.title}: Type=${c.type} | Status=${c.status} | Value=$${c.value || 'N/A'}`).join('\n')}`;
-        break;
-      }
-      case "reports":
-      default: {
-        // General query - gather summary data from multiple modules
-        const [orders, invoices, customers, vendors, employees, inventory, pos] = await Promise.all([
-          dbModule.getOrders(), dbModule.getInvoices(), dbModule.getCustomers(),
-          dbModule.getVendors(), dbModule.getEmployees(), dbModule.getInventory(),
-          dbModule.getPurchaseOrders(),
-        ]);
-        contextData = `System Summary:
-- Orders: ${orders.length}
-- Invoices: ${invoices.length} (Paid: ${invoices.filter((i: any) => i.status === 'paid').length}, Overdue: ${invoices.filter((i: any) => i.status === 'overdue').length})
-- Customers: ${customers.length}
-- Vendors: ${vendors.length}
-- Employees: ${employees.length}
-- Inventory items: ${inventory.length}
-- Purchase Orders: ${pos.length} (Open: ${pos.filter((p: any) => ['draft','sent','confirmed'].includes(p.status)).length})
-- Total Revenue: $${invoices.filter((i: any) => i.status === 'paid').reduce((s: number, i: any) => s + parseFloat(i.totalAmount || '0'), 0).toLocaleString()}`;
-        break;
-      }
-    }
+    contextData = await gatherQuerySystemContext(module, ctx);
   } catch (e: any) {
     contextData = `Error gathering ${module} data: ${e.message}`;
   }
@@ -1951,10 +2953,45 @@ async function executeQuerySystem(params: any, ctx: AIAgentContext): Promise<any
 }
 
 // ============================================
+// TOOL REGISTRY (extension hook for other modules)
+// ============================================
+
+export type ChatToolExecutor = (name: string, params: any, ctx: AIAgentContext) => Promise<any>;
+
+const registeredToolExecutors = new Map<string, ChatToolExecutor>();
+
+/**
+ * Let a sibling module (e.g. server/aiChatTools/index.ts) add tools to the top-bar
+ * assistant without editing this file. The tool schemas are appended to the set sent
+ * to the model; `executor` is invoked for any of their names. Registered tools must
+ * gate their own writes with `assertRole` / `assertCanMutate` and scope reads with
+ * `chatScope(ctx)`. Registering a name that already exists (built-in or registered)
+ * throws, so a collision surfaces at boot instead of silently shadowing a tool.
+ */
+export function registerChatTools(tools: Tool[], executor: ChatToolExecutor): void {
+  for (const tool of tools) {
+    const name = tool?.function?.name;
+    if (!name) throw new Error("registerChatTools: every tool needs a function.name");
+    if (AI_TOOLS.some((t) => t.function.name === name) || registeredToolExecutors.has(name)) {
+      throw new Error(`registerChatTools: a tool named "${name}" is already registered`);
+    }
+  }
+  for (const tool of tools) {
+    AI_TOOLS.push(tool);
+    registeredToolExecutors.set(tool.function.name, executor);
+  }
+}
+
+/** Names of every tool the assistant currently exposes (built-in + registered). */
+export function listChatToolNames(): string[] {
+  return AI_TOOLS.map((t) => t.function.name);
+}
+
+// ============================================
 // TOOL EXECUTION DISPATCHER
 // ============================================
 
-async function executeTool(toolName: string, params: any, ctx: AIAgentContext): Promise<any> {
+export async function executeTool(toolName: string, params: any, ctx: AIAgentContext): Promise<any> {
   switch (toolName) {
     case "search_google_drive":
       return executeSearchGoogleDrive(params, ctx);
@@ -1982,6 +3019,8 @@ async function executeTool(toolName: string, params: any, ctx: AIAgentContext): 
       return executeManageCustomer(params, ctx);
     case "manage_order":
       return executeManageOrder(params, ctx);
+    case "manage_invoice":
+      return executeManageInvoice(params, ctx);
     case "manage_freight":
       return executeManageFreight(params, ctx);
     case "generate_report":
@@ -1998,8 +3037,11 @@ async function executeTool(toolName: string, params: any, ctx: AIAgentContext): 
       return executeQueryCrm(params, ctx);
     case "query_system":
       return executeQuerySystem(params, ctx);
-    default:
+    default: {
+      const registered = registeredToolExecutors.get(toolName);
+      if (registered) return registered(toolName, params, ctx);
       throw new Error(`Unknown tool: ${toolName}`);
+    }
   }
 }
 
@@ -2162,48 +3204,60 @@ async function buildAgentMessages(
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  // Get current business context
+  // Get current business context (scoped to the caller's entity; a global caller
+  // keeps the unfiltered count query).
+  const countRows = (table: typeof vendors | typeof customers | typeof orders | typeof inventory | typeof purchaseOrders) => {
+    const q = db.select({ count: sql<number>`count(*)` }).from(table);
+    const w = companyWhere(table, ctx);
+    return w ? q.where(w) : q;
+  };
   const [vendorCount, customerCount, orderCount, inventoryCount, poCount] = await Promise.all([
-    db.select({ count: sql<number>`count(*)` }).from(vendors),
-    db.select({ count: sql<number>`count(*)` }).from(customers),
-    db.select({ count: sql<number>`count(*)` }).from(orders),
-    db.select({ count: sql<number>`count(*)` }).from(inventory),
-    db.select({ count: sql<number>`count(*)` }).from(purchaseOrders),
+    countRows(vendors),
+    countRows(customers),
+    countRows(orders),
+    countRows(inventory),
+    countRows(purchaseOrders),
   ]);
 
-  const systemPrompt = `You are an AI assistant for the Superhumn ERP system. You have FULL access to create, read, update, and delete all data in the system. You can perform ANY operation the user requests. Use the available tools to take action directly.
+  const canMutate = MUTATION_ROLES.includes(ctx.userRole);
+  const canFinance = FINANCE_ROLES.includes(ctx.userRole);
+  const isAdmin = ADMIN_ROLES.includes(ctx.userRole);
 
-Your capabilities include:
+  const systemPrompt = `You are the AI assistant for the Superhumn ERP system. You act ONLY through the tools listed below. Never claim to have created, changed, sent or deleted anything unless a tool call returned success, and never promise an operation no tool provides.
 
-1. **Purchase Orders**: Create new POs, approve POs, send POs to vendors, update PO status, and track PO fulfillment.
-2. **Invoices**: Create invoices, send invoices to customers, record payments against invoices, and manage invoice status.
-3. **Products & Inventory**: Create new products, update stock levels, transfer inventory between warehouses, adjust quantities, and track inventory movements.
-4. **Vendors & Suppliers**: Create new vendors, update vendor information, evaluate vendor performance, and manage vendor relationships.
-5. **Customers**: Create new customers, update customer records, view order history, and manage customer relationships.
-6. **Sales Orders**: Create new orders, update order status, cancel orders, and fulfill orders.
-7. **Work Orders & Manufacturing**: Create work orders, start production, complete work orders, and track manufacturing progress.
-8. **Shipments & Freight**: Create shipments, book freight, create RFQs for carriers, get quotes, and track shipment status.
-9. **BOMs & Recipes**: Create and modify bills of materials and recipes for manufacturing.
-10. **Co-packers**: Create work orders for contract manufacturers, track co-packer production, and manage co-packer relationships.
-11. **Email & Communication**: Send emails to vendors, customers, or team members. Draft professional emails for review. Follow up on outstanding items. Search and read the received (inbound) email inbox with search_inbox / read_email to find or reference a message the user asks about (e.g. "find the latest email from Acme").
-12. **Reports & Analytics**: Generate business reports, analyze sales trends, forecast demand, detect anomalies, and provide actionable insights.
-13. **Tasks & Approvals**: Create tasks, approve or reject pending items, and manage workflow approvals.
-14. **Web research**: You have a live web_search tool. Use it to look up real-world information that isn't in the ERP — a company's real contact details, address, and website; vendors/suppliers; current market prices; industry data; news. Prefer official sources and don't fabricate details you could verify by searching.
+WHAT YOU CAN DO (tool → actions):
+1. Look things up (every role): query_system (any module: inventory, work orders, POs, vendors, customers, orders, invoices, payments, shipments, cap table, data room, projects/tasks, banking, copacker, employees, contracts, general overview), query_crm, analyze_data, track_items, generate_report (sales_summary, inventory_status, vendor_performance, customer_analysis, financial_overview, production_status, order_fulfillment), search_inbox / read_email, search_google_drive, run_ai_analytics, manage_calendar list_events, and the read actions of manage_vendor / manage_customer / manage_order / manage_invoice / manage_freight / manage_copacker.
+2. Vendors (ops/admin/exec): manage_vendor create, update. Archive = admin only.
+3. Customers (ops/admin/exec): manage_customer create, update. Archive = admin only.
+4. Sales orders (ops/admin/exec): manage_order create (with line items), update (status/notes/addresses), cancel, fulfill (reserves stock, raises the outbound shipment, marks shipped). Archive (= cancel, keeps history) = admin only.
+5. Invoices & payments (finance/admin/exec): manage_invoice create (from an order or explicit lines; posts the AR/Revenue journal entry), send (mark sent), record_payment (payment row + invoice status + Cash/AR journal entry).
+6. Purchasing & production (ops/admin/exec): create_purchase_order (draft PO), update_inventory (add/remove/transfer/adjust), manage_copacker create_work_order (draft).
+7. Freight (ops/admin/exec): manage_freight create_rfq, book_shipment (accept a quote → booking); get_quotes/track/list_carriers for anyone.
+8. Communication: draft_email (anyone); send_email and manage_calendar create_event (ops/admin/exec).
+9. Tasks & errands: create_task (ops/admin/exec) queues an item for the Approval Queue; plan_errand (anyone) for multi-step chores — see below.
+10. Web research: the web_search tool for real-world facts (company details, addresses, market prices, news). Prefer official sources; never fabricate details you could verify.
 
-CRITICAL BEHAVIOR RULES:
-1. When a user asks you to create something, DO IT directly. Never tell them to do it manually.
-2. If required data is missing (e.g., no vendor exists), CREATE the missing entity first, then proceed with the original request. Ask the user only for info you truly cannot guess (e.g., "What vendor should I use?" or "What's the unit price?"). When a user names a real company (e.g. "add BCW as a warehouse vendor"), FIRST use web_search to find its real details (address, phone, website), then create the record with those details instead of asking the user to type them.
-3. If there are zero vendors/products/customers, that's fine — create them as part of fulfilling the request. For example, if the user says "create a PO for 5000kg mushrooms" and there's no vendor, ask "Which vendor should I create this PO for? And what's the unit price per kg?" Then create the vendor AND the PO.
-4. NEVER list steps for the user to follow. NEVER say "you need to first..." — just do it or ask for the specific missing detail.
-5. Use sensible defaults: auto-generate SKUs, use today's date, set status to "draft", etc.
-6. Be concise. Don't explain what you're doing — just do it and confirm the result.
+NOT AVAILABLE HERE (say so plainly and point the user to the right page): permanently deleting any record (only archive/cancel exists), creating or editing products, BOMs or recipes, approving or sending purchase orders, receiving POs, starting/completing work orders, HR/payroll changes, cap-table edits, bank transfers or refunds, sending invoices by email in one step (use manage_invoice send, then send_email).
+
+ACCESS RULES:
+- Data scope: you only see and change records that belong to the user's company entity${ctx.companyId != null ? ` (entity #${ctx.companyId})` : " (this user has global visibility)"}. Anything you create is stamped to it.
+- This user's role is "${ctx.userRole}": ${canMutate ? "they CAN run operational writes (orders, vendors, customers, inventory, POs, freight, email, calendar events)" : "they CANNOT run operational writes — offer plan_errand (which queues the work for approval) or explain which role is needed"}; ${canFinance ? "they CAN create invoices and record payments" : "they CANNOT create invoices or record payments"}; ${isAdmin ? "they CAN archive vendors, customers and orders" : "they CANNOT archive vendors, customers or orders (admin only)"}.
+- If a tool returns "Not authorized", relay which role is required and stop — do not retry or work around it.
+
+BEHAVIOUR RULES:
+1. When a user asks for something a tool can do, DO IT directly. Never tell them to do it manually.
+2. If required data is missing (e.g., no vendor exists), CREATE the missing entity first when you have the tool and the role, then proceed. Ask the user only for details you genuinely cannot determine (e.g., "Which vendor?" or "What unit price?"). When a user names a real company (e.g. "add BCW as a warehouse vendor"), FIRST use web_search to find its real details (address, phone, website), then create the record with those details.
+3. Zero vendors/products/customers is fine — create what you can as part of fulfilling the request.
+4. NEVER list steps for the user to follow when you can take them yourself.
+5. Use sensible defaults: today's date, status "draft"/"pending", USD, the product's list price.
+6. Be concise. Don't narrate — act, then confirm the result with the real identifiers (order number, invoice number, booking number) the tool returned.
 
 DELEGATED ERRANDS (concierge mode):
-- Tell apart a QUESTION or single trivial action ("how many orders shipped today?", "mark PO-123 approved") from a CHORE the user wants carried out for them ("chase the overdue invoice from Acme", "onboard this vendor and email them the forms", "follow up with everyone who hasn't replied"). Answer questions and do single trivial actions directly, as above.
-- For a multi-step chore with real-world side effects, call plan_errand with a title, the restated goal, an ordered list of concrete steps, and a riskLevel. Low-risk (safe/reversible) errands run automatically; medium/high-risk errands (money movement, outbound emails, bulk changes, deletes) are presented to the user for approval right there in the chat and run only after they approve the plan.
-- After calling plan_errand, briefly tell the user the plan is ready and ask them to approve it below to run it now (or that a low-risk errand is already running) — do NOT perform the steps yourself in that same turn; execution happens when they approve.
+- Tell apart a QUESTION or single trivial action ("how many orders shipped today?", "mark order 123 confirmed") from a CHORE the user wants carried out ("chase the overdue invoice from Acme", "onboard this vendor and email them the forms"). Answer questions and do single actions directly.
+- For a multi-step chore with real-world side effects, call plan_errand with a title, the restated goal, ordered concrete steps, and a riskLevel. Low-risk errands run automatically only for ops/admin/exec users; everything else waits in the Approval Queue until an authorised user approves the plan.
+- After calling plan_errand, briefly tell the user the plan is queued (or already running) — do NOT perform the steps yourself in that same turn.
 
-Current System Status:
+Current System Status (this entity):
 - Vendors: ${vendorCount[0]?.count || 0}
 - Customers: ${customerCount[0]?.count || 0}
 - Orders: ${orderCount[0]?.count || 0}
@@ -2215,25 +3269,21 @@ User Context:
 - Role: ${ctx.userRole}
 
 Guidelines:
-- When a user asks to create something, call the appropriate tool immediately. Do not suggest they do it manually.
-- For sensitive operations (large bulk changes, deletes), confirm with the user before proceeding.
-- Provide clear, actionable responses.
+- For sensitive operations (bulk changes, archiving, cancelling), confirm with the user before proceeding.
 - When analyzing data, provide insights and recommendations.
 - Format currency values with $ symbol and 2 decimal places.
 - When listing items, limit to 10-20 unless more are requested.
-- Be proactive in suggesting relevant actions based on the data.
-
-You can query ANY module in the system using the query_system tool. When a user asks about data in any module (inventory, work orders, POs, cap table, data room, projects, banking, etc.), use the query_system tool to fetch the data and answer their question.
+- Be proactive in suggesting relevant next actions that exist in the tool list.
 
 Examples:
 - "What work orders are in progress?" → query_system(question, module="work_orders")
 - "Show me overdue POs" → query_system(question, module="purchase_orders")
 - "What's my cap table breakdown?" → query_system(question, module="cap_table")
 - "Who viewed my data room this week?" → query_system(question, module="data_room")
-- "What tasks are overdue?" → query_system(question, module="tasks")
-- "How many employees do we have?" → query_system(question, module="employees")
-- "Show me all contracts" → query_system(question, module="contracts")
-- "What's our banking activity?" → query_system(question, module="banking")
+- "Invoice order ORD-2609-0042" → manage_order get (find the id) → manage_invoice create(orderId)
+- "Acme paid $1,200 on INV-2609-0007 by wire" → manage_invoice record_payment(invoiceId, {amount: 1200, method: "wire"})
+- "Ship order 55" → manage_order fulfill(orderId=55)
+- "Book the cheapest quote on RFQ 12" → manage_freight get_quotes(rfqId=12) → manage_freight book_shipment(quoteId)
 - "Give me an overview of the business" → query_system(question, module="general")`;
 
   return [
@@ -2403,6 +3453,7 @@ const TOOL_STATUS_LABELS: Record<string, string> = {
   update_inventory: "Updating inventory…",
   manage_vendor: "Updating vendor…",
   manage_customer: "Updating customer…",
+  manage_invoice: "Updating invoice…",
   manage_copacker: "Updating co-packer…",
   send_email: "Sending email…",
   draft_email: "Drafting email…",
@@ -2672,12 +3723,12 @@ export async function getSystemOverview(ctx: AIAgentContext): Promise<any> {
     poStats,
     workOrderStats,
   ] = await Promise.all([
-    db.select().from(vendors),
-    db.select().from(customers),
-    db.select().from(orders),
-    db.select().from(inventory),
-    db.select().from(purchaseOrders),
-    db.select().from(workOrders),
+    db.select().from(vendors).where(companyWhere(vendors, ctx)),
+    db.select().from(customers).where(companyWhere(customers, ctx)),
+    db.select().from(orders).where(companyWhere(orders, ctx)),
+    db.select().from(inventory).where(companyWhere(inventory, ctx)),
+    db.select().from(purchaseOrders).where(companyWhere(purchaseOrders, ctx)),
+    db.select().from(workOrders).where(companyWhere(workOrders, ctx)),
   ]);
 
   const activeVendors = vendorStats.filter(v => v.status === "active").length;
@@ -2723,7 +3774,7 @@ export async function getPendingActions(ctx: AIAgentContext): Promise<any> {
   const pendingTasks = await db
     .select()
     .from(aiAgentTasks)
-    .where(eq(aiAgentTasks.status, "pending_approval"))
+    .where(scopedWhere(ctx, aiAgentTasks, eq(aiAgentTasks.status, "pending_approval")))
     .orderBy(desc(aiAgentTasks.createdAt))
     .limit(20);
 

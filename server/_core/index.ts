@@ -180,6 +180,7 @@ import { getValidGoogleToken } from "../routers/middleware";
 import { startEmailQueueWorker } from "../emailQueueWorker";
 import { startOrchestrator } from "../supplyChainOrchestrator";
 import { startScheduler } from "../aiAgentScheduler";
+import { registerAllChatTools } from "../aiChatTools";
 import { createLogger } from "./logger";
 import { initErrorTracking, captureException } from "./errorTracking";
 import { secureCompare } from "./crypto";
@@ -1511,6 +1512,11 @@ async function startServer() {
   } else {
     serveStatic(app);
   }
+
+  // Module chat tools (finance, HR, projects, marketing, ...) join the top-bar
+  // assistant here so the first chat request already sees the full tool set.
+  const registered = await registerAllChatTools();
+  logger.info("AI chat tools registered", registered);
 
   const preferredPort = parseInt(process.env.PORT || "3000");
   const port = await findAvailablePort(preferredPort);

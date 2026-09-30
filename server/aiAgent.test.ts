@@ -430,3 +430,163 @@ describe("AI Agent System", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Router-level: aiAgent.tasks.execute / approveAndExecute drive the shared
+// executor (aiAgentTaskExecutor) behind an atomic claim.
+// ---------------------------------------------------------------------------
+vi.mock("./db", () => ({
+  getDb: vi.fn().mockResolvedValue({}),
+  getUserEntityAccessCompanyIds: vi.fn().mockResolvedValue([]),
+  createAuditLog: vi.fn().mockResolvedValue({ id: 1 }),
+  getAiAgentTaskById: vi.fn(),
+  updateAiAgentTask: vi.fn(async () => 1),
+  createAiAgentLog: vi.fn(async () => ({ id: 1 })),
+  createNotification: vi.fn(async () => 1),
+  createVendor: vi.fn(async () => ({ id: 11 })),
+}));
+vi.mock("./_core/email", () => ({ sendEmail: vi.fn(), formatEmailHtml: (t: string) => t }));
+vi.mock("./emailReplyService", () => ({ processEmailReply: vi.fn(), analyzeEmail: vi.fn(), generateEmailReply: vi.fn() }));
+vi.mock("./taskAgentBridge", () => ({
+  createProjectTaskFromSource: vi.fn(),
+  syncAgentStatusToProjectTask: vi.fn(async () => "none"),
+}));
+vi.mock("./conciergeErrandService", () => ({ executeConciergeErrand: vi.fn() }));
+
+import * as db from "./db";
+import { syncAgentStatusToProjectTask } from "./taskAgentBridge";
+import { executeConciergeErrand } from "./conciergeErrandService";
+import { router } from "./_core/trpc";
+import { aiAgentRouter } from "./routers/aiAgent";
+import { ctxFor } from "./flows/_harness";
+
+const admin = router({ aiAgent: aiAgentRouter }).createCaller(ctxFor("admin", { id: 1, name: "Ada Admin" }));
+
+const approvedVendorTask = (overrides: Record<string, unknown> = {}) => ({
+  id: 3,
+  status: "approved",
+  taskType: "create_vendor",
+  taskData: JSON.stringify({ name: "Pacific Foods", email: "sales@pacific.test" }),
+  approvedBy: 4,
+  retryCount: 1,
+  ...overrides,
+});
+
+describe("aiAgent.tasks.execute (router path)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("claims approved -> in_progress atomically, runs the shared executor, records the result, notifies the approver and writes back", async () => {
+    vi.mocked(db.getAiAgentTaskById).mockResolvedValue(approvedVendorTask() as any);
+
+    const result = await admin.aiAgent.tasks.execute({ id: 3 });
+
+    expect(result).toEqual({ success: true, result: { created: true, vendorId: 11, vendorName: "Pacific Foods" } });
+    expect(db.updateAiAgentTask).toHaveBeenNthCalledWith(1, 3, expect.objectContaining({ status: "in_progress" }), { onlyIfStatus: "approved" });
+    expect(db.createVendor).toHaveBeenCalledTimes(1);
+    expect(db.updateAiAgentTask).toHaveBeenNthCalledWith(2, 3, expect.objectContaining({ status: "completed", executionResult: JSON.stringify(result.result) }));
+    expect(db.createAiAgentLog).toHaveBeenCalledWith(expect.objectContaining({ taskId: 3, action: "task_executed", status: "success", message: "Task executed successfully" }));
+    expect(db.createNotification).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 4, type: "success", entityType: "ai_agent_task", entityId: 3, link: "/ai/approvals",
+      title: "AI task completed: create vendor", message: "Task #3 (create vendor) executed successfully.",
+    }));
+    expect(syncAgentStatusToProjectTask).toHaveBeenCalledWith(3);
+  });
+
+  it("refuses with CONFLICT and runs nothing when the claim is lost (the scheduler got there first)", async () => {
+    vi.mocked(db.getAiAgentTaskById).mockResolvedValue(approvedVendorTask() as any);
+    vi.mocked(db.updateAiAgentTask).mockResolvedValueOnce(0);
+
+    await expect(admin.aiAgent.tasks.execute({ id: 3 })).rejects.toMatchObject({ code: "CONFLICT" });
+
+    expect(db.createVendor).not.toHaveBeenCalled();
+    expect(db.updateAiAgentTask).toHaveBeenCalledTimes(1); // the claim only — no completed/failed write
+    expect(db.createAiAgentLog).not.toHaveBeenCalled();
+    expect(syncAgentStatusToProjectTask).not.toHaveBeenCalled();
+  });
+
+  it("rejects tasks that are missing or not approved before claiming", async () => {
+    vi.mocked(db.getAiAgentTaskById).mockResolvedValueOnce(null);
+    await expect(admin.aiAgent.tasks.execute({ id: 9 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    vi.mocked(db.getAiAgentTaskById).mockResolvedValueOnce(approvedVendorTask({ status: "pending_approval" }) as any);
+    await expect(admin.aiAgent.tasks.execute({ id: 3 })).rejects.toMatchObject({ code: "BAD_REQUEST", message: "Task must be approved before execution" });
+    expect(db.updateAiAgentTask).not.toHaveBeenCalled();
+  });
+
+  it("marks a failed execution failed (retryCount+1), logs it, writes back and surfaces the error", async () => {
+    vi.mocked(db.getAiAgentTaskById).mockResolvedValue(approvedVendorTask() as any);
+    vi.mocked(db.createVendor).mockRejectedValueOnce(new Error("Duplicate vendor name"));
+
+    await expect(admin.aiAgent.tasks.execute({ id: 3 })).rejects.toMatchObject({ code: "INTERNAL_SERVER_ERROR", message: "Duplicate vendor name" });
+
+    expect(db.updateAiAgentTask).toHaveBeenLastCalledWith(3, { status: "failed", errorMessage: "Duplicate vendor name", retryCount: 2 });
+    expect(db.createAiAgentLog).toHaveBeenCalledWith(expect.objectContaining({ taskId: 3, action: "task_failed", status: "error", message: "Task execution failed: Duplicate vendor name" }));
+    expect(db.createNotification).not.toHaveBeenCalled();
+    expect(syncAgentStatusToProjectTask).toHaveBeenCalledWith(3);
+  });
+
+  it("completes a type with no automated executor with a note rather than failing it", async () => {
+    vi.mocked(db.getAiAgentTaskById).mockResolvedValue(approvedVendorTask({ taskType: "reconcile_payment", taskData: JSON.stringify({ paymentId: 5 }) }) as any);
+
+    const result = await admin.aiAgent.tasks.execute({ id: 3 });
+
+    expect(result.success).toBe(true);
+    expect(result.result).toMatchObject({ noop: true, taskType: "reconcile_payment", note: expect.stringContaining("no automated executor") });
+    expect(db.updateAiAgentTask).toHaveBeenLastCalledWith(3, expect.objectContaining({ status: "completed" }));
+  });
+
+  it("a completed task is not turned into a failed one by a notification hiccup", async () => {
+    vi.mocked(db.getAiAgentTaskById).mockResolvedValue(approvedVendorTask() as any);
+    vi.mocked(db.createNotification).mockRejectedValueOnce(new Error("notifications table locked"));
+
+    await expect(admin.aiAgent.tasks.execute({ id: 3 })).resolves.toMatchObject({ success: true });
+    expect(db.updateAiAgentTask).toHaveBeenLastCalledWith(3, expect.objectContaining({ status: "completed" }));
+    expect(syncAgentStatusToProjectTask).toHaveBeenCalledWith(3);
+  });
+});
+
+describe("aiAgent.tasks.approveAndExecute (inline errand approval)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const errand = (overrides: Record<string, unknown> = {}) => ({
+    id: 8, status: "pending_approval", taskType: "concierge_errand", retryCount: 0,
+    taskData: JSON.stringify({ goal: "Translate copy", submittedByUserId: 2 }),
+    ...overrides,
+  });
+
+  it("claims pending_approval -> in_progress with the approver recorded, then runs the errand through the shared executor", async () => {
+    vi.mocked(db.getAiAgentTaskById).mockResolvedValue(errand() as any);
+    vi.mocked(executeConciergeErrand).mockResolvedValueOnce({ success: true, data: { summary: "Translated 42 descriptions." } });
+
+    const result = await admin.aiAgent.tasks.approveAndExecute({ id: 8 });
+
+    expect(result).toEqual({ success: true, result: { summary: "Translated 42 descriptions." } });
+    expect(db.updateAiAgentTask).toHaveBeenNthCalledWith(1, 8, expect.objectContaining({ status: "in_progress", approvedBy: 1, approvedAt: expect.any(Date) }), { onlyIfStatus: "pending_approval" });
+    expect(db.createAiAgentLog).toHaveBeenCalledWith(expect.objectContaining({ taskId: 8, action: "task_approved", message: "Errand approved inline by Ada Admin" }));
+    expect(executeConciergeErrand).toHaveBeenCalledWith(expect.objectContaining({ id: 8 }));
+    expect(db.updateAiAgentTask).toHaveBeenLastCalledWith(8, expect.objectContaining({ status: "completed" }));
+    expect(db.createAiAgentLog).toHaveBeenCalledWith(expect.objectContaining({ taskId: 8, action: "task_executed", message: "Errand executed successfully (inline approval)" }));
+    expect(syncAgentStatusToProjectTask).toHaveBeenCalledWith(8);
+  });
+
+  it("refuses non-errands, non-pending errands, and a lost claim", async () => {
+    vi.mocked(db.getAiAgentTaskById).mockResolvedValueOnce(errand({ taskType: "create_vendor" }) as any);
+    await expect(admin.aiAgent.tasks.approveAndExecute({ id: 8 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    vi.mocked(db.getAiAgentTaskById).mockResolvedValueOnce(errand({ status: "approved" }) as any);
+    await expect(admin.aiAgent.tasks.approveAndExecute({ id: 8 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(db.updateAiAgentTask).not.toHaveBeenCalled();
+
+    vi.mocked(db.getAiAgentTaskById).mockResolvedValueOnce(errand() as any);
+    vi.mocked(db.updateAiAgentTask).mockResolvedValueOnce(0);
+    await expect(admin.aiAgent.tasks.approveAndExecute({ id: 8 })).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(executeConciergeErrand).not.toHaveBeenCalled();
+  });
+
+  it("a failed errand is marked failed with the errand's error", async () => {
+    vi.mocked(db.getAiAgentTaskById).mockResolvedValue(errand() as any);
+    vi.mocked(executeConciergeErrand).mockResolvedValueOnce({ success: false, error: "No photographer vendors on file" });
+
+    await expect(admin.aiAgent.tasks.approveAndExecute({ id: 8 })).rejects.toMatchObject({ code: "INTERNAL_SERVER_ERROR", message: "No photographer vendors on file" });
+    expect(db.updateAiAgentTask).toHaveBeenLastCalledWith(8, { status: "failed", errorMessage: "No photographer vendors on file", retryCount: 1 });
+    expect(db.createAiAgentLog).toHaveBeenCalledWith(expect.objectContaining({ taskId: 8, action: "task_failed", message: "Errand execution failed: No photographer vendors on file" }));
+  });
+});
