@@ -28,11 +28,12 @@ vi.mock("@/lib/trpc", () => {
   return {
     trpc: {
       useUtils: () => ({
-        orders: { list: { invalidate: mocks.invalidateOrders } },
+        orders: { invalidate: mocks.invalidateOrders, list: { invalidate: mocks.invalidateOrders } },
         customers: { list: { invalidate: mocks.invalidateCustomers } },
       }),
       orders: {
         list: query(() => []),
+        listPaged: query(() => ({ rows: [], total: 0 })),
         create: mutation(mocks.create),
         update: mutation(async () => ({ success: true })),
         delete: mutation(async () => ({ success: true })),

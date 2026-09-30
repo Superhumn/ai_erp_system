@@ -1,4 +1,5 @@
 // appRouter.transactions — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
+import { MAX_PAGE_LIMIT, TRANSACTION_SORTS } from "../listPaging";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router } from "../_core/trpc";
@@ -15,6 +16,21 @@ export const transactionsRouter = router({
       }).optional())
       .query(async ({ input, ctx }) =>
         db.getTransactions(assertNonEmptyScope(await resolveRequestScope(ctx.user)), { type: input?.type, status: input?.status }),
+      ),
+    // One page (most recent date first) plus the total for the same filters.
+    listPaged: financeProcedure
+      .input(z.object({
+        type: z.string().optional(),
+        status: z.string().optional(),
+        cogsOnly: z.boolean().optional(),
+        sortBy: z.enum(TRANSACTION_SORTS).optional(),
+        sortDir: z.enum(["asc", "desc"]).optional(),
+        search: z.string().max(200).optional(),
+        limit: z.number().int().min(1).max(MAX_PAGE_LIMIT).optional(),
+        offset: z.number().int().min(0).optional(),
+      }).optional())
+      .query(async ({ input, ctx }) =>
+        db.getTransactionsPaged(assertNonEmptyScope(await resolveRequestScope(ctx.user)), input ?? {}),
       ),
     create: financeProcedure
       .input(z.object({
