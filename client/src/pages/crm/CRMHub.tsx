@@ -376,10 +376,13 @@ export default function CRMHub() {
   // Active pipeline: the default one, else the first. Kanban columns come
   // from its typed stages (crm_pipeline_stages), falling back to the JSON
   // array, then to the legacy hardcoded list.
+  // Kanban shows one pipeline at a time (stage names are per pipeline); the
+  // table and Reports deliberately span all pipelines.
+  const [boardPipelineId, setBoardPipelineId] = useState<number | null>(null);
   const activePipeline = useMemo(() => {
     const list = (pipelines ?? []) as any[];
-    return list.find((p) => p.isDefault) ?? list[0] ?? null;
-  }, [pipelines]);
+    return list.find((p) => p.id === boardPipelineId) ?? list.find((p) => p.isDefault) ?? list[0] ?? null;
+  }, [pipelines, boardPipelineId]);
   const { data: pipelineStages } = trpc.crm.pipelines.stages.list.useQuery(
     { pipelineId: activePipeline?.id ?? 0 },
     { enabled: !!activePipeline?.id },
@@ -1211,7 +1214,7 @@ export default function CRMHub() {
 
       {section === "accounts" && <AccountsPanel />}
       {section === "tasks" && <TasksPanel />}
-      {section === "reports" && <ReportsPanel pipelineId={activePipeline?.id} onOpenDeal={(id) => { setDealStatusFilter("open"); setSelectedDealId(id); }} />}
+      {section === "reports" && <ReportsPanel onOpenDeal={(id) => { setDealStatusFilter("open"); setSelectedDealId(id); }} />}
 
       {/* Sales KPIs — compact bar (sales tab only) */}
       {section === "relationships" && category === "sales" && (() => {
@@ -1280,6 +1283,16 @@ export default function CRMHub() {
               </div>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
+              {dealView === "kanban" ? (
+                <Select value={activePipeline ? String(activePipeline.id) : ""} onValueChange={(v) => setBoardPipelineId(Number(v))}>
+                  <SelectTrigger className="h-8 w-[170px] text-xs" aria-label="Board pipeline"><SelectValue placeholder="Pipeline" /></SelectTrigger>
+                  <SelectContent>
+                    {((pipelines ?? []) as any[]).map((p: any) => <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <span className="text-[11px] text-muted-foreground">All pipelines</span>
+              )}
               {/* View toggle */}
               <div className="flex items-center rounded border bg-background">
                 <button
@@ -1356,15 +1369,19 @@ export default function CRMHub() {
                       </TableCell>
                       <TableCell>{deal._contactName}</TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
-                        <select
-                          value={deal.stage}
-                          onChange={(e) => requestMove(deal.id, e.target.value)}
-                          className="bg-transparent border-none text-xs cursor-pointer focus:outline-none"
-                        >
-                          {(stageNames.includes(deal.stage) ? stageNames : [deal.stage, ...stageNames]).map(s => (
-                            <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
-                          ))}
-                        </select>
+                        {deal.pipelineId === activePipeline?.id ? (
+                          <select
+                            value={deal.stage}
+                            onChange={(e) => requestMove(deal.id, e.target.value)}
+                            className="bg-transparent border-none text-xs cursor-pointer focus:outline-none"
+                          >
+                            {(stageNames.includes(deal.stage) ? stageNames : [deal.stage, ...stageNames]).map(s => (
+                              <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="capitalize" title="Switch the board to this deal's pipeline to move it">{deal.stage?.replace(/_/g, " ")}</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-right font-semibold tabular-nums text-foreground" onClick={(e) => e.stopPropagation()}>
                         <InlineEdit value={deal._value || "0"} type="number" onSave={(v) => updateDeal.mutate({ id: deal.id, amount: v })} />
@@ -1405,7 +1422,7 @@ export default function CRMHub() {
             <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1 snap-x snap-mandatory md:snap-none">
               {stageNames.map((stage) => {
                 const stageMeta = stageByName[stage.toLowerCase()];
-                const stageDeals = filteredDeals.filter((d: any) => d.stage?.toLowerCase() === stage.toLowerCase());
+                const stageDeals = filteredDeals.filter((d: any) => d.pipelineId === activePipeline?.id && d.stage?.toLowerCase() === stage.toLowerCase());
                 const stageValue = stageDeals.reduce((sum: number, d: any) => sum + Number(d._value || 0), 0);
                 return (
                   <div

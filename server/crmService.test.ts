@@ -57,6 +57,16 @@ vi.mock("./db", () => ({
   findCrmAccountByName: vi.fn(async () => undefined),
   createCrmAccount: vi.fn(async () => 300),
   createCrmContact: vi.fn(async () => 400),
+  getUserEntityAccessCompanyIds: vi.fn(async () => []),
+  getCompanyById: vi.fn(async () => undefined),
+  getCompanyIdsInRegion: vi.fn(async () => []),
+  getEntityAndDescendantCompanyIds: vi.fn(async (id: number) => [id]),
+  getDealIdsWithOpenCrmTasks: vi.fn(async () => new Set<number>()),
+  getCrmAccountDescendantIds: vi.fn(async () => []),
+  getCrmAccountRollup: vi.fn(async () => ({ contactCount: 0, openDealCount: 0, openDealAmount: 0 })),
+  getCrmContactsForAccounts: vi.fn(async () => []),
+  getCrmDealsForAccounts: vi.fn(async () => []),
+  getCrmInteractionsForAccounts: vi.fn(async () => []),
 }));
 vi.mock("./_core/email", () => ({ sendEmail: vi.fn(async () => ({ success: true })) }));
 
@@ -65,9 +75,10 @@ import { sendEmail } from "./_core/email";
 import type { Scope } from "./_core/scope";
 import { seedStagesFromNames } from "./crmLogic";
 import {
-  addDealItem, closeDeal, completeTask, createDeal, createTask, dealForecast, deleteAccount, getOrSeedPipelineStages, importCommit,
-  importPreview, listLossReasons, listTasks, loadScopedDeal, loadScopedTask, mergeAccounts, moveDealStage, recomputeLeadScore,
-  removeDealContact, runStaleDealCheck, salesReport, sendCrmTaskReminders, updateTask,
+  addDealContact, addDealItem, closeDeal, completeTask, createAccount, createDeal, createTask, dealForecast, deleteAccount,
+  getAccountDetail, getOrSeedPipelineStages, importCommit, importPreview, listAccountChildren, listLossReasons, listTasks,
+  loadScopedDeal, loadScopedTask, mergeAccounts, moveDealStage, recomputeLeadScore, removeDealContact, reorderPipelineStages,
+  runStaleDealCheck, salesReport, sendCrmTaskReminders, updateDeal, updateTask,
 } from "./crmService";
 
 const global: Scope = { mode: "global", companyIds: "all" };
@@ -123,7 +134,7 @@ describe("moveDealStage", () => {
   it("keeps an explicit probability and marks the deal won on a won stage", async () => {
     const r = await moveDealStage({ id: 5, stage: "Closed_Won", probability: 95 }, global, 42);
     expect(r).toMatchObject({ stage: "closed_won", probability: 95, status: "won" });
-    expect(db.updateCrmDeal).toHaveBeenCalledWith(5, { stage: "closed_won", probability: 95, status: "won", isStale: false });
+    expect(db.updateCrmDeal).toHaveBeenCalledWith(5, { stage: "closed_won", probability: 95, status: "won", wonAt: expect.any(Date), lostAt: null, isStale: false });
   });
 
   it("does not write history when the stage is unchanged", async () => {
@@ -247,6 +258,7 @@ describe("win/loss rules", () => {
   });
 
   it("moving to a lost stage needs a loss reason, and records it", async () => {
+    vi.mocked(db.getCrmLossReasonById).mockResolvedValue({ id: 4, companyId: null, name: "Price", isActive: true } as never);
     await expect(moveDealStage({ id: 5, stage: "closed_lost" }, entity, 42)).rejects.toMatchObject({ code: "BAD_REQUEST" });
     await moveDealStage({ id: 5, stage: "closed_lost", lossReasonId: 4 }, entity, 42);
     expect(db.updateCrmDeal).toHaveBeenCalledWith(5, expect.objectContaining({ stage: "closed_lost", status: "lost", lossReasonId: 4, probability: 0 }));
@@ -282,6 +294,7 @@ describe("tasks", () => {
 
   it("create takes entity + account from the linked deal and assigns the caller by default", async () => {
     vi.mocked(db.getCrmDealById).mockResolvedValue({ ...deal, accountId: 12 } as never);
+    vi.mocked(db.getCrmAccountById).mockResolvedValue({ id: 12, companyId: 7, name: "District" } as never);
     await createTask({ title: " Call Jane ", type: "call", dealId: 5 }, entity, { id: 42, companyId: 1 });
     expect(db.createCrmTask).toHaveBeenCalledWith(expect.objectContaining({
       companyId: 7, dealId: 5, contactId: 3, accountId: 12, title: "Call Jane", type: "call", assignedTo: 42, createdBy: 42,
@@ -326,6 +339,7 @@ describe("tasks", () => {
     vi.mocked(db.getUserById).mockImplementation(async (id: number) => ({ id, name: `U${id}`, email: `u${id}@x.co` }) as never);
     vi.mocked(sendEmail).mockResolvedValueOnce({ success: true }).mockResolvedValueOnce({ success: false, error: "boom" });
     const r = await sendCrmTaskReminders(NOW);
+    expect(db.getCrmTasksDueForReminder).toHaveBeenCalledWith(new Date("2026-09-29T23:59:59.999Z"), NOW);
     expect(r).toMatchObject({ tasks: 3, sent: 1, failed: 1 });
     expect(sendEmail).toHaveBeenCalledTimes(2);
     expect(vi.mocked(sendEmail).mock.calls[0][0]).toMatchObject({ to: "u42@x.co", subject: "CRM: 2 tasks due" });
@@ -348,13 +362,24 @@ describe("runStaleDealCheck", () => {
       [2, new Date("2026-09-25T00:00:00Z")],
       [3, new Date("2026-09-28T00:00:00Z")],
     ]));
-    vi.mocked(db.getOpenCrmTasksForDeal).mockImplementation(async (id: number) => (id === 2 ? [{ id: 99 }] : []) as never);
+    vi.mocked(db.getDealIdsWithOpenCrmTasks).mockResolvedValueOnce(new Set([2]));
     const r = await runStaleDealCheck(NOW);
     expect(r).toEqual({ checked: 3, stale: 2, cleared: 1, tasksCreated: 1 });
     expect(db.setCrmDealsStale).toHaveBeenCalledWith([1, 2], true);
     expect(db.setCrmDealsStale).toHaveBeenCalledWith([3], false);
     expect(db.createCrmTask).toHaveBeenCalledTimes(1);
     expect(db.createCrmTask).toHaveBeenCalledWith(expect.objectContaining({ dealId: 1, type: "follow_up", assignedTo: 42, companyId: 7 }));
+    // Open-task membership is fetched once for all stale deals, not per deal.
+    expect(db.getDealIdsWithOpenCrmTasks).toHaveBeenCalledTimes(1);
+    expect(db.getDealIdsWithOpenCrmTasks).toHaveBeenCalledWith([1, 2]);
+    expect(db.getOpenCrmTasksForDeal).not.toHaveBeenCalled();
+  });
+
+  it("contact activity from before the deal existed does not keep it fresh", async () => {
+    vi.mocked(db.getCrmDeals).mockResolvedValueOnce([{ ...base, id: 4, createdAt: new Date("2026-09-20T00:00:00Z") }] as never);
+    vi.mocked(db.getCrmDealLastActivity).mockResolvedValueOnce(new Map([[4, new Date("2026-07-01T00:00:00Z")]]));
+    const r = await runStaleDealCheck(NOW);
+    expect(r.stale).toBe(0); // 9 days since creation < 21
   });
 });
 
@@ -425,5 +450,154 @@ describe("CSV import", () => {
     expect(db.updateCrmContact).toHaveBeenCalledWith(8, expect.objectContaining({ organization: "Acme Foods", accountId: 300 }));
     expect(r).toMatchObject({ created: 1, updated: 1, invalid: 1, accountsCreated: 2 });
     expect(r.skipped).toBe(2); // in-file duplicate + out-of-scope match
+  });
+});
+
+describe("entity consistency (review fixes)", () => {
+  const acct = (id: number, companyId: number | null, parentAccountId: number | null = null) => ({ id, companyId, name: `A${id}`, parentAccountId });
+
+  it("moveDealStage refuses a loss reason from another entity and stamps / clears outcome timestamps", async () => {
+    vi.mocked(db.getCrmLossReasonById).mockResolvedValue({ id: 9, companyId: 99, name: "Theirs", isActive: true } as never);
+    await expect(moveDealStage({ id: 5, stage: "closed_lost", lossReasonId: 9 }, entity, 42)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    vi.mocked(db.getCrmLossReasonById).mockResolvedValue({ id: 4, companyId: null, name: "Price", isActive: false } as never);
+    await expect(moveDealStage({ id: 5, stage: "closed_lost", lossReasonId: 4 }, entity, 42)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(db.updateCrmDeal).not.toHaveBeenCalled();
+
+    const now = new Date("2026-09-29T00:00:00Z");
+    vi.mocked(db.getCrmDealById).mockResolvedValue({ ...deal, status: "won", stage: "closed_won", wonAt: now } as never);
+    await moveDealStage({ id: 5, stage: "proposal" }, entity, 42, now);
+    expect(db.updateCrmDeal).toHaveBeenCalledWith(5, expect.objectContaining({ status: "open", wonAt: null, lostAt: null }));
+  });
+
+  it("createDeal / updateDeal refuse an account or contact from another entity", async () => {
+    vi.mocked(db.getCrmContactById).mockResolvedValue({ id: 3, companyId: 7, fullName: "Jane", accountId: null } as never);
+    vi.mocked(db.getCrmAccountById).mockResolvedValue(acct(12, 8) as never);
+    const both: Scope = { mode: "entity", companyIds: [7, 8] };
+    await expect(createDeal({ pipelineId: 1, contactId: 3, stage: "discovery", accountId: 12 }, both, { id: 42, companyId: 7 }))
+      .rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(db.createCrmDeal).not.toHaveBeenCalled();
+    await expect(updateDeal(5, { accountId: 12 }, both)).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    vi.mocked(db.getCrmContactById).mockResolvedValue({ id: 4, companyId: 8, fullName: "Bob" } as never);
+    await expect(updateDeal(5, { contactId: 4 }, both)).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(db.updateCrmDeal).not.toHaveBeenCalled();
+  });
+
+  it("createDeal ignores a contact's default account from another entity", async () => {
+    vi.mocked(db.getCrmContactById).mockResolvedValue({ id: 3, companyId: 7, fullName: "Jane", organization: "ACME", accountId: 12 } as never);
+    vi.mocked(db.getCrmAccountById).mockResolvedValue(acct(12, 8) as never);
+    await createDeal({ pipelineId: 1, contactId: 3, stage: "discovery" }, global, { id: 42, companyId: 7 });
+    expect(db.createCrmDeal).toHaveBeenCalledWith(expect.objectContaining({ accountId: null, name: "ACME" }));
+  });
+
+  it("updateDeal stamps won/lost timestamps and clears them on reopen", async () => {
+    const now = new Date("2026-09-29T00:00:00Z");
+    await updateDeal(5, { status: "won" }, entity, now);
+    expect(db.updateCrmDeal).toHaveBeenLastCalledWith(5, { status: "won", wonAt: now, lostAt: null });
+    vi.mocked(db.getCrmDealById).mockResolvedValue({ ...deal, status: "lost", lossReasonId: 2 } as never);
+    await updateDeal(5, { status: "open" }, entity, now);
+    expect(db.updateCrmDeal).toHaveBeenLastCalledWith(5, { status: "open", wonAt: null, lostAt: null });
+  });
+
+  it("deal committee members must be in the deal's entity", async () => {
+    vi.mocked(db.getCrmContactById).mockResolvedValue({ id: 4, companyId: 8, fullName: "Bob" } as never);
+    await expect(addDealContact({ dealId: 5, contactId: 4 }, global)).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(db.upsertCrmDealContact).not.toHaveBeenCalled();
+  });
+
+  it("accounts: merge refuses another entity's duplicate; parents must share the child's entity; children are scope-filtered", async () => {
+    const rows: Record<number, ReturnType<typeof acct>> = { 1: acct(1, 7), 2: acct(2, 8), 3: acct(3, 7, 1) };
+    vi.mocked(db.getCrmAccountById).mockImplementation(async (id: number) => rows[id] as never);
+    await expect(mergeAccounts(1, [2], global)).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(db.mergeCrmAccounts).not.toHaveBeenCalled();
+    await expect(createAccount({ name: "School", parentAccountId: 2 }, global, { companyId: 7 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(createAccount({ name: "School", parentAccountId: 1 }, global, { companyId: 7 })).resolves.toBe(300);
+    vi.mocked(db.getCrmAccountChildren).mockResolvedValueOnce([acct(3, 7, 1), acct(4, 99, 1), acct(5, 8, 1)] as never);
+    expect((await listAccountChildren(1, { mode: "entity", companyIds: [7, 8] })).map((c) => c.id)).toEqual([3]);
+  });
+
+  it("account detail totals come from the full subtree and lists report truncation", async () => {
+    vi.mocked(db.getCrmAccountById).mockResolvedValue(acct(1, 7) as never);
+    const many = Array.from({ length: 80 }, (_, i) => i + 100);
+    vi.mocked(db.getCrmAccountDescendantIds).mockResolvedValueOnce(many);
+    vi.mocked(db.getCrmAccountRollup).mockResolvedValueOnce({ contactCount: 900, openDealCount: 120, openDealAmount: 5000 });
+    vi.mocked(db.getCrmContactsForAccounts).mockResolvedValueOnce(Array.from({ length: 3 }, (_, i) => ({ id: i, companyId: 7 })) as never);
+    const d = await getAccountDetail(1, entity, { limit: 2 });
+    expect(db.getCrmAccountDescendantIds).toHaveBeenCalledWith(1, 7);
+    expect(vi.mocked(db.getCrmAccountRollup).mock.calls[0][0]).toHaveLength(81);
+    expect(d.rollup).toEqual({ descendantCount: 80, contactCount: 900, openDealCount: 120, openDealAmount: 5000 });
+    expect(d.contacts).toHaveLength(2);
+    expect(d.hasMore).toEqual({ contacts: true, deals: false, timeline: false });
+  });
+
+  it("stage reorder rejects repeated ids", async () => {
+    await expect(reorderPipelineStages(1, [10, 10, 12, 13], global)).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(db.reorderCrmPipelineStages).not.toHaveBeenCalled();
+    await reorderPipelineStages(1, [13, 12, 11, 10], global);
+    expect(db.reorderCrmPipelineStages).toHaveBeenCalledWith(1, [13, 12, 11, 10]);
+  });
+});
+
+describe("tasks: links and assignees (review fixes)", () => {
+  it("rejects links from different entities on create and on update (effective links)", async () => {
+    vi.mocked(db.getCrmContactById).mockResolvedValue({ id: 4, companyId: 8, fullName: "Bob", accountId: null } as never);
+    await expect(createTask({ title: "x", dealId: 5, contactId: 4 }, global, { id: 42, companyId: 7 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    vi.mocked(db.getCrmTaskById).mockResolvedValue({ id: 9, companyId: 7, dealId: 5, contactId: 3, accountId: null, assignedTo: 42 } as never);
+    // Only contactId changes, but the kept dealId (entity 7) still counts.
+    await expect(updateTask(9, { contactId: 4 }, global)).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(db.updateCrmTask).not.toHaveBeenCalled();
+  });
+
+  it("update writes the derived entity and links together", async () => {
+    vi.mocked(db.getCrmTaskById).mockResolvedValue({ id: 9, companyId: 7, dealId: 5, contactId: 3, accountId: null, assignedTo: 42 } as never);
+    vi.mocked(db.getCrmContactById).mockResolvedValue({ id: 4, companyId: 8, fullName: "Bob", accountId: null } as never);
+    vi.mocked(db.getUserById).mockResolvedValue({ id: 42, role: "sales", regionScope: "global", companyId: null } as never);
+    await updateTask(9, { dealId: null, contactId: 4 }, global);
+    expect(db.updateCrmTask).toHaveBeenCalledWith(9, expect.objectContaining({ companyId: 8, dealId: null, contactId: 4, accountId: null }));
+  });
+
+  it("an assignee must be an internal user who can see the task's entity", async () => {
+    vi.mocked(db.getCrmContactById).mockResolvedValue({ id: 3, companyId: 7, fullName: "Jane", accountId: null } as never);
+    vi.mocked(db.getUserById).mockImplementation(async (id: number) => ({
+      60: { id: 60, role: "sales", regionScope: "entity", companyId: 1 },
+      61: { id: 61, role: "vendor", regionScope: "global", companyId: null },
+      62: { id: 62, role: "sales", regionScope: "entity", companyId: 7 },
+    } as Record<number, unknown>)[id] as never);
+    await expect(createTask({ title: "x", dealId: 5, assignedTo: 60 }, global, { id: 42, companyId: 7 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(createTask({ title: "x", dealId: 5, assignedTo: 61 }, global, { id: 42, companyId: 7 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(createTask({ title: "x", dealId: 5, assignedTo: 999 }, global, { id: 42, companyId: 7 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await createTask({ title: "x", dealId: 5, assignedTo: 62 }, global, { id: 42, companyId: 7 });
+    expect(db.createCrmTask).toHaveBeenCalledTimes(1);
+    vi.mocked(db.getCrmTaskById).mockResolvedValue({ id: 9, companyId: 7, dealId: 5, contactId: 3, accountId: null, assignedTo: 42 } as never);
+    await expect(updateTask(9, { assignedTo: 60 }, global)).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("reminders skip tasks the assignee can no longer see", async () => {
+    const NOW = new Date("2026-09-29T15:00:00Z");
+    vi.mocked(db.getCrmTasksDueForReminder).mockResolvedValue([
+      { id: 1, title: "A", type: "call", dueAt: NOW, assignedTo: 60, companyId: 7 },
+      { id: 2, title: "B", type: "call", dueAt: NOW, assignedTo: 60, companyId: 1 },
+    ] as never);
+    vi.mocked(db.getUserById).mockResolvedValue({ id: 60, name: "S", email: "s@x.co", role: "sales", regionScope: "entity", companyId: 1 } as never);
+    const r = await sendCrmTaskReminders(NOW);
+    expect(r).toMatchObject({ sent: 1, skipped: 1 });
+    expect(db.markCrmTasksReminded).toHaveBeenCalledWith([2], NOW);
+  });
+});
+
+describe("CSV import limits + scoring (review fixes)", () => {
+  it("rejects files over the row limit instead of silently truncating", async () => {
+    const csv = ["Email", ...Array.from({ length: 5001 }, (_, i) => `u${i}@x.org`)].join("\n");
+    await expect(importPreview({ csv }, global)).rejects.toMatchObject({ code: "PAYLOAD_TOO_LARGE" });
+  });
+
+  it("recomputes lead scores for created contacts", async () => {
+    const csv = "Name,Email\nAna Diaz,ana@x.org";
+    vi.mocked(db.getCrmContactById).mockResolvedValue({ id: 400, contactType: "lead", leadScore: 0, accountId: null } as never);
+    vi.mocked(db.getCrmContactLastInteractionAt).mockResolvedValue(null);
+    vi.mocked(db.getCrmDeals).mockResolvedValue([] as never);
+    vi.mocked(db.findCrmContactMatch).mockResolvedValue(undefined);
+    const r = await importCommit({ csv, mapping: { 0: "fullName", 1: "email" } }, global, { id: 42, companyId: 7 });
+    expect(r).toMatchObject({ created: 1 });
+    expect(db.updateCrmContact).toHaveBeenCalledWith(400, { leadScore: 10 });
   });
 });

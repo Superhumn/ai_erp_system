@@ -40,6 +40,11 @@ export function crmScopeCompanyIds(scope: Scope): number[] | null {
   return scopeCompanyIds(scope);
 }
 
+/** NULL-safe entity equality for records linked together. */
+export function sameCompany(a: number | null | undefined, b: number | null | undefined): boolean {
+  return (a ?? null) === (b ?? null);
+}
+
 /** Whether a scoped list query can return nothing at all and should skip the DB. */
 export function scopeIsEmpty(companyIds: number[] | null | undefined): boolean {
   return Array.isArray(companyIds) && companyIds.length === 0;
@@ -58,6 +63,8 @@ export interface StageLike {
   isWon: boolean;
   isLost: boolean;
   rottingDays?: number | null;
+  /** Owning pipeline; stage names are only unique within one pipeline. */
+  pipelineId?: number | null;
 }
 
 /** Parses crm_pipelines.stages (a JSON string array); tolerates junk. */
@@ -112,6 +119,42 @@ export function findStage<T extends { name: string }>(stages: T[], stageName: st
 }
 
 /**
+ * Stage row for a deal: matched on (pipelineId, name) — two pipelines can both
+ * have a "proposal" stage with different defaults. Rows or deals without a
+ * pipelineId fall back to a name-only match.
+ */
+export function findStageInPipeline<T extends { name: string; pipelineId?: number | null }>(
+  stages: T[],
+  pipelineId: number | null | undefined,
+  stageName: string,
+): T | undefined {
+  const candidates = pipelineId == null ? stages : stages.filter((s) => s.pipelineId == null || s.pipelineId === pipelineId);
+  return findStage(candidates, stageName);
+}
+
+/** True when every id appears once (no repeats). */
+export function idsAreUnique(ids: number[]): boolean {
+  return new Set(ids).size === ids.length;
+}
+
+/**
+ * Won/lost timestamps for a status transition, so every path (move, close,
+ * update) agrees: entering won stamps wonAt and clears lostAt, entering lost
+ * the reverse, reopening clears both. No change -> empty patch.
+ */
+export function outcomeTimestamps(
+  prevStatus: string | null | undefined,
+  nextStatus: string | null | undefined,
+  now: Date = new Date(),
+): { wonAt?: Date | null; lostAt?: Date | null } {
+  if (!nextStatus || nextStatus === prevStatus) return {};
+  if (nextStatus === "won") return { wonAt: now, lostAt: null };
+  if (nextStatus === "lost") return { lostAt: now, wonAt: null };
+  if (prevStatus === "won" || prevStatus === "lost") return { wonAt: null, lostAt: null };
+  return {};
+}
+
+/**
  * Probability to store when a deal moves stage: the caller's explicit value
  * wins; otherwise the target stage's default; otherwise the deal's current
  * value is kept (undefined = leave unchanged).
@@ -152,6 +195,7 @@ export function dealIsRotting(
 
 export interface ForecastDeal {
   id: number;
+  pipelineId?: number | null;
   stage: string;
   status: string;
   amount: string | number | null;
@@ -200,7 +244,7 @@ export function computeForecast(deals: ForecastDeal[], stages: StageLike[] = [])
   for (const deal of deals) {
     if (deal.status !== "open") continue;
     const amount = Number(deal.amount ?? 0) || 0;
-    const stage = findStage(stages, deal.stage);
+    const stage = findStageInPipeline(stages, deal.pipelineId, deal.stage);
     const p = typeof deal.probability === "number" ? deal.probability : stage?.defaultProbability ?? 0;
     const weighted = amount * Math.max(0, Math.min(100, p)) / 100;
     totalOpen += amount;
@@ -247,14 +291,15 @@ export function closeDealPatch(
   outcome: "won" | "lost",
   opts: { lossReasonId?: number | null; note?: string | null; wonStage?: string; lostStage?: string },
   now: Date = new Date(),
-): { status: "won" | "lost"; probability: number; wonAt?: Date; lostAt?: Date; lossReasonId?: number | null; lostReason?: string | null; wonReason?: string | null; stage?: string } {
+): { status: "won" | "lost"; probability: number; wonAt?: Date | null; lostAt?: Date | null; lossReasonId?: number | null; lostReason?: string | null; wonReason?: string | null; stage?: string } {
   if (outcome === "won") {
-    return { status: "won", probability: 100, wonAt: now, lossReasonId: null, lostReason: null, wonReason: opts.note?.trim() ? opts.note.trim().slice(0, 500) : null, ...(opts.wonStage ? { stage: opts.wonStage } : {}) };
+    return { status: "won", probability: 100, wonAt: now, lostAt: null, lossReasonId: null, lostReason: null, wonReason: opts.note?.trim() ? opts.note.trim().slice(0, 500) : null, ...(opts.wonStage ? { stage: opts.wonStage } : {}) };
   }
   return {
     status: "lost",
     probability: 0,
     lostAt: now,
+    wonAt: null,
     lossReasonId: opts.lossReasonId ?? null,
     lostReason: opts.note?.trim() ? opts.note.trim().slice(0, 255) : null,
     wonReason: null,
@@ -403,7 +448,12 @@ export function dealStaleReason(
   now: Date = new Date(),
 ): StaleReason | null {
   if (deal.status !== "open") return null;
-  if (dealIsRotting(lastActivityAt ?? deal.createdAt, rottingDays, now)) return "idle";
+  // Interactions with the contact from before this deal existed don't count
+  // as activity on it: measure from the later of last activity and creation.
+  const created = new Date(deal.createdAt).getTime();
+  const last = lastActivityAt ? new Date(lastActivityAt).getTime() : NaN;
+  const since = Number.isFinite(last) && (!Number.isFinite(created) || last > created) ? lastActivityAt : deal.createdAt;
+  if (dealIsRotting(since, rottingDays, now)) return "idle";
   if (deal.expectedCloseDate) {
     const close = new Date(deal.expectedCloseDate).getTime();
     if (Number.isFinite(close) && close < startOfUtcDay(now).getTime()) return "past_close";

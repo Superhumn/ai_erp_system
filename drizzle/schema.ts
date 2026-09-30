@@ -4928,7 +4928,10 @@ export const crmInteractions = mysqlTable("crm_interactions", {
 
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (table) => ({
+  // Stale-deal / last-activity aggregates group by deal (migration 0074).
+  relatedDealIdx: index("idx_crm_interactions_related_deal").on(table.relatedDealId, table.createdAt),
+}));
 
 export type CrmInteraction = typeof crmInteractions.$inferSelect;
 export type InsertCrmInteraction = typeof crmInteractions.$inferInsert;
@@ -5090,8 +5093,9 @@ export const crmDealStageHistory = mysqlTable("crm_deal_stage_history", {
   id: int("id").autoincrement().primaryKey(),
   companyId: int("companyId"),
   dealId: int("dealId").notNull(),
-  fromStage: varchar("fromStage", { length: 64 }),
-  toStage: varchar("toStage", { length: 64 }).notNull(),
+  // 128 = crm_pipeline_stages.name length, so any stage name fits.
+  fromStage: varchar("fromStage", { length: 128 }),
+  toStage: varchar("toStage", { length: 128 }).notNull(),
   changedAt: timestamp("changedAt").defaultNow().notNull(),
   changedBy: int("changedBy"),
 });

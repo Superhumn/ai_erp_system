@@ -13392,6 +13392,9 @@ async function deleteCrmContactsCascading(tx: any, ids: number[]) {
   await tx.delete(crmInteractions).where(inArray(crmInteractions.contactId, ids));
   await tx.delete(crmDealContacts).where(inArray(crmDealContacts.contactId, ids));
   await tx.update(crmTasks).set({ contactId: null }).where(inArray(crmTasks.contactId, ids));
+  // Deals owned by these contacts go too — with their child rows.
+  const dealIds: number[] = (await tx.select({ id: crmDeals.id }).from(crmDeals).where(inArray(crmDeals.contactId, ids))).map((r: { id: number }) => r.id);
+  await deleteCrmDealChildren(tx, dealIds);
   await tx.delete(crmDeals).where(inArray(crmDeals.contactId, ids));
   await tx.update(marketingEngagements).set({ contactId: null }).where(inArray(marketingEngagements.contactId, ids));
   await tx.update(influencers).set({ crmContactId: null }).where(inArray(influencers.crmContactId, ids));
@@ -13794,23 +13797,69 @@ export async function getCrmDealStageHistoryForDeals(dealIds: number[]) {
   return db.select().from(crmDealStageHistory).where(inArray(crmDealStageHistory.dealId, dealIds)).orderBy(crmDealStageHistory.changedAt, crmDealStageHistory.id);
 }
 
-/** Most recent interaction time per deal: interactions linked to the deal, or to its contact. */
+/**
+ * Most recent interaction time per deal: interactions linked to the deal, or
+ * to its contact. Two grouped aggregates per batch of 500 deals (by
+ * relatedDealId — indexed in 0074 — and by contactId), merged in memory,
+ * instead of a correlated MAX with an OR per deal.
+ */
 export async function getCrmDealLastActivity(dealIds: number[]): Promise<Map<number, Date>> {
   const db = await getDb();
   const out = new Map<number, Date>();
   if (!db || dealIds.length === 0) return out;
-  const rows = await db
-    .select({
-      dealId: crmDeals.id,
-      last: sql<Date | string | null>`(SELECT MAX(i.createdAt) FROM ${crmInteractions} i WHERE i.relatedDealId = ${crmDeals.id} OR i.contactId = ${crmDeals.contactId})`,
-    })
-    .from(crmDeals)
-    .where(inArray(crmDeals.id, dealIds));
-  for (const r of rows) {
-    if (r.last) {
-      const d = new Date(r.last);
-      if (Number.isFinite(d.getTime())) out.set(r.dealId, d);
+  const toDate = (v: Date | string | null): Date | null => {
+    if (!v) return null;
+    const d = new Date(v);
+    return Number.isFinite(d.getTime()) ? d : null;
+  };
+  const bump = (dealId: number, d: Date | null) => {
+    if (!d) return;
+    const cur = out.get(dealId);
+    if (!cur || d > cur) out.set(dealId, d);
+  };
+  for (let i = 0; i < dealIds.length; i += 500) {
+    const chunk = dealIds.slice(i, i + 500);
+    const deals = await db.select({ id: crmDeals.id, contactId: crmDeals.contactId }).from(crmDeals).where(inArray(crmDeals.id, chunk));
+    const byDeal = await db
+      .select({ dealId: crmInteractions.relatedDealId, last: sql<Date | string | null>`MAX(${crmInteractions.createdAt})` })
+      .from(crmInteractions)
+      .where(inArray(crmInteractions.relatedDealId, chunk))
+      .groupBy(crmInteractions.relatedDealId);
+    for (const r of byDeal) if (r.dealId != null) bump(r.dealId, toDate(r.last));
+    const contactIds = [...new Set(deals.map((d) => d.contactId))];
+    if (contactIds.length) {
+      const byContact = await db
+        .select({ contactId: crmInteractions.contactId, last: sql<Date | string | null>`MAX(${crmInteractions.createdAt})` })
+        .from(crmInteractions)
+        .where(inArray(crmInteractions.contactId, contactIds))
+        .groupBy(crmInteractions.contactId);
+      const lastByContact = new Map(byContact.map((r) => [r.contactId, toDate(r.last)]));
+      for (const d of deals) bump(d.id, lastByContact.get(d.contactId) ?? null);
     }
+  }
+  return out;
+}
+
+/** Child rows of deals being deleted: items, stage history, committee links; tasks are unlinked. */
+async function deleteCrmDealChildren(tx: any, dealIds: number[]) {
+  if (dealIds.length === 0) return;
+  await tx.delete(crmDealItems).where(inArray(crmDealItems.dealId, dealIds));
+  await tx.delete(crmDealStageHistory).where(inArray(crmDealStageHistory.dealId, dealIds));
+  await tx.delete(crmDealContacts).where(inArray(crmDealContacts.dealId, dealIds));
+  await tx.update(crmTasks).set({ dealId: null }).where(inArray(crmTasks.dealId, dealIds));
+}
+
+/** Deal ids (among `dealIds`) that have at least one open task. */
+export async function getDealIdsWithOpenCrmTasks(dealIds: number[]): Promise<Set<number>> {
+  const db = await getDb();
+  const out = new Set<number>();
+  if (!db || dealIds.length === 0) return out;
+  for (let i = 0; i < dealIds.length; i += 1000) {
+    const rows = await db
+      .selectDistinct({ dealId: crmTasks.dealId })
+      .from(crmTasks)
+      .where(and(inArray(crmTasks.dealId, dealIds.slice(i, i + 1000)), isNull(crmTasks.completedAt)));
+    for (const r of rows) if (r.dealId != null) out.add(r.dealId);
   }
   return out;
 }
@@ -14013,12 +14062,13 @@ export async function getOpenCrmTasksForDeal(dealId: number, since?: Date) {
 }
 
 /**
- * Open, assigned tasks due (or overdue) by `dueBefore` — or whose explicit
- * reminderAt has passed — that have never been reminded. Used by the daily
- * reminder email, which sets reminderSentAt so each task is emailed once
- * (moving dueAt clears reminderSentAt; see crmService.updateTask).
+ * Open, assigned tasks that have never been reminded and are either due by
+ * `dueBefore` (the caller passes end of the current UTC day) or whose
+ * explicit reminderAt has passed `now` (the current instant). Used by the
+ * daily reminder email, which sets reminderSentAt so each task is emailed
+ * once (moving dueAt / reminderAt clears it; see crmService.updateTask).
  */
-export async function getCrmTasksDueForReminder(dueBefore: Date) {
+export async function getCrmTasksDueForReminder(dueBefore: Date, now: Date) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(crmTasks).where(and(
@@ -14027,7 +14077,7 @@ export async function getCrmTasksDueForReminder(dueBefore: Date) {
     sql`${crmTasks.assignedTo} IS NOT NULL`,
     or(
       and(sql`${crmTasks.dueAt} IS NOT NULL`, lte(crmTasks.dueAt, dueBefore))!,
-      and(sql`${crmTasks.reminderAt} IS NOT NULL`, lte(crmTasks.reminderAt, dueBefore))!,
+      and(sql`${crmTasks.reminderAt} IS NOT NULL`, lte(crmTasks.reminderAt, now))!,
     )!,
   )).orderBy(asc(crmTasks.assignedTo), asc(crmTasks.dueAt));
 }
@@ -14123,10 +14173,7 @@ export async function deleteCrmDeal(id: number) {
   const db = await getDb();
   if (!db) return;
   await db.transaction(async (tx) => {
-    await tx.delete(crmDealItems).where(eq(crmDealItems.dealId, id));
-    await tx.delete(crmDealContacts).where(eq(crmDealContacts.dealId, id));
-    await tx.delete(crmDealStageHistory).where(eq(crmDealStageHistory.dealId, id));
-    await tx.update(crmTasks).set({ dealId: null }).where(eq(crmTasks.dealId, id));
+    await deleteCrmDealChildren(tx, [id]);
     await tx.delete(crmDeals).where(eq(crmDeals.id, id));
   });
 }
@@ -14234,6 +14281,13 @@ export async function mergeCrmDeals(primaryId: number, duplicateIds: number[]) {
     await tx.update(crmDealItems).set({ dealId: primaryId }).where(inArray(crmDealItems.dealId, ids));
     await tx.delete(crmDealContacts).where(inArray(crmDealContacts.dealId, ids));
     await tx.delete(crmDeals).where(inArray(crmDeals.id, ids));
+    // With items, a deal's amount is the sum of its line totals — recompute
+    // over the combined set so the primary never shows a stale amount.
+    const items = await tx.select({ totalAmount: crmDealItems.totalAmount }).from(crmDealItems).where(eq(crmDealItems.dealId, primaryId));
+    if (items.length > 0) {
+      const sumCents = items.reduce((acc, it) => acc + Math.round((Number(it.totalAmount ?? 0) || 0) * 100), 0);
+      await tx.update(crmDeals).set({ amount: (sumCents / 100).toFixed(2) }).where(eq(crmDeals.id, primaryId));
+    }
   });
 
   return { merged: ids.length };
@@ -14413,6 +14467,90 @@ export async function getCrmAccountChildren(accountId: number) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(crmAccounts).where(eq(crmAccounts.parentAccountId, accountId)).orderBy(crmAccounts.name);
+}
+
+/**
+ * Every descendant of `rootId` (children, grandchildren, …) that belongs to
+ * `companyId` (NULL-safe) — one query per tree level, no size cap. Cycles
+ * are cut by the visited set.
+ */
+export async function getCrmAccountDescendantIds(rootId: number, companyId: number | null): Promise<number[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const seen = new Set<number>([rootId]);
+  const out: number[] = [];
+  let frontier = [rootId];
+  while (frontier.length) {
+    const next: number[] = [];
+    for (let i = 0; i < frontier.length; i += 1000) {
+      const rows = await db
+        .select({ id: crmAccounts.id })
+        .from(crmAccounts)
+        .where(and(
+          inArray(crmAccounts.parentAccountId, frontier.slice(i, i + 1000)),
+          companyId == null ? isNull(crmAccounts.companyId) : eq(crmAccounts.companyId, companyId),
+        ));
+      for (const r of rows) {
+        if (seen.has(r.id)) continue;
+        seen.add(r.id);
+        out.push(r.id);
+        next.push(r.id);
+      }
+    }
+    frontier = next;
+  }
+  return out;
+}
+
+/** Contact count and open-deal count / amount across a set of accounts (aggregate queries, batched). */
+export async function getCrmAccountRollup(accountIds: number[]) {
+  const db = await getDb();
+  const out = { contactCount: 0, openDealCount: 0, openDealAmount: 0 };
+  if (!db || accountIds.length === 0) return out;
+  for (let i = 0; i < accountIds.length; i += 1000) {
+    const chunk = accountIds.slice(i, i + 1000);
+    const [c] = await db.select({ n: count() }).from(crmContacts).where(inArray(crmContacts.accountId, chunk));
+    const [d] = await db
+      .select({ n: count(), total: sum(crmDeals.amount) })
+      .from(crmDeals)
+      .where(and(inArray(crmDeals.accountId, chunk), eq(crmDeals.status, "open")));
+    out.contactCount += Number(c?.n ?? 0);
+    out.openDealCount += Number(d?.n ?? 0);
+    out.openDealAmount += Number(d?.total ?? 0) || 0;
+  }
+  out.openDealAmount = Math.round(out.openDealAmount * 100) / 100;
+  return out;
+}
+
+/** Contacts on any of `accountIds`, newest first, paged. */
+export async function getCrmContactsForAccounts(accountIds: number[], limit: number, offset = 0) {
+  const db = await getDb();
+  if (!db || accountIds.length === 0) return [];
+  return db.select().from(crmContacts).where(inArray(crmContacts.accountId, accountIds))
+    .orderBy(desc(crmContacts.createdAt), desc(crmContacts.id)).limit(limit).offset(offset);
+}
+
+/** Deals on any of `accountIds`, newest first, paged. */
+export async function getCrmDealsForAccounts(accountIds: number[], limit: number, offset = 0) {
+  const db = await getDb();
+  if (!db || accountIds.length === 0) return [];
+  return db.select().from(crmDeals).where(inArray(crmDeals.accountId, accountIds))
+    .orderBy(desc(crmDeals.createdAt), desc(crmDeals.id)).limit(limit).offset(offset);
+}
+
+/** Interactions of contacts on any of `accountIds`, newest first, paged (one join query). */
+export async function getCrmInteractionsForAccounts(accountIds: number[], limit: number, offset = 0) {
+  const db = await getDb();
+  if (!db || accountIds.length === 0) return [];
+  const rows = await db
+    .select({ interaction: crmInteractions })
+    .from(crmInteractions)
+    .innerJoin(crmContacts, eq(crmContacts.id, crmInteractions.contactId))
+    .where(inArray(crmContacts.accountId, accountIds))
+    .orderBy(desc(crmInteractions.createdAt), desc(crmInteractions.id))
+    .limit(limit)
+    .offset(offset);
+  return rows.map((r) => r.interaction);
 }
 
 /**

@@ -25,6 +25,7 @@ export function ReportsPanel({ pipelineId, onOpenDeal }: { pipelineId?: number; 
 
   return (
     <div className="space-y-3">
+      <p className="text-[11px] text-muted-foreground">{pipelineId ? "One pipeline" : "All pipelines"} · deals in your entity scope</p>
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
         <Kpi label="Open pipeline" value={money(forecast.totalOpen)} />
         <Kpi label="Weighted" value={money(forecast.totalWeighted)} />

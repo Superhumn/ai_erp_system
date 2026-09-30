@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { format, isToday, isPast } from "date-fns";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
+import { dueAtFromUtcDate, isOverdueUtc, utcDateInput, utcDueLabel } from "@/lib/crmTasks";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -24,21 +24,6 @@ const TASK_TYPES: { value: TaskType; label: string }[] = [
 ];
 
 const TYPE_ICON: Record<string, typeof Phone> = { call: Phone, email: Mail, meeting: Users, follow_up: CalendarClock, todo: ListTodo };
-
-/** yyyy-MM-dd for a date input, from today + `days`. */
-function dateInput(days = 0): string {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return format(d, "yyyy-MM-dd");
-}
-
-/** A date-input value (local day) as a Date at 17:00 local — "due end of workday". */
-function dueFromInput(v: string): Date | null {
-  if (!v) return null;
-  const [y, m, d] = v.split("-").map(Number);
-  if (!y || !m || !d) return null;
-  return new Date(y, m - 1, d, 17, 0, 0);
-}
 
 /** Tasks tab: today / overdue / upcoming lists for the signed-in user. */
 export function TasksPanel() {
@@ -110,8 +95,9 @@ export function TaskList({ view, filter, compact }: {
       {rows.map((t) => {
         const Icon = TYPE_ICON[t.type] ?? ListTodo;
         const done = !!t.completedAt;
+        // UTC days, matching the server's today / overdue lists and reminders.
         const due = t.dueAt ? new Date(t.dueAt) : null;
-        const overdue = !done && due != null && isPast(due) && !isToday(due);
+        const overdue = isOverdueUtc(due, done);
         return (
           <div key={t.id} className={`flex items-start gap-2 p-2 border rounded-md text-sm ${done ? "opacity-60" : ""}`}>
             <button
@@ -126,7 +112,7 @@ export function TaskList({ view, filter, compact }: {
               <div className={`font-medium break-words ${done ? "line-through" : ""}`}>{t.title}</div>
               <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
                 <span className="inline-flex items-center gap-1"><Icon className="h-3 w-3" />{TASK_TYPES.find((x) => x.value === t.type)?.label ?? t.type}</span>
-                {due && <span className={overdue ? "text-destructive font-medium" : ""}>{isToday(due) ? "Today" : format(due, "MMM d")}</span>}
+                {due && <span className={overdue ? "text-destructive font-medium" : ""} title={`${due.toISOString().slice(0, 10)} (UTC)`}>{utcDueLabel(due)}</span>}
                 {t.notes && <span className="truncate max-w-[220px]">{t.notes}</span>}
               </div>
             </div>
@@ -151,7 +137,7 @@ export function QuickAddTask({ contactId, dealId, accountId, label = "Add task" 
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [type, setType] = useState<TaskType>("call");
-  const [due, setDue] = useState(dateInput(1));
+  const [due, setDue] = useState(() => utcDateInput(1));
   const [notes, setNotes] = useState("");
   const create = trpc.crm.tasks.create.useMutation({
     onSuccess: () => {
@@ -159,7 +145,7 @@ export function QuickAddTask({ contactId, dealId, accountId, label = "Add task" 
       setOpen(false);
       setTitle("");
       setNotes("");
-      setDue(dateInput(1));
+      setDue(utcDateInput(1));
       utils.crm.tasks.list.invalidate();
     },
     onError: (e) => toast.error(e.message),
@@ -189,13 +175,13 @@ export function QuickAddTask({ contactId, dealId, accountId, label = "Add task" 
                 </Select>
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Due</Label>
+                <Label className="text-xs">Due (UTC day)</Label>
                 <Input type="date" value={due} onChange={(e) => setDue(e.target.value)} />
               </div>
             </div>
             <div className="flex flex-wrap gap-1">
               {[["Today", 0], ["Tomorrow", 1], ["In 3 days", 3], ["Next week", 7]].map(([l, d]) => (
-                <Badge key={String(l)} variant="outline" className="cursor-pointer text-[11px]" onClick={() => setDue(dateInput(Number(d)))}>{l}</Badge>
+                <Badge key={String(l)} variant="outline" className="cursor-pointer text-[11px]" onClick={() => setDue(utcDateInput(Number(d)))}>{l}</Badge>
               ))}
             </div>
             <div className="space-y-1">
@@ -207,7 +193,7 @@ export function QuickAddTask({ contactId, dealId, accountId, label = "Add task" 
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
             <Button
               disabled={!title.trim() || create.isPending}
-              onClick={() => create.mutate({ title: title.trim(), type, dueAt: dueFromInput(due), notes: notes || null, contactId, dealId, accountId })}
+              onClick={() => create.mutate({ title: title.trim(), type, dueAt: dueAtFromUtcDate(due), notes: notes || null, contactId, dealId, accountId })}
             >
               {create.isPending ? "Adding…" : "Add task"}
             </Button>

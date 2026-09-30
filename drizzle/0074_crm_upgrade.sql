@@ -55,8 +55,8 @@ CREATE TABLE IF NOT EXISTS `crm_deal_stage_history` (
   `id` int AUTO_INCREMENT NOT NULL,
   `companyId` int,
   `dealId` int NOT NULL,
-  `fromStage` varchar(64),
-  `toStage` varchar(64) NOT NULL,
+  `fromStage` varchar(128),
+  `toStage` varchar(128) NOT NULL,
   `changedAt` timestamp NOT NULL DEFAULT (now()),
   `changedBy` int,
   CONSTRAINT `crm_deal_stage_history_id` PRIMARY KEY(`id`),
@@ -176,6 +176,15 @@ BEGIN
   IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'crm_deals')
      AND NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'crm_deals' AND COLUMN_NAME = 'isStale') THEN
     ALTER TABLE `crm_deals` ADD COLUMN `isStale` boolean NOT NULL DEFAULT false AFTER `wonReason`;
+  END IF;
+  -- Stage names are up to 128 chars; widen history created by an earlier draft of this migration.
+  IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'crm_deal_stage_history' AND COLUMN_NAME = 'toStage' AND CHARACTER_MAXIMUM_LENGTH < 128) THEN
+    ALTER TABLE `crm_deal_stage_history` MODIFY `fromStage` varchar(128), MODIFY `toStage` varchar(128) NOT NULL;
+  END IF;
+  -- Last-activity aggregates group interactions by deal.
+  IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'crm_interactions')
+     AND NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'crm_interactions' AND INDEX_NAME = 'idx_crm_interactions_related_deal') THEN
+    CREATE INDEX `idx_crm_interactions_related_deal` ON `crm_interactions` (`relatedDealId`, `createdAt`);
   END IF;
 END;
 --> statement-breakpoint

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -45,10 +45,27 @@ export function ContactImportDialog({ open, onOpenChange, onImported }: {
   const [updateDuplicates, setUpdateDuplicates] = useState(false);
   const [createAccounts, setCreateAccounts] = useState(true);
 
-  const preview = trpc.crm.contacts.importPreview.useMutation({
-    onSuccess: (r) => { if (!mapping) setMapping(r.mapping as Mapping); },
-    onError: (e) => toast.error(e.message),
-  });
+  const preview = trpc.crm.contacts.importPreview.useMutation();
+  // Each preview request gets a token; only the latest request's result is
+  // kept, so a slow preview of a previous file (or mapping) can never be shown
+  // for — or committed against — the current one.
+  const requestSeq = useRef(0);
+  const [data, setData] = useState<typeof preview.data | null>(null);
+  const runPreview = (input: { csv: string; mapping?: Mapping }) => {
+    const token = ++requestSeq.current;
+    preview.mutateAsync(input).then(
+      (r) => {
+        if (token !== requestSeq.current) return;
+        setData(r);
+        if (!input.mapping) setMapping(r.mapping as Mapping);
+      },
+      (e: unknown) => {
+        if (token !== requestSeq.current) return;
+        setData(null);
+        toast.error(e instanceof Error ? e.message : String(e));
+      },
+    );
+  };
   const commit = trpc.crm.contacts.importCommit.useMutation({
     onSuccess: (r) => {
       toast.success(`Imported ${r.created} new, updated ${r.updated}, skipped ${r.skipped}${r.accountsCreated ? `, ${r.accountsCreated} accounts created` : ""}`);
@@ -60,7 +77,7 @@ export function ContactImportDialog({ open, onOpenChange, onImported }: {
     onError: (e) => toast.error(e.message),
   });
 
-  const reset = () => { setCsv(""); setFileName(""); setMapping(null); preview.reset(); };
+  const reset = () => { requestSeq.current++; setCsv(""); setFileName(""); setMapping(null); setData(null); preview.reset(); };
 
   const onFile = async (file: File | undefined) => {
     if (!file) return;
@@ -69,7 +86,8 @@ export function ContactImportDialog({ open, onOpenChange, onImported }: {
     setCsv(text);
     setFileName(file.name);
     setMapping(null);
-    preview.mutate({ csv: text });
+    setData(null); // never show the previous file's rows under the new name
+    runPreview({ csv: text });
   };
 
   const remap = (idx: number, field: Field | "") => {
@@ -77,10 +95,9 @@ export function ContactImportDialog({ open, onOpenChange, onImported }: {
     // One column per field: clear the field from any other column.
     if (field) for (const k of Object.keys(next)) if (k !== String(idx) && next[k] === field) next[k] = "";
     setMapping(next);
-    preview.mutate({ csv, mapping: next });
+    runPreview({ csv, mapping: next });
   };
 
-  const data = preview.data;
   const statusBadge = (s: string) =>
     s === "new" ? <Badge className="text-[10px]">new</Badge>
       : s === "duplicate" ? <Badge variant="secondary" className="text-[10px]">duplicate</Badge>
@@ -177,7 +194,7 @@ export function ContactImportDialog({ open, onOpenChange, onImported }: {
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button
-            disabled={!data || !mapping || commit.isPending || (data.counts.new === 0 && !(updateDuplicates && data.counts.duplicate > 0))}
+            disabled={!data || !mapping || preview.isPending || commit.isPending || (data.counts.new === 0 && !(updateDuplicates && data.counts.duplicate > 0))}
             onClick={() => mapping && commit.mutate({ csv, mapping, updateDuplicates, createAccounts })}
           >
             {commit.isPending ? "Importing…" : data ? `Import ${data.counts.new} contact${data.counts.new === 1 ? "" : "s"}` : "Import"}

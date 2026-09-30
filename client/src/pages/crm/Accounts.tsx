@@ -149,21 +149,29 @@ export function AccountsPanel() {
                 return (
                   <div
                     key={a.id}
-                    className="grid grid-cols-[1fr_auto] md:grid-cols-[1fr_100px_90px_90px_70px_70px_80px] gap-2 px-2 py-1.5 text-xs hover:bg-muted/50 cursor-pointer items-center"
-                    onClick={() => setSelectedId(a.id)}
+                    className="grid grid-cols-[1fr_auto] md:grid-cols-[1fr_100px_90px_90px_70px_70px_80px] gap-2 px-2 py-1.5 text-xs hover:bg-muted/50 items-center"
                   >
                     <div className="flex items-center gap-1 min-w-0" style={{ paddingLeft: depth * 16 }}>
                       {hasChildren ? (
                         <button
                           type="button"
                           className="p-0.5 rounded hover:bg-muted shrink-0"
-                          onClick={(e) => { e.stopPropagation(); toggle(a.id); }}
-                          aria-label={collapsed.has(a.id) ? "Expand" : "Collapse"}
+                          onClick={() => toggle(a.id)}
+                          aria-label={`${collapsed.has(a.id) ? "Expand" : "Collapse"} ${a.name}`}
+                          aria-expanded={!collapsed.has(a.id)}
                         >
                           {collapsed.has(a.id) ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                         </button>
                       ) : <span className="w-[18px] shrink-0" />}
-                      <span className="font-medium truncate">{a.name}</span>
+                      {/* Keyboard-reachable: Tab to the name, Enter / Space opens the account. */}
+                      <button
+                        type="button"
+                        className="font-medium truncate text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+                        onClick={() => setSelectedId(a.id)}
+                        aria-label={`Open ${a.name}`}
+                      >
+                        {a.name}
+                      </button>
                       {filtering && a.parentName && <span className="text-muted-foreground truncate hidden sm:inline">· {a.parentName}</span>}
                     </div>
                     <div className="md:contents flex items-center gap-2 justify-end text-muted-foreground">
@@ -289,7 +297,9 @@ function AccountDetail({ id, allAccounts, onNavigate, onChanged, onDeleted }: {
   onChanged: () => void;
   onDeleted: () => void;
 }) {
-  const { data, isLoading } = trpc.crm.accounts.get.useQuery({ id });
+  // One page size for the three lists; "Show more" grows it. Totals come from rollup (full subtree).
+  const [limit, setLimit] = useState(50);
+  const { data, isLoading, isFetching } = trpc.crm.accounts.get.useQuery({ id, limit }, { placeholderData: (prev) => prev });
   const [tab, setTab] = useState<"overview" | "contacts" | "deals" | "tasks" | "timeline">("overview");
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<typeof EMPTY_FORM>(EMPTY_FORM);
@@ -331,7 +341,15 @@ function AccountDetail({ id, allAccounts, onNavigate, onChanged, onDeleted }: {
   };
 
   const tabClass = (t: string) => `px-3 py-1.5 text-xs font-medium rounded-md cursor-pointer transition-colors whitespace-nowrap ${tab === t ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`;
-  const allDeals = [...data.deals, ...data.childDeals];
+  const allDeals = data.deals;
+  const more = (shown: number, hasMore: boolean | undefined, label: string) => hasMore ? (
+    <div className="flex items-center justify-between gap-2 pt-1 text-[11px] text-muted-foreground">
+      <span>Showing the latest {shown} {label} — there are more.</span>
+      <Button size="sm" variant="outline" className="h-7 text-xs" disabled={isFetching} onClick={() => setLimit((l) => Math.min(l + 50, 500))}>
+        {isFetching ? "Loading…" : "Show more"}
+      </Button>
+    </div>
+  ) : null;
 
   return (
     <div className="p-4 space-y-4">
@@ -387,8 +405,8 @@ function AccountDetail({ id, allAccounts, onNavigate, onChanged, onDeleted }: {
 
       <div className="flex gap-1 border-b pb-2 overflow-x-auto">
         <button className={tabClass("overview")} onClick={() => setTab("overview")}>Overview</button>
-        <button className={tabClass("contacts")} onClick={() => setTab("contacts")}>Contacts ({data.contacts.length})</button>
-        <button className={tabClass("deals")} onClick={() => setTab("deals")}>Deals ({allDeals.length})</button>
+        <button className={tabClass("contacts")} onClick={() => setTab("contacts")}>Contacts ({data.rollup.contactCount})</button>
+        <button className={tabClass("deals")} onClick={() => setTab("deals")}>Deals ({allDeals.length}{data.hasMore.deals ? "+" : ""})</button>
         <button className={tabClass("tasks")} onClick={() => setTab("tasks")}>Tasks</button>
         <button className={tabClass("timeline")} onClick={() => setTab("timeline")}>Timeline</button>
       </div>
@@ -456,6 +474,7 @@ function AccountDetail({ id, allAccounts, onNavigate, onChanged, onDeleted }: {
                 </div>
               </div>
             ))}
+            {more(data.contacts.length, data.hasMore.contacts, "contacts")}
           </div>
         )
       )}
@@ -472,6 +491,7 @@ function AccountDetail({ id, allAccounts, onNavigate, onChanged, onDeleted }: {
                 <div className="font-semibold tabular-nums">${Number(d.amount ?? 0).toLocaleString()}</div>
               </div>
             ))}
+            {more(allDeals.length, data.hasMore.deals, "deals")}
           </div>
         )
       )}
@@ -490,6 +510,7 @@ function AccountDetail({ id, allAccounts, onNavigate, onChanged, onDeleted }: {
                 <p className="text-sm">{i.subject || i.content || i.summary || "—"}</p>
               </div>
             ))}
+            {more(data.timeline.length, data.hasMore.timeline, "activities")}
           </div>
         )
       )}

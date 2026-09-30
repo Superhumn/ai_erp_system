@@ -51,8 +51,12 @@ import {
   recomputeLeadScoreSafe,
   salesReport,
   updateTask,
+  createAccount,
+  updateAccount,
+  listAccountChildren,
+  updateDeal,
 } from "../crmService";
-import { IMPORT_FIELDS, crmRowVisible, parseStageNames } from "../crmLogic";
+import { IMPORT_FIELDS, crmRowVisible, parseStageNames, sameCompany } from "../crmLogic";
 
 // Every CRM procedure resolves the caller's entity scope up front. Reads filter
 // by it; by-id reads answer NOT_FOUND for rows outside it.
@@ -220,7 +224,12 @@ export const crmRouter = router({
         }))
         .mutation(async ({ input, ctx }) => {
           const fullName = input.fullName || `${input.firstName} ${input.lastName || ""}`.trim();
-          if (input.accountId) await loadScopedAccount(input.accountId, ctx.scope);
+          if (input.accountId) {
+            const account = await loadScopedAccount(input.accountId, ctx.scope);
+            if (!sameCompany(account.companyId, ctx.user.companyId ?? null)) {
+              throw new TRPCError({ code: "BAD_REQUEST", message: "The account belongs to a different entity" });
+            }
+          }
 
           // Skip self: don't let the logged-in user create a contact for themselves.
           const ownEmail = ctx.user.email?.trim().toLowerCase();
@@ -238,6 +247,7 @@ export const crmRouter = router({
             capturedBy: ctx.user.id,
           });
           await createAuditLog(ctx.user.id, created ? 'create' : 'update', 'crm_contact', id, fullName);
+          await recomputeLeadScoreSafe(id);
           return { id, merged: !created };
         }),
 
@@ -276,8 +286,16 @@ export const crmRouter = router({
         .mutation(async ({ input, ctx }) => {
           const { id, ...data } = input;
           const existing = await loadScopedContact(id, ctx.scope);
+          if (data.accountId) {
+            const account = await loadScopedAccount(data.accountId, ctx.scope);
+            if (!sameCompany(account.companyId, existing.companyId)) {
+              throw new TRPCError({ code: "BAD_REQUEST", message: "The account belongs to a different entity than the contact" });
+            }
+          }
           await db.updateCrmContact(id, data);
           await createAuditLog(ctx.user.id, 'update', 'crm_contact', id, existing.fullName, existing, data);
+          // Type / account / reply changes move the score.
+          await recomputeLeadScoreSafe(id);
           return { success: true };
         }),
 
@@ -994,14 +1012,8 @@ export const crmRouter = router({
         }))
         .mutation(async ({ input, ctx }) => {
           const { id, ...data } = input;
-          const existing = await loadScopedDeal(id, ctx.scope);
-          if (data.accountId) await loadScopedAccount(data.accountId, ctx.scope);
-          if (data.contactId) await loadScopedContact(data.contactId, ctx.scope);
-          // Closing as lost always carries a reason (see deals.close).
-          if (data.status === "lost" && existing.status !== "lost" && !(data.lossReasonId ?? existing.lossReasonId)) {
-            throw new TRPCError({ code: "BAD_REQUEST", message: "Pick a loss reason to mark the deal lost" });
-          }
-          await db.updateCrmDeal(id, data);
+          // Same-entity links, loss reason rules and won/lost timestamps live in the service.
+          const existing = await updateDeal(id, data, ctx.scope);
           await createAuditLog(ctx.user.id, 'update', 'crm_deal', id, existing.name, existing, data);
           return { success: true };
         }),
@@ -1238,16 +1250,21 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         }).optional())
         .query(({ input, ctx }) => db.getCrmAccounts({ ...input, companyIds: scopeIds(ctx.scope) })),
 
+      // Rolled-up totals cover the whole sub-account tree; contacts / deals /
+      // timeline are paged (`limit`, per-list offsets) with `hasMore` flags.
       get: scopedInternalProcedure
-        .input(z.object({ id: z.number() }))
-        .query(({ input, ctx }) => getAccountDetail(input.id, ctx.scope)),
+        .input(z.object({
+          id: z.number(),
+          limit: z.number().int().positive().max(500).optional(),
+          contactsOffset: z.number().int().nonnegative().optional(),
+          dealsOffset: z.number().int().nonnegative().optional(),
+          timelineOffset: z.number().int().nonnegative().optional(),
+        }))
+        .query(({ input, ctx }) => { const { id, ...page } = input; return getAccountDetail(id, ctx.scope, page); }),
 
       children: scopedInternalProcedure
         .input(z.object({ accountId: z.number() }))
-        .query(async ({ input, ctx }) => {
-          await loadScopedAccount(input.accountId, ctx.scope);
-          return db.getCrmAccountChildren(input.accountId);
-        }),
+        .query(({ input, ctx }) => listAccountChildren(input.accountId, ctx.scope)),
 
       create: scopedInternalProcedure
         .input(z.object({
@@ -1264,8 +1281,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           assignedTo: z.number().nullable().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          if (input.parentAccountId) await assertValidParentAccount(null, input.parentAccountId, ctx.scope);
-          const id = await db.createCrmAccount({ ...input, companyId: ctx.user.companyId ?? null });
+          const id = await createAccount(input, ctx.scope, ctx.user);
           await createAuditLog(ctx.user.id, 'create', 'crm_account', id, input.name);
           return { id };
         }),
@@ -1287,9 +1303,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         }))
         .mutation(async ({ input, ctx }) => {
           const { id, ...data } = input;
-          const existing = await loadScopedAccount(id, ctx.scope);
-          if (data.parentAccountId) await assertValidParentAccount(id, data.parentAccountId, ctx.scope);
-          await db.updateCrmAccount(id, data);
+          const existing = await updateAccount(id, data, ctx.scope);
           await createAuditLog(ctx.user.id, 'update', 'crm_account', id, existing.name, existing, data);
           return { success: true };
         }),

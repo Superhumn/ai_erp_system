@@ -8,7 +8,7 @@
  */
 import { TRPCError } from "@trpc/server";
 import * as db from "./db";
-import type { Scope } from "./_core/scope";
+import { resolveScopeFromAccess, type Scope } from "./_core/scope";
 import {
   DEFAULT_LOSS_REASONS,
   DEFAULT_ROTTING_DAYS,
@@ -35,6 +35,10 @@ import {
   renderTaskReminderText,
   staleFollowUpTitle,
   taskViewFilters,
+  findStageInPipeline,
+  idsAreUnique,
+  outcomeTimestamps,
+  sameCompany,
   type ImportMapping,
   type ImportedContact,
   type TaskView,
@@ -48,6 +52,41 @@ export type CrmScope = Scope;
 
 function notFound(what: string): never {
   throw new TRPCError({ code: "NOT_FOUND", message: `${what} not found` });
+}
+
+/** Records linked together (deal ↔ account, task ↔ deal, …) must share an entity. */
+function assertSameCompany(a: number | null | undefined, b: number | null | undefined, message: string): void {
+  if (!sameCompany(a, b)) throw new TRPCError({ code: "BAD_REQUEST", message });
+}
+
+/** Loss reason visible to the caller (NULL companyId = shared default) and active. */
+export async function loadScopedLossReason(id: number, scope: Scope) {
+  const reason = await db.getCrmLossReasonById(id);
+  if (!reason || !crmRowVisible(scope, reason.companyId, { sharedWhenNull: true }) || reason.isActive === false) notFound("Loss reason");
+  return reason;
+}
+
+/** Portal roles never own CRM work (mirrors routers/_shared EXTERNAL_ROLES). */
+const EXTERNAL_ROLES = ["copacker", "vendor", "investor", "contractor"];
+
+/** Entity scope of an arbitrary user (same resolution as the request scope). */
+export async function scopeForUser(user: { id: number; companyId: number | null; regionScope?: "entity" | "region" | "global" | null }): Promise<Scope> {
+  const accessEntityIds = await db.getUserEntityAccessCompanyIds(user.id);
+  return resolveScopeFromAccess({ companyId: user.companyId, regionScope: user.regionScope ?? null }, accessEntityIds, {
+    getCompanyRegionId: async (id) => (await db.getCompanyById(id))?.regionId ?? null,
+    getCompanyIdsInRegion: (regionId) => db.getCompanyIdsInRegion(regionId),
+    getEntityAndDescendants: (id) => db.getEntityAndDescendantCompanyIds(id),
+  });
+}
+
+/**
+ * Whether `userId` may own work on a row of `companyId`: an existing internal
+ * user whose entity scope includes that entity.
+ */
+export async function userCanAccessCompany(userId: number, companyId: number | null | undefined): Promise<boolean> {
+  const user = await db.getUserById(userId);
+  if (!user || EXTERNAL_ROLES.includes(user.role)) return false;
+  return crmRowVisible(await scopeForUser(user), companyId);
 }
 
 // ---------------------------------------------------------------------------
@@ -97,10 +136,16 @@ export async function loadScopedAccount(id: number, scope: Scope) {
 }
 
 /**
- * Validates a parent assignment: the parent must be visible, must not be the
- * account itself, and must not be one of its descendants (no cycles).
+ * Validates a parent assignment: the parent must be visible, in the same
+ * entity as the child (`childCompanyId`), not the account itself, and not one
+ * of its descendants (no cycles).
  */
-export async function assertValidParentAccount(accountId: number | null, parentAccountId: number, scope: Scope): Promise<void> {
+export async function assertValidParentAccount(
+  accountId: number | null,
+  parentAccountId: number,
+  scope: Scope,
+  childCompanyId: number | null | undefined,
+): Promise<void> {
   if (accountId != null && parentAccountId === accountId) {
     throw new TRPCError({ code: "BAD_REQUEST", message: "An account cannot be its own parent" });
   }
@@ -110,6 +155,7 @@ export async function assertValidParentAccount(accountId: number | null, parentA
     if (seen.has(cursor)) break;
     seen.add(cursor);
     const parent = await loadScopedAccount(cursor, scope);
+    if (cursor === parentAccountId) assertSameCompany(parent.companyId, childCompanyId, "A parent account must belong to the same entity");
     if (accountId != null && parent.parentAccountId === accountId) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "That parent is a child of this account" });
     }
@@ -117,69 +163,79 @@ export async function assertValidParentAccount(accountId: number | null, parentA
   }
 }
 
-/** Descendant account ids (children, grandchildren, …), breadth-first, capped. */
-async function descendantAccountIds(id: number, cap = 50): Promise<number[]> {
-  const out: number[] = [];
-  const seen = new Set<number>([id]);
-  let frontier = [id];
-  while (frontier.length && out.length < cap) {
-    const next: number[] = [];
-    for (const parentId of frontier) {
-      for (const child of await db.getCrmAccountChildren(parentId)) {
-        if (seen.has(child.id)) continue;
-        seen.add(child.id);
-        out.push(child.id);
-        next.push(child.id);
-      }
-    }
-    frontier = next;
-  }
-  return out.slice(0, cap);
+export interface AccountInput {
+  name?: string;
+  type?: "district" | "school" | "distributor" | "operator" | "gpo" | "other";
+  parentAccountId?: number | null;
+  region?: string | null;
+  state?: string | null;
+  mealsPerDay?: number | null;
+  externalId?: string | null;
+  customerId?: number | null;
+  website?: string | null;
+  notes?: string | null;
+  assignedTo?: number | null;
 }
 
+export async function createAccount(input: AccountInput & { name: string }, scope: Scope, user: { companyId: number | null }) {
+  const companyId = user.companyId ?? null;
+  if (input.parentAccountId) await assertValidParentAccount(null, input.parentAccountId, scope, companyId);
+  return db.createCrmAccount({ ...input, companyId });
+}
+
+export async function updateAccount(id: number, data: AccountInput, scope: Scope) {
+  const existing = await loadScopedAccount(id, scope);
+  if (data.parentAccountId) await assertValidParentAccount(id, data.parentAccountId, scope, existing.companyId);
+  await db.updateCrmAccount(id, data);
+  return existing;
+}
+
+/** Direct children of an account, limited to the caller's scope and the parent's entity. */
+export async function listAccountChildren(accountId: number, scope: Scope) {
+  const account = await loadScopedAccount(accountId, scope);
+  return (await db.getCrmAccountChildren(accountId))
+    .filter((c) => crmRowVisible(scope, c.companyId) && sameCompany(c.companyId, account.companyId));
+}
+
+export const ACCOUNT_DETAIL_PAGE = 50;
+
 /**
- * Account detail: the row plus parent, direct children, its own contacts and
- * deals, and a timeline rolled up across the account and every descendant
- * (a district's timeline includes its schools'). `rollup` sums open deals
- * across the whole subtree.
+ * Account detail: the row plus parent and direct children, then contacts,
+ * deals and a timeline across the account and its whole sub-account tree
+ * (a district includes its schools). `rollup` totals are aggregate queries
+ * over the full subtree (no cap); the row lists are paged (`limit` /
+ * `*Offset`) and report `hasMore` when truncated.
  */
-export async function getAccountDetail(id: number, scope: Scope) {
+export async function getAccountDetail(
+  id: number,
+  scope: Scope,
+  page: { limit?: number; contactsOffset?: number; dealsOffset?: number; timelineOffset?: number } = {},
+) {
   const account = await loadScopedAccount(id, scope);
-  const companyIds = crmScopeCompanyIds(scope);
-  const [parent, children, contacts, deals, descendants] = await Promise.all([
+  const limit = Math.min(Math.max(page.limit ?? ACCOUNT_DETAIL_PAGE, 1), 500);
+  const [parent, children, descendants] = await Promise.all([
     account.parentAccountId ? db.getCrmAccountById(account.parentAccountId) : Promise.resolve(undefined),
-    db.getCrmAccountChildren(id),
-    db.getCrmContacts({ accountId: id, companyIds, limit: 500 }),
-    db.getCrmDeals({ accountId: id, companyIds, limit: 500 }),
-    descendantAccountIds(id),
+    listAccountChildren(id, scope),
+    db.getCrmAccountDescendantIds(id, account.companyId ?? null),
   ]);
-  const [descContacts, descDeals] = await Promise.all([
-    Promise.all(descendants.map((a) => db.getCrmContacts({ accountId: a, companyIds, limit: 100 }))).then((r) => r.flat()),
-    Promise.all(descendants.map((a) => db.getCrmDeals({ accountId: a, companyIds, limit: 100 }))).then((r) => r.flat()),
+  const subtree = [id, ...descendants];
+  const visible = <T extends { companyId?: number | null }>(rows: T[]) => rows.filter((r) => crmRowVisible(scope, r.companyId));
+  const [rollup, contactRows, dealRows, timelineRows] = await Promise.all([
+    db.getCrmAccountRollup(subtree),
+    db.getCrmContactsForAccounts(subtree, limit + 1, page.contactsOffset ?? 0),
+    db.getCrmDealsForAccounts(subtree, limit + 1, page.dealsOffset ?? 0),
+    db.getCrmInteractionsForAccounts(subtree, limit + 1, page.timelineOffset ?? 0),
   ]);
-  const timelineContacts = [...contacts, ...descContacts].slice(0, 60);
-  const timeline = timelineContacts.length
-    ? (await Promise.all(timelineContacts.map((c) => db.getCrmInteractions({ contactId: c.id, limit: 20 }))))
-        .flat()
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-        .slice(0, 50)
-    : [];
-  const openDeals = [...deals, ...descDeals].filter((d) => d.status === "open");
-  const rollup = {
-    descendantCount: descendants.length,
-    contactCount: contacts.length + descContacts.length,
-    openDealCount: openDeals.length,
-    openDealAmount: Math.round(openDeals.reduce((s, d) => s + (Number(d.amount ?? 0) || 0), 0) * 100) / 100,
-  };
   return {
     ...account,
     parent: parent && crmRowVisible(scope, parent.companyId) ? parent : null,
-    children: children.filter((c) => crmRowVisible(scope, c.companyId)),
-    contacts,
-    deals,
-    childDeals: descDeals,
-    timeline,
-    rollup,
+    children,
+    contacts: visible(contactRows.slice(0, limit)),
+    deals: visible(dealRows.slice(0, limit)),
+    timeline: visible(timelineRows.slice(0, limit)),
+    hasMore: { contacts: contactRows.length > limit, deals: dealRows.length > limit, timeline: timelineRows.length > limit },
+    pageSize: limit,
+    rollup: { descendantCount: descendants.length, ...rollup },
   };
 }
 
@@ -297,7 +353,7 @@ export async function reorderPipelineStages(pipelineId: number, orderedIds: numb
   await loadScopedPipeline(pipelineId, scope);
   const stages = await db.getCrmPipelineStages(pipelineId);
   const known = new Set(stages.map((s) => s.id));
-  if (orderedIds.length !== stages.length || orderedIds.some((id) => !known.has(id))) {
+  if (!idsAreUnique(orderedIds) || orderedIds.length !== stages.length || orderedIds.some((id) => !known.has(id))) {
     throw new TRPCError({ code: "BAD_REQUEST", message: "orderedIds must list every stage of the pipeline exactly once" });
   }
   await db.reorderCrmPipelineStages(pipelineId, orderedIds);
@@ -320,26 +376,31 @@ export async function deletePipelineStage(id: number, scope: Scope) {
 
 /**
  * Moves a deal to a stage: probability defaults to the stage's value when the
- * caller passes none, status follows won/lost stages, and the move is
- * recorded in crm_deal_stage_history.
+ * caller passes none, status follows won/lost stages (with wonAt / lostAt
+ * stamped or cleared like deals.close and deals.update), and the move is
+ * recorded in crm_deal_stage_history. Moving into a lost stage needs a loss
+ * reason visible to the caller.
  */
-export async function moveDealStage(input: { id: number; stage: string; probability?: number; lossReasonId?: number | null }, scope: Scope, userId: number) {
+export async function moveDealStage(input: { id: number; stage: string; probability?: number; lossReasonId?: number | null }, scope: Scope, userId: number, now: Date = new Date()) {
   const deal = await loadScopedDeal(input.id, scope);
   const pipeline = await db.getCrmPipelineById(deal.pipelineId);
   const stages = pipeline ? await getOrSeedPipelineStages(pipeline) : [];
   const target = findStage(stages, input.stage);
   const stageName = target?.name ?? input.stage;
   const probability = resolveMoveProbability(input.probability, target);
-  const status = statusForStage(target);
-  // Moving into a lost stage closes the deal as lost, which needs a reason.
+  const stageStatus = statusForStage(target);
+  const nextStatus = stageStatus && stageStatus !== deal.status && (stageStatus !== "open" || deal.status === "won" || deal.status === "lost")
+    ? stageStatus
+    : undefined;
+  if (input.lossReasonId) await loadScopedLossReason(input.lossReasonId, scope);
   const lossReasonId = input.lossReasonId ?? deal.lossReasonId ?? null;
-  if (target?.isLost && deal.status !== "lost" && !lossReasonId) {
+  if (nextStatus === "lost" && !lossReasonId) {
     throw new TRPCError({ code: "BAD_REQUEST", message: "Pick a loss reason to move the deal to a lost stage" });
   }
   await db.updateCrmDeal(input.id, {
     stage: stageName,
     ...(probability !== undefined ? { probability } : {}),
-    ...(status && status !== deal.status && (status !== "open" || deal.status === "won" || deal.status === "lost") ? { status } : {}),
+    ...(nextStatus ? { status: nextStatus, ...outcomeTimestamps(deal.status, nextStatus, now) } : {}),
     ...(target?.isLost && input.lossReasonId ? { lossReasonId: input.lossReasonId } : {}),
     // A move re-engages the deal; the next stale check re-evaluates it.
     ...(stageName !== deal.stage ? { isStale: false } : {}),
@@ -350,12 +411,12 @@ export async function moveDealStage(input: { id: number; stage: string; probabil
       dealId: deal.id,
       fromStage: deal.stage,
       toStage: stageName,
-      changedAt: new Date(),
+      changedAt: now,
       changedBy: userId,
     });
   }
   await recomputeLeadScoreSafe(deal.contactId);
-  return { deal, stage: stageName, probability, status };
+  return { deal, stage: stageName, probability, status: stageStatus };
 }
 
 export interface CreateDealInput {
@@ -379,20 +440,30 @@ export interface CreateDealInput {
  * Creates a deal directly. The name defaults to the contact's account /
  * organization (a contact may now have any number of deals); probability
  * defaults to the stage's value; the initial stage is recorded in history.
+ * An explicit account must be in the contact's entity; the contact's own
+ * account is used only when it is.
  */
 export async function createDeal(input: CreateDealInput, scope: Scope, user: { id: number; companyId: number | null }) {
   const contact = await loadScopedContact(input.contactId, scope);
   const pipeline = await loadScopedPipeline(input.pipelineId, scope);
   const stages = await getOrSeedPipelineStages(pipeline);
   const stage = findStage(stages, input.stage);
-  let accountId = input.accountId ?? contact.accountId ?? null;
+  const companyId = contact.companyId ?? user.companyId ?? null;
+  let accountId: number | null = null;
   let accountName: string | null = null;
-  if (accountId) {
-    const account = await loadScopedAccount(accountId, scope);
+  if (input.accountId) {
+    const account = await loadScopedAccount(input.accountId, scope);
+    assertSameCompany(account.companyId, companyId, "The account belongs to a different entity than the contact");
+    accountId = account.id;
     accountName = account.name;
+  } else if (contact.accountId) {
+    const account = await db.getCrmAccountById(contact.accountId);
+    if (account && crmRowVisible(scope, account.companyId) && sameCompany(account.companyId, companyId)) {
+      accountId = account.id;
+      accountName = account.name;
+    }
   }
   const name = input.name?.trim() || accountName || (contact.organization ?? "").trim() || contact.fullName;
-  const companyId = contact.companyId ?? user.companyId ?? null;
   const id = await db.createCrmDeal({
     companyId,
     pipelineId: pipeline.id,
@@ -417,6 +488,46 @@ export async function createDeal(input: CreateDealInput, scope: Scope, user: { i
   return { id, name };
 }
 
+export interface UpdateDealInput {
+  name?: string;
+  description?: string;
+  stage?: string;
+  amount?: string;
+  probability?: number;
+  status?: "open" | "won" | "lost" | "stalled";
+  lostReason?: string;
+  lossReasonId?: number | null;
+  wonReason?: string | null;
+  accountId?: number | null;
+  contactId?: number;
+  expectedCloseDate?: Date | null;
+  notes?: string;
+  assignedTo?: number;
+}
+
+/**
+ * deals.update: linked account / contact must be in the deal's entity; a
+ * status change to lost needs a visible loss reason; won/lost timestamps
+ * follow the same rules as moveStage and close.
+ */
+export async function updateDeal(id: number, data: UpdateDealInput, scope: Scope, now: Date = new Date()) {
+  const existing = await loadScopedDeal(id, scope);
+  if (data.accountId) {
+    const account = await loadScopedAccount(data.accountId, scope);
+    assertSameCompany(account.companyId, existing.companyId, "The account belongs to a different entity than the deal");
+  }
+  if (data.contactId) {
+    const contact = await loadScopedContact(data.contactId, scope);
+    assertSameCompany(contact.companyId, existing.companyId, "The contact belongs to a different entity than the deal");
+  }
+  if (data.lossReasonId) await loadScopedLossReason(data.lossReasonId, scope);
+  if (data.status === "lost" && existing.status !== "lost" && !(data.lossReasonId ?? existing.lossReasonId)) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Pick a loss reason to mark the deal lost" });
+  }
+  await db.updateCrmDeal(id, { ...data, ...outcomeTimestamps(existing.status, data.status, now) });
+  return existing;
+}
+
 // --- Deal contacts ---
 
 export async function listDealContacts(dealId: number, scope: Scope) {
@@ -426,7 +537,8 @@ export async function listDealContacts(dealId: number, scope: Scope) {
 
 export async function addDealContact(input: { dealId: number; contactId: number; role?: DealContactRole }, scope: Scope) {
   const deal = await loadScopedDeal(input.dealId, scope);
-  await loadScopedContact(input.contactId, scope);
+  const contact = await loadScopedContact(input.contactId, scope);
+  assertSameCompany(contact.companyId, deal.companyId, "The contact belongs to a different entity than the deal");
   return db.upsertCrmDealContact({ companyId: deal.companyId ?? null, dealId: deal.id, contactId: input.contactId, role: input.role ?? "other" });
 }
 
@@ -530,10 +642,7 @@ export async function closeDeal(
   if (input.outcome === "lost" && !input.lossReasonId) {
     throw new TRPCError({ code: "BAD_REQUEST", message: "Pick a loss reason to close the deal as lost" });
   }
-  if (input.outcome === "lost" && input.lossReasonId) {
-    const reason = await db.getCrmLossReasonById(input.lossReasonId);
-    if (!reason || !crmRowVisible(scope, reason.companyId, { sharedWhenNull: true })) notFound("Loss reason");
-  }
+  if (input.outcome === "lost" && input.lossReasonId) await loadScopedLossReason(input.lossReasonId, scope);
   const pipeline = await db.getCrmPipelineById(deal.pipelineId);
   const stages = pipeline ? await getOrSeedPipelineStages(pipeline) : [];
   const wonStage = stages.find((s) => s.isWon)?.name;
@@ -576,7 +685,7 @@ export async function annotateDealActivity<T extends { id: number; pipelineId: n
   const stages = await db.getCrmPipelineStagesForPipelines(pipelineIds);
   const lastActivity = await db.getCrmDealLastActivity(deals.map((d) => d.id));
   return deals.map((d) => {
-    const stage = findStage(stages.filter((s) => s.pipelineId === d.pipelineId), d.stage);
+    const stage = findStageInPipeline(stages, d.pipelineId, d.stage);
     return { ...d, rottingDays: stage?.rottingDays ?? DEFAULT_ROTTING_DAYS, lastActivityAt: lastActivity.get(d.id) ?? null };
   });
 }
@@ -597,17 +706,19 @@ export async function deleteAccount(id: number, scope: Scope) {
 }
 
 /**
- * Merges `duplicateIds` into `primaryId`. Every account must be visible to
- * the caller; the primary cannot be a descendant of a duplicate's subtree in
- * a way that creates a cycle (children of the duplicates move to the primary).
+ * Merges `duplicateIds` into `primaryId`. Every account must be visible and in
+ * the primary's entity (children and linked rows move with them, so a
+ * cross-entity merge would re-parent another entity's data); a duplicate that
+ * is an ancestor of the primary is refused (it would create a cycle).
  */
 export async function mergeAccounts(primaryId: number, duplicateIds: number[], scope: Scope) {
   const primary = await loadScopedAccount(primaryId, scope);
-  const dupes = duplicateIds.filter((id) => id !== primaryId);
+  const dupes = [...new Set(duplicateIds.filter((id) => id !== primaryId))];
   if (dupes.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Pick at least one other account to merge" });
-  for (const id of dupes) await loadScopedAccount(id, scope);
-  // Refuse when a duplicate is an ancestor of the primary (its children would
-  // include the primary's own ancestor chain).
+  for (const id of dupes) {
+    const dup = await loadScopedAccount(id, scope);
+    assertSameCompany(dup.companyId, primary.companyId, `"${dup.name}" belongs to a different entity`);
+  }
   let cursor = primary.parentAccountId ?? null;
   const seen = new Set<number>();
   while (cursor != null && !seen.has(cursor)) {
@@ -682,59 +793,97 @@ export interface TaskInput {
 }
 
 /**
- * Resolves the entity a task belongs to from what it hangs off (deal, then
- * contact, then account), checking each linked record is in scope.
+ * Resolves a task's effective links (deal, contact, account). Every linked
+ * record must be visible and all of them must share one entity; a deal fills
+ * in a missing contact / account, a contact a missing account. Returns the
+ * entity (undefined when nothing is linked) and the full link set to store.
  */
-async function resolveTaskLinks(input: Pick<TaskInput, "contactId" | "dealId" | "accountId">, scope: Scope) {
-  let companyId: number | null | undefined;
-  let accountId = input.accountId ?? null;
-  let contactId = input.contactId ?? null;
-  if (input.dealId) {
-    const deal = await loadScopedDeal(input.dealId, scope);
-    companyId = deal.companyId;
-    accountId = accountId ?? deal.accountId ?? null;
+export async function resolveTaskLinks(
+  links: { dealId: number | null; contactId: number | null; accountId: number | null },
+  scope: Scope,
+): Promise<{ companyId: number | null | undefined; dealId: number | null; contactId: number | null; accountId: number | null }> {
+  const companies: Array<number | null> = [];
+  let { contactId, accountId } = links;
+  if (links.dealId) {
+    const deal = await loadScopedDeal(links.dealId, scope);
+    companies.push(deal.companyId ?? null);
     contactId = contactId ?? deal.contactId;
+    accountId = accountId ?? deal.accountId ?? null;
   }
-  if (input.contactId) {
-    const contact = await loadScopedContact(input.contactId, scope);
-    companyId = companyId ?? contact.companyId;
-    accountId = accountId ?? contact.accountId ?? null;
+  if (contactId) {
+    const contact = await loadScopedContact(contactId, scope);
+    companies.push(contact.companyId ?? null);
+    if (accountId == null && contact.accountId) {
+      const acct = await db.getCrmAccountById(contact.accountId);
+      if (acct && sameCompany(acct.companyId, contact.companyId)) accountId = acct.id;
+    }
   }
-  if (input.accountId) {
-    const account = await loadScopedAccount(input.accountId, scope);
-    companyId = companyId ?? account.companyId;
+  if (accountId) {
+    const account = await loadScopedAccount(accountId, scope);
+    companies.push(account.companyId ?? null);
   }
-  return { companyId, accountId, contactId };
+  if (companies.some((c) => !sameCompany(c, companies[0]))) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "A task's deal, contact and account must belong to the same entity" });
+  }
+  return { companyId: companies.length ? companies[0] : undefined, dealId: links.dealId, contactId, accountId };
+}
+
+async function assertAssignee(assignedTo: number, companyId: number | null) {
+  if (!(await userCanAccessCompany(assignedTo, companyId))) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "The assignee has no access to this task's entity" });
+  }
 }
 
 export async function createTask(input: TaskInput, scope: Scope, user: { id: number; companyId: number | null }) {
-  const links = await resolveTaskLinks(input, scope);
+  const links = await resolveTaskLinks({ dealId: input.dealId ?? null, contactId: input.contactId ?? null, accountId: input.accountId ?? null }, scope);
+  const companyId = links.companyId !== undefined ? links.companyId : user.companyId ?? null;
+  const assignedTo = input.assignedTo ?? user.id;
+  if (assignedTo !== user.id) await assertAssignee(assignedTo, companyId);
   return db.createCrmTask({
-    companyId: links.companyId ?? user.companyId ?? null,
+    companyId,
     title: input.title.trim(),
     type: input.type ?? "todo",
     contactId: links.contactId,
-    dealId: input.dealId ?? null,
+    dealId: links.dealId,
     accountId: links.accountId,
     dueAt: input.dueAt ?? null,
     reminderAt: input.reminderAt ?? null,
-    assignedTo: input.assignedTo ?? user.id,
+    assignedTo,
     createdBy: user.id,
     notes: input.notes ?? null,
   });
 }
 
+/**
+ * Updates a task. Links are resolved on the effective (existing + patch) set
+ * and written together with the derived entity, so a task never points at a
+ * deal and a contact from different entities. The assignee is re-checked
+ * whenever it or the entity changes.
+ */
 export async function updateTask(id: number, patch: Partial<TaskInput>, scope: Scope) {
   const task = await loadScopedTask(id, scope);
-  if (patch.dealId || patch.contactId || patch.accountId) await resolveTaskLinks(patch, scope);
+  const linksTouched = patch.dealId !== undefined || patch.contactId !== undefined || patch.accountId !== undefined;
+  let linkPatch: { companyId?: number | null; dealId?: number | null; contactId?: number | null; accountId?: number | null } = {};
+  let companyId = task.companyId ?? null;
+  if (linksTouched) {
+    const links = await resolveTaskLinks({
+      dealId: patch.dealId !== undefined ? patch.dealId : task.dealId ?? null,
+      contactId: patch.contactId !== undefined ? patch.contactId : task.contactId ?? null,
+      accountId: patch.accountId !== undefined ? patch.accountId : task.accountId ?? null,
+    }, scope);
+    if (links.companyId !== undefined) companyId = links.companyId;
+    linkPatch = { companyId, dealId: links.dealId, contactId: links.contactId, accountId: links.accountId };
+  }
+  const assignee = patch.assignedTo !== undefined ? patch.assignedTo : task.assignedTo ?? null;
+  if (assignee != null && (patch.assignedTo !== undefined || !sameCompany(companyId, task.companyId))) {
+    await assertAssignee(assignee, companyId);
+  }
   const dueMoved = patch.dueAt !== undefined && String(patch.dueAt ?? "") !== String(task.dueAt ?? "");
   const remindMoved = patch.reminderAt !== undefined && String(patch.reminderAt ?? "") !== String(task.reminderAt ?? "");
   await db.updateCrmTask(id, {
     ...(patch.title !== undefined ? { title: patch.title.trim() } : {}),
     ...(patch.type !== undefined ? { type: patch.type } : {}),
-    ...(patch.contactId !== undefined ? { contactId: patch.contactId } : {}),
-    ...(patch.dealId !== undefined ? { dealId: patch.dealId } : {}),
-    ...(patch.accountId !== undefined ? { accountId: patch.accountId } : {}),
+    ...linkPatch,
     ...(patch.dueAt !== undefined ? { dueAt: patch.dueAt } : {}),
     ...(patch.reminderAt !== undefined ? { reminderAt: patch.reminderAt } : {}),
     ...(patch.assignedTo !== undefined ? { assignedTo: patch.assignedTo } : {}),
@@ -776,28 +925,33 @@ export async function deleteTask(id: number, scope: Scope) {
 }
 
 /**
- * Daily job: one digest email per assignee listing their open tasks that are
- * due today or overdue (or whose reminderAt has passed) and have not been
- * reminded yet; each task is marked reminderSentAt so it is sent once.
- * Tasks are marked only when their email went out, so a failed send retries
- * next run.
+ * Daily job: one digest email per assignee listing their open tasks due by
+ * the end of the current UTC day (or whose reminderAt has passed) that have
+ * not been reminded yet; each task is marked reminderSentAt so it is sent
+ * once. Tasks are marked only when their email went out, so a failed send
+ * retries next run. Tasks in an entity the assignee can no longer see (or
+ * assigned to a missing / external user) are skipped, never emailed.
  */
 export async function sendCrmTaskReminders(now: Date = new Date()) {
-  const due = await db.getCrmTasksDueForReminder(endOfUtcDay(now));
+  const due = await db.getCrmTasksDueForReminder(endOfUtcDay(now), now);
   const result = { tasks: due.length, sent: 0, failed: 0, skipped: 0 };
   for (const [userId, tasks] of groupTasksByAssignee(due)) {
     const user = await db.getUserById(userId);
-    if (!user?.email) { result.skipped += tasks.length; continue; }
-    const text = renderTaskReminderText(user.name, tasks, now);
+    if (!user?.email || EXTERNAL_ROLES.includes(user.role)) { result.skipped += tasks.length; continue; }
+    const scope = await scopeForUser(user);
+    const allowed = tasks.filter((t) => crmRowVisible(scope, t.companyId));
+    result.skipped += tasks.length - allowed.length;
+    if (allowed.length === 0) continue;
+    const text = renderTaskReminderText(user.name, allowed, now);
     const res = await sendEmail({
       to: user.email,
-      subject: `CRM: ${tasks.length} task${tasks.length === 1 ? "" : "s"} due`,
+      subject: `CRM: ${allowed.length} task${allowed.length === 1 ? "" : "s"} due`,
       text,
       html: `<pre style="font-family:inherit;white-space:pre-wrap">${escapeHtml(text)}</pre>`,
     }).catch((e: unknown) => ({ success: false, error: e instanceof Error ? e.message : String(e) }));
     if (res.success) {
       result.sent++;
-      await db.markCrmTasksReminded(tasks.map((t) => t.id), now);
+      await db.markCrmTasksReminded(allowed.map((t) => t.id), now);
     } else {
       result.failed++;
       logger.warn("Task reminder email failed", { userId, error: res.error });
@@ -816,9 +970,10 @@ function escapeHtml(s: string): string {
 
 /**
  * Daily job over every open deal: flags `isStale` when the deal has had no
- * interaction for its stage's rottingDays (default 21) or its expected close
- * date has passed, clears the flag otherwise, and opens a follow-up task for
- * the deal owner when the deal has no open task. Idempotent.
+ * interaction since it was created for its stage's rottingDays (default 21)
+ * or its expected close date has passed, clears the flag otherwise, and
+ * opens a follow-up task for the deal owner when the deal has no open task
+ * (open-task membership is fetched once, in batches). Idempotent.
  */
 export async function runStaleDealCheck(now: Date = new Date()) {
   const deals = await db.getCrmDeals({ status: "open", limit: 100000 });
@@ -826,31 +981,34 @@ export async function runStaleDealCheck(now: Date = new Date()) {
   const result = { checked: deals.length, stale: 0, cleared: 0, tasksCreated: 0 };
   const toFlag: number[] = [];
   const toClear: number[] = [];
+  const staleDeals: Array<{ deal: (typeof annotated)[number]; reason: NonNullable<ReturnType<typeof dealStaleReason>> }> = [];
   for (const d of annotated) {
     const reason = dealStaleReason(d, d.lastActivityAt, d.rottingDays, now);
     if (reason) {
       result.stale++;
       if (!d.isStale) toFlag.push(d.id);
-      const open = await db.getOpenCrmTasksForDeal(d.id);
-      if (open.length === 0) {
-        await db.createCrmTask({
-          companyId: d.companyId ?? null,
-          title: staleFollowUpTitle(d.name, reason).slice(0, 255),
-          type: "follow_up",
-          contactId: d.contactId,
-          dealId: d.id,
-          accountId: d.accountId ?? null,
-          dueAt: now,
-          assignedTo: d.assignedTo ?? null,
-          notes: reason === "past_close"
-            ? "Expected close date has passed — confirm timing or update the close date."
-            : `No activity in ${d.rottingDays}+ days.`,
-        });
-        result.tasksCreated++;
-      }
+      staleDeals.push({ deal: d, reason });
     } else if (d.isStale) {
       toClear.push(d.id);
     }
+  }
+  const withOpenTask = await db.getDealIdsWithOpenCrmTasks(staleDeals.map((x) => x.deal.id));
+  for (const { deal: d, reason } of staleDeals) {
+    if (withOpenTask.has(d.id)) continue;
+    await db.createCrmTask({
+      companyId: d.companyId ?? null,
+      title: staleFollowUpTitle(d.name, reason).slice(0, 255),
+      type: "follow_up",
+      contactId: d.contactId,
+      dealId: d.id,
+      accountId: d.accountId ?? null,
+      dueAt: now,
+      assignedTo: d.assignedTo ?? null,
+      notes: reason === "past_close"
+        ? "Expected close date has passed — confirm timing or update the close date."
+        : `No activity in ${d.rottingDays}+ days.`,
+    });
+    result.tasksCreated++;
   }
   await db.setCrmDealsStale(toFlag, true);
   await db.setCrmDealsStale(toClear, false);
@@ -923,7 +1081,13 @@ export async function importPreview(input: { csv: string; mapping?: ImportMappin
   if (rows.length === 0) return { headers: [] as string[], mapping: {} as ImportMapping, rows: [] as ImportPreviewRow[], counts: { new: 0, duplicate: 0, invalid: 0 } };
   const hasHeader = input.hasHeader !== false;
   const headers = hasHeader ? rows[0] : rows[0].map((_, i) => `Column ${i + 1}`);
-  const body = (hasHeader ? rows.slice(1) : rows).slice(0, IMPORT_MAX_ROWS);
+  const body = hasHeader ? rows.slice(1) : rows;
+  if (body.length > IMPORT_MAX_ROWS) {
+    throw new TRPCError({
+      code: "PAYLOAD_TOO_LARGE",
+      message: `This file has ${body.length.toLocaleString()} rows; the import limit is ${IMPORT_MAX_ROWS.toLocaleString()}. Split it into smaller files.`,
+    });
+  }
   const mapping = input.mapping ?? guessImportMapping(headers);
   const seen = new Set<string>();
   const out: ImportPreviewRow[] = [];
@@ -964,6 +1128,7 @@ export async function importCommit(
   const companyId = user.companyId ?? null;
   const ownEmail = user.email?.trim().toLowerCase();
   const accountCache = new Map<string, number>();
+  const touched: number[] = [];
   const result = { created: 0, updated: 0, skipped: 0, invalid: preview.counts.invalid, accountsCreated: 0, errors: [] as Array<{ row: number; error: string }> };
 
   const accountFor = async (org: string | undefined): Promise<number | null> => {
@@ -987,7 +1152,9 @@ export async function importCommit(
         if (!input.updateDuplicates || !r.matchId || r.matchOutOfScope) { result.skipped++; continue; }
         const existing = await db.getCrmContactById(r.matchId);
         if (!existing) { result.skipped++; continue; }
-        const accountId = existing.accountId ?? await accountFor(c.organization);
+        // Accounts are created in the importer's entity; only link one to a
+        // duplicate from that same entity.
+        const accountId = existing.accountId ?? (sameCompany(existing.companyId, companyId) ? await accountFor(c.organization) : null);
         const patch: Record<string, unknown> = {};
         const fill = (k: keyof typeof existing, v: unknown) => {
           if (v != null && v !== "" && (existing[k] == null || existing[k] === "")) patch[k as string] = v;
@@ -997,6 +1164,7 @@ export async function importCommit(
         fill("linkedinUrl", c.linkedinUrl); fill("notes", c.notes); fill("accountId", accountId);
         if (Object.keys(patch).length) {
           await db.updateCrmContact(existing.id, patch);
+          touched.push(existing.id);
           result.updated++;
         } else {
           result.skipped++;
@@ -1004,7 +1172,7 @@ export async function importCommit(
         continue;
       }
       const accountId = await accountFor(c.organization);
-      await db.createCrmContact({
+      const newId = await db.createCrmContact({
         ...c,
         contactType: c.contactType ?? input.contactType ?? "lead",
         source: "import",
@@ -1012,11 +1180,14 @@ export async function importCommit(
         accountId,
         capturedBy: user.id,
       });
+      touched.push(newId);
       result.created++;
     } catch (e) {
       // A UNIQUE collision (e.g. phone formatted differently) lands here.
       result.errors.push({ row: r.row, error: e instanceof Error ? e.message.slice(0, 200) : String(e) });
     }
   }
+  // Imported / enriched contacts get a real score, not the column default.
+  for (const id of touched) await recomputeLeadScoreSafe(id);
   return result;
 }

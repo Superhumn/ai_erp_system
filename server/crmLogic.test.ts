@@ -5,6 +5,7 @@ import {
   findStage, monthKey, parseStageNames, resolveMoveProbability, scopeIsEmpty, seedStagesFromNames, statusForStage,
   computeLeadScore, computeVelocity, dealStaleReason, groupTasksByAssignee, guessImportMapping, mapImportRow, parseCsv,
   renderTaskReminderText, taskBucket, taskViewFilters,
+  findStageInPipeline, idsAreUnique, outcomeTimestamps, sameCompany,
 } from "./crmLogic";
 
 describe("deal items / close", () => {
@@ -17,8 +18,8 @@ describe("deal items / close", () => {
   });
   it("builds the won / lost patch", () => {
     const now = new Date("2026-09-29T00:00:00Z");
-    expect(closeDealPatch("won", { wonStage: "closed_won" }, now)).toEqual({ status: "won", probability: 100, wonAt: now, lossReasonId: null, lostReason: null, wonReason: null, stage: "closed_won" });
-    expect(closeDealPatch("lost", { lossReasonId: 3, note: "  too pricey " }, now)).toEqual({ status: "lost", probability: 0, lostAt: now, lossReasonId: 3, lostReason: "too pricey", wonReason: null });
+    expect(closeDealPatch("won", { wonStage: "closed_won" }, now)).toEqual({ status: "won", probability: 100, wonAt: now, lostAt: null, lossReasonId: null, lostReason: null, wonReason: null, stage: "closed_won" });
+    expect(closeDealPatch("lost", { lossReasonId: 3, note: "  too pricey " }, now)).toEqual({ status: "lost", probability: 0, lostAt: now, wonAt: null, lossReasonId: 3, lostReason: "too pricey", wonReason: null });
     expect(closeDealPatch("lost", {}, now).stage).toBeUndefined();
   });
 });
@@ -269,5 +270,45 @@ describe("CSV import helpers", () => {
     expect(mapImportRow(["Bo", "not-an-email", "", ""], m).error).toMatch(/Invalid email/);
     expect(mapImportRow(["Bo", "", "", ""], m).error).toMatch(/Needs an email/);
     expect(mapImportRow(["", "cy@x.org", "", "weird"], m).contact).toMatchObject({ firstName: "cy", contactType: undefined });
+  });
+});
+
+describe("review fixes: pure helpers", () => {
+  it("outcomeTimestamps stamps won/lost and clears on reopen", () => {
+    const now = new Date("2026-09-29T00:00:00Z");
+    expect(outcomeTimestamps("open", "won", now)).toEqual({ wonAt: now, lostAt: null });
+    expect(outcomeTimestamps("won", "lost", now)).toEqual({ lostAt: now, wonAt: null });
+    expect(outcomeTimestamps("lost", "open", now)).toEqual({ wonAt: null, lostAt: null });
+    expect(outcomeTimestamps("open", "stalled", now)).toEqual({});
+    expect(outcomeTimestamps("won", "won", now)).toEqual({});
+    expect(outcomeTimestamps("won", undefined, now)).toEqual({});
+  });
+
+  it("sameCompany is NULL-safe; idsAreUnique catches repeats", () => {
+    expect(sameCompany(null, undefined)).toBe(true);
+    expect(sameCompany(7, 7)).toBe(true);
+    expect(sameCompany(7, null)).toBe(false);
+    expect(idsAreUnique([1, 2, 3])).toBe(true);
+    expect(idsAreUnique([1, 2, 1])).toBe(false);
+  });
+
+  it("forecast matches stages on (pipelineId, name)", () => {
+    const stages = [
+      { pipelineId: 1, name: "proposal", sortOrder: 0, defaultProbability: 20, isWon: false, isLost: false },
+      { pipelineId: 2, name: "proposal", sortOrder: 0, defaultProbability: 80, isWon: false, isLost: false },
+    ];
+    expect(findStageInPipeline(stages, 2, "Proposal")?.defaultProbability).toBe(80);
+    const f = computeForecast([
+      { id: 1, pipelineId: 1, stage: "proposal", status: "open", amount: 100, probability: null, expectedCloseDate: null },
+      { id: 2, pipelineId: 2, stage: "proposal", status: "open", amount: 100, probability: null, expectedCloseDate: null },
+    ], stages);
+    expect(f.totalWeighted).toBe(100);
+  });
+
+  it("stale check ignores activity from before the deal was created", () => {
+    const now = new Date("2026-09-29T12:00:00Z");
+    const deal = { status: "open", createdAt: "2026-09-20T00:00:00Z" };
+    expect(dealStaleReason(deal, "2026-06-01T00:00:00Z", 21, now)).toBeNull();
+    expect(dealStaleReason({ ...deal, createdAt: "2026-08-01T00:00:00Z" }, "2026-06-01T00:00:00Z", 21, now)).toBe("idle");
   });
 });
