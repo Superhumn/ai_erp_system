@@ -9,7 +9,7 @@
  */
 import * as db from "../db";
 import { addCampaignRecipients, scheduleCampaign, CampaignError, CONTACT_TYPES, PIPELINE_STAGES } from "../campaignService";
-import { escapeHtml } from "../campaignSender";
+import { textToHtml } from "../campaignSender";
 import type { CrmEmailCampaign } from "../../drizzle/schema";
 import {
   type ChatToolModule,
@@ -114,9 +114,8 @@ async function createCampaignDraft(params: ChatToolParams, ctx: AIAgentContext) 
   const name = requireString(params.name, "name");
   const subject = requireString(params.subject, "subject");
   const bodyText = optionalString(params.bodyText);
-  // Plain text from the chat is escaped before it becomes HTML so a "<" in the
-  // copy can never turn into markup in the sent email.
-  const bodyHtml = optionalString(params.bodyHtml) ?? (bodyText ? bodyText.split(/\n{2,}/).map((p) => `<p>${escapeHtml(p).replace(/\n/g, "<br/>")}</p>`).join("") : undefined);
+  // Plain text goes through the same escaping conversion the sender uses.
+  const bodyHtml = optionalString(params.bodyHtml) ?? (bodyText ? textToHtml(bodyText) : undefined);
   if (!bodyHtml) throw new ChatToolError("bodyHtml or bodyText is required");
   const type = optionalString(params.type) as (typeof CAMPAIGN_TYPES)[number] | undefined;
   if (type && !CAMPAIGN_TYPES.includes(type)) throw new ChatToolError(`Unknown campaign type: ${type}`);

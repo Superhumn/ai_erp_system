@@ -168,7 +168,8 @@ function weekdayHours(start: Date, end: Date): number {
     if (dow !== 0 && dow !== 6) days += 1;
     cursor.setDate(cursor.getDate() + 1);
   }
-  return Math.max(days, 1) * 8;
+  // Zero weekdays stays zero so the positive-hours check below rejects a weekend-only range.
+  return days * 8;
 }
 
 async function requestTimeOff(params: ChatToolParams, ctx: AIAgentContext) {

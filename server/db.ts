@@ -1376,99 +1376,155 @@ export async function createOrderItem(data: typeof orderItems.$inferInsert) {
  * reservedQuantity), reserve it, raise an outbound shipment, mark the order "shipped", and
  * run the order→invoice cascade that `orders.update` applies (draft invoice → sent).
  *
- * Fails before writing anything when any line cannot be covered, so a short order is never
- * left half-reserved. Throws for a missing order, an order already shipped/delivered/cancelled,
- * or an order with no lines.
+ * Only a `confirmed` order may enter fulfilment — the same gate the workflow processor
+ * applies (`pending`/`draft` have not been confirmed; `processing` is the processor's own
+ * in-flight marker, so accepting it here would reserve the stock a second time).
+ *
+ * Every read, check and write runs in one transaction: the order row and the product's
+ * inventory rows are locked FOR UPDATE, lines for the same product are aggregated against
+ * one running balance per inventory row, and the status change is a compare-and-set on
+ * `status = 'confirmed'`. Any failure (a short line, a racing status change, a failed
+ * shipment insert) rolls back, so no reservation is ever left behind. Throws for a missing
+ * order, a non-confirmed order, or an order with no lines.
  */
 export async function fulfillOrder(orderId: number, opts: { performedBy?: number } = {}) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const [order] = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
-  if (!order) throw new Error(`Order ${orderId} not found`);
-  if (["shipped", "delivered", "cancelled", "refunded"].includes(order.status)) {
-    throw new Error(`Order ${order.orderNumber} is already ${order.status} and cannot be fulfilled`);
-  }
-
-  const items = await db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
-  if (items.length === 0) throw new Error(`Order ${order.orderNumber} has no line items to fulfil`);
-
-  // Plan every allocation first; the order is only touched once all lines are covered.
-  const allocations: Array<{ inventoryId: number; warehouseId: number | null; productId: number; quantity: number }> = [];
-  const shortages: Array<{ productId: number | null; required: number; available: number }> = [];
-  for (const item of items) {
-    const requiredQty = parseFloat(item.quantity);
-    if (item.productId == null) {
-      shortages.push({ productId: null, required: requiredQty, available: 0 });
-      continue;
+  return db.transaction(async (tx) => {
+    // Lock the order so a concurrent fulfil / workflow run for the same order waits here
+    // and then fails the status check instead of reserving twice.
+    const [order] = await tx.select().from(orders).where(eq(orders.id, orderId)).limit(1).for("update");
+    if (!order) throw new Error(`Order ${orderId} not found`);
+    if (order.status !== "confirmed") {
+      throw new Error(`Order ${order.orderNumber} is ${order.status}; only a confirmed order can be fulfilled`);
     }
-    const [inv] = await db
-      .select({
-        id: inventory.id,
-        availableQty: sql<number>`CAST(${inventory.quantity} AS DECIMAL) - CAST(${inventory.reservedQuantity} AS DECIMAL)`,
-        warehouseId: inventory.warehouseId,
+
+    const items = await tx.select().from(orderItems).where(eq(orderItems.orderId, orderId));
+    if (items.length === 0) throw new Error(`Order ${order.orderNumber} has no line items to fulfil`);
+
+    // Plan every allocation first; the order is only touched once all lines are covered.
+    // Inventory rows for a product are read (and locked) once and carry a running `planned`
+    // balance, so a second line for the same product sees what earlier lines already took.
+    type InvRow = { id: number; warehouseId: number | null; available: number; planned: number };
+    const invByProduct = new Map<number, InvRow[]>();
+    const loadInventory = async (productId: number): Promise<InvRow[]> => {
+      let rows = invByProduct.get(productId);
+      if (!rows) {
+        const found = await tx
+          .select({
+            id: inventory.id,
+            warehouseId: inventory.warehouseId,
+            quantity: inventory.quantity,
+            reservedQuantity: inventory.reservedQuantity,
+          })
+          .from(inventory)
+          .where(eq(inventory.productId, productId))
+          .for("update");
+        rows = found.map((r) => ({
+          id: r.id,
+          warehouseId: r.warehouseId,
+          available: toNumber(r.quantity) - toNumber(r.reservedQuantity),
+          planned: 0,
+        }));
+        invByProduct.set(productId, rows);
+      }
+      return rows;
+    };
+
+    const allocations: Array<{ inventoryId: number; warehouseId: number | null; productId: number; quantity: number }> = [];
+    const shortages = new Map<number | null, { required: number; available: number }>();
+    const requiredByProduct = new Map<number | null, number>();
+    for (const item of items) {
+      const requiredQty = toNumber(item.quantity);
+      requiredByProduct.set(item.productId, (requiredByProduct.get(item.productId) ?? 0) + requiredQty);
+      if (item.productId == null) {
+        shortages.set(null, { required: requiredByProduct.get(null)!, available: 0 });
+        continue;
+      }
+      const rows = await loadInventory(item.productId);
+      // Location with the most stock still unplanned after the lines already accepted.
+      const best = rows.reduce<InvRow | undefined>(
+        (acc, r) => (acc == null || r.available - r.planned > acc.available - acc.planned ? r : acc),
+        undefined,
+      );
+      const remaining = best ? best.available - best.planned : 0;
+      if (!best || remaining < requiredQty) {
+        const totalAvailable = rows.reduce((s, r) => s + r.available, 0);
+        shortages.set(item.productId, { required: requiredByProduct.get(item.productId)!, available: totalAvailable });
+        continue;
+      }
+      best.planned += requiredQty;
+      allocations.push({ inventoryId: best.id, warehouseId: best.warehouseId, productId: item.productId, quantity: requiredQty });
+    }
+    if (shortages.size > 0) {
+      const detail = Array.from(shortages.entries())
+        .map(([productId, s]) => `product ${productId ?? "(no product)"}: need ${s.required}, have ${s.available}`)
+        .join("; ");
+      throw new Error(`Cannot fulfil order ${order.orderNumber} — insufficient stock (${detail})`);
+    }
+
+    // Compare-and-set on the status: if anything moved the order off `confirmed` between our
+    // read and here, zero rows match and the whole transaction rolls back.
+    const cas = await tx
+      .update(orders)
+      .set({ status: "shipped" })
+      .where(and(eq(orders.id, order.id), eq(orders.status, "confirmed")));
+    const affectedRows = (cas as any)[0]?.affectedRows ?? (cas as any).rowsAffected ?? 0;
+    if (affectedRows === 0) {
+      throw new Error(`Order ${order.orderNumber} is no longer confirmed; fulfilment aborted and nothing was reserved`);
+    }
+
+    // One reservation write per inventory row, for the sum of every line planned against it.
+    // The rows are locked above, so the absolute value is safe and keeps decimal precision.
+    for (const rows of invByProduct.values()) {
+      for (const row of rows) {
+        if (row.planned <= 0) continue;
+        const [current] = await tx
+          .select({ reservedQuantity: inventory.reservedQuantity })
+          .from(inventory)
+          .where(eq(inventory.id, row.id))
+          .limit(1);
+        const reserved = toNumber(current?.reservedQuantity) + row.planned;
+        await tx.update(inventory).set({ reservedQuantity: reserved.toFixed(4) }).where(eq(inventory.id, row.id));
+      }
+    }
+
+    const shipmentNumber = `SHP-${Date.now().toString(36).toUpperCase()}`;
+    const [shipment] = await tx
+      .insert(shipments)
+      .values({
+        companyId: order.companyId,
+        shipmentNumber,
+        type: "outbound",
+        orderId: order.id,
+        status: "pending",
+        toAddress: order.shippingAddress,
+        shipDate: new Date(),
       })
-      .from(inventory)
-      .where(eq(inventory.productId, item.productId))
-      .orderBy(desc(sql`CAST(${inventory.quantity} AS DECIMAL) - CAST(${inventory.reservedQuantity} AS DECIMAL)`))
-      .limit(1);
-    const available = inv ? Number(inv.availableQty) : 0;
-    if (!inv || available < requiredQty) {
-      shortages.push({ productId: item.productId, required: requiredQty, available });
-      continue;
+      .$returningId();
+
+    // Cascade #16a (orders.update): order shipped → linked draft invoice becomes "sent".
+    let invoiceMarkedSent = false;
+    if (order.invoiceId) {
+      const [invoice] = await tx.select().from(invoices).where(eq(invoices.id, order.invoiceId)).limit(1);
+      if (invoice && invoice.status === "draft") {
+        await tx.update(invoices).set({ status: "sent" }).where(eq(invoices.id, order.invoiceId));
+        invoiceMarkedSent = true;
+      }
     }
-    allocations.push({ inventoryId: inv.id, warehouseId: inv.warehouseId, productId: item.productId, quantity: requiredQty });
-  }
-  if (shortages.length > 0) {
-    const detail = shortages
-      .map((s) => `product ${s.productId ?? "(no product)"}: need ${s.required}, have ${s.available}`)
-      .join("; ");
-    throw new Error(`Cannot fulfil order ${order.orderNumber} — insufficient stock (${detail})`);
-  }
 
-  for (const alloc of allocations) {
-    await db
-      .update(inventory)
-      .set({ reservedQuantity: sql`CAST(${inventory.reservedQuantity} AS DECIMAL) + ${alloc.quantity}` })
-      .where(eq(inventory.id, alloc.inventoryId));
-  }
-
-  const shipmentNumber = `SHP-${Date.now().toString(36).toUpperCase()}`;
-  const [shipment] = await db
-    .insert(shipments)
-    .values({
-      companyId: order.companyId,
-      shipmentNumber,
-      type: "outbound",
+    return {
       orderId: order.id,
-      status: "pending",
-      toAddress: order.shippingAddress,
-      shipDate: new Date(),
-    })
-    .$returningId();
-
-  await db.update(orders).set({ status: "shipped" }).where(eq(orders.id, order.id));
-
-  // Cascade #16a (orders.update): order shipped → linked draft invoice becomes "sent".
-  let invoiceMarkedSent = false;
-  if (order.invoiceId) {
-    const [invoice] = await db.select().from(invoices).where(eq(invoices.id, order.invoiceId)).limit(1);
-    if (invoice && invoice.status === "draft") {
-      await db.update(invoices).set({ status: "sent" }).where(eq(invoices.id, order.invoiceId));
-      invoiceMarkedSent = true;
-    }
-  }
-
-  return {
-    orderId: order.id,
-    orderNumber: order.orderNumber,
-    status: "shipped" as const,
-    shipmentId: shipment.id,
-    shipmentNumber,
-    allocations,
-    invoiceMarkedSent,
-    performedBy: opts.performedBy ?? null,
-  };
+      orderNumber: order.orderNumber,
+      status: "shipped" as const,
+      shipmentId: shipment.id,
+      shipmentNumber,
+      allocations,
+      invoiceMarkedSent,
+      performedBy: opts.performedBy ?? null,
+    };
+  });
 }
 
 // ============================================

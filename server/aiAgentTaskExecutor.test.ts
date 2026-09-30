@@ -3,32 +3,36 @@ import { aiAgentTasks, type AiAgentTask } from "../drizzle/schema";
 
 // Every db.ts helper the executor can reach, stubbed with a plausible row so
 // each task type can run to completion. Writes are recorded on the mocks.
+// Rows belong to company 1, the default task's company; the scope tests below
+// override individual rows to belong to another company.
 vi.mock("./db", () => ({
   updateAiAgentTask: vi.fn(async () => 1),
-  getRawMaterialById: vi.fn(async (id: number) => ({ id, name: "Flour", sku: "FLR", unit: "kg", unitCost: "2.50", preferredVendorId: 9, quantityOnOrder: "0", leadTimeDays: 5 })),
-  getRawMaterials: vi.fn(async () => [{ id: 1, name: "Flour", sku: "FLR", unit: "kg", unitCost: "2.50", preferredVendorId: 9, quantityOnOrder: "0" }]),
-  getVendorById: vi.fn(async (id: number) => ({ id, name: "Acme", contactName: "Sam", email: `vendor${id}@acme.test`, defaultLeadTimeDays: 7 })),
-  getVendorsByIds: vi.fn(async (ids: number[]) => ids.map((id) => ({ id, name: `Vendor ${id}`, email: `vendor${id}@acme.test` }))),
+  getRawMaterialById: vi.fn(async (id: number) => ({ id, companyId: 1, name: "Flour", sku: "FLR", unit: "kg", unitCost: "2.50", preferredVendorId: 9, quantityOnOrder: "0", leadTimeDays: 5 })),
+  getRawMaterials: vi.fn(async () => [{ id: 1, companyId: 1, name: "Flour", sku: "FLR", unit: "kg", unitCost: "2.50", preferredVendorId: 9, quantityOnOrder: "0" }]),
+  getVendorById: vi.fn(async (id: number) => ({ id, companyId: 1, name: "Acme", contactName: "Sam", email: `vendor${id}@acme.test`, defaultLeadTimeDays: 7 })),
+  getVendorsByIds: vi.fn(async (ids: number[]) => ids.map((id) => ({ id, companyId: 1, name: `Vendor ${id}`, email: `vendor${id}@acme.test` }))),
   createPurchaseOrder: vi.fn(async () => ({ id: 100 })),
   createPurchaseOrderItem: vi.fn(async () => ({ id: 200 })),
   createPurchaseOrderRawMaterialLink: vi.fn(async () => ({ id: 300 })),
   updateRawMaterial: vi.fn(async () => undefined),
+  getFreightRfqById: vi.fn(async (id: number) => ({ id, companyId: 1, status: "draft" })),
   updateFreightRfq: vi.fn(async () => ({ success: true })),
-  getBomById: vi.fn(async (id: number) => ({ id, productId: 4, name: "Bread" })),
+  getBomById: vi.fn(async (id: number) => ({ id, companyId: 1, productId: 4, name: "Bread" })),
   getBomComponents: vi.fn(async () => [{ rawMaterialId: 1, productId: null, name: "Flour", quantity: "2", unit: "kg" }]),
   createWorkOrder: vi.fn(async () => ({ id: 50, workOrderNumber: "WO-1" })),
   createWorkOrderMaterial: vi.fn(async () => ({ id: 60 })),
   upsertRawMaterialInventory: vi.fn(async () => undefined),
-  getPurchaseOrderById: vi.fn(async (id: number) => ({ id, poNumber: "PO-1" })),
+  getPurchaseOrderById: vi.fn(async (id: number) => ({ id, companyId: 1, poNumber: "PO-1" })),
   updatePurchaseOrder: vi.fn(async () => undefined),
-  getInvoiceById: vi.fn(async (id: number) => ({ id, invoiceNumber: "INV-1" })),
+  getInvoiceById: vi.fn(async (id: number) => ({ id, companyId: 1, invoiceNumber: "INV-1" })),
   updateInvoice: vi.fn(async () => undefined),
+  getProductById: vi.fn(async (id: number) => ({ id, companyId: 1, name: "Bread", sku: "BRD" })),
   createVendor: vi.fn(async () => ({ id: 11 })),
   createRawMaterial: vi.fn(async () => ({ id: 12 })),
   createProduct: vi.fn(async () => ({ id: 13 })),
   createBom: vi.fn(async () => ({ id: 14 })),
   createCustomer: vi.fn(async () => ({ id: 15 })),
-  getCrmContactById: vi.fn(async (id: number) => ({ id, fullName: "Jo Buyer", organization: "Globex" })),
+  getCrmContactById: vi.fn(async (id: number) => ({ id, companyId: 1, fullName: "Jo Buyer", organization: "Globex" })),
   findCrmDealByCompany: vi.fn(async () => null),
   createCrmDeal: vi.fn(async () => 77),
 }));
@@ -150,7 +154,9 @@ describe("executeAgentTask covers every taskType in the enum", () => {
 
   it("returns a failure outcome (does not throw) when a handler throws", async () => {
     vi.mocked(db.getBomById).mockResolvedValueOnce(undefined as any);
-    await expect(executeAgentTask(task("create_work_order", { bomId: 99 }))).resolves.toEqual({ success: false, error: "BOM not found" });
+    await expect(executeAgentTask(task("create_work_order", { bomId: 99 }))).resolves.toEqual({ success: false, error: "BOM #99 not found in this company" });
+    vi.mocked(db.getBomById).mockResolvedValueOnce(undefined as any);
+    await expect(executeAgentTask(task("create_work_order", { bomId: 99 }, { companyId: null }))).resolves.toEqual({ success: false, error: "BOM #99 not found" });
   });
 
   it("rejects malformed taskData without running anything", async () => {
@@ -175,9 +181,10 @@ describe("executeAgentTask tolerates both payload spellings", () => {
     expect(sendEmail).toHaveBeenCalledWith({ to: "ops@acme.test", subject: "Where is PO-7?", html: "<p>Line 1\nLine 2</p>" });
   });
 
-  it("vendor_followup: no vendor email anywhere is reported, not thrown", async () => {
-    vi.mocked(db.getVendorById).mockResolvedValueOnce({ id: 9, name: "Acme", email: null } as any);
-    await expect(executeAgentTask(task("vendor_followup", { vendorId: 9 }))).resolves.toEqual({ success: true, data: { emailSent: false, error: "Vendor email not found" } });
+  it("vendor_followup: no vendor email anywhere fails the task (nothing was sent)", async () => {
+    vi.mocked(db.getVendorById).mockResolvedValueOnce({ id: 9, companyId: 1, name: "Acme", email: null } as any);
+    await expect(executeAgentTask(task("vendor_followup", { vendorId: 9 }))).resolves.toEqual({ success: false, error: "Vendor email not found" });
+    expect(sendEmail).not.toHaveBeenCalled();
   });
 
   it("reply_email: `to` + generateWithAI drafts through the LLM (router spelling)", async () => {
@@ -244,14 +251,14 @@ describe("executeAgentTask tolerates both payload spellings", () => {
   it("generate_po: single-material payload falls back to the material's preferred vendor and bumps on-order quantity", async () => {
     const outcome = await executeAgentTask(task("generate_po", { rawMaterialId: 1, quantity: 20, unitCost: "2.50", notes: "From chat" }));
     expect(outcome).toEqual({ success: true, data: { purchaseOrderId: 100, poNumber: expect.stringMatching(/^PO-\d{4}-\d{4}$/), expectedDate: expect.any(String), totalAmount: "50.00" } });
-    expect(db.getVendorById).toHaveBeenCalledWith(9);
-    expect(db.createPurchaseOrder).toHaveBeenCalledWith(expect.objectContaining({ vendorId: 9, status: "draft", subtotal: "50.00", totalAmount: "50.00", notes: "From chat" }));
+    expect(db.getVendorById).toHaveBeenCalledWith(9, { mode: "entity", companyIds: [1] });
+    expect(db.createPurchaseOrder).toHaveBeenCalledWith(expect.objectContaining({ vendorId: 9, companyId: 1, status: "draft", subtotal: "50.00", totalAmount: "50.00", notes: "From chat" }));
     expect(db.createPurchaseOrderRawMaterialLink).toHaveBeenCalledWith({ purchaseOrderItemId: 200, rawMaterialId: 1, orderedQuantity: "20", unit: "kg" });
     expect(db.updateRawMaterial).toHaveBeenCalledWith(1, expect.objectContaining({ quantityOnOrder: "20", receivingStatus: "ordered", lastPoId: 100 }));
   });
 
   it("generate_po: single-material payload with no vendor at all fails instead of writing an invalid status", async () => {
-    vi.mocked(db.getRawMaterialById).mockResolvedValueOnce({ id: 1, name: "Flour", preferredVendorId: null } as any);
+    vi.mocked(db.getRawMaterialById).mockResolvedValueOnce({ id: 1, companyId: 1, name: "Flour", preferredVendorId: null } as any);
     await expect(executeAgentTask(task("generate_po", { rawMaterialId: 1, quantity: 5 })))
       .resolves.toEqual({ success: false, error: expect.stringMatching(/requires vendor selection for Flour/) });
     expect(db.updateAiAgentTask).not.toHaveBeenCalled();
@@ -275,6 +282,214 @@ describe("executeAgentTask tolerates both payload spellings", () => {
 
   it("ingredient_rfq / invoice_price_review monitor costs then send every pending RFQ", async () => {
     await expect(executeAgentTask(task("invoice_price_review", {}))).resolves.toEqual({ success: true, data: { checked: 3, requestsCreated: 1, rfqsSent: 2 } });
+  });
+});
+
+describe("executeAgentTask enforces the task's company scope", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const otherCompany = (row: Record<string, unknown>) => ({ ...row, companyId: 1 });
+  const notFoundInCompany = (label: string) => ({ success: false, error: expect.stringMatching(new RegExp(`${label} not found in this company`)) });
+
+  it("approve_po: a company-2 task cannot confirm company 1's purchase order", async () => {
+    vi.mocked(db.getPurchaseOrderById).mockResolvedValueOnce(otherCompany({ id: 4, poNumber: "PO-1" }) as any);
+    await expect(executeAgentTask(task("approve_po", { purchaseOrderId: 4 }, { companyId: 2 }))).resolves.toEqual(notFoundInCompany("Purchase order #4"));
+    expect(db.updatePurchaseOrder).not.toHaveBeenCalled();
+  });
+
+  it("approve_invoice: a company-2 task cannot mark company 1's invoice sent", async () => {
+    vi.mocked(db.getInvoiceById).mockResolvedValueOnce(otherCompany({ id: 2, invoiceNumber: "INV-1" }) as any);
+    await expect(executeAgentTask(task("approve_invoice", { invoiceId: 2 }, { companyId: 2 }))).resolves.toEqual(notFoundInCompany("Invoice #2"));
+    expect(db.updateInvoice).not.toHaveBeenCalled();
+  });
+
+  it("a row with no company is not visible to a company-scoped task", async () => {
+    vi.mocked(db.getPurchaseOrderById).mockResolvedValueOnce({ id: 4, poNumber: "PO-1", companyId: null } as any);
+    await expect(executeAgentTask(task("approve_po", { purchaseOrderId: 4 }, { companyId: 2 }))).resolves.toEqual(notFoundInCompany("Purchase order #4"));
+    expect(db.updatePurchaseOrder).not.toHaveBeenCalled();
+  });
+
+  it("a task with no company (global) keeps today's behaviour: any row is visible, inserts carry no company", async () => {
+    vi.mocked(db.getPurchaseOrderById).mockResolvedValueOnce({ id: 4, poNumber: "PO-1", companyId: 7 } as any);
+    await expect(executeAgentTask(task("approve_po", { purchaseOrderId: 4 }, { companyId: null }))).resolves.toEqual({ success: true, data: { approved: true, poId: 4, poNumber: "PO-1" } });
+    expect(db.updatePurchaseOrder).toHaveBeenCalledWith(4, { status: "confirmed" });
+
+    await executeAgentTask(task("create_vendor", PAYLOADS.create_vendor, { companyId: null }));
+    expect(db.createVendor).toHaveBeenCalledWith(expect.not.objectContaining({ companyId: expect.anything() }));
+  });
+
+  it("create_vendor / create_material / create_product / create_customer inserts are stamped with the task's company", async () => {
+    await executeAgentTask(task("create_vendor", PAYLOADS.create_vendor, { companyId: 2 }));
+    expect(db.createVendor).toHaveBeenCalledWith(expect.objectContaining({ name: "Pacific Foods", companyId: 2 }));
+    await executeAgentTask(task("create_material", PAYLOADS.create_material, { companyId: 2 }));
+    expect(db.createRawMaterial).toHaveBeenCalledWith(expect.objectContaining({ name: "Cocoa", companyId: 2 }));
+    await executeAgentTask(task("create_product", PAYLOADS.create_product, { companyId: 2 }));
+    expect(db.createProduct).toHaveBeenCalledWith(expect.objectContaining({ name: "Hemp Bar", companyId: 2 }));
+    await executeAgentTask(task("create_customer", PAYLOADS.create_customer, { companyId: 2 }));
+    expect(db.createCustomer).toHaveBeenCalledWith(expect.objectContaining({ name: "Whole Foods", companyId: 2 }));
+  });
+
+  it("create_bom: the product must be in the task's company; the BOM is stamped", async () => {
+    await expect(executeAgentTask(task("create_bom", PAYLOADS.create_bom, { companyId: 2 }))).resolves.toEqual(notFoundInCompany("Product #4"));
+    expect(db.createBom).not.toHaveBeenCalled();
+
+    vi.mocked(db.getProductById).mockResolvedValueOnce({ id: 4, companyId: 2 } as any);
+    await expect(executeAgentTask(task("create_bom", PAYLOADS.create_bom, { companyId: 2 }))).resolves.toMatchObject({ success: true });
+    expect(db.createBom).toHaveBeenCalledWith(expect.objectContaining({ productId: 4, companyId: 2 }));
+  });
+
+  it("generate_po: vendor and material are looked up within the task's company and the PO is stamped", async () => {
+    vi.mocked(db.getRawMaterialById).mockResolvedValueOnce({ id: 1, companyId: 2, name: "Flour", unit: "kg", quantityOnOrder: "0", preferredVendorId: 9 } as any);
+    vi.mocked(db.getVendorById).mockResolvedValueOnce({ id: 9, companyId: 2, name: "Acme", email: "v@acme.test", defaultLeadTimeDays: 7 } as any);
+    await expect(executeAgentTask(task("generate_po", PAYLOADS.generate_po, { companyId: 2 }))).resolves.toMatchObject({ success: true });
+    expect(db.getVendorById).toHaveBeenCalledWith(9, { mode: "entity", companyIds: [2] });
+    expect(db.createPurchaseOrder).toHaveBeenCalledWith(expect.objectContaining({ vendorId: 9, companyId: 2 }));
+
+    // Material in company 1 → the company-2 task fails before anything is written.
+    vi.clearAllMocks();
+    await expect(executeAgentTask(task("generate_po", PAYLOADS.generate_po, { companyId: 2 }))).resolves.toEqual(notFoundInCompany("Raw material #1"));
+    expect(db.createPurchaseOrder).not.toHaveBeenCalled();
+    expect(db.updateRawMaterial).not.toHaveBeenCalled();
+  });
+
+  it("generate_po: a preferred vendor outside the task's company is not used", async () => {
+    vi.mocked(db.getRawMaterialById).mockResolvedValueOnce({ id: 1, companyId: 2, name: "Flour", preferredVendorId: 9, quantityOnOrder: "0" } as any);
+    vi.mocked(db.getVendorById).mockResolvedValueOnce(undefined as any); // scoped lookup: vendor 9 belongs to company 1
+    await expect(executeAgentTask(task("generate_po", { rawMaterialId: 1, quantity: 5 }, { companyId: 2 })))
+      .resolves.toEqual({ success: false, error: expect.stringMatching(/requires vendor selection for Flour/) });
+    expect(db.createPurchaseOrder).not.toHaveBeenCalled();
+  });
+
+  it("generate_po (bulk): the vendor and every material must belong to the task's company", async () => {
+    const payload = { vendorId: 9, materials: [{ id: 1, name: "Flour", quantity: "5", unitCost: "1" }], totalValue: 5 };
+    await expect(executeAgentTask(task("generate_po", payload, { companyId: 2 }))).resolves.toEqual(notFoundInCompany("Vendor #9"));
+    expect(db.createPurchaseOrder).not.toHaveBeenCalled();
+
+    vi.mocked(db.getVendorById).mockResolvedValueOnce({ id: 9, companyId: 2 } as any);
+    await expect(executeAgentTask(task("generate_po", payload, { companyId: 2 }))).resolves.toEqual(notFoundInCompany("Raw material #1"));
+    expect(db.createPurchaseOrder).not.toHaveBeenCalled();
+  });
+
+  it("create_work_order / reorder_materials: the BOM must be in the task's company; the work order is stamped", async () => {
+    await expect(executeAgentTask(task("reorder_materials", PAYLOADS.reorder_materials, { companyId: 2 }))).resolves.toEqual(notFoundInCompany("BOM #3"));
+    expect(db.createWorkOrder).not.toHaveBeenCalled();
+
+    vi.mocked(db.getBomById).mockResolvedValueOnce({ id: 3, companyId: 2, productId: 4, name: "Bread" } as any);
+    await expect(executeAgentTask(task("create_work_order", PAYLOADS.create_work_order, { companyId: 2 }))).resolves.toMatchObject({ success: true });
+    expect(db.createWorkOrder).toHaveBeenCalledWith(expect.objectContaining({ bomId: 3, companyId: 2 }));
+  });
+
+  it("update_inventory: the material must be in the task's company; the inventory row is stamped", async () => {
+    await expect(executeAgentTask(task("update_inventory", PAYLOADS.update_inventory, { companyId: 2 }))).resolves.toEqual(notFoundInCompany("Raw material #1"));
+    expect(db.upsertRawMaterialInventory).not.toHaveBeenCalled();
+
+    vi.mocked(db.getRawMaterialById).mockResolvedValueOnce({ id: 1, companyId: 2 } as any);
+    await executeAgentTask(task("update_inventory", PAYLOADS.update_inventory, { companyId: 2 }));
+    expect(db.upsertRawMaterialInventory).toHaveBeenCalledWith(1, 1, { quantity: "5", companyId: 2 });
+  });
+
+  it("send_rfq: vendors outside the task's company are rejected before any email goes out", async () => {
+    vi.mocked(db.getRawMaterialById).mockResolvedValueOnce({ id: 1, companyId: 2, name: "Flour" } as any);
+    vi.mocked(db.getVendorsByIds).mockResolvedValueOnce([{ id: 9, companyId: 2, email: "a@x.test" }, { id: 10, companyId: 1, email: "b@x.test" }] as any);
+    await expect(executeAgentTask(task("send_rfq", PAYLOADS.send_rfq, { companyId: 2 }))).resolves.toEqual(notFoundInCompany("Vendor #10"));
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it("send_rfq: a freight RFQ in another company is not marked sent", async () => {
+    await expect(executeAgentTask(task("send_rfq", { rfqId: 3 }, { companyId: 2 }))).resolves.toEqual(notFoundInCompany("Freight RFQ #3"));
+    expect(db.updateFreightRfq).not.toHaveBeenCalled();
+  });
+
+  it("vendor_followup: a vendor in another company is not emailed", async () => {
+    vi.mocked(db.getVendorById).mockResolvedValueOnce(undefined as any); // scoped lookup misses
+    await expect(executeAgentTask(task("vendor_followup", { vendorId: 9 }, { companyId: 2 }))).resolves.toEqual(notFoundInCompany("Vendor #9"));
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it("create_crm_deal: the contact must be in the task's company; another company's same-named deal is not a duplicate; the deal is stamped", async () => {
+    await expect(executeAgentTask(task("create_crm_deal", PAYLOADS.create_crm_deal, { companyId: 2 }))).resolves.toEqual(notFoundInCompany("CRM contact #1"));
+    expect(db.createCrmDeal).not.toHaveBeenCalled();
+
+    vi.mocked(db.getCrmContactById).mockResolvedValueOnce({ id: 1, companyId: 2, fullName: "Jo", organization: "Globex" } as any);
+    vi.mocked(db.findCrmDealByCompany).mockResolvedValueOnce({ id: 5, companyId: 1 } as any);
+    await expect(executeAgentTask(task("create_crm_deal", PAYLOADS.create_crm_deal, { companyId: 2 }))).resolves.toEqual({ success: true, data: { created: true, dealId: 77, dealName: "Globex" } });
+    expect(db.createCrmDeal).toHaveBeenCalledWith(expect.objectContaining({ contactId: 1, companyId: 2 }));
+
+    vi.mocked(db.getCrmContactById).mockResolvedValueOnce({ id: 1, companyId: 2, fullName: "Jo", organization: "Globex" } as any);
+    vi.mocked(db.findCrmDealByCompany).mockResolvedValueOnce({ id: 5, companyId: 2 } as any);
+    await expect(executeAgentTask(task("create_crm_deal", PAYLOADS.create_crm_deal, { companyId: 2 }))).resolves.toEqual({ success: false, error: 'A deal already exists for company "Globex" (deal #5)' });
+  });
+});
+
+describe("executeAgentTask reports a failed send as a failed task", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("send_email: an unconfigured/failed provider fails the task with the provider's error", async () => {
+    vi.mocked(sendEmail).mockResolvedValueOnce({ success: false, error: "SendGrid not configured" });
+    await expect(executeAgentTask(task("send_email", PAYLOADS.send_email))).resolves.toEqual({ success: false, error: expect.stringContaining("SendGrid not configured") });
+  });
+
+  it("send_email: a failed send with no error text still fails", async () => {
+    vi.mocked(sendEmail).mockResolvedValueOnce({ success: false });
+    await expect(executeAgentTask(task("send_email", PAYLOADS.send_email))).resolves.toMatchObject({ success: false });
+  });
+
+  it("vendor_followup: a failed send fails the task", async () => {
+    vi.mocked(sendEmail).mockResolvedValueOnce({ success: false, error: "Mailbox unavailable" });
+    await expect(executeAgentTask(task("vendor_followup", PAYLOADS.vendor_followup))).resolves.toEqual({ success: false, error: expect.stringContaining("Mailbox unavailable") });
+  });
+
+  it("reply_email (AI-drafted): emailSent false fails the task even though a reply was generated", async () => {
+    vi.mocked(processEmailReply).mockResolvedValueOnce({ success: true, emailSent: false, generatedReply: { subject: "Re: hi", body: "Thanks" }, error: "SendGrid not configured" } as any);
+    await expect(executeAgentTask(task("reply_email", { to: "c@d.test", generateWithAI: true }))).resolves.toEqual({ success: false, error: expect.stringContaining("SendGrid not configured") });
+
+    // No provider error at all (email not configured, so processEmailReply never tried): still a failure.
+    vi.mocked(processEmailReply).mockResolvedValueOnce({ success: true, emailSent: false, generatedReply: { subject: "Re: hi", body: "Thanks" } } as any);
+    await expect(executeAgentTask(task("reply_email", { to: "c@d.test", generateWithAI: true }))).resolves.toMatchObject({ success: false, error: expect.stringMatching(/not sent/i) });
+  });
+
+  it("reply_email (pre-written): a failed send fails the task", async () => {
+    vi.mocked(sendEmail).mockResolvedValueOnce({ success: false, error: "Rejected by provider" });
+    await expect(executeAgentTask(task("reply_email", PAYLOADS.reply_email))).resolves.toEqual({ success: false, error: expect.stringContaining("Rejected by provider") });
+  });
+
+  it("send_rfq: every vendor email failing fails the task", async () => {
+    vi.mocked(sendEmail).mockResolvedValueOnce({ success: false, error: "SendGrid not configured" }).mockResolvedValueOnce({ success: false, error: "SendGrid not configured" });
+    await expect(executeAgentTask(task("send_rfq", PAYLOADS.send_rfq))).resolves.toEqual({ success: false, error: expect.stringContaining("SendGrid not configured") });
+    expect(db.updateFreightRfq).not.toHaveBeenCalled();
+  });
+
+  it("send_rfq: a partial failure succeeds and lists what failed", async () => {
+    vi.mocked(sendEmail).mockResolvedValueOnce({ success: true, messageId: "m1" }).mockResolvedValueOnce({ success: false, error: "Bounced" });
+    const outcome = await executeAgentTask(task("send_rfq", PAYLOADS.send_rfq));
+    expect(outcome).toEqual({
+      success: true,
+      data: {
+        rfqSent: true,
+        vendorCount: 2,
+        emailsSent: ["vendor9@acme.test"],
+        failed: [{ vendorId: 10, email: "vendor10@acme.test", error: "Bounced" }],
+        note: expect.stringMatching(/1 of 2/),
+      },
+    });
+  });
+
+  it("send_rfq: vendors without an email address cannot be quoted", async () => {
+    vi.mocked(db.getVendorsByIds).mockResolvedValueOnce([{ id: 9, companyId: 1, email: null }, { id: 10, companyId: 1, email: "" }] as any);
+    await expect(executeAgentTask(task("send_rfq", PAYLOADS.send_rfq))).resolves.toEqual({ success: false, error: expect.stringMatching(/email address/i) });
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it("ingredient_rfq: every RFQ failing to send fails the task; a partial failure is listed", async () => {
+    const { sendIngredientRfqToVendors } = await import("./ingredientQuoteService");
+    vi.mocked(sendIngredientRfqToVendors).mockRejectedValueOnce(new Error("No vendors configured")).mockRejectedValueOnce(new Error("No vendors configured"));
+    await expect(executeAgentTask(task("ingredient_rfq", PAYLOADS.ingredient_rfq))).resolves.toEqual({ success: false, error: expect.stringContaining("No vendors configured") });
+
+    vi.mocked(sendIngredientRfqToVendors).mockRejectedValueOnce(new Error("No vendors configured"));
+    await expect(executeAgentTask(task("ingredient_rfq", PAYLOADS.ingredient_rfq))).resolves.toEqual({
+      success: true,
+      data: { checked: 3, requestsCreated: 1, rfqsSent: 1, failed: [{ quoteRequestId: 1, error: "No vendors configured" }], note: expect.stringMatching(/1 of 2/) },
+    });
   });
 });
 

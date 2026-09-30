@@ -179,10 +179,12 @@ async function approveBill(params: ChatToolParams, ctx: AIAgentContext) {
 }
 
 async function listBankTransactions(params: ChatToolParams, ctx: AIAgentContext) {
+  // Filter in MySQL, not in memory: the helper takes the company predicate.
   const rows = filterByCompany(ctx, await db.getBankTransactions({
     startDate: optionalString(params.startDate),
     endDate: optionalString(params.endDate),
     status: optionalString(params.status),
+    companyId: ctx.companyId,
   }));
   const limit = optionalNumber(params.limit) ?? 25;
   let inflow = 0;
@@ -250,7 +252,8 @@ async function financialSummary(params: ChatToolParams, ctx: AIAgentContext) {
     },
     receivables: {
       openInvoices: openInvoices.length,
-      outstanding: openInvoices.reduce((s, i) => s + toNumber(i.totalAmount), 0),
+      // Same rule as dataRoomLiveFinancials: a partly paid invoice only owes the remainder.
+      outstanding: openInvoices.reduce((s, i) => s + Math.max(0, toNumber(i.totalAmount) - toNumber(i.paidAmount)), 0),
     },
     payables: {
       openBills: openBills.length,
@@ -268,6 +271,9 @@ async function financialSummary(params: ChatToolParams, ctx: AIAgentContext) {
 export async function executeFinance(name: string, params: ChatToolParams, ctx: AIAgentContext): Promise<unknown> {
   if (name !== "manage_finance") throw new ChatToolError(`Unknown tool: ${name}`);
   requireInternal(ctx, "use finance tools");
+  // Every read here mirrors a financeProcedure route (bills.list, banking.*,
+  // financialReports.generate), so the chat holds the same line.
+  requireRole(ctx, FINANCE_ROLES, `finance: ${String(params.action ?? "")}`);
   switch (params.action) {
     case "list_bills": return listBills(params, ctx);
     case "create_bill": return createBill(params, ctx);

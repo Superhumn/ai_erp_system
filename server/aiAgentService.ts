@@ -798,6 +798,11 @@ const AI_TOOLS: Tool[] = [
 // TOOL EXECUTION FUNCTIONS
 // ============================================
 
+/** Escape a value for a Drive `q` string literal: backslashes first, then quotes. */
+export function escapeDriveQueryValue(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
 async function executeSearchGoogleDrive(params: any, ctx: AIAgentContext): Promise<any> {
   try {
     const { accessToken, error: tokenErr } = await getValidGoogleToken(ctx.userId);
@@ -805,7 +810,7 @@ async function executeSearchGoogleDrive(params: any, ctx: AIAgentContext): Promi
       return { error: "Google Drive not connected. Go to Settings → Integrations to connect." };
     }
 
-    let query = `fullText contains '${params.query.replace(/'/g, "\\'")}'`;
+    let query = `fullText contains '${escapeDriveQueryValue(String(params.query ?? ""))}'`;
     if (params.fileType && params.fileType !== "all") {
       const mimeMap: Record<string, string> = {
         spreadsheet: "application/vnd.google-apps.spreadsheet",

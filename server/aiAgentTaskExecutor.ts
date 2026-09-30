@@ -22,11 +22,20 @@
  * - Payload fields accept both spellings the two legacy paths used
  *   (`vendorId` or `vendorEmail`, `to` or `recipientEmail`,
  *   `subject` or `emailSubject`, `body` or `emailBody`).
+ * - Company scope: `task.companyId` is the tenancy of the task. A scoped task
+ *   only reads rows in that company (any other row is "not found in this
+ *   company" and nothing is written) and every row it creates is stamped with
+ *   it. A task with no company runs globally, as before.
+ * - A send that the provider reports as failed (`success: false` /
+ *   `emailSent: false`) fails the task; it is never a completed task. For a
+ *   multi-recipient send, all-failed fails the task and a partial failure
+ *   succeeds with `data.failed` and `data.note`.
  */
 import { randomInt } from "node:crypto";
 import type { AiAgentTask } from "../drizzle/schema";
 import * as db from "./db";
-import { sendEmail, formatEmailHtml } from "./_core/email";
+import { sendEmail, formatEmailHtml, type EmailResult } from "./_core/email";
+import { scopeAllows, type Scope } from "./_core/scope";
 import { processEmailReply } from "./emailReplyService";
 import { createProjectTaskFromSource } from "./taskAgentBridge";
 
@@ -99,6 +108,85 @@ export async function claimAgentTask(
 }
 
 // ---------------------------------------------------------------------------
+// Company scope
+// ---------------------------------------------------------------------------
+
+/** What a handler needs from the task row besides its payload. */
+interface TaskContext {
+  task: AiAgentTask;
+  /** Rows visible to this task: the task's company, or everything for a task with no company. */
+  scope: Scope;
+  /** Spread into every insert: `{ companyId }` for a scoped task, `{}` for a global one. */
+  stamp: { companyId?: number };
+}
+
+function taskContext(task: AiAgentTask): TaskContext {
+  const companyId = task.companyId;
+  return companyId != null
+    ? { task, scope: { mode: "entity", companyIds: [companyId] }, stamp: { companyId } }
+    : { task, scope: { mode: "global", companyIds: "all" }, stamp: {} };
+}
+
+/**
+ * A row read by id must exist and be visible under the task's scope, else the
+ * task fails before anything is written. For a scoped task a missing row and
+ * another company's row get the same message (a scoped db lookup such as
+ * `getVendorById(id, scope)` cannot tell them apart either), and it says
+ * "not found" rather than "forbidden": confirming another company's row
+ * exists would leak it.
+ */
+function requireInScope<T extends { companyId?: number | null }>(
+  ctx: TaskContext,
+  row: T | null | undefined,
+  label: string,
+): T {
+  const scoped = ctx.scope.companyIds !== "all";
+  if (!row) throw new Error(scoped ? `${label} not found in this company` : `${label} not found`);
+  if (!scopeAllows(ctx.scope, row.companyId)) throw new Error(`${label} not found in this company`);
+  return row;
+}
+
+/**
+ * Scope check for a row the handler only references by id (never reads
+ * otherwise). A global task skips the lookup, keeping its behaviour unchanged.
+ */
+async function assertInScope(
+  ctx: TaskContext,
+  label: string,
+  fetch: () => Promise<{ companyId?: number | null } | null | undefined>,
+): Promise<void> {
+  if (ctx.scope.companyIds === "all") return;
+  requireInScope(ctx, await fetch(), label);
+}
+
+// ---------------------------------------------------------------------------
+// Send results
+// ---------------------------------------------------------------------------
+
+/** A single send either succeeded or fails the task with the provider's reason. */
+function requireSent(result: Pick<EmailResult, "success" | "error">, what: string): void {
+  if (!result.success) throw new Error(`${what} was not sent: ${result.error || "email provider reported a failure"}`);
+}
+
+/**
+ * Outcome fields for a multi-recipient send: all failed → the task fails;
+ * some failed → `failed` + `note` for the reader; none failed → nothing extra.
+ */
+function multiSendReport<F>(
+  what: string,
+  attempted: number,
+  failed: F[],
+  errorOf: (f: F) => string,
+): { failed?: F[]; note?: string } {
+  if (failed.length === 0) return {};
+  if (failed.length >= attempted) {
+    const reasons = Array.from(new Set(failed.map(errorOf))).join("; ");
+    throw new Error(`No ${what} was sent (${failed.length} of ${attempted} failed): ${reasons}`);
+  }
+  return { failed, note: `${failed.length} of ${attempted} ${what}s failed to send; see \`failed\`.` };
+}
+
+// ---------------------------------------------------------------------------
 // Execute
 // ---------------------------------------------------------------------------
 
@@ -136,7 +224,7 @@ export async function executeAgentTask(
   if (!taskData) return { success: false, error: "Task data is not valid JSON" };
 
   try {
-    const data = await runTaskType(task, taskData, opts);
+    const data = await runTaskType(taskContext(task), taskData, opts);
     return { success: true, data };
   } catch (err: any) {
     return { success: false, error: err?.message ? String(err.message) : String(err) };
@@ -144,44 +232,45 @@ export async function executeAgentTask(
 }
 
 async function runTaskType(
-  task: AiAgentTask,
+  ctx: TaskContext,
   taskData: TaskData,
   opts: ExecuteAgentTaskOptions,
 ): Promise<AgentTaskExecutionData> {
+  const { task } = ctx;
   const taskType = task.taskType as AgentTaskType;
   switch (taskType) {
     case "generate_po":
-      return executeGeneratePo(task, taskData);
+      return executeGeneratePo(ctx, taskData);
     case "send_rfq":
-      return executeSendRfq(taskData);
+      return executeSendRfq(ctx, taskData);
     case "send_email":
       return executeSendEmail(taskData);
     case "vendor_followup":
-      return executeVendorFollowup(taskData);
+      return executeVendorFollowup(ctx, taskData);
     case "reorder_materials":
-      return executeWorkOrderFromBom(taskData, { withMaterials: true });
+      return executeWorkOrderFromBom(ctx, taskData, { withMaterials: true });
     case "create_work_order":
-      return executeWorkOrderFromBom(taskData, { withMaterials: false });
+      return executeWorkOrderFromBom(ctx, taskData, { withMaterials: false });
     case "update_inventory":
-      return executeUpdateInventory(taskData);
+      return executeUpdateInventory(ctx, taskData);
     case "reply_email":
       return executeReplyEmail(taskData, opts);
     case "approve_po":
-      return executeApprovePo(taskData);
+      return executeApprovePo(ctx, taskData);
     case "approve_invoice":
-      return executeApproveInvoice(taskData);
+      return executeApproveInvoice(ctx, taskData);
     case "create_vendor":
-      return executeCreateVendor(taskData);
+      return executeCreateVendor(ctx, taskData);
     case "create_material":
-      return executeCreateMaterial(taskData);
+      return executeCreateMaterial(ctx, taskData);
     case "create_product":
-      return executeCreateProduct(taskData);
+      return executeCreateProduct(ctx, taskData);
     case "create_bom":
-      return executeCreateBom(taskData);
+      return executeCreateBom(ctx, taskData);
     case "create_customer":
-      return executeCreateCustomer(taskData);
+      return executeCreateCustomer(ctx, taskData);
     case "create_crm_deal":
-      return executeCreateCrmDeal(taskData);
+      return executeCreateCrmDeal(ctx, taskData);
     case "concierge_errand":
       return executeConciergeErrand(task);
     case "ingredient_rfq":
@@ -214,27 +303,31 @@ async function runTaskType(
  *   → one draft PO for one material; the vendor falls back to the material's
  *   preferred vendor and the material's on-order quantity is bumped.
  */
-async function executeGeneratePo(task: AiAgentTask, taskData: TaskData): Promise<AgentTaskExecutionData> {
-  if (Array.isArray(taskData.materials)) return executeBulkPoGeneration(task, taskData);
+async function executeGeneratePo(ctx: TaskContext, taskData: TaskData): Promise<AgentTaskExecutionData> {
+  if (Array.isArray(taskData.materials)) return executeBulkPoGeneration(ctx, taskData);
 
   let material: Awaited<ReturnType<typeof db.getRawMaterialById>> | null = null;
   if (taskData.rawMaterialId) {
-    material = await db.getRawMaterialById(taskData.rawMaterialId);
+    material = requireInScope(ctx, await db.getRawMaterialById(taskData.rawMaterialId), `Raw material #${taskData.rawMaterialId}`);
   } else if (taskData.rawMaterialName) {
     const wanted = String(taskData.rawMaterialName).toLowerCase();
     const allMaterials = await db.getRawMaterials();
-    material = allMaterials.find((m) =>
-      m.name?.toLowerCase().includes(wanted) || m.sku?.toLowerCase() === wanted
-    ) || null;
+    material = allMaterials
+      .filter((m) => scopeAllows(ctx.scope, m.companyId))
+      .find((m) => m.name?.toLowerCase().includes(wanted) || m.sku?.toLowerCase() === wanted) || null;
   }
 
   let vendor: Awaited<ReturnType<typeof db.getVendorById>> | null = null;
   let vendorId: number | undefined = toPositiveInt(taskData.vendorId);
   if (vendorId) {
-    vendor = await db.getVendorById(vendorId);
+    vendor = requireInScope(ctx, await db.getVendorById(vendorId, ctx.scope), `Vendor #${vendorId}`);
   } else if (material?.preferredVendorId) {
-    vendor = await db.getVendorById(material.preferredVendorId);
-    vendorId = material.preferredVendorId;
+    // A preferred vendor outside the task's company is simply not a candidate.
+    const preferred = await db.getVendorById(material.preferredVendorId, ctx.scope);
+    if (preferred && scopeAllows(ctx.scope, preferred.companyId)) {
+      vendor = preferred;
+      vendorId = preferred.id;
+    }
   }
   if (!vendorId) {
     // `needs_vendor` is not a valid aiAgentTasks.status, so this surfaces as a
@@ -255,6 +348,7 @@ async function executeGeneratePo(task: AiAgentTask, taskData: TaskData): Promise
   const poNumber = generateNumber("PO");
 
   const po = await db.createPurchaseOrder({
+    ...ctx.stamp,
     poNumber,
     vendorId,
     orderDate: new Date(),
@@ -268,6 +362,7 @@ async function executeGeneratePo(task: AiAgentTask, taskData: TaskData): Promise
   // `material.id` is a rawMaterials id (purchaseOrderItems.productId references
   // products), so the line carries no productId and is linked to the material
   // through purchaseOrderRawMaterials — the same shape purchaseOrders.create produces.
+  // Neither line table carries a company column (both are scope-exempt).
   if (material) {
     const poItem = await db.createPurchaseOrderItem({
       purchaseOrderId: po.id,
@@ -293,7 +388,7 @@ async function executeGeneratePo(task: AiAgentTask, taskData: TaskData): Promise
   return { purchaseOrderId: po.id, poNumber, expectedDate: expectedDate.toISOString(), totalAmount: totalAmount.toFixed(2) };
 }
 
-async function executeBulkPoGeneration(task: AiAgentTask, taskData: TaskData): Promise<AgentTaskExecutionData> {
+async function executeBulkPoGeneration(ctx: TaskContext, taskData: TaskData): Promise<AgentTaskExecutionData> {
   const { materials, totalValue } = taskData as { materials: TaskData[]; totalValue?: number | string };
   // A task without a vendor cannot be turned into an order for anyone: fail it
   // so a person picks the vendor, instead of quietly buying from vendor 1.
@@ -301,9 +396,14 @@ async function executeBulkPoGeneration(task: AiAgentTask, taskData: TaskData): P
   if (!vendorId) {
     throw new Error("PO generation task has no vendorId — select a vendor for this task before approving it");
   }
+  await assertInScope(ctx, `Vendor #${vendorId}`, () => db.getVendorById(vendorId, ctx.scope));
+  for (const material of materials) {
+    if (material.id) await assertInScope(ctx, `Raw material #${material.id}`, () => db.getRawMaterialById(material.id));
+  }
 
   const poNumber = `PO-${Date.now().toString(36).toUpperCase()}`;
   const po = await db.createPurchaseOrder({
+    ...ctx.stamp,
     poNumber,
     vendorId,
     status: "draft",
@@ -311,7 +411,7 @@ async function executeBulkPoGeneration(task: AiAgentTask, taskData: TaskData): P
     subtotal: totalValue?.toString() || "0",
     totalAmount: totalValue?.toString() || "0",
     currency: "USD",
-    notes: `Auto-generated by AI Agent. Task ID: ${task.id}`,
+    notes: `Auto-generated by AI Agent. Task ID: ${ctx.task.id}`,
   });
 
   for (const material of materials) {
@@ -344,7 +444,7 @@ async function executeBulkPoGeneration(task: AiAgentTask, taskData: TaskData): P
  * each vendor a quote request; `{ rfqId }` (freight RFQ from the rule engine)
  * marks that RFQ sent. A payload can carry both.
  */
-async function executeSendRfq(taskData: TaskData): Promise<AgentTaskExecutionData> {
+async function executeSendRfq(ctx: TaskContext, taskData: TaskData): Promise<AgentTaskExecutionData> {
   const vendorIds: number[] = Array.isArray(taskData.vendorIds) ? taskData.vendorIds : [];
   const rfqId = toPositiveInt(taskData.rfqId);
   if (vendorIds.length === 0 && !rfqId) {
@@ -352,14 +452,22 @@ async function executeSendRfq(taskData: TaskData): Promise<AgentTaskExecutionDat
   }
 
   const emailsSent: string[] = [];
+  let report: { failed?: { vendorId: number; email: string; error: string }[]; note?: string } = {};
   if (vendorIds.length > 0) {
-    const material = taskData.rawMaterialId ? await db.getRawMaterialById(taskData.rawMaterialId) : null;
+    const material = taskData.rawMaterialId
+      ? requireInScope(ctx, await db.getRawMaterialById(taskData.rawMaterialId), `Raw material #${taskData.rawMaterialId}`)
+      : null;
     const vendorsForRfq = await db.getVendorsByIds(vendorIds);
+    for (const vendor of vendorsForRfq) requireInScope(ctx, vendor, `Vendor #${vendor.id}`);
+    const reachable = vendorsForRfq.filter((vendor) => vendor.email);
+    if (reachable.length === 0) {
+      throw new Error("None of the selected vendors has an email address to send the RFQ to");
+    }
     const results = await Promise.all(
-      vendorsForRfq
-        .filter((vendor) => vendor.email)
-        .map((vendor) => sendEmail({
-          to: vendor.email!,
+      reachable.map(async (vendor) => {
+        const email = vendor.email!;
+        const result = await sendEmail({
+          to: email,
           subject: `Request for Quote: ${material?.name || "Materials"}`,
           html: `
             <p>Dear ${vendor.contactName || vendor.name},</p>
@@ -373,12 +481,19 @@ async function executeSendRfq(taskData: TaskData): Promise<AgentTaskExecutionDat
             <p>Please reply with your best price and lead time.</p>
             <p>Best regards,<br/>Procurement Team</p>
           `,
-        }).then((r) => (r.success ? vendor.email! : null))),
+        });
+        return { vendorId: vendor.id, email, result };
+      }),
     );
-    emailsSent.push(...results.filter((e): e is string => e !== null));
+    const failed = results
+      .filter((r) => !r.result.success)
+      .map((r) => ({ vendorId: r.vendorId, email: r.email, error: r.result.error || "email provider reported a failure" }));
+    report = multiSendReport("RFQ email", reachable.length, failed, (f) => f.error);
+    emailsSent.push(...results.filter((r) => r.result.success).map((r) => r.email));
   }
 
   if (rfqId) {
+    await assertInScope(ctx, `Freight RFQ #${rfqId}`, () => db.getFreightRfqById(rfqId));
     await db.updateFreightRfq(rfqId, { status: "sent" });
   }
 
@@ -386,6 +501,7 @@ async function executeSendRfq(taskData: TaskData): Promise<AgentTaskExecutionDat
     rfqSent: true,
     vendorCount: vendorIds.length,
     emailsSent,
+    ...report,
     ...(rfqId ? { rfqId, status: "sent" } : {}),
   };
 }
@@ -398,17 +514,16 @@ async function executeSendEmail(taskData: TaskData): Promise<AgentTaskExecutionD
     subject: pick<string>(taskData, "subject", "emailSubject") || "",
     html: pick<string>(taskData, "body", "content", "emailBody") || "",
   });
-  return { emailSent: emailResult.success, messageId: emailResult.messageId };
+  requireSent(emailResult, `Email to ${to}`);
+  return { emailSent: true, messageId: emailResult.messageId };
 }
 
 /** Vendor resolved from `vendorId` when present, else the stored `vendorEmail`. */
-async function executeVendorFollowup(taskData: TaskData): Promise<AgentTaskExecutionData> {
+async function executeVendorFollowup(ctx: TaskContext, taskData: TaskData): Promise<AgentTaskExecutionData> {
   const vendorId = toPositiveInt(taskData.vendorId);
-  const vendor = vendorId ? await db.getVendorById(vendorId) : null;
+  const vendor = vendorId ? requireInScope(ctx, await db.getVendorById(vendorId, ctx.scope), `Vendor #${vendorId}`) : null;
   const vendorEmail = vendor?.email || pick<string>(taskData, "vendorEmail");
-  if (!vendorEmail) {
-    return { emailSent: false, error: "Vendor email not found" };
-  }
+  if (!vendorEmail) throw new Error("Vendor email not found");
   const poNumber = taskData.poNumber;
   const body = pick<string>(taskData, "body", "emailBody");
   const emailResult = await sendEmail({
@@ -421,17 +536,19 @@ async function executeVendorFollowup(taskData: TaskData): Promise<AgentTaskExecu
       <p>Best regards,<br/>Procurement Team</p>
     `,
   });
-  return { emailSent: emailResult.success, messageId: emailResult.messageId, vendorEmail };
+  requireSent(emailResult, `Follow-up email to ${vendorEmail}`);
+  return { emailSent: true, messageId: emailResult.messageId, vendorEmail };
 }
 
 async function executeWorkOrderFromBom(
+  ctx: TaskContext,
   taskData: TaskData,
   { withMaterials }: { withMaterials: boolean },
 ): Promise<AgentTaskExecutionData> {
-  const bom = taskData.bomId ? await db.getBomById(taskData.bomId) : null;
-  if (!bom) throw new Error("BOM not found");
+  const bom = requireInScope(ctx, taskData.bomId ? await db.getBomById(taskData.bomId) : null, `BOM #${taskData.bomId ?? "?"}`);
 
   const workOrder = await db.createWorkOrder({
+    ...ctx.stamp,
     bomId: bom.id,
     productId: bom.productId,
     quantity: taskData.quantity?.toString() || "1",
@@ -444,6 +561,7 @@ async function executeWorkOrderFromBom(
     return { created: true, workOrderId: workOrder.id, workOrderNumber: workOrder.workOrderNumber };
   }
 
+  // workOrderMaterials is scope-exempt (no company column); it hangs off the stamped work order.
   const components = await db.getBomComponents(bom.id);
   for (const comp of components) {
     const requiredQty = parseFloat(comp.quantity?.toString() || "0") * parseFloat(taskData.quantity || "1");
@@ -460,10 +578,12 @@ async function executeWorkOrderFromBom(
   return { workOrderId: workOrder.id, workOrderNumber: workOrder.workOrderNumber, materialsCount: components.length };
 }
 
-async function executeUpdateInventory(taskData: TaskData): Promise<AgentTaskExecutionData> {
+async function executeUpdateInventory(ctx: TaskContext, taskData: TaskData): Promise<AgentTaskExecutionData> {
   if (taskData.rawMaterialId) {
+    requireInScope(ctx, await db.getRawMaterialById(taskData.rawMaterialId), `Raw material #${taskData.rawMaterialId}`);
     await db.upsertRawMaterialInventory(taskData.rawMaterialId, taskData.warehouseId || 1, {
       quantity: taskData.quantity?.toString(),
+      ...ctx.stamp,
     });
   }
   return { updated: true };
@@ -493,8 +613,14 @@ async function executeReplyEmail(taskData: TaskData, opts: ExecuteAgentTaskOptio
       senderName: taskData.senderName || opts.executedByName,
       senderTitle: taskData.senderTitle,
     });
+    // `emailSent: false` with no error means the provider is not configured, so
+    // processEmailReply generated the draft but never attempted the send.
+    requireSent(
+      { success: emailReplyResult.emailSent === true, error: emailReplyResult.error || "email is not configured, the drafted reply was not sent" },
+      `AI-drafted reply to ${to}`,
+    );
     return {
-      emailSent: emailReplyResult.emailSent,
+      emailSent: true,
       messageId: emailReplyResult.messageId,
       to,
       generatedReply: emailReplyResult.generatedReply,
@@ -507,25 +633,25 @@ async function executeReplyEmail(taskData: TaskData, opts: ExecuteAgentTaskOptio
     subject: pick<string>(taskData, "subject", "emailSubject") || `Re: ${taskData.originalSubject || "Your inquiry"}`,
     html: formatEmailHtml(preWritten || ""),
   });
-  return { emailSent: replyResult.success, messageId: replyResult.messageId, to, aiGenerated: false };
+  requireSent(replyResult, `Reply to ${to}`);
+  return { emailSent: true, messageId: replyResult.messageId, to, aiGenerated: false };
 }
 
-async function executeApprovePo(taskData: TaskData): Promise<AgentTaskExecutionData> {
-  const po = await db.getPurchaseOrderById(taskData.purchaseOrderId);
-  if (!po) throw new Error("Purchase order not found");
-  await db.updatePurchaseOrder(taskData.purchaseOrderId, { status: "confirmed" });
-  return { approved: true, poId: taskData.purchaseOrderId, poNumber: po.poNumber };
+async function executeApprovePo(ctx: TaskContext, taskData: TaskData): Promise<AgentTaskExecutionData> {
+  const po = requireInScope(ctx, await db.getPurchaseOrderById(taskData.purchaseOrderId), `Purchase order #${taskData.purchaseOrderId}`);
+  await db.updatePurchaseOrder(po.id, { status: "confirmed" });
+  return { approved: true, poId: po.id, poNumber: po.poNumber };
 }
 
-async function executeApproveInvoice(taskData: TaskData): Promise<AgentTaskExecutionData> {
-  const invoice = await db.getInvoiceById(taskData.invoiceId);
-  if (!invoice) throw new Error("Invoice not found");
-  await db.updateInvoice(taskData.invoiceId, { status: "sent" });
-  return { approved: true, invoiceId: taskData.invoiceId, invoiceNumber: invoice.invoiceNumber };
+async function executeApproveInvoice(ctx: TaskContext, taskData: TaskData): Promise<AgentTaskExecutionData> {
+  const invoice = requireInScope(ctx, await db.getInvoiceById(taskData.invoiceId), `Invoice #${taskData.invoiceId}`);
+  await db.updateInvoice(invoice.id, { status: "sent" });
+  return { approved: true, invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber };
 }
 
-async function executeCreateVendor(taskData: TaskData): Promise<AgentTaskExecutionData> {
+async function executeCreateVendor(ctx: TaskContext, taskData: TaskData): Promise<AgentTaskExecutionData> {
   const vendor = await db.createVendor({
+    ...ctx.stamp,
     name: taskData.name,
     email: taskData.email || undefined,
     phone: taskData.phone || undefined,
@@ -536,8 +662,9 @@ async function executeCreateVendor(taskData: TaskData): Promise<AgentTaskExecuti
   return { created: true, vendorId: vendor.id, vendorName: taskData.name };
 }
 
-async function executeCreateMaterial(taskData: TaskData): Promise<AgentTaskExecutionData> {
+async function executeCreateMaterial(ctx: TaskContext, taskData: TaskData): Promise<AgentTaskExecutionData> {
   const material = await db.createRawMaterial({
+    ...ctx.stamp,
     name: taskData.name,
     sku: taskData.sku || undefined,
     unit: taskData.unit || "units",
@@ -548,8 +675,9 @@ async function executeCreateMaterial(taskData: TaskData): Promise<AgentTaskExecu
   return { created: true, materialId: material.id, materialName: taskData.name };
 }
 
-async function executeCreateProduct(taskData: TaskData): Promise<AgentTaskExecutionData> {
+async function executeCreateProduct(ctx: TaskContext, taskData: TaskData): Promise<AgentTaskExecutionData> {
   const product = await db.createProduct({
+    ...ctx.stamp,
     name: taskData.name,
     // products.sku is NOT NULL — generate one when the task didn't supply it
     sku: taskData.sku || generateNumber("PROD"),
@@ -560,8 +688,10 @@ async function executeCreateProduct(taskData: TaskData): Promise<AgentTaskExecut
   return { created: true, productId: product.id, productName: taskData.name };
 }
 
-async function executeCreateBom(taskData: TaskData): Promise<AgentTaskExecutionData> {
+async function executeCreateBom(ctx: TaskContext, taskData: TaskData): Promise<AgentTaskExecutionData> {
+  await assertInScope(ctx, `Product #${taskData.productId}`, () => db.getProductById(taskData.productId));
   const bom = await db.createBom({
+    ...ctx.stamp,
     productId: taskData.productId,
     name: taskData.name,
     batchSize: taskData.batchSize || undefined,
@@ -571,8 +701,9 @@ async function executeCreateBom(taskData: TaskData): Promise<AgentTaskExecutionD
   return { created: true, bomId: bom.id, bomName: taskData.name };
 }
 
-async function executeCreateCustomer(taskData: TaskData): Promise<AgentTaskExecutionData> {
+async function executeCreateCustomer(ctx: TaskContext, taskData: TaskData): Promise<AgentTaskExecutionData> {
   const customer = await db.createCustomer({
+    ...ctx.stamp,
     name: taskData.name,
     email: taskData.email || undefined,
     phone: taskData.phone || undefined,
@@ -582,20 +713,24 @@ async function executeCreateCustomer(taskData: TaskData): Promise<AgentTaskExecu
   return { created: true, customerId: customer.id, customerName: taskData.name };
 }
 
-async function executeCreateCrmDeal(taskData: TaskData): Promise<AgentTaskExecutionData> {
+async function executeCreateCrmDeal(ctx: TaskContext, taskData: TaskData): Promise<AgentTaskExecutionData> {
   // The deal is titled after the contact's organization.
-  const contact = taskData.contactId ? await db.getCrmContactById(taskData.contactId) : null;
-  if (!contact) throw new Error("Contact not found for CRM deal");
+  const contact = requireInScope(ctx, taskData.contactId ? await db.getCrmContactById(taskData.contactId) : null, `CRM contact #${taskData.contactId ?? "?"}`);
   const company = (contact.organization || "").trim();
   if (!company) throw new Error(`Cannot create deal: contact "${contact.fullName}" has no company set`);
 
   // Re-check duplicates at execution time in case another deal was approved
-  // for the same company while this one was waiting.
+  // for the same company while this one was waiting. A same-named deal in
+  // another entity is not a duplicate of this one (and must not be revealed).
   const existing = await db.findCrmDealByCompany(company);
-  if (existing) throw new Error(`A deal already exists for company "${company}" (deal #${existing.id})`);
+  if (existing && scopeAllows(ctx.scope, existing.companyId)) {
+    throw new Error(`A deal already exists for company "${company}" (deal #${existing.id})`);
+  }
+  // crmPipelines is scope-exempt (shared across entities), so pipelineId is not checked.
   if (!taskData.pipelineId) throw new Error("Pipeline required to create CRM deal");
 
   const dealId = await db.createCrmDeal({
+    ...ctx.stamp,
     pipelineId: taskData.pipelineId,
     contactId: taskData.contactId,
     name: company,
@@ -616,7 +751,12 @@ async function executeConciergeErrand(task: AiAgentTask): Promise<AgentTaskExecu
   return (errandResult.data ?? {}) as AgentTaskExecutionData;
 }
 
-/** Re-quote ingredients whose cost spiked, then send every pending RFQ to its vendors. */
+/**
+ * Re-quote ingredients whose cost spiked, then send every pending RFQ to its
+ * vendors. `sendIngredientRfqToVendors` throws per request rather than
+ * reporting per vendor, so a request is the unit of success here: every
+ * request failing fails the task, some failing is reported in `failed`.
+ */
 async function executeIngredientRfq(taskData: TaskData): Promise<AgentTaskExecutionData> {
   const [ingredientQuoteService, manufacturingDb] = await Promise.all([
     import("./ingredientQuoteService"),
@@ -627,15 +767,17 @@ async function executeIngredientRfq(taskData: TaskData): Promise<AgentTaskExecut
   });
   const requests = await manufacturingDb.getIngredientQuoteRequests({ status: "pending" });
   let rfqsSent = 0;
+  const failed: { quoteRequestId: number; error: string }[] = [];
   for (const qr of requests) {
     try {
       await ingredientQuoteService.sendIngredientRfqToVendors(qr.id);
       rfqsSent++;
-    } catch {
-      // Individual RFQ failures are non-fatal
+    } catch (err: any) {
+      failed.push({ quoteRequestId: qr.id, error: err?.message ? String(err.message) : String(err) });
     }
   }
-  return { ...result, rfqsSent };
+  const report = multiSendReport("ingredient RFQ", requests.length, failed, (f) => f.error);
+  return { ...result, rfqsSent, ...report };
 }
 
 /**

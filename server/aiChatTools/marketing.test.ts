@@ -12,6 +12,7 @@ vi.mock("../campaignService", async (importOriginal) => {
   return { ...actual, addCampaignRecipients: vi.fn(), scheduleCampaign: vi.fn() };
 });
 
+import { textToHtml } from "../campaignSender";
 import * as db from "../db";
 import * as svc from "../campaignService";
 import { executeMarketing, marketingTool } from "./marketing";
@@ -70,14 +71,14 @@ describe("create_campaign_draft", () => {
     m.createCrmEmailCampaign.mockResolvedValue(33 as never);
     const res = await run({ action: "create_campaign_draft", name: "Launch", subject: "New flavour", bodyText: "Hello\n\nWorld", type: "announcement" }, ctx("user")) as { campaignId: number; status: string };
     expect(res).toMatchObject({ created: true, campaignId: 33, status: "draft" });
-    expect(m.createCrmEmailCampaign.mock.calls[0][0]).toMatchObject({ name: "Launch", subject: "New flavour", bodyHtml: "<p>Hello</p><p>World</p>", bodyText: "Hello\n\nWorld", type: "announcement", status: "draft", companyId: 1, createdBy: 10 });
+    expect(m.createCrmEmailCampaign.mock.calls[0][0]).toMatchObject({ name: "Launch", subject: "New flavour", bodyHtml: textToHtml("Hello\n\nWorld"), bodyText: "Hello\n\nWorld", type: "announcement", status: "draft", companyId: 1, createdBy: 10 });
     expect(m.createCrmEmailCampaign.mock.calls[0][0]).not.toHaveProperty("scheduledAt");
     expect(m.createAuditLog).toHaveBeenCalledWith(expect.objectContaining({ entityType: "crm_campaign", entityId: 33 }));
   });
 
   it("escapes plain text before turning it into HTML", async () => {
     await run({ action: "create_campaign_draft", name: "x", subject: "y", bodyText: "a <b>&</b>\nc" }, ctx("user"));
-    expect(m.createCrmEmailCampaign.mock.calls[0][0]).toMatchObject({ bodyHtml: "<p>a &lt;b&gt;&amp;&lt;/b&gt;<br/>c</p>" });
+    expect(m.createCrmEmailCampaign.mock.calls[0][0]).toMatchObject({ bodyHtml: textToHtml("a <b>&</b>\nc") });
   });
 
   it("requires a body", async () => {

@@ -124,9 +124,18 @@ describe("list_bank_transactions", () => {
       { id: 2, companyId: 1, amount: "-40.00", date: new Date(), description: "AWS", status: "posted", categorizationStatus: "uncategorized", reconciliationStatus: "unreconciled" },
       { id: 3, companyId: 2, amount: "999.00", date: new Date(), description: "other co", status: "posted", categorizationStatus: "confirmed", reconciliationStatus: "reconciled" },
     ] as never);
-    const res = await run({ action: "list_bank_transactions", startDate: "2026-09-01" }, ctx("user")) as { count: number; inflow: number; outflow: number; net: number };
-    expect(m.getBankTransactions).toHaveBeenCalledWith(expect.objectContaining({ startDate: "2026-09-01" }));
+    const res = await run({ action: "list_bank_transactions", startDate: "2026-09-01" }, ctx("finance")) as { count: number; inflow: number; outflow: number; net: number };
+    expect(m.getBankTransactions).toHaveBeenCalledWith(expect.objectContaining({ startDate: "2026-09-01", companyId: 1 }));
     expect(res).toMatchObject({ count: 2, inflow: 100, outflow: 40, net: 60 });
+  });
+
+  it("is finance-only, like the banking routes", async () => {
+    for (const role of ["user", "ops", "sales"]) {
+      await expect(run({ action: "list_bank_transactions" }, ctx(role))).rejects.toThrow(/Not authorized/);
+      await expect(run({ action: "list_bills" }, ctx(role))).rejects.toThrow(/Not authorized/);
+      await expect(run({ action: "financial_summary" }, ctx(role))).rejects.toThrow(/Not authorized/);
+      await expect(run({ action: "reconciliation_summary" }, ctx(role))).rejects.toThrow(/Not authorized/);
+    }
   });
 });
 

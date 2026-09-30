@@ -106,6 +106,11 @@ describe("request_time_off", () => {
   });
 });
 
+  it("rejects a weekend-only range instead of charging a day of PTO", async () => {
+    await expect(run({ action: "request_time_off", leaveType: "vacation", startDate: "2026-10-03", endDate: "2026-10-04" }, ctx("user"))).rejects.toThrow(/hours|weekday/i);
+    expect(m.createLeaveRequestWithPtoAdjustment).not.toHaveBeenCalled();
+  });
+
 describe("list_time_off", () => {
   const pending = [
     { id: 1, employeeId: 1, leaveType: "vacation", startDate: new Date(), endDate: new Date(), hours: "8", status: "pending", reason: null },
