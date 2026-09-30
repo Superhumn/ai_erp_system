@@ -43,6 +43,18 @@ export const invoicesRouter = router({
       .query(async ({ input, ctx }) =>
         db.getInvoices(assertNonEmptyScope(await resolveRequestScope(ctx.user)), { status: input?.status, customerId: input?.customerId }),
       ),
+    // Sales hub: invoice number/status and payments received for the invoices of one page of orders.
+    billingByIds: financeProcedure
+      .input(z.object({ invoiceIds: z.array(z.number().int()).max(500) }))
+      .query(async ({ input, ctx }) =>
+        db.getInvoiceBillingByIds(assertNonEmptyScope(await resolveRequestScope(ctx.user)), input.invoiceIds),
+      ),
+    // Home dashboard: open AR and payments received this month (browser's calendar month).
+    homeSummary: financeProcedure
+      .input(z.object({ monthStartMs: z.number(), monthEndMs: z.number() }).refine((w) => w.monthEndMs > w.monthStartMs))
+      .query(async ({ input, ctx }) =>
+        db.getHomeInvoiceSummary(assertNonEmptyScope(await resolveRequestScope(ctx.user)), input.monthStartMs, input.monthEndMs),
+      ),
     // One page (newest first) plus the total for the same filters.
     listPaged: financeProcedure
       .input(z.object({

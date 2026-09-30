@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -10,6 +10,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Package, Truck, CheckCircle, ArrowRight, History } from "lucide-react";
 import { toast } from "sonner";
+import { ListPager } from "@/components/ListPager";
+import { usePagedList } from "@/hooks/usePagedList";
 
 interface ReceivingItem {
   purchaseOrderItemId: number;
@@ -30,7 +32,17 @@ export default function POReceiving() {
   const [isReceiveOpen, setIsReceiveOpen] = useState(false);
   const [selectedReceivingId, setSelectedReceivingId] = useState<number | null>(null);
 
-  const { data: purchaseOrders } = trpc.purchaseOrders.list.useQuery();
+  // Only POs awaiting receipt, paged on the server (oldest expected first).
+  const utils = trpc.useUtils();
+  const paging = usePagedList("", 50);
+  const { data: pendingPage } = trpc.purchaseOrders.listPaged.useQuery({
+    ...paging.query,
+    statusIn: ["sent", "confirmed", "partial"],
+    sortBy: "expectedDate",
+    sortDir: "asc",
+  });
+  const pendingPOs = pendingPage?.rows;
+  useEffect(() => paging.clampTo(pendingPage?.total), [pendingPage?.total]);
   const { data: poItems } = trpc.purchaseOrders.getItems.useQuery(
     { purchaseOrderId: selectedPO || 0 },
     { enabled: !!selectedPO }
@@ -54,13 +66,11 @@ export default function POReceiving() {
       setIsReceiveOpen(false);
       setReceivingItems([]);
       setSelectedPO(null);
+      utils.purchaseOrders.listPaged.invalidate();
     },
     onError: (err) => toast.error(err.message),
   });
 
-  const pendingPOs = purchaseOrders?.filter(po => 
-    po.status === 'sent' || po.status === 'confirmed' || po.status === 'partial'
-  );
 
   const handleSelectPO = (poId: string) => {
     setSelectedPO(parseInt(poId));
@@ -117,7 +127,13 @@ export default function POReceiving() {
     });
   };
 
-  const selectedPOData = purchaseOrders?.find(po => po.id === selectedPO);
+  // Stays in hand if the selected PO leaves the page (paging, search, or fully received).
+  const [selectedPOData, setSelectedPOData] = useState<{ poNumber?: string } | null>(null);
+  useEffect(() => {
+    const onPage = pendingPOs?.find(po => po.id === selectedPO);
+    if (onPage) setSelectedPOData(onPage);
+    else if (!selectedPO) setSelectedPOData(null);
+  }, [pendingPOs, selectedPO]);
 
   return (
     <div className="p-6 space-y-6">
@@ -136,6 +152,12 @@ export default function POReceiving() {
             <CardDescription>Select a PO to receive items</CardDescription>
           </CardHeader>
           <CardContent>
+            <Input
+              placeholder="Search PO # or vendor..."
+              value={paging.searchInput}
+              onChange={(e) => paging.setSearchInput(e.target.value)}
+              className="max-w-sm mb-3"
+            />
             <Table>
               <TableHeader>
                 <TableRow>
@@ -158,7 +180,7 @@ export default function POReceiving() {
                   pendingPOs?.map(po => (
                     <TableRow key={po.id} className={selectedPO === po.id ? 'bg-muted' : ''}>
                       <TableCell className="font-mono">{po.poNumber}</TableCell>
-                      <TableCell>{po.vendorId}</TableCell>
+                      <TableCell>{po.vendor?.name ?? po.vendorId}</TableCell>
                       <TableCell>-</TableCell>
                       <TableCell>
                         <Badge className={
@@ -185,6 +207,13 @@ export default function POReceiving() {
                 )}
               </TableBody>
             </Table>
+            <ListPager
+              page={paging.page}
+              pageSize={paging.pageSize}
+              total={pendingPage?.total ?? 0}
+              onPageChange={paging.setPage}
+              onPageSizeChange={paging.setPageSize}
+            />
           </CardContent>
         </Card>
 

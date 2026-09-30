@@ -2,6 +2,7 @@ import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray
 import { containsPattern, resolvePage, type PageRequest, type CUSTOMER_SORTS, type ORDER_SORTS, type TRANSACTION_SORTS } from "./listPaging";
 import type { Customer, Order, Transaction } from "../drizzle/schema";
 import { COGS_KEYWORDS, COGS_REFERENCE_TYPES } from "../shared/cogs";
+import { cohortSizes, mergeCustomerAggs, type CohortCell, type CohortSize, type CustomerInvoiceAgg } from "../shared/cfoMetrics";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2";
 import { scopeAllows, scopeCompanyIds, partitionIdsByVisibility, type Scope } from "./_core/scope";
@@ -1464,7 +1465,7 @@ export async function getOrdersPaged(
   filters: PageRequest & { search?: string; status?: string; customerId?: number; sortBy?: (typeof ORDER_SORTS)[number] } = {},
 ) {
   const db = await getDb();
-  const empty = { rows: [] as (Order & { customerName: string | null })[], total: 0 };
+  const empty = { rows: [] as (Order & { customerName: string | null; customerEmail: string | null })[], total: 0 };
   if (!db) return empty;
   const conditions = [];
   const ids = scope ? scopeCompanyIds(scope) : null;
@@ -1481,7 +1482,7 @@ export async function getOrdersPaged(
   const sortCol = { createdAt: orders.createdAt, orderDate: orders.orderDate, totalAmount: orders.totalAmount }[filters.sortBy ?? "createdAt"] ?? orders.createdAt;
   const dir = filters.sortBy && filters.sortDir === "asc" ? asc : desc;
   const [rows, [{ value: total }]] = await Promise.all([
-    db.select({ order: orders, customerName: customers.name })
+    db.select({ order: orders, customerName: customers.name, customerEmail: customers.email })
       .from(orders)
       .leftJoin(customers, eq(orders.customerId, customers.id))
       .where(where)
@@ -1494,7 +1495,77 @@ export async function getOrdersPaged(
       ? db.select({ value: count() }).from(orders).leftJoin(customers, eq(orders.customerId, customers.id)).where(where)
       : db.select({ value: count() }).from(orders).where(where),
   ]);
-  return { rows: rows.map((r) => ({ ...r.order, customerName: r.customerName })), total: Number(total) };
+  return { rows: rows.map((r) => ({ ...r.order, customerName: r.customerName, customerEmail: r.customerEmail })), total: Number(total) };
+}
+
+/** Order count, total value and pending count for the same scope/filters as getOrdersPaged. */
+export async function getOrderSummary(scope: Scope | undefined, filters: { customerId?: number } = {}) {
+  const db = await getDb();
+  const empty = { count: 0, totalValue: 0, pending: 0 };
+  if (!db) return empty;
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids && ids.length === 0) return empty;
+  const [row] = await db
+    .select({
+      count: count(),
+      totalValue: sql<string>`COALESCE(SUM(${orders.totalAmount}), 0)`,
+      pending: sql<string>`COALESCE(SUM(${orders.status} = 'pending'), 0)`,
+    })
+    .from(orders)
+    .where(and(
+      ids ? inArray(orders.companyId, ids) : undefined,
+      filters.customerId ? eq(orders.customerId, filters.customerId) : undefined,
+    ));
+  return { count: Number(row?.count ?? 0), totalValue: Number(row?.totalValue ?? 0), pending: Number(row?.pending ?? 0) };
+}
+
+/**
+ * Invoice number, status and payments received for a page of orders' invoices. Payments are
+ * summed per invoice (any type/status, as the Sales hub always did); `lastPaymentDate` is the latest.
+ */
+export async function getInvoiceBillingByIds(scope: Scope | undefined, invoiceIds: number[]) {
+  const db = await getDb();
+  if (!db || invoiceIds.length === 0) return [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids && ids.length === 0) return [];
+  const [invRows, payRows] = await Promise.all([
+    db.select({ id: invoices.id, invoiceNumber: invoices.invoiceNumber, status: invoices.status })
+      .from(invoices)
+      .where(and(inArray(invoices.id, invoiceIds), ids ? inArray(invoices.companyId, ids) : undefined)),
+    db.select({
+      invoiceId: payments.invoiceId,
+      amountPaid: sql<string>`COALESCE(SUM(${payments.amount}), 0)`,
+      lastPaymentDate: sql<Date | string | null>`MAX(${payments.paymentDate})`,
+    })
+      .from(payments)
+      .where(and(inArray(payments.invoiceId, invoiceIds), ids ? inArray(payments.companyId, ids) : undefined))
+      .groupBy(payments.invoiceId),
+  ]);
+  const paid = new Map(payRows.map((p) => [p.invoiceId, p]));
+  return invRows.map((inv) => ({
+    ...inv,
+    amountPaid: Number(paid.get(inv.id)?.amountPaid ?? 0),
+    lastPaymentDate: paid.get(inv.id)?.lastPaymentDate ?? null,
+  }));
+}
+
+/**
+ * The newest shipment of each given order (what the Sales hub shows per row). Only orders
+ * inside `scope` count, so an id from another entity returns nothing.
+ */
+export async function getLatestShipmentsForOrders(scope: Scope | undefined, orderIds: number[]) {
+  const db = await getDb();
+  if (!db || orderIds.length === 0) return [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids && ids.length === 0) return [];
+  const rows = await db
+    .select({ id: shipments.id, orderId: shipments.orderId, status: shipments.status, trackingNumber: shipments.trackingNumber, carrier: shipments.carrier })
+    .from(shipments)
+    .innerJoin(orders, eq(orders.id, shipments.orderId))
+    .where(and(inArray(shipments.orderId, orderIds), ids ? inArray(orders.companyId, ids) : undefined))
+    .orderBy(desc(shipments.createdAt), desc(shipments.id));
+  const seen = new Set<number>();
+  return rows.filter((r) => r.orderId != null && !seen.has(r.orderId) && (seen.add(r.orderId), true));
 }
 
 // Pass `ctx.scope` to enforce entity visibility: an order outside the caller's scope is reported
@@ -1792,6 +1863,8 @@ const DEFAULT_PO_PAGE_LIMIT = 1000;
 export type PurchaseOrderListFilters = {
   companyId?: number;
   status?: string;
+  /** Any of these statuses (e.g. the receiving queue: sent, confirmed, partial). */
+  statusIn?: string[];
   vendorId?: number;
   /** Matches PO number or vendor name. */
   search?: string;
@@ -1829,6 +1902,7 @@ async function buildPurchaseOrderConditions(filters: PurchaseOrderListFilters, s
 
   if (filters.companyId) conditions.push(eq(purchaseOrders.companyId, filters.companyId));
   if (filters.status) conditions.push(eq(purchaseOrders.status, filters.status as any));
+  if (filters.statusIn?.length) conditions.push(inArray(purchaseOrders.status, filters.statusIn as any));
   if (filters.vendorId) conditions.push(eq(purchaseOrders.vendorId, filters.vendorId));
   if (filters.orderDateFrom) conditions.push(gte(purchaseOrders.orderDate, filters.orderDateFrom));
   if (filters.orderDateTo) conditions.push(lte(purchaseOrders.orderDate, filters.orderDateTo));
@@ -3894,6 +3968,210 @@ export async function updateAiConversation(id: number, data: Partial<typeof aiCo
 // ============================================
 // DASHBOARD METRICS
 // ============================================
+
+/**
+ * Home dashboard receivables card and revenue tile, summed in SQL. Revenue this month is
+ * customer payments received and completed in [monthStartMs, monthEndMs).
+ */
+export async function getHomeInvoiceSummary(scope: Scope | undefined, monthStartMs: number, monthEndMs: number) {
+  const db = await getDb();
+  const empty = { revenueThisMonth: 0, outstandingAR: 0, unpaidInvoices: 0 };
+  if (!db) return empty;
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids && ids.length === 0) return empty;
+  const [[ar], [rev]] = await Promise.all([
+    db.select({ total: sql<string>`COALESCE(SUM(${invoices.totalAmount}), 0)`, count: count() })
+      .from(invoices)
+      .where(and(inArray(invoices.status, ["sent", "overdue"]), ids ? inArray(invoices.companyId, ids) : undefined)),
+    db.select({ total: sql<string>`COALESCE(SUM(${payments.amount}), 0)` })
+      .from(payments)
+      .where(and(
+        eq(payments.type, "received"),
+        eq(payments.status, "completed"),
+        gte(payments.paymentDate, new Date(monthStartMs)),
+        lt(payments.paymentDate, new Date(monthEndMs)),
+        ids ? inArray(payments.companyId, ids) : undefined,
+      )),
+  ]);
+  return { revenueThisMonth: Number(rev?.total ?? 0), outstandingAR: Number(ar?.total ?? 0), unpaidInvoices: Number(ar?.count ?? 0) };
+}
+
+/** Home dashboard PO figures (burn proxy, open AP, open POs), summed in SQL. */
+export async function getHomePurchaseOrderSummary(scope: Scope | undefined, monthStartMs: number, monthEndMs: number) {
+  const db = await getDb();
+  const empty = { receivedThisMonth: 0, outstandingAP: 0, openPOCount: 0, openPOValue: 0 };
+  if (!db) return empty;
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids && ids.length === 0) return empty;
+  const inScope = ids ? inArray(purchaseOrders.companyId, ids) : undefined;
+  const sumTotal = sql<string>`COALESCE(SUM(${purchaseOrders.totalAmount}), 0)`;
+  // Receipt month: receivedDate, set by the receiving flows. Older rows without it fall back
+  // to updatedAt, the proxy the dashboard used before.
+  const receivedAt = sql`COALESCE(${purchaseOrders.receivedDate}, ${purchaseOrders.updatedAt})`;
+  const [[received], [ap], [open]] = await Promise.all([
+    db.select({ total: sumTotal }).from(purchaseOrders).where(and(
+      eq(purchaseOrders.status, "received"),
+      sql`${receivedAt} >= ${new Date(monthStartMs)}`,
+      sql`${receivedAt} < ${new Date(monthEndMs)}`,
+      inScope,
+    )),
+    db.select({ total: sumTotal }).from(purchaseOrders)
+      .where(and(inArray(purchaseOrders.status, ["sent", "confirmed", "received"]), inScope)),
+    db.select({ total: sumTotal, count: count() }).from(purchaseOrders)
+      .where(and(inArray(purchaseOrders.status, ["draft", "sent", "confirmed"]), inScope)),
+  ]);
+  return {
+    receivedThisMonth: Number(received?.total ?? 0),
+    outstandingAP: Number(ap?.total ?? 0),
+    openPOCount: Number(open?.count ?? 0),
+    openPOValue: Number(open?.total ?? 0),
+  };
+}
+
+/**
+ * Time boundaries for the CFO dashboard, supplied by the browser so month and quarter
+ * edges match the viewer's local calendar (TIMESTAMP columns are compared as epochs,
+ * which is timezone-independent).
+ */
+export type CfoWindows = {
+  nowMs: number;
+  /** 14 ascending epochs: start of the month 12 months ago … start of next month. */
+  monthStarts: number[];
+  /** 9 ascending epochs: start of the quarter 7 quarters ago … start of next quarter. */
+  quarterStarts: number[];
+};
+
+/**
+ * Everything the CFO dashboard derives from invoices, expense transactions and purchase
+ * orders, aggregated in SQL. Replaces downloading those whole tables to the browser
+ * (~430 MB at 1M invoices). Pure derivations live in shared/cfoMetrics.ts.
+ */
+export async function getCfoAggregates(scope: Scope | undefined, w: CfoWindows) {
+  const db = await getDb();
+  const empty = {
+    customers: [] as CustomerInvoiceAgg[],
+    monthlyRevenue: new Array(13).fill(0) as number[],
+    cohortCells: [] as CohortCell[],
+    cohortSizes: [] as CohortSize[],
+    arAging: { current: 0, d30: 0, d60: 0, d90: 0 },
+    expenseByMonth: [0, 0, 0],
+    outstandingAP: 0,
+  };
+  if (!db) return empty;
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids && ids.length === 0) return empty;
+  const scoped = (col: string) =>
+    ids ? sql`AND ${sql.raw(col)} IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})` : sql``;
+
+  const ts = sql.raw("UNIX_TIMESTAMP(i.issueDate) * 1000");
+  // Same key the browser used: customer name, else "Customer <id>". Binary collation keeps
+  // it case-sensitive like the browser's Map keys. Grouping 1M invoices by this string costs
+  // ~4× grouping by customerId, so SQL groups by id and names are merged afterwards.
+  const custKey = (idCol: string) =>
+    sql.raw(`(CONVERT(COALESCE(NULLIF(c.name, ''), CONCAT('Customer ', COALESCE(CAST(${idCol} AS CHAR), '—'))) USING utf8mb4) COLLATE utf8mb4_bin)`);
+  const m = w.monthStarts;
+  const q = w.quarterStarts;
+  const ninetyAgo = w.nowMs - 90 * 86_400_000;
+  const oneEightyAgo = w.nowMs - 180 * 86_400_000;
+  // Bucket index of an epoch against ascending boundaries b[0..n]: count of b[1..n-1] it has passed.
+  const bucketOf = (expr: ReturnType<typeof sql.raw>, b: number[]) =>
+    sql.join(b.slice(1, -1).map((x) => sql`(${expr} >= ${x})`), sql` + `);
+
+  const [custRes, monthRes, cohortRes, arRes, expRes, apRes] = await Promise.all([
+    db.execute(sql`
+      SELECT ${custKey("a.customerId")} AS name, a.*
+      FROM (
+        SELECT i.customerId, COUNT(*) AS count, SUM(i.totalAmount) AS total,
+          MIN(${ts}) AS firstAt, MAX(${ts}) AS lastAt,
+          SUM(CASE WHEN ${ts} >= ${ninetyAgo} THEN i.totalAmount ELSE 0 END) AS rev90,
+          SUM(CASE WHEN ${ts} >= ${oneEightyAgo} AND ${ts} < ${ninetyAgo} THEN i.totalAmount ELSE 0 END) AS revPrior90,
+          SUM(CASE WHEN ${ts} >= ${m[12]} AND ${ts} < ${m[13]} THEN i.totalAmount ELSE 0 END) AS revThisMonth,
+          SUM(CASE WHEN ${ts} >= ${m[0]} AND ${ts} < ${m[1]} THEN i.totalAmount ELSE 0 END) AS revYearAgoMonth
+        FROM invoices i
+        WHERE 1 = 1 ${scoped("i.companyId")}
+        GROUP BY i.customerId
+      ) a LEFT JOIN customers c ON c.id = a.customerId`),
+    db.execute(sql`
+      SELECT ${bucketOf(ts, m)} AS bucket, SUM(i.totalAmount) AS revenue
+      FROM invoices i
+      WHERE ${ts} >= ${m[0]} AND ${ts} < ${m[13]} ${scoped("i.companyId")}
+      GROUP BY bucket`),
+    // Revenue by (acquisition quarter, quarter offset). A customer's acquisition is the first
+    // invoice across every customer id sharing its name, as the browser keyed customers.
+    db.execute(sql`
+      WITH per_id AS (
+        SELECT i.customerId, MIN(${ts}) AS firstAt
+        FROM invoices i
+        WHERE 1 = 1 ${scoped("i.companyId")}
+        GROUP BY i.customerId
+      ), firsts AS (
+        SELECT p.customerId, MIN(p.firstAt) OVER (PARTITION BY ${custKey("p.customerId")}) AS firstAt
+        FROM per_id p LEFT JOIN customers c ON c.id = p.customerId
+      )
+      SELECT ${bucketOf(sql.raw("f.firstAt"), q)} AS cohortQ,
+        ${bucketOf(ts, q)} - (${bucketOf(sql.raw("f.firstAt"), q)}) AS offset,
+        SUM(i.totalAmount) AS revenue
+      FROM invoices i
+      JOIN firsts f ON f.customerId <=> i.customerId
+      WHERE ${ts} >= ${q[0]} AND ${ts} < ${q[8]}
+        AND f.firstAt >= ${q[0]} AND f.firstAt < ${q[8]} ${scoped("i.companyId")}
+      GROUP BY cohortQ, offset`),
+    // Unpaid AR by days past due (no due date = current).
+    db.execute(sql`
+      SELECT
+        SUM(CASE WHEN d = 0 THEN i.totalAmount ELSE 0 END) AS current,
+        SUM(CASE WHEN d BETWEEN 1 AND 30 THEN i.totalAmount ELSE 0 END) AS d30,
+        SUM(CASE WHEN d BETWEEN 31 AND 60 THEN i.totalAmount ELSE 0 END) AS d60,
+        SUM(CASE WHEN d > 60 THEN i.totalAmount ELSE 0 END) AS d90
+      FROM (
+        SELECT i.totalAmount,
+          GREATEST(0, FLOOR((${w.nowMs} - COALESCE(UNIX_TIMESTAMP(i.dueDate) * 1000, ${w.nowMs})) / 86400000)) AS d
+        FROM invoices i
+        WHERE i.status NOT IN ('paid', 'cancelled') ${scoped("i.companyId")}
+      ) i`),
+    // Expense ledger for the last three calendar months (oldest first).
+    db.execute(sql`
+      SELECT ${bucketOf(sql.raw("UNIX_TIMESTAMP(t.date) * 1000"), m.slice(10))} AS bucket,
+        SUM(ABS(t.totalAmount)) AS total
+      FROM transactions t
+      WHERE t.type = 'expense'
+        AND UNIX_TIMESTAMP(t.date) * 1000 >= ${m[10]} AND UNIX_TIMESTAMP(t.date) * 1000 < ${m[13]}
+        ${scoped("t.companyId")}
+      GROUP BY bucket`),
+    db.execute(sql`
+      SELECT COALESCE(SUM(p.totalAmount), 0) AS total
+      FROM purchase_orders p
+      WHERE p.status NOT IN ('paid', 'cancelled', 'closed') ${scoped("p.companyId")}`),
+  ]);
+
+  const n = (v: unknown) => Number(v ?? 0) || 0;
+  const monthlyRevenue = new Array(13).fill(0) as number[];
+  for (const r of rowsFromExecute(monthRes)) monthlyRevenue[n(r.bucket)] = n(r.revenue);
+  const expenseByMonth = [0, 0, 0];
+  for (const r of rowsFromExecute(expRes)) expenseByMonth[n(r.bucket)] = n(r.total);
+  const ar = rowsFromExecute(arRes)[0] ?? {};
+  const customerAggs = mergeCustomerAggs(rowsFromExecute(custRes).map((r) => ({
+    name: String(r.name),
+    count: n(r.count),
+    total: n(r.total),
+    firstAt: n(r.firstAt),
+    lastAt: n(r.lastAt),
+    rev90: n(r.rev90),
+    revPrior90: n(r.revPrior90),
+    revThisMonth: n(r.revThisMonth),
+    revYearAgoMonth: n(r.revYearAgoMonth),
+  })));
+  return {
+    customers: customerAggs,
+    monthlyRevenue,
+    cohortCells: rowsFromExecute(cohortRes).map((r) => ({ cohortQ: n(r.cohortQ), offset: n(r.offset), revenue: n(r.revenue) })),
+    cohortSizes: cohortSizes(customerAggs, q),
+    arAging: { current: n(ar.current), d30: n(ar.d30), d60: n(ar.d60), d90: n(ar.d90) },
+    expenseByMonth,
+    outstandingAP: n(rowsFromExecute(apRes)[0]?.total),
+  };
+}
+
 
 export async function getDashboardMetrics() {
   const db = await getDb();
