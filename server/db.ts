@@ -1,4 +1,7 @@
 import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray, ne, sum, notExists } from "drizzle-orm";
+import { containsPattern, resolvePage, type PageRequest, type CUSTOMER_SORTS, type ORDER_SORTS, type TRANSACTION_SORTS } from "./listPaging";
+import type { Customer, Order, Transaction } from "../drizzle/schema";
+import { COGS_KEYWORDS, COGS_REFERENCE_TYPES } from "../shared/cogs";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2";
 import { scopeAllows, scopeCompanyIds, partitionIdsByVisibility, type Scope } from "./_core/scope";
@@ -775,6 +778,46 @@ export async function getCustomers(scope?: Scope) {
   return db.select().from(customers).orderBy(desc(customers.createdAt));
 }
 
+/**
+ * One page of customers, newest first, plus the total matching the same filters.
+ * `search` matches name, email, phone, city, state or country. Entity scope narrows first.
+ */
+export async function getCustomersPaged(
+  scope: Scope | undefined,
+  filters: PageRequest & { search?: string; status?: string; source?: "shopify" | "manual"; sortBy?: (typeof CUSTOMER_SORTS)[number] } = {},
+) {
+  const db = await getDb();
+  if (!db) return { rows: [] as Customer[], total: 0 };
+  const conditions = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return { rows: [] as Customer[], total: 0 };
+    conditions.push(inArray(customers.companyId, ids));
+  }
+  if (filters.status) conditions.push(eq(customers.status, filters.status as any));
+  // Same rule as the screen's Source column: a Shopify id means it came from Shopify.
+  if (filters.source === "shopify") conditions.push(sql`${customers.shopifyCustomerId} IS NOT NULL`);
+  if (filters.source === "manual") conditions.push(isNull(customers.shopifyCustomerId));
+  const pattern = containsPattern(filters.search);
+  if (pattern) {
+    conditions.push(or(
+      like(customers.name, pattern), like(customers.email, pattern), like(customers.phone, pattern),
+      like(customers.city, pattern), like(customers.state, pattern), like(customers.country, pattern),
+    )!);
+  }
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const { limit, offset } = resolvePage(filters);
+  const sortCol = { name: customers.name, email: customers.email, lastSyncedAt: customers.lastSyncedAt, createdAt: customers.createdAt }[filters.sortBy ?? "createdAt"] ?? customers.createdAt;
+  const dir = filters.sortBy && filters.sortDir === "asc" ? asc : desc;
+  const [rows, [{ value: total }]] = await Promise.all([
+    // id is the tiebreak so rows can't shuffle between pages when the sort column ties; it
+    // runs in the same direction so MySQL can walk the (sortCol, id) index instead of sorting.
+    db.select().from(customers).where(where).orderBy(dir(sortCol), dir(customers.id)).limit(limit).offset(offset),
+    db.select({ value: count() }).from(customers).where(where),
+  ]);
+  return { rows, total: Number(total) };
+}
+
 // Pass a request's `ctx.scope` to enforce entity visibility: a customer outside the caller's
 // scope is reported as not found (undefined) so cross-entity existence isn't leaked. Omit `scope`
 // for trusted internal callers.
@@ -1096,6 +1139,63 @@ export async function getInvoices(scope?: Scope, filters?: { companyId?: number;
   return baseQuery.orderBy(desc(invoices.createdAt));
 }
 
+/**
+ * One page of invoices, newest first, in the same row shape as getInvoices, plus the
+ * total matching the same filters. `search` matches invoice number or customer name.
+ */
+export async function getInvoicesPaged(
+  scope: Scope | undefined,
+  filters: PageRequest & { search?: string; status?: string; customerId?: number } = {},
+) {
+  const db = await getDb();
+  if (!db) return { rows: [], total: 0 };
+  const conditions = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return { rows: [], total: 0 };
+    conditions.push(inArray(invoices.companyId, ids));
+  }
+  if (filters.status) conditions.push(eq(invoices.status, filters.status as any));
+  if (filters.customerId) conditions.push(eq(invoices.customerId, filters.customerId));
+  const pattern = containsPattern(filters.search);
+  if (pattern) conditions.push(or(like(invoices.invoiceNumber, pattern), like(customers.name, pattern))!);
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const { limit, offset } = resolvePage(filters);
+  const [rows, [{ value: total }]] = await Promise.all([
+    db.select({
+      id: invoices.id,
+      companyId: invoices.companyId,
+      invoiceNumber: invoices.invoiceNumber,
+      customerId: invoices.customerId,
+      type: invoices.type,
+      status: invoices.status,
+      issueDate: invoices.issueDate,
+      dueDate: invoices.dueDate,
+      subtotal: invoices.subtotal,
+      taxAmount: invoices.taxAmount,
+      discountAmount: invoices.discountAmount,
+      totalAmount: invoices.totalAmount,
+      paidAmount: invoices.paidAmount,
+      currency: invoices.currency,
+      notes: invoices.notes,
+      terms: invoices.terms,
+      createdAt: invoices.createdAt,
+      customer: { id: customers.id, name: customers.name, email: customers.email },
+    })
+      .from(invoices)
+      .leftJoin(customers, eq(invoices.customerId, customers.id))
+      .where(where)
+      .orderBy(desc(invoices.createdAt), desc(invoices.id))
+      .limit(limit)
+      .offset(offset),
+    // The customer join is only needed to match a search on customer name.
+    pattern
+      ? db.select({ value: count() }).from(invoices).leftJoin(customers, eq(invoices.customerId, customers.id)).where(where)
+      : db.select({ value: count() }).from(invoices).where(where),
+  ]);
+  return { rows, total: Number(total) };
+}
+
 export async function getInvoiceById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
@@ -1249,6 +1349,48 @@ export async function getTransactions(scope?: Scope, filters?: { companyId?: num
   return db.select().from(transactions).orderBy(desc(transactions.date));
 }
 
+/**
+ * One page of transactions, most recent date first, plus the total matching the same
+ * filters. `search` matches transaction number, description or reference type.
+ */
+export async function getTransactionsPaged(
+  scope: Scope | undefined,
+  filters: PageRequest & { search?: string; type?: string; status?: string; cogsOnly?: boolean; sortBy?: (typeof TRANSACTION_SORTS)[number] } = {},
+) {
+  const db = await getDb();
+  if (!db) return { rows: [] as Transaction[], total: 0 };
+  const conditions = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return { rows: [] as Transaction[], total: 0 };
+    conditions.push(inArray(transactions.companyId, ids));
+  }
+  if (filters.type) conditions.push(eq(transactions.type, filters.type as any));
+  if (filters.status) conditions.push(eq(transactions.status, filters.status as any));
+  if (filters.cogsOnly) {
+    // Same rule as shared/cogs.ts isCOGSTransaction (column collation is case-insensitive).
+    conditions.push(or(
+      ...COGS_KEYWORDS.map((kw) => like(transactions.description, `%${kw}%`)),
+      inArray(transactions.referenceType, [...COGS_REFERENCE_TYPES]),
+    )!);
+  }
+  const pattern = containsPattern(filters.search);
+  if (pattern) {
+    conditions.push(or(
+      like(transactions.transactionNumber, pattern), like(transactions.description, pattern), like(transactions.referenceType, pattern),
+    )!);
+  }
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const { limit, offset } = resolvePage(filters);
+  const sortCol = { date: transactions.date, totalAmount: transactions.totalAmount }[filters.sortBy ?? "date"] ?? transactions.date;
+  const dir = filters.sortBy && filters.sortDir === "asc" ? asc : desc;
+  const [rows, [{ value: total }]] = await Promise.all([
+    db.select().from(transactions).where(where).orderBy(dir(sortCol), dir(transactions.id)).limit(limit).offset(offset),
+    db.select({ value: count() }).from(transactions).where(where),
+  ]);
+  return { rows, total: Number(total) };
+}
+
 export async function createTransaction(data: InsertTransaction) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -1311,6 +1453,48 @@ export async function getOrders(scope?: Scope, filters?: { companyId?: number; s
     return db.select().from(orders).where(and(...conditions)).orderBy(desc(orders.createdAt));
   }
   return db.select().from(orders).orderBy(desc(orders.createdAt));
+}
+
+/**
+ * One page of orders, newest first, with the customer name joined in, plus the total
+ * matching the same filters. `search` matches order number or customer name.
+ */
+export async function getOrdersPaged(
+  scope: Scope | undefined,
+  filters: PageRequest & { search?: string; status?: string; customerId?: number; sortBy?: (typeof ORDER_SORTS)[number] } = {},
+) {
+  const db = await getDb();
+  const empty = { rows: [] as (Order & { customerName: string | null })[], total: 0 };
+  if (!db) return empty;
+  const conditions = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return empty;
+    conditions.push(inArray(orders.companyId, ids));
+  }
+  if (filters.status) conditions.push(eq(orders.status, filters.status as any));
+  if (filters.customerId) conditions.push(eq(orders.customerId, filters.customerId));
+  const pattern = containsPattern(filters.search);
+  if (pattern) conditions.push(or(like(orders.orderNumber, pattern), like(customers.name, pattern))!);
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const { limit, offset } = resolvePage(filters);
+  const sortCol = { createdAt: orders.createdAt, orderDate: orders.orderDate, totalAmount: orders.totalAmount }[filters.sortBy ?? "createdAt"] ?? orders.createdAt;
+  const dir = filters.sortBy && filters.sortDir === "asc" ? asc : desc;
+  const [rows, [{ value: total }]] = await Promise.all([
+    db.select({ order: orders, customerName: customers.name })
+      .from(orders)
+      .leftJoin(customers, eq(orders.customerId, customers.id))
+      .where(where)
+      .orderBy(dir(sortCol), dir(orders.id))
+      .limit(limit)
+      .offset(offset),
+    // The customer join is only needed to match a search on customer name; without it
+    // the count reads an index instead of joining every order.
+    pattern
+      ? db.select({ value: count() }).from(orders).leftJoin(customers, eq(orders.customerId, customers.id)).where(where)
+      : db.select({ value: count() }).from(orders).where(where),
+  ]);
+  return { rows: rows.map((r) => ({ ...r.order, customerName: r.customerName })), total: Number(total) };
 }
 
 // Pass `ctx.scope` to enforce entity visibility: an order outside the caller's scope is reported

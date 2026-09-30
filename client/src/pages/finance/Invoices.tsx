@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { ListPager } from "@/components/ListPager";
+import { usePagedList } from "@/hooks/usePagedList";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -60,8 +62,9 @@ type LineItem = {
 };
 
 export default function Invoices() {
-  const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  // Paged on the server: search and status filter run there, over every invoice.
+  const paging = usePagedList(statusFilter);
   const [isOpen, setIsOpen] = useState(false);
   const [isEmailDialogOpen, setIsEmailDialogOpen] = useState(false);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<number | null>(null);
@@ -100,7 +103,11 @@ export default function Invoices() {
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
   const utils = trpc.useUtils();
-  const { data: invoices, isLoading } = trpc.invoices.list.useQuery();
+  const { data: invoicesPage, isLoading } = trpc.invoices.listPaged.useQuery({
+    ...paging.query,
+    status: statusFilter === "all" ? undefined : statusFilter,
+  });
+  useEffect(() => paging.clampTo(invoicesPage?.total), [invoicesPage?.total]);
   const { data: customers } = trpc.customers.list.useQuery();
   const { data: products } = trpc.products.list.useQuery();
 
@@ -109,7 +116,7 @@ export default function Invoices() {
       toast.success("Invoice created successfully");
       setIsOpen(false);
       resetForm();
-      utils.invoices.list.invalidate();
+      utils.invoices.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -120,7 +127,7 @@ export default function Invoices() {
     onSuccess: () => {
       toast.success("Invoice deleted");
       setDeleteInvoiceId(null);
-      utils.invoices.list.invalidate();
+      utils.invoices.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -128,7 +135,7 @@ export default function Invoices() {
   const updateInvoice = trpc.invoices.update.useMutation({
     onSuccess: () => {
       toast.success("Invoice updated");
-      utils.invoices.list.invalidate();
+      utils.invoices.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -136,7 +143,7 @@ export default function Invoices() {
   const approveInvoice = trpc.invoices.approve.useMutation({
     onSuccess: () => {
       toast.success("Invoice approved");
-      utils.invoices.list.invalidate();
+      utils.invoices.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -163,7 +170,7 @@ export default function Invoices() {
       setIsPaymentDialogOpen(false);
       setPaymentData({ amount: "", paymentMethod: "bank_transfer", notes: "" });
       setSelectedInvoiceId(null);
-      utils.invoices.list.invalidate();
+      utils.invoices.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -194,7 +201,7 @@ export default function Invoices() {
   const generateNow = trpc.recurringInvoices.generateNow.useMutation({
     onSuccess: (data) => {
       toast.success(`Invoice ${data.invoiceNumber} generated`);
-      utils.invoices.list.invalidate();
+      utils.invoices.invalidate();
       utils.recurringInvoices.list.invalidate();
     },
     onError: (error) => {
@@ -217,7 +224,7 @@ export default function Invoices() {
       toast.success("Invoice sent to customer");
       setIsEmailDialogOpen(false);
       setEmailMessage("");
-      utils.invoices.list.invalidate();
+      utils.invoices.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -244,7 +251,7 @@ export default function Invoices() {
       setParsedInvoiceData(null);
       setDraftInvoiceId(null);
       setInvoiceText("");
-      utils.invoices.list.invalidate();
+      utils.invoices.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -321,12 +328,7 @@ export default function Invoices() {
     return { subtotal, tax, total };
   };
 
-  const filteredInvoices = invoices?.filter((invoice) => {
-    const matchesSearch =
-      invoice.invoiceNumber.toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = statusFilter === "all" || invoice.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  const filteredInvoices = invoicesPage?.rows;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -923,9 +925,9 @@ export default function Invoices() {
             <div className="relative flex-1 min-w-[200px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search invoices..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search invoice # or customer..."
+                value={paging.searchInput}
+                onChange={(e) => paging.setSearchInput(e.target.value)}
                 className="pl-9"
               />
             </div>
@@ -1052,6 +1054,13 @@ export default function Invoices() {
               </TableBody>
             </Table>
           )}
+          <ListPager
+            page={paging.page}
+            pageSize={paging.pageSize}
+            total={invoicesPage?.total ?? 0}
+            onPageChange={paging.setPage}
+            onPageSizeChange={paging.setPageSize}
+          />
         </CardContent>
       </Card>
 

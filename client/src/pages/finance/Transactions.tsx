@@ -1,5 +1,7 @@
-import { useState, useMemo } from "react";
+import { useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { ListPager } from "@/components/ListPager";
+import { usePagedList } from "@/hooks/usePagedList";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { SpreadsheetTable, Column } from "@/components/SpreadsheetTable";
@@ -7,21 +9,6 @@ import { DetailSheet } from "@/components/DetailSheet";
 import { TrendingUp, DollarSign } from "lucide-react";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
-
-// COGS-related keywords to identify COGS expenses
-const COGS_KEYWORDS = [
-  "cogs", "cost of goods", "cost of sales", "raw material", "freight",
-  "customs", "duty", "shipping cost", "packaging", "manufacturing",
-  "production cost", "ingredient", "landed cost",
-];
-
-function isCOGSTransaction(tx: any): boolean {
-  const desc = (tx.description || "").toLowerCase();
-  const ref = (tx.referenceType || "").toLowerCase();
-  return COGS_KEYWORDS.some((kw) => desc.includes(kw)) ||
-    ref === "purchase_order" || ref === "purchaseorder" ||
-    ref === "cogs" || ref === "inventory";
-}
 
 const typeOptions = [
   { value: "journal", label: "Journal", color: "bg-muted text-muted-foreground" },
@@ -74,19 +61,36 @@ function TransactionSummaryBody({ tx }: { tx: any }) {
   );
 }
 
+// Table column → transactions.listPaged sortBy. Sorting runs on the server across every
+// page, so only indexed columns are sortable.
+const TRANSACTION_SORT_KEYS: Record<string, "date" | "totalAmount"> = {
+  date: "date",
+  totalAmount: "totalAmount",
+};
+
 export default function Transactions() {
   const [cogsOnly, setCogsOnly] = useState(false);
   const [selectedTx, setSelectedTx] = useState<any | null>(null);
 
-  const { data: transactions, isLoading } = trpc.transactions.list.useQuery();
-
-  const filteredTransactions = useMemo(
-    () => (cogsOnly ? (transactions || []).filter(isCOGSTransaction) : transactions || []),
-    [transactions, cogsOnly],
-  );
+  // Paged on the server, COGS filter included: a full-table load failed outright at ~2M rows.
+  const [tableFilters, setTableFilters] = useState<Record<string, string>>({});
+  const typeFilter = tableFilters.type && tableFilters.type !== "all" ? tableFilters.type : undefined;
+  const statusFilter = tableFilters.status && tableFilters.status !== "all" ? tableFilters.status : undefined;
+  const paging = usePagedList(`${typeFilter ?? ""}|${statusFilter ?? ""}|${cogsOnly}`);
+  const { data: txPage, isLoading } = trpc.transactions.listPaged.useQuery({
+    ...paging.query,
+    type: typeFilter,
+    status: statusFilter,
+    cogsOnly: cogsOnly || undefined,
+    ...(paging.sort && TRANSACTION_SORT_KEYS[paging.sort.key]
+      ? { sortBy: TRANSACTION_SORT_KEYS[paging.sort.key], sortDir: paging.sort.dir }
+      : {}),
+  });
+  const filteredTransactions = txPage?.rows ?? [];
+  useEffect(() => paging.clampTo(txPage?.total), [txPage?.total]);
 
   const columns: Column<any>[] = [
-    { key: "transactionNumber", header: "Transaction #", type: "text", sortable: true },
+    { key: "transactionNumber", header: "Transaction #", type: "text" },
     { key: "date", header: "Date", type: "date", sortable: true },
     {
       key: "description",
@@ -147,9 +151,23 @@ export default function Transactions() {
             showSearch
             showFilters
             showExport
+            searchValue={paging.searchInput}
+            onSearchChange={paging.setSearchInput}
+            searchPlaceholder="Search #, description or reference…"
+            filterValues={tableFilters}
+            onFiltersChange={setTableFilters}
+            sort={paging.sort ?? { key: null, dir: "asc" }}
+            onSortChange={paging.setSort}
             onRowClick={(row) => setSelectedTx(row)}
             expandedRowId={selectedTx?.id ?? null}
             compact
+          />
+          <ListPager
+            page={paging.page}
+            pageSize={paging.pageSize}
+            total={txPage?.total ?? 0}
+            onPageChange={paging.setPage}
+            onPageSizeChange={paging.setPageSize}
           />
         </CardContent>
       </Card>
