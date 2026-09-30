@@ -13,7 +13,6 @@ import {
   addDealContact,
   addDealItem,
   annotateDealActivity,
-  assertValidParentAccount,
   closeDeal,
   createDeal,
   createPipelineStage,
