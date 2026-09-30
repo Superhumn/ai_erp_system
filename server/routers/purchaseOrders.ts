@@ -22,6 +22,10 @@ export const purchaseOrdersRouter = router({
         vendorId: z.number().optional(),
       }).optional())
       .query(({ input }) => db.getPurchaseOrders(input)),
+    // Home dashboard: POs received this month (browser's calendar month), open AP and open POs.
+    homeSummary: scopedOpsProcedure
+      .input(z.object({ monthStartMs: z.number(), monthEndMs: z.number() }).refine((w) => w.monthEndMs > w.monthStartMs))
+      .query(({ input, ctx }) => db.getHomePurchaseOrderSummary(ctx.scope, input.monthStartMs, input.monthEndMs)),
     // Entity-scoped like listPaged: a PO outside the caller's scope reads as
     // not found so cross-entity existence isn't leaked through a by-id lookup.
     get: scopedOpsProcedure
@@ -530,6 +534,7 @@ export const purchaseOrdersRouter = router({
       .input(z.object({
         companyId: z.number().optional(),
         status: z.string().optional(),
+        statusIn: z.array(z.enum(['draft', 'sent', 'confirmed', 'partial', 'received', 'cancelled'])).max(6).optional(),
         vendorId: z.number().optional(),
         search: z.string().optional(),
         orderDateFrom: z.date().optional(),

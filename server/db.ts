@@ -1,4 +1,8 @@
 import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray, ne, sum, notExists } from "drizzle-orm";
+import { containsPattern, resolvePage, type PageRequest, type CUSTOMER_SORTS, type ORDER_SORTS, type TRANSACTION_SORTS } from "./listPaging";
+import type { Customer, Order, Transaction } from "../drizzle/schema";
+import { COGS_KEYWORDS, COGS_REFERENCE_TYPES } from "../shared/cogs";
+import { cohortSizes, mergeCustomerAggs, type CohortCell, type CohortSize, type CustomerInvoiceAgg } from "../shared/cfoMetrics";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2";
 import { scopeAllows, scopeCompanyIds, partitionIdsByVisibility, type Scope } from "./_core/scope";
@@ -233,6 +237,8 @@ import {
   cashForecastAlertSettings,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
+import { isMultiTenant, requireTenant } from './_core/tenancy';
+import { getTenantDb } from './_core/tenantDb';
 import { bucketBillsAging, nextStatusAfterPayment, OPEN_BILL_STATUSES } from "./billsLogic";
 import {
   SAMPLE_MATERIAL_SUPPLY,
@@ -247,6 +253,8 @@ let _pool: mysql.Pool | null = null;
 let _db: ReturnType<typeof drizzle> | null = null;
 
 export async function getDb() {
+  // Multi-tenant: the request's tenant picks the database. No tenant → throw, never a default.
+  if (isMultiTenant()) return getTenantDb(requireTenant());
   if (!_db && process.env.DATABASE_URL) {
     try {
       // Use an explicit connection pool rather than passing the URL string to
@@ -316,7 +324,8 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     if (user.role !== undefined) {
       values.role = user.role;
       updateSet.role = user.role;
-    } else if (user.openId === ENV.ownerOpenId) {
+    } else if (!isMultiTenant() && user.openId === ENV.ownerOpenId) {
+      // The platform owner is a single-tenant concept; never auto-admin inside a customer's tenant.
       values.role = 'admin';
       updateSet.role = 'admin';
     }
@@ -775,6 +784,46 @@ export async function getCustomers(scope?: Scope) {
   return db.select().from(customers).orderBy(desc(customers.createdAt));
 }
 
+/**
+ * One page of customers, newest first, plus the total matching the same filters.
+ * `search` matches name, email, phone, city, state or country. Entity scope narrows first.
+ */
+export async function getCustomersPaged(
+  scope: Scope | undefined,
+  filters: PageRequest & { search?: string; status?: string; source?: "shopify" | "manual"; sortBy?: (typeof CUSTOMER_SORTS)[number] } = {},
+) {
+  const db = await getDb();
+  if (!db) return { rows: [] as Customer[], total: 0 };
+  const conditions = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return { rows: [] as Customer[], total: 0 };
+    conditions.push(inArray(customers.companyId, ids));
+  }
+  if (filters.status) conditions.push(eq(customers.status, filters.status as any));
+  // Same rule as the screen's Source column: a Shopify id means it came from Shopify.
+  if (filters.source === "shopify") conditions.push(sql`${customers.shopifyCustomerId} IS NOT NULL`);
+  if (filters.source === "manual") conditions.push(isNull(customers.shopifyCustomerId));
+  const pattern = containsPattern(filters.search);
+  if (pattern) {
+    conditions.push(or(
+      like(customers.name, pattern), like(customers.email, pattern), like(customers.phone, pattern),
+      like(customers.city, pattern), like(customers.state, pattern), like(customers.country, pattern),
+    )!);
+  }
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const { limit, offset } = resolvePage(filters);
+  const sortCol = { name: customers.name, email: customers.email, lastSyncedAt: customers.lastSyncedAt, createdAt: customers.createdAt }[filters.sortBy ?? "createdAt"] ?? customers.createdAt;
+  const dir = filters.sortBy && filters.sortDir === "asc" ? asc : desc;
+  const [rows, [{ value: total }]] = await Promise.all([
+    // id is the tiebreak so rows can't shuffle between pages when the sort column ties; it
+    // runs in the same direction so MySQL can walk the (sortCol, id) index instead of sorting.
+    db.select().from(customers).where(where).orderBy(dir(sortCol), dir(customers.id)).limit(limit).offset(offset),
+    db.select({ value: count() }).from(customers).where(where),
+  ]);
+  return { rows, total: Number(total) };
+}
+
 // Pass a request's `ctx.scope` to enforce entity visibility: a customer outside the caller's
 // scope is reported as not found (undefined) so cross-entity existence isn't leaked. Omit `scope`
 // for trusted internal callers.
@@ -1097,6 +1146,63 @@ export async function getInvoices(scope?: Scope, filters?: { companyId?: number;
   return baseQuery.orderBy(desc(invoices.createdAt));
 }
 
+/**
+ * One page of invoices, newest first, in the same row shape as getInvoices, plus the
+ * total matching the same filters. `search` matches invoice number or customer name.
+ */
+export async function getInvoicesPaged(
+  scope: Scope | undefined,
+  filters: PageRequest & { search?: string; status?: string; customerId?: number } = {},
+) {
+  const db = await getDb();
+  if (!db) return { rows: [], total: 0 };
+  const conditions = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return { rows: [], total: 0 };
+    conditions.push(inArray(invoices.companyId, ids));
+  }
+  if (filters.status) conditions.push(eq(invoices.status, filters.status as any));
+  if (filters.customerId) conditions.push(eq(invoices.customerId, filters.customerId));
+  const pattern = containsPattern(filters.search);
+  if (pattern) conditions.push(or(like(invoices.invoiceNumber, pattern), like(customers.name, pattern))!);
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const { limit, offset } = resolvePage(filters);
+  const [rows, [{ value: total }]] = await Promise.all([
+    db.select({
+      id: invoices.id,
+      companyId: invoices.companyId,
+      invoiceNumber: invoices.invoiceNumber,
+      customerId: invoices.customerId,
+      type: invoices.type,
+      status: invoices.status,
+      issueDate: invoices.issueDate,
+      dueDate: invoices.dueDate,
+      subtotal: invoices.subtotal,
+      taxAmount: invoices.taxAmount,
+      discountAmount: invoices.discountAmount,
+      totalAmount: invoices.totalAmount,
+      paidAmount: invoices.paidAmount,
+      currency: invoices.currency,
+      notes: invoices.notes,
+      terms: invoices.terms,
+      createdAt: invoices.createdAt,
+      customer: { id: customers.id, name: customers.name, email: customers.email },
+    })
+      .from(invoices)
+      .leftJoin(customers, eq(invoices.customerId, customers.id))
+      .where(where)
+      .orderBy(desc(invoices.createdAt), desc(invoices.id))
+      .limit(limit)
+      .offset(offset),
+    // The customer join is only needed to match a search on customer name.
+    pattern
+      ? db.select({ value: count() }).from(invoices).leftJoin(customers, eq(invoices.customerId, customers.id)).where(where)
+      : db.select({ value: count() }).from(invoices).where(where),
+  ]);
+  return { rows, total: Number(total) };
+}
+
 export async function getInvoiceById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
@@ -1250,6 +1356,48 @@ export async function getTransactions(scope?: Scope, filters?: { companyId?: num
   return db.select().from(transactions).orderBy(desc(transactions.date));
 }
 
+/**
+ * One page of transactions, most recent date first, plus the total matching the same
+ * filters. `search` matches transaction number, description or reference type.
+ */
+export async function getTransactionsPaged(
+  scope: Scope | undefined,
+  filters: PageRequest & { search?: string; type?: string; status?: string; cogsOnly?: boolean; sortBy?: (typeof TRANSACTION_SORTS)[number] } = {},
+) {
+  const db = await getDb();
+  if (!db) return { rows: [] as Transaction[], total: 0 };
+  const conditions = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return { rows: [] as Transaction[], total: 0 };
+    conditions.push(inArray(transactions.companyId, ids));
+  }
+  if (filters.type) conditions.push(eq(transactions.type, filters.type as any));
+  if (filters.status) conditions.push(eq(transactions.status, filters.status as any));
+  if (filters.cogsOnly) {
+    // Same rule as shared/cogs.ts isCOGSTransaction (column collation is case-insensitive).
+    conditions.push(or(
+      ...COGS_KEYWORDS.map((kw) => like(transactions.description, `%${kw}%`)),
+      inArray(transactions.referenceType, [...COGS_REFERENCE_TYPES]),
+    )!);
+  }
+  const pattern = containsPattern(filters.search);
+  if (pattern) {
+    conditions.push(or(
+      like(transactions.transactionNumber, pattern), like(transactions.description, pattern), like(transactions.referenceType, pattern),
+    )!);
+  }
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const { limit, offset } = resolvePage(filters);
+  const sortCol = { date: transactions.date, totalAmount: transactions.totalAmount }[filters.sortBy ?? "date"] ?? transactions.date;
+  const dir = filters.sortBy && filters.sortDir === "asc" ? asc : desc;
+  const [rows, [{ value: total }]] = await Promise.all([
+    db.select().from(transactions).where(where).orderBy(dir(sortCol), dir(transactions.id)).limit(limit).offset(offset),
+    db.select({ value: count() }).from(transactions).where(where),
+  ]);
+  return { rows, total: Number(total) };
+}
+
 export async function createTransaction(data: InsertTransaction) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -1312,6 +1460,118 @@ export async function getOrders(scope?: Scope, filters?: { companyId?: number; s
     return db.select().from(orders).where(and(...conditions)).orderBy(desc(orders.createdAt));
   }
   return db.select().from(orders).orderBy(desc(orders.createdAt));
+}
+
+/**
+ * One page of orders, newest first, with the customer name joined in, plus the total
+ * matching the same filters. `search` matches order number or customer name.
+ */
+export async function getOrdersPaged(
+  scope: Scope | undefined,
+  filters: PageRequest & { search?: string; status?: string; customerId?: number; sortBy?: (typeof ORDER_SORTS)[number] } = {},
+) {
+  const db = await getDb();
+  const empty = { rows: [] as (Order & { customerName: string | null; customerEmail: string | null })[], total: 0 };
+  if (!db) return empty;
+  const conditions = [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return empty;
+    conditions.push(inArray(orders.companyId, ids));
+  }
+  if (filters.status) conditions.push(eq(orders.status, filters.status as any));
+  if (filters.customerId) conditions.push(eq(orders.customerId, filters.customerId));
+  const pattern = containsPattern(filters.search);
+  if (pattern) conditions.push(or(like(orders.orderNumber, pattern), like(customers.name, pattern))!);
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const { limit, offset } = resolvePage(filters);
+  const sortCol = { createdAt: orders.createdAt, orderDate: orders.orderDate, totalAmount: orders.totalAmount }[filters.sortBy ?? "createdAt"] ?? orders.createdAt;
+  const dir = filters.sortBy && filters.sortDir === "asc" ? asc : desc;
+  const [rows, [{ value: total }]] = await Promise.all([
+    db.select({ order: orders, customerName: customers.name, customerEmail: customers.email })
+      .from(orders)
+      .leftJoin(customers, eq(orders.customerId, customers.id))
+      .where(where)
+      .orderBy(dir(sortCol), dir(orders.id))
+      .limit(limit)
+      .offset(offset),
+    // The customer join is only needed to match a search on customer name; without it
+    // the count reads an index instead of joining every order.
+    pattern
+      ? db.select({ value: count() }).from(orders).leftJoin(customers, eq(orders.customerId, customers.id)).where(where)
+      : db.select({ value: count() }).from(orders).where(where),
+  ]);
+  return { rows: rows.map((r) => ({ ...r.order, customerName: r.customerName, customerEmail: r.customerEmail })), total: Number(total) };
+}
+
+/** Order count, total value and pending count for the same scope/filters as getOrdersPaged. */
+export async function getOrderSummary(scope: Scope | undefined, filters: { customerId?: number } = {}) {
+  const db = await getDb();
+  const empty = { count: 0, totalValue: 0, pending: 0 };
+  if (!db) return empty;
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids && ids.length === 0) return empty;
+  const [row] = await db
+    .select({
+      count: count(),
+      totalValue: sql<string>`COALESCE(SUM(${orders.totalAmount}), 0)`,
+      pending: sql<string>`COALESCE(SUM(${orders.status} = 'pending'), 0)`,
+    })
+    .from(orders)
+    .where(and(
+      ids ? inArray(orders.companyId, ids) : undefined,
+      filters.customerId ? eq(orders.customerId, filters.customerId) : undefined,
+    ));
+  return { count: Number(row?.count ?? 0), totalValue: Number(row?.totalValue ?? 0), pending: Number(row?.pending ?? 0) };
+}
+
+/**
+ * Invoice number, status and payments received for a page of orders' invoices. Payments are
+ * summed per invoice (any type/status, as the Sales hub always did); `lastPaymentDate` is the latest.
+ */
+export async function getInvoiceBillingByIds(scope: Scope | undefined, invoiceIds: number[]) {
+  const db = await getDb();
+  if (!db || invoiceIds.length === 0) return [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids && ids.length === 0) return [];
+  const [invRows, payRows] = await Promise.all([
+    db.select({ id: invoices.id, invoiceNumber: invoices.invoiceNumber, status: invoices.status })
+      .from(invoices)
+      .where(and(inArray(invoices.id, invoiceIds), ids ? inArray(invoices.companyId, ids) : undefined)),
+    db.select({
+      invoiceId: payments.invoiceId,
+      amountPaid: sql<string>`COALESCE(SUM(${payments.amount}), 0)`,
+      lastPaymentDate: sql<Date | string | null>`MAX(${payments.paymentDate})`,
+    })
+      .from(payments)
+      .where(and(inArray(payments.invoiceId, invoiceIds), ids ? inArray(payments.companyId, ids) : undefined))
+      .groupBy(payments.invoiceId),
+  ]);
+  const paid = new Map(payRows.map((p) => [p.invoiceId, p]));
+  return invRows.map((inv) => ({
+    ...inv,
+    amountPaid: Number(paid.get(inv.id)?.amountPaid ?? 0),
+    lastPaymentDate: paid.get(inv.id)?.lastPaymentDate ?? null,
+  }));
+}
+
+/**
+ * The newest shipment of each given order (what the Sales hub shows per row). Only orders
+ * inside `scope` count, so an id from another entity returns nothing.
+ */
+export async function getLatestShipmentsForOrders(scope: Scope | undefined, orderIds: number[]) {
+  const db = await getDb();
+  if (!db || orderIds.length === 0) return [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids && ids.length === 0) return [];
+  const rows = await db
+    .select({ id: shipments.id, orderId: shipments.orderId, status: shipments.status, trackingNumber: shipments.trackingNumber, carrier: shipments.carrier })
+    .from(shipments)
+    .innerJoin(orders, eq(orders.id, shipments.orderId))
+    .where(and(inArray(shipments.orderId, orderIds), ids ? inArray(orders.companyId, ids) : undefined))
+    .orderBy(desc(shipments.createdAt), desc(shipments.id));
+  const seen = new Set<number>();
+  return rows.filter((r) => r.orderId != null && !seen.has(r.orderId) && (seen.add(r.orderId), true));
 }
 
 // Pass `ctx.scope` to enforce entity visibility: an order outside the caller's scope is reported
@@ -1632,6 +1892,8 @@ const DEFAULT_PO_PAGE_LIMIT = 1000;
 export type PurchaseOrderListFilters = {
   companyId?: number;
   status?: string;
+  /** Any of these statuses (e.g. the receiving queue: sent, confirmed, partial). */
+  statusIn?: string[];
   vendorId?: number;
   /** Matches PO number or vendor name. */
   search?: string;
@@ -1669,6 +1931,7 @@ async function buildPurchaseOrderConditions(filters: PurchaseOrderListFilters, s
 
   if (filters.companyId) conditions.push(eq(purchaseOrders.companyId, filters.companyId));
   if (filters.status) conditions.push(eq(purchaseOrders.status, filters.status as any));
+  if (filters.statusIn?.length) conditions.push(inArray(purchaseOrders.status, filters.statusIn as any));
   if (filters.vendorId) conditions.push(eq(purchaseOrders.vendorId, filters.vendorId));
   if (filters.orderDateFrom) conditions.push(gte(purchaseOrders.orderDate, filters.orderDateFrom));
   if (filters.orderDateTo) conditions.push(lte(purchaseOrders.orderDate, filters.orderDateTo));
@@ -3734,6 +3997,210 @@ export async function updateAiConversation(id: number, data: Partial<typeof aiCo
 // ============================================
 // DASHBOARD METRICS
 // ============================================
+
+/**
+ * Home dashboard receivables card and revenue tile, summed in SQL. Revenue this month is
+ * customer payments received and completed in [monthStartMs, monthEndMs).
+ */
+export async function getHomeInvoiceSummary(scope: Scope | undefined, monthStartMs: number, monthEndMs: number) {
+  const db = await getDb();
+  const empty = { revenueThisMonth: 0, outstandingAR: 0, unpaidInvoices: 0 };
+  if (!db) return empty;
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids && ids.length === 0) return empty;
+  const [[ar], [rev]] = await Promise.all([
+    db.select({ total: sql<string>`COALESCE(SUM(${invoices.totalAmount}), 0)`, count: count() })
+      .from(invoices)
+      .where(and(inArray(invoices.status, ["sent", "overdue"]), ids ? inArray(invoices.companyId, ids) : undefined)),
+    db.select({ total: sql<string>`COALESCE(SUM(${payments.amount}), 0)` })
+      .from(payments)
+      .where(and(
+        eq(payments.type, "received"),
+        eq(payments.status, "completed"),
+        gte(payments.paymentDate, new Date(monthStartMs)),
+        lt(payments.paymentDate, new Date(monthEndMs)),
+        ids ? inArray(payments.companyId, ids) : undefined,
+      )),
+  ]);
+  return { revenueThisMonth: Number(rev?.total ?? 0), outstandingAR: Number(ar?.total ?? 0), unpaidInvoices: Number(ar?.count ?? 0) };
+}
+
+/** Home dashboard PO figures (burn proxy, open AP, open POs), summed in SQL. */
+export async function getHomePurchaseOrderSummary(scope: Scope | undefined, monthStartMs: number, monthEndMs: number) {
+  const db = await getDb();
+  const empty = { receivedThisMonth: 0, outstandingAP: 0, openPOCount: 0, openPOValue: 0 };
+  if (!db) return empty;
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids && ids.length === 0) return empty;
+  const inScope = ids ? inArray(purchaseOrders.companyId, ids) : undefined;
+  const sumTotal = sql<string>`COALESCE(SUM(${purchaseOrders.totalAmount}), 0)`;
+  // Receipt month: receivedDate, set by the receiving flows. Older rows without it fall back
+  // to updatedAt, the proxy the dashboard used before.
+  const receivedAt = sql`COALESCE(${purchaseOrders.receivedDate}, ${purchaseOrders.updatedAt})`;
+  const [[received], [ap], [open]] = await Promise.all([
+    db.select({ total: sumTotal }).from(purchaseOrders).where(and(
+      eq(purchaseOrders.status, "received"),
+      sql`${receivedAt} >= ${new Date(monthStartMs)}`,
+      sql`${receivedAt} < ${new Date(monthEndMs)}`,
+      inScope,
+    )),
+    db.select({ total: sumTotal }).from(purchaseOrders)
+      .where(and(inArray(purchaseOrders.status, ["sent", "confirmed", "received"]), inScope)),
+    db.select({ total: sumTotal, count: count() }).from(purchaseOrders)
+      .where(and(inArray(purchaseOrders.status, ["draft", "sent", "confirmed"]), inScope)),
+  ]);
+  return {
+    receivedThisMonth: Number(received?.total ?? 0),
+    outstandingAP: Number(ap?.total ?? 0),
+    openPOCount: Number(open?.count ?? 0),
+    openPOValue: Number(open?.total ?? 0),
+  };
+}
+
+/**
+ * Time boundaries for the CFO dashboard, supplied by the browser so month and quarter
+ * edges match the viewer's local calendar (TIMESTAMP columns are compared as epochs,
+ * which is timezone-independent).
+ */
+export type CfoWindows = {
+  nowMs: number;
+  /** 14 ascending epochs: start of the month 12 months ago … start of next month. */
+  monthStarts: number[];
+  /** 9 ascending epochs: start of the quarter 7 quarters ago … start of next quarter. */
+  quarterStarts: number[];
+};
+
+/**
+ * Everything the CFO dashboard derives from invoices, expense transactions and purchase
+ * orders, aggregated in SQL. Replaces downloading those whole tables to the browser
+ * (~430 MB at 1M invoices). Pure derivations live in shared/cfoMetrics.ts.
+ */
+export async function getCfoAggregates(scope: Scope | undefined, w: CfoWindows) {
+  const db = await getDb();
+  const empty = {
+    customers: [] as CustomerInvoiceAgg[],
+    monthlyRevenue: new Array(13).fill(0) as number[],
+    cohortCells: [] as CohortCell[],
+    cohortSizes: [] as CohortSize[],
+    arAging: { current: 0, d30: 0, d60: 0, d90: 0 },
+    expenseByMonth: [0, 0, 0],
+    outstandingAP: 0,
+  };
+  if (!db) return empty;
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids && ids.length === 0) return empty;
+  const scoped = (col: string) =>
+    ids ? sql`AND ${sql.raw(col)} IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})` : sql``;
+
+  const ts = sql.raw("UNIX_TIMESTAMP(i.issueDate) * 1000");
+  // Same key the browser used: customer name, else "Customer <id>". Binary collation keeps
+  // it case-sensitive like the browser's Map keys. Grouping 1M invoices by this string costs
+  // ~4× grouping by customerId, so SQL groups by id and names are merged afterwards.
+  const custKey = (idCol: string) =>
+    sql.raw(`(CONVERT(COALESCE(NULLIF(c.name, ''), CONCAT('Customer ', COALESCE(CAST(${idCol} AS CHAR), '—'))) USING utf8mb4) COLLATE utf8mb4_bin)`);
+  const m = w.monthStarts;
+  const q = w.quarterStarts;
+  const ninetyAgo = w.nowMs - 90 * 86_400_000;
+  const oneEightyAgo = w.nowMs - 180 * 86_400_000;
+  // Bucket index of an epoch against ascending boundaries b[0..n]: count of b[1..n-1] it has passed.
+  const bucketOf = (expr: ReturnType<typeof sql.raw>, b: number[]) =>
+    sql.join(b.slice(1, -1).map((x) => sql`(${expr} >= ${x})`), sql` + `);
+
+  const [custRes, monthRes, cohortRes, arRes, expRes, apRes] = await Promise.all([
+    db.execute(sql`
+      SELECT ${custKey("a.customerId")} AS name, a.*
+      FROM (
+        SELECT i.customerId, COUNT(*) AS count, SUM(i.totalAmount) AS total,
+          MIN(${ts}) AS firstAt, MAX(${ts}) AS lastAt,
+          SUM(CASE WHEN ${ts} >= ${ninetyAgo} THEN i.totalAmount ELSE 0 END) AS rev90,
+          SUM(CASE WHEN ${ts} >= ${oneEightyAgo} AND ${ts} < ${ninetyAgo} THEN i.totalAmount ELSE 0 END) AS revPrior90,
+          SUM(CASE WHEN ${ts} >= ${m[12]} AND ${ts} < ${m[13]} THEN i.totalAmount ELSE 0 END) AS revThisMonth,
+          SUM(CASE WHEN ${ts} >= ${m[0]} AND ${ts} < ${m[1]} THEN i.totalAmount ELSE 0 END) AS revYearAgoMonth
+        FROM invoices i
+        WHERE 1 = 1 ${scoped("i.companyId")}
+        GROUP BY i.customerId
+      ) a LEFT JOIN customers c ON c.id = a.customerId`),
+    db.execute(sql`
+      SELECT ${bucketOf(ts, m)} AS bucket, SUM(i.totalAmount) AS revenue
+      FROM invoices i
+      WHERE ${ts} >= ${m[0]} AND ${ts} < ${m[13]} ${scoped("i.companyId")}
+      GROUP BY bucket`),
+    // Revenue by (acquisition quarter, quarter offset). A customer's acquisition is the first
+    // invoice across every customer id sharing its name, as the browser keyed customers.
+    db.execute(sql`
+      WITH per_id AS (
+        SELECT i.customerId, MIN(${ts}) AS firstAt
+        FROM invoices i
+        WHERE 1 = 1 ${scoped("i.companyId")}
+        GROUP BY i.customerId
+      ), firsts AS (
+        SELECT p.customerId, MIN(p.firstAt) OVER (PARTITION BY ${custKey("p.customerId")}) AS firstAt
+        FROM per_id p LEFT JOIN customers c ON c.id = p.customerId
+      )
+      SELECT ${bucketOf(sql.raw("f.firstAt"), q)} AS cohortQ,
+        ${bucketOf(ts, q)} - (${bucketOf(sql.raw("f.firstAt"), q)}) AS offset,
+        SUM(i.totalAmount) AS revenue
+      FROM invoices i
+      JOIN firsts f ON f.customerId <=> i.customerId
+      WHERE ${ts} >= ${q[0]} AND ${ts} < ${q[8]}
+        AND f.firstAt >= ${q[0]} AND f.firstAt < ${q[8]} ${scoped("i.companyId")}
+      GROUP BY cohortQ, offset`),
+    // Unpaid AR by days past due (no due date = current).
+    db.execute(sql`
+      SELECT
+        SUM(CASE WHEN d = 0 THEN i.totalAmount ELSE 0 END) AS current,
+        SUM(CASE WHEN d BETWEEN 1 AND 30 THEN i.totalAmount ELSE 0 END) AS d30,
+        SUM(CASE WHEN d BETWEEN 31 AND 60 THEN i.totalAmount ELSE 0 END) AS d60,
+        SUM(CASE WHEN d > 60 THEN i.totalAmount ELSE 0 END) AS d90
+      FROM (
+        SELECT i.totalAmount,
+          GREATEST(0, FLOOR((${w.nowMs} - COALESCE(UNIX_TIMESTAMP(i.dueDate) * 1000, ${w.nowMs})) / 86400000)) AS d
+        FROM invoices i
+        WHERE i.status NOT IN ('paid', 'cancelled') ${scoped("i.companyId")}
+      ) i`),
+    // Expense ledger for the last three calendar months (oldest first).
+    db.execute(sql`
+      SELECT ${bucketOf(sql.raw("UNIX_TIMESTAMP(t.date) * 1000"), m.slice(10))} AS bucket,
+        SUM(ABS(t.totalAmount)) AS total
+      FROM transactions t
+      WHERE t.type = 'expense'
+        AND UNIX_TIMESTAMP(t.date) * 1000 >= ${m[10]} AND UNIX_TIMESTAMP(t.date) * 1000 < ${m[13]}
+        ${scoped("t.companyId")}
+      GROUP BY bucket`),
+    db.execute(sql`
+      SELECT COALESCE(SUM(p.totalAmount), 0) AS total
+      FROM purchase_orders p
+      WHERE p.status NOT IN ('paid', 'cancelled', 'closed') ${scoped("p.companyId")}`),
+  ]);
+
+  const n = (v: unknown) => Number(v ?? 0) || 0;
+  const monthlyRevenue = new Array(13).fill(0) as number[];
+  for (const r of rowsFromExecute(monthRes)) monthlyRevenue[n(r.bucket)] = n(r.revenue);
+  const expenseByMonth = [0, 0, 0];
+  for (const r of rowsFromExecute(expRes)) expenseByMonth[n(r.bucket)] = n(r.total);
+  const ar = rowsFromExecute(arRes)[0] ?? {};
+  const customerAggs = mergeCustomerAggs(rowsFromExecute(custRes).map((r) => ({
+    name: String(r.name),
+    count: n(r.count),
+    total: n(r.total),
+    firstAt: n(r.firstAt),
+    lastAt: n(r.lastAt),
+    rev90: n(r.rev90),
+    revPrior90: n(r.revPrior90),
+    revThisMonth: n(r.revThisMonth),
+    revYearAgoMonth: n(r.revYearAgoMonth),
+  })));
+  return {
+    customers: customerAggs,
+    monthlyRevenue,
+    cohortCells: rowsFromExecute(cohortRes).map((r) => ({ cohortQ: n(r.cohortQ), offset: n(r.offset), revenue: n(r.revenue) })),
+    cohortSizes: cohortSizes(customerAggs, q),
+    arAging: { current: n(ar.current), d30: n(ar.d30), d60: n(ar.d60), d90: n(ar.d90) },
+    expenseByMonth,
+    outstandingAP: n(rowsFromExecute(apRes)[0]?.total),
+  };
+}
+
 
 export async function getDashboardMetrics() {
   const db = await getDb();

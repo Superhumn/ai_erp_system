@@ -1,4 +1,5 @@
 // appRouter.teamInvites — moved verbatim from server/routers.ts by scripts/split-legacy-router.mjs.
+import { appUrlForLinks } from "../_core/tenancy";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router } from "../_core/trpc";
@@ -47,7 +48,7 @@ export const teamInvitesRouter = router({
 
         // 3. Send invite email via SendGrid
         try {
-          const appUrl = process.env.APP_URL || process.env.PUBLIC_APP_URL || "https://aierpsystem-production.up.railway.app";
+          const appUrl = appUrlForLinks(process.env.APP_URL || process.env.PUBLIC_APP_URL || "https://aierpsystem-production.up.railway.app");
           const inviteUrl = `${appUrl}/login?invite=${token}`;
 
           await sendEmail({
@@ -87,7 +88,7 @@ export const teamInvitesRouter = router({
         if (!invite) throw new TRPCError({ code: "NOT_FOUND" });
 
         try {
-          const appUrl = process.env.APP_URL || process.env.PUBLIC_APP_URL || "https://aierpsystem-production.up.railway.app";
+          const appUrl = appUrlForLinks(process.env.APP_URL || process.env.PUBLIC_APP_URL || "https://aierpsystem-production.up.railway.app");
           const inviteUrl = `${appUrl}/login?invite=${invite.token}`;
 
           await sendEmail({

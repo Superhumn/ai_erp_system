@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import { SignJWT, jwtVerify } from "jose";
 import { ENV } from "./env";
 import { getSessionCookieOptions } from "./cookies";
+import { currentTenant, isMultiTenant, requireTenant } from "./tenancy";
 
 export const VISITOR_COOKIE_NAME = "dr_visitor";
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
@@ -26,7 +27,9 @@ export async function signVisitorSession(
   expiresInMs: number = DEFAULT_TTL_MS,
 ): Promise<string> {
   const expSec = Math.floor((Date.now() + expiresInMs) / 1000);
-  return new SignJWT({ ...payload })
+  // Multi-tenant: bind the token to its tenant. Data room ids repeat across tenant databases.
+  const claims = isMultiTenant() ? { ...payload, tid: requireTenant().slug } : { ...payload };
+  return new SignJWT(claims)
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setExpirationTime(expSec)
     .sign(getSecret());
@@ -38,7 +41,8 @@ export async function verifyVisitorSession(
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, getSecret(), { algorithms: ["HS256"] });
-    const { visitorId, linkId, linkCode, dataRoomId } = payload as Record<string, unknown>;
+    const { visitorId, linkId, linkCode, dataRoomId, tid } = payload as Record<string, unknown>;
+    if (isMultiTenant() && (typeof tid !== "string" || tid !== currentTenant()?.slug)) return null;
     if (
       (visitorId !== undefined && typeof visitorId !== "number") ||
       typeof linkId !== "number" ||

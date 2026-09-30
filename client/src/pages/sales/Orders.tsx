@@ -1,5 +1,8 @@
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
+import { CustomerPicker } from "@/components/CustomerPicker";
+import { ListPager } from "@/components/ListPager";
+import { usePagedList } from "@/hooks/usePagedList";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -119,6 +122,13 @@ function OrderSummaryBody({ order }: { order: any }) {
   );
 }
 
+// Table column → orders.listPaged sortBy. Sorting runs on the server across every page,
+// so only indexed columns are sortable.
+const ORDER_SORT_KEYS: Record<string, "orderDate" | "totalAmount"> = {
+  orderDate: "orderDate",
+  totalAmount: "totalAmount",
+};
+
 export default function Orders() {
   const [isOpen, setIsOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
@@ -148,15 +158,31 @@ export default function Orders() {
     applyLineItems(lineItems.map((line, i) => (i === index ? { ...line, ...patch } : line)));
 
   const utils = trpc.useUtils();
-  const { data: orders, isLoading } = trpc.orders.list.useQuery();
-  const { data: customers } = trpc.customers.list.useQuery();
+  // Paged on the server: a full-table load failed outright at ~1M orders.
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const paging = usePagedList(statusFilter);
+  const { data: ordersPage, isLoading } = trpc.orders.listPaged.useQuery({
+    ...paging.query,
+    status: statusFilter === "all" ? undefined : statusFilter,
+    ...(paging.sort && ORDER_SORT_KEYS[paging.sort.key]
+      ? { sortBy: ORDER_SORT_KEYS[paging.sort.key], sortDir: paging.sort.dir }
+      : {}),
+  });
+  // A selection only covers the rows on screen; drop it when the rows change.
+  useEffect(() => setSelectedOrders(new Set()), [paging.query, statusFilter, paging.sort]);
+  const orders = ordersPage?.rows;
+  const totalOrders = ordersPage?.total ?? 0;
+  useEffect(() => paging.clampTo(ordersPage?.total), [ordersPage?.total]);
+  // Only "are there any customers?" — the picker searches the server itself.
+  const { data: anyCustomer } = trpc.customers.listPaged.useQuery({ limit: 1 });
+  const hasCustomers = (anyCustomer?.total ?? 0) > 0;
   const createCustomer = trpc.customers.create.useMutation();
 
   const bulkDeleteOrders = trpc.orders.bulkDelete.useMutation({
     onSuccess: (data) => {
       toast.success(`Deleted ${data.deleted} order(s)`);
       setSelectedOrders(new Set());
-      utils.orders.list.invalidate();
+      utils.orders.invalidate();
     },
     onError: (err: any) => toast.error(err.message),
   });
@@ -168,15 +194,15 @@ export default function Orders() {
       setFormData({ customerId: 0, subtotal: "", tax: "", total: "" });
       setLineItems([]);
       setNewCustomerName("");
-      utils.orders.list.invalidate();
-      utils.customers.list.invalidate();
+      utils.orders.invalidate();
+      utils.customers.invalidate();
     },
     onError: (err: any) => toast.error(err.message),
   });
 
   const updateOrder = trpc.orders.update.useMutation({
     onSuccess: () => {
-      utils.orders.list.invalidate();
+      utils.orders.invalidate();
     },
     onError: (err: any) => toast.error(err.message),
   });
@@ -186,38 +212,32 @@ export default function Orders() {
       toast.success("Order deleted");
       setOrderToDelete(null);
       setSelectedOrder(null);
-      utils.orders.list.invalidate();
+      utils.orders.invalidate();
     },
     onError: (err: any) => toast.error(err.message),
   });
 
-  // Enrich orders for dense display: resolve customer name and item count.
-  const customerById = useMemo(() => {
-    const map = new Map<number, string>();
-    (customers || []).forEach((c: any) => map.set(c.id, c.name));
-    return map;
-  }, [customers]);
-
+  // Enrich orders for dense display: the server joins the customer name in.
   const enrichedOrders = useMemo(
     () =>
       (orders || []).map((o: any) => ({
         ...o,
         _customerName: o.customerId
-          ? customerById.get(o.customerId) || `Customer #${o.customerId}`
+          ? o.customerName || `Customer #${o.customerId}`
           : "—",
         _itemCount: o.items?.length ?? o.itemCount ?? null,
       })),
-    [orders, customerById],
+    [orders],
   );
 
   // Dense column set: most fields visible at a glance.
   const columns: Column<any>[] = [
-    { key: "orderNumber", header: "Order #", type: "text", sortable: true },
-    { key: "_customerName", header: "Customer", type: "text", sortable: true },
+    { key: "orderNumber", header: "Order #", type: "text" },
+    { key: "_customerName", header: "Customer", type: "text" },
     { key: "orderDate", header: "Date", type: "date", sortable: true },
     { key: "status", header: "Status", type: "status", options: orderStatusOptions, editable: true, filterable: true },
-    { key: "_itemCount", header: "Items", type: "number", sortable: true },
-    { key: "subtotal", header: "Subtotal", type: "currency", sortable: true },
+    { key: "_itemCount", header: "Items", type: "number" },
+    { key: "subtotal", header: "Subtotal", type: "currency" },
     { key: "taxAmount", header: "Tax", type: "currency" },
     { key: "shippingAmount", header: "Shipping", type: "currency" },
     { key: "discountAmount", header: "Discount", type: "currency" },
@@ -304,22 +324,11 @@ export default function Orders() {
               <div className="grid gap-4 py-4">
                 <div className="space-y-2">
                   <Label htmlFor="customer">Customer</Label>
-                  {customers && customers.length > 0 ? (
-                    <Select
-                      value={formData.customerId.toString()}
-                      onValueChange={(value) => setFormData({ ...formData, customerId: parseInt(value) })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select customer" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {customers.map((customer) => (
-                          <SelectItem key={customer.id} value={customer.id.toString()}>
-                            {customer.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                  {hasCustomers ? (
+                    <CustomerPicker
+                      value={formData.customerId}
+                      onChange={(id) => setFormData({ ...formData, customerId: id })}
+                    />
                   ) : (
                     <div className="space-y-2">
                       <Input
@@ -469,6 +478,13 @@ export default function Orders() {
             showSearch
             showFilters
             showExport
+            searchValue={paging.searchInput}
+            onSearchChange={paging.setSearchInput}
+            searchPlaceholder="Search order # or customer…"
+            filterValues={{ status: statusFilter }}
+            onFiltersChange={(f) => setStatusFilter(f.status || "all")}
+            sort={paging.sort ?? { key: null, dir: "asc" }}
+            onSortChange={paging.setSort}
             onRowClick={(row) => setSelectedOrder(row)}
             expandedRowId={selectedOrder?.id ?? null}
             selectedRows={selectedOrders}
@@ -481,6 +497,13 @@ export default function Orders() {
               }
             }}
             compact
+          />
+          <ListPager
+            page={paging.page}
+            pageSize={paging.pageSize}
+            total={totalOrders}
+            onPageChange={paging.setPage}
+            onPageSizeChange={paging.setPageSize}
           />
         </CardContent>
       </Card>
