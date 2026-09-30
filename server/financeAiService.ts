@@ -309,90 +309,27 @@ export async function predictCashFlow(params?: {
   companyId?: number;
   weeksAhead?: number;
 }): Promise<CashFlowPrediction> {
-  const weeksAhead = params?.weeksAhead || 8;
-
-  const invoices = await db.getInvoices(undefined, { companyId: params?.companyId });
-  const payments = await db.getPayments(undefined, { companyId: params?.companyId });
-  const purchaseOrders = await db.getPurchaseOrders({ companyId: params?.companyId });
-
-  // Compute pending receivables and payables
-  const pendingReceivables = invoices.filter(i => (i.type as string) !== "payable" && (i.status === "sent" || i.status === "overdue"));
-  const pendingPayables = invoices.filter(i => (i.type as string) === "payable" && (i.status === "sent" || (i.status as string) === "pending" || i.status === "overdue"));
-  const openPOs = purchaseOrders.filter(po => (po.status as string) === "approved" || po.status === "sent");
-
-  const prompt = `Predict weekly cash flow for the next ${weeksAhead} weeks based on this data.
-
-PENDING RECEIVABLES: ${pendingReceivables.length} invoices totaling $${pendingReceivables.reduce((s, i) => s + parseFloat(String(i.totalAmount || 0)), 0).toFixed(2)}
-${pendingReceivables.slice(0, 20).map(i => `- #${i.invoiceNumber}: $${i.totalAmount} due ${i.dueDate} (${i.status})`).join("\n")}
-
-PENDING PAYABLES: ${pendingPayables.length} invoices totaling $${pendingPayables.reduce((s, i) => s + parseFloat(String(i.totalAmount || 0)), 0).toFixed(2)}
-${pendingPayables.slice(0, 20).map(i => `- #${i.invoiceNumber}: $${i.totalAmount} due ${i.dueDate} (${i.status})`).join("\n")}
-
-OPEN PURCHASE ORDERS: ${openPOs.length} totaling $${openPOs.reduce((s, po) => s + parseFloat(String(po.totalAmount || 0)), 0).toFixed(2)}
-
-RECENT PAYMENT HISTORY: ${payments.length} payments
-${payments.slice(0, 20).map(p => `- $${p.amount} via ${p.paymentMethod} on ${p.paymentDate} (${p.status})`).join("\n")}
-
-Today: ${new Date().toISOString().slice(0, 10)}
-
-Respond ONLY with valid JSON:
-{
-  "predictions": [{ "week": "YYYY-MM-DD", "expectedInflows": number, "expectedOutflows": number, "netCashFlow": number, "cumulativeBalance": number, "confidence": number }],
-  "alerts": [{ "type": "shortfall"|"surplus"|"timing", "description": string, "severity": "low"|"medium"|"high", "suggestedAction": string }]
-}`;
-
-  try {
-    const result = await invokeLLM({
-      messages: [
-        { role: "system", content: "You are a treasury and cash management expert. Predict cash flows and identify potential shortfalls. Always respond with valid JSON only." },
-        { role: "user", content: prompt },
-      ],
-    });
-
-    const content = result.choices[0]?.message?.content;
-    const text = typeof content === "string" ? content : "";
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      const validated = CashFlowPredictionSchema.safeParse(parsed);
-      if (validated.success) return validated.data;
-    }
-  } catch (e) {
-    console.warn("Cash flow prediction LLM failed:", e);
-  }
-
-  // Fallback
-  const totalReceivables = pendingReceivables.reduce((s, i) => s + parseFloat(String(i.totalAmount || 0)), 0);
-  const totalPayables = pendingPayables.reduce((s, i) => s + parseFloat(String(i.totalAmount || 0)), 0);
-  const weeklyInflow = totalReceivables / Math.max(weeksAhead, 1);
-  const weeklyOutflow = totalPayables / Math.max(weeksAhead, 1);
-
-  const predictions: CashFlowPrediction["predictions"] = [];
-  let cumulative = 0;
-  for (let i = 0; i < weeksAhead; i++) {
-    const weekStart = new Date();
-    weekStart.setDate(weekStart.getDate() + i * 7);
-    const net = weeklyInflow - weeklyOutflow;
-    cumulative += net;
-    predictions.push({
-      week: weekStart.toISOString().slice(0, 10),
-      expectedInflows: Math.round(weeklyInflow * 100) / 100,
-      expectedOutflows: Math.round(weeklyOutflow * 100) / 100,
-      netCashFlow: Math.round(net * 100) / 100,
-      cumulativeBalance: Math.round(cumulative * 100) / 100,
-      confidence: Math.max(20, 60 - i * 5),
-    });
-  }
-
-  return {
-    predictions,
-    alerts: cumulative < 0 ? [{
-      type: "shortfall",
-      description: `Projected cumulative cash shortfall of $${Math.abs(cumulative).toFixed(2)} over ${weeksAhead} weeks`,
-      severity: "high",
-      suggestedAction: "Accelerate receivables collection or arrange credit facility",
-    }] : [],
-  };
+  // One engine for every cash number in the app: the 13-week forecast
+  // (cashForecastService). This keeps the shape the AI agent and Finance AI
+  // page already consume, but the numbers are the same ones on the Finance
+  // page, the investor portal and the data room.
+  const weeksAhead = Math.min(26, Math.max(4, params?.weeksAhead || 8));
+  const { getCashForecast } = await import("./cashForecastService");
+  const { deriveAlerts } = await import("./cashForecastLogic");
+  const scope: import("./_core/scope").Scope = params?.companyId
+    ? { mode: "entity", companyIds: [params.companyId] }
+    : { mode: "global", companyIds: "all" };
+  const f = await getCashForecast({ scope, weeks: weeksAhead });
+  const predictions: CashFlowPrediction["predictions"] = f.weeks.map((w, i) => ({
+    week: w.start,
+    expectedInflows: w.totalIn,
+    expectedOutflows: w.totalOut,
+    netCashFlow: w.net,
+    cumulativeBalance: w.closingCash,
+    // Near weeks are dated items; far weeks lean on behaviour and schedules.
+    confidence: Math.max(35, 90 - i * 4),
+  }));
+  return { predictions, alerts: deriveAlerts(f) };
 }
 
 // ============================================

@@ -324,3 +324,113 @@ describe("accuracy", () => {
     expect(summarizeAccuracy([])).toEqual({ weeks: 0, inMape: null, outMape: null });
   });
 });
+
+// ── v3 ─────────────────────────────────────────────────────────
+import {
+  billsToEventsWithBehaviour,
+  computeVendorBehaviour,
+  deriveAlerts,
+  ledgerToMovements,
+  pipelineToEvents,
+  projectEventsToEvents,
+  rollupMonths,
+  splitByEntity,
+} from "./cashForecastLogic";
+
+describe("vendor behaviour + autopay", () => {
+  const behaviour = computeVendorBehaviour([
+    { vendorId: 5, dueDate: d("2026-01-10"), paidAt: d("2026-01-20") },
+    { vendorId: 5, dueDate: d("2026-02-10"), paidAt: d("2026-02-25") },
+    { vendorId: 5, dueDate: d("2026-03-10"), paidAt: d("2026-03-22") },
+    { vendorId: 6, dueDate: d("2026-03-10"), paidAt: d("2026-03-10") },
+  ]);
+  it("computes median days late per vendor with enough samples", () => {
+    expect(behaviour.get(5)).toEqual({ samples: 3, medianDaysLate: 12 });
+    expect(behaviour.has(6)).toBe(false);
+  });
+  it("moves non-autopay bills by vendor slip, keeps autopay and past-due bills on due date", () => {
+    const ev = billsToEventsWithBehaviour(
+      [
+        { id: 1, vendorId: 5, status: "approved", billDate: d("2026-09-01"), dueDate: d("2026-10-10"), totalAmount: "100", amountPaid: "0", vendorName: "V" },
+        { id: 2, vendorId: 5, status: "approved", billDate: d("2026-09-01"), dueDate: d("2026-10-10"), totalAmount: "100", amountPaid: "0", vendorName: "V", autopay: true },
+        { id: 3, vendorId: 5, status: "approved", billDate: d("2026-09-01"), dueDate: d("2026-10-10"), totalAmount: "100", amountPaid: "0", vendorName: "V", vendorAutopay: true },
+        { id: 4, vendorId: 5, status: "overdue", billDate: d("2026-08-01"), dueDate: d("2026-09-01"), totalAmount: "100", amountPaid: "0", vendorName: "V" },
+        { id: 5, vendorId: 9, status: "approved", billDate: d("2026-09-01"), dueDate: d("2026-10-10"), totalAmount: "100", amountPaid: "0", vendorName: "X" },
+      ],
+      behaviour,
+      asOf,
+    );
+    expect(isoDate(ev[0].date)).toBe("2026-10-22");
+    expect(ev[0].label).toContain("+12d");
+    expect(isoDate(ev[1].date)).toBe("2026-10-10");
+    expect(ev[1].label).toContain("autopay");
+    expect(isoDate(ev[2].date)).toBe("2026-10-10");
+    expect(isoDate(ev[3].date)).toBe("2026-09-01");
+    expect(isoDate(ev[4].date)).toBe("2026-10-10");
+  });
+});
+
+describe("pipeline + projects", () => {
+  it("weights deals by probability at close + terms and skips low-probability", () => {
+    const ev = pipelineToEvents([
+      { id: 1, name: "DOE lunch", amount: "100000", probability: 60, expectedCloseDate: d("2026-10-01"), organization: "NYC DOE" },
+      { id: 2, name: "Maybe", amount: "50000", probability: 5, expectedCloseDate: d("2026-10-01") },
+      { id: 3, name: "No date", amount: "50000", probability: 50, expectedCloseDate: null },
+    ]);
+    expect(ev).toHaveLength(1);
+    expect(ev[0]).toMatchObject({ amount: 60000, direction: "in", category: "pipeline_weighted" });
+    expect(isoDate(ev[0].date)).toBe("2026-10-31");
+    expect(ev[0].label).toBe("NYC DOE · DOE lunch (60%)");
+  });
+  it("turns project events into signed movements and skips finished projects", () => {
+    const ev = projectEventsToEvents([
+      { id: 1, name: "Line 2", status: "in_progress", cashEventAmount: "20000", cashEventType: "capex", cashEventDate: d("2026-11-01") },
+      { id: 2, name: "Grant", status: "not_started", cashEventAmount: "-15000", cashEventType: "funding", cashEventDate: d("2026-11-15") },
+      { id: 3, name: "Done", status: "complete", cashEventAmount: "999", cashEventType: "revenue", cashEventDate: d("2026-11-15") },
+    ]);
+    expect(ev.map((e) => [e.direction, e.amount])).toEqual([["out", 20000], ["in", 15000]]);
+  });
+});
+
+describe("monthly roll-up and entity split", () => {
+  const events = [
+    { date: d("2026-10-01"), amount: 1000, direction: "in" as const, category: "customer_receipts" as const, label: "A", companyId: 1 },
+    { date: d("2026-11-03"), amount: 400, direction: "out" as const, category: "vendor_bills" as const, label: "B", companyId: 2 },
+    { date: d("2026-11-10"), amount: 50, direction: "out" as const, category: "payroll" as const, label: "C", companyId: 1 },
+  ];
+  it("rolls dated events into calendar months (Oct 1 is October), past-due into the as-of month", () => {
+    const months = rollupMonths({ asOf, startingCash: 100, events: [...events, { date: d("2026-07-01"), amount: 10, direction: "in", category: "customer_receipts", label: "late" }], months: 12 });
+    expect(months.map((m) => m.key).slice(0, 4)).toEqual(["2026-09", "2026-10", "2026-11", "2026-12"]);
+    expect(months).toHaveLength(12);
+    expect(months[0].totalIn).toBe(10); // past-due lands in September
+    expect(months.find((m) => m.key === "2026-10")!.totalIn).toBe(1000);
+    expect(months.find((m) => m.key === "2026-11")!.totalOut).toBe(450);
+    expect(months[1].openingCash).toBe(110);
+    expect(months[months.length - 1].closingCash).toBe(660);
+    expect(months[months.length - 1].key).toBe("2027-08");
+  });
+  it("splits by entity with its own starting cash", () => {
+    const rows = splitByEntity({ asOf, events, startingCashByCompany: new Map([[1, 500], [2, 100]]), names: new Map([[1, "US"], [2, "India"]]) });
+    expect(rows.map((r) => [r.name, r.startingCash, r.endingCash])).toEqual([["US", 500, 1450], ["India", 100, -300]]);
+    expect(rows[1].firstNegativeWeek).not.toBeNull();
+  });
+});
+
+describe("ledger + alerts", () => {
+  it("maps ledger payments to bank-style movements", () => {
+    expect(ledgerToMovements([{ type: "received", amount: "10", paymentDate: d("2026-10-01") }, { type: "made", amount: "5", paymentDate: d("2026-10-02") }]).map((m) => m.type)).toEqual(["credit", "debit"]);
+  });
+  it("derives a shortfall alert when cash goes negative and a timing alert for overdue AR", () => {
+    const f = buildCashForecast({
+      asOf,
+      startingCash: 100,
+      events: [
+        { date: d("2026-08-01"), amount: 300, direction: "in", category: "customer_receipts", label: "late" },
+        { date: d("2026-10-20"), amount: 2000, direction: "out", category: "vendor_bills", label: "big" },
+      ],
+    });
+    const alerts = deriveAlerts(f);
+    expect(alerts.map((a) => a.type)).toEqual(["shortfall", "timing"]);
+    expect(alerts[0].severity).toBe("high");
+  });
+});

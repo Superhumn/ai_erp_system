@@ -374,6 +374,8 @@ export const vendors = mysqlTable("vendors", {
   type: mysqlEnum("type", ["supplier", "contractor", "service"]).default("supplier").notNull(),
   status: mysqlEnum("status", ["active", "inactive", "pending"]).default("active").notNull(),
   paymentTerms: int("paymentTerms").default(30),
+  /** Vendor is paid by direct debit / autopay: every bill lands on its due date. */
+  autopay: boolean("autopay").default(false).notNull(),
   taxId: varchar("taxId", { length: 64 }),
   bankAccount: varchar("bankAccount", { length: 128 }),
   bankRouting: varchar("bankRouting", { length: 64 }),
@@ -771,6 +773,8 @@ export const bills = mysqlTable("bills", {
   approvedAt: timestamp("approvedAt"),
   paidAt: timestamp("paidAt"),
   paymentTerms: varchar("paymentTerms", { length: 64 }),
+  /** Direct debit / card on file: the bank takes it on the due date exactly. */
+  autopay: boolean("autopay").default(false).notNull(),
   notes: text("notes"),
   attachmentUrl: varchar("attachmentUrl", { length: 512 }),
   lineItems: json("lineItems").$type<BillLineItem[]>(),
@@ -8504,3 +8508,27 @@ export const cashForecastAlertSettings = mysqlTable("cash_forecast_alert_setting
   scopeUnique: uniqueIndex("uq_cash_forecast_alert_settings_scope").on(t.scopeKey),
 }));
 export type CashForecastAlertSettings = typeof cashForecastAlertSettings.$inferSelect;
+
+/**
+ * Where cash forecast messages go: the Monday digest and the low-cash alert.
+ * One row per destination. `target` is a webhook URL (slack, google_chat,
+ * webhook), a phone number (whatsapp) or an address (email).
+ */
+export const cashNotificationChannels = mysqlTable("cash_notification_channels", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  scopeKey: varchar("scopeKey", { length: 64 }).default("global").notNull(),
+  type: mysqlEnum("type", ["slack", "google_chat", "whatsapp", "email", "webhook"]).notNull(),
+  label: varchar("label", { length: 120 }),
+  target: varchar("target", { length: 1024 }).notNull(),
+  sendDigest: boolean("sendDigest").default(true).notNull(),
+  sendAlerts: boolean("sendAlerts").default(true).notNull(),
+  isActive: boolean("isActive").default(true).notNull(),
+  lastSentAt: timestamp("lastSentAt"),
+  lastError: text("lastError"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type CashNotificationChannel = typeof cashNotificationChannels.$inferSelect;
+export type InsertCashNotificationChannel = typeof cashNotificationChannels.$inferInsert;

@@ -19,7 +19,7 @@ export function AccuracyPanel() {
         <CardContent className="pt-4 space-y-2">
           <div className="text-sm font-semibold">Forecast vs. what hit the bank</div>
           <p className="text-xs text-muted-foreground">
-            A snapshot is frozen every Monday (or when you press Snapshot). Once a week has passed, its forecast is graded against Mercury credits and debits. Error = actual − forecast. MAPE is the average miss as a percentage; under 15% is good for a 13-week view.
+            A snapshot is frozen every Monday (or when you press Snapshot). Once a week has passed, its forecast is graded against Mercury credits and debits, and separately against the payments recorded in the ERP ledger. Error = actual − forecast. MAPE is the average miss as a percentage; under 15% is good for a 13-week view.
           </p>
           {isLoading && <p className="text-xs text-muted-foreground">Loading…</p>}
           {data && data.snapshots.length === 0 && <p className="text-xs text-muted-foreground">No snapshots yet. Press Snapshot on the Forecast tab, then come back next week.</p>}
@@ -34,6 +34,7 @@ export function AccuracyPanel() {
                   <th className="py-1 text-right font-medium">Weeks graded</th>
                   <th className="py-1 text-right font-medium">Money-in MAPE</th>
                   <th className="py-1 text-right font-medium">Money-out MAPE</th>
+                  <th className="py-1 text-right font-medium" title="Same grading against the ERP's own payments ledger instead of the bank">Ledger in / out</th>
                 </tr>
               </thead>
               <tbody>
@@ -50,6 +51,7 @@ export function AccuracyPanel() {
                     <td className="py-1.5 text-right">{s.summary.weeks}</td>
                     <td className="py-1.5 text-right">{pct(s.summary.inMape)}</td>
                     <td className="py-1.5 text-right">{pct(s.summary.outMape)}</td>
+                    <td className="py-1.5 text-right text-muted-foreground">{pct(s.ledgerSummary.inMape)} / {pct(s.ledgerSummary.outMape)}</td>
                   </tr>
                 ))}
               </tbody>

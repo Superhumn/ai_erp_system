@@ -417,3 +417,44 @@ async function readCapped(
   text += decoder.decode();
   return { text, truncated };
 }
+
+/**
+ * POST a small JSON body to a user-configured public webhook (Slack, Google
+ * Chat, Zapier…). Same guard as page fetches: public host only, connection
+ * pinned to the checked address, no redirects followed, short timeout.
+ */
+export async function safePostJson(
+  rawUrl: string,
+  body: unknown,
+  opts: { timeoutMs?: number; headers?: Record<string, string> } = {},
+): Promise<{ ok: boolean; status: number; body: string }> {
+  const checked = await checkPublicUrl(rawUrl);
+  const payload = JSON.stringify(body);
+  const timeoutMs = opts.timeoutMs ?? FETCH_TIMEOUT_MS;
+  return new Promise((resolve, reject) => {
+    const isHttps = checked.url.protocol === "https:";
+    const transport = isHttps ? https : http;
+    const Agent = isHttps ? https.Agent : http.Agent;
+    const agent = new Agent({ keepAlive: false, lookup: pinnedLookup(checked.address, checked.family) as any });
+    const req = transport.request(
+      checked.url,
+      {
+        method: "POST",
+        agent,
+        timeout: timeoutMs,
+        headers: { "Content-Type": "application/json", "Content-Length": String(Buffer.byteLength(payload)), ...(opts.headers ?? {}) },
+      },
+      (res) => {
+        const status = res.statusCode ?? 0;
+        // Read at most 64 KiB, then destroy the stream so a misbehaving
+        // webhook cannot hold the socket open by streaming forever.
+        readCapped(res as AsyncIterable<Uint8Array>, 64 * 1024)
+          .then(({ text }) => resolve({ ok: status >= 200 && status < 300, status, body: text }))
+          .catch(reject);
+      },
+    );
+    req.on("timeout", () => req.destroy(new Error(`Timed out after ${timeoutMs}ms`)));
+    req.on("error", reject);
+    req.end(payload);
+  });
+}

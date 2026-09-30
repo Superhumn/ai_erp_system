@@ -125,6 +125,7 @@ function emptyForm(): BillFormState {
     shippingAmount: "",
     currency: "USD",
     paymentTerms: "",
+    autopay: false,
     notes: "",
     lineItems: [],
   };
@@ -142,6 +143,7 @@ function formFromBill(bill: BillRow): BillFormState {
     shippingAmount: bill.shippingAmount ?? "",
     currency: bill.currency ?? "USD",
     paymentTerms: bill.paymentTerms ?? "",
+    autopay: Boolean((bill as any).autopay),
     notes: bill.notes ?? "",
     lineItems: (bill.lineItems ?? []).map((li) => ({
       description: li.description,
@@ -220,6 +222,7 @@ function BillDetailBody({ bill }: { bill: BillView }) {
         <Field label="Outstanding" mono>{money(bill.outstanding, bill.currency)}</Field>
         <Field label="Currency" mono>{bill.currency ?? "USD"}</Field>
         <Field label="Payment terms">{bill.paymentTerms ?? "—"}</Field>
+        <Field label="Autopay">{(bill as any).autopay ? "Yes" : "No"}</Field>
         <Field label="Source">{billStatusLabel(bill.sourceType)}</Field>
         <Field label="Approved">{fmtDate(bill.approvedAt)}</Field>
         <Field label="Paid at">{fmtDate(bill.paidAt)}</Field>
@@ -398,6 +401,13 @@ function BillFormDialog({
               <div className="space-y-2">
                 <Label htmlFor="bill-terms">Payment terms</Label>
                 <Input id="bill-terms" value={form.paymentTerms} onChange={(e) => set("paymentTerms", e.target.value)} placeholder="Net 30" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="bill-autopay">Autopay / direct debit</Label>
+                <div className="flex items-center gap-2 h-9">
+                  <input id="bill-autopay" type="checkbox" className="h-4 w-4" checked={form.autopay} onChange={(e) => set("autopay", e.target.checked)} />
+                  <span className="text-xs text-muted-foreground">Leaves the bank on the due date exactly</span>
+                </div>
               </div>
             </div>
 

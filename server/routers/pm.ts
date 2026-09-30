@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
+import { resolveRequestScope, assertNonEmptyScope } from "./_shared";
 import { adminProcedure, opsProcedure, internalProcedure, createAuditLog } from "./_shared";
 
 // ============================================
@@ -69,7 +70,7 @@ export const pmRouter = router({
       return db.attachPmTaskCounts(raw);
     }),
 
-    cashForecast: protectedProcedure.query(() => db.getPmCashForecast()),
+    cashForecast: protectedProcedure.query(async ({ ctx }) => db.getPmCashForecast(assertNonEmptyScope(await resolveRequestScope(ctx.user)))),
 
     owners: protectedProcedure.query(() => db.getPmOwnerCapacity()),
 

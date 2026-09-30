@@ -86,7 +86,7 @@ function rowsToXlsxBase64(
   return Buffer.from(buf).toString("base64");
 }
 
-async function htmlToPdfBase64(html: string): Promise<string> {
+export async function htmlToPdfBase64(html: string): Promise<string> {
   try {
     const puppeteer = await import("puppeteer");
     const browser = await puppeteer.default.launch({

@@ -24,6 +24,7 @@ const baseForm: BillFormState = {
   shippingAmount: "",
   currency: "usd",
   paymentTerms: "",
+  autopay: false,
   notes: "",
   lineItems: [],
 };

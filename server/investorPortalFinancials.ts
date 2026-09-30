@@ -34,6 +34,8 @@ export interface InvestorPortalFinancials {
   avgMonthlyBurn: number;
   runwayMonths: number | null;
   cashOutMonth: string | null; // e.g. "Oct 2026" — null if runway indeterminate
+  /** From the 13-week cash forecast (same engine as the Finance page). Null when it could not be computed. */
+  forecast13w: { lowestCash: number; lowestWeekStart: string | null; endingCash13w: number; firstNegativeWeekStart: string | null } | null;
   burnMultiple: number | null; // burn / net new ARR; null when not meaningful
   // Operational extras
   arTotal: number;
@@ -59,20 +61,31 @@ function parseAmount(v: unknown): number {
   return 0;
 }
 
-async function getCashBalance(): Promise<number> {
+async function getCashBalance(companyId?: number): Promise<number> {
+  // Same source as the Finance page: Mercury, filtered to the entity's mapped
+  // accounts when a companyId is given.
   try {
-    const { getMercuryAccounts } = await import("./mercuryService");
-    const accounts = await getMercuryAccounts();
-    const list = (accounts?.accounts || []) as Array<{
-      currentBalance?: number;
-      availableBalance?: number;
-    }>;
-    return list.reduce(
-      (sum, a) => sum + (a.currentBalance ?? a.availableBalance ?? 0),
-      0,
-    );
+    const { loadBankCashForScope } = await import("./cashForecastService");
+    const bank = await loadBankCashForScope(companyId ? { mode: "entity", companyIds: [companyId] } : { mode: "global", companyIds: "all" });
+    return bank.total;
   } catch {
     return 0;
+  }
+}
+
+/** 13-week forecast headline numbers, so investor-facing runway agrees with the Finance page. */
+async function getForecastHeadline(companyId?: number): Promise<{ lowestCash: number; lowestWeekStart: string | null; endingCash13w: number; firstNegativeWeekStart: string | null } | null> {
+  try {
+    const { getCashForecast } = await import("./cashForecastService");
+    const f = await getCashForecast({ scope: companyId ? { mode: "entity", companyIds: [companyId] } : { mode: "global", companyIds: "all" } });
+    return {
+      lowestCash: f.lowestCash,
+      lowestWeekStart: f.weeks[f.lowestWeek - 1]?.start ?? null,
+      endingCash13w: f.endingCash,
+      firstNegativeWeekStart: f.firstNegativeWeek ? f.weeks[f.firstNegativeWeek - 1].start : null,
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -111,9 +124,10 @@ export async function computeInvestorPortalFinancials(options?: {
   const [invoices, expenseTxns, cash, margins] = await Promise.all([
     db.getInvoices(undefined, companyId ? { companyId } : undefined),
     db.getTransactions(undefined, { type: "expense", ...(companyId ? { companyId } : {}) }),
-    getCashBalance(),
+    getCashBalance(companyId),
     getMargins(),
   ]);
+  const forecast = await getForecastHeadline(companyId);
 
   // The oldest bucket defines the earliest date we care about — drop
   // anything older in memory since the DB helper doesn't support a
@@ -201,6 +215,7 @@ export async function computeInvestorPortalFinancials(options?: {
     avgMonthlyBurn,
     runwayMonths,
     cashOutMonth,
+    forecast13w: forecast,
     burnMultiple,
     arTotal,
     grossMarginPct: margins.grossMarginPct,
