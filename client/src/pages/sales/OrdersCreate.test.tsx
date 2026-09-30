@@ -29,7 +29,7 @@ vi.mock("@/lib/trpc", () => {
     trpc: {
       useUtils: () => ({
         orders: { invalidate: mocks.invalidateOrders, list: { invalidate: mocks.invalidateOrders } },
-        customers: { list: { invalidate: mocks.invalidateCustomers } },
+        customers: { invalidate: mocks.invalidateCustomers, list: { invalidate: mocks.invalidateCustomers } },
       }),
       orders: {
         list: query(() => []),
@@ -41,6 +41,8 @@ vi.mock("@/lib/trpc", () => {
       },
       customers: {
         list: query(() => mocks.customers),
+        listPaged: query(() => ({ rows: mocks.customers, total: mocks.customers.length })),
+        get: query(() => undefined),
         create: mutation(mocks.createCustomer),
       },
     },

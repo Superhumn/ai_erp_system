@@ -21,6 +21,10 @@ export const ordersRouter = router({
         customerId: z.number().optional(),
       }).optional())
       .query(({ input, ctx }) => db.getOrders(ctx.scope, { status: input?.status, customerId: input?.customerId })),
+    // Count, total value and pending count across every matching order (not a page).
+    summary: scopedInternalProcedure
+      .input(z.object({ customerId: z.number().optional() }).optional())
+      .query(({ input, ctx }) => db.getOrderSummary(ctx.scope, input ?? {})),
     // One page (newest first) plus the total for the same filters.
     listPaged: scopedInternalProcedure
       .input(z.object({

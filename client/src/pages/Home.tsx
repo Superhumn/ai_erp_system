@@ -21,7 +21,6 @@ import {
   Target,
 } from "lucide-react";
 import { useLocation } from "wouter";
-import { isThisMonth } from "date-fns";
 import { formatDistanceToNow } from "date-fns";
 
 // ---------------------------------------------------------------------------
@@ -136,11 +135,20 @@ export default function Home() {
   const { data: bankBalances, isLoading: bankLoading } =
     trpc.banking.balances.useQuery();
 
-  const { data: invoices, isLoading: invoicesLoading } =
-    trpc.invoices.list.useQuery();
+  // Invoice and PO figures are summed on the server for the viewer's current calendar
+  // month; this page used to download every invoice and purchase order.
+  const monthWindow = useMemo(() => {
+    const now = new Date();
+    return {
+      monthStartMs: new Date(now.getFullYear(), now.getMonth(), 1).getTime(),
+      monthEndMs: new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime(),
+    };
+  }, []);
+  const { data: invoiceSummary, isLoading: invoicesLoading } =
+    trpc.invoices.homeSummary.useQuery(monthWindow);
 
-  const { data: purchaseOrders, isLoading: posLoading } =
-    trpc.purchaseOrders.list.useQuery();
+  const { data: poSummary, isLoading: posLoading } =
+    trpc.purchaseOrders.homeSummary.useQuery(monthWindow);
 
   const { data: inventory, isLoading: invLoading } =
     trpc.inventory.list.useQuery();
@@ -206,39 +214,19 @@ export default function Home() {
       0,
     ) ?? 0;
 
-  const revenueThisMonth =
-    invoices
-      ?.filter(
-        (i: any) =>
-          i.status === "paid" && i.paidDate && isThisMonth(new Date(i.paidDate)),
-      )
-      ?.reduce((sum: number, i: any) => sum + parseFloat(i.totalAmount || "0"), 0) ?? 0;
+  // Customer payments received and completed this month.
+  const revenueThisMonth = invoiceSummary?.revenueThisMonth ?? 0;
 
-  // Burn rate: sum of POs marked as received/paid this month as a rough proxy
-  const recentExpenses =
-    purchaseOrders
-      ?.filter(
-        (po: any) =>
-          ["received", "completed", "paid"].includes(po.status) &&
-          po.updatedAt &&
-          isThisMonth(new Date(po.updatedAt)),
-      )
-      ?.reduce((sum: number, po: any) => sum + parseFloat(po.totalAmount || "0"), 0) ?? 0;
+  // Burn rate: POs received this month as a rough proxy
+  const recentExpenses = poSummary?.receivedThisMonth ?? 0;
 
   const monthlyBurn = recentExpenses || 0;
   const runwayMonths =
     monthlyBurn > 0 ? Math.round((cashOnHand / monthlyBurn) * 10) / 10 : null;
 
   // Operations
-  const outstandingAR =
-    invoices
-      ?.filter((i: any) => ["sent", "overdue"].includes(i.status))
-      ?.reduce((sum: number, i: any) => sum + parseFloat(i.totalAmount || "0"), 0) ?? 0;
-
-  const outstandingAP =
-    purchaseOrders
-      ?.filter((po: any) => ["sent", "confirmed", "received"].includes(po.status))
-      ?.reduce((sum: number, po: any) => sum + parseFloat(po.totalAmount || "0"), 0) ?? 0;
+  const outstandingAR = invoiceSummary?.outstandingAR ?? 0;
+  const outstandingAP = poSummary?.outstandingAP ?? 0;
 
   const inventoryValue =
     inventory?.reduce(
@@ -247,15 +235,8 @@ export default function Home() {
       0,
     ) ?? 0;
 
-  const openPOs = purchaseOrders?.filter((po: any) =>
-    ["draft", "sent", "confirmed"].includes(po.status),
-  );
-  const openPOCount = openPOs?.length ?? 0;
-  const openPOValue =
-    openPOs?.reduce(
-      (sum: number, po: any) => sum + parseFloat(po.totalAmount || "0"),
-      0,
-    ) ?? 0;
+  const openPOCount = poSummary?.openPOCount ?? 0;
+  const openPOValue = poSummary?.openPOValue ?? 0;
 
   // Activity
   const activeWorkOrders =
@@ -334,7 +315,7 @@ export default function Home() {
             label="Revenue This Month"
             value={formatCurrency(revenueThisMonth, { whole: true })}
             icon={DollarSign}
-            subtitle="From paid invoices"
+            subtitle="Customer payments received"
             onClick={() => setLocation("/finance/invoices")}
             loading={invoicesLoading}
             variant="green"
@@ -353,7 +334,7 @@ export default function Home() {
             label="Outstanding AR"
             value={formatCurrency(outstandingAR, { whole: true })}
             icon={FileText}
-            subtitle={`${invoices?.filter((i: any) => ["sent", "overdue"].includes(i.status))?.length ?? 0} unpaid invoices`}
+            subtitle={`${invoiceSummary?.unpaidInvoices ?? 0} unpaid invoices`}
             onClick={() => setLocation("/finance/invoices")}
             loading={invoicesLoading}
             variant="amber"

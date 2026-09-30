@@ -9,6 +9,10 @@ import { opsProcedure, createAuditLog, generateNumber } from "./_shared";
 // OPERATIONS - SHIPMENTS
 // ============================================
 export const shipmentsRouter = router({
+    // Sales hub: the newest shipment of each order on the visible page.
+    latestForOrders: opsProcedure
+      .input(z.object({ orderIds: z.array(z.number().int()).max(500) }))
+      .query(({ input }) => db.getLatestShipmentsForOrders(input.orderIds)),
     list: opsProcedure
       .input(z.object({
         companyId: z.number().optional(),

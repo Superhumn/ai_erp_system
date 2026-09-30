@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { CustomerPicker } from "@/components/CustomerPicker";
 import { ListPager } from "@/components/ListPager";
 import { usePagedList } from "@/hooks/usePagedList";
 import { Button } from "@/components/ui/button";
@@ -108,7 +109,6 @@ export default function Invoices() {
     status: statusFilter === "all" ? undefined : statusFilter,
   });
   useEffect(() => paging.clampTo(invoicesPage?.total), [invoicesPage?.total]);
-  const { data: customers } = trpc.customers.list.useQuery();
   const { data: products } = trpc.products.list.useQuery();
 
   const createInvoice = trpc.invoices.create.useMutation({
@@ -480,21 +480,11 @@ export default function Invoices() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="customer">Customer</Label>
-                    <Select
-                      value={formData.customerId.toString()}
-                      onValueChange={(value) => setFormData({ ...formData, customerId: parseInt(value) })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select customer" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {customers?.map((customer) => (
-                          <SelectItem key={customer.id} value={customer.id.toString()}>
-                            {customer.name} {customer.email ? `(${customer.email})` : ""}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <CustomerPicker
+                      value={formData.customerId}
+                      onChange={(id) => setFormData({ ...formData, customerId: id })}
+                      showEmail
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="dueDate">Due Date</Label>
@@ -780,19 +770,10 @@ export default function Invoices() {
                 </div>
                 <div className="space-y-2">
                   <Label>Customer *</Label>
-                  <Select 
-                    value={recurringData.customerId?.toString() || ""} 
-                    onValueChange={(v) => setRecurringData({ ...recurringData, customerId: parseInt(v) })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select customer" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {customers?.map((c) => (
-                        <SelectItem key={c.id} value={c.id.toString()}>{c.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <CustomerPicker
+                    value={recurringData.customerId}
+                    onChange={(id) => setRecurringData({ ...recurringData, customerId: id })}
+                  />
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-4">
