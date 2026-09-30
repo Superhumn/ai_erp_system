@@ -54,6 +54,7 @@ const billFieldsSchema = z.object({
   currency: z.string().length(3).optional(),
   status: z.enum(BILL_STATUSES).optional(),
   paymentTerms: z.string().max(64).nullable().optional(),
+  autopay: z.boolean().optional(),
   notes: z.string().nullable().optional(),
   attachmentUrl: z.string().max(512).nullable().optional(),
   lineItems: z.array(lineItemSchema).nullable().optional(),

@@ -21,6 +21,8 @@ export const CASH_CATEGORIES = [
   "purchase_orders",
   "payroll",
   "recurring_expenses",
+  "project_events",
+  "pipeline_weighted",
   "adjustment_in",
   "adjustment_out",
 ] as const;
@@ -33,6 +35,8 @@ export const CATEGORY_LABELS: Record<CashCategory, string> = {
   purchase_orders: "Open purchase orders",
   payroll: "Payroll",
   recurring_expenses: "Recurring expenses",
+  project_events: "Project cash events",
+  pipeline_weighted: "Weighted pipeline (not committed)",
   adjustment_in: "Manual inflows",
   adjustment_out: "Manual outflows",
 };
@@ -47,6 +51,7 @@ export interface CashEvent {
   label: string;
   ref?: string;
   currency?: string;
+  companyId?: number | null;
 }
 
 export interface ForecastEventRow {
@@ -243,6 +248,7 @@ const OPEN_PO_STATUSES = new Set<string>(OPEN_PO_STATUS_LIST);
 
 export interface InvoiceLike {
   id: number;
+  companyId?: number | null;
   invoiceNumber?: string | null;
   type?: string | null;
   status: string;
@@ -272,6 +278,7 @@ export function receivablesToEvents(rows: InvoiceLike[]): CashEvent[] {
       label: `${r.customer?.name ?? "Customer"} · ${r.invoiceNumber ?? `INV ${r.id}`}`,
       ref: `invoice:${r.id}`,
       currency: r.currency ?? "USD",
+      companyId: r.companyId ?? null,
     });
   }
   return out;
@@ -279,6 +286,10 @@ export function receivablesToEvents(rows: InvoiceLike[]): CashEvent[] {
 
 export interface BillLike {
   id: number;
+  companyId?: number | null;
+  vendorId?: number | null;
+  autopay?: boolean | null;
+  vendorAutopay?: boolean | null;
   billNumber?: string | null;
   status: string;
   billDate: Date | string | null;
@@ -307,6 +318,7 @@ export function billsToEvents(rows: BillLike[]): CashEvent[] {
       label: `${r.vendorName ?? "Vendor"} · ${r.billNumber ?? `Bill ${r.id}`}`,
       ref: `bill:${r.id}`,
       currency: r.currency ?? "USD",
+      companyId: r.companyId ?? null,
     });
   }
   return out;
@@ -314,6 +326,7 @@ export function billsToEvents(rows: BillLike[]): CashEvent[] {
 
 export interface PurchaseOrderLike {
   id: number;
+  companyId?: number | null;
   poNumber?: string | null;
   status: string;
   orderDate: Date | string | null;
@@ -345,6 +358,7 @@ export function purchaseOrdersToEvents(rows: PurchaseOrderLike[], billedPoIds: S
       label: `${r.vendor?.name ?? "Vendor"} · ${r.poNumber ?? `PO ${r.id}`}`,
       ref: `po:${r.id}`,
       currency: r.currency ?? "USD",
+      companyId: r.companyId ?? null,
     });
   }
   return out;
@@ -352,6 +366,7 @@ export function purchaseOrdersToEvents(rows: PurchaseOrderLike[], billedPoIds: S
 
 export interface RecurringInvoiceLike {
   id: number;
+  companyId?: number | null;
   templateName?: string | null;
   frequency: string;
   dayOfMonth?: number | null;
@@ -426,6 +441,7 @@ export function recurringToEvents(rows: RecurringInvoiceLike[], horizonEnd: Date
         label: `${r.customer?.name ?? "Customer"} · ${r.templateName ?? `Recurring ${r.id}`}`,
         ref: `recurring:${r.id}:${isoDate(gen)}`,
         currency: r.currency ?? "USD",
+        companyId: r.companyId ?? null,
       });
       gen = nextOccurrence(gen, r.frequency, r.dayOfMonth);
     }
@@ -435,6 +451,7 @@ export function recurringToEvents(rows: RecurringInvoiceLike[], horizonEnd: Date
 
 export interface EmployeePaymentLike {
   id: number;
+  companyId?: number | null;
   paymentNumber?: string | null;
   status: string;
   type?: string | null;
@@ -459,6 +476,7 @@ export function payrollToEvents(rows: EmployeePaymentLike[]): CashEvent[] {
       label: `Payroll · ${r.paymentNumber ?? `Payment ${r.id}`}`,
       ref: `payroll:${r.id}`,
       currency: r.currency ?? "USD",
+      companyId: r.companyId ?? null,
     });
   }
   return out;
@@ -498,6 +516,7 @@ export function nonUsdCount(events: CashEvent[]): number {
 
 export interface RecurringExpenseLike {
   id: number;
+  companyId?: number | null;
   name: string;
   category?: string | null;
   frequency: string;
@@ -530,6 +549,7 @@ export function recurringExpensesToEvents(rows: RecurringExpenseLike[], horizonE
         label: `${r.name}${r.category && r.category !== "other" ? ` · ${r.category}` : ""}`,
         ref: `recurring_expense:${r.id}:${isoDate(next)}`,
         currency: r.currency ?? "USD",
+        companyId: r.companyId ?? null,
       });
       next = nextOccurrence(next, r.frequency, r.dayOfMonth);
     }
@@ -743,4 +763,276 @@ export function summarizeAccuracy(rows: WeekAccuracy[]): { weeks: number; inMape
     inMape: mape(rows.map((r) => [r.forecastIn, r.actualIn])),
     outMape: mape(rows.map((r) => [r.forecastOut, r.actualOut])),
   };
+}
+
+
+// ── v3: vendor payment behaviour + autopay ─────────────────────
+
+export interface BillHistoryRow {
+  vendorId: number | null;
+  dueDate: Date | string | null;
+  paidAt: Date | string | null;
+}
+
+export interface VendorPayBehaviour {
+  samples: number;
+  /** Median days paid after (positive) or before (negative) the due date. */
+  medianDaysLate: number;
+}
+
+/** How late each vendor really gets paid, from bills we have settled. */
+export function computeVendorBehaviour(rows: BillHistoryRow[], minSamples = MIN_PAY_SAMPLES): Map<number, VendorPayBehaviour> {
+  const byVendor = new Map<number, number[]>();
+  for (const r of rows) {
+    if (r.vendorId == null) continue;
+    const due = toDate(r.dueDate);
+    const paid = toDate(r.paidAt);
+    if (!due || !paid) continue;
+    const days = Math.round((paid.getTime() - due.getTime()) / DAY_MS);
+    if (days < -60 || days > 180) continue;
+    const list = byVendor.get(r.vendorId) ?? [];
+    list.push(days);
+    byVendor.set(r.vendorId, list);
+  }
+  const out = new Map<number, VendorPayBehaviour>();
+  for (const [vendorId, days] of byVendor) {
+    if (days.length < minSamples) continue;
+    const sorted = [...days].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const median = sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+    out.set(vendorId, { samples: days.length, medianDaysLate: median });
+  }
+  return out;
+}
+
+/**
+ * Like billsToEvents, but: an autopay bill (bill or vendor flag) lands on its
+ * due date exactly; any other bill from a vendor with history moves by that
+ * vendor's median days late. Bills already past due keep their date.
+ */
+export function billsToEventsWithBehaviour(rows: BillLike[], behaviour: Map<number, VendorPayBehaviour>, today: Date): CashEvent[] {
+  const base = billsToEvents(rows);
+  const byRef = new Map<string, BillLike>(rows.map((r) => [`bill:${r.id}`, r]));
+  return base.map((e) => {
+    const bill = e.ref ? byRef.get(e.ref) : undefined;
+    if (!bill) return e;
+    if (bill.autopay || bill.vendorAutopay) return { ...e, label: `${e.label} · autopay` };
+    const b = bill.vendorId != null ? behaviour.get(bill.vendorId) : undefined;
+    if (!b || b.medianDaysLate === 0) return e;
+    if (e.date.getTime() < startOfDay(today).getTime()) return e;
+    return { ...e, date: addDays(e.date, b.medianDaysLate), label: `${e.label} · paid ~${b.medianDaysLate > 0 ? "+" : ""}${b.medianDaysLate}d` };
+  });
+}
+
+// ── v3: weighted pipeline ──────────────────────────────────────
+
+export interface DealLike {
+  id: number;
+  companyId?: number | null;
+  name: string;
+  amount: string | number | null;
+  currency?: string | null;
+  probability: number | null;
+  expectedCloseDate: Date | string | null;
+  stage?: string | null;
+  organization?: string | null;
+}
+
+/**
+ * Open deals × probability, expected at close date + payment terms. Shown as
+ * its own category so nobody mistakes hope for a receivable.
+ */
+export function pipelineToEvents(rows: DealLike[], termsDays = DEFAULT_TERMS_DAYS, minProbability = 10): CashEvent[] {
+  const out: CashEvent[] = [];
+  for (const d of rows) {
+    const amount = toAmount(d.amount);
+    const p = Math.min(100, Math.max(0, d.probability ?? 0));
+    if (amount <= 0 || p < minProbability) continue;
+    const close = toDate(d.expectedCloseDate);
+    if (!close) continue;
+    out.push({
+      date: addDays(close, termsDays),
+      amount: round2((amount * p) / 100),
+      direction: "in",
+      category: "pipeline_weighted",
+      label: `${d.organization ?? "Prospect"} · ${d.name} (${p}%)`,
+      ref: `deal:${d.id}`,
+      currency: d.currency ?? "USD",
+      companyId: d.companyId ?? null,
+    });
+  }
+  return out;
+}
+
+// ── v3: project cash events ────────────────────────────────────
+
+export interface ProjectCashEventLike {
+  id: number;
+  companyId?: number | null;
+  name: string;
+  status: string;
+  cashEventAmount: string | number | null;
+  cashEventType: string | null;
+  cashEventDate: Date | string | null;
+}
+
+/** Planned project money: revenue/funding in, capex/opex out, only for projects still ahead of us. */
+export function projectEventsToEvents(rows: ProjectCashEventLike[]): CashEvent[] {
+  const out: CashEvent[] = [];
+  for (const p of rows) {
+    if (p.status === "complete" || p.status === "cancelled") continue;
+    const amount = Math.abs(toAmount(p.cashEventAmount));
+    const date = toDate(p.cashEventDate);
+    if (amount <= 0 || !date) continue;
+    const direction: CashDirection = p.cashEventType === "capex" || p.cashEventType === "opex" ? "out" : "in";
+    out.push({
+      date,
+      amount,
+      direction,
+      category: "project_events",
+      label: `${p.name} · ${p.cashEventType ?? "event"}`,
+      ref: `project:${p.id}`,
+      companyId: p.companyId ?? null,
+    });
+  }
+  return out;
+}
+
+// ── v3: monthly roll-up ────────────────────────────────────────
+
+export interface ForecastMonth {
+  key: string; // yyyy-mm
+  label: string; // "Oct 2026"
+  openingCash: number;
+  totalIn: number;
+  totalOut: number;
+  net: number;
+  closingCash: number;
+  inflows: Partial<Record<CashCategory, number>>;
+  outflows: Partial<Record<CashCategory, number>>;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** Roll a (long) weekly forecast into calendar months. A week straddling a month boundary goes by its Monday. */
+export function rollupMonths(forecast: CashForecast): ForecastMonth[] {
+  const months: ForecastMonth[] = [];
+  let cur: ForecastMonth | null = null;
+  for (const w of forecast.weeks) {
+    const key = w.start.slice(0, 7);
+    if (!cur || cur.key !== key) {
+      const y: number = Number(key.slice(0, 4));
+      const m: number = Number(key.slice(5, 7));
+      cur = { key, label: `${MONTHS[m - 1]} ${y}`, openingCash: w.openingCash, totalIn: 0, totalOut: 0, net: 0, closingCash: w.closingCash, inflows: {}, outflows: {} };
+      months.push(cur);
+    }
+    cur.totalIn = round2(cur.totalIn + w.totalIn);
+    cur.totalOut = round2(cur.totalOut + w.totalOut);
+    cur.net = round2(cur.totalIn - cur.totalOut);
+    cur.closingCash = w.closingCash;
+    for (const k of Object.keys(w.inflows) as CashCategory[]) cur.inflows[k] = round2((cur.inflows[k] ?? 0) + (w.inflows[k] ?? 0));
+    for (const k of Object.keys(w.outflows) as CashCategory[]) cur.outflows[k] = round2((cur.outflows[k] ?? 0) + (w.outflows[k] ?? 0));
+  }
+  return months;
+}
+
+// ── v3: per-entity split ───────────────────────────────────────
+
+export interface EntityForecast {
+  companyId: number | null;
+  name: string;
+  startingCash: number;
+  totalIn: number;
+  totalOut: number;
+  endingCash: number;
+  lowestCash: number;
+  lowestWeek: number;
+  firstNegativeWeek: number | null;
+}
+
+/** Run the same weekly engine once per entity so a consolidated view can still show who is short. */
+export function splitByEntity(
+  params: { asOf: Date; events: CashEvent[]; weeks?: number; startingCashByCompany: Map<number | null, number>; names: Map<number | null, string> },
+): EntityForecast[] {
+  const groups = new Map<number | null, CashEvent[]>();
+  for (const e of params.events) {
+    const k = e.companyId ?? null;
+    groups.set(k, [...(groups.get(k) ?? []), e]);
+  }
+  for (const k of params.startingCashByCompany.keys()) if (!groups.has(k)) groups.set(k, []);
+  const out: EntityForecast[] = [];
+  for (const [companyId, events] of groups) {
+    const f = buildCashForecast({ asOf: params.asOf, startingCash: params.startingCashByCompany.get(companyId) ?? 0, events, weeks: params.weeks });
+    out.push({
+      companyId,
+      name: params.names.get(companyId) ?? (companyId == null ? "Unassigned" : `Entity ${companyId}`),
+      startingCash: f.startingCash,
+      totalIn: f.totalIn,
+      totalOut: f.totalOut,
+      endingCash: f.endingCash,
+      lowestCash: f.lowestCash,
+      lowestWeek: f.lowestWeek,
+      firstNegativeWeek: f.firstNegativeWeek,
+    });
+  }
+  return out.sort((a, b) => (a.companyId ?? 1e9) - (b.companyId ?? 1e9));
+}
+
+// ── v3: ledger grading ─────────────────────────────────────────
+
+export interface LedgerPayment {
+  type: "received" | "made" | string;
+  amount: string | number;
+  paymentDate: Date | string;
+}
+
+/** Same as bank grading, but from the ERP's own payments table (what we recorded, not what the bank saw). */
+export function ledgerToMovements(rows: LedgerPayment[]): BankMovement[] {
+  return rows.map((r) => ({ date: r.paymentDate, amount: r.amount, type: r.type === "received" ? "credit" : "debit" }));
+}
+
+// ── v3: deterministic alerts (replaces the LLM guess in financeAiService) ──
+
+export interface ForecastAlert {
+  type: "shortfall" | "surplus" | "timing";
+  description: string;
+  severity: "low" | "medium" | "high";
+  suggestedAction: string;
+}
+
+export function deriveAlerts(f: CashForecast, threshold = 0): ForecastAlert[] {
+  const alerts: ForecastAlert[] = [];
+  if (f.firstNegativeWeek) {
+    const w = f.weeks[f.firstNegativeWeek - 1];
+    alerts.push({
+      type: "shortfall",
+      description: `Cash goes below zero in week ${f.firstNegativeWeek} (${w.start}), reaching ${f.lowestCash.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })} in week ${f.lowestWeek}.`,
+      severity: "high",
+      suggestedAction: "Pull forward collections on the largest overdue invoices, delay non-autopay vendor payments, or line up a bridge.",
+    });
+  } else if (f.lowestCash < threshold) {
+    alerts.push({
+      type: "shortfall",
+      description: `Lowest projected cash is ${f.lowestCash.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })} in week ${f.lowestWeek}, under the ${threshold.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })} floor.`,
+      severity: "medium",
+      suggestedAction: "Review the low week's outflows and move what can move.",
+    });
+  }
+  if (f.overdueIn > 0) {
+    alerts.push({
+      type: "timing",
+      description: `${f.overdueIn.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })} of customer money is already past due and assumed to land in week 1.`,
+      severity: f.overdueIn > f.totalIn * 0.25 ? "high" : "medium",
+      suggestedAction: "Work the collections queue; every week of slip moves the low point.",
+    });
+  }
+  if (f.endingCash > f.startingCash * 1.5 && f.endingCash > 0) {
+    alerts.push({
+      type: "surplus",
+      description: `Cash grows from ${f.startingCash.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })} to ${f.endingCash.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })} over the horizon.`,
+      severity: "low",
+      suggestedAction: "Consider paying early for discounts or moving excess to a yield account.",
+    });
+  }
+  return alerts;
 }

@@ -175,6 +175,7 @@ describe("computeLiveFinancials", () => {
       "avgMonthlyBurn",
       "cash",
       "currency",
+      "forecast13w",
       "last3MoBurn",
       "last3MoRevenue",
       "runwayMonths",

@@ -6,9 +6,13 @@ import * as db from "../db";
 import { adminProcedure, financeProcedure } from "./middleware";
 import { resolveRequestScope, assertNonEmptyScope } from "./_shared";
 import { scopeAllows } from "../_core/scope";
+import { validateChannelTarget } from "../cashNotifyService";
 import {
+  forecastToPdf,
   forecastToXlsx,
   getCashForecast,
+  runCashDigest,
+  sendTestToChannel,
   getCollectionsQueue,
   getForecastAccuracy,
   loadBankCashForScope,
@@ -39,6 +43,8 @@ const forecastInput = z
     adjustments: z.array(adjustmentSchema).max(100).optional(),
     knobs: knobsSchema.optional(),
     scenarioId: z.number().int().optional(),
+    includePipeline: z.boolean().optional(),
+    includeProjects: z.boolean().optional(),
   })
   .optional();
 
@@ -88,8 +94,10 @@ async function resolveForecastParams(scope: Awaited<ReturnType<typeof scopeFor>>
     adjustments = [...(p.adjustments ?? []), ...adjustments];
     knobs = { arSlipDays: p.arSlipDays, arHaircutPct: p.arHaircutPct, apSlipDays: p.apSlipDays, excludeCustomerIds: p.excludeCustomerIds, ...(knobs ?? {}) };
   }
-  return { scope, weeks: input?.weeks, startingCashOverride, adjustments, knobs };
+  return { scope, weeks: input?.weeks, startingCashOverride, adjustments, knobs, includePipeline: input?.includePipeline, includeProjects: input?.includeProjects };
 }
+
+const channelType = z.enum(["slack", "google_chat", "whatsapp", "email", "webhook"]);
 
 export const cashForecastRouter = router({
   get: financeProcedure.input(forecastInput).query(async ({ ctx, input }) => {
@@ -100,6 +108,57 @@ export const cashForecastRouter = router({
   export: financeProcedure.input(forecastInput).mutation(async ({ ctx, input }) => {
     const scope = await scopeFor(ctx.user);
     return forecastToXlsx(await getCashForecast(await resolveForecastParams(scope, input)));
+  }),
+
+  exportPdf: financeProcedure.input(forecastInput).mutation(async ({ ctx, input }) => {
+    const scope = await scopeFor(ctx.user);
+    const forecast = await getCashForecast(await resolveForecastParams(scope, input));
+    const companies = await db.getCompanies();
+    const home = ctx.user.companyId ? companies.find((c) => c.id === ctx.user.companyId) : undefined;
+    return forecastToPdf(forecast, { companyName: home?.name ?? "Superhumn", preparedBy: ctx.user.name ?? ctx.user.email ?? undefined });
+  }),
+
+  // ── Notification channels (digest + alerts) ──
+  channels: router({
+    list: financeProcedure.query(async ({ ctx }) => {
+      const scope = await scopeFor(ctx.user);
+      return db.getCashNotificationChannels(scopeKeyFor(scope));
+    }),
+    create: financeProcedure
+      .input(z.object({ type: channelType, target: z.string().min(1).max(1024), label: z.string().max(120).nullable().optional(), sendDigest: z.boolean().default(true), sendAlerts: z.boolean().default(true) }))
+      .mutation(async ({ ctx, input }) => {
+        const err = validateChannelTarget(input.type, input.target);
+        if (err) throw new TRPCError({ code: "BAD_REQUEST", message: err });
+        const scope = await scopeFor(ctx.user);
+        return db.createCashNotificationChannel({ ...input, target: input.target.trim(), scopeKey: scopeKeyFor(scope), companyId: homeCompany(ctx.user, scope), createdBy: ctx.user.id });
+      }),
+    update: financeProcedure
+      .input(z.object({ id: z.number().int(), label: z.string().max(120).nullable().optional(), sendDigest: z.boolean().optional(), sendAlerts: z.boolean().optional(), isActive: z.boolean().optional() }))
+      .mutation(async ({ ctx, input }) => {
+        const scope = await scopeFor(ctx.user);
+        const row = await db.getCashNotificationChannelById(input.id);
+        if (!row || row.scopeKey !== scopeKeyFor(scope)) throw new TRPCError({ code: "NOT_FOUND", message: "Channel not found" });
+        const { id, ...data } = input;
+        await db.updateCashNotificationChannel(id, data);
+        return { ok: true };
+      }),
+    delete: financeProcedure.input(z.object({ id: z.number().int() })).mutation(async ({ ctx, input }) => {
+      const scope = await scopeFor(ctx.user);
+      const row = await db.getCashNotificationChannelById(input.id);
+      if (!row || row.scopeKey !== scopeKeyFor(scope)) throw new TRPCError({ code: "NOT_FOUND", message: "Channel not found" });
+      await db.deleteCashNotificationChannel(input.id);
+      return { ok: true };
+    }),
+    test: financeProcedure.input(z.object({ id: z.number().int() })).mutation(async ({ ctx, input }) => {
+      const scope = await scopeFor(ctx.user);
+      const row = await db.getCashNotificationChannelById(input.id);
+      if (!row || row.scopeKey !== scopeKeyFor(scope)) throw new TRPCError({ code: "NOT_FOUND", message: "Channel not found" });
+      const r = await sendTestToChannel({ type: row.type, target: row.target }, scope);
+      await db.markCashNotificationChannelResult(row.id, r.ok, r.error);
+      if (!r.ok) throw new TRPCError({ code: "BAD_REQUEST", message: r.error ?? "Send failed" });
+      return { ok: true };
+    }),
+    runDigestNow: adminProcedure.mutation(async () => runCashDigest()),
   }),
 
   // ── Recurring expenses ──

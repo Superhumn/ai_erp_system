@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Camera, Download, Plus, Trash2, RefreshCw } from "lucide-react";
+import { AlertTriangle, Camera, Download, FileText, Plus, Trash2, RefreshCw } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { downloadExport } from "@/lib/downloadExport";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -43,6 +44,8 @@ interface Adjustment {
 const IN_ROWS = [
   ["customer_receipts", "Customer invoices"],
   ["recurring_billing", "Recurring billing"],
+  ["project_events", "Project events (in)"],
+  ["pipeline_weighted", "Weighted pipeline (upside)"],
   ["adjustment_in", "Manual inflows"],
 ] as const;
 const OUT_ROWS = [
@@ -50,6 +53,7 @@ const OUT_ROWS = [
   ["purchase_orders", "Open purchase orders"],
   ["payroll", "Payroll"],
   ["recurring_expenses", "Recurring expenses"],
+  ["project_events", "Project events (out)"],
   ["adjustment_out", "Manual outflows"],
 ] as const;
 
@@ -144,6 +148,8 @@ function CashForecastPanel({ storageKey, scenarioId, knobs, scenarioDraft }: { s
   const [adjustments, setAdjustments] = useState<Adjustment[]>(saved.adjustments);
   const [draft, setDraft] = useState<Adjustment>({ label: "", amount: 0, direction: "out", date: todayIso() });
   const [selectedWeek, setSelectedWeek] = useState<number | null>(null);
+  const [view, setView] = useState<"weeks" | "months">("weeks");
+  const [includePipeline, setIncludePipeline] = useState(false);
 
   useEffect(() => {
     try {
@@ -175,11 +181,16 @@ function CashForecastPanel({ storageKey, scenarioId, knobs, scenarioDraft }: { s
     startingCashOverride: override,
     adjustments: [...scenarioDraft.adjustments, ...adjustments],
     scenarioId: scenarioId ?? undefined,
+    includePipeline,
     knobs: scenarioId != null || hasKnobs ? { arSlipDays: knobs.arSlipDays ?? 0, arHaircutPct: knobs.arHaircutPct ?? 0, apSlipDays: knobs.apSlipDays ?? 0, excludeCustomerIds: knobs.excludeCustomerIds ?? [] } : undefined,
   };
   const { data, isLoading, error, refetch, isFetching } = trpc.cashForecast.get.useQuery(input);
   const utils = trpc.useUtils();
   const exportMut = trpc.cashForecast.export.useMutation({
+    onSuccess: (res) => downloadExport(res),
+    onError: (e) => toast.error(e.message),
+  });
+  const pdfMut = trpc.cashForecast.exportPdf.useMutation({
     onSuccess: (res) => downloadExport(res),
     onError: (e) => toast.error(e.message),
   });
@@ -300,6 +311,18 @@ function CashForecastPanel({ storageKey, scenarioId, knobs, scenarioDraft }: { s
           <Download className="h-3.5 w-3.5 mr-1.5" />
           Excel
         </Button>
+        <Button variant="outline" size="sm" onClick={() => pdfMut.mutate(input)} disabled={pdfMut.isPending || !data} title="One-page board pack: tiles, chart, risks, 12 months, entities, inventory">
+          <FileText className="h-3.5 w-3.5 mr-1.5" />
+          {pdfMut.isPending ? "Building PDF…" : "Board pack PDF"}
+        </Button>
+        <div className="flex rounded-md border overflow-hidden">
+          <button className={`px-2.5 h-8 text-xs ${view === "weeks" ? "bg-primary text-primary-foreground" : "bg-background"}`} onClick={() => setView("weeks")}>13 weeks</button>
+          <button className={`px-2.5 h-8 text-xs border-l ${view === "months" ? "bg-primary text-primary-foreground" : "bg-background"}`} onClick={() => setView("months")}>12 months</button>
+        </div>
+        <label className="flex items-center gap-1.5 text-xs">
+          <Switch checked={includePipeline} onCheckedChange={setIncludePipeline} />
+          Include weighted pipeline
+        </label>
         <Button variant="outline" size="sm" onClick={() => snapshotMut.mutate()} disabled={snapshotMut.isPending} title="Freeze this week's base forecast so it can be graded against the bank later">
           <Camera className="h-3.5 w-3.5 mr-1.5" />
           Snapshot
@@ -346,6 +369,40 @@ function CashForecastPanel({ storageKey, scenarioId, knobs, scenarioDraft }: { s
             </div>
           )}
 
+          {includePipeline && data.pipelineWeightedTotal > 0 && (
+            <p className="text-xs text-muted-foreground">Weighted pipeline adds {money(data.pipelineWeightedTotal)} of upside. It is a probability, not a receivable.</p>
+          )}
+
+          {view === "months" && (
+            <div className="overflow-x-auto rounded-md border">
+              <table className="w-full text-xs tabular-nums">
+                <thead className="bg-muted/50">
+                  <tr>
+                    <th className="px-2 py-2 text-left font-medium">Month</th>
+                    <th className="px-2 py-2 text-right font-medium">Opening</th>
+                    <th className="px-2 py-2 text-right font-medium">Money in</th>
+                    <th className="px-2 py-2 text-right font-medium">Money out</th>
+                    <th className="px-2 py-2 text-right font-medium">Net</th>
+                    <th className="px-2 py-2 text-right font-medium">Closing</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.months.map((m) => (
+                    <tr key={m.key} className="border-t border-border/40">
+                      <td className="px-2 py-1.5">{m.label}</td>
+                      <td className="px-2 py-1.5 text-right">{money(m.openingCash)}</td>
+                      <td className="px-2 py-1.5 text-right text-emerald-600">{money(m.totalIn)}</td>
+                      <td className="px-2 py-1.5 text-right text-destructive">{money(m.totalOut)}</td>
+                      <td className={`px-2 py-1.5 text-right ${m.net < 0 ? "text-destructive" : ""}`}>{money(m.net)}</td>
+                      <td className={`px-2 py-1.5 text-right font-semibold ${m.closingCash < 0 ? "text-destructive" : ""}`}>{money(m.closingCash)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="px-2 py-1.5 text-[11px] text-muted-foreground">Months 4–12 lean on schedules and payment behaviour; treat them as direction, not commitment.</p>
+            </div>
+          )}
+
           {/* Chart */}
           <Card>
             <CardContent className="pt-4 h-56">
@@ -363,6 +420,7 @@ function CashForecastPanel({ storageKey, scenarioId, knobs, scenarioDraft }: { s
           </Card>
 
           {/* Weekly table */}
+          {view === "weeks" && (
           <div className="overflow-x-auto rounded-md border">
             <table className="w-full text-xs tabular-nums">
               <thead className="bg-muted/50">
@@ -396,6 +454,72 @@ function CashForecastPanel({ storageKey, scenarioId, knobs, scenarioDraft }: { s
                 <Row label="Closing cash" values={data.weeks.map((w) => w.closingCash)} bold signed highlight />
               </tbody>
             </table>
+          </div>
+          )}
+
+          {/* Entities + inventory */}
+          <div className="grid md:grid-cols-2 gap-4">
+            {data.byEntity.length > 1 && (
+              <Card>
+                <CardContent className="pt-4 space-y-2">
+                  <div className="text-sm font-semibold">By entity</div>
+                  <table className="w-full text-xs tabular-nums">
+                    <thead className="text-muted-foreground">
+                      <tr className="border-b border-border/40">
+                        <th className="py-1 text-left font-medium">Entity</th>
+                        <th className="py-1 text-right font-medium">Now</th>
+                        <th className="py-1 text-right font-medium">Low</th>
+                        <th className="py-1 text-right font-medium">Wk 13</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.byEntity.map((e) => (
+                        <tr key={String(e.companyId)} className="border-b border-border/40 last:border-0">
+                          <td className="py-1.5">{e.name}</td>
+                          <td className="py-1.5 text-right">{money(e.startingCash)}</td>
+                          <td className={`py-1.5 text-right ${e.lowestCash < 0 ? "text-destructive font-medium" : ""}`}>{money(e.lowestCash)}<span className="text-muted-foreground"> W{e.lowestWeek}</span></td>
+                          <td className={`py-1.5 text-right ${e.endingCash < 0 ? "text-destructive font-medium" : ""}`}>{money(e.endingCash)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <p className="text-[11px] text-muted-foreground">Starting cash per entity comes from the bank-account mapping in Alerts &amp; banks.</p>
+                </CardContent>
+              </Card>
+            )}
+            <Card>
+              <CardContent className="pt-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-semibold">Cash tied up in inventory</div>
+                  <Badge variant="secondary" className="text-xs">{money(data.inventory.totalValue)} at cost</Badge>
+                </div>
+                {data.inventory.items.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No active cost layers. Receive stock through Operations and it shows here.</p>
+                ) : (
+                  <table className="w-full text-xs tabular-nums">
+                    <thead className="text-muted-foreground">
+                      <tr className="border-b border-border/40">
+                        <th className="py-1 text-left font-medium">Product</th>
+                        <th className="py-1 text-right font-medium">Qty</th>
+                        <th className="py-1 text-right font-medium">Value</th>
+                        <th className="py-1 text-right font-medium">Share</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.inventory.items.slice(0, 12).map((i) => (
+                        <tr key={i.productId} className="border-b border-border/40 last:border-0">
+                          <td className="py-1.5">{i.productName}{i.sku && <span className="ml-1 text-muted-foreground">{i.sku}</span>}</td>
+                          <td className="py-1.5 text-right">{i.quantity.toLocaleString("en-US")}</td>
+                          <td className="py-1.5 text-right">{money(i.totalValue)}</td>
+                          <td className="py-1.5 text-right text-muted-foreground">{data.inventory.totalValue > 0 ? `${Math.round((i.totalValue / data.inventory.totalValue) * 100)}%` : "–"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+                <p className="text-[11px] text-muted-foreground">Two-year shelf life invites overbuilding. This is money already spent that only comes back when product ships.</p>
+              </CardContent>
+            </Card>
           </div>
 
           {/* Week detail */}

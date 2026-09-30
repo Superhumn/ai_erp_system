@@ -17,7 +17,19 @@ vi.mock("./db", () => ({
   releaseCashForecastAlert: vi.fn(),
   getInvoiceById: vi.fn(),
   getCustomerById: vi.fn(),
+  getBillPaymentHistory: vi.fn(async () => []),
+  getOpenCrmDealsForForecast: vi.fn(async () => []),
+  getOpenPmCashEvents: vi.fn(async () => []),
+  getInventoryValuationForScope: vi.fn(async () => []),
+  getCompanies: vi.fn(async () => [{ id: 1, name: "Superhumn US" }, { id: 2, name: "Superhumn India" }]),
+  getCompletedPaymentsByDateRange: vi.fn(async () => []),
+  getCashNotificationChannels: vi.fn(async () => []),
+  getAllActiveCashNotificationChannels: vi.fn(async () => []),
+  markCashNotificationChannelResult: vi.fn(),
+  upsertCashForecastFinancialModelRows: vi.fn(async () => ({ written: 0 })),
 }));
+vi.mock("./cashNotifyService", () => ({ sendToChannel: vi.fn(async () => ({ ok: true })), validateChannelTarget: vi.fn(() => null) }));
+vi.mock("./_core/messageExport", () => ({ htmlToPdfBase64: vi.fn(async () => "UERG") }));
 vi.mock("./mercuryService", () => ({ getMercuryAccounts: vi.fn() }));
 vi.mock("./fxService", () => ({ getFxRate: vi.fn(async (from: string) => (from === "ZAR" ? 0.05 : null)) }));
 vi.mock("./_core/email", () => ({ sendEmail: vi.fn(async () => ({ success: true })), isEmailConfigured: vi.fn(() => true) }));
@@ -25,7 +37,8 @@ vi.mock("./_core/email", () => ({ sendEmail: vi.fn(async () => ({ success: true 
 import * as db from "./db";
 import * as mercury from "./mercuryService";
 import * as email from "./_core/email";
-import { forecastToXlsx, getCashForecast, getCollectionsQueue, runCashForecastAlerts, scopeKeyFor, snapshotForecast } from "./cashForecastService";
+import * as notify from "./cashNotifyService";
+import { composeDigest, forecastToBoardPackHtml, forecastToPdf, forecastToXlsx, getCashForecast, getCollectionsQueue, runCashDigest, runCashForecastAlerts, scopeKeyFor, snapshotForecast } from "./cashForecastService";
 import type { Scope } from "./_core/scope";
 
 const asOf = new Date("2026-09-30T12:00:00Z");
@@ -218,6 +231,99 @@ describe("getCashForecast", () => {
     vi.mocked(db.getInvoiceById).mockResolvedValue({ id: 1, companyId: 1, type: "invoice", status: "sent", totalAmount: "100", paidAmount: "0", dueDate: new Date(Date.now() + 86400000), customerId: 1 } as any);
     expect((await sendCollectionReminder(globalScope, 1)).error).toMatch(/not overdue/);
     expect(email.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it("adds pipeline only when asked, projects by default, and reports inventory + entities", async () => {
+    vi.mocked(db.getOpenCrmDealsForForecast).mockResolvedValue([
+      { id: 1, companyId: 1, name: "DOE", amount: "10000", currency: "USD", probability: 50, expectedCloseDate: d("2026-10-05"), stage: "proposal", customerId: null, organization: "NYC DOE" },
+    ] as any);
+    vi.mocked(db.getOpenPmCashEvents).mockResolvedValue([
+      { id: 1, companyId: 2, name: "Mumbai line", status: "in_progress", cashEventAmount: "3000", cashEventType: "capex", cashEventDate: d("2026-10-20") },
+    ] as any);
+    vi.mocked(db.getInventoryValuationForScope).mockResolvedValue([
+      { productId: 1, productName: "Chickpea crumble", sku: "CC-1", warehouseId: 1, warehouseName: "PA", quantity: "100", totalValue: "2500", layerCount: 1 },
+      { productId: 1, productName: "Chickpea crumble", sku: "CC-1", warehouseId: 2, warehouseName: "NJ", quantity: "50", totalValue: "1250", layerCount: 1 },
+    ] as any);
+    const base = await getCashForecast({ scope: globalScope, asOf });
+    expect(base.totalOut).toBe(3500); // 400 bill + 100 PO + 3000 capex
+    expect(base.pipelineWeightedTotal).toBe(0);
+    expect(base.inventory).toMatchObject({ totalValue: 3750, items: [{ productId: 1, quantity: 150, totalValue: 3750 }] });
+    expect(base.months.length).toBeGreaterThanOrEqual(12);
+    expect(base.byEntity.map((e) => e.name)).toEqual(["Superhumn US", "Superhumn India", "Unassigned"]);
+    expect(base.byEntity.find((e) => e.name === "Superhumn India")?.totalOut).toBe(3000);
+    const withPipe = await getCashForecast({ scope: globalScope, asOf, includePipeline: true });
+    expect(withPipe.pipelineWeightedTotal).toBe(5000);
+    expect(withPipe.totalIn).toBe(6000);
+    expect(db.getOpenCrmDealsForForecast).toHaveBeenCalledWith(globalScope, expect.any(Date));
+    const noProjects = await getCashForecast({ scope: globalScope, asOf, includeProjects: false });
+    expect(noProjects.totalOut).toBe(500);
+  });
+
+  it("applies vendor behaviour and autopay to open bills", async () => {
+    vi.mocked(db.getBillPaymentHistory).mockResolvedValue([
+      { vendorId: 5, dueDate: d("2026-01-10"), paidAt: d("2026-01-24") },
+      { vendorId: 5, dueDate: d("2026-02-10"), paidAt: d("2026-02-24") },
+      { vendorId: 5, dueDate: d("2026-03-10"), paidAt: d("2026-03-24") },
+    ] as any);
+    vi.mocked(db.getBills).mockResolvedValue([
+      { id: 1, companyId: 1, vendorId: 5, status: "approved", billDate: d("2026-09-01"), dueDate: d("2026-10-08"), totalAmount: "400", amountPaid: "0", vendorName: "V" },
+      { id: 2, companyId: 1, vendorId: 5, status: "approved", billDate: d("2026-09-01"), dueDate: d("2026-10-08"), totalAmount: "100", amountPaid: "0", vendorName: "V", vendorAutopay: true },
+    ] as any);
+    vi.mocked(db.getOpenPurchaseOrdersForForecast).mockResolvedValue([] as any);
+    const f = await getCashForecast({ scope: globalScope, asOf });
+    expect(f.behaviourVendors).toBe(1);
+    const w2 = f.weeks.find((w) => w.start === "2026-10-05")!; // due week: only the autopay 100
+    const w4 = f.weeks.find((w) => w.start === "2026-10-19")!; // +14d: the 400
+    expect(w2.outflows.vendor_bills).toBe(100);
+    expect(w4.outflows.vendor_bills).toBe(400);
+  });
+
+  it("digest goes to every active channel that wants it, keyed by scope", async () => {
+    vi.mocked(db.getAllActiveCashNotificationChannels).mockResolvedValue([
+      { id: 1, scopeKey: "global", type: "slack", target: "https://hooks.slack.com/services/x", sendDigest: true, sendAlerts: true, isActive: true },
+      { id: 2, scopeKey: "global", type: "whatsapp", target: "+14155551234", sendDigest: false, sendAlerts: true, isActive: true },
+      { id: 3, scopeKey: "entities:1", type: "email", target: "a@b.co", sendDigest: true, sendAlerts: false, isActive: true },
+    ] as any);
+    const r = await runCashDigest();
+    expect(r).toEqual({ scopes: 2, sent: 2, failed: 0 });
+    const calls = vi.mocked(notify.sendToChannel).mock.calls;
+    expect(calls.map((c) => c[0].type)).toEqual(["slack", "email"]);
+    expect(calls[0][1].title).toMatch(/cash digest, week of 2026-09-28/);
+    expect(calls[0][1].text).toMatch(/Cash now: \$5,000/);
+    expect(calls[0][1].text).toMatch(/Low point/);
+  });
+
+  it("alerts also fan out to channels flagged for alerts", async () => {
+    vi.mocked(db.getAllActiveCashForecastAlertSettings).mockResolvedValue([
+      { id: 1, scopeKey: "global", thresholdAmount: "10000", recipients: [], isActive: true, lastAlertedAt: null, lastAlertLowestCash: null },
+    ] as any);
+    vi.mocked(db.getCashNotificationChannels).mockResolvedValue([
+      { id: 9, scopeKey: "global", type: "google_chat", target: "https://chat.googleapis.com/v1/spaces/x", sendDigest: false, sendAlerts: true, isActive: true },
+    ] as any);
+    const r = await runCashForecastAlerts(asOf);
+    expect(r.sent).toBe(1);
+    expect(vi.mocked(notify.sendToChannel).mock.calls[0][0].type).toBe("google_chat");
+    expect(db.markCashNotificationChannelResult).toHaveBeenCalledWith(9, true, undefined);
+  });
+
+  it("snapshot pushes the monthly view into financial_model", async () => {
+    vi.mocked(db.insertCashForecastSnapshotIfAbsent).mockResolvedValue({ id: 5, created: true, existingAsOf: null });
+    await snapshotForecast(globalScope, "scheduled");
+    const rows = vi.mocked(db.upsertCashForecastFinancialModelRows).mock.calls[0][0];
+    expect(rows.length).toBeGreaterThanOrEqual(12);
+    expect(rows[0]).toMatchObject({ companyId: null, year: 2026, month: 9 });
+  });
+
+  it("board pack HTML and PDF carry the headline numbers", async () => {
+    const f = await getCashForecast({ scope: globalScope, asOf });
+    const html = forecastToBoardPackHtml(f, { companyName: "Superhumn" });
+    expect(html).toContain("13-week cash forecast");
+    expect(html).toContain("$5,000");
+    expect(html).toContain("12-month view");
+    const pdf = await forecastToPdf(f);
+    expect(pdf).toMatchObject({ filename: "cash-forecast-2026-09-30.pdf", mimeType: "application/pdf", data: "UERG" });
+    const digest = composeDigest(f);
+    expect(digest.text).toContain("Week 13 ending cash");
   });
 
   it("collections queue lists overdue invoices largest first", async () => {

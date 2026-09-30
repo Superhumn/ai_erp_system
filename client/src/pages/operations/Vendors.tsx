@@ -101,6 +101,7 @@ export default function Vendors() {
     postalCode: "",
     website: "",
     paymentTerms: 30,
+    autopay: false,
     defaultLeadTimeDays: 14,
     notes: "",
   });
@@ -268,7 +269,7 @@ export default function Vendors() {
     setFormData({
       name: "", contactName: "", email: "", phone: "", type: "supplier",
       address: "", city: "", state: "", country: "", postalCode: "", website: "",
-      paymentTerms: 30, defaultLeadTimeDays: 14, notes: "",
+      paymentTerms: 30, autopay: false, defaultLeadTimeDays: 14, notes: "",
     });
   };
 
@@ -287,6 +288,7 @@ export default function Vendors() {
       postalCode: vendor.postalCode ?? "",
       website: vendor.website ?? "",
       paymentTerms: vendor.paymentTerms ?? 30,
+      autopay: Boolean(vendor.autopay),
       defaultLeadTimeDays: vendor.defaultLeadTimeDays ?? 14,
       notes: vendor.notes ?? "",
     });
@@ -408,6 +410,7 @@ export default function Vendors() {
       country: formData.country || undefined,
       postalCode: formData.postalCode || undefined,
       paymentTerms: formData.paymentTerms,
+      autopay: formData.autopay,
       defaultLeadTimeDays: formData.defaultLeadTimeDays,
       notes: formData.notes || undefined,
     };
@@ -557,6 +560,10 @@ export default function Vendors() {
                     value={formData.paymentTerms}
                     onChange={(e) => setFormData({ ...formData, paymentTerms: parseInt(e.target.value) || 30 })}
                   />
+                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <input type="checkbox" checked={formData.autopay} onChange={(e) => setFormData({ ...formData, autopay: e.target.checked })} />
+                    Paid by autopay / direct debit (bills land on the due date exactly)
+                  </label>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="defaultLeadTimeDays">Default Lead Time (days)</Label>

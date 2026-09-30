@@ -159,6 +159,7 @@ describe("computeInvestorPortalFinancials", () => {
       "cashOutMonth",
       "currency",
       "ebitdaMarginPct",
+      "forecast13w",
       "grossMarginPct",
       "marginSource",
       "momGrowthPct",

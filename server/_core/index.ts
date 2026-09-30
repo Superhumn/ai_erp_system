@@ -1948,14 +1948,20 @@ async function startServer() {
         const CASH_FORECAST_INTERVAL = 24 * 60 * 60 * 1000; // Daily
         console.log("[Cash Forecast] Starting daily snapshot/alert scheduler");
         const tick = async () => {
-          const { runCashForecastAlerts, snapshotForecast } = await import("../cashForecastService");
-          // One frozen forecast per week so it can be graded against the bank later.
+          const { runCashForecastAlerts, snapshotForecast, runCashDigest } = await import("../cashForecastService");
+          // One frozen forecast per week so it can be graded against the bank later, then the Monday digest.
           if (new Date().getUTCDay() === 1) {
             try {
               await snapshotForecast({ mode: "global", companyIds: "all" }, "scheduled");
               console.log("[Cash Forecast] Weekly snapshot saved");
             } catch (e) {
               console.warn("[Cash Forecast] Snapshot failed:", e);
+            }
+            try {
+              const d = await runCashDigest();
+              if (d.sent + d.failed > 0) console.log(`[Cash Forecast] Monday digest: ${d.sent} sent, ${d.failed} failed`);
+            } catch (e) {
+              console.warn("[Cash Forecast] Digest failed:", e);
             }
           }
           const result = await runCashForecastAlerts();

@@ -735,6 +735,8 @@ function useCfoMetrics() {
 
 // ── CFO Dashboard — Liquidity · Growth · Efficiency · Risk ──────
 export default function CFODashboard() {
+  // Same engine as the 13-Week Cash Forecast section, so the headline tiles agree with it.
+  const { data: forecast13 } = trpc.cashForecast.get.useQuery(undefined, { staleTime: 60_000 });
   const {
     cashPosition, estimatedBurn, burnSource, runwayMonths, zeroCashDate, runwayProjection,
     arr, arrSource, recurring, netNewArr, momGrowth, yoyGrowth, retention,
@@ -826,6 +828,14 @@ export default function CFODashboard() {
                          ? "At current burn"
                          : "At current burn"
                  } />
+        <KpiCard icon={Clock} label="13-wk low point"
+                 value={forecast13 ? fmtCompact(forecast13.lowestCash) : "—"}
+                 tone={forecast13 && forecast13.lowestCash < 0 ? "text-destructive" : undefined}
+                 sub={forecast13 ? `Week ${forecast13.lowestWeek} · ${forecast13.weeks[forecast13.lowestWeek - 1]?.start ?? ""}` : "13-week cash forecast"} />
+        <KpiCard icon={DollarSign} label="Cash in 13 wks"
+                 value={forecast13 ? fmtCompact(forecast13.endingCash) : "—"}
+                 tone={forecast13 && forecast13.endingCash < 0 ? "text-destructive" : undefined}
+                 sub={forecast13?.firstNegativeWeek ? `Goes negative week ${forecast13.firstNegativeWeek}` : "Dated items + payment behaviour"} />
       </div>
 
       <Card>

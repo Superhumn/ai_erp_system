@@ -100,6 +100,7 @@ export type BillFormState = {
   shippingAmount: string;
   currency: string;
   paymentTerms: string;
+  autopay: boolean;
   notes: string;
   lineItems: LineItemDraft[];
 };
@@ -116,6 +117,7 @@ export type BillFormPayload = {
   shippingAmount?: string;
   currency?: string;
   paymentTerms?: string;
+  autopay?: boolean;
   notes?: string;
   lineItems?: BillLineItemInput[];
 };
@@ -180,6 +182,7 @@ export function buildBillPayload(
   if (currency) payload.currency = currency;
   const paymentTerms = blankToUndefined(form.paymentTerms);
   if (paymentTerms) payload.paymentTerms = paymentTerms;
+  payload.autopay = form.autopay;
   const notes = blankToUndefined(form.notes);
   if (notes) payload.notes = notes;
   if (lineItems.length > 0) payload.lineItems = lineItems;

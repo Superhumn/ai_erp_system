@@ -20,6 +20,8 @@ export interface LiveFinancialsSnapshot {
   last3MoBurn: Array<{ monthKey: string; label: string; burn: number }>;
   avgMonthlyBurn: number;
   runwayMonths: number | null; // null when burn <= 0 (runway indeterminate)
+  /** 13-week forecast headline, same engine as the Finance page. */
+  forecast13w: { lowestCash: number; lowestWeekStart: string | null; endingCash13w: number; firstNegativeWeekStart: string | null } | null;
   // AR total is only included when `includeAr` is enabled on the room.
   arTotal: number | null;
 }
@@ -44,20 +46,31 @@ function parseAmount(v: unknown): number {
 // Best-effort current cash balance from Mercury. If Mercury is not
 // configured or the API call fails, we return 0 rather than throwing —
 // the public page should degrade gracefully.
-async function getCashBalance(): Promise<number> {
+async function getCashBalance(companyId?: number): Promise<number> {
+  // Same source as the Finance page: Mercury, filtered to the entity's mapped
+  // accounts when a companyId is given.
   try {
-    const { getMercuryAccounts } = await import("./mercuryService");
-    const accounts = await getMercuryAccounts();
-    const list = (accounts?.accounts || []) as Array<{
-      currentBalance?: number;
-      availableBalance?: number;
-    }>;
-    return list.reduce(
-      (sum, a) => sum + (a.currentBalance ?? a.availableBalance ?? 0),
-      0,
-    );
+    const { loadBankCashForScope } = await import("./cashForecastService");
+    const bank = await loadBankCashForScope(companyId ? { mode: "entity", companyIds: [companyId] } : { mode: "global", companyIds: "all" });
+    return bank.total;
   } catch {
     return 0;
+  }
+}
+
+/** 13-week forecast headline numbers, so investor-facing runway agrees with the Finance page. */
+async function getForecastHeadline(companyId?: number): Promise<{ lowestCash: number; lowestWeekStart: string | null; endingCash13w: number; firstNegativeWeekStart: string | null } | null> {
+  try {
+    const { getCashForecast } = await import("./cashForecastService");
+    const f = await getCashForecast({ scope: companyId ? { mode: "entity", companyIds: [companyId] } : { mode: "global", companyIds: "all" } });
+    return {
+      lowestCash: f.lowestCash,
+      lowestWeekStart: f.weeks[f.lowestWeek - 1]?.start ?? null,
+      endingCash13w: f.endingCash,
+      firstNegativeWeekStart: f.firstNegativeWeek ? f.weeks[f.firstNegativeWeek - 1].start : null,
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -137,7 +150,8 @@ export async function computeLiveFinancials(opts: {
       ? last3MoBurn.reduce((s, b) => s + b.burn, 0) / monthsWithBurn
       : 0;
 
-  const cash = await getCashBalance();
+  const cash = await getCashBalance(opts.companyId);
+  const forecast13w = await getForecastHeadline(opts.companyId);
   const runwayMonths =
     avgMonthlyBurn > 0
       ? Math.round((cash / avgMonthlyBurn) * 10) / 10
@@ -165,6 +179,7 @@ export async function computeLiveFinancials(opts: {
     last3MoBurn,
     avgMonthlyBurn,
     runwayMonths,
+    forecast13w,
     arTotal,
   };
 }

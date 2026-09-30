@@ -231,6 +231,7 @@ import {
   cashForecastSnapshots, InsertCashForecastSnapshot,
   bankAccountEntityMap,
   cashForecastAlertSettings,
+  cashNotificationChannels, InsertCashNotificationChannel,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { bucketBillsAging, nextStatusAfterPayment, OPEN_BILL_STATUSES } from "./billsLogic";
@@ -17038,7 +17039,7 @@ export async function getBills(filters?: BillFilters) {
   if (filters?.purchaseOrderId) conditions.push(eq(bills.purchaseOrderId, filters.purchaseOrderId));
 
   const base = db
-    .select({ bill: bills, vendorName: vendors.name, poNumber: purchaseOrders.poNumber })
+    .select({ bill: bills, vendorName: vendors.name, vendorAutopay: vendors.autopay, poNumber: purchaseOrders.poNumber })
     .from(bills)
     .leftJoin(vendors, eq(bills.vendorId, vendors.id))
     .leftJoin(purchaseOrders, eq(bills.purchaseOrderId, purchaseOrders.id));
@@ -17049,19 +17050,19 @@ export async function getBills(filters?: BillFilters) {
   if (filters?.limit) query = query.limit(filters.limit) as typeof query;
 
   const rows = await query;
-  return rows.map((r) => ({ ...r.bill, vendorName: r.vendorName, poNumber: r.poNumber }));
+  return rows.map((r) => ({ ...r.bill, vendorName: r.vendorName, vendorAutopay: r.vendorAutopay ?? false, poNumber: r.poNumber }));
 }
 
 export async function getBillById(id: number) {
   const db = await getDb();
   if (!db) return null;
   const [row] = await db
-    .select({ bill: bills, vendorName: vendors.name, poNumber: purchaseOrders.poNumber })
+    .select({ bill: bills, vendorName: vendors.name, vendorAutopay: vendors.autopay, poNumber: purchaseOrders.poNumber })
     .from(bills)
     .leftJoin(vendors, eq(bills.vendorId, vendors.id))
     .leftJoin(purchaseOrders, eq(bills.purchaseOrderId, purchaseOrders.id))
     .where(eq(bills.id, id));
-  return row ? { ...row.bill, vendorName: row.vendorName, poNumber: row.poNumber } : null;
+  return row ? { ...row.bill, vendorName: row.vendorName, vendorAutopay: row.vendorAutopay ?? false, poNumber: row.poNumber } : null;
 }
 
 export async function updateBill(id: number, data: Partial<InsertBill>) {
@@ -18589,31 +18590,46 @@ export async function pushPmCashEventToFinancialModel(projectId: number): Promis
 
 // Cash forecast: pm_projects with cash events, grouped by month, joined to
 // matching financial_model rows for the same metricName + year + month.
-export async function getPmCashForecast() {
-  const projects = await getPmProjectsWithCashEvents();
-  const db = await getDb();
-  if (!db) return { byMonth: [] as Array<{ key: string; year: number; month: number; total: number; projects: typeof projects }>, rows: projects, financialModelRows: [] as Array<typeof financialModel.$inferSelect> };
+/** revenue and funding bring cash in; capex and opex send it out. */
+export function pmCashEventSign(type: string | null | undefined): 1 | -1 {
+  return type === "capex" || type === "opex" ? -1 : 1;
+}
 
-  // Group by YYYY-MM key.
-  const grouped = new Map<string, { year: number; month: number; total: number; projects: typeof projects }>();
+export async function getPmCashForecast(scope?: Scope) {
+  const all = await getPmProjectsWithCashEvents();
+  const projects = scope ? all.filter((p) => scopeAllows(scope, p.companyId)) : all;
+  const db = await getDb();
+  if (!db) return { byMonth: [] as Array<{ key: string; year: number; month: number; total: number; inflow: number; outflow: number; projects: typeof projects }>, rows: projects, financialModelRows: [] as Array<typeof financialModel.$inferSelect> };
+
+  // Group by YYYY-MM key, signed by event type so opex/capex reduce the month.
+  const grouped = new Map<string, { year: number; month: number; total: number; inflow: number; outflow: number; projects: typeof projects }>();
   for (const p of projects) {
     if (!p.cashEventDate) continue;
     const d = new Date(p.cashEventDate);
     const year = d.getUTCFullYear();
     const month = d.getUTCMonth() + 1;
     const key = `${year}-${String(month).padStart(2, "0")}`;
-    if (!grouped.has(key)) grouped.set(key, { year, month, total: 0, projects: [] });
+    if (!grouped.has(key)) grouped.set(key, { year, month, total: 0, inflow: 0, outflow: 0, projects: [] });
     const g = grouped.get(key)!;
-    g.total += Number(p.cashEventAmount ?? 0);
+    const amt = Math.abs(Number(p.cashEventAmount ?? 0));
+    if (pmCashEventSign(p.cashEventType) > 0) g.inflow += amt;
+    else g.outflow += amt;
+    g.total = g.inflow - g.outflow;
     g.projects.push(p);
   }
 
   const byMonth = Array.from(grouped.entries()).map(([key, v]) => ({ key, ...v }))
     .sort((a, b) => a.key.localeCompare(b.key));
 
-  // Pull matching financial_model entries (same metricName prefix).
+  // Rows pushed by pushPmCashEventToFinancialModel carry "pm_project_id=<id>" in notes.
+  const fmConditions = [like(financialModel.notes, "pm_project_id=%")];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids) {
+    if (ids.length === 0) return { byMonth, rows: projects, financialModelRows: [] as Array<typeof financialModel.$inferSelect> };
+    fmConditions.push(inArray(financialModel.companyId, ids));
+  }
   const fmRows = await db.select().from(financialModel)
-    .where(like(financialModel.metricName, "PM: %"))
+    .where(and(...fmConditions))
     .orderBy(asc(financialModel.year), asc(financialModel.month));
 
   return { byMonth, rows: projects, financialModelRows: fmRows };
@@ -19264,4 +19280,151 @@ export async function getInvoicePaymentHistory(scope: Scope, sinceDate: Date) {
     .from(payments)
     .innerJoin(invoices, eq(payments.invoiceId, invoices.id))
     .where(and(...conditions));
+}
+
+
+// ── v3: channels, pipeline, projects, ledger, vendors, inventory ──
+
+export async function getCashNotificationChannels(scopeKey: string) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(cashNotificationChannels).where(eq(cashNotificationChannels.scopeKey, scopeKey)).orderBy(asc(cashNotificationChannels.id));
+}
+
+export async function getAllActiveCashNotificationChannels() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(cashNotificationChannels).where(eq(cashNotificationChannels.isActive, true));
+}
+
+export async function getCashNotificationChannelById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db.select().from(cashNotificationChannels).where(eq(cashNotificationChannels.id, id)).limit(1);
+  return row ?? null;
+}
+
+export async function createCashNotificationChannel(data: InsertCashNotificationChannel) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(cashNotificationChannels).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateCashNotificationChannel(id: number, data: Partial<InsertCashNotificationChannel>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(cashNotificationChannels).set(data).where(eq(cashNotificationChannels.id, id));
+}
+
+export async function deleteCashNotificationChannel(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(cashNotificationChannels).where(eq(cashNotificationChannels.id, id));
+}
+
+export async function markCashNotificationChannelResult(id: number, ok: boolean, error?: string) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(cashNotificationChannels).set(ok ? { lastSentAt: new Date(), lastError: null } : { lastError: (error ?? "send failed").slice(0, 2000) }).where(eq(cashNotificationChannels.id, id));
+}
+
+/** Open CRM deals with an amount and expected close inside the window, scoped, with the contact's customer link for payment terms. */
+export async function getOpenCrmDealsForForecast(scope: Scope, closeBefore: Date) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [eq(crmDeals.status, "open"), lt(crmDeals.expectedCloseDate, closeBefore), sql`${crmDeals.amount} IS NOT NULL`];
+  const ids = scopeCompanyIds(scope);
+  if (ids) {
+    if (ids.length === 0) return [];
+    conditions.push(inArray(crmDeals.companyId, ids));
+  }
+  return db
+    .select({
+      id: crmDeals.id,
+      companyId: crmDeals.companyId,
+      name: crmDeals.name,
+      amount: crmDeals.amount,
+      currency: crmDeals.currency,
+      probability: crmDeals.probability,
+      expectedCloseDate: crmDeals.expectedCloseDate,
+      stage: crmDeals.stage,
+      customerId: crmContacts.customerId,
+      organization: crmContacts.organization,
+    })
+    .from(crmDeals)
+    .leftJoin(crmContacts, eq(crmDeals.contactId, crmContacts.id))
+    .where(and(...conditions));
+}
+
+/** Project cash events still ahead of us (not complete, not cancelled), scoped. */
+export async function getOpenPmCashEvents(scope: Scope) {
+  const rows = await getPmProjectsWithCashEvents();
+  return rows.filter((p) => scopeAllows(scope, p.companyId) && p.status !== "complete" && p.status !== "cancelled");
+}
+
+/** Completed customer receipts and vendor payments in a window, for grading the forecast against the ledger. */
+export async function getCompletedPaymentsByDateRange(scope: Scope, from: Date, to: Date) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [eq(payments.status, "completed"), gte(payments.paymentDate, from), lt(payments.paymentDate, to)];
+  const ids = scopeCompanyIds(scope);
+  if (ids) {
+    if (ids.length === 0) return [];
+    conditions.push(inArray(payments.companyId, ids));
+  }
+  return db.select({ type: payments.type, amount: payments.amount, paymentDate: payments.paymentDate }).from(payments).where(and(...conditions));
+}
+
+/** Paid bills with due and paid dates, for vendor days-late stats. */
+export async function getBillPaymentHistory(scope: Scope, sinceDate: Date) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [eq(bills.status, "paid"), sql`${bills.paidAt} IS NOT NULL`, sql`${bills.dueDate} IS NOT NULL`, gte(bills.paidAt, sinceDate)];
+  const ids = scopeCompanyIds(scope);
+  if (ids) {
+    if (ids.length === 0) return [];
+    conditions.push(inArray(bills.companyId, ids));
+  }
+  return db.select({ vendorId: bills.vendorId, dueDate: bills.dueDate, paidAt: bills.paidAt }).from(bills).where(and(...conditions));
+}
+
+/** Inventory on hand at cost, per product, for the visible entities. */
+export async function getInventoryValuationForScope(scope: Scope) {
+  const ids = scopeCompanyIds(scope);
+  if (ids === null) return getInventoryValuation();
+  if (ids.length === 0) return [];
+  const perCompany = await Promise.all(ids.map((companyId) => getInventoryValuation({ companyId })));
+  return perCompany.flat();
+}
+
+/**
+ * Write the monthly cash forecast into financial_model so Model vs Actual and
+ * the investor views read the same numbers. One row per month, replaced on
+ * each call (notes carry a stable key).
+ */
+export async function upsertCashForecastFinancialModelRows(rows: { companyId: number | null; year: number; month: number; closingCash: number; totalIn: number; totalOut: number }[]) {
+  const db = await getDb();
+  if (!db) return { written: 0 };
+  let written = 0;
+  for (const r of rows) {
+    const metrics: { metricName: string; category: string; value: number }[] = [
+      { metricName: "Projected closing cash (13-week model)", category: "cash", value: r.closingCash },
+      { metricName: "Projected cash in (13-week model)", category: "cash", value: r.totalIn },
+      { metricName: "Projected cash out (13-week model)", category: "cash", value: r.totalOut },
+    ];
+    for (const m of metrics) {
+      const noteKey = `cash_forecast:${r.companyId ?? "global"}:${m.metricName}`;
+      const existing = await db
+        .select({ id: financialModel.id })
+        .from(financialModel)
+        .where(and(eq(financialModel.year, r.year), eq(financialModel.month, r.month), eq(financialModel.notes, noteKey)))
+        .limit(1);
+      const data = { companyId: r.companyId, sheetName: "Cash Forecast", category: m.category, metricName: m.metricName, year: r.year, month: r.month, projectedValue: String(Math.round(m.value * 100) / 100), unit: "USD", notes: noteKey };
+      if (existing.length) await db.update(financialModel).set(data).where(eq(financialModel.id, existing[0].id));
+      else await db.insert(financialModel).values(data);
+      written++;
+    }
+  }
+  return { written };
 }

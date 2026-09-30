@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Bell, Play } from "lucide-react";
+import { Bell, Play, Plus, Send, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -14,9 +14,109 @@ const usd0 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD"
 export function CashSettingsPanel({ isAdmin }: { isAdmin: boolean }) {
   return (
     <div className="space-y-4">
+      <Channels isAdmin={isAdmin} />
       <AlertSettings isAdmin={isAdmin} />
       {isAdmin && <BankMapping />}
     </div>
+  );
+}
+
+type ChannelType = "slack" | "google_chat" | "whatsapp" | "email" | "webhook";
+const CHANNEL_META: Record<ChannelType, { label: string; placeholder: string; help: string }> = {
+  slack: { label: "Slack", placeholder: "https://hooks.slack.com/services/…", help: "Slack → Apps → Incoming Webhooks → Add to channel → copy the URL." },
+  google_chat: { label: "Google Chat", placeholder: "https://chat.googleapis.com/v1/spaces/…", help: "Open the space → Apps & integrations → Webhooks → Add → copy the URL." },
+  whatsapp: { label: "WhatsApp", placeholder: "+14155551234", help: "Sent from the company Twilio WhatsApp number. Needs TWILIO_WHATSAPP_NUMBER on the server." },
+  email: { label: "Email", placeholder: "you@company.com", help: "Plain email with the same digest." },
+  webhook: { label: "Webhook (Teams, Zapier, other)", placeholder: "https://…", help: "POSTs JSON: { title, text, startingCash, lowestCash, … }. Point Zapier or a Teams connector at it." },
+};
+
+function Channels({ isAdmin }: { isAdmin: boolean }) {
+  const utils = trpc.useUtils();
+  const { data: rows, isLoading } = trpc.cashForecast.channels.list.useQuery();
+  const invalidate = () => utils.cashForecast.channels.list.invalidate();
+  const create = trpc.cashForecast.channels.create.useMutation({ onSuccess: () => { invalidate(); setTarget(""); setLabel(""); toast.success("Destination added"); }, onError: (e) => toast.error(e.message) });
+  const update = trpc.cashForecast.channels.update.useMutation({ onSuccess: invalidate, onError: (e) => toast.error(e.message) });
+  const remove = trpc.cashForecast.channels.delete.useMutation({ onSuccess: () => { invalidate(); toast.success("Removed"); }, onError: (e) => toast.error(e.message) });
+  const test = trpc.cashForecast.channels.test.useMutation({ onSuccess: () => { invalidate(); toast.success("Test digest sent"); }, onError: (e) => { invalidate(); toast.error(e.message); } });
+  const runDigest = trpc.cashForecast.channels.runDigestNow.useMutation({ onSuccess: (r) => toast.success(`Digest: ${r.sent} sent, ${r.failed} failed across ${r.scopes} scope(s)`), onError: (e) => toast.error(e.message) });
+  const [type, setType] = useState<ChannelType>("slack");
+  const [target, setTarget] = useState("");
+  const [label, setLabel] = useState("");
+  const meta = CHANNEL_META[type];
+
+  return (
+    <Card>
+      <CardContent className="pt-4 space-y-3">
+        <div>
+          <div className="text-sm font-semibold flex items-center gap-1.5"><Send className="h-4 w-4" />Where the Monday digest and alerts go</div>
+          <p className="text-xs text-muted-foreground">Every Monday: cash now, low point, week-13 cash, this week's movements, biggest risks, cash in inventory, and per-entity numbers. Low-cash alerts use the same destinations.</p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Channel</label>
+            <Select value={type} onValueChange={(v) => setType(v as ChannelType)}>
+              <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+              <SelectContent>{(Object.keys(CHANNEL_META) as ChannelType[]).map((k) => <SelectItem key={k} value={k}>{CHANNEL_META[k].label}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1 md:col-span-2">
+            <label className="text-xs text-muted-foreground">Destination</label>
+            <Input className="h-8 text-sm" placeholder={meta.placeholder} value={target} onChange={(e) => setTarget(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Label (optional)</label>
+            <Input className="h-8 text-sm" placeholder="#finance" value={label} onChange={(e) => setLabel(e.target.value)} />
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[11px] text-muted-foreground">{meta.help}</p>
+          <Button size="sm" onClick={() => create.mutate({ type, target, label: label || null })} disabled={create.isPending || !target.trim()}>
+            <Plus className="h-3.5 w-3.5 mr-1" />Add
+          </Button>
+        </div>
+        {isLoading && <p className="text-xs text-muted-foreground">Loading…</p>}
+        {rows && rows.length > 0 && (
+          <table className="w-full text-xs">
+            <thead className="text-muted-foreground">
+              <tr className="border-b border-border/40">
+                <th className="py-1 text-left font-medium">Channel</th>
+                <th className="py-1 text-left font-medium">Destination</th>
+                <th className="py-1 text-center font-medium">Digest</th>
+                <th className="py-1 text-center font-medium">Alerts</th>
+                <th className="py-1 text-center font-medium">Active</th>
+                <th className="py-1 text-left font-medium">Last</th>
+                <th className="py-1" />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="border-b border-border/40 last:border-0">
+                  <td className="py-1.5 pr-2 whitespace-nowrap">{CHANNEL_META[r.type as ChannelType]?.label ?? r.type}{r.label ? <span className="text-muted-foreground"> · {r.label}</span> : null}</td>
+                  <td className="py-1.5 pr-2 max-w-[260px] truncate" title={r.target}>{r.type === "slack" || r.type === "google_chat" || r.type === "webhook" ? r.target.replace(/^https:\/\//, "").slice(0, 40) + "…" : r.target}</td>
+                  <td className="py-1.5 text-center"><Switch checked={r.sendDigest} onCheckedChange={(v) => update.mutate({ id: r.id, sendDigest: v })} /></td>
+                  <td className="py-1.5 text-center"><Switch checked={r.sendAlerts} onCheckedChange={(v) => update.mutate({ id: r.id, sendAlerts: v })} /></td>
+                  <td className="py-1.5 text-center"><Switch checked={r.isActive} onCheckedChange={(v) => update.mutate({ id: r.id, isActive: v })} /></td>
+                  <td className="py-1.5 pr-2 whitespace-nowrap">
+                    {r.lastError ? <Badge variant="destructive" className="text-[10px]" title={r.lastError}>failed</Badge> : r.lastSentAt ? <span className="text-muted-foreground">{String(r.lastSentAt).slice(0, 10)}</span> : <span className="text-muted-foreground">never</span>}
+                  </td>
+                  <td className="py-1.5 text-right whitespace-nowrap">
+                    <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => test.mutate({ id: r.id })} disabled={test.isPending}>Test</Button>
+                    <button aria-label="Remove" className="text-muted-foreground hover:text-destructive ml-1" onClick={() => remove.mutate({ id: r.id })}><Trash2 className="h-3.5 w-3.5" /></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {isAdmin && (
+          <div>
+            <Button size="sm" variant="outline" onClick={() => runDigest.mutate()} disabled={runDigest.isPending}>
+              <Play className="h-3.5 w-3.5 mr-1" />Send digest to everyone now
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
