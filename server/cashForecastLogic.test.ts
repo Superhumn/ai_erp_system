@@ -398,15 +398,16 @@ describe("monthly roll-up and entity split", () => {
     { date: d("2026-11-03"), amount: 400, direction: "out" as const, category: "vendor_bills" as const, label: "B", companyId: 2 },
     { date: d("2026-11-10"), amount: 50, direction: "out" as const, category: "payroll" as const, label: "C", companyId: 1 },
   ];
-  it("rolls weeks into calendar months by Monday", () => {
-    const f = buildCashForecast({ asOf, startingCash: 100, events, weeks: 20 });
-    const months = rollupMonths(f);
-    expect(months.map((m) => m.key)).toEqual(["2026-09", "2026-10", "2026-11", "2026-12", "2027-01", "2027-02"]);
-    const oct = months.find((m) => m.key === "2026-10")!;
-    expect(oct.totalIn).toBe(0); // Oct 1 sits in the week of Sep 28
-    expect(months[0].totalIn).toBe(1000);
+  it("rolls dated events into calendar months (Oct 1 is October), past-due into the as-of month", () => {
+    const months = rollupMonths({ asOf, startingCash: 100, events: [...events, { date: d("2026-07-01"), amount: 10, direction: "in", category: "customer_receipts", label: "late" }], months: 12 });
+    expect(months.map((m) => m.key).slice(0, 4)).toEqual(["2026-09", "2026-10", "2026-11", "2026-12"]);
+    expect(months).toHaveLength(12);
+    expect(months[0].totalIn).toBe(10); // past-due lands in September
+    expect(months.find((m) => m.key === "2026-10")!.totalIn).toBe(1000);
     expect(months.find((m) => m.key === "2026-11")!.totalOut).toBe(450);
-    expect(months[months.length - 1].closingCash).toBe(650);
+    expect(months[1].openingCash).toBe(110);
+    expect(months[months.length - 1].closingCash).toBe(660);
+    expect(months[months.length - 1].key).toBe("2027-08");
   });
   it("splits by entity with its own starting cash", () => {
     const rows = splitByEntity({ asOf, events, startingCashByCompany: new Map([[1, 500], [2, 100]]), names: new Map([[1, "US"], [2, "India"]]) });

@@ -27,6 +27,8 @@ vi.mock("./db", () => ({
   getAllActiveCashNotificationChannels: vi.fn(async () => []),
   markCashNotificationChannelResult: vi.fn(),
   upsertCashForecastFinancialModelRows: vi.fn(async () => ({ written: 0 })),
+  claimCashNotificationDigest: vi.fn(async () => ({ claimed: true, previousLastSentAt: null })),
+  releaseCashNotificationDigest: vi.fn(),
 }));
 vi.mock("./cashNotifyService", () => ({ sendToChannel: vi.fn(async () => ({ ok: true })), validateChannelTarget: vi.fn(() => null) }));
 vi.mock("./_core/messageExport", () => ({ htmlToPdfBase64: vi.fn(async () => "UERG") }));
@@ -65,6 +67,12 @@ beforeEach(() => {
   vi.mocked(db.getRecurringExpenses).mockResolvedValue([] as any);
   vi.mocked(db.getInvoicePaymentHistory).mockResolvedValue([] as any);
   vi.mocked(db.getBankAccountEntityMap).mockResolvedValue([] as any);
+  vi.mocked(db.getBillPaymentHistory).mockResolvedValue([] as any);
+  vi.mocked(db.getOpenCrmDealsForForecast).mockResolvedValue([] as any);
+  vi.mocked(db.getOpenPmCashEvents).mockResolvedValue([] as any);
+  vi.mocked(db.getInventoryValuationForScope).mockResolvedValue([] as any);
+  vi.mocked(db.getCashNotificationChannels).mockResolvedValue([] as any);
+  vi.mocked(db.claimCashNotificationDigest).mockResolvedValue({ claimed: true, previousLastSentAt: null });
   vi.mocked(mercury.getMercuryAccounts).mockResolvedValue({ configured: true, accounts: [{ id: "acc-1", name: "Ops", currentBalance: 5000 }] });
 });
 
@@ -284,13 +292,58 @@ describe("getCashForecast", () => {
       { id: 2, scopeKey: "global", type: "whatsapp", target: "+14155551234", sendDigest: false, sendAlerts: true, isActive: true },
       { id: 3, scopeKey: "entities:1", type: "email", target: "a@b.co", sendDigest: true, sendAlerts: false, isActive: true },
     ] as any);
-    const r = await runCashDigest();
-    expect(r).toEqual({ scopes: 2, sent: 2, failed: 0 });
+    const r = await runCashDigest({ now: asOf });
+    expect(r).toEqual({ scopes: 2, sent: 2, failed: 0, skipped: 0 });
     const calls = vi.mocked(notify.sendToChannel).mock.calls;
     expect(calls.map((c) => c[0].type)).toEqual(["slack", "email"]);
     expect(calls[0][1].title).toMatch(/cash digest, week of 2026-09-28/);
     expect(calls[0][1].text).toMatch(/Cash now: \$5,000/);
     expect(calls[0][1].text).toMatch(/Low point/);
+  });
+
+  it("digest is claimed once per channel per week; losers skip, failures release", async () => {
+    vi.mocked(db.getAllActiveCashNotificationChannels).mockResolvedValue([
+      { id: 1, scopeKey: "global", type: "slack", target: "https://hooks.slack.com/services/x", sendDigest: true, sendAlerts: true, isActive: true },
+      { id: 2, scopeKey: "global", type: "email", target: "a@b.co", sendDigest: true, sendAlerts: true, isActive: true },
+    ] as any);
+    vi.mocked(db.claimCashNotificationDigest).mockResolvedValueOnce({ claimed: false, previousLastSentAt: asOf }).mockResolvedValueOnce({ claimed: true, previousLastSentAt: null });
+    vi.mocked(notify.sendToChannel).mockResolvedValueOnce({ ok: false, error: "boom" });
+    const r = await runCashDigest({ now: asOf });
+    expect(r).toEqual({ scopes: 1, sent: 0, failed: 1, skipped: 1 });
+    expect(notify.sendToChannel).toHaveBeenCalledTimes(1);
+    expect(db.releaseCashNotificationDigest).toHaveBeenCalledWith(2, null, "boom");
+    expect(vi.mocked(db.claimCashNotificationDigest).mock.calls[0].slice(1)).toEqual([d("2026-09-28"), asOf, false]);
+  });
+
+  it("send-now forces the claim", async () => {
+    vi.mocked(db.getAllActiveCashNotificationChannels).mockResolvedValue([
+      { id: 1, scopeKey: "global", type: "slack", target: "https://hooks.slack.com/services/x", sendDigest: true, sendAlerts: true, isActive: true },
+    ] as any);
+    await runCashDigest({ now: asOf, force: true });
+    expect(vi.mocked(db.claimCashNotificationDigest).mock.calls[0][3]).toBe(true);
+  });
+
+  it("weighted pipeline upside is reported after FX conversion", async () => {
+    vi.mocked(db.getOpenCrmDealsForForecast).mockResolvedValue([
+      { id: 1, companyId: 1, name: "ZA school", amount: "10000", currency: "ZAR", probability: 100, expectedCloseDate: d("2026-10-05"), stage: "proposal", customerId: null, organization: "WCED" },
+    ] as any);
+    const f = await getCashForecast({ scope: globalScope, asOf, includePipeline: true });
+    expect(f.pipelineWeightedTotal).toBe(500); // 10,000 ZAR × 0.05
+    expect(f.totalIn).toBe(1500);
+  });
+
+  it("manual override on a single-entity scope is attributed to that entity", async () => {
+    const f = await getCashForecast({ scope: entityScope, asOf, startingCashOverride: 900 });
+    expect(f.byEntity.map((e) => [e.name, e.startingCash])).toEqual([["Superhumn US", 900]]);
+  });
+
+  it("recurring schedules run through the 12-month window", async () => {
+    vi.mocked(db.getRecurringExpenses).mockResolvedValue([
+      { id: 1, companyId: 1, name: "Rent", category: "rent", frequency: "monthly", dayOfMonth: 1, nextDate: d("2026-10-01"), amount: "1000", currency: "USD", isActive: true },
+    ] as any);
+    const f = await getCashForecast({ scope: globalScope, asOf });
+    expect(f.months.find((m) => m.key === "2027-06")?.totalOut).toBe(1000);
+    expect(f.totalOut).toBe(3500); // 13-week totals still stop at the horizon: Oct, Nov, Dec rent + 400 + 100
   });
 
   it("alerts also fan out to channels flagged for alerts", async () => {

@@ -158,7 +158,7 @@ export const cashForecastRouter = router({
       if (!r.ok) throw new TRPCError({ code: "BAD_REQUEST", message: r.error ?? "Send failed" });
       return { ok: true };
     }),
-    runDigestNow: adminProcedure.mutation(async () => runCashDigest()),
+    runDigestNow: adminProcedure.mutation(async () => runCashDigest({ force: true })),
   }),
 
   // ── Recurring expenses ──

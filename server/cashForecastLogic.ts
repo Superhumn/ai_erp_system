@@ -914,26 +914,46 @@ export interface ForecastMonth {
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** Roll a (long) weekly forecast into calendar months. A week straddling a month boundary goes by its Monday. */
-export function rollupMonths(forecast: CashForecast): ForecastMonth[] {
-  const months: ForecastMonth[] = [];
-  let cur: ForecastMonth | null = null;
-  for (const w of forecast.weeks) {
-    const key = w.start.slice(0, 7);
-    if (!cur || cur.key !== key) {
-      const y: number = Number(key.slice(0, 4));
-      const m: number = Number(key.slice(5, 7));
-      cur = { key, label: `${MONTHS[m - 1]} ${y}`, openingCash: w.openingCash, totalIn: 0, totalOut: 0, net: 0, closingCash: w.closingCash, inflows: {}, outflows: {} };
-      months.push(cur);
-    }
-    cur.totalIn = round2(cur.totalIn + w.totalIn);
-    cur.totalOut = round2(cur.totalOut + w.totalOut);
-    cur.net = round2(cur.totalIn - cur.totalOut);
-    cur.closingCash = w.closingCash;
-    for (const k of Object.keys(w.inflows) as CashCategory[]) cur.inflows[k] = round2((cur.inflows[k] ?? 0) + (w.inflows[k] ?? 0));
-    for (const k of Object.keys(w.outflows) as CashCategory[]) cur.outflows[k] = round2((cur.outflows[k] ?? 0) + (w.outflows[k] ?? 0));
+/**
+ * Calendar-month view built from the dated events themselves (never from
+ * Monday-bucketed weeks, which would push a 1st-of-month item into the prior
+ * month). Anything already past due lands in the as-of month. Runs a fresh
+ * balance from `startingCash` so it matches the weekly view's opening.
+ */
+export function rollupMonths(params: { asOf: Date; startingCash: number; events: CashEvent[]; months?: number }): ForecastMonth[] {
+  const count = params.months ?? 12;
+  const first = new Date(Date.UTC(params.asOf.getUTCFullYear(), params.asOf.getUTCMonth(), 1));
+  const out: ForecastMonth[] = [];
+  const byKey = new Map<string, ForecastMonth>();
+  for (let i = 0; i < count; i++) {
+    const y: number = first.getUTCFullYear();
+    const m0: number = first.getUTCMonth() + i;
+    const dt = new Date(Date.UTC(y, m0, 1));
+    const key = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}`;
+    const row: ForecastMonth = { key, label: `${MONTHS[dt.getUTCMonth()]} ${dt.getUTCFullYear()}`, openingCash: 0, totalIn: 0, totalOut: 0, net: 0, closingCash: 0, inflows: {}, outflows: {} };
+    out.push(row);
+    byKey.set(key, row);
   }
-  return months;
+  const end = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + count, 1));
+  const firstKey = out[0]?.key;
+  for (const e of params.events) {
+    if (!(e.amount > 0) || e.date.getTime() >= end.getTime()) continue;
+    const key = e.date.getTime() < first.getTime() ? firstKey : `${e.date.getUTCFullYear()}-${String(e.date.getUTCMonth() + 1).padStart(2, "0")}`;
+    const row = key ? byKey.get(key) : undefined;
+    if (!row) continue;
+    const bucket = e.direction === "in" ? row.inflows : row.outflows;
+    bucket[e.category] = round2((bucket[e.category] ?? 0) + e.amount);
+  }
+  let cash = params.startingCash;
+  for (const row of out) {
+    row.totalIn = round2(Object.values(row.inflows).reduce((s, v) => s + (v ?? 0), 0));
+    row.totalOut = round2(Object.values(row.outflows).reduce((s, v) => s + (v ?? 0), 0));
+    row.net = round2(row.totalIn - row.totalOut);
+    row.openingCash = round2(cash);
+    cash += row.net;
+    row.closingCash = round2(cash);
+  }
+  return out;
 }
 
 // ── v3: per-entity split ───────────────────────────────────────

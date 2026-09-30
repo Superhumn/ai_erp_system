@@ -445,16 +445,12 @@ export async function safePostJson(
         headers: { "Content-Type": "application/json", "Content-Length": String(Buffer.byteLength(payload)), ...(opts.headers ?? {}) },
       },
       (res) => {
-        const chunks: Buffer[] = [];
-        let size = 0;
-        res.on("data", (c: Buffer) => {
-          size += c.length;
-          if (size <= 64 * 1024) chunks.push(c);
-        });
-        res.on("end", () => {
-          const status = res.statusCode ?? 0;
-          resolve({ ok: status >= 200 && status < 300, status, body: Buffer.concat(chunks).toString("utf8") });
-        });
+        const status = res.statusCode ?? 0;
+        // Read at most 64 KiB, then destroy the stream so a misbehaving
+        // webhook cannot hold the socket open by streaming forever.
+        readCapped(res as AsyncIterable<Uint8Array>, 64 * 1024)
+          .then(({ text }) => resolve({ ok: status >= 200 && status < 300, status, body: text }))
+          .catch(reject);
       },
     );
     req.on("timeout", () => req.destroy(new Error(`Timed out after ${timeoutMs}ms`)));

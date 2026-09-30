@@ -167,6 +167,9 @@ export async function getCashForecast(params: ForecastOptions): Promise<CashFore
   const weeks = params.weeks ?? DEFAULT_FORECAST_WEEKS;
   const weekStart = startOfWeek(asOf);
   const horizonEnd = addDays(weekStart, weeks * 7);
+  // Sources are generated through the 12-month window so the monthly view is
+  // as full as the weekly one; buildCashForecast drops what lies past its horizon.
+  const longHorizonEnd = addDays(weekStart, Math.max(weeks, 53) * 7);
   const scopeIds = params.scope.companyIds === "all" ? undefined : params.scope.companyIds;
   const visible = (companyId: number | null | undefined) => scopeAllows(params.scope, companyId);
 
@@ -180,7 +183,7 @@ export async function getCashForecast(params: ForecastOptions): Promise<CashFore
     db.getRecurringExpenses(params.scope, { isActive: true }),
     db.getInvoicePaymentHistory(params.scope, addDays(asOf, -365)),
     db.getBillPaymentHistory(params.scope, addDays(asOf, -365)),
-    params.includePipeline ? db.getOpenCrmDealsForForecast(params.scope, horizonEnd) : Promise.resolve([]),
+    params.includePipeline ? db.getOpenCrmDealsForForecast(params.scope, longHorizonEnd) : Promise.resolve([]),
     includeProjects ? db.getOpenPmCashEvents(params.scope) : Promise.resolve([]),
     db.getInventoryValuationForScope(params.scope),
     db.getCompanies(),
@@ -200,15 +203,14 @@ export async function getCashForecast(params: ForecastOptions): Promise<CashFore
 
   let events: CashEvent[] = [
     ...receivablesToEventsWithBehaviour(invoices as any, behaviour),
-    ...recurringToEvents(recurring.filter((r) => visible(r.companyId)) as any, horizonEnd, weekStart),
+    ...recurringToEvents(recurring.filter((r) => visible(r.companyId)) as any, longHorizonEnd, weekStart),
     ...billsToEventsWithBehaviour(openBills as any, vendorBehaviour, asOf),
     ...purchaseOrdersToEvents(pos as any, billedPoIds),
     ...payrollToEvents(payroll.filter((p) => visible(p.companyId)) as any),
-    ...recurringExpensesToEvents(expenses as any, horizonEnd, weekStart),
+    ...recurringExpensesToEvents(expenses as any, longHorizonEnd, weekStart),
     ...projectEventsToEvents(projects as any),
     ...pipelineToEvents(deals as any),
   ];
-  const pipelineWeightedTotal = round2(events.filter((e) => e.category === "pipeline_weighted").reduce((s, e) => s + e.amount, 0));
 
   // Recurring refs carry a date suffix; map them to the template's customer.
   const refLookup = new Map<string, number>();
@@ -227,6 +229,10 @@ export async function getCashForecast(params: ForecastOptions): Promise<CashFore
 
   if (params.knobs) events = applyScenario(events, params.knobs, refLookup);
   events.push(...adjustmentsToEvents(params.adjustments ?? []));
+  // Upside figure in USD, after conversion, limited to the 13-week window the totals cover.
+  const pipelineWeightedTotal = round2(
+    events.filter((e) => e.category === "pipeline_weighted" && e.date.getTime() < horizonEnd.getTime()).reduce((s, e) => s + e.amount, 0),
+  );
 
   let startingCash = 0;
   let cashSource: CashSource = "none";
@@ -263,14 +269,17 @@ export async function getCashForecast(params: ForecastOptions): Promise<CashFore
   if (vendorBehaviour.size > 0) notes.push(`${vendorBehaviour.size} vendor(s) forecast on when we actually pay them; autopay bills stay on due date.`);
   if (params.includePipeline && pipelineWeightedTotal > 0) notes.push(`$${pipelineWeightedTotal.toLocaleString("en-US")} of probability-weighted pipeline is included. Treat it as upside, not a receivable.`);
 
-  // 12-month view: same engine, longer horizon, rolled into calendar months.
-  const long = buildCashForecast({ asOf, startingCash, events, weeks: Math.max(weeks, 53) });
-  const months = rollupMonths(long).slice(0, 12);
+  // 12-month view from the dated events themselves.
+  const months = rollupMonths({ asOf, startingCash, events, months: 12 });
 
   // Per-entity split (global scope only shows more than one row).
   const names = new Map<number | null, string>(companies.map((c) => [c.id, c.name] as [number | null, string]));
   names.set(null, "Unassigned");
-  if (cashSource === "manual") startingCashByCompany.set(null, startingCash);
+  if (cashSource === "manual") {
+    // A single-entity scope owns the override; only global / multi-entity overrides stay unassigned.
+    const sole = scopeIds && scopeIds.length === 1 ? scopeIds[0] : null;
+    startingCashByCompany.set(sole, startingCash);
+  }
   const byEntity = splitByEntity({ asOf, events, weeks, startingCashByCompany, names });
 
   // Inventory at cost: money already spent, sitting on a shelf.
@@ -606,23 +615,49 @@ function scopeFromKey(scopeKey: string): Scope {
 }
 
 /** Send the digest to every active channel that wants it, grouped by scope so each entity gets its own numbers. */
-export async function runCashDigest(): Promise<{ scopes: number; sent: number; failed: number }> {
+/**
+ * Send the digest to every active channel that wants it, grouped by scope so
+ * each entity gets its own numbers. Each channel is claimed once per week
+ * (conditional UPDATE on lastSentAt) so replicas and restart re-ticks never
+ * double-send; `force` (the "send now" button) bypasses the weekly claim.
+ */
+export async function runCashDigest(opts: { force?: boolean; now?: Date } = {}): Promise<{ scopes: number; sent: number; failed: number; skipped: number }> {
+  const now = opts.now ?? new Date();
+  const weekStart = startOfWeek(now);
   const channels = (await db.getAllActiveCashNotificationChannels()).filter((c) => c.sendDigest);
   const byScope = new Map<string, typeof channels>();
   for (const c of channels) byScope.set(c.scopeKey, [...(byScope.get(c.scopeKey) ?? []), c]);
   let sent = 0;
   let failed = 0;
+  let skipped = 0;
   for (const [scopeKey, list] of byScope) {
-    const forecast = await getCashForecast({ scope: scopeFromKey(scopeKey) });
-    const msg = composeDigest(forecast);
+    // Claim before the (slow) forecast so a losing replica does no work at all.
+    const claimed: { channel: (typeof list)[number]; prev: Date | null }[] = [];
     for (const c of list) {
-      const r = await sendToChannel({ type: c.type, target: c.target }, msg);
-      await db.markCashNotificationChannelResult(c.id, r.ok, r.error);
+      const claim = await db.claimCashNotificationDigest(c.id, weekStart, now, opts.force === true);
+      if (claim.claimed) claimed.push({ channel: c, prev: claim.previousLastSentAt });
+      else skipped++;
+    }
+    if (claimed.length === 0) continue;
+    let msg: OutboundMessage;
+    try {
+      msg = composeDigest(await getCashForecast({ scope: scopeFromKey(scopeKey), asOf: now }));
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      for (const { channel, prev } of claimed) await db.releaseCashNotificationDigest(channel.id, prev, reason);
+      failed += claimed.length;
+      continue;
+    }
+    for (const { channel, prev } of claimed) {
+      const r = await sendToChannel({ type: channel.type, target: channel.target }, msg);
       if (r.ok) sent++;
-      else failed++;
+      else {
+        await db.releaseCashNotificationDigest(channel.id, prev, r.error ?? "send failed");
+        failed++;
+      }
     }
   }
-  return { scopes: byScope.size, sent, failed };
+  return { scopes: byScope.size, sent, failed, skipped };
 }
 
 export async function sendTestToChannel(channel: ChannelTarget, scope: Scope): Promise<{ ok: boolean; error?: string }> {

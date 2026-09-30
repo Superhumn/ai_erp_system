@@ -18575,6 +18575,7 @@ export async function pushPmCashEventToFinancialModel(projectId: number): Promis
   }
 
   await db.insert(financialModel).values({
+    companyId: project.companyId ?? null,
     sheetName: "PM Cash Events",
     category: project.cashEventType,
     metricName,
@@ -19321,6 +19322,30 @@ export async function deleteCashNotificationChannel(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.delete(cashNotificationChannels).where(eq(cashNotificationChannels.id, id));
+}
+
+/**
+ * Claim this week's digest for a channel: succeeds once per channel per week
+ * (lastSentAt moves to now only if it is still before `weekStart`). Replicas
+ * and restart re-ticks lose the race and skip. `force` bypasses the check.
+ */
+export async function claimCashNotificationDigest(id: number, weekStart: Date, now: Date, force = false): Promise<{ claimed: boolean; previousLastSentAt: Date | null }> {
+  const db = await getDb();
+  if (!db) return { claimed: false, previousLastSentAt: null };
+  const [row] = await db.select({ lastSentAt: cashNotificationChannels.lastSentAt }).from(cashNotificationChannels).where(eq(cashNotificationChannels.id, id)).limit(1);
+  if (!row) return { claimed: false, previousLastSentAt: null };
+  const prev = row.lastSentAt ?? null;
+  const guard = force
+    ? eq(cashNotificationChannels.id, id)
+    : and(eq(cashNotificationChannels.id, id), prev ? lt(cashNotificationChannels.lastSentAt, weekStart) : isNull(cashNotificationChannels.lastSentAt));
+  const result = await db.update(cashNotificationChannels).set({ lastSentAt: now, lastError: null }).where(guard);
+  return { claimed: ((result as any)[0]?.affectedRows ?? 0) > 0, previousLastSentAt: prev };
+}
+
+export async function releaseCashNotificationDigest(id: number, previousLastSentAt: Date | null, error: string) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(cashNotificationChannels).set({ lastSentAt: previousLastSentAt, lastError: error.slice(0, 2000) }).where(eq(cashNotificationChannels.id, id));
 }
 
 export async function markCashNotificationChannelResult(id: number, ok: boolean, error?: string) {

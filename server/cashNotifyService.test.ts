@@ -39,6 +39,18 @@ describe("sendToChannel", () => {
     const r = await sendToChannel({ type: "slack", target: "https://hooks.slack.com/services/T/B/x" }, msg);
     expect(r).toEqual({ ok: false, error: "Slack 404: no_service" });
   });
+  it("normalizes WhatsApp numbers before adding the prefix", async () => {
+    const create = vi.fn(async () => ({ sid: "SM1" }));
+    vi.doMock("twilio", () => ({ default: () => ({ messages: { create } }) }));
+    const { ENV } = await import("./_core/env");
+    Object.assign(ENV, { twilioAccountSid: "AC", twilioAuthToken: "tok", twilioWhatsappNumber: "+1 (415) 555-0000" });
+    const r = await sendToChannel({ type: "whatsapp", target: "+1 415 555-1234" }, msg);
+    expect(r.ok).toBe(true);
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ to: "whatsapp:+14155551234", from: "whatsapp:+14155550000" }));
+    Object.assign(ENV, { twilioAccountSid: "", twilioAuthToken: "", twilioWhatsappNumber: "" });
+    vi.doUnmock("twilio");
+  });
+
   it("fails cleanly when WhatsApp is not configured", async () => {
     const r = await sendToChannel({ type: "whatsapp", target: "+14155551234" }, msg);
     expect(r.ok).toBe(false);

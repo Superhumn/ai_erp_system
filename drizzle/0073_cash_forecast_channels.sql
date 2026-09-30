@@ -4,6 +4,8 @@
 --    webhook destinations for the Monday cash digest and low-cash alerts.
 --  * bills.autopay, vendors.autopay: direct-debit flags so the forecast
 --    pays those bills on the due date exactly instead of on vendor behaviour.
+--  * financial_model.companyId backfill for rows written by
+--    pushPmCashEventToFinancialModel.
 --
 -- Backed by drizzle/schema.ts. Re-runnable.
 
@@ -24,6 +26,13 @@ CREATE TABLE IF NOT EXISTS `cash_notification_channels` (
   `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT `cash_notification_channels_id` PRIMARY KEY(`id`)
 );
+--> statement-breakpoint
+-- PM cash events pushed to financial_model before this migration carried no
+-- companyId; entity-scoped views filter on it, so backfill from the project.
+UPDATE `financial_model` fm
+  JOIN `pm_projects` p ON fm.`notes` = CONCAT('pm_project_id=', p.`id`)
+  SET fm.`companyId` = p.`companyId`
+  WHERE fm.`companyId` IS NULL AND p.`companyId` IS NOT NULL;
 --> statement-breakpoint
 DROP PROCEDURE IF EXISTS `_migrate_0073_autopay`;
 --> statement-breakpoint

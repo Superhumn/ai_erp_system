@@ -93,9 +93,9 @@ function Channels({ isAdmin }: { isAdmin: boolean }) {
                 <tr key={r.id} className="border-b border-border/40 last:border-0">
                   <td className="py-1.5 pr-2 whitespace-nowrap">{CHANNEL_META[r.type as ChannelType]?.label ?? r.type}{r.label ? <span className="text-muted-foreground"> · {r.label}</span> : null}</td>
                   <td className="py-1.5 pr-2 max-w-[260px] truncate" title={r.target}>{r.type === "slack" || r.type === "google_chat" || r.type === "webhook" ? r.target.replace(/^https:\/\//, "").slice(0, 40) + "…" : r.target}</td>
-                  <td className="py-1.5 text-center"><Switch checked={r.sendDigest} onCheckedChange={(v) => update.mutate({ id: r.id, sendDigest: v })} /></td>
-                  <td className="py-1.5 text-center"><Switch checked={r.sendAlerts} onCheckedChange={(v) => update.mutate({ id: r.id, sendAlerts: v })} /></td>
-                  <td className="py-1.5 text-center"><Switch checked={r.isActive} onCheckedChange={(v) => update.mutate({ id: r.id, isActive: v })} /></td>
+                  <td className="py-1.5 text-center"><Switch aria-label={`Send Monday digest to ${r.label || r.target}`} checked={r.sendDigest} onCheckedChange={(v) => update.mutate({ id: r.id, sendDigest: v })} /></td>
+                  <td className="py-1.5 text-center"><Switch aria-label={`Send low-cash alerts to ${r.label || r.target}`} checked={r.sendAlerts} onCheckedChange={(v) => update.mutate({ id: r.id, sendAlerts: v })} /></td>
+                  <td className="py-1.5 text-center"><Switch aria-label={`${r.label || r.target} active`} checked={r.isActive} onCheckedChange={(v) => update.mutate({ id: r.id, isActive: v })} /></td>
                   <td className="py-1.5 pr-2 whitespace-nowrap">
                     {r.lastError ? <Badge variant="destructive" className="text-[10px]" title={r.lastError}>failed</Badge> : r.lastSentAt ? <span className="text-muted-foreground">{String(r.lastSentAt).slice(0, 10)}</span> : <span className="text-muted-foreground">never</span>}
                   </td>

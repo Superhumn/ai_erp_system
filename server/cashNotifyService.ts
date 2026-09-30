@@ -89,7 +89,11 @@ export async function sendToChannel(channel: ChannelTarget, message: OutboundMes
         }
         const { default: twilio } = await import("twilio");
         const client = twilio(ENV.twilioAccountSid, ENV.twilioAuthToken);
-        const withPrefix = (n: string) => (n.startsWith("whatsapp:") ? n : `whatsapp:${n.startsWith("+") ? n : `+${n}`}`);
+        const withPrefix = (raw: string) => {
+          if (raw.startsWith("whatsapp:")) return raw;
+          const n = raw.replace(/[\s-()]/g, "");
+          return `whatsapp:${n.startsWith("+") ? n : `+${n}`}`;
+        };
         const body = `*${message.title}*\n${message.text}`.slice(0, MAX_WHATSAPP);
         await client.messages.create({ to: withPrefix(channel.target), from: withPrefix(ENV.twilioWhatsappNumber), body });
         return { ok: true };
