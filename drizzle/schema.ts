@@ -518,7 +518,10 @@ export const payments = mysqlTable("payments", {
   createdBy: int("createdBy").references(() => users.id),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (t) => ({
+  // Migration 0073: payments of one page of invoices (Sales hub).
+  invoiceIdx: index("idx_payments_invoice").on(t.invoiceId),
+}));
 
 export const transactions = mysqlTable("transactions", {
   id: int("id").autoincrement().primaryKey(),
@@ -835,7 +838,10 @@ export const shipments = mysqlTable("shipments", {
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (t) => ({
+  // Migration 0073: shipments of one page of orders (Sales hub).
+  orderIdx: index("idx_shipments_order").on(t.orderId),
+}));
 
 // ============================================
 // HR MODULE
