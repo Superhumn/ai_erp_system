@@ -1997,6 +1997,40 @@ async function startServer() {
       }
     })();
 
+    // ── CRM: task reminder digest + stale-deal check (daily) ──
+    // Reminders email each assignee once per task (reminderSentAt); the stale
+    // check flags crm_deals.isStale and opens one follow-up task per stale
+    // deal. Both are idempotent across restarts. Multi-tenant mode runs them
+    // inside each tenant's context.
+    {
+      const CRM_DAILY_INTERVAL = 24 * 60 * 60 * 1000; // Daily
+      const crmLog = createLogger("CRM Daily");
+      const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+      const runCrmDailyOnce = async () => {
+        const { sendCrmTaskReminders, runStaleDealCheck } = await import("../crmService");
+        try {
+          const stale = await runStaleDealCheck();
+          if (stale.stale > 0 || stale.cleared > 0) crmLog.info("Stale deals", stale);
+        } catch (e) {
+          crmLog.warn("Stale-deal check failed", { error: errText(e) });
+        }
+        try {
+          const r = await sendCrmTaskReminders();
+          if (r.sent > 0 || r.failed > 0) crmLog.info("Task reminders", r);
+        } catch (e) {
+          crmLog.warn("Task reminders failed", { error: errText(e) });
+        }
+      };
+      const runCrmDaily = async () => {
+        if (isMultiTenant()) await forEachTenant(runCrmDailyOnce);
+        else await runCrmDailyOnce();
+      };
+      crmLog.info("Starting task-reminder + stale-deal scheduler");
+      setInterval(() => { void runCrmDaily(); }, CRM_DAILY_INTERVAL);
+      // Initial run after 10 minutes
+      setTimeout(() => { void runCrmDaily(); }, 10 * 60 * 1000);
+    }
+
     // ── Automation #8: Mercury transaction sync (every 15 minutes) ──
     if (process.env.MERCURY_API_TOKEN) {
       (async () => {

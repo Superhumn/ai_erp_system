@@ -37,7 +37,7 @@ import {
   Smartphone, QrCode, CreditCard, Filter, MoreHorizontal,
   Calendar, Clock, MessageCircle, Target, Handshake, HardDrive,
   Sparkles, ArrowRight, Upload, Heart, Truck,
-  Settings, Trash2, Edit, LayoutGrid, List
+  Settings, Trash2, Edit, LayoutGrid, List, ListTodo, BarChart3
 } from "lucide-react";
 import { Link } from "wouter";
 import {
@@ -50,12 +50,18 @@ import {
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { DetailSheet } from "@/components/DetailSheet";
+import { AccountsPanel } from "./Accounts";
+import { QuickAddTask, TaskList, TasksPanel } from "./CrmTasks";
+import { ReportsPanel } from "./CrmReports";
+import { ContactImportDialog } from "./ContactImportDialog";
 
 type ContactType = "lead" | "prospect" | "customer" | "partner" | "investor" | "donor" | "vendor" | "other";
 type ContactSource = "iphone_bump" | "whatsapp" | "linkedin_scan" | "business_card" | "website" | "referral" | "event" | "cold_outreach" | "import" | "manual";
 type PipelineStage = "new" | "contacted" | "qualified" | "proposal" | "negotiation" | "won" | "lost";
 
 type Category = "sales" | "partners" | "vendors" | "investors" | "donors" | "other";
+/** Top-level hub section: relationship lists (by category) or a workspace tab. */
+type Section = "relationships" | "accounts" | "tasks" | "reports";
 
 const CATEGORY_TYPES: Record<Category, ContactType[]> = {
   sales: ["lead", "prospect", "customer"],
@@ -65,6 +71,27 @@ const CATEGORY_TYPES: Record<Category, ContactType[]> = {
   donors: ["donor"],
   other: ["other"],
 };
+
+const FALLBACK_STAGES = ["discovery", "qualification", "proposal", "negotiation", "closed_won", "closed_lost"];
+const DEFAULT_ROTTING_DAYS = 21;
+
+/** Stage names from crm_pipelines.stages (JSON string array), tolerating junk. */
+function parseStageNames(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "") : [];
+  } catch {
+    return [];
+  }
+}
+
+function isRotting(lastActivityAt: string | Date | null | undefined, rottingDays: number | null | undefined, now = Date.now()): boolean {
+  if (!lastActivityAt) return false;
+  const t = new Date(lastActivityAt).getTime();
+  if (!Number.isFinite(t)) return false;
+  return now - t > (rottingDays ?? DEFAULT_ROTTING_DAYS) * 24 * 60 * 60 * 1000;
+}
 
 const CATEGORY_DEFAULT_TYPE: Record<Category, ContactType> = {
   sales: "lead",
@@ -88,7 +115,7 @@ function ContactDetailView({
   onContactUpdated: () => void;
 }) {
   const utils = trpc.useUtils();
-  const [activeTab, setActiveTab] = useState<"profile" | "notes" | "emails" | "documents">("profile");
+  const [activeTab, setActiveTab] = useState<"profile" | "notes" | "tasks" | "emails" | "documents">("profile");
   const [form, setForm] = useState({
     email: contact.email || "",
     phone: contact.phone || "",
@@ -120,22 +147,31 @@ function ContactDetailView({
     onError: (error: any) => toast.error(error.message),
   });
 
-  const tabClass = (tab: string) => `px-3 py-1.5 text-sm font-medium rounded-md cursor-pointer transition-colors ${activeTab === tab ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`;
+  const tabClass = (tab: string) => `px-3 py-1.5 text-sm font-medium rounded-md cursor-pointer transition-colors whitespace-nowrap ${activeTab === tab ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`;
 
   return (
     <div className="space-y-4">
       {/* Tab Navigation */}
-      <div className="flex gap-1 border-b pb-2">
+      <div className="flex items-center gap-2 text-xs">
+        {contact.leadScore != null && (
+          <Badge variant="outline" className="tabular-nums" title="Lead score (0-100), recomputed on activity">Score {contact.leadScore}</Badge>
+        )}
+        <div className="ml-auto"><QuickAddTask contactId={contact.id} label="Task" /></div>
+      </div>
+      <div className="flex gap-1 border-b pb-2 overflow-x-auto">
         <button className={tabClass("profile")} onClick={() => setActiveTab("profile")}>Profile</button>
         <button className={tabClass("notes")} onClick={() => setActiveTab("notes")}>Notes & Activity</button>
+        <button className={tabClass("tasks")} onClick={() => setActiveTab("tasks")}>Tasks</button>
         <button className={tabClass("emails")} onClick={() => setActiveTab("emails")}>Email History</button>
         <button className={tabClass("documents")} onClick={() => setActiveTab("documents")}>Documents</button>
       </div>
 
       {/* Profile Tab */}
+      {activeTab === "tasks" && <TaskList filter={{ contactId: contact.id }} />}
+
       {activeTab === "profile" && (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-xs">Organization</Label>
               <Input value={form.organization} onChange={(e) => setForm({ ...form, organization: e.target.value })} placeholder="Company name" />
@@ -273,7 +309,14 @@ function ContactDetailView({
 }
 
 export default function CRMHub() {
+  const utils = trpc.useUtils();
   const [category, setCategory] = useState<Category>("sales");
+  const [section, setSection] = useState<Section>("relationships");
+  const [contactSort, setContactSort] = useState<"createdAt" | "leadScore">("createdAt");
+  const [showImport, setShowImport] = useState(false);
+  // A kanban/table move into a lost stage waits here for a loss reason.
+  const [pendingLost, setPendingLost] = useState<{ dealId: number; stage: string } | null>(null);
+  const [pendingLossReasonId, setPendingLossReasonId] = useState("");
   const [search, setSearch] = useState("");
   const [dealsSearch, setDealsSearch] = useState("");
   const [isDealDialogOpen, setIsDealDialogOpen] = useState(false);
@@ -320,13 +363,47 @@ export default function CRMHub() {
   // Queries
   const { data: contacts, isLoading: contactsLoading, refetch: refetchContacts } = trpc.crm.contacts.list.useQuery({
     search: search || undefined,
+    sortBy: contactSort,
+    limit: 500,
   });
+  const { data: lossReasons } = trpc.crm.deals.lossReasons.list.useQuery(undefined, { enabled: !!pendingLost });
 
   const { data: dealStats } = trpc.crm.deals.getStats.useQuery();
   const { data: deals, isLoading: dealsLoading, refetch: refetchDeals } = trpc.crm.deals.list.useQuery({
     status: dealStatusFilter === "all" ? undefined : dealStatusFilter,
   });
   const { data: pipelines } = trpc.crm.pipelines.list.useQuery();
+  // Active pipeline: the default one, else the first. Kanban columns come
+  // from its typed stages (crm_pipeline_stages), falling back to the JSON
+  // array, then to the legacy hardcoded list.
+  // Kanban shows one pipeline at a time (stage names are per pipeline); the
+  // table and Reports deliberately span all pipelines.
+  const [boardPipelineId, setBoardPipelineId] = useState<number | null>(null);
+  const activePipeline = useMemo(() => {
+    const list = (pipelines ?? []) as any[];
+    return list.find((p) => p.id === boardPipelineId) ?? list.find((p) => p.isDefault) ?? list[0] ?? null;
+  }, [pipelines, boardPipelineId]);
+  const { data: pipelineStages } = trpc.crm.pipelines.stages.list.useQuery(
+    { pipelineId: activePipeline?.id ?? 0 },
+    { enabled: !!activePipeline?.id },
+  );
+  const stageNames = useMemo<string[]>(() => {
+    if (pipelineStages && pipelineStages.length > 0) return pipelineStages.map((s: any) => s.name);
+    const fromJson = parseStageNames(activePipeline?.stages);
+    return fromJson.length ? fromJson : FALLBACK_STAGES;
+  }, [pipelineStages, activePipeline]);
+  const stageByName = useMemo(() => {
+    const m: Record<string, any> = {};
+    (pipelineStages ?? []).forEach((st: any) => { m[st.name.toLowerCase()] = st; });
+    return m;
+  }, [pipelineStages]);
+  // Last activity + rotting threshold per open deal (kanban badge).
+  const { data: dealActivity } = trpc.crm.deals.activity.useQuery(undefined, { enabled: category === "sales" });
+  const activityById = useMemo(() => {
+    const m: Record<number, { lastActivityAt: string | Date | null; rottingDays: number }> = {};
+    (dealActivity ?? []).forEach((a: any) => { m[a.id] = a; });
+    return m;
+  }, [dealActivity]);
 
   // AI Next Steps for the deal currently open in the detail sheet
   const { data: nextStepsData, isLoading: nextStepsLoading } = trpc.crm.deals.getNextSteps.useQuery(
@@ -348,6 +425,20 @@ export default function CRMHub() {
   const updateDeal = trpc.crm.deals.update.useMutation({
     onSuccess: () => refetchDeals(),
   });
+  const moveStage = trpc.crm.deals.moveStage.useMutation({
+    onSuccess: () => { refetchDeals(); utils.crm.deals.forecast.invalidate(); utils.crm.deals.report.invalidate(); setPendingLost(null); setPendingLossReasonId(""); },
+    onError: (e: any) => toast.error(e.message),
+  });
+  /** Stage change from the kanban or table: a lost stage asks for a reason first. */
+  const requestMove = (dealId: number, stage: string) => {
+    const meta = stageByName[stage.toLowerCase()];
+    const deal = (deals as any[] | undefined)?.find((d: any) => d.id === dealId);
+    if (meta?.isLost && deal?.status !== "lost") {
+      setPendingLost({ dealId, stage });
+      return;
+    }
+    moveStage.mutate({ id: dealId, stage });
+  };
 
   const deleteDeal = trpc.crm.deals.delete.useMutation({
     onSuccess: () => {
@@ -643,7 +734,7 @@ export default function CRMHub() {
           <div className="h-4 w-px bg-border" />
           <div><span className="text-muted-foreground">Contacts</span> <span className="font-bold">{contacts?.length || 0}</span></div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
             size="sm"
@@ -728,7 +819,7 @@ export default function CRMHub() {
                 Capture Contact
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-lg">
+            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Capture Contact</DialogTitle>
                 <DialogDescription>
@@ -918,8 +1009,8 @@ export default function CRMHub() {
             </DialogContent>
           </Dialog>
 
-          <Button variant="outline" size="sm" onClick={() => window.location.href = "/import"}>
-            <Upload className="h-4 w-4 mr-1" /> Import
+          <Button variant="outline" size="sm" onClick={() => setShowImport(true)}>
+            <Upload className="h-4 w-4 mr-1" /> Import CSV
           </Button>
           <Dialog open={isContactDialogOpen} onOpenChange={(open) => {
             if (open) {
@@ -933,7 +1024,7 @@ export default function CRMHub() {
                 Add Contact
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-lg">
+            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Add New Contact</DialogTitle>
                 <DialogDescription>
@@ -1078,7 +1169,7 @@ export default function CRMHub() {
       </div>
 
       {/* Relationship-type tabs: not every contact is a sales deal */}
-      <div className="flex items-center gap-1 border-b">
+      <div className="flex items-center gap-1 border-b overflow-x-auto">
         {([
           { key: "sales", label: "Sales", icon: TrendingUp },
           { key: "partners", label: "Partners", icon: Handshake },
@@ -1090,9 +1181,9 @@ export default function CRMHub() {
           <button
             key={key}
             type="button"
-            onClick={() => { setCategory(key); setSelectedIds(new Set()); }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border-b-2 -mb-px transition-colors ${
-              category === key
+            onClick={() => { setSection("relationships"); setCategory(key); setSelectedIds(new Set()); }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${
+              section === "relationships" && category === key
                 ? "border-primary text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
@@ -1101,16 +1192,38 @@ export default function CRMHub() {
             {label}
           </button>
         ))}
+        <div className="h-4 w-px bg-border mx-1 shrink-0" />
+        {([
+          { key: "accounts", label: "Accounts", icon: Building2 },
+          { key: "tasks", label: "Tasks", icon: ListTodo },
+          { key: "reports", label: "Reports", icon: BarChart3 },
+        ] as const).map(({ key, label, icon: Icon }) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setSection(key)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${
+              section === key ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Icon className="h-3.5 w-3.5" />
+            {label}
+          </button>
+        ))}
       </div>
 
+      {section === "accounts" && <AccountsPanel />}
+      {section === "tasks" && <TasksPanel />}
+      {section === "reports" && <ReportsPanel onOpenDeal={(id) => { setDealStatusFilter("open"); setSelectedDealId(id); }} />}
+
       {/* Sales KPIs — compact bar (sales tab only) */}
-      {category === "sales" && (() => {
+      {section === "relationships" && category === "sales" && (() => {
         const openVal = Number(dealStats?.openValue || 0);
         const wonVal = Number(dealStats?.wonValue || 0);
         const totalDeals = (dealStats?.open || 0) + (dealStats?.won || 0) + (dealStats?.lost || 0);
         const conversionRate = totalDeals > 0 ? Math.round(((dealStats?.won || 0) / totalDeals) * 100) : 0;
         return (
-          <div className="flex items-center gap-4 text-xs border rounded-xl px-3 py-2 bg-card">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs border rounded-xl px-3 py-2 bg-card">
             <div><span className="text-muted-foreground">Pipeline</span> <span className="font-bold">${openVal.toLocaleString()}</span></div>
             <div className="h-5 w-px bg-border" />
             <div><span className="text-muted-foreground">Won</span> <span className="font-display font-bold tabular-nums text-foreground">${wonVal.toLocaleString()}</span></div>
@@ -1125,7 +1238,7 @@ export default function CRMHub() {
       })()}
 
       {/* Investors redirect — investors live in a separate table (/crm/investors) */}
-      {category === "investors" && (
+      {section === "relationships" && category === "investors" && (
         <Card className="py-3">
           <CardContent className="py-8 text-center space-y-3">
             <DollarSign className="h-12 w-12 mx-auto text-muted-foreground" />
@@ -1146,11 +1259,11 @@ export default function CRMHub() {
       )}
 
       {/* Deals — sales tab only */}
-      {category === "sales" && (
+      {section === "relationships" && category === "sales" && (
       <Card className="py-3">
         <CardHeader className="pb-2">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <div className="flex items-center gap-3">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+            <div className="flex items-center gap-3 flex-wrap">
               <CardTitle className="text-sm">Deals</CardTitle>
               {/* Status filter pills */}
               <div className="flex items-center gap-1 text-xs">
@@ -1169,7 +1282,17 @@ export default function CRMHub() {
                 ))}
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              {dealView === "kanban" ? (
+                <Select value={activePipeline ? String(activePipeline.id) : ""} onValueChange={(v) => setBoardPipelineId(Number(v))}>
+                  <SelectTrigger className="h-8 w-[170px] text-xs" aria-label="Board pipeline"><SelectValue placeholder="Pipeline" /></SelectTrigger>
+                  <SelectContent>
+                    {((pipelines ?? []) as any[]).map((p: any) => <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <span className="text-[11px] text-muted-foreground">All pipelines</span>
+              )}
               {/* View toggle */}
               <div className="flex items-center rounded border bg-background">
                 <button
@@ -1187,13 +1310,13 @@ export default function CRMHub() {
                   <LayoutGrid className="h-4 w-4" />
                 </button>
               </div>
-              <div className="relative">
+              <div className="relative flex-1 sm:flex-none">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
                   placeholder="Search deals..."
                   value={dealsSearch}
                   onChange={(e) => setDealsSearch(e.target.value)}
-                  className="pl-8 w-[250px]"
+                  className="pl-8 w-full sm:w-[250px]"
                 />
               </div>
               <Button onClick={() => setIsDealDialogOpen(true)}>
@@ -1238,18 +1361,27 @@ export default function CRMHub() {
                       className="hover:bg-muted/50 cursor-pointer text-xs h-7"
                       onClick={() => setSelectedDealId(deal.id)}
                     >
-                      <TableCell className="font-medium">{deal._company !== "-" ? deal._company : deal.name}</TableCell>
+                      <TableCell className="font-medium">
+                        {deal._company !== "-" ? deal._company : deal.name}
+                        {deal.isStale && deal.status === "open" && (
+                          <span className="ml-1.5 rounded px-1 py-px text-[9px] font-semibold uppercase bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">Stale</span>
+                        )}
+                      </TableCell>
                       <TableCell>{deal._contactName}</TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
-                        <select
-                          value={deal.stage}
-                          onChange={(e) => updateDeal.mutate({ id: deal.id, stage: e.target.value })}
-                          className="bg-transparent border-none text-xs cursor-pointer focus:outline-none"
-                        >
-                          {["discovery", "qualification", "proposal", "negotiation", "closed_won", "closed_lost"].map(s => (
-                            <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
-                          ))}
-                        </select>
+                        {deal.pipelineId === activePipeline?.id ? (
+                          <select
+                            value={deal.stage}
+                            onChange={(e) => requestMove(deal.id, e.target.value)}
+                            className="bg-transparent border-none text-xs cursor-pointer focus:outline-none"
+                          >
+                            {(stageNames.includes(deal.stage) ? stageNames : [deal.stage, ...stageNames]).map(s => (
+                              <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="capitalize" title="Switch the board to this deal's pipeline to move it">{deal.stage?.replace(/_/g, " ")}</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-right font-semibold tabular-nums text-foreground" onClick={(e) => e.stopPropagation()}>
                         <InlineEdit value={deal._value || "0"} type="number" onSave={(v) => updateDeal.mutate({ id: deal.id, amount: v })} />
@@ -1286,44 +1418,69 @@ export default function CRMHub() {
               </Table>
             </div>
           ) : (
-            // Kanban view — one column per stage, drag a card to move stage
-            <div className="flex gap-2 overflow-x-auto pb-2">
-              {["discovery", "qualification", "proposal", "negotiation", "closed_won", "closed_lost"].map((stage) => {
-                const stageDeals = filteredDeals.filter((d: any) => d.stage === stage);
+            // Kanban view — one column per pipeline stage, drag a card to move stage
+            <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1 snap-x snap-mandatory md:snap-none">
+              {stageNames.map((stage) => {
+                const stageMeta = stageByName[stage.toLowerCase()];
+                const stageDeals = filteredDeals.filter((d: any) => d.pipelineId === activePipeline?.id && d.stage?.toLowerCase() === stage.toLowerCase());
                 const stageValue = stageDeals.reduce((sum: number, d: any) => sum + Number(d._value || 0), 0);
                 return (
                   <div
                     key={stage}
-                    className="min-w-[220px] flex-1 bg-muted/30 rounded p-2"
+                    className="w-[78vw] min-w-[220px] sm:w-auto sm:min-w-[220px] flex-1 bg-muted/30 rounded p-2 shrink-0 snap-start"
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={(e) => {
                       e.preventDefault();
                       if (draggingDealId != null) {
-                        updateDeal.mutate({ id: draggingDealId, stage });
+                        requestMove(draggingDealId, stage);
                         setDraggingDealId(null);
                       }
                     }}
                   >
-                    <div className="flex items-center justify-between mb-2 px-1">
-                      <span className="text-xs font-semibold capitalize">{stage.replace(/_/g, " ")}</span>
-                      <span className="text-[10px] text-muted-foreground">
+                    <div className="flex items-center justify-between mb-2 px-1 gap-1">
+                      <span className="text-xs font-semibold capitalize truncate" title={stageMeta ? `${stageMeta.defaultProbability}% default` : undefined}>
+                        {stage.replace(/_/g, " ")}
+                        {stageMeta && <span className="ml-1 text-[10px] font-normal text-muted-foreground">{stageMeta.defaultProbability}%</span>}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground whitespace-nowrap">
                         {stageDeals.length} · ${stageValue.toLocaleString()}
                       </span>
                     </div>
                     <div className="space-y-1.5">
-                      {stageDeals.map((deal: any) => (
+                      {stageDeals.map((deal: any) => {
+                        const act = activityById[deal.id];
+                        // Server flag from the daily stale-deal job, or live rotting from activity.
+                        const rotting = deal.status === "open" && !stageMeta?.isWon && !stageMeta?.isLost
+                          && (deal.isStale || isRotting(act?.lastActivityAt ?? deal._lastContact ?? deal.updatedAt ?? deal.createdAt, act?.rottingDays ?? stageMeta?.rottingDays));
+                        return (
                         <div
                           key={deal.id}
                           draggable
                           onDragStart={() => setDraggingDealId(deal.id)}
                           onDragEnd={() => setDraggingDealId(null)}
                           onClick={() => setSelectedDealId(deal.id)}
-                          className="bg-background border rounded p-2 text-xs cursor-pointer hover:border-primary"
+                          className={`bg-background border rounded p-2 text-xs cursor-pointer hover:border-primary ${rotting ? "border-amber-400/70" : ""}`}
                         >
-                          <div className="font-medium truncate">{deal._company !== "-" ? deal._company : deal.name}</div>
+                          <div className="flex items-center gap-1">
+                            <div className="font-medium truncate flex-1">{deal._company !== "-" ? deal._company : deal.name}</div>
+                            {rotting && (
+                              <span className="shrink-0 rounded px-1 py-px text-[9px] font-semibold uppercase bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200" title={`No activity in ${act?.rottingDays ?? stageMeta?.rottingDays ?? DEFAULT_ROTTING_DAYS}+ days, or the expected close date has passed`}>
+                                Stale
+                              </span>
+                            )}
+                          </div>
                           {deal._contactName !== "-" && (
                             <div className="text-muted-foreground text-[11px] truncate">{deal._contactName}</div>
                           )}
+                          {/* Touch devices can't drag: move via select. */}
+                          <select
+                            className="md:hidden mt-1 w-full bg-transparent border rounded text-[11px] py-0.5"
+                            value={deal.stage}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => requestMove(deal.id, e.target.value)}
+                          >
+                            {stageNames.map((s) => <option key={s} value={s}>{s.replace(/_/g, " ")}</option>)}
+                          </select>
                           <div className="flex items-center justify-between mt-1">
                             <span className="text-foreground font-semibold tabular-nums">
                               ${Number(deal._value || 0).toLocaleString()}
@@ -1335,7 +1492,8 @@ export default function CRMHub() {
                             )}
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                       {stageDeals.length === 0 && (
                         <div className="text-[10px] text-muted-foreground text-center py-2 italic">
                           No deals
@@ -1367,16 +1525,18 @@ export default function CRMHub() {
           return parts.length ? parts.join(" · ") : null;
         })()}
         width="md"
+        className="w-full"
       >
         {(() => {
           const deal = filteredDeals.find((d: any) => d.id === selectedDealId);
           if (!deal) return null;
           return (
             <div className="space-y-4 p-4">
-              <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                 <div>
                   <div className="text-xs text-muted-foreground">Value</div>
                   <div className="font-semibold tabular-nums text-foreground">${Number(deal._value || 0).toLocaleString()}</div>
+                  {deal.isStale && deal.status === "open" && <div className="text-[11px] text-amber-700 dark:text-amber-300">Stale — no recent activity or close date passed</div>}
                 </div>
                 <div>
                   <div className="text-xs text-muted-foreground">Stage</div>
@@ -1402,6 +1562,16 @@ export default function CRMHub() {
                     <div className="text-sm whitespace-pre-wrap">{deal.notes}</div>
                   </div>
                 )}
+              </div>
+              <DealExtras
+                deal={deal}
+                salesContacts={salesContacts}
+                stageByName={stageByName}
+                onChanged={() => { refetchDeals(); utils.crm.deals.forecast.invalidate(); utils.crm.deals.report.invalidate(); }}
+              />
+              <div className="border-t pt-3 space-y-2">
+                <h4 className="font-medium text-sm">Tasks</h4>
+                <TaskList filter={{ dealId: deal.id }} compact />
               </div>
               <div className="border-t pt-3">
                 <div className="flex items-center gap-2 mb-3">
@@ -1460,10 +1630,10 @@ export default function CRMHub() {
       </DetailSheet>
 
       {/* Contacts Table — hidden on investors tab (investors have their own page) */}
-      {category !== "investors" && (
+      {section === "relationships" && category !== "investors" && (
       <Card className="py-3">
         <CardHeader className="pb-2">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <CardTitle className="text-sm flex items-center gap-2">
               {category === "sales" ? "Sales Contacts"
                 : category === "partners" ? "Partners"
@@ -1472,14 +1642,23 @@ export default function CRMHub() {
                 : "Other Contacts"}
               <span className="text-muted-foreground font-normal">({categoryContacts.length})</span>
             </CardTitle>
-            <div className="relative">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search contacts..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-8 w-[250px]"
-              />
+            <div className="flex items-center gap-2">
+              <Select value={contactSort} onValueChange={(v) => setContactSort(v as "createdAt" | "leadScore")}>
+                <SelectTrigger className="h-9 w-[130px] text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="createdAt">Newest</SelectItem>
+                  <SelectItem value="leadScore">Lead score</SelectItem>
+                </SelectContent>
+              </Select>
+              <div className="relative flex-1 sm:flex-none">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search contacts..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="pl-8 w-full sm:w-[250px]"
+                />
+              </div>
             </div>
           </div>
         </CardHeader>
@@ -1534,13 +1713,14 @@ export default function CRMHub() {
                         }}
                       />
                     </TableHead>
-                    <TableHead className="min-w-[160px]">Name</TableHead>
-                    <TableHead className="min-w-[120px]">Organization</TableHead>
-                    <TableHead className="min-w-[160px]">Email</TableHead>
-                    <TableHead className="min-w-[110px]">Phone</TableHead>
-                    <TableHead className="min-w-[90px]">Type</TableHead>
-                    <TableHead className="min-w-[90px]">Source</TableHead>
-                    <TableHead className="min-w-[100px]">Last Contact</TableHead>
+                    <TableHead className="min-w-[140px]">Name</TableHead>
+                    <TableHead className="w-[60px] text-right">Score</TableHead>
+                    <TableHead className="min-w-[120px] hidden md:table-cell">Organization</TableHead>
+                    <TableHead className="min-w-[160px] hidden md:table-cell">Email</TableHead>
+                    <TableHead className="min-w-[110px] hidden lg:table-cell">Phone</TableHead>
+                    <TableHead className="min-w-[90px] hidden sm:table-cell">Type</TableHead>
+                    <TableHead className="min-w-[90px] hidden lg:table-cell">Source</TableHead>
+                    <TableHead className="min-w-[100px] hidden md:table-cell">Last Contact</TableHead>
                     <TableHead className="w-[40px]"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -1567,9 +1747,11 @@ export default function CRMHub() {
                       </TableCell>
                       <TableCell className="font-medium">
                         {contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '-'}
+                        <div className="md:hidden text-[11px] font-normal text-muted-foreground truncate max-w-[200px]">{contact.organization || contact.email || ''}</div>
                       </TableCell>
-                      <TableCell>{contact.organization || '-'}</TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell className="text-right tabular-nums text-sm">{contact.leadScore ?? 0}</TableCell>
+                      <TableCell className="hidden md:table-cell">{contact.organization || '-'}</TableCell>
+                      <TableCell className="text-sm hidden md:table-cell">
                         {contact.email ? (
                           <a
                             href={`mailto:${contact.email}`}
@@ -1580,16 +1762,16 @@ export default function CRMHub() {
                           </a>
                         ) : '-'}
                       </TableCell>
-                      <TableCell className="text-sm">{contact.phone || '-'}</TableCell>
-                      <TableCell>
+                      <TableCell className="text-sm hidden lg:table-cell">{contact.phone || '-'}</TableCell>
+                      <TableCell className="hidden sm:table-cell">
                         <Badge variant="secondary" className="capitalize text-xs">
                           {contact.contactType || '-'}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-sm capitalize">
+                      <TableCell className="text-sm capitalize hidden lg:table-cell">
                         {(contact.source || '-').replace(/_/g, ' ')}
                       </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
+                      <TableCell className="text-sm text-muted-foreground hidden md:table-cell">
                         {contact.lastContactedAt
                           ? format(new Date(contact.lastContactedAt), 'MMM d, yyyy')
                           : '-'}
@@ -1632,7 +1814,7 @@ export default function CRMHub() {
 
       {/* New Deal Dialog */}
       <Dialog open={isDealDialogOpen} onOpenChange={setIsDealDialogOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>New Deal</DialogTitle>
             <DialogDescription>Create a new deal in your pipeline</DialogDescription>
@@ -1667,18 +1849,15 @@ export default function CRMHub() {
                 </div>
               )}
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label className="text-xs">Stage</Label>
                 <Select value={dealForm.stage} onValueChange={(v) => setDealForm({ ...dealForm, stage: v })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="discovery">Discovery</SelectItem>
-                    <SelectItem value="qualified">Qualified</SelectItem>
-                    <SelectItem value="proposal">Proposal</SelectItem>
-                    <SelectItem value="negotiation">Negotiation</SelectItem>
-                    <SelectItem value="closed_won">Closed Won</SelectItem>
-                    <SelectItem value="closed_lost">Closed Lost</SelectItem>
+                    {(stageNames.includes(dealForm.stage) ? stageNames : [dealForm.stage, ...stageNames]).map((st) => (
+                      <SelectItem key={st} value={st} className="capitalize">{st.replace(/_/g, " ")}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -1723,10 +1902,10 @@ export default function CRMHub() {
                   return;
                 }
               }
-              // Auto-name deal from contact's company or name
+              // Deal name: what was typed, else the contact's company / name
               const selectedC = (contacts as any[])?.find((c: any) => c.id === contactId);
-              const autoName = selectedC?.organization || selectedC?.fullName || dealForm.contactName || "New Deal";
-              const activePipelineId = pipelines?.[0]?.id;
+              const autoName = dealForm.name.trim() || selectedC?.organization || selectedC?.fullName || dealForm.contactName || "New Deal";
+              const activePipelineId = activePipeline?.id;
               if (!activePipelineId) {
                 toast.error("No sales pipeline found. Please set up a pipeline first.");
                 return;
@@ -1757,6 +1936,7 @@ export default function CRMHub() {
           selectedContact?.organization || "No organization",
         ].filter(Boolean).join(" at ")}
         width="lg"
+        className="w-full"
       >
         {selectedContact && (
           <ContactDetailView
@@ -1767,6 +1947,32 @@ export default function CRMHub() {
           />
         )}
       </DetailSheet>
+
+      <Dialog open={!!pendingLost} onOpenChange={(o) => { if (!o) { setPendingLost(null); setPendingLossReasonId(""); } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Why was this deal lost?</DialogTitle>
+            <DialogDescription>Moving to "{pendingLost?.stage.replace(/_/g, " ")}" closes the deal as lost.</DialogDescription>
+          </DialogHeader>
+          <Select value={pendingLossReasonId} onValueChange={setPendingLossReasonId}>
+            <SelectTrigger><SelectValue placeholder="Pick a reason" /></SelectTrigger>
+            <SelectContent>
+              {((lossReasons ?? []) as any[]).map((r: any) => <SelectItem key={r.id} value={String(r.id)}>{r.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingLost(null)}>Cancel</Button>
+            <Button
+              disabled={!pendingLossReasonId || moveStage.isPending}
+              onClick={() => pendingLost && moveStage.mutate({ id: pendingLost.dealId, stage: pendingLost.stage, lossReasonId: Number(pendingLossReasonId) })}
+            >
+              {moveStage.isPending ? "Saving…" : "Mark lost"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ContactImportDialog open={showImport} onOpenChange={setShowImport} onImported={() => { refetchContacts(); utils.crm.accounts.list.invalidate(); }} />
 
       <TagsManagerDialog open={showTagsManager} onClose={() => setShowTagsManager(false)} />
       <PipelinesManagerDialog open={showPipelinesManager} onClose={() => setShowPipelinesManager(false)} />
@@ -1905,6 +2111,7 @@ function PipelinesManagerDialog({ open, onClose }: { open: boolean; onClose: () 
   const utils = trpc.useUtils();
   const { data: pipelines } = trpc.crm.pipelines.list.useQuery(undefined, { enabled: open });
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [stagesFor, setStagesFor] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({
     name: "",
@@ -2066,6 +2273,9 @@ function PipelinesManagerDialog({ open, onClose }: { open: boolean; onClose: () 
                           {stageCount} stage{stageCount === 1 ? "" : "s"}
                         </div>
                       </div>
+                      <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setStagesFor(stagesFor === p.id ? null : p.id)}>
+                        <LayoutGrid className="h-3.5 w-3.5 mr-1" /> Stages
+                      </Button>
                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => startEdit(p)}>
                         <Edit className="h-3.5 w-3.5" />
                       </Button>
@@ -2074,6 +2284,7 @@ function PipelinesManagerDialog({ open, onClose }: { open: boolean; onClose: () 
                 })
               )}
             </div>
+            {stagesFor !== null && <PipelineStageEditor pipelineId={stagesFor} />}
           </>
         )}
 
@@ -2082,5 +2293,314 @@ function PipelinesManagerDialog({ open, onClose }: { open: boolean; onClose: () 
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
+// Stage editor — typed stages (probability, won/lost, rotting days,
+// order) for one pipeline. Deals reference stages by name, so a
+// rename carries its deals along on the server.
+// ──────────────────────────────────────────────────────────────
+function PipelineStageEditor({ pipelineId }: { pipelineId: number }) {
+  const utils = trpc.useUtils();
+  const { data: stages, isLoading } = trpc.crm.pipelines.stages.list.useQuery({ pipelineId });
+  const [newName, setNewName] = useState("");
+  const refresh = () => {
+    utils.crm.pipelines.stages.list.invalidate({ pipelineId });
+    utils.crm.pipelines.list.invalidate();
+  };
+  const onError = (e: any) => toast.error(e.message);
+  const createStage = trpc.crm.pipelines.stages.create.useMutation({ onSuccess: () => { setNewName(""); refresh(); }, onError });
+  const updateStage = trpc.crm.pipelines.stages.update.useMutation({ onSuccess: refresh, onError });
+  const reorder = trpc.crm.pipelines.stages.reorder.useMutation({ onSuccess: refresh, onError });
+  const deleteStage = trpc.crm.pipelines.stages.delete.useMutation({ onSuccess: () => { toast.success("Stage deleted"); refresh(); }, onError });
+
+  const list = (stages ?? []) as any[];
+  const move = (idx: number, dir: -1 | 1) => {
+    const ids = list.map((st) => st.id);
+    const j = idx + dir;
+    if (j < 0 || j >= ids.length) return;
+    [ids[idx], ids[j]] = [ids[j], ids[idx]];
+    reorder.mutate({ pipelineId, orderedIds: ids });
+  };
+
+  return (
+    <div className="mt-3 rounded-md border p-2 space-y-2">
+      <div className="text-xs font-medium">Stages</div>
+      {isLoading ? (
+        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+      ) : list.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No stages yet.</p>
+      ) : (
+        <div className="space-y-1">
+          <div className="hidden sm:grid grid-cols-[1fr_64px_64px_44px_44px_72px] gap-1 text-[10px] text-muted-foreground px-1">
+            <span>Name</span><span>Prob %</span><span>Rot days</span><span>Won</span><span>Lost</span><span></span>
+          </div>
+          {list.map((st, idx) => (
+            <div key={st.id} className="grid grid-cols-2 sm:grid-cols-[1fr_64px_64px_44px_44px_72px] gap-1 items-center text-xs px-1">
+              <InlineEdit value={st.name} onSave={(v) => v.trim() && v !== st.name && updateStage.mutate({ id: st.id, name: v.trim() })} className="font-medium" />
+              <Input
+                type="number" min={0} max={100} defaultValue={st.defaultProbability} className="h-7 text-xs px-1.5"
+                onBlur={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v !== st.defaultProbability) updateStage.mutate({ id: st.id, defaultProbability: Math.max(0, Math.min(100, Math.round(v))) }); }}
+              />
+              <Input
+                type="number" min={1} placeholder="21" defaultValue={st.rottingDays ?? ""} className="h-7 text-xs px-1.5"
+                onBlur={(e) => { const raw = e.target.value.trim(); const v = raw ? Number(raw) : null; if ((v === null || (Number.isFinite(v) && v > 0)) && v !== st.rottingDays) updateStage.mutate({ id: st.id, rottingDays: v }); }}
+              />
+              <label className="flex items-center gap-1"><input type="checkbox" checked={!!st.isWon} onChange={(e) => updateStage.mutate({ id: st.id, isWon: e.target.checked, ...(e.target.checked ? { isLost: false } : {}) })} /><span className="sm:hidden">Won</span></label>
+              <label className="flex items-center gap-1"><input type="checkbox" checked={!!st.isLost} onChange={(e) => updateStage.mutate({ id: st.id, isLost: e.target.checked, ...(e.target.checked ? { isWon: false } : {}) })} /><span className="sm:hidden">Lost</span></label>
+              <div className="flex items-center gap-0.5 col-span-2 sm:col-span-1 justify-end">
+                <Button variant="ghost" size="icon" className="h-6 w-6" disabled={idx === 0} onClick={() => move(idx, -1)} title="Move up">↑</Button>
+                <Button variant="ghost" size="icon" className="h-6 w-6" disabled={idx === list.length - 1} onClick={() => move(idx, 1)} title="Move down">↓</Button>
+                <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => { if (confirm(`Delete stage "${st.name}"?`)) deleteStage.mutate({ id: st.id }); }} title="Delete">
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <Input placeholder="New stage name" value={newName} onChange={(e) => setNewName(e.target.value)} className="h-7 text-xs" />
+        <Button size="sm" className="h-7 text-xs" disabled={!newName.trim() || createStage.isPending} onClick={() => createStage.mutate({ pipelineId, name: newName.trim() })}>
+          <Plus className="h-3 w-3 mr-1" /> Add
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
+// Deal extras — buying committee, line items and close won/lost,
+// shown inside the deal detail sheet.
+// ──────────────────────────────────────────────────────────────
+const DEAL_ROLES = [
+  { value: "decision_maker", label: "Decision maker" },
+  { value: "champion", label: "Champion" },
+  { value: "procurement", label: "Procurement" },
+  { value: "influencer", label: "Influencer" },
+  { value: "blocker", label: "Blocker" },
+  { value: "other", label: "Other" },
+] as const;
+type DealRole = (typeof DEAL_ROLES)[number]["value"];
+
+function DealExtras({ deal, salesContacts, stageByName, onChanged }: {
+  deal: any;
+  salesContacts: any[];
+  stageByName: Record<string, any>;
+  onChanged: () => void;
+}) {
+  const utils = trpc.useUtils();
+  const dealId = deal.id as number;
+  const { data: dealContacts } = trpc.crm.deals.contacts.list.useQuery({ dealId });
+  const { data: items } = trpc.crm.deals.items.list.useQuery({ dealId });
+  const { data: lossReasons } = trpc.crm.deals.lossReasons.list.useQuery();
+  const { data: history } = trpc.crm.deals.stageHistory.useQuery({ dealId });
+  const { data: products } = trpc.products.list.useQuery();
+  const [addContactId, setAddContactId] = useState<string>("");
+  const [addRole, setAddRole] = useState<DealRole>("influencer");
+  const [item, setItem] = useState({ productId: "", description: "", quantity: "1", unit: "case", unitPrice: "", annualVolume: "" });
+  const [closing, setClosing] = useState<"won" | "lost" | null>(null);
+  const [lossReasonId, setLossReasonId] = useState<string>("");
+  const [closeNote, setCloseNote] = useState("");
+
+  const onError = (e: any) => toast.error(e.message);
+  const refreshContacts = () => utils.crm.deals.contacts.list.invalidate({ dealId });
+  const refreshItems = () => { utils.crm.deals.items.list.invalidate({ dealId }); onChanged(); };
+  const addContact = trpc.crm.deals.contacts.add.useMutation({ onSuccess: () => { setAddContactId(""); refreshContacts(); }, onError });
+  const removeContact = trpc.crm.deals.contacts.remove.useMutation({ onSuccess: refreshContacts, onError });
+  const addItem = trpc.crm.deals.items.add.useMutation({ onSuccess: () => { setItem({ productId: "", description: "", quantity: "1", unit: "case", unitPrice: "", annualVolume: "" }); refreshItems(); }, onError });
+  const pickProduct = (id: string) => {
+    const p = ((products ?? []) as any[]).find((x: any) => String(x.id) === id);
+    setItem((cur) => ({
+      ...cur,
+      productId: id,
+      description: p ? (p.sku ? `${p.name} (${p.sku})` : p.name) : cur.description,
+      unitPrice: p && p.unitPrice != null && cur.unitPrice === "" ? String(Number(p.unitPrice)) : cur.unitPrice,
+    }));
+  };
+  const removeItem = trpc.crm.deals.items.remove.useMutation({ onSuccess: refreshItems, onError });
+  const closeDeal = trpc.crm.deals.close.useMutation({
+    onSuccess: (r) => { toast.success(r.status === "won" ? "Deal marked won" : "Deal marked lost"); setClosing(null); setCloseNote(""); setLossReasonId(""); onChanged(); },
+    onError,
+  });
+
+  const linkedIds = new Set((dealContacts ?? []).map((c: any) => c.contactId));
+  const candidates = salesContacts.filter((c) => !linkedIds.has(c.id));
+  const itemsTotal = (items ?? []).reduce((sum: number, it: any) => sum + Number(it.totalAmount || 0), 0);
+  const stageMeta = stageByName[(deal.stage ?? "").toLowerCase()];
+  const isOpen = deal.status === "open" || deal.status === "stalled";
+
+  return (
+    <div className="space-y-4">
+      {/* Close won / lost */}
+      <div className="border-t pt-3 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <h4 className="font-medium text-sm flex-1">Outcome</h4>
+          {isOpen ? (
+            <>
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setClosing("won")}>Mark won</Button>
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setClosing("lost")}>Mark lost</Button>
+            </>
+          ) : (
+            <Badge variant={deal.status === "won" ? "default" : "secondary"} className="capitalize">{deal.status}</Badge>
+          )}
+        </div>
+        {closing && (
+          <div className="rounded-md border p-2 space-y-2 text-xs">
+            {closing === "lost" && (
+              <div className="space-y-1">
+                <Label className="text-xs">Loss reason</Label>
+                <Select value={lossReasonId} onValueChange={setLossReasonId}>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Pick a reason" /></SelectTrigger>
+                  <SelectContent>
+                    {(lossReasons ?? []).map((r: any) => <SelectItem key={r.id} value={String(r.id)}>{r.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div className="space-y-1">
+              <Label className="text-xs">{closing === "won" ? "Why we won" : "Note"}</Label>
+              <Textarea rows={2} value={closeNote} onChange={(e) => setCloseNote(e.target.value)} placeholder={closing === "won" ? "What sealed it? (saved as the win reason)" : "What happened?"} />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setClosing(null)}>Cancel</Button>
+              <Button
+                size="sm"
+                className="h-7 text-xs"
+                disabled={closeDeal.isPending || (closing === "lost" && !lossReasonId)}
+                onClick={() => closeDeal.mutate({ dealId, outcome: closing, lossReasonId: closing === "lost" && lossReasonId ? Number(lossReasonId) : null, note: closeNote || null })}
+              >
+                {closeDeal.isPending ? "Saving…" : closing === "won" ? "Confirm won" : "Confirm lost"}
+              </Button>
+            </div>
+          </div>
+        )}
+        {deal.status === "won" && deal.wonReason && (
+          <p className="text-xs text-muted-foreground">Won: {deal.wonReason}</p>
+        )}
+        {deal.status === "lost" && (deal.lostReason || deal.lossReasonId) && (
+          <p className="text-xs text-muted-foreground">
+            Lost{deal.lossReasonId ? `: ${(lossReasons ?? []).find((r: any) => r.id === deal.lossReasonId)?.name ?? ""}` : ""}{deal.lostReason ? ` — ${deal.lostReason}` : ""}
+          </p>
+        )}
+      </div>
+
+      {/* Buying committee */}
+      <div className="border-t pt-3 space-y-2">
+        <h4 className="font-medium text-sm">Buying committee</h4>
+        {(dealContacts ?? []).length === 0 ? (
+          <p className="text-xs text-muted-foreground italic">No contacts linked yet.</p>
+        ) : (
+          <div className="space-y-1">
+            {(dealContacts ?? []).map((c: any) => (
+              <div key={c.id} className="flex items-center gap-2 text-xs border rounded p-1.5">
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium truncate">{c.contactName}</div>
+                  <div className="text-muted-foreground truncate">{[c.contactTitle, c.contactEmail].filter(Boolean).join(" · ") || "—"}</div>
+                </div>
+                <Badge variant="outline" className="text-[10px] capitalize">{String(c.role).replace(/_/g, " ")}</Badge>
+                {c.contactId !== deal.contactId && (
+                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeContact.mutate({ dealId, contactId: c.contactId })} title="Remove">
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="flex flex-col sm:flex-row gap-2">
+          <Select value={addContactId} onValueChange={setAddContactId}>
+            <SelectTrigger className="h-8 text-xs flex-1"><SelectValue placeholder="Add a contact" /></SelectTrigger>
+            <SelectContent>
+              {candidates.map((c) => <SelectItem key={c.id} value={String(c.id)}>{c.fullName || c.email}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={addRole} onValueChange={(v) => setAddRole(v as DealRole)}>
+            <SelectTrigger className="h-8 text-xs sm:w-[150px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {DEAL_ROLES.map((r) => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Button size="sm" className="h-8 text-xs" disabled={!addContactId || addContact.isPending} onClick={() => addContact.mutate({ dealId, contactId: Number(addContactId), role: addRole })}>
+            <Plus className="h-3 w-3 mr-1" /> Add
+          </Button>
+        </div>
+      </div>
+
+      {/* Line items */}
+      <div className="border-t pt-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <h4 className="font-medium text-sm">Line items</h4>
+          {(items ?? []).length > 0 && <span className="text-xs text-muted-foreground">Total ${itemsTotal.toLocaleString()} (sets the deal value)</span>}
+        </div>
+        {(items ?? []).length === 0 ? (
+          <p className="text-xs text-muted-foreground italic">No items — the deal value is entered manually.</p>
+        ) : (
+          <div className="space-y-1">
+            {(items ?? []).map((it: any) => (
+              <div key={it.id} className="flex items-center gap-2 text-xs border rounded p-1.5">
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium truncate">{it.description}</div>
+                  <div className="text-muted-foreground">
+                    {Number(it.quantity).toLocaleString()} {it.unit} × ${Number(it.unitPrice).toLocaleString()}
+                    {it.annualVolume ? ` · ${Number(it.annualVolume).toLocaleString()} ${it.unit}/yr` : ""}
+                  </div>
+                </div>
+                <span className="font-semibold tabular-nums">${Number(it.totalAmount).toLocaleString()}</span>
+                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeItem.mutate({ id: it.id })} title="Remove">
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="grid grid-cols-2 sm:grid-cols-6 gap-1.5">
+          <Select value={item.productId || "none"} onValueChange={(v) => (v === "none" ? setItem({ ...item, productId: "" }) : pickProduct(v))}>
+            <SelectTrigger className="h-8 text-xs col-span-2 sm:col-span-3"><SelectValue placeholder="Product (optional)" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">No product — custom line</SelectItem>
+              {((products ?? []) as any[]).map((p: any) => <SelectItem key={p.id} value={String(p.id)}>{p.name}{p.sku ? ` · ${p.sku}` : ""}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Input className="h-8 text-xs col-span-2 sm:col-span-3" placeholder="Description" value={item.description} onChange={(e) => setItem({ ...item, description: e.target.value })} />
+          <Input className="h-8 text-xs" type="number" min={0} placeholder="Qty" value={item.quantity} onChange={(e) => setItem({ ...item, quantity: e.target.value })} />
+          <Input className="h-8 text-xs" placeholder="Unit" value={item.unit} onChange={(e) => setItem({ ...item, unit: e.target.value })} />
+          <Input className="h-8 text-xs" type="number" min={0} placeholder="Unit price" value={item.unitPrice} onChange={(e) => setItem({ ...item, unitPrice: e.target.value })} />
+          <Input className="h-8 text-xs" type="number" min={0} placeholder="Annual vol." value={item.annualVolume} onChange={(e) => setItem({ ...item, annualVolume: e.target.value })} />
+          <Button
+            size="sm" className="h-8 text-xs"
+            disabled={!item.description.trim() || item.unitPrice === "" || addItem.isPending}
+            onClick={() => addItem.mutate({
+              dealId,
+              productId: item.productId ? Number(item.productId) : null,
+              description: item.description.trim(),
+              quantity: Number(item.quantity) || 0,
+              unit: item.unit || "case",
+              unitPrice: Number(item.unitPrice) || 0,
+              annualVolume: item.annualVolume ? Number(item.annualVolume) : null,
+            })}
+          >
+            <Plus className="h-3 w-3 mr-1" /> Add
+          </Button>
+        </div>
+      </div>
+
+      {/* Stage history */}
+      {(history ?? []).length > 0 && (
+        <div className="border-t pt-3 space-y-1">
+          <h4 className="font-medium text-sm">Stage history</h4>
+          <div className="text-xs text-muted-foreground space-y-0.5">
+            {(history ?? []).map((h: any) => (
+              <div key={h.id} className="flex items-center gap-2">
+                <span className="tabular-nums">{format(new Date(h.changedAt), "MMM d, yyyy")}</span>
+                <span className="capitalize">{h.fromStage ? `${h.fromStage.replace(/_/g, " ")} → ` : ""}{h.toStage.replace(/_/g, " ")}</span>
+              </div>
+            ))}
+            {stageMeta && <div className="text-[10px]">Current stage default probability: {stageMeta.defaultProbability}%</div>}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

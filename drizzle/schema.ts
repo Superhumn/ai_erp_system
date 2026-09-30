@@ -4745,6 +4745,7 @@ export const crmContacts = mysqlTable("crm_contacts", {
 
   // Organization info
   organization: varchar("organization", { length: 255 }),
+  accountId: int("accountId"), // crm_accounts.id — the structured replacement for `organization`
   jobTitle: varchar("jobTitle", { length: 255 }),
   department: varchar("department", { length: 128 }),
 
@@ -4815,6 +4816,7 @@ export type InsertCrmContact = typeof crmContacts.$inferInsert;
 // CRM Contact Tags for categorization
 export const crmTags = mysqlTable("crm_tags", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"), // null = shared across entities
   name: varchar("name", { length: 64 }).notNull(),
   color: varchar("color", { length: 7 }).default("#3B82F6"), // Hex color
   category: mysqlEnum("category", ["contact", "deal", "general"]).default("general"),
@@ -4885,6 +4887,7 @@ export type InsertWhatsappMessage = typeof whatsappMessages.$inferInsert;
 // CRM Interactions - Unified activity log across all channels
 export const crmInteractions = mysqlTable("crm_interactions", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"), // copied from the contact at insert; reads scope via the contact join
   contactId: int("contactId").notNull().references(() => crmContacts.id),
 
   // Interaction type
@@ -4925,7 +4928,10 @@ export const crmInteractions = mysqlTable("crm_interactions", {
 
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (table) => ({
+  // Stale-deal / last-activity aggregates group by deal (migration 0074).
+  relatedDealIdx: index("idx_crm_interactions_related_deal").on(table.relatedDealId, table.createdAt),
+}));
 
 export type CrmInteraction = typeof crmInteractions.$inferSelect;
 export type InsertCrmInteraction = typeof crmInteractions.$inferInsert;
@@ -4933,6 +4939,7 @@ export type InsertCrmInteraction = typeof crmInteractions.$inferInsert;
 // CRM Pipelines - For sales and fundraising
 export const crmPipelines = mysqlTable("crm_pipelines", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"), // null = shared across entities
   name: varchar("name", { length: 128 }).notNull(),
   type: mysqlEnum("type", ["sales", "fundraising", "partnerships", "other"]).default("sales").notNull(),
   stages: text("stages").notNull(), // JSON array of stage names and order
@@ -4951,6 +4958,7 @@ export const crmDeals = mysqlTable("crm_deals", {
   companyId: int("companyId").references(() => companies.id),
   pipelineId: int("pipelineId").notNull().references(() => crmPipelines.id),
   contactId: int("contactId").notNull().references(() => crmContacts.id),
+  accountId: int("accountId"), // crm_accounts.id
 
   // Deal info
   name: varchar("name", { length: 255 }).notNull(),
@@ -4966,6 +4974,9 @@ export const crmDeals = mysqlTable("crm_deals", {
   // Status
   status: mysqlEnum("status", ["open", "won", "lost", "stalled"]).default("open").notNull(),
   lostReason: varchar("lostReason", { length: 255 }),
+  lossReasonId: int("lossReasonId"), // crm_loss_reasons.id (lostReason keeps the free-text note)
+  wonReason: varchar("wonReason", { length: 500 }),
+  isStale: boolean("isStale").default(false).notNull(), // set by the daily stale-deal job
   wonAt: timestamp("wonAt"),
   lostAt: timestamp("lostAt"),
 
@@ -4988,6 +4999,7 @@ export type InsertCrmDeal = typeof crmDeals.$inferInsert;
 // Contact Captures - Track how contacts were captured
 export const contactCaptures = mysqlTable("contact_captures", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
   contactId: int("contactId"),
 
   // Capture method
@@ -5029,6 +5041,142 @@ export const contactCaptures = mysqlTable("contact_captures", {
 
 export type ContactCapture = typeof contactCaptures.$inferSelect;
 export type InsertContactCapture = typeof contactCaptures.$inferInsert;
+
+// CRM Accounts — the customer organisation (district, school, distributor…)
+// that contacts and deals belong to. Replaces the free-text
+// crm_contacts.organization with a real record and a parent/child hierarchy
+// (district → schools, GPO → operators).
+export const crmAccounts = mysqlTable("crm_accounts", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  type: mysqlEnum("type", ["district", "school", "distributor", "operator", "gpo", "other"]).default("other").notNull(),
+  parentAccountId: int("parentAccountId"),
+  region: varchar("region", { length: 128 }),
+  state: varchar("state", { length: 64 }),
+  mealsPerDay: int("mealsPerDay"), // meals served per day — the K-12 sizing signal
+  externalId: varchar("externalId", { length: 128 }), // NCES id, distributor account #, …
+  customerId: int("customerId"), // customers.id once they buy
+  website: varchar("website", { length: 512 }),
+  notes: text("notes"),
+  assignedTo: int("assignedTo"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CrmAccount = typeof crmAccounts.$inferSelect;
+export type InsertCrmAccount = typeof crmAccounts.$inferInsert;
+
+// CRM Pipeline Stages — typed rows replacing crm_pipelines.stages (JSON array
+// of names). Each stage carries a default probability, won/lost flags and the
+// number of idle days after which a deal in it is "rotting".
+export const crmPipelineStages = mysqlTable("crm_pipeline_stages", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  pipelineId: int("pipelineId").notNull(),
+  name: varchar("name", { length: 128 }).notNull(),
+  sortOrder: int("sortOrder").default(0).notNull(),
+  defaultProbability: int("defaultProbability").default(10).notNull(), // 0-100
+  isWon: boolean("isWon").default(false).notNull(),
+  isLost: boolean("isLost").default(false).notNull(),
+  rottingDays: int("rottingDays"), // null = pipeline default (21)
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CrmPipelineStage = typeof crmPipelineStages.$inferSelect;
+export type InsertCrmPipelineStage = typeof crmPipelineStages.$inferInsert;
+
+// CRM Deal Stage History — one row per stage move; feeds cycle-time and
+// stage-conversion reporting.
+export const crmDealStageHistory = mysqlTable("crm_deal_stage_history", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  dealId: int("dealId").notNull(),
+  // 128 = crm_pipeline_stages.name length, so any stage name fits.
+  fromStage: varchar("fromStage", { length: 128 }),
+  toStage: varchar("toStage", { length: 128 }).notNull(),
+  changedAt: timestamp("changedAt").defaultNow().notNull(),
+  changedBy: int("changedBy"),
+});
+
+export type CrmDealStageHistory = typeof crmDealStageHistory.$inferSelect;
+export type InsertCrmDealStageHistory = typeof crmDealStageHistory.$inferInsert;
+
+// CRM Deal Contacts — the buying committee on a deal (beyond the primary
+// crm_deals.contactId).
+export const crmDealContacts = mysqlTable("crm_deal_contacts", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  dealId: int("dealId").notNull(),
+  contactId: int("contactId").notNull(),
+  role: mysqlEnum("role", ["decision_maker", "champion", "procurement", "influencer", "blocker", "other"]).default("other").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({
+  dealContactUniq: uniqueIndex("crm_deal_contacts_deal_contact_uniq").on(table.dealId, table.contactId),
+}));
+
+export type CrmDealContact = typeof crmDealContacts.$inferSelect;
+export type InsertCrmDealContact = typeof crmDealContacts.$inferInsert;
+
+// CRM Deal Items — the products / volumes a deal is for. When a deal has
+// items its amount is the sum of their totals.
+export const crmDealItems = mysqlTable("crm_deal_items", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  dealId: int("dealId").notNull(),
+  productId: int("productId").references(() => products.id),
+  description: varchar("description", { length: 255 }).notNull(),
+  quantity: decimal("quantity", { precision: 15, scale: 3 }).default("1").notNull(),
+  unit: varchar("unit", { length: 32 }).default("case"),
+  unitPrice: decimal("unitPrice", { precision: 15, scale: 4 }).default("0").notNull(),
+  annualVolume: decimal("annualVolume", { precision: 15, scale: 3 }),
+  totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).default("0").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CrmDealItem = typeof crmDealItems.$inferSelect;
+export type InsertCrmDealItem = typeof crmDealItems.$inferInsert;
+
+// CRM Loss Reasons — lookup for deals.close; rows with a NULL companyId are
+// the shared defaults.
+export const crmLossReasons = mysqlTable("crm_loss_reasons", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 128 }).notNull(),
+  sortOrder: int("sortOrder").default(0).notNull(),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CrmLossReason = typeof crmLossReasons.$inferSelect;
+export type InsertCrmLossReason = typeof crmLossReasons.$inferInsert;
+
+// CRM Tasks — follow-ups tied to a contact / deal / account, with due dates
+// and reminders. Distinct from projectTasks (project work) and
+// crm_interactions (things that already happened).
+export const crmTasks = mysqlTable("crm_tasks", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  title: varchar("title", { length: 255 }).notNull(),
+  type: mysqlEnum("type", ["call", "email", "meeting", "follow_up", "todo"]).default("todo").notNull(),
+  contactId: int("contactId"),
+  dealId: int("dealId"),
+  accountId: int("accountId"),
+  dueAt: timestamp("dueAt"),
+  reminderAt: timestamp("reminderAt"),
+  reminderSentAt: timestamp("reminderSentAt"), // dedupes the daily reminder email
+  assignedTo: int("assignedTo"),
+  completedAt: timestamp("completedAt"),
+  createdBy: int("createdBy"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CrmTask = typeof crmTasks.$inferSelect;
+export type InsertCrmTask = typeof crmTasks.$inferInsert;
 
 // Email Campaigns for CRM
 export const crmEmailCampaigns = mysqlTable("crm_email_campaigns", {

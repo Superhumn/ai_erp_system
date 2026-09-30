@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import {
-  Zap, Loader2, Sparkles, Search, RefreshCw,
+  Zap, Loader2, Sparkles, Search,
   Mail, Linkedin, Phone, Target, TrendingUp,
   ChevronDown, ChevronUp, Play, Pause,
   ArrowRight,
@@ -30,16 +30,6 @@ import {
 type Tier = "hot" | "warm" | "cool" | "cold";
 type SequenceStatus = "draft" | "active" | "paused" | "completed";
 type StepChannel = "email" | "linkedin" | "call";
-
-interface ScoredContact {
-  id: number;
-  name: string;
-  company: string;
-  email: string;
-  score: number | null;
-  tier: Tier | null;
-  lastScored: string | null;
-}
 
 interface SequenceStep {
   day: number;
@@ -82,35 +72,6 @@ const statusColors: Record<SequenceStatus, string> = {
 
 const channelIcons: Record<StepChannel, typeof Mail> = { email: Mail, linkedin: Linkedin, call: Phone };
 
-const STORAGE_KEY = "sales-ai-scores";
-
-// ── Seed contacts ──
-
-const SEED_CONTACTS: ScoredContact[] = [
-  { id: 1, name: "Sarah Chen", company: "Acme Foods", email: "sarah@acmefoods.com", score: null, tier: null, lastScored: null },
-  { id: 2, name: "Mike Johnson", company: "BigRetail Corp", email: "mike@bigretail.com", score: null, tier: null, lastScored: null },
-  { id: 3, name: "Lisa Park", company: "Organic Mart", email: "lisa@organicmart.com", score: null, tier: null, lastScored: null },
-  { id: 4, name: "Tom Williams", company: "FreshMart Inc", email: "tom@freshmart.com", score: null, tier: null, lastScored: null },
-  { id: 5, name: "Amy Rodriguez", company: "HealthPlus Stores", email: "amy@healthplus.com", score: null, tier: null, lastScored: null },
-  { id: 6, name: "Bob Fischer", company: "Grocery Chain LLC", email: "bob@grocerychain.com", score: null, tier: null, lastScored: null },
-  { id: 7, name: "Carol Diaz", company: "FreshFarms Co", email: "carol@freshfarms.com", score: null, tier: null, lastScored: null },
-  { id: 8, name: "Dave Kim", company: "NaturalCo", email: "dave@naturalco.com", score: null, tier: null, lastScored: null },
-  { id: 9, name: "Eva Martinez", company: "CleanEats", email: "eva@cleaneats.com", score: null, tier: null, lastScored: null },
-  { id: 10, name: "Frank Wu", company: "Pacific Foods", email: "frank@pacificfoods.com", score: null, tier: null, lastScored: null },
-];
-
-function loadScores(): ScoredContact[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return SEED_CONTACTS;
-}
-
-function saveScores(contacts: ScoredContact[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(contacts));
-}
-
 export default function SalesAutomation() {
   const [tab, setTab] = useState("scoring");
 
@@ -133,69 +94,27 @@ export default function SalesAutomation() {
 }
 
 // ── Tab 1: Lead Scoring ──
+// Scores are persisted on crm_contacts.leadScore by the server
+// (crmService.recomputeLeadScore) whenever a contact's activity, deals or
+// account change — this view is read-only.
 
 function LeadScoring() {
-  const [contacts, setContacts] = useState<ScoredContact[]>(loadScores);
   const [search, setSearch] = useState("");
   const [tierFilter, setTierFilter] = useState<string>("all");
-  const [scoringId, setScoringId] = useState<number | null>(null);
-  const [scoringAll, setScoringAll] = useState(false);
+  const { data, isLoading } = trpc.crm.contacts.list.useQuery({ sortBy: "leadScore", limit: 500, search: search || undefined });
 
-  useEffect(() => { saveScores(contacts); }, [contacts]);
-
-  const aiMutation = trpc.ai.query.useMutation({
-    onSuccess: (data: any) => {
-      const text = data.response || data.answer || "";
-      const scoreMatch = text.match(/(\d+)\s*\/\s*100|score[:\s]+(\d+)/i);
-      const score = scoreMatch ? parseInt(scoreMatch[1] || scoreMatch[2]) : Math.floor(Math.random() * 60 + 30);
-      const clamped = Math.min(100, Math.max(0, score));
-      const contactId = scoringId;
-      if (contactId) {
-        setContacts(prev => {
-          const next = prev.map(c => c.id === contactId ? { ...c, score: clamped, tier: scoreTier(clamped), lastScored: new Date().toISOString() } : c);
-          return next;
-        });
-      }
-      setScoringId(null);
-    },
-    onError: () => { toast.error("Scoring failed"); setScoringId(null); setScoringAll(false); },
-  });
-
-  const scoreContact = (contact: ScoredContact) => {
-    setScoringId(contact.id);
-    aiMutation.mutate({
-      question: `Score this sales lead from 0 to 100 based on likely purchase intent and fit. Reply with ONLY a number like "Score: 75/100" then a one-line reason.\n\nName: ${contact.name}\nCompany: ${contact.company}\nEmail: ${contact.email}`,
-    });
-  };
-
-  const scoreAll = async () => {
-    setScoringAll(true);
-    for (const c of contacts.filter(c => c.score === null)) {
-      scoreContact(c);
-      await new Promise(r => setTimeout(r, 800));
-    }
-    setScoringAll(false);
-  };
-
-  const filtered = useMemo(() => {
-    return contacts.filter(c => {
-      if (tierFilter !== "all" && c.tier !== tierFilter) return false;
-      if (search) {
-        const q = search.toLowerCase();
-        return c.name.toLowerCase().includes(q) || c.company.toLowerCase().includes(q);
-      }
-      return true;
-    }).sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
-  }, [contacts, search, tierFilter]);
-
-  const scored = contacts.filter(c => c.score !== null);
+  const contacts = useMemo(() => (data ?? []).map((c) => {
+    const score = c.leadScore ?? 0;
+    return { id: c.id, name: c.fullName ?? "", company: c.organization ?? "", email: c.email ?? "", type: c.contactType ?? "", score, tier: scoreTier(score) };
+  }), [data]);
+  const filtered = tierFilter === "all" ? contacts : contacts.filter((c) => c.tier === tierFilter);
   const tierCounts = { hot: 0, warm: 0, cool: 0, cold: 0 };
-  scored.forEach(c => { if (c.tier) tierCounts[c.tier]++; });
+  contacts.forEach((c) => { tierCounts[c.tier]++; });
 
   return (
     <div className="space-y-2">
       {/* KPI bar */}
-      <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {([
           { tier: "hot" as Tier, label: "Hot (80+)", count: tierCounts.hot, color: "text-primary" },
           { tier: "warm" as Tier, label: "Warm (60-79)", count: tierCounts.warm, color: "text-muted-foreground" },
@@ -215,50 +134,41 @@ function LeadScoring() {
       </div>
 
       {/* Toolbar */}
-      <div className="flex gap-2 items-center">
-        <div className="relative flex-1 max-w-xs">
+      <div className="flex flex-wrap gap-2 items-center">
+        <div className="relative flex-1 min-w-[180px] max-w-xs">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input placeholder="Search contacts..." value={search} onChange={e => setSearch(e.target.value)} className="pl-7 h-8 text-sm" />
         </div>
-        <Button size="sm" variant="outline" onClick={scoreAll} disabled={scoringAll || aiMutation.isPending} className="h-8">
-          {scoringAll ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Sparkles className="h-3.5 w-3.5 mr-1" />}
-          Score All Unscored
-        </Button>
-        <Button size="sm" variant="ghost" onClick={() => { setContacts(SEED_CONTACTS); saveScores(SEED_CONTACTS); }} className="h-8 text-xs">
-          <RefreshCw className="h-3 w-3 mr-1" /> Reset
-        </Button>
+        <p className="text-[11px] text-muted-foreground">
+          Score = contact type + account type (district/distributor) + meals/day + recent activity + recent reply + open deal value. Updates automatically.
+        </p>
       </div>
 
-      {/* Contact list */}
-      <div className="space-y-1">
-        {filtered.map(contact => (
-          <Card key={contact.id} className="px-3 py-2 flex items-center gap-3">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium truncate">{contact.name}</span>
-                <span className="text-xs text-muted-foreground truncate">{contact.company}</span>
-              </div>
-              <span className="text-xs text-muted-foreground">{contact.email}</span>
-            </div>
-            {contact.score !== null ? (
-              <>
-                <div className="w-16 bg-muted rounded-full h-2 overflow-hidden">
-                  <div className="h-full rounded-full transition-all" style={{
-                    width: `${contact.score}%`,
-                    backgroundColor: contact.score >= 80 ? "#ef4444" : contact.score >= 60 ? "#f59e0b" : contact.score >= 40 ? "#3b82f6" : "#6b7280",
-                  }} />
+      {/* Contact list, highest score first */}
+      {isLoading ? (
+        <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+      ) : filtered.length === 0 ? (
+        <p className="text-sm text-muted-foreground italic py-4">No contacts{tierFilter !== "all" ? ` in the ${tierFilter} tier` : ""}.</p>
+      ) : (
+        <div className="space-y-1">
+          {filtered.map(contact => (
+            <Card key={contact.id} className="px-3 py-2 flex items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-sm font-medium truncate">{contact.name}</span>
+                  <span className="text-xs text-muted-foreground truncate hidden sm:inline">{contact.company}</span>
                 </div>
-                <span className="text-sm font-mono font-semibold w-8 text-right">{contact.score}</span>
-                <Badge variant="secondary" className={`${tierColors[contact.tier!]} text-[11px] w-12 justify-center`}>{contact.tier}</Badge>
-              </>
-            ) : (
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => scoreContact(contact)} disabled={scoringId === contact.id}>
-                {scoringId === contact.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <><Sparkles className="h-3 w-3 mr-1" /> Score</>}
-              </Button>
-            )}
-          </Card>
-        ))}
-      </div>
+                <span className="text-xs text-muted-foreground truncate block">{contact.email || contact.company}</span>
+              </div>
+              <div className="w-16 bg-muted rounded-full h-2 overflow-hidden hidden sm:block">
+                <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${contact.score}%`, opacity: contact.score >= 60 ? 1 : 0.5 }} />
+              </div>
+              <span className="text-sm font-mono font-semibold w-8 text-right">{contact.score}</span>
+              <Badge variant="secondary" className={`${tierColors[contact.tier]} text-[11px] w-12 justify-center`}>{contact.tier}</Badge>
+            </Card>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

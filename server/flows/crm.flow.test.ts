@@ -25,6 +25,9 @@ interface State {
   interactions: Table<Row>;
   pipelines: Table<Row>;
   deals: Table<Row>;
+  stages: Table<Row>;
+  stageHistory: Table<Row>;
+  dealContacts: Table<Row>;
   tasks: Table<Row>;
   taskLogs: Table<Row>;
   campaigns: Table<Row>;
@@ -61,6 +64,9 @@ vi.mock("../db", async () => {
     interactions: table<Row>(),
     pipelines: table<Row>(),
     deals: table<Row>(),
+    stages: table<Row>(),
+    stageHistory: table<Row>(),
+    dealContacts: table<Row>(),
     tasks: table<Row>(),
     taskLogs: table<Row>(),
     campaigns: table<Row>(),
@@ -229,6 +235,30 @@ vi.mock("../db", async () => {
     getCrmPipelines: vi.fn(async (type?: string) =>
       state.pipelines.filter((p) => p.isActive === true && (!type || p.type === type)).sort((a, b) => a.name.localeCompare(b.name))),
     createCrmPipeline: vi.fn(async (data: Row) => state.pipelines.insert({ isActive: true, isDefault: false, ...data }).id),
+    getCrmPipelineById: vi.fn(async (id: number) => snap(state.pipelines.get(id))),
+    updateCrmPipeline: vi.fn(async (id: number, data: Row) => { state.pipelines.update(id, data); }),
+    // ---- typed pipeline stages + stage history (crm_pipeline_stages / crm_deal_stage_history)
+    getCrmPipelineStages: vi.fn(async (pipelineId: number) =>
+      state.stages.filter((st) => st.pipelineId === pipelineId).sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id).map((st) => ({ ...st }))),
+    getCrmPipelineStagesForPipelines: vi.fn(async (ids: number[]) =>
+      state.stages.filter((st) => ids.includes(st.pipelineId)).sort((a, b) => a.sortOrder - b.sortOrder).map((st) => ({ ...st }))),
+    createCrmPipelineStage: vi.fn(async (data: Row) => state.stages.insert({ rottingDays: null, ...data }).id),
+    createCrmPipelineStages: vi.fn(async (rows: Row[]) => { for (const r of rows) state.stages.insert({ rottingDays: null, ...r }); }),
+    updateCrmPipelineStage: vi.fn(async (id: number, data: Row) => { state.stages.update(id, data); }),
+    deleteCrmPipelineStage: vi.fn(async (id: number) => { state.stages.remove(id); }),
+    countCrmDealsInStage: vi.fn(async (pipelineId: number, stage: string) => state.deals.filter((d) => d.pipelineId === pipelineId && d.stage === stage).length),
+    createCrmDealStageHistory: vi.fn(async (data: Row) => state.stageHistory.insert(data).id),
+    getCrmDealStageHistory: vi.fn(async (dealId: number) => state.stageHistory.filter((h) => h.dealId === dealId).map((h) => ({ ...h }))),
+    upsertCrmDealContact: vi.fn(async (data: Row) => {
+      const existing = state.dealContacts.find((l) => l.dealId === data.dealId && l.contactId === data.contactId);
+      if (existing) { state.dealContacts.update(existing.id, { role: data.role }); return existing.id; }
+      return state.dealContacts.insert(data).id;
+    }),
+    deleteCrmDeal: vi.fn(async (id: number) => { state.deals.remove(id); }),
+    // ---- lead scoring inputs
+    getCrmAccountById: vi.fn(async () => undefined),
+    getCrmContactLastInteractionAt: vi.fn(async (contactId: number) =>
+      state.interactions.filter((i) => i.contactId === contactId).map((i) => i.createdAt as Date).sort((a, b) => b.getTime() - a.getTime())[0] ?? null),
     getCrmDeals: vi.fn(async (f?: Row) => {
       const rows = state.deals
         .filter((d) =>
@@ -527,19 +557,26 @@ describe("CRM process: contact → deal → outreach → marketing", () => {
     })).id;
     expect((await sales.crm.pipelines.list({ type: "sales" })).map((p) => p.id)).toEqual([ids.pipelineId]);
 
+    // The JSON stage array is mirrored into typed stage rows on create.
+    expect(state.stages.filter((st) => st.pipelineId === ids.pipelineId).map((st) => [st.name, st.defaultProbability, st.isWon])).toEqual([
+      ["discovery", 10, false], ["proposal", 50, false], ["negotiation", 90, false], ["closed_won", 100, true],
+    ]);
+
+    // requestApproval routes the new deal through the AI-agent approval queue.
     const req = await sales.crm.deals.create({
       pipelineId: ids.pipelineId, contactId: ids.contactId, stage: "discovery", amount: "25000", source: "event", notes: "Regional launch",
+      requestApproval: true,
     });
     ids.taskId = req.taskId;
     expect(req).toEqual({ taskId: ids.taskId, pendingApproval: true, company: "Acme Foods" });
     expect(state.tasks.get(ids.taskId)).toMatchObject({ taskType: "create_crm_deal", status: "pending_approval", priority: "medium" });
     expect(JSON.parse(state.tasks.get(ids.taskId)!.taskData)).toEqual({
-      pipelineId: ids.pipelineId, contactId: ids.contactId, company: "Acme Foods", stage: "discovery", amount: "25000", source: "event", notes: "Regional launch", assignedTo: SALES_ID,
+      pipelineId: ids.pipelineId, contactId: ids.contactId, company: "Acme Foods", name: "Acme Foods", stage: "discovery", amount: "25000", source: "event", notes: "Regional launch", assignedTo: SALES_ID,
     });
     expect(await sales.crm.deals.list()).toEqual([]); // nothing until approved
 
     // A second request for the same company is blocked while one is pending.
-    await expect(sales.crm.deals.create({ pipelineId: ids.pipelineId, contactId: ids.contactId, stage: "discovery" }))
+    await expect(sales.crm.deals.create({ pipelineId: ids.pipelineId, contactId: ids.contactId, stage: "discovery", requestApproval: true }))
       .rejects.toMatchObject({ code: "CONFLICT", message: 'An approval is already pending for "Acme Foods".' });
 
     // Only an admin can approve.
@@ -558,9 +595,15 @@ describe("CRM process: contact → deal → outreach → marketing", () => {
     });
     expect((await sales.crm.deals.list({ contactId: ids.contactId })).map((d) => d.id)).toEqual([ids.dealId]);
 
-    // And now that the deal exists, another request for the company is rejected outright.
-    await expect(sales.crm.deals.create({ pipelineId: ids.pipelineId, contactId: ids.contactId, stage: "discovery" }))
-      .rejects.toMatchObject({ code: "CONFLICT", message: `A deal already exists for "Acme Foods" (deal #${ids.dealId}).` });
+    // Without requestApproval a deal is inserted directly — a company may
+    // hold several deals — with its stage probability and history recorded.
+    const direct = await sales.crm.deals.create({ pipelineId: ids.pipelineId, contactId: ids.contactId, stage: "proposal", name: "Acme Foods — spring menu" });
+    expect(direct).toMatchObject({ pendingApproval: false, name: "Acme Foods — spring menu" });
+    const directId = (direct as { id: number }).id;
+    expect(await sales.crm.deals.get({ id: directId })).toMatchObject({ stage: "proposal", probability: 50, status: "open", assignedTo: SALES_ID });
+    expect(state.stageHistory.filter((h) => h.dealId === directId).map((h) => [h.fromStage, h.toStage])).toEqual([[null, "proposal"]]);
+    await sales.crm.deals.delete({ id: directId });
+    expect(state.deals.all()).toHaveLength(1);
   });
 
   it("3b. the deal moves through the stages to won and the pipeline summary reflects it", async () => {
@@ -569,7 +612,7 @@ describe("CRM process: contact → deal → outreach → marketing", () => {
     });
 
     for (const [stage, probability] of [["proposal", 40], ["negotiation", 70], ["closed_won", 100]] as const) {
-      expect(await sales.crm.deals.moveStage({ id: ids.dealId, stage, probability })).toEqual({ success: true });
+      expect(await sales.crm.deals.moveStage({ id: ids.dealId, stage, probability })).toMatchObject({ success: true, stage, probability });
       expect(await sales.crm.deals.get({ id: ids.dealId })).toMatchObject({ stage, probability });
     }
     expect(state.auditLogs.at(-1)).toMatchObject({

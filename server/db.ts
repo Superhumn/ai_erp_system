@@ -4,6 +4,7 @@ import type { Customer, Order, Transaction } from "../drizzle/schema";
 import { COGS_KEYWORDS, COGS_REFERENCE_TYPES } from "../shared/cogs";
 import { cohortSizes, mergeCustomerAggs, type CohortCell, type CohortSize, type CustomerInvoiceAgg } from "../shared/cfoMetrics";
 import { drizzle } from "drizzle-orm/mysql2";
+import { alias } from "drizzle-orm/mysql-core";
 import mysql from "mysql2";
 import { scopeAllows, scopeCompanyIds, partitionIdsByVisibility, type Scope } from "./_core/scope";
 import {
@@ -133,6 +134,10 @@ import {
   marketingEngagements, influencers, subsidiaryFundraisingInvestors, brandAmbassadors,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
   InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
+  crmAccounts, InsertCrmAccount,
+  crmPipelineStages, InsertCrmPipelineStage, crmDealStageHistory, InsertCrmDealStageHistory,
+  crmDealContacts, InsertCrmDealContact, crmDealItems, InsertCrmDealItem, crmLossReasons, InsertCrmLossReason,
+  crmTasks, InsertCrmTask,
   // Copacker portal
   copackerInventoryUpdates, copackerInventoryUpdateItems, copackerInvoices, copackerInvoiceItems, copackerShippingDocuments,
   InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
@@ -13108,13 +13113,25 @@ export async function getCrmContacts(filters?: {
   assignedTo?: number;
   search?: string;
   excludeEmail?: string;
+  accountId?: number;
+  /** Entity allow-list: null/undefined = unrestricted, [] = no rows. */
+  companyIds?: number[] | null;
+  /** Default newest first; "leadScore" = highest persisted score first. */
+  sortBy?: "createdAt" | "leadScore";
   limit?: number;
   offset?: number;
 }) {
   const db = await getDb();
   if (!db) return [];
+  if (Array.isArray(filters?.companyIds) && filters.companyIds.length === 0) return [];
 
   const conditions = [];
+  if (Array.isArray(filters?.companyIds)) {
+    conditions.push(inArray(crmContacts.companyId, filters.companyIds));
+  }
+  if (filters?.accountId) {
+    conditions.push(eq(crmContacts.accountId, filters.accountId));
+  }
   if (filters?.contactType) {
     conditions.push(eq(crmContacts.contactType, filters.contactType as any));
   }
@@ -13154,9 +13171,24 @@ export async function getCrmContacts(filters?: {
   }
 
   return query
-    .orderBy(desc(crmContacts.createdAt))
+    .orderBy(...(filters?.sortBy === "leadScore"
+      ? [desc(crmContacts.leadScore), desc(crmContacts.createdAt)]
+      : [desc(crmContacts.createdAt)]))
     .limit(filters?.limit || 100)
     .offset(filters?.offset || 0);
+}
+
+/** Latest crm_interactions.createdAt for a contact (lead scoring recency). */
+export async function getCrmContactLastInteractionAt(contactId: number): Promise<Date | null> {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db
+    .select({ last: sql<Date | string | null>`MAX(${crmInteractions.createdAt})` })
+    .from(crmInteractions)
+    .where(eq(crmInteractions.contactId, contactId));
+  if (!row?.last) return null;
+  const d = new Date(row.last);
+  return Number.isFinite(d.getTime()) ? d : null;
 }
 
 export async function getCrmContactById(id: number) {
@@ -13320,6 +13352,22 @@ export async function mergeCrmContacts(primaryId: number, duplicateIds: number[]
     await tx.update(whatsappMessages).set({ contactId: primaryId }).where(inArray(whatsappMessages.contactId, ids));
     await tx.update(crmContactTags).set({ contactId: primaryId }).where(inArray(crmContactTags.contactId, ids));
     await tx.update(crmCampaignRecipients).set({ contactId: primaryId }).where(inArray(crmCampaignRecipients.contactId, ids));
+    await tx.update(crmTasks).set({ contactId: primaryId }).where(inArray(crmTasks.contactId, ids));
+    // crm_deal_contacts is unique on (dealId, contactId): drop links for deals
+    // the primary is already on, re-point the rest.
+    const primaryDeals = (await tx.select({ dealId: crmDealContacts.dealId }).from(crmDealContacts).where(eq(crmDealContacts.contactId, primaryId))).map((r) => r.dealId);
+    if (primaryDeals.length) {
+      await tx.delete(crmDealContacts).where(and(inArray(crmDealContacts.contactId, ids), inArray(crmDealContacts.dealId, primaryDeals)));
+    }
+    const dupLinks = await tx.select({ id: crmDealContacts.id, dealId: crmDealContacts.dealId }).from(crmDealContacts).where(inArray(crmDealContacts.contactId, ids));
+    const keep = new Set<number>();
+    const extra: number[] = [];
+    for (const l of dupLinks) {
+      if (keep.has(l.dealId)) extra.push(l.id);
+      else keep.add(l.dealId);
+    }
+    if (extra.length) await tx.delete(crmDealContacts).where(inArray(crmDealContacts.id, extra));
+    await tx.update(crmDealContacts).set({ contactId: primaryId }).where(inArray(crmDealContacts.contactId, ids));
     await tx.delete(crmContacts).where(inArray(crmContacts.id, ids));
   });
 
@@ -13342,6 +13390,11 @@ async function deleteCrmContactsCascading(tx: any, ids: number[]) {
   if (ids.length === 0) return 0;
   await tx.delete(crmContactTags).where(inArray(crmContactTags.contactId, ids));
   await tx.delete(crmInteractions).where(inArray(crmInteractions.contactId, ids));
+  await tx.delete(crmDealContacts).where(inArray(crmDealContacts.contactId, ids));
+  await tx.update(crmTasks).set({ contactId: null }).where(inArray(crmTasks.contactId, ids));
+  // Deals owned by these contacts go too — with their child rows.
+  const dealIds: number[] = (await tx.select({ id: crmDeals.id }).from(crmDeals).where(inArray(crmDeals.contactId, ids))).map((r: { id: number }) => r.id);
+  await deleteCrmDealChildren(tx, dealIds);
   await tx.delete(crmDeals).where(inArray(crmDeals.contactId, ids));
   await tx.update(marketingEngagements).set({ contactId: null }).where(inArray(marketingEngagements.contactId, ids));
   await tx.update(influencers).set({ crmContactId: null }).where(inArray(influencers.crmContactId, ids));
@@ -13388,14 +13441,25 @@ export async function getCrmContactStats() {
 
 // --- CRM TAGS ---
 
-export async function getCrmTags(category?: string) {
+export async function getCrmTags(category?: string, companyIds?: number[] | null) {
   const db = await getDb();
   if (!db) return [];
-  let query = db.select().from(crmTags);
-  if (category) {
-    query = query.where(eq(crmTags.category, category as any)) as any;
+  const conditions = [];
+  if (category) conditions.push(eq(crmTags.category, category as any));
+  // Tags with no companyId are shared across entities.
+  if (Array.isArray(companyIds)) {
+    conditions.push(companyIds.length ? or(isNull(crmTags.companyId), inArray(crmTags.companyId, companyIds))! : isNull(crmTags.companyId));
   }
+  let query = db.select().from(crmTags);
+  if (conditions.length) query = query.where(and(...conditions)) as any;
   return query.orderBy(crmTags.name);
+}
+
+export async function getCrmTagById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(crmTags).where(eq(crmTags.id, id)).limit(1);
+  return row;
 }
 
 export async function createCrmTag(data: InsertCrmTag) {
@@ -13541,15 +13605,28 @@ export async function updateWhatsappMessageStatus(
 export async function getCrmInteractions(filters?: {
   contactId?: number;
   channel?: string;
+  relatedDealId?: number;
+  /** Entity allow-list resolved through the owning contact: null = unrestricted, [] = no rows. */
+  companyIds?: number[] | null;
   limit?: number;
   offset?: number;
 }) {
   const db = await getDb();
   if (!db) return [];
+  if (Array.isArray(filters?.companyIds) && filters.companyIds.length === 0) return [];
 
   const conditions = [];
+  if (Array.isArray(filters?.companyIds)) {
+    conditions.push(inArray(
+      crmInteractions.contactId,
+      db.select({ id: crmContacts.id }).from(crmContacts).where(inArray(crmContacts.companyId, filters.companyIds)),
+    ));
+  }
   if (filters?.contactId) {
     conditions.push(eq(crmInteractions.contactId, filters.contactId));
+  }
+  if (filters?.relatedDealId) {
+    conditions.push(eq(crmInteractions.relatedDealId, filters.relatedDealId));
   }
   if (filters?.channel) {
     conditions.push(eq(crmInteractions.channel, filters.channel as any));
@@ -13570,6 +13647,10 @@ export async function createCrmInteraction(data: InsertCrmInteraction) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
+  if (data.companyId === undefined) {
+    const [owner] = await db.select({ companyId: crmContacts.companyId }).from(crmContacts).where(eq(crmContacts.id, data.contactId)).limit(1);
+    data = { ...data, companyId: owner?.companyId ?? null };
+  }
   const result = await db.insert(crmInteractions).values(data);
 
   // Update contact's interaction count and last contacted timestamp
@@ -13598,12 +13679,16 @@ export async function getContactTimeline(contactId: number, limit: number = 50) 
 
 // --- CRM PIPELINES ---
 
-export async function getCrmPipelines(type?: string) {
+export async function getCrmPipelines(type?: string, companyIds?: number[] | null) {
   const db = await getDb();
   if (!db) return [];
 
   const conditions = [eq(crmPipelines.isActive, true)];
   if (type) conditions.push(eq(crmPipelines.type, type as any));
+  // Pipelines with no companyId are shared across entities.
+  if (Array.isArray(companyIds)) {
+    conditions.push(companyIds.length ? or(isNull(crmPipelines.companyId), inArray(crmPipelines.companyId, companyIds))! : isNull(crmPipelines.companyId));
+  }
 
   return db.select().from(crmPipelines).where(and(...conditions)).orderBy(crmPipelines.name);
 }
@@ -13628,21 +13713,406 @@ export async function updateCrmPipeline(id: number, data: Partial<InsertCrmPipel
   await db.update(crmPipelines).set(data).where(eq(crmPipelines.id, id));
 }
 
+// --- CRM PIPELINE STAGES ---
+
+export async function getCrmPipelineStages(pipelineId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(crmPipelineStages).where(eq(crmPipelineStages.pipelineId, pipelineId)).orderBy(crmPipelineStages.sortOrder, crmPipelineStages.id);
+}
+
+export async function getCrmPipelineStagesForPipelines(pipelineIds: number[]) {
+  const db = await getDb();
+  if (!db || pipelineIds.length === 0) return [];
+  return db.select().from(crmPipelineStages).where(inArray(crmPipelineStages.pipelineId, pipelineIds)).orderBy(crmPipelineStages.pipelineId, crmPipelineStages.sortOrder, crmPipelineStages.id);
+}
+
+export async function getCrmPipelineStageById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(crmPipelineStages).where(eq(crmPipelineStages.id, id)).limit(1);
+  return row;
+}
+
+export async function createCrmPipelineStage(data: InsertCrmPipelineStage) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(crmPipelineStages).values(data);
+  return result[0].insertId;
+}
+
+export async function createCrmPipelineStages(rows: InsertCrmPipelineStage[]) {
+  const db = await getDb();
+  if (!db || rows.length === 0) return;
+  await db.insert(crmPipelineStages).values(rows);
+}
+
+export async function updateCrmPipelineStage(id: number, data: Partial<InsertCrmPipelineStage>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(crmPipelineStages).set(data).where(eq(crmPipelineStages.id, id));
+}
+
+export async function deleteCrmPipelineStage(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(crmPipelineStages).where(eq(crmPipelineStages.id, id));
+}
+
+/** Rewrites sortOrder so `orderedIds` are 0..n-1 in that order. */
+export async function reorderCrmPipelineStages(pipelineId: number, orderedIds: number[]) {
+  const db = await getDb();
+  if (!db) return;
+  for (let i = 0; i < orderedIds.length; i++) {
+    await db.update(crmPipelineStages).set({ sortOrder: i }).where(and(eq(crmPipelineStages.id, orderedIds[i]), eq(crmPipelineStages.pipelineId, pipelineId)));
+  }
+}
+
+/** Number of deals currently sitting in a stage (by name) of a pipeline. */
+export async function countCrmDealsInStage(pipelineId: number, stageName: string) {
+  const db = await getDb();
+  if (!db) return 0;
+  const [row] = await db.select({ n: count() }).from(crmDeals).where(and(eq(crmDeals.pipelineId, pipelineId), eq(crmDeals.stage, stageName)));
+  return row?.n ?? 0;
+}
+
+// --- CRM DEAL STAGE HISTORY ---
+
+export async function createCrmDealStageHistory(data: InsertCrmDealStageHistory) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(crmDealStageHistory).values(data);
+  return result[0].insertId;
+}
+
+export async function getCrmDealStageHistory(dealId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(crmDealStageHistory).where(eq(crmDealStageHistory.dealId, dealId)).orderBy(crmDealStageHistory.changedAt, crmDealStageHistory.id);
+}
+
+export async function getCrmDealStageHistoryForDeals(dealIds: number[]) {
+  const db = await getDb();
+  if (!db || dealIds.length === 0) return [];
+  return db.select().from(crmDealStageHistory).where(inArray(crmDealStageHistory.dealId, dealIds)).orderBy(crmDealStageHistory.changedAt, crmDealStageHistory.id);
+}
+
+/**
+ * Most recent interaction time per deal: interactions linked to the deal, or
+ * to its contact. Two grouped aggregates per batch of 500 deals (by
+ * relatedDealId — indexed in 0074 — and by contactId), merged in memory,
+ * instead of a correlated MAX with an OR per deal.
+ */
+export async function getCrmDealLastActivity(dealIds: number[]): Promise<Map<number, Date>> {
+  const db = await getDb();
+  const out = new Map<number, Date>();
+  if (!db || dealIds.length === 0) return out;
+  const toDate = (v: Date | string | null): Date | null => {
+    if (!v) return null;
+    const d = new Date(v);
+    return Number.isFinite(d.getTime()) ? d : null;
+  };
+  const bump = (dealId: number, d: Date | null) => {
+    if (!d) return;
+    const cur = out.get(dealId);
+    if (!cur || d > cur) out.set(dealId, d);
+  };
+  for (let i = 0; i < dealIds.length; i += 500) {
+    const chunk = dealIds.slice(i, i + 500);
+    const deals = await db.select({ id: crmDeals.id, contactId: crmDeals.contactId }).from(crmDeals).where(inArray(crmDeals.id, chunk));
+    const byDeal = await db
+      .select({ dealId: crmInteractions.relatedDealId, last: sql<Date | string | null>`MAX(${crmInteractions.createdAt})` })
+      .from(crmInteractions)
+      .where(inArray(crmInteractions.relatedDealId, chunk))
+      .groupBy(crmInteractions.relatedDealId);
+    for (const r of byDeal) if (r.dealId != null) bump(r.dealId, toDate(r.last));
+    const contactIds = [...new Set(deals.map((d) => d.contactId))];
+    if (contactIds.length) {
+      const byContact = await db
+        .select({ contactId: crmInteractions.contactId, last: sql<Date | string | null>`MAX(${crmInteractions.createdAt})` })
+        .from(crmInteractions)
+        .where(inArray(crmInteractions.contactId, contactIds))
+        .groupBy(crmInteractions.contactId);
+      const lastByContact = new Map(byContact.map((r) => [r.contactId, toDate(r.last)]));
+      for (const d of deals) bump(d.id, lastByContact.get(d.contactId) ?? null);
+    }
+  }
+  return out;
+}
+
+/** Child rows of deals being deleted: items, stage history, committee links; tasks are unlinked. */
+async function deleteCrmDealChildren(tx: any, dealIds: number[]) {
+  if (dealIds.length === 0) return;
+  await tx.delete(crmDealItems).where(inArray(crmDealItems.dealId, dealIds));
+  await tx.delete(crmDealStageHistory).where(inArray(crmDealStageHistory.dealId, dealIds));
+  await tx.delete(crmDealContacts).where(inArray(crmDealContacts.dealId, dealIds));
+  await tx.update(crmTasks).set({ dealId: null }).where(inArray(crmTasks.dealId, dealIds));
+}
+
+/** Deal ids (among `dealIds`) that have at least one open task. */
+export async function getDealIdsWithOpenCrmTasks(dealIds: number[]): Promise<Set<number>> {
+  const db = await getDb();
+  const out = new Set<number>();
+  if (!db || dealIds.length === 0) return out;
+  for (let i = 0; i < dealIds.length; i += 1000) {
+    const rows = await db
+      .selectDistinct({ dealId: crmTasks.dealId })
+      .from(crmTasks)
+      .where(and(inArray(crmTasks.dealId, dealIds.slice(i, i + 1000)), isNull(crmTasks.completedAt)));
+    for (const r of rows) if (r.dealId != null) out.add(r.dealId);
+  }
+  return out;
+}
+
+// --- CRM DEAL CONTACTS ---
+
+export async function getCrmDealContacts(dealId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select({ link: crmDealContacts, contact: crmContacts })
+    .from(crmDealContacts)
+    .innerJoin(crmContacts, eq(crmContacts.id, crmDealContacts.contactId))
+    .where(eq(crmDealContacts.dealId, dealId))
+    .orderBy(crmDealContacts.id);
+  return rows.map((r) => ({
+    ...r.link,
+    contactName: r.contact.fullName,
+    contactEmail: r.contact.email,
+    contactTitle: r.contact.jobTitle,
+    contactOrganization: r.contact.organization,
+  }));
+}
+
+export async function getCrmDealContactsForDeals(dealIds: number[]) {
+  const db = await getDb();
+  if (!db || dealIds.length === 0) return [];
+  return db.select().from(crmDealContacts).where(inArray(crmDealContacts.dealId, dealIds));
+}
+
+/** Insert-or-update the role of a contact on a deal. Returns the link id. */
+export async function upsertCrmDealContact(data: InsertCrmDealContact) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [existing] = await db.select().from(crmDealContacts)
+    .where(and(eq(crmDealContacts.dealId, data.dealId), eq(crmDealContacts.contactId, data.contactId))).limit(1);
+  if (existing) {
+    await db.update(crmDealContacts).set({ role: data.role ?? existing.role }).where(eq(crmDealContacts.id, existing.id));
+    return existing.id;
+  }
+  const result = await db.insert(crmDealContacts).values(data);
+  return result[0].insertId;
+}
+
+export async function removeCrmDealContact(dealId: number, contactId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(crmDealContacts).where(and(eq(crmDealContacts.dealId, dealId), eq(crmDealContacts.contactId, contactId)));
+}
+
+// --- CRM DEAL ITEMS ---
+
+export async function getCrmDealItems(dealId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(crmDealItems).where(eq(crmDealItems.dealId, dealId)).orderBy(crmDealItems.id);
+}
+
+export async function getCrmDealItemById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(crmDealItems).where(eq(crmDealItems.id, id)).limit(1);
+  return row;
+}
+
+export async function createCrmDealItem(data: InsertCrmDealItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(crmDealItems).values(data);
+  return result[0].insertId;
+}
+
+export async function updateCrmDealItem(id: number, data: Partial<InsertCrmDealItem>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(crmDealItems).set(data).where(eq(crmDealItems.id, id));
+}
+
+export async function deleteCrmDealItem(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(crmDealItems).where(eq(crmDealItems.id, id));
+}
+
+// --- CRM LOSS REASONS ---
+
+export async function getCrmLossReasons(companyIds?: number[] | null, includeInactive = false) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (!includeInactive) conditions.push(eq(crmLossReasons.isActive, true));
+  if (Array.isArray(companyIds)) {
+    conditions.push(companyIds.length ? or(isNull(crmLossReasons.companyId), inArray(crmLossReasons.companyId, companyIds))! : isNull(crmLossReasons.companyId));
+  }
+  let query = db.select().from(crmLossReasons);
+  if (conditions.length) query = query.where(and(...conditions)) as any;
+  return query.orderBy(crmLossReasons.sortOrder, crmLossReasons.id);
+}
+
+export async function getCrmLossReasonById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(crmLossReasons).where(eq(crmLossReasons.id, id)).limit(1);
+  return row;
+}
+
+export async function createCrmLossReason(data: InsertCrmLossReason) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(crmLossReasons).values(data);
+  return result[0].insertId;
+}
+
+export async function createCrmLossReasons(rows: InsertCrmLossReason[]) {
+  const db = await getDb();
+  if (!db || rows.length === 0) return;
+  await db.insert(crmLossReasons).values(rows);
+}
+
+export async function updateCrmLossReason(id: number, data: Partial<InsertCrmLossReason>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(crmLossReasons).set(data).where(eq(crmLossReasons.id, id));
+}
+
+// --- CRM TASKS ---
+
+export async function getCrmTasks(filters?: {
+  assignedTo?: number;
+  /** open = not completed, done = completed, all = both (default open). */
+  status?: "open" | "done" | "all";
+  /** Only open tasks whose dueAt is before `now`. */
+  overdue?: boolean;
+  dueBefore?: Date;
+  dueAfter?: Date;
+  contactId?: number;
+  dealId?: number;
+  accountId?: number;
+  /** Entity allow-list: null/undefined = unrestricted, [] = no rows. */
+  companyIds?: number[] | null;
+  limit?: number;
+  offset?: number;
+}, now: Date = new Date()) {
+  const db = await getDb();
+  if (!db) return [];
+  if (Array.isArray(filters?.companyIds) && filters.companyIds.length === 0) return [];
+  const conditions = [];
+  if (Array.isArray(filters?.companyIds)) conditions.push(inArray(crmTasks.companyId, filters.companyIds));
+  if (filters?.assignedTo) conditions.push(eq(crmTasks.assignedTo, filters.assignedTo));
+  const status = filters?.status ?? "open";
+  if (status === "open") conditions.push(isNull(crmTasks.completedAt));
+  if (status === "done") conditions.push(sql`${crmTasks.completedAt} IS NOT NULL`);
+  if (filters?.overdue) conditions.push(isNull(crmTasks.completedAt), lt(crmTasks.dueAt, now));
+  if (filters?.dueBefore) conditions.push(lte(crmTasks.dueAt, filters.dueBefore));
+  if (filters?.dueAfter) conditions.push(gte(crmTasks.dueAt, filters.dueAfter));
+  if (filters?.contactId) conditions.push(eq(crmTasks.contactId, filters.contactId));
+  if (filters?.dealId) conditions.push(eq(crmTasks.dealId, filters.dealId));
+  if (filters?.accountId) conditions.push(eq(crmTasks.accountId, filters.accountId));
+  let query = db.select().from(crmTasks);
+  if (conditions.length) query = query.where(and(...conditions)) as any;
+  return query
+    .orderBy(sql`${crmTasks.dueAt} IS NULL`, asc(crmTasks.dueAt), asc(crmTasks.id))
+    .limit(filters?.limit || 200)
+    .offset(filters?.offset || 0);
+}
+
+export async function getCrmTaskById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(crmTasks).where(eq(crmTasks.id, id)).limit(1);
+  return row;
+}
+
+export async function createCrmTask(data: InsertCrmTask) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(crmTasks).values(data);
+  return result[0].insertId;
+}
+
+export async function updateCrmTask(id: number, data: Partial<InsertCrmTask>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(crmTasks).set(data).where(eq(crmTasks.id, id));
+}
+
+export async function deleteCrmTask(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(crmTasks).where(eq(crmTasks.id, id));
+}
+
+/** Open tasks for a deal created on/after `since` (stale-deal job idempotency). */
+export async function getOpenCrmTasksForDeal(dealId: number, since?: Date) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [eq(crmTasks.dealId, dealId), isNull(crmTasks.completedAt)];
+  if (since) conditions.push(gte(crmTasks.createdAt, since));
+  return db.select().from(crmTasks).where(and(...conditions));
+}
+
+/**
+ * Open, assigned tasks that have never been reminded and are either due by
+ * `dueBefore` (the caller passes end of the current UTC day) or whose
+ * explicit reminderAt has passed `now` (the current instant). Used by the
+ * daily reminder email, which sets reminderSentAt so each task is emailed
+ * once (moving dueAt / reminderAt clears it; see crmService.updateTask).
+ */
+export async function getCrmTasksDueForReminder(dueBefore: Date, now: Date) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(crmTasks).where(and(
+    isNull(crmTasks.completedAt),
+    isNull(crmTasks.reminderSentAt),
+    sql`${crmTasks.assignedTo} IS NOT NULL`,
+    or(
+      and(sql`${crmTasks.dueAt} IS NOT NULL`, lte(crmTasks.dueAt, dueBefore))!,
+      and(sql`${crmTasks.reminderAt} IS NOT NULL`, lte(crmTasks.reminderAt, now))!,
+    )!,
+  )).orderBy(asc(crmTasks.assignedTo), asc(crmTasks.dueAt));
+}
+
+export async function markCrmTasksReminded(ids: number[], at: Date) {
+  const db = await getDb();
+  if (!db || ids.length === 0) return;
+  await db.update(crmTasks).set({ reminderSentAt: at }).where(inArray(crmTasks.id, ids));
+}
+
 // --- CRM DEALS ---
 
 export async function getCrmDeals(filters?: {
   pipelineId?: number;
   contactId?: number;
+  accountId?: number;
   stage?: string;
   status?: string;
   assignedTo?: number;
+  /** Entity allow-list: null/undefined = unrestricted, [] = no rows. */
+  companyIds?: number[] | null;
   limit?: number;
   offset?: number;
 }) {
   const db = await getDb();
   if (!db) return [];
+  if (Array.isArray(filters?.companyIds) && filters.companyIds.length === 0) return [];
 
   const conditions = [];
+  if (Array.isArray(filters?.companyIds)) {
+    conditions.push(inArray(crmDeals.companyId, filters.companyIds));
+  }
+  if (filters?.accountId) {
+    conditions.push(eq(crmDeals.accountId, filters.accountId));
+  }
   if (filters?.pipelineId) {
     conditions.push(eq(crmDeals.pipelineId, filters.pipelineId));
   }
@@ -13702,7 +14172,17 @@ export async function updateCrmDeal(id: number, data: Partial<InsertCrmDeal>) {
 export async function deleteCrmDeal(id: number) {
   const db = await getDb();
   if (!db) return;
-  await db.delete(crmDeals).where(eq(crmDeals.id, id));
+  await db.transaction(async (tx) => {
+    await deleteCrmDealChildren(tx, [id]);
+    await tx.delete(crmDeals).where(eq(crmDeals.id, id));
+  });
+}
+
+/** Sets the isStale flag on a batch of deals (stale-deal job). */
+export async function setCrmDealsStale(ids: number[], isStale: boolean) {
+  const db = await getDb();
+  if (!db || ids.length === 0) return;
+  await db.update(crmDeals).set({ isStale }).where(inArray(crmDeals.id, ids));
 }
 
 // Looks up an existing deal that represents the same client company.
@@ -13796,7 +14276,18 @@ export async function mergeCrmDeals(primaryId: number, duplicateIds: number[]) {
 
   await db.transaction(async (tx) => {
     await tx.update(crmInteractions).set({ relatedDealId: primaryId }).where(inArray(crmInteractions.relatedDealId, ids));
+    await tx.update(crmTasks).set({ dealId: primaryId }).where(inArray(crmTasks.dealId, ids));
+    await tx.update(crmDealStageHistory).set({ dealId: primaryId }).where(inArray(crmDealStageHistory.dealId, ids));
+    await tx.update(crmDealItems).set({ dealId: primaryId }).where(inArray(crmDealItems.dealId, ids));
+    await tx.delete(crmDealContacts).where(inArray(crmDealContacts.dealId, ids));
     await tx.delete(crmDeals).where(inArray(crmDeals.id, ids));
+    // With items, a deal's amount is the sum of its line totals — recompute
+    // over the combined set so the primary never shows a stale amount.
+    const items = await tx.select({ totalAmount: crmDealItems.totalAmount }).from(crmDealItems).where(eq(crmDealItems.dealId, primaryId));
+    if (items.length > 0) {
+      const sumCents = items.reduce((acc, it) => acc + Math.round((Number(it.totalAmount ?? 0) || 0) * 100), 0);
+      await tx.update(crmDeals).set({ amount: (sumCents / 100).toFixed(2) }).where(eq(crmDeals.id, primaryId));
+    }
   });
 
   return { merged: ids.length };
@@ -13859,11 +14350,18 @@ export async function cleanupLegacyMeetingDeals() {
   return { renamed, merged, groupsMerged };
 }
 
-export async function getCrmDealStats(pipelineId?: number) {
+export async function getCrmDealStats(pipelineId?: number, companyIds?: number[] | null) {
   const db = await getDb();
   if (!db) return null;
+  if (Array.isArray(companyIds) && companyIds.length === 0) {
+    return { total: 0, open: 0, openValue: 0, won: 0, wonValue: 0, lost: 0 };
+  }
 
-  const baseCondition = pipelineId ? eq(crmDeals.pipelineId, pipelineId) : undefined;
+  const scopeParts = [
+    ...(pipelineId ? [eq(crmDeals.pipelineId, pipelineId)] : []),
+    ...(Array.isArray(companyIds) ? [inArray(crmDeals.companyId, companyIds)] : []),
+  ];
+  const baseCondition = scopeParts.length ? and(...scopeParts) : undefined;
 
   const [totalDeals] = await db.select({ count: count() }).from(crmDeals).where(baseCondition);
   const [openDeals] = await db.select({ count: count(), totalValue: sum(crmDeals.amount) })
@@ -13886,19 +14384,303 @@ export async function getCrmDealStats(pipelineId?: number) {
   };
 }
 
+// --- CRM ACCOUNTS ---
+
+export async function getCrmAccounts(filters?: {
+  type?: string;
+  parentAccountId?: number | null;
+  search?: string;
+  assignedTo?: number;
+  /** Entity allow-list: null/undefined = unrestricted, [] = no rows. */
+  companyIds?: number[] | null;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  if (Array.isArray(filters?.companyIds) && filters.companyIds.length === 0) return [];
+
+  const parent = alias(crmAccounts, "parent");
+  const conditions = [];
+  if (Array.isArray(filters?.companyIds)) conditions.push(inArray(crmAccounts.companyId, filters.companyIds));
+  if (filters?.type) conditions.push(eq(crmAccounts.type, filters.type as any));
+  if (filters?.parentAccountId === null) conditions.push(isNull(crmAccounts.parentAccountId));
+  else if (filters?.parentAccountId) conditions.push(eq(crmAccounts.parentAccountId, filters.parentAccountId));
+  if (filters?.assignedTo) conditions.push(eq(crmAccounts.assignedTo, filters.assignedTo));
+  if (filters?.search) {
+    const escaped = filters.search.replace(/[_%\\]/g, '\\$&');
+    conditions.push(or(like(crmAccounts.name, `%${escaped}%`), like(crmAccounts.region, `%${escaped}%`), like(crmAccounts.externalId, `%${escaped}%`))!);
+  }
+
+  const childCount = sql<number>`(SELECT COUNT(*) FROM ${crmAccounts} c WHERE c.parentAccountId = ${crmAccounts.id})`;
+  const contactCount = sql<number>`(SELECT COUNT(*) FROM ${crmContacts} k WHERE k.accountId = ${crmAccounts.id})`;
+  const openDealCount = sql<number>`(SELECT COUNT(*) FROM ${crmDeals} d WHERE d.accountId = ${crmAccounts.id} AND d.status = 'open')`;
+
+  let query = db
+    .select({
+      account: crmAccounts,
+      parentName: parent.name,
+      childCount,
+      contactCount,
+      openDealCount,
+    })
+    .from(crmAccounts)
+    .leftJoin(parent, eq(parent.id, crmAccounts.parentAccountId));
+  if (conditions.length) query = query.where(and(...conditions)) as any;
+  const rows = await query.orderBy(crmAccounts.name).limit(filters?.limit || 200).offset(filters?.offset || 0);
+  return rows.map((r) => ({
+    ...r.account,
+    parentName: r.parentName ?? null,
+    childCount: Number(r.childCount ?? 0),
+    contactCount: Number(r.contactCount ?? 0),
+    openDealCount: Number(r.openDealCount ?? 0),
+  }));
+}
+
+export async function getCrmAccountById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(crmAccounts).where(eq(crmAccounts.id, id)).limit(1);
+  return row;
+}
+
+export async function getCrmAccountsByIds(ids: number[]) {
+  const db = await getDb();
+  if (!db || ids.length === 0) return [];
+  return db.select().from(crmAccounts).where(inArray(crmAccounts.id, ids));
+}
+
+export async function createCrmAccount(data: InsertCrmAccount) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(crmAccounts).values(data);
+  return result[0].insertId;
+}
+
+export async function updateCrmAccount(id: number, data: Partial<InsertCrmAccount>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(crmAccounts).set(data).where(eq(crmAccounts.id, id));
+}
+
+export async function getCrmAccountChildren(accountId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(crmAccounts).where(eq(crmAccounts.parentAccountId, accountId)).orderBy(crmAccounts.name);
+}
+
+/**
+ * Every descendant of `rootId` (children, grandchildren, …) that belongs to
+ * `companyId` (NULL-safe) — one query per tree level, no size cap. Cycles
+ * are cut by the visited set.
+ */
+export async function getCrmAccountDescendantIds(rootId: number, companyId: number | null): Promise<number[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const seen = new Set<number>([rootId]);
+  const out: number[] = [];
+  let frontier = [rootId];
+  while (frontier.length) {
+    const next: number[] = [];
+    for (let i = 0; i < frontier.length; i += 1000) {
+      const rows = await db
+        .select({ id: crmAccounts.id })
+        .from(crmAccounts)
+        .where(and(
+          inArray(crmAccounts.parentAccountId, frontier.slice(i, i + 1000)),
+          companyId == null ? isNull(crmAccounts.companyId) : eq(crmAccounts.companyId, companyId),
+        ));
+      for (const r of rows) {
+        if (seen.has(r.id)) continue;
+        seen.add(r.id);
+        out.push(r.id);
+        next.push(r.id);
+      }
+    }
+    frontier = next;
+  }
+  return out;
+}
+
+/** Contact count and open-deal count / amount across a set of accounts (aggregate queries, batched). */
+export async function getCrmAccountRollup(accountIds: number[]) {
+  const db = await getDb();
+  const out = { contactCount: 0, openDealCount: 0, openDealAmount: 0 };
+  if (!db || accountIds.length === 0) return out;
+  for (let i = 0; i < accountIds.length; i += 1000) {
+    const chunk = accountIds.slice(i, i + 1000);
+    const [c] = await db.select({ n: count() }).from(crmContacts).where(inArray(crmContacts.accountId, chunk));
+    const [d] = await db
+      .select({ n: count(), total: sum(crmDeals.amount) })
+      .from(crmDeals)
+      .where(and(inArray(crmDeals.accountId, chunk), eq(crmDeals.status, "open")));
+    out.contactCount += Number(c?.n ?? 0);
+    out.openDealCount += Number(d?.n ?? 0);
+    out.openDealAmount += Number(d?.total ?? 0) || 0;
+  }
+  out.openDealAmount = Math.round(out.openDealAmount * 100) / 100;
+  return out;
+}
+
+/** Contacts on any of `accountIds`, newest first, paged. */
+export async function getCrmContactsForAccounts(accountIds: number[], limit: number, offset = 0) {
+  const db = await getDb();
+  if (!db || accountIds.length === 0) return [];
+  return db.select().from(crmContacts).where(inArray(crmContacts.accountId, accountIds))
+    .orderBy(desc(crmContacts.createdAt), desc(crmContacts.id)).limit(limit).offset(offset);
+}
+
+/** Deals on any of `accountIds`, newest first, paged. */
+export async function getCrmDealsForAccounts(accountIds: number[], limit: number, offset = 0) {
+  const db = await getDb();
+  if (!db || accountIds.length === 0) return [];
+  return db.select().from(crmDeals).where(inArray(crmDeals.accountId, accountIds))
+    .orderBy(desc(crmDeals.createdAt), desc(crmDeals.id)).limit(limit).offset(offset);
+}
+
+/** Interactions of contacts on any of `accountIds`, newest first, paged (one join query). */
+export async function getCrmInteractionsForAccounts(accountIds: number[], limit: number, offset = 0) {
+  const db = await getDb();
+  if (!db || accountIds.length === 0) return [];
+  const rows = await db
+    .select({ interaction: crmInteractions })
+    .from(crmInteractions)
+    .innerJoin(crmContacts, eq(crmContacts.id, crmInteractions.contactId))
+    .where(inArray(crmContacts.accountId, accountIds))
+    .orderBy(desc(crmInteractions.createdAt), desc(crmInteractions.id))
+    .limit(limit)
+    .offset(offset);
+  return rows.map((r) => r.interaction);
+}
+
+/**
+ * Deletes an account. Contacts, deals and tasks are detached (accountId =
+ * NULL) and child accounts move up to the deleted account's parent.
+ */
+export async function deleteCrmAccount(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  const [row] = await db.select().from(crmAccounts).where(eq(crmAccounts.id, id)).limit(1);
+  if (!row) return;
+  await db.transaction(async (tx) => {
+    await tx.update(crmContacts).set({ accountId: null }).where(eq(crmContacts.accountId, id));
+    await tx.update(crmDeals).set({ accountId: null }).where(eq(crmDeals.accountId, id));
+    await tx.update(crmTasks).set({ accountId: null }).where(eq(crmTasks.accountId, id));
+    await tx.update(crmAccounts).set({ parentAccountId: row.parentAccountId ?? null }).where(eq(crmAccounts.parentAccountId, id));
+    await tx.delete(crmAccounts).where(eq(crmAccounts.id, id));
+  });
+}
+
+/**
+ * Merges duplicate accounts into `primaryId`: contacts, deals, tasks and child
+ * accounts are re-pointed, then the duplicates are deleted. One transaction.
+ */
+export async function mergeCrmAccounts(primaryId: number, duplicateIds: number[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const ids = duplicateIds.filter((id) => id !== primaryId);
+  if (ids.length === 0) return { merged: 0 };
+  await db.transaction(async (tx) => {
+    await tx.update(crmContacts).set({ accountId: primaryId }).where(inArray(crmContacts.accountId, ids));
+    await tx.update(crmDeals).set({ accountId: primaryId }).where(inArray(crmDeals.accountId, ids));
+    await tx.update(crmTasks).set({ accountId: primaryId }).where(inArray(crmTasks.accountId, ids));
+    await tx.update(crmAccounts).set({ parentAccountId: primaryId }).where(inArray(crmAccounts.parentAccountId, ids));
+    await tx.delete(crmAccounts).where(inArray(crmAccounts.id, ids));
+  });
+  return { merged: ids.length };
+}
+
+/** Case-insensitive account lookup by exact name within one entity (NULL-safe). */
+export async function findCrmAccountByName(name: string, companyId: number | null) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const n = name.trim().toLowerCase();
+  if (!n) return undefined;
+  const [row] = await db.select().from(crmAccounts).where(and(
+    sql`LOWER(${crmAccounts.name}) = ${n}`,
+    companyId == null ? isNull(crmAccounts.companyId) : eq(crmAccounts.companyId, companyId),
+  )).limit(1);
+  return row;
+}
+
+/** Distinct non-empty `organization` values on contacts that have no account yet. */
+export async function getUnlinkedContactOrganizations(companyIds?: number[] | null) {
+  const db = await getDb();
+  if (!db) return [];
+  if (Array.isArray(companyIds) && companyIds.length === 0) return [];
+  const conditions = [isNull(crmContacts.accountId), sql`${crmContacts.organization} IS NOT NULL AND TRIM(${crmContacts.organization}) <> ''`];
+  if (Array.isArray(companyIds)) conditions.push(inArray(crmContacts.companyId, companyIds));
+  const rows = await db
+    .select({ organization: crmContacts.organization, companyId: crmContacts.companyId })
+    .from(crmContacts)
+    .where(and(...conditions))
+    .groupBy(crmContacts.organization, crmContacts.companyId);
+  return rows.map((r) => ({ organization: (r.organization ?? "").trim(), companyId: r.companyId ?? null })).filter((r) => r.organization);
+}
+
+/**
+ * Creates one account per distinct contact `organization` (case-insensitive,
+ * per entity) and links contacts and their deals to it. Re-runnable: existing
+ * accounts with the same name are reused, already-linked rows are untouched.
+ */
+export async function backfillAccountsFromOrganization(companyIds?: number[] | null) {
+  const db = await getDb();
+  if (!db) return { accountsCreated: 0, contactsLinked: 0, dealsLinked: 0 };
+  const orgs = await getUnlinkedContactOrganizations(companyIds);
+  let accountsCreated = 0;
+  let contactsLinked = 0;
+  let dealsLinked = 0;
+  for (const { organization, companyId } of orgs) {
+    const existing = await db
+      .select({ id: crmAccounts.id })
+      .from(crmAccounts)
+      .where(and(
+        sql`LOWER(${crmAccounts.name}) = ${organization.toLowerCase()}`,
+        companyId == null ? isNull(crmAccounts.companyId) : eq(crmAccounts.companyId, companyId),
+      ))
+      .limit(1);
+    let accountId = existing[0]?.id;
+    if (!accountId) {
+      accountId = await createCrmAccount({ name: organization, companyId, type: "other" });
+      accountsCreated++;
+    }
+    const contactWhere = and(
+      isNull(crmContacts.accountId),
+      sql`LOWER(TRIM(${crmContacts.organization})) = ${organization.toLowerCase()}`,
+      companyId == null ? isNull(crmContacts.companyId) : eq(crmContacts.companyId, companyId),
+    );
+    const linked = await db.select({ id: crmContacts.id }).from(crmContacts).where(contactWhere);
+    if (linked.length === 0) continue;
+    await db.update(crmContacts).set({ accountId }).where(contactWhere);
+    contactsLinked += linked.length;
+    const dealRes = await db
+      .update(crmDeals)
+      .set({ accountId })
+      .where(and(isNull(crmDeals.accountId), inArray(crmDeals.contactId, linked.map((c) => c.id))));
+    dealsLinked += Number((dealRes as any)[0]?.affectedRows ?? 0);
+  }
+  return { accountsCreated, contactsLinked, dealsLinked };
+}
+
 // --- CONTACT CAPTURES ---
 
 export async function getContactCaptures(filters?: {
   status?: string;
   captureMethod?: string;
   capturedBy?: number;
+  /** Entity allow-list: null/undefined = unrestricted, [] = no rows. */
+  companyIds?: number[] | null;
   limit?: number;
   offset?: number;
 }) {
   const db = await getDb();
   if (!db) return [];
+  if (Array.isArray(filters?.companyIds) && filters.companyIds.length === 0) return [];
 
   const conditions = [];
+  if (Array.isArray(filters?.companyIds)) {
+    conditions.push(inArray(contactCaptures.companyId, filters.companyIds));
+  }
   if (filters?.status) {
     conditions.push(eq(contactCaptures.status, filters.status as any));
   }

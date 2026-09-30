@@ -14,7 +14,7 @@ vi.mock("./_core/email", () => ({ sendEmail: vi.fn() }));
 import * as db from "./db";
 import { sendEmail } from "./_core/email";
 import {
-  CLAIM_LEASE_MS, MAX_SEND_ATTEMPTS, RETRY_DELAY_MS, addDays, firstSendAt, nextStep, runDueSequenceSteps, runEmailOutreachTick,
+  CLAIM_LEASE_MS, MAX_SEND_ATTEMPTS, RETRY_DELAY_MS, addDays, enrollmentStopReason, firstSendAt, nextStep, runDueSequenceSteps, runEmailOutreachTick,
 } from "./sequenceRunner";
 
 type Row = Record<string, any> & { id: number };
@@ -173,6 +173,33 @@ describe("runDueSequenceSteps", () => {
       ["active", null],
     ]);
     expect(rows[3].nextSendAt).toEqual(new Date(NOW.getTime() + CLAIM_LEASE_MS));
+  });
+
+  it("stops an enrollment before sending when the contact replied after enrolling", async () => {
+    const enrolledAt = new Date(NOW.getTime() - 3 * DAY);
+    const rows = setup([
+      { id: 1, sequenceId: 1, contactId: 7, currentStepOrder: 1, nextSendAt: NOW, createdAt: enrolledAt },
+      { id: 2, sequenceId: 1, contactId: 8, currentStepOrder: 1, nextSendAt: NOW, createdAt: enrolledAt },
+    ]);
+    vi.mocked(db.getCrmContactById).mockImplementation(async (id: number) =>
+      (id === 7
+        ? { ...jane, id: 7, lastRepliedAt: new Date(NOW.getTime() - DAY) } // replied after enrolling
+        : { ...jane, id: 8, lastRepliedAt: new Date(enrolledAt.getTime() - DAY) }) as never); // replied before
+
+    const r = await runDueSequenceSteps(NOW);
+    expect(r).toMatchObject({ stopped: 1, sent: 1 });
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+    expect(rows[0]).toMatchObject({ status: "stopped", stoppedReason: "Contact replied", nextSendAt: null });
+    expect(rows[1].status).toBe("active");
+  });
+
+  it("enrollmentStopReason: opt-out wins, reply only counts after enrollment", () => {
+    const enrolled = { createdAt: new Date("2026-09-01T00:00:00Z") };
+    expect(enrollmentStopReason({ optedOutEmail: true }, enrolled)).toBe("Contact opted out of email");
+    expect(enrollmentStopReason({ lastRepliedAt: new Date("2026-09-02T00:00:00Z") }, enrolled)).toBe("Contact replied");
+    expect(enrollmentStopReason({ lastRepliedAt: new Date("2026-08-30T00:00:00Z") }, enrolled)).toBeNull();
+    expect(enrollmentStopReason({ lastRepliedAt: null }, enrolled)).toBeNull();
+    expect(enrollmentStopReason(undefined, enrolled)).toBeNull();
   });
 
   it("the outreach tick also sends due scheduled campaigns", async () => {
