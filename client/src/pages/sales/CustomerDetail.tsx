@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { ListPager } from "@/components/ListPager";
+import { usePagedList } from "@/hooks/usePagedList";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -34,7 +36,16 @@ export default function CustomerDetail() {
 
   const utils = trpc.useUtils();
   const { data: customer, isLoading } = trpc.customers.get.useQuery({ id: customerId });
-  const { data: orders } = trpc.orders.list.useQuery({ customerId });
+  // Order history is paged; the count and total value cover every order on the server.
+  const ordersPaging = usePagedList(String(customerId), 25);
+  const { data: ordersPage } = trpc.orders.listPaged.useQuery({
+    customerId,
+    limit: ordersPaging.query.limit,
+    offset: ordersPaging.query.offset,
+  });
+  const orders = ordersPage?.rows;
+  useEffect(() => ordersPaging.clampTo(ordersPage?.total), [ordersPage?.total]);
+  const { data: orderSummary } = trpc.orders.summary.useQuery({ customerId });
 
   const [editOpen, setEditOpen] = useState(false);
   const [form, setForm] = useState({
@@ -147,8 +158,7 @@ export default function CustomerDetail() {
     );
   };
 
-  const totalOrderValue = orders?.reduce((sum, order) => 
-    sum + parseFloat(order.totalAmount?.toString() || "0"), 0) || 0;
+  const totalOrderValue = orderSummary?.totalValue ?? 0;
 
   return (
     <div className="p-6 space-y-6">
@@ -279,7 +289,7 @@ export default function CustomerDetail() {
         <CardHeader>
           <CardTitle>Order History</CardTitle>
           <CardDescription>
-            {orders?.length || 0} order(s) • Total value: {formatCurrency(totalOrderValue.toString())}
+            {orderSummary?.count ?? 0} order(s) • Total value: {formatCurrency(totalOrderValue.toString())}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -315,6 +325,13 @@ export default function CustomerDetail() {
           ) : (
             <p className="text-center text-muted-foreground py-8">No orders yet</p>
           )}
+          <ListPager
+            page={ordersPaging.page}
+            pageSize={ordersPaging.pageSize}
+            total={ordersPage?.total ?? 0}
+            onPageChange={ordersPaging.setPage}
+            onPageSizeChange={ordersPaging.setPageSize}
+          />
         </CardContent>
       </Card>
 

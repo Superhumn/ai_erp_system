@@ -3,7 +3,15 @@ import { z } from "zod";
 import { router } from "../_core/trpc";
 import { invokeLLM } from "../_core/llm";
 import * as db from "../db";
-import { financeProcedure } from "./_shared";
+import { assertNonEmptyScope, financeProcedure, resolveRequestScope } from "./_shared";
+import {
+  arrMovementMetrics,
+  cohortHeatmap,
+  concentrationMetrics,
+  newCustomerCounts,
+  recurringMetrics,
+  retentionMetrics,
+} from "../../shared/cfoMetrics";
 import { bucketBillsAging, billOutstanding, billDaysOverdue } from "../billsLogic";
 import { parseReportRange, inReportRange, onOrBefore } from "../financialReportRange";
 
@@ -11,6 +19,42 @@ import { parseReportRange, inReportRange, onOrBefore } from "../financialReportR
 // FINANCIAL REPORTS
 // ============================================
 export const financialReportsRouter = router({
+    // CFO dashboard invoice/ledger/AP metrics, aggregated in SQL instead of shipping whole
+    // tables to the browser. Boundaries come from the browser so months follow its calendar.
+    cfoMetrics: financeProcedure
+      .input(z.object({
+        nowMs: z.number(),
+        monthStarts: z.array(z.number()).length(14),
+        quarterStarts: z.array(z.number()).length(9),
+        currentQuarter: z.number().int(),
+        newCustomerCutoffMs: z.number(),
+      }).refine((w) => [w.monthStarts, w.quarterStarts].every((b) => b.every((x, i) => i === 0 || x > b[i - 1])), {
+        message: "Boundaries must be strictly ascending",
+      }))
+      .query(async ({ input, ctx }) => {
+        const scope = assertNonEmptyScope(await resolveRequestScope(ctx.user));
+        const agg = await db.getCfoAggregates(scope, input);
+        const baseQuarter = input.currentQuarter - 7;
+        return {
+          // Index 0 is the same month a year ago; 1..12 are the last 12 months, oldest first.
+          monthlyRevenue: agg.monthlyRevenue,
+          recurring: recurringMetrics(agg.customers, input.nowMs),
+          retention: retentionMetrics(agg.customers),
+          arrMovement: arrMovementMetrics(agg.customers),
+          concentration: concentrationMetrics(agg.customers),
+          newCustomers: newCustomerCounts(agg.customers, input.newCustomerCutoffMs),
+          cohortHeatmap: cohortHeatmap(
+            agg.cohortCells.map((c) => ({ ...c, cohortQ: baseQuarter + c.cohortQ })),
+            agg.cohortSizes.map((c) => ({ ...c, cohortQ: baseQuarter + c.cohortQ })),
+            input.currentQuarter,
+          ),
+          arAging: agg.arAging,
+          // Last three calendar months, oldest first.
+          expenseByMonth: agg.expenseByMonth,
+          outstandingAP: agg.outstandingAP,
+          hasInvoices: agg.customers.length > 0,
+        };
+      }),
     generate: financeProcedure
       .input(z.object({
         reportType: z.string(),

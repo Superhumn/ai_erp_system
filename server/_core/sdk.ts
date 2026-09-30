@@ -6,6 +6,7 @@ import { SignJWT, jwtVerify } from "jose";
 import type { User } from "../../drizzle/schema";
 import * as db from "../db";
 import { ENV } from "./env";
+import { currentTenant, isMultiTenant, requireTenant } from "./tenancy";
 
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0;
@@ -14,6 +15,8 @@ export type SessionPayload = {
   openId: string;
   appId: string;
   name: string;
+  /** Tenant slug the session was issued for. Set only in multi-tenant mode. */
+  tid?: string;
 };
 
 class SDKServer {
@@ -37,6 +40,7 @@ class SDKServer {
         openId,
         appId: ENV.appId,
         name: options.name || "",
+        tid: isMultiTenant() ? requireTenant().slug : undefined,
       },
       options
     );
@@ -47,20 +51,22 @@ class SDKServer {
     const expiresInMs = options.expiresInMs ?? ONE_YEAR_MS;
     const expirationSeconds = Math.floor((issuedAt + expiresInMs) / 1000);
     const secretKey = this.getSessionSecret();
-    return new SignJWT({ openId: payload.openId, appId: payload.appId, name: payload.name })
+    const claims: Record<string, string> = { openId: payload.openId, appId: payload.appId, name: payload.name };
+    if (payload.tid) claims.tid = payload.tid;
+    return new SignJWT(claims)
       .setProtectedHeader({ alg: "HS256", typ: "JWT" })
       .setExpirationTime(expirationSeconds)
       .sign(secretKey);
   }
 
-  async verifySession(cookieValue: string | undefined | null): Promise<{ openId: string; appId: string; name: string } | null> {
+  async verifySession(cookieValue: string | undefined | null): Promise<SessionPayload | null> {
     if (!cookieValue) {
       return null;
     }
     try {
       const secretKey = this.getSessionSecret();
       const { payload } = await jwtVerify(cookieValue, secretKey, { algorithms: ["HS256"] });
-      const { openId, appId, name } = payload as Record<string, unknown>;
+      const { openId, appId, name, tid } = payload as Record<string, unknown>;
 
       if (
         !isNonEmptyString(openId) ||
@@ -69,7 +75,12 @@ class SDKServer {
       ) {
         return null;
       }
-      return { openId, appId, name };
+      // Multi-tenant: a cookie is only good on the tenant that issued it. Without this, a user
+      // of tenant A could replay their cookie against tenant B and match a same-openId row there.
+      if (isMultiTenant() && (!isNonEmptyString(tid) || tid !== currentTenant()?.slug)) {
+        return null;
+      }
+      return isNonEmptyString(tid) ? { openId, appId, name, tid } : { openId, appId, name };
     } catch (error) {
       console.warn("[Auth] Session verification failed", String(error));
       return null;

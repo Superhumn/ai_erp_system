@@ -13,6 +13,7 @@ import {
   AlertTriangle, Users, Zap, PieChart, Download,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
+import { quarterIndex } from "@shared/cfoMetrics";
 
 // ── Helpers ───────────────────────────────────────────────────
 function fmtCompact(value: number | string | null | undefined): string {
@@ -127,14 +128,36 @@ function KpiCard({ icon: Icon, label, value, sub, tone, hint }: KpiCardProps) {
   );
 }
 
+/**
+ * Month / quarter boundaries in the viewer's local calendar for financialReports.cfoMetrics.
+ * monthStarts: start of the month 12 months ago … start of next month (14 values).
+ * quarterStarts: start of the quarter 7 quarters ago … start of next quarter (9 values).
+ */
+export function cfoTimeWindows(now: Date) {
+  const y = now.getFullYear();
+  const mo = now.getMonth();
+  const monthStarts = Array.from({ length: 14 }, (_, i) => new Date(y, mo - 12 + i, 1).getTime());
+  const qStartMonth = Math.floor(mo / 3) * 3;
+  const quarterStarts = Array.from({ length: 9 }, (_, i) => new Date(y, qStartMonth - 21 + i * 3, 1).getTime());
+  return {
+    nowMs: now.getTime(),
+    monthStarts,
+    quarterStarts,
+    currentQuarter: quarterIndex(now),
+    newCustomerCutoffMs: new Date(y, mo - 3, 1).getTime(),
+  };
+}
+
 // ── Component ────────────────────────────────────────────────
 function useCfoMetrics() {
   const { data: bankBalances } = trpc.banking.balances.useQuery();
-  const { data: invoicesList } = trpc.invoices.list.useQuery();
+  // Invoice, expense-ledger and AP figures are aggregated on the server; the dashboard
+  // used to download every invoice, expense and PO (~430 MB at 1M invoices).
+  const cfoWindows = useMemo(() => cfoTimeWindows(new Date()), []);
+  const { data: cfo } = trpc.financialReports.cfoMetrics.useQuery(cfoWindows);
   const { data: modelData } = trpc.financialModel.list.useQuery({});
   const { data: kpiGoals } = trpc.kpiGoals.list.useQuery({ year: new Date().getFullYear() });
   const { data: employees } = trpc.employees.list.useQuery({ status: "active" });
-  const { data: expenseTxns } = trpc.transactions.list.useQuery({ type: "expense" });
   // Format YYYY-MM-DD in local time. Using `toISOString().slice(0,10)` would
   // shift the date by one day in timezones ahead of UTC (local midnight
   // serializes to the previous UTC date).
@@ -147,7 +170,6 @@ function useCfoMetrics() {
     summarizeBy: "Month",
   });
   const { data: openDeals } = trpc.crm.deals.list.useQuery({ status: "open" });
-  const { data: allPOs } = trpc.purchaseOrders.list.useQuery();
   const { data: investorUpdatesList } = trpc.investorUpdates.list.useQuery();
 
   // ── Cash ────────────────────────────────────────────────────
@@ -169,14 +191,10 @@ function useCfoMetrics() {
         date: d,
       });
     }
-    for (const inv of (invoicesList ?? [])) {
-      const d = new Date((inv as any).issueDate || (inv as any).createdAt);
-      const k = `${d.getFullYear()}-${d.getMonth()}`;
-      const bucket = buckets.find((b) => b.key === k);
-      if (bucket) bucket.revenue += parseFloat((inv as any).totalAmount || "0");
-    }
+    // cfo.monthlyRevenue[1..12] are the same 12 months, oldest first.
+    buckets.forEach((b, i) => { b.revenue = cfo?.monthlyRevenue[i + 1] ?? 0; });
     return buckets;
-  }, [invoicesList]);
+  }, [cfo]);
 
   const thisMonthRev = monthlyRevenue[monthlyRevenue.length - 1]?.revenue ?? 0;
   const lastMonthRev = monthlyRevenue[monthlyRevenue.length - 2]?.revenue ?? 0;
@@ -186,18 +204,7 @@ function useCfoMetrics() {
     ? ((thisMonthRev - lastMonthRev) / lastMonthRev) * 100 : 0;
 
   // YoY: compare current month to the same calendar month 12 months ago
-  const yoyBaseRev = useMemo(() => {
-    const now = new Date();
-    const sameMonthLastYear = new Date(now.getFullYear() - 1, now.getMonth(), 1);
-    const key = `${sameMonthLastYear.getFullYear()}-${sameMonthLastYear.getMonth()}`;
-    let total = 0;
-    for (const inv of (invoicesList ?? [])) {
-      const d = new Date((inv as any).issueDate || (inv as any).createdAt);
-      if (`${d.getFullYear()}-${d.getMonth()}` === key)
-        total += parseFloat((inv as any).totalAmount || "0");
-    }
-    return total;
-  }, [invoicesList]);
+  const yoyBaseRev = cfo?.monthlyRevenue[0] ?? 0;
   const yoyGrowth = yoyBaseRev > 0 ? ((thisMonthRev - yoyBaseRev) / yoyBaseRev) * 100 : 0;
 
   const naiveArr = threeMonthAvgRev * 12;
@@ -207,95 +214,14 @@ function useCfoMetrics() {
   // For each customer with ≥2 invoices, infer mean days-between-orders.
   // Active = last order within 1.5× cadence; At-Risk = 1.5-3×; Churned = >3×.
   // Detected MRR = Σ (customer avg invoice / cadence-in-months) across active.
-  const recurring = useMemo(() => {
-    const invs = invoicesList ?? [];
-    if (invs.length === 0) return null;
-    const byCustomer = new Map<string, { name: string; times: number[]; amounts: number[] }>();
-    for (const inv of invs) {
-      const name = (inv as any).customer?.name || `Customer ${(inv as any).customerId ?? "—"}`;
-      const t = new Date((inv as any).issueDate || (inv as any).createdAt).getTime();
-      const amt = parseFloat((inv as any).totalAmount || "0");
-      if (!byCustomer.has(name)) byCustomer.set(name, { name, times: [], amounts: [] });
-      const c = byCustomer.get(name)!;
-      c.times.push(t);
-      c.amounts.push(amt);
-    }
-    const now = Date.now();
-    const profiles = Array.from(byCustomer.values())
-      .map((c) => {
-        c.times.sort((a, b) => a - b);
-        const n = c.times.length;
-        if (n < 2) return null;
-        const intervals = c.times.slice(1).map((t, i) => (t - c.times[i]) / 86400000);
-        const cadenceDays = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-        const avgAmount = c.amounts.reduce((a, b) => a + b, 0) / c.amounts.length;
-        const lastOrder = c.times[n - 1];
-        const daysSinceLast = (now - lastOrder) / 86400000;
-        let status: "active" | "at_risk" | "churned" = "active";
-        if (daysSinceLast > cadenceDays * 3) status = "churned";
-        else if (daysSinceLast > cadenceDays * 1.5) status = "at_risk";
-        return { name: c.name, cadenceDays, avgAmount, lastOrder, daysSinceLast, status };
-      })
-      .filter((p): p is NonNullable<typeof p> => p !== null);
-
-    if (profiles.length === 0) return null;
-    const active  = profiles.filter((p) => p.status === "active");
-    const atRisk  = profiles.filter((p) => p.status === "at_risk").sort((a, b) => b.avgAmount - a.avgAmount);
-    const churned = profiles.filter((p) => p.status === "churned");
-    const detectedMRR = active.reduce((s, p) =>
-      s + (p.avgAmount / (p.cadenceDays / 30.44)), 0);
-    const atRiskARR = atRisk.reduce((s, p) => s + (p.avgAmount / (p.cadenceDays / 30.44)) * 12, 0);
-    return {
-      total: profiles.length,
-      active: active.length,
-      atRisk: atRisk.length,
-      churned: churned.length,
-      detectedMRR,
-      detectedARR: detectedMRR * 12,
-      atRiskARR,
-      atRiskCustomers: atRisk.slice(0, 5),
-    };
-  }, [invoicesList]);
+  // Formulas: shared/cfoMetrics.ts (recurringMetrics).
+  const recurring = cfo?.recurring ?? null;
 
   // ── Cohort-derived retention (NRR / GRR / Logo) ─────────────
   // Groups invoices by customer, compares this-month revenue vs same-customer
   // revenue 12 months ago. Best-effort from in-system invoice data — a real
   // subscriptions table would be more accurate.
-  const retention = useMemo(() => {
-    const invs = invoicesList ?? [];
-    if (invs.length === 0) return null;
-    const byCustomer = new Map<string, Map<string, number>>();
-    for (const inv of invs) {
-      const name = (inv as any).customer?.name || `Customer ${(inv as any).customerId ?? "—"}`;
-      const d = new Date((inv as any).issueDate || (inv as any).createdAt);
-      const k = `${d.getFullYear()}-${d.getMonth()}`;
-      const amt = parseFloat((inv as any).totalAmount || "0");
-      if (!byCustomer.has(name)) byCustomer.set(name, new Map());
-      const m = byCustomer.get(name)!;
-      m.set(k, (m.get(k) ?? 0) + amt);
-    }
-    const now = new Date();
-    const yearAgoKey = `${now.getFullYear() - 1}-${now.getMonth()}`;
-    const thisKey = `${now.getFullYear()}-${now.getMonth()}`;
-    let cohortSize = 0, revYearAgo = 0, revNow = 0, revCapped = 0, logosRetained = 0;
-    for (const monthly of byCustomer.values()) {
-      const prior = monthly.get(yearAgoKey) ?? 0;
-      if (prior <= 0) continue;
-      cohortSize++;
-      revYearAgo += prior;
-      const cur = monthly.get(thisKey) ?? 0;
-      revNow += cur;
-      revCapped += Math.min(cur, prior);
-      if (cur > 0) logosRetained++;
-    }
-    if (cohortSize === 0 || revYearAgo === 0) return null;
-    return {
-      nrr: (revNow / revYearAgo) * 100,
-      grr: (revCapped / revYearAgo) * 100,
-      logoRetention: (logosRetained / cohortSize) * 100,
-      cohortSize,
-    };
-  }, [invoicesList]);
+  const retention = cfo?.retention ?? null;
 
   // ── Burn / Runway ───────────────────────────────────────────
   // Priority: QuickBooks P&L (actual) → in-system expense ledger → proxy.
@@ -310,27 +236,14 @@ function useCfoMetrics() {
         return { actualBurn: avg, burnSource: "quickbooks" as const };
       }
     }
-    // 2 — In-system expense ledger
-    const txns = expenseTxns ?? [];
-    if (txns.length > 0) {
-      const now = new Date();
-      const buckets: Record<string, number> = {};
-      for (let i = 0; i < 3; i++) {
-        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        buckets[`${d.getFullYear()}-${d.getMonth()}`] = 0;
-      }
-      for (const t of txns) {
-        const d = new Date((t as any).date || (t as any).createdAt);
-        const k = `${d.getFullYear()}-${d.getMonth()}`;
-        if (k in buckets) buckets[k] += Math.abs(parseFloat((t as any).totalAmount || "0"));
-      }
-      const sum = Object.values(buckets).reduce((a, b) => a + b, 0);
-      const monthsWithData = Object.values(buckets).filter((v) => v > 0).length;
-      if (monthsWithData > 0) return { actualBurn: sum / monthsWithData, burnSource: "ledger" as const };
-    }
+    // 2 — In-system expense ledger (last three calendar months, summed on the server)
+    const buckets = cfo?.expenseByMonth ?? [];
+    const sum = buckets.reduce((a, b) => a + b, 0);
+    const monthsWithData = buckets.filter((v) => v > 0).length;
+    if (monthsWithData > 0) return { actualBurn: sum / monthsWithData, burnSource: "ledger" as const };
     // 3 — No data
     return { actualBurn: 0, burnSource: "none" as const };
-  }, [qbPnl, expenseTxns]);
+  }, [qbPnl, cfo]);
 
   const estimatedBurn = useMemo(() =>
     actualBurn > 0 ? actualBurn : Math.max(threeMonthAvgRev * 0.7, 10000),
@@ -419,85 +332,10 @@ function useCfoMetrics() {
   }, [investorUpdatesList]);
 
   // ── Cohort retention heatmap — revenue retention by acquisition quarter
-  const cohortHeatmap = useMemo(() => {
-    const invs = invoicesList ?? [];
-    if (invs.length === 0) return null;
-    const qIndex = (d: Date) => d.getFullYear() * 4 + Math.floor(d.getMonth() / 3);
-
-    // Each customer's acquisition quarter = quarter of their first invoice.
-    const firstQByCustomer = new Map<string, number>();
-    for (const inv of invs) {
-      const name = (inv as any).customer?.name || `Customer ${(inv as any).customerId ?? "—"}`;
-      const qi = qIndex(new Date((inv as any).issueDate || (inv as any).createdAt));
-      if (!firstQByCustomer.has(name) || qi < firstQByCustomer.get(name)!) {
-        firstQByCustomer.set(name, qi);
-      }
-    }
-
-    // cohortQuarter → offset → revenue
-    const cohorts = new Map<number, Map<number, number>>();
-    for (const inv of invs) {
-      const name = (inv as any).customer?.name || `Customer ${(inv as any).customerId ?? "—"}`;
-      const qi = qIndex(new Date((inv as any).issueDate || (inv as any).createdAt));
-      const cohort = firstQByCustomer.get(name)!;
-      const offset = qi - cohort;
-      const amt = parseFloat((inv as any).totalAmount || "0");
-      if (!cohorts.has(cohort)) cohorts.set(cohort, new Map());
-      const m = cohorts.get(cohort)!;
-      m.set(offset, (m.get(offset) ?? 0) + amt);
-    }
-
-    const currentQi = qIndex(new Date());
-    const rows = Array.from(cohorts.entries())
-      .filter(([qi]) => qi >= currentQi - 7 && qi <= currentQi) // last 8 quarters max
-      .sort((a, b) => a[0] - b[0])
-      .map(([qi, offsets]) => {
-        const q0Rev = offsets.get(0) ?? 0;
-        const maxOffset = currentQi - qi;
-        const cells: (number | null)[] = [];
-        for (let o = 0; o <= maxOffset; o++) {
-          const rev = offsets.get(o) ?? 0;
-          cells.push(q0Rev > 0 ? (rev / q0Rev) * 100 : null);
-        }
-        const year = Math.floor(qi / 4);
-        const q = (qi % 4) + 1;
-        const n = Array.from(firstQByCustomer.values()).filter((v) => v === qi).length;
-        return { label: `Q${q} ${year}`, n, cells };
-      });
-    if (rows.length === 0) return null;
-    const maxOffset = Math.max(...rows.map((r) => r.cells.length));
-    return { rows, maxOffset };
-  }, [invoicesList]);
+  const cohortHeatmap = cfo?.cohortHeatmap ?? null;
 
   // ── ARR Movement (last 6mo): Starting → New + Expansion − Contraction − Churn → Ending
-  const arrMovement = useMemo(() => {
-    const invs = invoicesList ?? [];
-    if (invs.length === 0) return null;
-    const byCustomer = new Map<string, { t: number; amt: number }[]>();
-    for (const inv of invs) {
-      const name = (inv as any).customer?.name || `Customer ${(inv as any).customerId ?? "—"}`;
-      const t = new Date((inv as any).issueDate || (inv as any).createdAt).getTime();
-      const amt = parseFloat((inv as any).totalAmount || "0");
-      if (!byCustomer.has(name)) byCustomer.set(name, []);
-      byCustomer.get(name)!.push({ t, amt });
-    }
-    const now = Date.now();
-    const ninetyAgo = now - 90 * 86400000;
-    const oneEightyAgo = now - 180 * 86400000;
-    let starting = 0, newArr = 0, expansion = 0, contraction = 0, churn = 0;
-    for (const history of byCustomer.values()) {
-      const current = history.filter((i) => i.t >= ninetyAgo).reduce((s, i) => s + i.amt, 0) * 4;
-      const prior   = history.filter((i) => i.t >= oneEightyAgo && i.t < ninetyAgo).reduce((s, i) => s + i.amt, 0) * 4;
-      starting += prior;
-      if (prior === 0 && current > 0) newArr += current;
-      else if (current === 0 && prior > 0) churn += prior;
-      else if (current > prior) expansion += (current - prior);
-      else if (current < prior) contraction += (prior - current);
-    }
-    const ending = starting + newArr + expansion - contraction - churn;
-    if (starting === 0 && newArr === 0) return null;
-    return { starting, new: newArr, expansion, contraction, churn, ending };
-  }, [invoicesList]);
+  const arrMovement = cfo?.arrMovement ?? null;
 
   // Prefer cadence-detected ARR when we have enough signal (≥3 recurring customers)
   const arr = recurring && recurring.active >= 3 ? recurring.detectedARR : naiveArr;
@@ -505,13 +343,10 @@ function useCfoMetrics() {
 
   // DPO — Days Payable Outstanding
   const dpo = useMemo(() => {
-    const pos = allPOs ?? [];
-    const unpaid = pos.filter((p: any) =>
-      p.status !== "paid" && p.status !== "cancelled" && p.status !== "closed");
-    const outstandingAP = unpaid.reduce((s: number, p: any) => s + parseFloat(p.totalAmount || "0"), 0);
+    const outstandingAP = cfo?.outstandingAP ?? 0;
     const monthlyCogsProxy = estimatedBurn * 0.5; // rough — assumes ~50% of burn is vendor-paid
     return monthlyCogsProxy > 0 ? Math.round((outstandingAP / monthlyCogsProxy) * 30) : null;
-  }, [allPOs, estimatedBurn]);
+  }, [cfo, estimatedBurn]);
 
   // Pipeline (from open CRM deals)
   const pipeline = useMemo(() => {
@@ -569,27 +404,17 @@ function useCfoMetrics() {
 
   // Real CAC and CAC payback from QB S&M spend and new-customer count
   const cacReal = useMemo(() => {
-    if (!opexBreakdown || opexBreakdown.sm === 0 || !invoicesList?.length) return null;
-    // Count new customers in the trailing 3 months (first-ever invoice in that window)
-    const now = new Date();
-    const cutoff = new Date(now.getFullYear(), now.getMonth() - 3, 1).getTime();
-    const firstInvoiceByCustomer = new Map<string, number>();
-    for (const inv of invoicesList) {
-      const name = (inv as any).customer?.name || `Customer ${(inv as any).customerId ?? "—"}`;
-      const t = new Date((inv as any).issueDate || (inv as any).createdAt).getTime();
-      if (!firstInvoiceByCustomer.has(name) || t < firstInvoiceByCustomer.get(name)!) {
-        firstInvoiceByCustomer.set(name, t);
-      }
-    }
-    const newCustomers = Array.from(firstInvoiceByCustomer.values()).filter((t) => t >= cutoff).length;
+    if (!opexBreakdown || opexBreakdown.sm === 0 || !cfo?.hasInvoices) return null;
+    // New customers = first-ever invoice in the trailing 3 months (counted on the server).
+    const { newCustomers, customerCount } = cfo.newCustomers;
     if (newCustomers === 0) return null;
     const quarterlySM = opexBreakdown.sm / 4;
     const cac = quarterlySM / newCustomers;
-    const arpu = threeMonthAvgRev / Math.max(1, firstInvoiceByCustomer.size);
+    const arpu = threeMonthAvgRev / Math.max(1, customerCount);
     const gm = (grossMarginPct ?? 70) / 100;
     const paybackMonths = arpu > 0 && gm > 0 ? cac / (arpu * gm) : null;
     return { cac, newCustomers, paybackMonths };
-  }, [opexBreakdown, invoicesList, threeMonthAvgRev, grossMarginPct]);
+  }, [opexBreakdown, cfo, threeMonthAvgRev, grossMarginPct]);
 
   // Magic Number = Net New ARR / prior-period S&M spend (quarterly norm)
   const magicNumber = useMemo(() => {
@@ -667,35 +492,9 @@ function useCfoMetrics() {
   }, [kpiGoals, grossMarginPct, threeMonthAvgRev]);
 
   // ── Customer concentration & AR aging ──────────────────────
-  const concentration = useMemo(() => {
-    if (!invoicesList?.length) return { top5: [], totalRev: 0, topPct: 0 };
-    const byCustomer = new Map<string, number>();
-    for (const inv of invoicesList) {
-      const name = (inv as any).customer?.name || `Customer ${(inv as any).customerId ?? "—"}`;
-      byCustomer.set(name, (byCustomer.get(name) ?? 0) + parseFloat((inv as any).totalAmount || "0"));
-    }
-    const sorted = Array.from(byCustomer.entries()).sort((a, b) => b[1] - a[1]);
-    const totalRev = sorted.reduce((s, [, v]) => s + v, 0);
-    const top5 = sorted.slice(0, 5).map(([name, v]) => ({ name, value: v, pct: totalRev > 0 ? (v / totalRev) * 100 : 0 }));
-    const topPct = top5[0]?.pct ?? 0;
-    return { top5, totalRev, topPct };
-  }, [invoicesList]);
+  const concentration = cfo?.concentration ?? { top5: [], totalRev: 0, topPct: 0 };
 
-  const arAging = useMemo(() => {
-    const buckets = { current: 0, d30: 0, d60: 0, d90: 0 };
-    const now = Date.now();
-    for (const inv of invoicesList ?? []) {
-      if ((inv as any).status === "paid" || (inv as any).status === "cancelled") continue;
-      const due = (inv as any).dueDate ? new Date((inv as any).dueDate).getTime() : now;
-      const days = Math.max(0, Math.floor((now - due) / 86400000));
-      const amt = parseFloat((inv as any).totalAmount || "0");
-      if (days === 0) buckets.current += amt;
-      else if (days <= 30) buckets.d30 += amt;
-      else if (days <= 60) buckets.d60 += amt;
-      else buckets.d90 += amt;
-    }
-    return buckets;
-  }, [invoicesList]);
+  const arAging = cfo?.arAging ?? { current: 0, d30: 0, d60: 0, d90: 0 };
   const totalAR = arAging.current + arAging.d30 + arAging.d60 + arAging.d90;
   const dso = thisMonthRev > 0 ? Math.round((totalAR / thisMonthRev) * 30) : null;
   const cashGapDays = dso !== null && dpo !== null ? dso - dpo : null;
