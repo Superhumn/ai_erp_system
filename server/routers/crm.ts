@@ -39,8 +39,20 @@ import {
   loadScopedPipeline,
   loadScopedTag,
   scopeIds,
+  completeTask,
+  createTask,
+  dealVelocity,
+  deleteAccount,
+  deleteTask,
+  importCommit,
+  importPreview,
+  listTasks,
+  mergeAccounts,
+  recomputeLeadScoreSafe,
+  salesReport,
+  updateTask,
 } from "../crmService";
-import { crmRowVisible, parseStageNames } from "../crmLogic";
+import { IMPORT_FIELDS, crmRowVisible, parseStageNames } from "../crmLogic";
 
 // Every CRM procedure resolves the caller's entity scope up front. Reads filter
 // by it; by-id reads answer NOT_FOUND for rows outside it.
@@ -70,6 +82,13 @@ const contactTypeEnum = z.enum(["lead", "prospect", "customer", "partner", "inve
 const pipelineStageEnum = z.enum(["new", "contacted", "qualified", "proposal", "negotiation", "won", "lost"]);
 const accountTypeEnum = z.enum(["district", "school", "distributor", "operator", "gpo", "other"]);
 const dealContactRoleEnum = z.enum(["decision_maker", "champion", "procurement", "influencer", "blocker", "other"]);
+const taskTypeEnum = z.enum(["call", "email", "meeting", "follow_up", "todo"]);
+// Column index (as a string key) -> contact field; "" ignores the column.
+const importMappingInput = z.record(z.string(), z.union([z.enum(IMPORT_FIELDS), z.literal("")]));
+const importCsvInput = z.object({
+  csv: z.string().min(1).max(5_000_000),
+  hasHeader: z.boolean().optional(),
+});
 const dealItemInput = z.object({
   productId: z.number().nullable().optional(),
   description: z.string().min(1).max(255),
@@ -157,6 +176,7 @@ export const crmRouter = router({
           assignedTo: z.number().optional(),
           accountId: z.number().optional(),
           search: z.string().optional(),
+          sortBy: z.enum(["createdAt", "leadScore"]).optional(),
           limit: z.number().optional(),
           offset: z.number().optional(),
         }).optional())
@@ -391,6 +411,25 @@ export const crmRouter = router({
               cause: error,
             });
           }
+        }),
+
+      // CSV import: preview classifies rows (new / duplicate / invalid) with a
+      // guessed or supplied column mapping; commit inserts them.
+      importPreview: scopedInternalProcedure
+        .input(importCsvInput.extend({ mapping: importMappingInput.optional() }))
+        .mutation(({ input, ctx }) => importPreview(input, ctx.scope)),
+
+      importCommit: scopedInternalProcedure
+        .input(importCsvInput.extend({
+          mapping: importMappingInput,
+          updateDuplicates: z.boolean().optional(),
+          createAccounts: z.boolean().optional(),
+          contactType: contactTypeEnum.optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await importCommit(input, ctx.scope, ctx.user);
+          await createAuditLog(ctx.user.id, 'create', 'crm_contact', 0, `CSV import: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped`);
+          return result;
         }),
     }),
 
@@ -666,6 +705,7 @@ export const crmRouter = router({
             companyId: contact.companyId,
             performedBy: ctx.user.id,
           });
+          await recomputeLeadScoreSafe(input.contactId);
           return { id };
         }),
 
@@ -680,6 +720,7 @@ export const crmRouter = router({
         }))
         .mutation(async ({ input, ctx }) => {
           const contact = await loadScopedContact(input.contactId, ctx.scope);
+          if (input.relatedDealId) await loadScopedDeal(input.relatedDealId, ctx.scope);
           const id = await db.createCrmInteraction({
             contactId: input.contactId,
             companyId: contact.companyId,
@@ -691,6 +732,7 @@ export const crmRouter = router({
             content: input.notes,
             performedBy: ctx.user.id,
           });
+          await recomputeLeadScoreSafe(input.contactId);
           return { id };
         }),
 
@@ -708,6 +750,7 @@ export const crmRouter = router({
         }))
         .mutation(async ({ input, ctx }) => {
           const contact = await loadScopedContact(input.contactId, ctx.scope);
+          if (input.relatedDealId) await loadScopedDeal(input.relatedDealId, ctx.scope);
           const id = await db.createCrmInteraction({
             contactId: input.contactId,
             companyId: contact.companyId,
@@ -722,6 +765,7 @@ export const crmRouter = router({
             content: input.notes,
             performedBy: ctx.user.id,
           });
+          await recomputeLeadScoreSafe(input.contactId);
           return { id };
         }),
 
@@ -733,6 +777,7 @@ export const crmRouter = router({
         }))
         .mutation(async ({ input, ctx }) => {
           const contact = await loadScopedContact(input.contactId, ctx.scope);
+          if (input.relatedDealId) await loadScopedDeal(input.relatedDealId, ctx.scope);
           const id = await db.createCrmInteraction({
             contactId: input.contactId,
             companyId: contact.companyId,
@@ -742,6 +787,7 @@ export const crmRouter = router({
             content: input.content,
             performedBy: ctx.user.id,
           });
+          await recomputeLeadScoreSafe(input.contactId);
           return { id };
         }),
     }),
@@ -939,6 +985,7 @@ export const crmRouter = router({
           status: z.enum(["open", "won", "lost", "stalled"]).optional(),
           lostReason: z.string().optional(),
           lossReasonId: z.number().nullable().optional(),
+          wonReason: z.string().max(500).nullable().optional(),
           accountId: z.number().nullable().optional(),
           contactId: z.number().optional(),
           expectedCloseDate: z.date().nullable().optional(),
@@ -950,6 +997,10 @@ export const crmRouter = router({
           const existing = await loadScopedDeal(id, ctx.scope);
           if (data.accountId) await loadScopedAccount(data.accountId, ctx.scope);
           if (data.contactId) await loadScopedContact(data.contactId, ctx.scope);
+          // Closing as lost always carries a reason (see deals.close).
+          if (data.status === "lost" && existing.status !== "lost" && !(data.lossReasonId ?? existing.lossReasonId)) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "Pick a loss reason to mark the deal lost" });
+          }
           await db.updateCrmDeal(id, data);
           await createAuditLog(ctx.user.id, 'update', 'crm_deal', id, existing.name, existing, data);
           return { success: true };
@@ -1029,6 +1080,7 @@ export const crmRouter = router({
           id: z.number(),
           stage: z.string(),
           probability: z.number().optional(),
+          lossReasonId: z.number().nullable().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
           const r = await moveDealStage(input, ctx.scope, ctx.user.id);
@@ -1047,6 +1099,17 @@ export const crmRouter = router({
       forecast: scopedProcedure
         .input(z.object({ pipelineId: z.number().optional() }).optional())
         .query(({ input, ctx }) => dealForecast(ctx.scope, input?.pipelineId)),
+
+      // Average days deals spend in each stage (from stage history).
+      velocity: scopedProcedure
+        .input(z.object({ pipelineId: z.number().optional() }).optional())
+        .query(({ input, ctx }) => dealVelocity(ctx.scope, input?.pipelineId)),
+
+      // Sales dashboard: forecast, win rate, cycle time, sources, losses by
+      // reason, stale deals, stage velocity.
+      report: scopedProcedure
+        .input(z.object({ pipelineId: z.number().optional() }).optional())
+        .query(({ input, ctx }) => salesReport(ctx.scope, input?.pipelineId)),
 
       // Open deals with their stage's rotting threshold and last activity — the
       // kanban uses this for the "rotting" badge.
@@ -1192,6 +1255,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           type: accountTypeEnum.optional(),
           parentAccountId: z.number().nullable().optional(),
           region: z.string().optional(),
+          state: z.string().max(64).optional(),
           mealsPerDay: z.number().int().nonnegative().nullable().optional(),
           externalId: z.string().optional(),
           customerId: z.number().nullable().optional(),
@@ -1213,6 +1277,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           type: accountTypeEnum.optional(),
           parentAccountId: z.number().nullable().optional(),
           region: z.string().nullable().optional(),
+          state: z.string().max(64).nullable().optional(),
           mealsPerDay: z.number().int().nonnegative().nullable().optional(),
           externalId: z.string().nullable().optional(),
           customerId: z.number().nullable().optional(),
@@ -1229,6 +1294,25 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           return { success: true };
         }),
 
+      // Contacts, deals and tasks are detached; children move up a level.
+      delete: scopedInternalProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const account = await deleteAccount(input.id, ctx.scope);
+          await createAuditLog(ctx.user.id, 'delete', 'crm_account', input.id, account.name);
+          return { success: true };
+        }),
+
+      // Re-points contacts, deals, tasks and children to the primary, then
+      // deletes the duplicates.
+      merge: scopedInternalProcedure
+        .input(z.object({ primaryId: z.number(), duplicateIds: z.array(z.number()).min(1) }))
+        .mutation(async ({ input, ctx }) => {
+          const r = await mergeAccounts(input.primaryId, input.duplicateIds, ctx.scope);
+          await createAuditLog(ctx.user.id, 'update', 'crm_account', input.primaryId, `merged ${r.merged} accounts into ${r.primary.name}`);
+          return { merged: r.merged };
+        }),
+
       // One account per distinct contact `organization`; links contacts and
       // their deals. Re-runnable.
       backfill: scopedAdminProcedure.mutation(async ({ ctx }) => {
@@ -1236,6 +1320,73 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         await createAuditLog(ctx.user.id, 'update', 'crm_account', 0, `backfill: ${result.accountsCreated} accounts, ${result.contactsLinked} contacts, ${result.dealsLinked} deals`);
         return result;
       }),
+    }),
+
+    // --- TASKS ---
+    // Follow-ups tied to a contact / deal / account. A daily job emails the
+    // assignee about tasks due today or overdue (server/_core/index.ts).
+    tasks: router({
+      list: scopedInternalProcedure
+        .input(z.object({
+          view: z.enum(["mine", "today", "overdue", "upcoming", "all"]).optional(),
+          contactId: z.number().optional(),
+          dealId: z.number().optional(),
+          accountId: z.number().optional(),
+          limit: z.number().int().positive().max(1000).optional(),
+        }).optional())
+        .query(({ input, ctx }) => listTasks(input ?? {}, ctx.scope, ctx.user.id)),
+
+      create: scopedInternalProcedure
+        .input(z.object({
+          title: z.string().min(1).max(255),
+          type: taskTypeEnum.optional(),
+          contactId: z.number().nullable().optional(),
+          dealId: z.number().nullable().optional(),
+          accountId: z.number().nullable().optional(),
+          dueAt: z.date().nullable().optional(),
+          reminderAt: z.date().nullable().optional(),
+          assignedTo: z.number().nullable().optional(),
+          notes: z.string().max(5000).nullable().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await createTask(input, ctx.scope, ctx.user);
+          await createAuditLog(ctx.user.id, 'create', 'crm_task', id, input.title);
+          return { id };
+        }),
+
+      update: scopedInternalProcedure
+        .input(z.object({
+          id: z.number(),
+          title: z.string().min(1).max(255).optional(),
+          type: taskTypeEnum.optional(),
+          contactId: z.number().nullable().optional(),
+          dealId: z.number().nullable().optional(),
+          accountId: z.number().nullable().optional(),
+          dueAt: z.date().nullable().optional(),
+          reminderAt: z.date().nullable().optional(),
+          assignedTo: z.number().nullable().optional(),
+          notes: z.string().max(5000).nullable().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...patch } = input;
+          await updateTask(id, patch, ctx.scope);
+          return { success: true };
+        }),
+
+      complete: scopedInternalProcedure
+        .input(z.object({ id: z.number(), completed: z.boolean().optional() }))
+        .mutation(async ({ input, ctx }) => {
+          await completeTask(input.id, input.completed ?? true, ctx.scope, ctx.user.id);
+          return { success: true };
+        }),
+
+      delete: scopedInternalProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const task = await deleteTask(input.id, ctx.scope);
+          await createAuditLog(ctx.user.id, 'delete', 'crm_task', input.id, task.title);
+          return { success: true };
+        }),
     }),
 
     // --- CONTACT CAPTURES ---

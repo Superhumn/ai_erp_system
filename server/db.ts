@@ -12838,6 +12838,8 @@ export async function getCrmContacts(filters?: {
   accountId?: number;
   /** Entity allow-list: null/undefined = unrestricted, [] = no rows. */
   companyIds?: number[] | null;
+  /** Default newest first; "leadScore" = highest persisted score first. */
+  sortBy?: "createdAt" | "leadScore";
   limit?: number;
   offset?: number;
 }) {
@@ -12891,9 +12893,24 @@ export async function getCrmContacts(filters?: {
   }
 
   return query
-    .orderBy(desc(crmContacts.createdAt))
+    .orderBy(...(filters?.sortBy === "leadScore"
+      ? [desc(crmContacts.leadScore), desc(crmContacts.createdAt)]
+      : [desc(crmContacts.createdAt)]))
     .limit(filters?.limit || 100)
     .offset(filters?.offset || 0);
+}
+
+/** Latest crm_interactions.createdAt for a contact (lead scoring recency). */
+export async function getCrmContactLastInteractionAt(contactId: number): Promise<Date | null> {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db
+    .select({ last: sql<Date | string | null>`MAX(${crmInteractions.createdAt})` })
+    .from(crmInteractions)
+    .where(eq(crmInteractions.contactId, contactId));
+  if (!row?.last) return null;
+  const d = new Date(row.last);
+  return Number.isFinite(d.getTime()) ? d : null;
 }
 
 export async function getCrmContactById(id: number) {
@@ -13057,6 +13074,22 @@ export async function mergeCrmContacts(primaryId: number, duplicateIds: number[]
     await tx.update(whatsappMessages).set({ contactId: primaryId }).where(inArray(whatsappMessages.contactId, ids));
     await tx.update(crmContactTags).set({ contactId: primaryId }).where(inArray(crmContactTags.contactId, ids));
     await tx.update(crmCampaignRecipients).set({ contactId: primaryId }).where(inArray(crmCampaignRecipients.contactId, ids));
+    await tx.update(crmTasks).set({ contactId: primaryId }).where(inArray(crmTasks.contactId, ids));
+    // crm_deal_contacts is unique on (dealId, contactId): drop links for deals
+    // the primary is already on, re-point the rest.
+    const primaryDeals = (await tx.select({ dealId: crmDealContacts.dealId }).from(crmDealContacts).where(eq(crmDealContacts.contactId, primaryId))).map((r) => r.dealId);
+    if (primaryDeals.length) {
+      await tx.delete(crmDealContacts).where(and(inArray(crmDealContacts.contactId, ids), inArray(crmDealContacts.dealId, primaryDeals)));
+    }
+    const dupLinks = await tx.select({ id: crmDealContacts.id, dealId: crmDealContacts.dealId }).from(crmDealContacts).where(inArray(crmDealContacts.contactId, ids));
+    const keep = new Set<number>();
+    const extra: number[] = [];
+    for (const l of dupLinks) {
+      if (keep.has(l.dealId)) extra.push(l.id);
+      else keep.add(l.dealId);
+    }
+    if (extra.length) await tx.delete(crmDealContacts).where(inArray(crmDealContacts.id, extra));
+    await tx.update(crmDealContacts).set({ contactId: primaryId }).where(inArray(crmDealContacts.contactId, ids));
     await tx.delete(crmContacts).where(inArray(crmContacts.id, ids));
   });
 
@@ -13079,6 +13112,8 @@ async function deleteCrmContactsCascading(tx: any, ids: number[]) {
   if (ids.length === 0) return 0;
   await tx.delete(crmContactTags).where(inArray(crmContactTags.contactId, ids));
   await tx.delete(crmInteractions).where(inArray(crmInteractions.contactId, ids));
+  await tx.delete(crmDealContacts).where(inArray(crmDealContacts.contactId, ids));
+  await tx.update(crmTasks).set({ contactId: null }).where(inArray(crmTasks.contactId, ids));
   await tx.delete(crmDeals).where(inArray(crmDeals.contactId, ids));
   await tx.update(marketingEngagements).set({ contactId: null }).where(inArray(marketingEngagements.contactId, ids));
   await tx.update(influencers).set({ crmContactId: null }).where(inArray(influencers.crmContactId, ids));
@@ -13700,19 +13735,29 @@ export async function getOpenCrmTasksForDeal(dealId: number, since?: Date) {
 }
 
 /**
- * Open tasks that are due (or overdue) by `dueBefore` and have not been
- * reminded since `remindedBefore`; used by the daily reminder email.
+ * Open, assigned tasks due (or overdue) by `dueBefore` — or whose explicit
+ * reminderAt has passed — that have never been reminded. Used by the daily
+ * reminder email, which sets reminderSentAt so each task is emailed once
+ * (moving dueAt clears reminderSentAt; see crmService.updateTask).
  */
-export async function getCrmTasksDueForReminder(dueBefore: Date, remindedBefore: Date) {
+export async function getCrmTasksDueForReminder(dueBefore: Date) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(crmTasks).where(and(
     isNull(crmTasks.completedAt),
+    isNull(crmTasks.reminderSentAt),
     sql`${crmTasks.assignedTo} IS NOT NULL`,
-    sql`${crmTasks.dueAt} IS NOT NULL`,
-    lte(crmTasks.dueAt, dueBefore),
-    or(isNull(crmTasks.reminderSentAt), lt(crmTasks.reminderSentAt, remindedBefore))!,
+    or(
+      and(sql`${crmTasks.dueAt} IS NOT NULL`, lte(crmTasks.dueAt, dueBefore))!,
+      and(sql`${crmTasks.reminderAt} IS NOT NULL`, lte(crmTasks.reminderAt, dueBefore))!,
+    )!,
   )).orderBy(asc(crmTasks.assignedTo), asc(crmTasks.dueAt));
+}
+
+export async function markCrmTasksReminded(ids: number[], at: Date) {
+  const db = await getDb();
+  if (!db || ids.length === 0) return;
+  await db.update(crmTasks).set({ reminderSentAt: at }).where(inArray(crmTasks.id, ids));
 }
 
 // --- CRM DEALS ---
@@ -13799,7 +13844,20 @@ export async function updateCrmDeal(id: number, data: Partial<InsertCrmDeal>) {
 export async function deleteCrmDeal(id: number) {
   const db = await getDb();
   if (!db) return;
-  await db.delete(crmDeals).where(eq(crmDeals.id, id));
+  await db.transaction(async (tx) => {
+    await tx.delete(crmDealItems).where(eq(crmDealItems.dealId, id));
+    await tx.delete(crmDealContacts).where(eq(crmDealContacts.dealId, id));
+    await tx.delete(crmDealStageHistory).where(eq(crmDealStageHistory.dealId, id));
+    await tx.update(crmTasks).set({ dealId: null }).where(eq(crmTasks.dealId, id));
+    await tx.delete(crmDeals).where(eq(crmDeals.id, id));
+  });
+}
+
+/** Sets the isStale flag on a batch of deals (stale-deal job). */
+export async function setCrmDealsStale(ids: number[], isStale: boolean) {
+  const db = await getDb();
+  if (!db || ids.length === 0) return;
+  await db.update(crmDeals).set({ isStale }).where(inArray(crmDeals.id, ids));
 }
 
 // Looks up an existing deal that represents the same client company.
@@ -13893,6 +13951,10 @@ export async function mergeCrmDeals(primaryId: number, duplicateIds: number[]) {
 
   await db.transaction(async (tx) => {
     await tx.update(crmInteractions).set({ relatedDealId: primaryId }).where(inArray(crmInteractions.relatedDealId, ids));
+    await tx.update(crmTasks).set({ dealId: primaryId }).where(inArray(crmTasks.dealId, ids));
+    await tx.update(crmDealStageHistory).set({ dealId: primaryId }).where(inArray(crmDealStageHistory.dealId, ids));
+    await tx.update(crmDealItems).set({ dealId: primaryId }).where(inArray(crmDealItems.dealId, ids));
+    await tx.delete(crmDealContacts).where(inArray(crmDealContacts.dealId, ids));
     await tx.delete(crmDeals).where(inArray(crmDeals.id, ids));
   });
 
@@ -14073,6 +14135,56 @@ export async function getCrmAccountChildren(accountId: number) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(crmAccounts).where(eq(crmAccounts.parentAccountId, accountId)).orderBy(crmAccounts.name);
+}
+
+/**
+ * Deletes an account. Contacts, deals and tasks are detached (accountId =
+ * NULL) and child accounts move up to the deleted account's parent.
+ */
+export async function deleteCrmAccount(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  const [row] = await db.select().from(crmAccounts).where(eq(crmAccounts.id, id)).limit(1);
+  if (!row) return;
+  await db.transaction(async (tx) => {
+    await tx.update(crmContacts).set({ accountId: null }).where(eq(crmContacts.accountId, id));
+    await tx.update(crmDeals).set({ accountId: null }).where(eq(crmDeals.accountId, id));
+    await tx.update(crmTasks).set({ accountId: null }).where(eq(crmTasks.accountId, id));
+    await tx.update(crmAccounts).set({ parentAccountId: row.parentAccountId ?? null }).where(eq(crmAccounts.parentAccountId, id));
+    await tx.delete(crmAccounts).where(eq(crmAccounts.id, id));
+  });
+}
+
+/**
+ * Merges duplicate accounts into `primaryId`: contacts, deals, tasks and child
+ * accounts are re-pointed, then the duplicates are deleted. One transaction.
+ */
+export async function mergeCrmAccounts(primaryId: number, duplicateIds: number[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const ids = duplicateIds.filter((id) => id !== primaryId);
+  if (ids.length === 0) return { merged: 0 };
+  await db.transaction(async (tx) => {
+    await tx.update(crmContacts).set({ accountId: primaryId }).where(inArray(crmContacts.accountId, ids));
+    await tx.update(crmDeals).set({ accountId: primaryId }).where(inArray(crmDeals.accountId, ids));
+    await tx.update(crmTasks).set({ accountId: primaryId }).where(inArray(crmTasks.accountId, ids));
+    await tx.update(crmAccounts).set({ parentAccountId: primaryId }).where(inArray(crmAccounts.parentAccountId, ids));
+    await tx.delete(crmAccounts).where(inArray(crmAccounts.id, ids));
+  });
+  return { merged: ids.length };
+}
+
+/** Case-insensitive account lookup by exact name within one entity (NULL-safe). */
+export async function findCrmAccountByName(name: string, companyId: number | null) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const n = name.trim().toLowerCase();
+  if (!n) return undefined;
+  const [row] = await db.select().from(crmAccounts).where(and(
+    sql`LOWER(${crmAccounts.name}) = ${n}`,
+    companyId == null ? isNull(crmAccounts.companyId) : eq(crmAccounts.companyId, companyId),
+  )).limit(1);
+  return row;
 }
 
 /** Distinct non-empty `organization` values on contacts that have no account yet. */

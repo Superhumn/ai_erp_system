@@ -3,6 +3,8 @@ import type { Scope } from "./_core/scope";
 import {
   closeDealPatch, computeForecast, crmRowVisible, crmScopeCompanyIds, dealAmountFromItems, dealIsRotting, dealItemTotal, filterCrmRows,
   findStage, monthKey, parseStageNames, resolveMoveProbability, scopeIsEmpty, seedStagesFromNames, statusForStage,
+  computeLeadScore, computeVelocity, dealStaleReason, groupTasksByAssignee, guessImportMapping, mapImportRow, parseCsv,
+  renderTaskReminderText, taskBucket, taskViewFilters,
 } from "./crmLogic";
 
 describe("deal items / close", () => {
@@ -15,8 +17,8 @@ describe("deal items / close", () => {
   });
   it("builds the won / lost patch", () => {
     const now = new Date("2026-09-29T00:00:00Z");
-    expect(closeDealPatch("won", { wonStage: "closed_won" }, now)).toEqual({ status: "won", probability: 100, wonAt: now, lossReasonId: null, lostReason: null, stage: "closed_won" });
-    expect(closeDealPatch("lost", { lossReasonId: 3, note: "  too pricey " }, now)).toEqual({ status: "lost", probability: 0, lostAt: now, lossReasonId: 3, lostReason: "too pricey" });
+    expect(closeDealPatch("won", { wonStage: "closed_won" }, now)).toEqual({ status: "won", probability: 100, wonAt: now, lossReasonId: null, lostReason: null, wonReason: null, stage: "closed_won" });
+    expect(closeDealPatch("lost", { lossReasonId: 3, note: "  too pricey " }, now)).toEqual({ status: "lost", probability: 0, lostAt: now, lossReasonId: 3, lostReason: "too pricey", wonReason: null });
     expect(closeDealPatch("lost", {}, now).stage).toBeUndefined();
   });
 });
@@ -169,5 +171,103 @@ describe("computeForecast", () => {
     const f = computeForecast([{ id: 9, stage: "x", status: "open", amount: "100", probability: null, expectedCloseDate: null }]);
     expect(f.totalWeighted).toBe(0);
     expect(monthKey("2026-02-03")).toBe("2026-02");
+  });
+});
+
+describe("computeVelocity", () => {
+  it("averages completed stays per stage and ignores the current stage", () => {
+    const v = computeVelocity([
+      { dealId: 1, fromStage: null, toStage: "discovery", changedAt: "2026-01-01T00:00:00Z" },
+      { dealId: 1, fromStage: "discovery", toStage: "proposal", changedAt: "2026-01-11T00:00:00Z" },
+      { dealId: 1, fromStage: "proposal", toStage: "closed_won", changedAt: "2026-01-16T00:00:00Z" },
+      { dealId: 2, fromStage: "discovery", toStage: "proposal", changedAt: "2026-02-10T00:00:00Z" }, // out of order on purpose
+      { dealId: 2, fromStage: null, toStage: "discovery", changedAt: "2026-02-01T00:00:00Z" },
+    ]);
+    const by = Object.fromEntries(v.map((s) => [s.stage, s]));
+    expect(by.discovery).toEqual({ stage: "discovery", samples: 2, avgDays: 9.5 });
+    expect(by.proposal).toEqual({ stage: "proposal", samples: 1, avgDays: 5 });
+    expect(by.closed_won).toBeUndefined();
+  });
+});
+
+describe("dealStaleReason", () => {
+  const now = new Date("2026-09-29T12:00:00Z");
+  it("idle beyond the stage threshold (default 21 days), measured from creation when never touched", () => {
+    expect(dealStaleReason({ status: "open", createdAt: "2026-09-01" }, null, null, now)).toBe("idle");
+    expect(dealStaleReason({ status: "open", createdAt: "2026-09-01" }, "2026-09-20", null, now)).toBeNull();
+    expect(dealStaleReason({ status: "open", createdAt: "2026-09-01" }, "2026-09-20", 5, now)).toBe("idle");
+  });
+  it("past expected close date; closed deals are never stale", () => {
+    expect(dealStaleReason({ status: "open", createdAt: "2026-09-25", expectedCloseDate: "2026-09-28" }, null, null, now)).toBe("past_close");
+    expect(dealStaleReason({ status: "open", createdAt: "2026-09-25", expectedCloseDate: "2026-09-29T08:00:00Z" }, null, null, now)).toBeNull();
+    expect(dealStaleReason({ status: "won", createdAt: "2020-01-01" }, null, null, now)).toBeNull();
+  });
+});
+
+describe("tasks helpers", () => {
+  const now = new Date("2026-09-29T12:00:00Z");
+  it("buckets tasks by UTC day", () => {
+    expect(taskBucket({ dueAt: "2026-09-28T23:00:00Z" }, now)).toBe("overdue");
+    expect(taskBucket({ dueAt: "2026-09-29T00:00:00Z" }, now)).toBe("today");
+    expect(taskBucket({ dueAt: "2026-09-29T23:59:00Z" }, now)).toBe("today");
+    expect(taskBucket({ dueAt: "2026-09-30T00:00:00Z" }, now)).toBe("upcoming");
+    expect(taskBucket({ dueAt: null }, now)).toBe("someday");
+    expect(taskBucket({ dueAt: "2026-09-01", completedAt: "2026-09-02" }, now)).toBe("done");
+  });
+  it("maps views to db filters", () => {
+    expect(taskViewFilters("today", 4, now)).toEqual({ assignedTo: 4, status: "open", dueAfter: new Date("2026-09-29T00:00:00Z"), dueBefore: new Date("2026-09-29T23:59:59.999Z") });
+    expect(taskViewFilters("upcoming", 4, now)).toEqual({ assignedTo: 4, status: "open", dueAfter: new Date("2026-09-30T00:00:00Z") });
+    expect(taskViewFilters("all", 4, now)).toEqual({ status: "all" });
+  });
+  it("groups reminders by assignee and renders overdue first", () => {
+    const tasks = [
+      { id: 1, title: "Call district", type: "call", dueAt: new Date("2026-09-27T00:00:00Z"), assignedTo: 1 },
+      { id: 2, title: "Send pricing", type: "email", dueAt: new Date("2026-09-29T10:00:00Z"), assignedTo: 1 },
+      { id: 3, title: "Unassigned", type: "todo", dueAt: null, assignedTo: null },
+    ];
+    const g = groupTasksByAssignee(tasks);
+    expect([...g.keys()]).toEqual([1]);
+    const text = renderTaskReminderText("Jade", g.get(1)!, now);
+    expect(text.indexOf("Overdue (1)")).toBeLessThan(text.indexOf("Due today (1)"));
+    expect(text).toContain("- [call] Call district (due 2026-09-27)");
+  });
+});
+
+describe("computeLeadScore", () => {
+  const now = new Date("2026-09-29T12:00:00Z");
+  it("adds each rule and caps at 100", () => {
+    expect(computeLeadScore({ contactType: "lead" }, now).score).toBe(10);
+    expect(computeLeadScore({ contactType: "vendor" }, now).score).toBe(0);
+    const big = computeLeadScore({
+      contactType: "customer", accountType: "distributor", mealsPerDay: 80000,
+      lastInteractionAt: "2026-09-28", lastRepliedAt: "2026-09-28", openDealAmount: 500000,
+    }, now);
+    expect(big.score).toBe(100);
+    expect(big.factors.map((f) => f.points)).toEqual([25, 15, 20, 15, 15, 10]);
+  });
+  it("recency tiers decay", () => {
+    const s = (d: string) => computeLeadScore({ contactType: null, lastInteractionAt: d }, now).score;
+    expect([s("2026-09-25"), s("2026-09-10"), s("2026-07-15"), s("2026-01-01")]).toEqual([15, 10, 5, 0]);
+  });
+});
+
+describe("CSV import helpers", () => {
+  it("parses quotes, escaped quotes, CRLF and embedded newlines; skips blank lines", () => {
+    const rows = parseCsv('\uFEFFa,b,c\r\n"x, y","he said ""hi""","multi\nline"\r\n\r\n1,,3');
+    expect(rows).toEqual([["a", "b", "c"], ["x, y", 'he said "hi"', "multi\nline"], ["1", "", "3"]]);
+  });
+  it("guesses a mapping from common headers", () => {
+    expect(guessImportMapping(["Full Name", "E-mail Address", "School District", "Job Title", "Mobile", "LinkedIn URL", "Misc"]))
+      .toEqual({ 0: "fullName", 1: "email", 2: "organization", 3: "jobTitle", 4: "phone", 5: "linkedinUrl", 6: "" });
+  });
+  it("maps a row, splitting a full name and validating", () => {
+    const m = { 0: "fullName", 1: "email", 2: "organization", 3: "contactType" } as const;
+    expect(mapImportRow(["Ana Maria Lopez", "ANA@X.ORG", "Dallas ISD", "Prospect"], m).contact).toMatchObject({
+      firstName: "Ana", lastName: "Maria Lopez", fullName: "Ana Maria Lopez", email: "ana@x.org", organization: "Dallas ISD", contactType: "prospect",
+    });
+    expect(mapImportRow(["", "", "", ""], m).error).toBe("Missing name");
+    expect(mapImportRow(["Bo", "not-an-email", "", ""], m).error).toMatch(/Invalid email/);
+    expect(mapImportRow(["Bo", "", "", ""], m).error).toMatch(/Needs an email/);
+    expect(mapImportRow(["", "cy@x.org", "", "weird"], m).contact).toMatchObject({ firstName: "cy", contactType: undefined });
   });
 });
