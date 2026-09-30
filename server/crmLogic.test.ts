@@ -11,7 +11,7 @@ describe("deal items / close", () => {
     expect(dealItemTotal(null, 5)).toBe(0);
     expect(dealItemTotal("x", 5)).toBe(0);
     expect(dealAmountFromItems([])).toBeUndefined();
-    expect(dealAmountFromItems([{ total: "10.10" }, { total: 5 }, { total: null }])).toBe(15.1);
+    expect(dealAmountFromItems([{ totalAmount: "10.10" }, { totalAmount: 5 }, { totalAmount: null }])).toBe(15.1);
   });
   it("builds the won / lost patch", () => {
     const now = new Date("2026-09-29T00:00:00Z");

@@ -164,9 +164,9 @@ describe("createDeal", () => {
 
 describe("deal items", () => {
   it("adds an item with a computed total and recomputes the deal amount", async () => {
-    vi.mocked(db.getCrmDealItems).mockResolvedValueOnce([{ total: "300.00" }, { total: "45.50" }] as never);
+    vi.mocked(db.getCrmDealItems).mockResolvedValueOnce([{ totalAmount: "300.00" }, { totalAmount: "45.50" }] as never);
     const r = await addDealItem(5, { description: "Plant protein crumbles", quantity: 30, unit: "case", unitPrice: 10 }, entity);
-    expect(db.createCrmDealItem).toHaveBeenCalledWith(expect.objectContaining({ dealId: 5, companyId: 7, quantity: "30", unitPrice: "10", total: "300.00" }));
+    expect(db.createCrmDealItem).toHaveBeenCalledWith(expect.objectContaining({ dealId: 5, companyId: 7, quantity: "30", unitPrice: "10", totalAmount: "300.00" }));
     expect(db.updateCrmDeal).toHaveBeenCalledWith(5, { amount: "345.50" });
     expect(r).toEqual({ id: 9, amount: 345.5 });
   });
@@ -205,7 +205,7 @@ describe("closeDeal / listLossReasons", () => {
     vi.mocked(db.getCrmLossReasons).mockResolvedValueOnce([] as never).mockResolvedValueOnce([{ id: 1, name: "Price" }] as never);
     const rows = await listLossReasons(global);
     expect(db.createCrmLossReasons).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(db.createCrmLossReasons).mock.calls[0][0].map((r) => r.name)).toEqual(["Price", "Timing/Budget cycle", "Chose incumbent", "No decision", "Product fit", "Lost bid", "Other"]);
+    expect(vi.mocked(db.createCrmLossReasons).mock.calls[0][0].map((r) => r.name)).toEqual(["Price", "Chose incumbent", "No budget this cycle", "Bid timing", "Product fit", "Distributor not carrying", "No decision"]);
     expect(rows).toHaveLength(1);
   });
 });

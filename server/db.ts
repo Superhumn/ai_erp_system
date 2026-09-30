@@ -136,6 +136,7 @@ import {
   crmAccounts, InsertCrmAccount,
   crmPipelineStages, InsertCrmPipelineStage, crmDealStageHistory, InsertCrmDealStageHistory,
   crmDealContacts, InsertCrmDealContact, crmDealItems, InsertCrmDealItem, crmLossReasons, InsertCrmLossReason,
+  crmTasks, InsertCrmTask,
   // Copacker portal
   copackerInventoryUpdates, copackerInventoryUpdateItems, copackerInvoices, copackerInvoiceItems, copackerShippingDocuments,
   InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
@@ -13620,6 +13621,98 @@ export async function updateCrmLossReason(id: number, data: Partial<InsertCrmLos
   const db = await getDb();
   if (!db) return;
   await db.update(crmLossReasons).set(data).where(eq(crmLossReasons.id, id));
+}
+
+// --- CRM TASKS ---
+
+export async function getCrmTasks(filters?: {
+  assignedTo?: number;
+  /** open = not completed, done = completed, all = both (default open). */
+  status?: "open" | "done" | "all";
+  /** Only open tasks whose dueAt is before `now`. */
+  overdue?: boolean;
+  dueBefore?: Date;
+  dueAfter?: Date;
+  contactId?: number;
+  dealId?: number;
+  accountId?: number;
+  /** Entity allow-list: null/undefined = unrestricted, [] = no rows. */
+  companyIds?: number[] | null;
+  limit?: number;
+  offset?: number;
+}, now: Date = new Date()) {
+  const db = await getDb();
+  if (!db) return [];
+  if (Array.isArray(filters?.companyIds) && filters.companyIds.length === 0) return [];
+  const conditions = [];
+  if (Array.isArray(filters?.companyIds)) conditions.push(inArray(crmTasks.companyId, filters.companyIds));
+  if (filters?.assignedTo) conditions.push(eq(crmTasks.assignedTo, filters.assignedTo));
+  const status = filters?.status ?? "open";
+  if (status === "open") conditions.push(isNull(crmTasks.completedAt));
+  if (status === "done") conditions.push(sql`${crmTasks.completedAt} IS NOT NULL`);
+  if (filters?.overdue) conditions.push(isNull(crmTasks.completedAt), lt(crmTasks.dueAt, now));
+  if (filters?.dueBefore) conditions.push(lte(crmTasks.dueAt, filters.dueBefore));
+  if (filters?.dueAfter) conditions.push(gte(crmTasks.dueAt, filters.dueAfter));
+  if (filters?.contactId) conditions.push(eq(crmTasks.contactId, filters.contactId));
+  if (filters?.dealId) conditions.push(eq(crmTasks.dealId, filters.dealId));
+  if (filters?.accountId) conditions.push(eq(crmTasks.accountId, filters.accountId));
+  let query = db.select().from(crmTasks);
+  if (conditions.length) query = query.where(and(...conditions)) as any;
+  return query
+    .orderBy(sql`${crmTasks.dueAt} IS NULL`, asc(crmTasks.dueAt), asc(crmTasks.id))
+    .limit(filters?.limit || 200)
+    .offset(filters?.offset || 0);
+}
+
+export async function getCrmTaskById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(crmTasks).where(eq(crmTasks.id, id)).limit(1);
+  return row;
+}
+
+export async function createCrmTask(data: InsertCrmTask) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(crmTasks).values(data);
+  return result[0].insertId;
+}
+
+export async function updateCrmTask(id: number, data: Partial<InsertCrmTask>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(crmTasks).set(data).where(eq(crmTasks.id, id));
+}
+
+export async function deleteCrmTask(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(crmTasks).where(eq(crmTasks.id, id));
+}
+
+/** Open tasks for a deal created on/after `since` (stale-deal job idempotency). */
+export async function getOpenCrmTasksForDeal(dealId: number, since?: Date) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [eq(crmTasks.dealId, dealId), isNull(crmTasks.completedAt)];
+  if (since) conditions.push(gte(crmTasks.createdAt, since));
+  return db.select().from(crmTasks).where(and(...conditions));
+}
+
+/**
+ * Open tasks that are due (or overdue) by `dueBefore` and have not been
+ * reminded since `remindedBefore`; used by the daily reminder email.
+ */
+export async function getCrmTasksDueForReminder(dueBefore: Date, remindedBefore: Date) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(crmTasks).where(and(
+    isNull(crmTasks.completedAt),
+    sql`${crmTasks.assignedTo} IS NOT NULL`,
+    sql`${crmTasks.dueAt} IS NOT NULL`,
+    lte(crmTasks.dueAt, dueBefore),
+    or(isNull(crmTasks.reminderSentAt), lt(crmTasks.reminderSentAt, remindedBefore))!,
+  )).orderBy(asc(crmTasks.assignedTo), asc(crmTasks.dueAt));
 }
 
 // --- CRM DEALS ---

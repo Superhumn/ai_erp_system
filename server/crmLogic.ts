@@ -85,7 +85,7 @@ function isLostName(name: string): boolean {
 /**
  * Default stage rows for a list of stage names: the first regular stage is
  * 10%, the last 90%, evenly spaced in between; won = 100, lost = 0.
- * Mirrors the SQL backfill in drizzle/0073_crm_upgrade.sql.
+ * Mirrors the SQL backfill in drizzle/0074_crm_upgrade.sql.
  */
 export function seedStagesFromNames(names: string[]): StageLike[] {
   const regular = names.filter((n) => !isWonName(n) && !isLostName(n));
@@ -222,7 +222,7 @@ export function computeForecast(deals: ForecastDeal[], stages: StageLike[] = [])
 // Deals: items, close
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_LOSS_REASONS = ["Price", "Timing/Budget cycle", "Chose incumbent", "No decision", "Product fit", "Lost bid", "Other"];
+export const DEFAULT_LOSS_REASONS = ["Price", "Chose incumbent", "No budget this cycle", "Bid timing", "Product fit", "Distributor not carrying", "No decision"];
 
 /** Line total = quantity × unitPrice, rounded to cents. */
 export function dealItemTotal(quantity: string | number | null | undefined, unitPrice: string | number | null | undefined): number {
@@ -236,9 +236,9 @@ export function dealItemTotal(quantity: string | number | null | undefined, unit
  * Deal amount implied by its items: the sum of line totals when there is at
  * least one item, otherwise `undefined` (leave the manually entered amount).
  */
-export function dealAmountFromItems(items: Array<{ total: string | number | null }>): number | undefined {
+export function dealAmountFromItems(items: Array<{ totalAmount: string | number | null }>): number | undefined {
   if (items.length === 0) return undefined;
-  const sum = items.reduce((acc, it) => acc + (Number(it.total ?? 0) || 0), 0);
+  const sum = items.reduce((acc, it) => acc + (Number(it.totalAmount ?? 0) || 0), 0);
   return Math.round(sum * 100) / 100;
 }
 

@@ -4966,6 +4966,8 @@ export const crmDeals = mysqlTable("crm_deals", {
   status: mysqlEnum("status", ["open", "won", "lost", "stalled"]).default("open").notNull(),
   lostReason: varchar("lostReason", { length: 255 }),
   lossReasonId: int("lossReasonId"), // crm_loss_reasons.id (lostReason keeps the free-text note)
+  wonReason: varchar("wonReason", { length: 500 }),
+  isStale: boolean("isStale").default(false).notNull(), // set by the daily stale-deal job
   wonAt: timestamp("wonAt"),
   lostAt: timestamp("lostAt"),
 
@@ -5042,7 +5044,8 @@ export const crmAccounts = mysqlTable("crm_accounts", {
   type: mysqlEnum("type", ["district", "school", "distributor", "operator", "gpo", "other"]).default("other").notNull(),
   parentAccountId: int("parentAccountId"),
   region: varchar("region", { length: 128 }),
-  mealCount: int("mealCount"), // meals served per day — the K-12 sizing signal
+  state: varchar("state", { length: 64 }),
+  mealsPerDay: int("mealsPerDay"), // meals served per day — the K-12 sizing signal
   externalId: varchar("externalId", { length: 128 }), // NCES id, distributor account #, …
   customerId: int("customerId"), // customers.id once they buy
   website: varchar("website", { length: 512 }),
@@ -5118,7 +5121,7 @@ export const crmDealItems = mysqlTable("crm_deal_items", {
   unit: varchar("unit", { length: 32 }).default("case"),
   unitPrice: decimal("unitPrice", { precision: 15, scale: 4 }).default("0").notNull(),
   annualVolume: decimal("annualVolume", { precision: 15, scale: 3 }),
-  total: decimal("total", { precision: 15, scale: 2 }).default("0").notNull(),
+  totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).default("0").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -5139,6 +5142,31 @@ export const crmLossReasons = mysqlTable("crm_loss_reasons", {
 
 export type CrmLossReason = typeof crmLossReasons.$inferSelect;
 export type InsertCrmLossReason = typeof crmLossReasons.$inferInsert;
+
+// CRM Tasks — follow-ups tied to a contact / deal / account, with due dates
+// and reminders. Distinct from projectTasks (project work) and
+// crm_interactions (things that already happened).
+export const crmTasks = mysqlTable("crm_tasks", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  title: varchar("title", { length: 255 }).notNull(),
+  type: mysqlEnum("type", ["call", "email", "meeting", "follow_up", "todo"]).default("todo").notNull(),
+  contactId: int("contactId"),
+  dealId: int("dealId"),
+  accountId: int("accountId"),
+  dueAt: timestamp("dueAt"),
+  reminderAt: timestamp("reminderAt"),
+  reminderSentAt: timestamp("reminderSentAt"), // dedupes the daily reminder email
+  assignedTo: int("assignedTo"),
+  completedAt: timestamp("completedAt"),
+  createdBy: int("createdBy"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CrmTask = typeof crmTasks.$inferSelect;
+export type InsertCrmTask = typeof crmTasks.$inferInsert;
 
 // Email Campaigns for CRM
 export const crmEmailCampaigns = mysqlTable("crm_email_campaigns", {

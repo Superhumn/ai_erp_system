@@ -399,7 +399,7 @@ export async function addDealItem(dealId: number, input: DealItemInput, scope: S
     unit: input.unit ?? "case",
     unitPrice: String(input.unitPrice),
     annualVolume: input.annualVolume != null ? String(input.annualVolume) : null,
-    total: dealItemTotal(input.quantity, input.unitPrice).toFixed(2),
+    totalAmount: dealItemTotal(input.quantity, input.unitPrice).toFixed(2),
   });
   const amount = await recomputeDealAmount(deal.id);
   return { id, amount };
@@ -418,7 +418,7 @@ export async function updateDealItem(id: number, patch: Partial<DealItemInput>, 
     ...(patch.annualVolume !== undefined ? { annualVolume: patch.annualVolume != null ? String(patch.annualVolume) : null } : {}),
     quantity: String(quantity),
     unitPrice: String(unitPrice),
-    total: dealItemTotal(quantity, unitPrice).toFixed(2),
+    totalAmount: dealItemTotal(quantity, unitPrice).toFixed(2),
   });
   const amount = await recomputeDealAmount(item.dealId);
   return { amount };

@@ -2290,7 +2290,7 @@ function DealExtras({ deal, salesContacts, stageByName, onChanged }: {
 
   const linkedIds = new Set((dealContacts ?? []).map((c: any) => c.contactId));
   const candidates = salesContacts.filter((c) => !linkedIds.has(c.id));
-  const itemsTotal = (items ?? []).reduce((sum: number, it: any) => sum + Number(it.total || 0), 0);
+  const itemsTotal = (items ?? []).reduce((sum: number, it: any) => sum + Number(it.totalAmount || 0), 0);
   const stageMeta = stageByName[(deal.stage ?? "").toLowerCase()];
   const isOpen = deal.status === "open" || deal.status === "stalled";
 
@@ -2407,7 +2407,7 @@ function DealExtras({ deal, salesContacts, stageByName, onChanged }: {
                     {it.annualVolume ? ` · ${Number(it.annualVolume).toLocaleString()} ${it.unit}/yr` : ""}
                   </div>
                 </div>
-                <span className="font-semibold tabular-nums">${Number(it.total).toLocaleString()}</span>
+                <span className="font-semibold tabular-nums">${Number(it.totalAmount).toLocaleString()}</span>
                 <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeItem.mutate({ id: it.id })} title="Remove">
                   <Trash2 className="h-3 w-3" />
                 </Button>

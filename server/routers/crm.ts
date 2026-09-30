@@ -864,7 +864,7 @@ export const crmRouter = router({
 
       // Creates the deal directly. A contact/company may have any number of
       // deals and the name is free (defaults to the account / organization).
-      // `requireApproval: true` keeps the old behaviour: queue an approval task
+      // `requestApproval: true` keeps the old behaviour: queue an approval task
       // for the AI agent to create the deal instead of inserting now.
       create: scopedProcedure
         .input(z.object({
@@ -882,11 +882,11 @@ export const crmRouter = router({
           campaign: z.string().optional(),
           notes: z.string().optional(),
           assignedTo: z.number().optional(),
-          requireApproval: z.boolean().optional(),
+          requestApproval: z.boolean().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const { requireApproval, ...dealInput } = input;
-          if (!requireApproval) {
+          const { requestApproval, ...dealInput } = input;
+          if (!requestApproval) {
             const { id, name } = await createDeal(dealInput, ctx.scope, ctx.user);
             await createAuditLog(ctx.user.id, 'create', 'crm_deal', id, name);
             return { id, name, pendingApproval: false as const };
@@ -1192,7 +1192,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           type: accountTypeEnum.optional(),
           parentAccountId: z.number().nullable().optional(),
           region: z.string().optional(),
-          mealCount: z.number().int().nonnegative().nullable().optional(),
+          mealsPerDay: z.number().int().nonnegative().nullable().optional(),
           externalId: z.string().optional(),
           customerId: z.number().nullable().optional(),
           website: z.string().optional(),
@@ -1213,7 +1213,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           type: accountTypeEnum.optional(),
           parentAccountId: z.number().nullable().optional(),
           region: z.string().nullable().optional(),
-          mealCount: z.number().int().nonnegative().nullable().optional(),
+          mealsPerDay: z.number().int().nonnegative().nullable().optional(),
           externalId: z.string().nullable().optional(),
           customerId: z.number().nullable().optional(),
           website: z.string().nullable().optional(),

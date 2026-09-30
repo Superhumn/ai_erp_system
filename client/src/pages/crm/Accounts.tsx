@@ -25,7 +25,7 @@ const ACCOUNT_TYPES: { value: AccountType; label: string }[] = [
   { value: "other", label: "Other" },
 ];
 
-const EMPTY_FORM = { name: "", type: "district" as AccountType, parentAccountId: "", region: "", mealCount: "", externalId: "", website: "", notes: "" };
+const EMPTY_FORM = { name: "", type: "district" as AccountType, parentAccountId: "", region: "", mealsPerDay: "", externalId: "", website: "", notes: "" };
 
 function typeLabel(t: string | null | undefined) {
   return ACCOUNT_TYPES.find((a) => a.value === t)?.label ?? "Other";
@@ -131,7 +131,7 @@ export default function Accounts() {
                       <TableCell><Badge variant="secondary" className="text-xs">{typeLabel(a.type)}</Badge></TableCell>
                       <TableCell className="text-muted-foreground">{a.parentName ?? "—"}</TableCell>
                       <TableCell>{a.region ?? "—"}</TableCell>
-                      <TableCell className="text-right tabular-nums">{a.mealCount != null ? a.mealCount.toLocaleString() : "—"}</TableCell>
+                      <TableCell className="text-right tabular-nums">{a.mealsPerDay != null ? a.mealsPerDay.toLocaleString() : "—"}</TableCell>
                       <TableCell className="text-right tabular-nums">{a.childCount}</TableCell>
                       <TableCell className="text-right tabular-nums">{a.contactCount}</TableCell>
                       <TableCell className="text-right tabular-nums">{a.openDealCount}</TableCell>
@@ -179,7 +179,7 @@ export default function Accounts() {
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Meals per day</Label>
-                <Input type="number" min={0} value={form.mealCount} onChange={(e) => setForm({ ...form, mealCount: e.target.value })} />
+                <Input type="number" min={0} value={form.mealsPerDay} onChange={(e) => setForm({ ...form, mealsPerDay: e.target.value })} />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">External ID</Label>
@@ -202,7 +202,7 @@ export default function Accounts() {
               type: form.type,
               parentAccountId: form.parentAccountId ? Number(form.parentAccountId) : null,
               region: form.region || undefined,
-              mealCount: form.mealCount ? Number(form.mealCount) : null,
+              mealsPerDay: form.mealsPerDay ? Number(form.mealsPerDay) : null,
               externalId: form.externalId || undefined,
               website: form.website || undefined,
               notes: form.notes || undefined,
@@ -256,7 +256,7 @@ function AccountDetail({ id, allAccounts, onNavigate, onChanged }: {
       type: data.type as AccountType,
       parentAccountId: data.parentAccountId ? String(data.parentAccountId) : "",
       region: data.region ?? "",
-      mealCount: data.mealCount != null ? String(data.mealCount) : "",
+      mealsPerDay: data.mealsPerDay != null ? String(data.mealsPerDay) : "",
       externalId: data.externalId ?? "",
       website: data.website ?? "",
       notes: data.notes ?? "",
@@ -274,7 +274,7 @@ function AccountDetail({ id, allAccounts, onNavigate, onChanged }: {
           <div className="text-xs text-muted-foreground flex flex-wrap items-center gap-1.5">
             <Badge variant="secondary" className="text-[11px]">{typeLabel(data.type)}</Badge>
             {data.region && <span>· {data.region}</span>}
-            {data.mealCount != null && <span>· {data.mealCount.toLocaleString()} meals/day</span>}
+            {data.mealsPerDay != null && <span>· {data.mealsPerDay.toLocaleString()} meals/day</span>}
           </div>
         </div>
         {!editing && <Button size="sm" variant="outline" onClick={startEdit}>Edit</Button>}
@@ -342,7 +342,7 @@ function AccountDetail({ id, allAccounts, onNavigate, onChanged }: {
               </Select>
             </div>
             <div className="space-y-1"><Label className="text-xs">Region</Label><Input value={form.region} onChange={(e) => setForm({ ...form, region: e.target.value })} /></div>
-            <div className="space-y-1"><Label className="text-xs">Meals per day</Label><Input type="number" min={0} value={form.mealCount} onChange={(e) => setForm({ ...form, mealCount: e.target.value })} /></div>
+            <div className="space-y-1"><Label className="text-xs">Meals per day</Label><Input type="number" min={0} value={form.mealsPerDay} onChange={(e) => setForm({ ...form, mealsPerDay: e.target.value })} /></div>
             <div className="space-y-1"><Label className="text-xs">External ID</Label><Input value={form.externalId} onChange={(e) => setForm({ ...form, externalId: e.target.value })} /></div>
             <div className="space-y-1"><Label className="text-xs">Website</Label><Input value={form.website} onChange={(e) => setForm({ ...form, website: e.target.value })} /></div>
           </div>
@@ -355,7 +355,7 @@ function AccountDetail({ id, allAccounts, onNavigate, onChanged }: {
               type: form.type,
               parentAccountId: form.parentAccountId ? Number(form.parentAccountId) : null,
               region: form.region || null,
-              mealCount: form.mealCount ? Number(form.mealCount) : null,
+              mealsPerDay: form.mealsPerDay ? Number(form.mealsPerDay) : null,
               externalId: form.externalId || null,
               website: form.website || null,
               notes: form.notes || null,
