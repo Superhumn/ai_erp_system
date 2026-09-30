@@ -24,6 +24,14 @@ export const opsProcedure = protectedProcedure.use(({ ctx, next }) => {
   return next({ ctx });
 });
 
+// Sales section (CRM + Marketing): sales, admin, exec — matches the sidebar contract.
+export const salesProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (!['admin', 'sales', 'exec'].includes(ctx.user.role)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Sales access required' });
+  }
+  return next({ ctx });
+});
+
 export const legalProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (!['admin', 'legal', 'exec'].includes(ctx.user.role)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Legal access required' });

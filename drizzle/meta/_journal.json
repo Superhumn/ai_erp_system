@@ -519,6 +519,13 @@
 			"when": 1787800000000,
 			"tag": "0073_lookup_indexes",
 			"breakpoints": true
+		},
+		{
+			"idx": 74,
+			"version": "5",
+			"when": 1787800100000,
+			"tag": "0074_ad_marketing",
+			"breakpoints": true
 		}
 	]
 }

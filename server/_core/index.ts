@@ -173,6 +173,7 @@ async function ensureAuthSchema() {
 }
 import { ENV, validateEmailConfig, validateCriticalConfig, validateRequiredSecrets } from "./env";
 import { registerTwilioWebhooks } from "./twilioWebhooks";
+import { registerAdWebhooks } from "./adWebhooks";
 import * as sendgridProvider from "./sendgridProvider";
 import * as emailService from "./emailService";
 import * as db from "../db";
@@ -1139,6 +1140,9 @@ async function startServer() {
   // ============================================
   registerTwilioWebhooks(app);
 
+  // Paid-ads lead intake: Meta lead-form webhook + our landing-page form.
+  registerAdWebhooks(app, reenterTenant);
+
   // Shared handler for Google OAuth callbacks.
   // `selfRedirectUri` must exactly match the redirect_uri used when the auth URL was generated.
   async function handleGoogleOAuthCallback(req: any, res: any, selfRedirectUri: string) {
@@ -1600,6 +1604,17 @@ async function startServer() {
       startSequenceRunner();
     }).catch(err => {
       logger.error("Failed to start sequence runner — email sequences and scheduled campaigns disabled", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+
+    // Paid ads: daily spend sync, lead polling, cost-per-signup / budget /
+    // credit alerts, Monday summary. Runs are recorded in ad_sync_logs so a
+    // restart never repeats one.
+    import("../adMarketingScheduler").then(({ startAdMarketingScheduler }) => {
+      startAdMarketingScheduler();
+    }).catch(err => {
+      logger.error("Failed to start ad marketing scheduler — ad spend sync and alerts disabled", {
         error: err instanceof Error ? err.message : String(err),
       });
     });

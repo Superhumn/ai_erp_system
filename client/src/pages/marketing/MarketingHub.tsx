@@ -24,13 +24,14 @@ import {
   Megaphone, Calendar as CalendarIcon, PenSquare, Inbox, Target,
   Loader2, Plus, Send, Sparkles, CheckCircle2, AlertTriangle,
   Users as UsersIcon, ExternalLink, Trash2, Star, Video, Link2, Unlink,
-  Construction, Eye, MessageCircle,
+  Construction, Eye, MessageCircle, BarChart3,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { format, isSameDay, addDays, startOfDay } from "date-fns";
 import { Link } from "wouter";
 import BrandAmbassadors from "./BrandAmbassadors";
+import { PaidAdsPanel } from "./PaidAds";
 
 // ---------------------------------------------------------------------------
 // Everything on this page calls a procedure that exists on the live router:
@@ -899,6 +900,7 @@ export default function MarketingHub() {
           <TabsTrigger value="campaigns"><Target className="h-3 w-3 mr-1" /> Campaigns</TabsTrigger>
           <TabsTrigger value="influencers"><UsersIcon className="h-3 w-3 mr-1" /> Influencers</TabsTrigger>
           <TabsTrigger value="ambassadors"><Star className="h-3 w-3 mr-1" /> Ambassadors</TabsTrigger>
+          <TabsTrigger value="ads"><BarChart3 className="h-3 w-3 mr-1" /> Paid Ads</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview"><OverviewTab /></TabsContent>
@@ -908,6 +910,7 @@ export default function MarketingHub() {
         <TabsContent value="campaigns"><CampaignsTab /></TabsContent>
         <TabsContent value="influencers"><InfluencersTab onOpenAmbassadors={() => setTab("ambassadors")} /></TabsContent>
         <TabsContent value="ambassadors"><BrandAmbassadors /></TabsContent>
+        <TabsContent value="ads"><PaidAdsPanel /></TabsContent>
       </Tabs>
     </div>
   );

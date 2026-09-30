@@ -4757,7 +4757,7 @@ export const crmContacts = mysqlTable("crm_contacts", {
 
   // CRM classification
   contactType: mysqlEnum("contactType", ["lead", "prospect", "customer", "partner", "investor", "donor", "vendor", "other"]).default("lead").notNull(),
-  source: mysqlEnum("source", ["iphone_bump", "whatsapp", "linkedin_scan", "business_card", "website", "referral", "event", "cold_outreach", "import", "manual", "fireflies", "b2brocket"]).default("manual").notNull(),
+  source: mysqlEnum("source", ["iphone_bump", "whatsapp", "linkedin_scan", "business_card", "website", "referral", "event", "cold_outreach", "import", "manual", "fireflies", "b2brocket", "paid_ad"]).default("manual").notNull(),
   status: mysqlEnum("status", ["active", "inactive", "unsubscribed", "bounced"]).default("active").notNull(),
 
   // Sales/Fundraising context
@@ -8422,3 +8422,180 @@ export type SerialNumber = typeof serialNumbers.$inferSelect;
 export type InsertSerialNumber = typeof serialNumbers.$inferInsert;
 export type SerialNumberEvent = typeof serialNumberEvents.$inferSelect;
 export type InsertSerialNumberEvent = typeof serialNumberEvents.$inferInsert;
+
+// ============================================
+// MARKETING — PAID ADS (platforms, campaigns, spend, leads, links, credits)
+// ============================================
+// The paperwork behind paid ads. Ads are still built and launched on each
+// platform; these tables record what happened. Cost per signup is calculated
+// (spend ÷ signups), never stored. All names carry the `ad_` prefix so they
+// don't collide with the social-posting `marketing_campaigns` table above.
+
+export const adPlatforms = mysqlTable("ad_platforms", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: mysqlEnum("name", ["meta", "linkedin", "reddit", "google", "tiktok", "other"]).notNull(),
+  label: varchar("label", { length: 128 }),
+  // Platform-side account id: Meta `act_…`, LinkedIn sponsored account id, Reddit ad account id.
+  accountId: varchar("accountId", { length: 128 }),
+  // Extra platform ids needed for lead intake (Meta page id, LinkedIn org id …).
+  pageId: varchar("pageId", { length: 128 }),
+  // Encrypted with _core/crypto encrypt(); never returned to the client.
+  accessToken: text("accessToken"),
+  tokenExpiresAt: timestamp("tokenExpiresAt"),
+  connectionStatus: mysqlEnum("connectionStatus", ["disconnected", "connected", "error"]).default("disconnected").notNull(),
+  lastSyncAt: timestamp("lastSyncAt"),
+  lastSyncError: text("lastSyncError"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type AdPlatform = typeof adPlatforms.$inferSelect;
+export type InsertAdPlatform = typeof adPlatforms.$inferInsert;
+
+export const adCampaigns = mysqlTable("ad_campaigns", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  platformId: int("platformId").notNull(),
+  // Campaign id on the platform; used to match synced spend rows and inbound leads.
+  externalId: varchar("externalId", { length: 128 }),
+  name: varchar("name", { length: 255 }).notNull(),
+  objective: varchar("objective", { length: 128 }),
+  dailyBudgetUsd: decimal("dailyBudgetUsd", { precision: 12, scale: 2 }),
+  totalBudgetUsd: decimal("totalBudgetUsd", { precision: 12, scale: 2 }),
+  // Alert threshold: cost per signup above this for 3 days in a row raises an alert. Null = no alert.
+  targetCostPerSignupUsd: decimal("targetCostPerSignupUsd", { precision: 12, scale: 2 }),
+  startDate: timestamp("startDate"),
+  endDate: timestamp("endDate"),
+  status: mysqlEnum("status", ["planned", "active", "paused", "ended"]).default("planned").notNull(),
+  ownerUserId: int("ownerUserId"),
+  utmCampaign: varchar("utmCampaign", { length: 128 }),
+  // Welcome email sent to each new lead. Empty = no email.
+  welcomeSubject: varchar("welcomeSubject", { length: 255 }),
+  welcomeBody: text("welcomeBody"),
+  notes: text("notes"),
+  // Alert de-dupe: when each alert last fired for this campaign.
+  cpsAlertAt: timestamp("cpsAlertAt"),
+  budgetAlertAt: timestamp("budgetAlertAt"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type AdCampaign = typeof adCampaigns.$inferSelect;
+export type InsertAdCampaign = typeof adCampaigns.$inferInsert;
+
+// One row per campaign per day. Child of ad_campaigns (inherits its scope).
+export const adSpendDaily = mysqlTable("ad_spend_daily", {
+  id: int("id").autoincrement().primaryKey(),
+  campaignId: int("campaignId").notNull(),
+  // YYYY-MM-DD in the platform's reporting timezone.
+  date: varchar("date", { length: 10 }).notNull(),
+  spendUsd: decimal("spendUsd", { precision: 12, scale: 2 }).default("0").notNull(),
+  impressions: int("impressions").default(0).notNull(),
+  clicks: int("clicks").default(0).notNull(),
+  signups: int("signups").default(0).notNull(),
+  source: mysqlEnum("source", ["sync", "manual"]).default("sync").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  campaignDateUniq: uniqueIndex("ad_spend_daily_campaign_date_uniq").on(t.campaignId, t.date),
+}));
+
+export type AdSpendDaily = typeof adSpendDaily.$inferSelect;
+export type InsertAdSpendDaily = typeof adSpendDaily.$inferInsert;
+
+// Every signup that came in from an ad, linked to the CRM contact it created or matched.
+export const adLeads = mysqlTable("ad_leads", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  campaignId: int("campaignId"),
+  platformId: int("platformId"),
+  contactId: int("contactId"),
+  source: mysqlEnum("source", ["meta", "linkedin", "reddit", "google", "tiktok", "landing_page", "manual", "other"]).notNull(),
+  // Platform lead id (Meta leadgen_id, LinkedIn response id). Unique per platform so retried webhooks don't double-count.
+  externalLeadId: varchar("externalLeadId", { length: 128 }),
+  email: varchar("email", { length: 320 }),
+  fullName: varchar("fullName", { length: 255 }),
+  utmSource: varchar("utmSource", { length: 128 }),
+  utmMedium: varchar("utmMedium", { length: 128 }),
+  utmCampaign: varchar("utmCampaign", { length: 128 }),
+  utmContent: varchar("utmContent", { length: 128 }),
+  // Raw form answers as JSON, exactly as the platform sent them.
+  answersJson: text("answersJson"),
+  receivedAt: timestamp("receivedAt").defaultNow().notNull(),
+  welcomeEmailSentAt: timestamp("welcomeEmailSentAt"),
+  welcomeEmailError: text("welcomeEmailError"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (t) => ({
+  externalUniq: uniqueIndex("ad_leads_platform_external_uniq").on(t.platformId, t.externalLeadId),
+}));
+
+export type AdLead = typeof adLeads.$inferSelect;
+export type InsertAdLead = typeof adLeads.$inferInsert;
+
+export const adTrackingLinks = mysqlTable("ad_tracking_links", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  campaignId: int("campaignId"),
+  label: varchar("label", { length: 255 }),
+  baseUrl: text("baseUrl").notNull(),
+  fullUrl: text("fullUrl").notNull(),
+  utmSource: varchar("utmSource", { length: 128 }).notNull(),
+  utmMedium: varchar("utmMedium", { length: 128 }).notNull(),
+  utmCampaign: varchar("utmCampaign", { length: 128 }).notNull(),
+  utmContent: varchar("utmContent", { length: 128 }),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type AdTrackingLink = typeof adTrackingLinks.$inferSelect;
+export type InsertAdTrackingLink = typeof adTrackingLinks.$inferInsert;
+
+// Free ad credit / perk from a platform or partner. Warned 14 days before expiry.
+export const adCredits = mysqlTable("ad_credits", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  platformId: int("platformId"),
+  offer: varchar("offer", { length: 255 }).notNull(),
+  amountUsd: decimal("amountUsd", { precision: 12, scale: 2 }).default("0").notNull(),
+  amountUsedUsd: decimal("amountUsedUsd", { precision: 12, scale: 2 }).default("0").notNull(),
+  conditions: text("conditions"),
+  claimedAt: timestamp("claimedAt"),
+  expiresAt: timestamp("expiresAt"),
+  status: mysqlEnum("status", ["available", "claimed", "active", "used", "expired"]).default("available").notNull(),
+  // When the expiry warning last fired (once per credit).
+  expiryWarnedAt: timestamp("expiryWarnedAt"),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type AdCredit = typeof adCredits.$inferSelect;
+export type InsertAdCredit = typeof adCredits.$inferInsert;
+
+// Log of every automated run (spend sync, lead sync, alert checks, weekly
+// summary). Failed syncs raise an alert. Also the scheduler's idempotency
+// record: a run for the same kind/platform/period is not repeated.
+export const adSyncLogs = mysqlTable("ad_sync_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  platformId: int("platformId"),
+  kind: mysqlEnum("kind", ["spend_sync", "lead_sync", "alert_check", "weekly_summary"]).notNull(),
+  // The period the run covered: a YYYY-MM-DD date for daily runs, ISO week (YYYY-Www) for the summary.
+  period: varchar("period", { length: 16 }).notNull(),
+  // Scheduled runs claim `<kind>:<platformId>:<period>` here before doing any
+  // work; the unique index makes a second instance's claim fail. Manual runs
+  // leave it NULL (NULLs never collide).
+  claimKey: varchar("claimKey", { length: 64 }),
+  status: mysqlEnum("status", ["running", "success", "failed", "skipped"]).notNull(),
+  rowsAffected: int("rowsAffected").default(0).notNull(),
+  message: text("message"),
+  ranAt: timestamp("ranAt").defaultNow().notNull(),
+  finishedAt: timestamp("finishedAt"),
+}, (t) => ({
+  claimUniq: uniqueIndex("ad_sync_logs_claim_uniq").on(t.claimKey),
+}));
+
+export type AdSyncLog = typeof adSyncLogs.$inferSelect;
+export type InsertAdSyncLog = typeof adSyncLogs.$inferInsert;
