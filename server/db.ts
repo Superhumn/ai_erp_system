@@ -1549,14 +1549,20 @@ export async function getInvoiceBillingByIds(scope: Scope | undefined, invoiceId
   }));
 }
 
-/** The newest shipment of each given order (what the Sales hub shows per row). */
-export async function getLatestShipmentsForOrders(orderIds: number[]) {
+/**
+ * The newest shipment of each given order (what the Sales hub shows per row). Only orders
+ * inside `scope` count, so an id from another entity returns nothing.
+ */
+export async function getLatestShipmentsForOrders(scope: Scope | undefined, orderIds: number[]) {
   const db = await getDb();
   if (!db || orderIds.length === 0) return [];
+  const ids = scope ? scopeCompanyIds(scope) : null;
+  if (ids && ids.length === 0) return [];
   const rows = await db
     .select({ id: shipments.id, orderId: shipments.orderId, status: shipments.status, trackingNumber: shipments.trackingNumber, carrier: shipments.carrier })
     .from(shipments)
-    .where(inArray(shipments.orderId, orderIds))
+    .innerJoin(orders, eq(orders.id, shipments.orderId))
+    .where(and(inArray(shipments.orderId, orderIds), ids ? inArray(orders.companyId, ids) : undefined))
     .orderBy(desc(shipments.createdAt), desc(shipments.id));
   const seen = new Set<number>();
   return rows.filter((r) => r.orderId != null && !seen.has(r.orderId) && (seen.add(r.orderId), true));
@@ -3999,11 +4005,14 @@ export async function getHomePurchaseOrderSummary(scope: Scope | undefined, mont
   if (ids && ids.length === 0) return empty;
   const inScope = ids ? inArray(purchaseOrders.companyId, ids) : undefined;
   const sumTotal = sql<string>`COALESCE(SUM(${purchaseOrders.totalAmount}), 0)`;
+  // Receipt month: receivedDate, set by the receiving flows. Older rows without it fall back
+  // to updatedAt, the proxy the dashboard used before.
+  const receivedAt = sql`COALESCE(${purchaseOrders.receivedDate}, ${purchaseOrders.updatedAt})`;
   const [[received], [ap], [open]] = await Promise.all([
     db.select({ total: sumTotal }).from(purchaseOrders).where(and(
       eq(purchaseOrders.status, "received"),
-      gte(purchaseOrders.updatedAt, new Date(monthStartMs)),
-      lt(purchaseOrders.updatedAt, new Date(monthEndMs)),
+      sql`${receivedAt} >= ${new Date(monthStartMs)}`,
+      sql`${receivedAt} < ${new Date(monthEndMs)}`,
       inScope,
     )),
     db.select({ total: sumTotal }).from(purchaseOrders)

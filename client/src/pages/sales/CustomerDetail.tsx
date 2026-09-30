@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { ListPager } from "@/components/ListPager";
 import { usePagedList } from "@/hooks/usePagedList";
@@ -44,6 +44,7 @@ export default function CustomerDetail() {
     offset: ordersPaging.query.offset,
   });
   const orders = ordersPage?.rows;
+  useEffect(() => ordersPaging.clampTo(ordersPage?.total), [ordersPage?.total]);
   const { data: orderSummary } = trpc.orders.summary.useQuery({ customerId });
 
   const [editOpen, setEditOpen] = useState(false);

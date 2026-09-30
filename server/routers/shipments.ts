@@ -3,16 +3,16 @@ import { z } from "zod";
 import { router } from "../_core/trpc";
 import { invokeLLM } from "../_core/llm";
 import * as db from "../db";
-import { opsProcedure, createAuditLog, generateNumber } from "./_shared";
+import { opsProcedure, scopedOpsProcedure, createAuditLog, generateNumber } from "./_shared";
 
 // ============================================
 // OPERATIONS - SHIPMENTS
 // ============================================
 export const shipmentsRouter = router({
     // Sales hub: the newest shipment of each order on the visible page.
-    latestForOrders: opsProcedure
+    latestForOrders: scopedOpsProcedure
       .input(z.object({ orderIds: z.array(z.number().int()).max(500) }))
-      .query(({ input }) => db.getLatestShipmentsForOrders(input.orderIds)),
+      .query(({ input, ctx }) => db.getLatestShipmentsForOrders(ctx.scope, input.orderIds)),
     list: opsProcedure
       .input(z.object({
         companyId: z.number().optional(),

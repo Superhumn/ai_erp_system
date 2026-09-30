@@ -49,9 +49,9 @@ describe("invoices.billingByIds", () => {
 });
 
 describe("shipments.latestForOrders", () => {
-  it("is ops-gated like shipments.list", async () => {
+  it("is ops-gated and entity-scoped", async () => {
     await ops.shipments.latestForOrders({ orderIds: [4] });
-    expect(db.getLatestShipmentsForOrders).toHaveBeenCalledWith([4]);
+    expect(db.getLatestShipmentsForOrders).toHaveBeenCalledWith(scope, [4]);
     await expect(sales.shipments.latestForOrders({ orderIds: [4] })).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });
